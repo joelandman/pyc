@@ -1,14 +1,15 @@
 #include <cstdio>
-
-// Extended runtime for pyc (basic PyObject with refcounting for ints)
 #include <stdio.h>
 #include <stdlib.h>
 
-typedef struct {
+#include "pyc/runtime.h"
+
+// Internal definition - users should only use the opaque type from runtime.h
+struct PyObject {
     int refcount;
-    int type;  // 0 = int
+    int type;   // 0 = int
     long value;
-} PyObject;
+};
 
 extern "C" {
 
@@ -26,7 +27,12 @@ void Py_DECREF(PyObject* obj) {
     }
 }
 
+void Py_INCREF(PyObject* obj) {
+    if (obj) ++obj->refcount;
+}
+
 int PyObject_Print(PyObject* obj, FILE* fp) {
+    if (!fp) fp = stdout;   // tolerate null FILE* during boxed transition
     if (obj && obj->type == 0) {
         return fprintf(fp, "%ld\n", obj->value);
     }

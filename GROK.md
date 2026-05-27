@@ -19,4 +19,9 @@ The AI acted as an interactive engineering partner, providing plans, code, fixes
 
 Project achieved MVC for Python subset to static native executables with LLVM.
 
+### Later Major Work
+- Visitor-based AST lowering refactor (Deep Polish 4)
+- Full migration to `PyObject*` boxed runtime with basic refcounting (Deep Polish 5, Option A)
+- Improved testing (`make check` / ctest), packaging (runtime headers + `libpycrt`), and CLI (`--emit-llvm`, `-S`, `--verbose`)
+
 See README.md and LICENSE for details.

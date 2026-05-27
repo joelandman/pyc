@@ -11,6 +11,8 @@ class Codegen {
 public:
     std::unique_ptr<llvm::Module> generate(ModuleIR& ir, llvm::LLVMContext& context, const std::string& moduleName);
     bool emitObject(llvm::Module* module, const std::string& outputPath);
+    bool emitLLVM(llvm::Module* module, const std::string& outputPath);
+    bool emitAssembly(llvm::Module* module, const std::string& outputPath);
     void optimize(llvm::Module* module, int optLevel = 2);
 };
 

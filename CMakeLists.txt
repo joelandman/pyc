@@ -34,3 +34,27 @@ target_link_libraries(pyc PRIVATE ${llvm_libs} Python3::Python)
 target_include_directories(pyc PRIVATE include)
 
 install(TARGETS pyc DESTINATION bin)
+
+add_library(pyc_runtime STATIC src/runtime/Runtime.cpp)
+set_target_properties(pyc_runtime PROPERTIES OUTPUT_NAME "pycrt")
+install(TARGETS pyc_runtime DESTINATION lib)
+install(FILES include/pyc/runtime.h DESTINATION include/pyc)
+
+# Testing support
+enable_testing()
+
+# Convenience target: make check (or make pyc-check)
+add_custom_target(check
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/runner.py
+  DEPENDS pyc
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  COMMENT "Running pyc test suite"
+  USES_TERMINAL
+)
+
+# Also register with CTest so "make test" / ctest works
+add_test(
+  NAME pyc_basic_tests
+  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/runner.py
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)

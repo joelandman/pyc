@@ -52,6 +52,20 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             node->op = getPyString(opType, "__name__");
             Py_DECREF(op);
         }
+        PyObject* left = PyObject_GetAttrString(pyNode, "left");
+        if (left) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(left, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(left);
+        }
+        PyObject* right = PyObject_GetAttrString(pyNode, "right");
+        if (right) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(right, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(right);
+        }
     } else if (node->type == "FunctionDef") {
         node->id = getPyString(pyNode, "name");
         PyObject* a = PyObject_GetAttrString(pyNode, "args");
@@ -130,6 +144,14 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(ops);
+        PyObject* comparators = PyObject_GetAttrString(pyNode, "comparators");
+        if (comparators && PyList_Check(comparators) && PyList_Size(comparators) > 0) {
+            PyObject* right = PyList_GetItem(comparators, 0);
+            auto child = std::make_unique<ASTNode>();
+            buildAST(right, child.get());
+            node->children.push_back(std::move(child));
+        }
+        Py_XDECREF(comparators);
     } else if (node->type == "Assign") {
         PyObject* targets = PyObject_GetAttrString(pyNode, "targets");
         if (targets && PyList_Check(targets)) {
@@ -138,24 +160,26 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         }
         Py_XDECREF(targets);
     }
-    PyObject* body = PyObject_GetAttrString(pyNode, "body");
-    if (body && PyList_Check(body)) {
-        for (Py_ssize_t i = 0; i < PyList_Size(body); ++i) {
-            PyObject* item = PyList_GetItem(body, i);
-            auto child = std::make_unique<ASTNode>();
-            buildAST(item, child.get());
-            node->children.push_back(std::move(child));
+    if (node->children.empty()) {
+        PyObject* body = PyObject_GetAttrString(pyNode, "body");
+        if (body && PyList_Check(body)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(body); ++i) {
+                PyObject* item = PyList_GetItem(body, i);
+                auto child = std::make_unique<ASTNode>();
+                buildAST(item, child.get());
+                node->children.push_back(std::move(child));
+            }
+        } else {
+            PyObject* val = PyObject_GetAttrString(pyNode, "value");
+            if (val) {
+                auto child = std::make_unique<ASTNode>();
+                buildAST(val, child.get());
+                node->children.push_back(std::move(child));
+                Py_DECREF(val);
+            }
         }
-    } else {
-        PyObject* val = PyObject_GetAttrString(pyNode, "value");
-        if (val) {
-            auto child = std::make_unique<ASTNode>();
-            buildAST(val, child.get());
-            node->children.push_back(std::move(child));
-            Py_DECREF(val);
-        }
+        Py_XDECREF(body);
     }
-    Py_XDECREF(body);
 }
 
 std::unique_ptr<ASTNode> PythonParser::parseFile(const std::string& path) {
