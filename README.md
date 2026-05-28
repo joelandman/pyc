@@ -50,7 +50,7 @@ Apache License 2.0 (see LICENSE).
 Built with assistance from Grok (xAI). See GROK.md for collaboration notes.
 
 ### Current Status
-- Working features: functions, returns, variables, `if`/`else`, `while`, basic arithmetic, `print`
+- Working features: functions, returns, variables, `if`/`else`, `while`, basic arithmetic, `print`, list comprehensions, dictionary comprehensions, *args and **kwargs
 - Architecture: Visitor-based AST lowering + full `PyObject*` boxed runtime (with basic refcounting)
 - Tooling: `--emit-llvm`, `--emit-asm`/`-S`, `--verbose`, `make check` / `ctest`
 - Packaging: Installable runtime library (`libpycrt`) + public headers
