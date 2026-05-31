@@ -76,6 +76,17 @@ All features produce output that matches CPython behavior exactly.
 - List literals `[a, b, c]`
 - `PyList_Size` runtime support
 
+## Dict and Tuple Literals
+
+- Dict literals `{'a': 1, 'b': 2}`
+- Tuple literals `(1, 2, 3)` (currently mapped to lists)
+- Keyword argument parsing in function calls
+
+## String Literals and Break/Continue
+
+- String literals and `print("hello")`
+- Basic `break` and `continue` support in `while` loops
+
 ## Arithmetic Operators
 
 Full arithmetic support:

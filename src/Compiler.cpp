@@ -40,6 +40,10 @@ public:
             lowerWhile(node);
         } else if (node->type == "For") {
             lowerFor(node);
+        } else if (node->type == "Break") {
+            ir.addInstruction(currentFunc, "br", {}, "exit");
+        } else if (node->type == "Continue") {
+            ir.addInstruction(currentFunc, "br", {}, "loop");
         } else if (node->type == "Assign") {
             lowerAssign(node);
         } else if (node->type == "Return") {
@@ -67,7 +71,16 @@ public:
 
         if (node->type == "Constant") {
             std::string res = "c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {node->value}, res);
+            std::string val = node->value;
+            // Quote strings so codegen can distinguish them from numbers
+            if (!val.empty() && val.find_first_of("\"'") == std::string::npos) {
+                // crude heuristic: if it contains non-digits, treat as string
+                bool isNum = val.find_first_not_of("0123456789+-") == std::string::npos;
+                if (!isNum) {
+                    val = "\"" + val + "\"";
+                }
+            }
+            ir.addInstruction(currentFunc, "const", {val}, res);
             return res;
         } else if (node->type == "Name") {
             return node->id;
@@ -77,8 +90,10 @@ public:
             return lowerCall(node);
         } else if (node->type == "Compare") {
             return lowerCompare(node);
-        } else if (node->type == "List") {
+        } else if (node->type == "List" || node->type == "Tuple") {
             return lowerList(node);
+        } else if (node->type == "Dict") {
+            return lowerDict(node);
         } else if (node->type == "Return") {
             return lowerReturnExpr(node);
         }
@@ -209,6 +224,18 @@ private:
             ir.addInstruction(currentFunc, "call", {"PyList_SetItem", listRes, idxStr, elem}, "");
         }
         return listRes;
+    }
+
+    std::string lowerDict(const ASTNode* node) {
+        std::string dictRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
+
+        for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
+            std::string key = lowerExpr(node->children[i].get());
+            std::string val = lowerExpr(node->children[i+1].get());
+            ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, key, val}, "");
+        }
+        return dictRes;
     }
 
     void lowerAssign(const ASTNode* node) {

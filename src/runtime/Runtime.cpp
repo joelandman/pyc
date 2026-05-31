@@ -3,18 +3,20 @@
 #include <stdlib.h>
 #include <vector>
 #include <unordered_map>
+#include <string>
 
 #include "pyc/runtime.h"
 
 // Internal definition - users should only use the opaque type from runtime.h
 struct PyObject {
     int refcount;
-    int type;   // 0 = int, 1 = list, 2 = dict
+    int type;   // 0 = int, 1 = list, 2 = dict, 3 = str
     union {
         long value;
         std::vector<PyObject*> list;
         std::unordered_map<PyObject*, PyObject*> dict;
     };
+    std::string str;
 };
 
 void Py_INCREF(PyObject* obj) {
@@ -183,8 +185,18 @@ int PyObject_Print(PyObject* obj, FILE* fp) {
         }
         fprintf(fp, "}\n");
         return 0;
+    } else if (obj && obj->type == 3) {
+        return fprintf(fp, "%s\n", obj->str.c_str());
     }
     return fprintf(fp, "<object>\n");
+}
+
+PyObject* PyUnicode_FromString(const char* s) {
+    PyObject* obj = (PyObject*)malloc(sizeof(PyObject));
+    obj->refcount = 1;
+    obj->type = 3;
+    obj->str = s ? s : "";
+    return obj;
 }
 
 PyObject* PyNumber_Add(PyObject* a, PyObject* b) {

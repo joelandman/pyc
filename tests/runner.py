@@ -39,6 +39,22 @@ print(add(add(1, 2), 3))
     ("print(2+3*4)", "14\n"),
     # list literal (basic construction test)
     ("lst=[1,2]; print(42)", "42\n"),
+    # string literal
+    ('print("hello")', "hello\n"),
+    # break in while
+    ("""
+i=0
+while i<5:
+    if i==2: break
+    print(i)
+    i=i+1
+""", "0\n1\n"),
+    # dict literal
+    ("d={'a':1}; print(99)", "99\n"),
+    # tuple literal (treated as list for now)
+    ("t=(1,2); print(7)", "7\n"),
+    # keyword argument (parsed but not yet passed specially)
+    ("def f(x=1): return x\nprint(f(x=42))", "42\n"),
 ]
 
 def run(cmd):
