@@ -38,6 +38,8 @@ public:
             lowerIf(node);
         } else if (node->type == "While") {
             lowerWhile(node);
+        } else if (node->type == "For") {
+            lowerFor(node);
         } else if (node->type == "Assign") {
             lowerAssign(node);
         } else if (node->type == "Return") {
@@ -75,6 +77,8 @@ public:
             return lowerCall(node);
         } else if (node->type == "Compare") {
             return lowerCompare(node);
+        } else if (node->type == "List") {
+            return lowerList(node);
         } else if (node->type == "Return") {
             return lowerReturnExpr(node);
         }
@@ -149,6 +153,62 @@ private:
         }
         ir.addInstruction(currentFunc, "br", {}, "loop");
         ir.addInstruction(currentFunc, "label", {}, "exit");
+    }
+
+    void lowerFor(const ASTNode* node) {
+        // Simple list-based for: for target in <list-expr>:
+        if (node->children.size() < 2) return;
+        std::string listVal = lowerExpr(node->children[1].get());           // iterator list
+        std::string lenRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_Size", listVal}, lenRes);
+
+        std::string idx = node->id + "_idx";   // synthetic index var
+        ir.addInstruction(currentFunc, "const", {"0"}, idx);
+        ir.addInstruction(currentFunc, "assign", {idx}, idx);
+
+        std::string loopLabel = "for_loop_" + std::to_string(tempCounter);
+        std::string bodyLabel = "for_body_" + std::to_string(tempCounter);
+        std::string exitLabel = "for_exit_" + std::to_string(tempCounter);
+        tempCounter++;
+
+        ir.addInstruction(currentFunc, "label", {}, loopLabel);
+        std::string cmpRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", idx, lenRes}, cmpRes);
+        ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
+
+        ir.addInstruction(currentFunc, "label", {}, bodyLabel);
+        std::string itemRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItem", listVal, idx}, itemRes);
+        ir.addInstruction(currentFunc, "assign", {itemRes}, node->children[0]->id);  // target
+
+        // body statements start at child 2
+        for (size_t i = 2; i < node->children.size(); ++i) {
+            lower(node->children[i].get());
+        }
+
+        // idx = idx + 1
+        std::string oneRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"1"}, oneRes);
+        std::string nextIdx = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "add", {idx, oneRes}, nextIdx);
+        ir.addInstruction(currentFunc, "assign", {nextIdx}, idx);
+
+        ir.addInstruction(currentFunc, "br", {}, loopLabel);
+        ir.addInstruction(currentFunc, "label", {}, exitLabel);
+    }
+
+    std::string lowerList(const ASTNode* node) {
+        size_t n = node->children.size();
+        std::string sizeStr = std::to_string(n);
+        std::string listRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_New", sizeStr}, listRes);
+
+        for (size_t i = 0; i < n; ++i) {
+            std::string elem = lowerExpr(node->children[i].get());
+            std::string idxStr = std::to_string(i);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItem", listRes, idxStr, elem}, "");
+        }
+        return listRes;
     }
 
     void lowerAssign(const ASTNode* node) {

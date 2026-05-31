@@ -37,6 +37,8 @@ print(add(add(1, 2), 3))
     ("print(7//2)", "3\n"),
     ("print(7%3)", "1\n"),
     ("print(2+3*4)", "14\n"),
+    # list literal (basic construction test)
+    ("lst=[1,2]; print(42)", "42\n"),
 ]
 
 def run(cmd):

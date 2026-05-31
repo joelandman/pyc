@@ -46,6 +46,13 @@ PyObject* PyList_GetItem(PyObject* list, size_t index) {
     return nullptr;
 }
 
+size_t PyList_Size(PyObject* list) {
+    if (list && list->type == 1) {
+        return list->list.size();
+    }
+    return 0;
+}
+
 void PyList_SetItem(PyObject* list, size_t index, PyObject* item) {
     if (list && list->type == 1 && index < list->list.size()) {
         // Decrement reference count of old item if it exists

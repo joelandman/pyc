@@ -11,6 +11,7 @@ typedef struct PyObject PyObject;
 PyObject* PyInt_FromLong(long v);
 PyObject* PyList_New(size_t size);
 PyObject* PyList_GetItem(PyObject* list, size_t index);
+size_t    PyList_Size(PyObject* list);
 void      PyList_SetItem(PyObject* list, size_t index, PyObject* item);
 void      Py_DECREF(PyObject* obj);
 void      Py_INCREF(PyObject* obj);

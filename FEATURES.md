@@ -70,6 +70,12 @@ These features were implemented by:
 
 All features produce output that matches CPython behavior exactly.
 
+## For Loops and List Literals
+
+- `for` loops over lists (index-based iteration)
+- List literals `[a, b, c]`
+- `PyList_Size` runtime support
+
 ## Arithmetic Operators
 
 Full arithmetic support:
