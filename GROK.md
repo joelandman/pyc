@@ -11,7 +11,7 @@ This project (pyc) was built interactively with Grok (xAI model grok-4.20-0309-r
 - **CLI/Packaging:** Flags (--static, --opt, -o), CMake install target, automated linking with -static -s -Wl,--gc-sections.
 - **Tests/Error Handling:** Comprehensive `tests/test_basic.py` + runner with timing benchmarks, output validation, error cases. Compiler/Parser handle parse errors, IR verification, link failures with messages.
 - **Optimizations/Static:** LLVM passes via TargetMachine/PassBuilder (instcombine, GVN, CFG simplify). Static binaries (~700K, no dynamic libs via ldd).
-- **Other:** Project rename (pyllvm -> pyc), variable/if/while/classes support, control flow skeleton, benchmarking, Apache 2.0 license, README.
+- **Other:** Project rename (pyllvm -> pyc), variable/if/while/classes support, control flow skeleton, benchmarking, Apache 2.0 license, README, list/dict comprehension support.
 
 Grok followed code conventions (no unnecessary comments, mimic existing style, use existing libs, security best practices). Used tools for search/edit/build/test/git. All changes verified with builds, runs, and tests.
 

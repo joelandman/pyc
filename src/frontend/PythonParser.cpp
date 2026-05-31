@@ -45,6 +45,15 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         }
     } else if (node->type == "Name") {
         node->id = getPyString(pyNode, "id");
+    } else if (node->type == "Attribute") {
+        PyObject* value = PyObject_GetAttrString(pyNode, "value");
+        if (value) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(value, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(value);
+        }
+        node->id = getPyString(pyNode, "attr");  // attribute name
     } else if (node->type == "BinOp") {
         PyObject* op = PyObject_GetAttrString(pyNode, "op");
         if (op) {
@@ -80,8 +89,13 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             // Handle default arguments
             PyObject* defaults = PyObject_GetAttrString(a, "defaults");
             if (defaults && PyList_Check(defaults)) {
-                // For now, we'll just note that defaults exist, but not process them deeply
-                // The compiler will need to handle defaults separately
+                for (Py_ssize_t i = 0; i < PyList_Size(defaults); ++i) {
+                    PyObject* d = PyList_GetItem(defaults, i);
+                    auto defNode = std::make_unique<ASTNode>();
+                    buildAST(d, defNode.get());
+                    defNode->type = "Default";
+                    node->children.push_back(std::move(defNode));
+                }
             }
             Py_XDECREF(defaults);
             

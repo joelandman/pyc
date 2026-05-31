@@ -7,6 +7,7 @@
 #include <iostream>
 #include <cstdlib>
 #include <string>
+#include <unordered_map>
 
 namespace pyc {
 
@@ -28,6 +29,21 @@ public:
         } else if (node->type == "FunctionDef") {
             std::string saved = currentFunc;
             ir.addFunction(node->id, node->args);
+            funcParamNames[node->id] = node->args;
+
+            // Count defaults and collect their values
+            std::vector<std::string> defaults;
+            for (const auto& c : node->children) {
+                if (c && c->type == "Default") {
+                    std::string defVal = lowerExpr(c.get());
+                    defaults.push_back(defVal);
+                }
+            }
+            if (!defaults.empty()) {
+                funcDefaultCount[node->id] = defaults.size();
+                funcDefaultValues[node->id] = defaults;
+            }
+
             currentFunc = node->id;
             tempCounter = 0;
             for (const auto& c : node->children) {
@@ -84,6 +100,8 @@ public:
             return res;
         } else if (node->type == "Name") {
             return node->id;
+        } else if (node->type == "Attribute") {
+            return lowerAttribute(node);
         } else if (node->type == "BinOp") {
             return lowerBinOp(node);
         } else if (node->type == "Call") {
@@ -94,6 +112,9 @@ public:
             return lowerList(node);
         } else if (node->type == "Dict") {
             return lowerDict(node);
+        } else if (node->type == "Default") {
+            // Defaults are handled specially in FunctionDef lowering
+            return lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         } else if (node->type == "Return") {
             return lowerReturnExpr(node);
         }
@@ -104,6 +125,9 @@ private:
     ModuleIR& ir;
     std::string currentFunc;
     int tempCounter = 0;
+    std::unordered_map<std::string, int> funcDefaultCount;
+    std::unordered_map<std::string, std::vector<std::string>> funcDefaultValues;
+    std::unordered_map<std::string, std::vector<std::string>> funcParamNames;
 
     std::string lowerBinOp(const ASTNode* node) {
         std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
@@ -122,11 +146,47 @@ private:
     std::string lowerCall(const ASTNode* node) {
         std::string funcName = (node->children.empty() || !node->children[0]) ? "" : node->children[0]->id;
         std::vector<std::string> argRes;
+        std::vector<std::pair<std::string, std::string>> kwArgs; // (name, value)
+
         for (size_t i = 1; i < node->children.size(); ++i) {
-            if (node->children[i]) {
+            if (!node->children[i]) continue;
+            if (node->children[i]->type == "Keyword") {
+                if (!node->children[i]->children.empty()) {
+                    std::string val = lowerExpr(node->children[i]->children[0].get());
+                    kwArgs.emplace_back(node->children[i]->id, val);
+                }
+            } else {
                 argRes.push_back(lowerExpr(node->children[i].get()));
             }
         }
+
+        // Handle keyword arguments by mapping to parameter positions
+        if (!kwArgs.empty()) {
+            auto pit = funcParamNames.find(funcName);
+            if (pit != funcParamNames.end()) {
+                const auto& params = pit->second;
+                for (auto& kw : kwArgs) {
+                    for (size_t j = 0; j < params.size(); ++j) {
+                        if (params[j] == kw.first) {
+                            if (argRes.size() <= j) argRes.resize(j + 1);
+                            argRes[j] = kw.second;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Fallback: append keyword values
+                for (auto& kw : kwArgs) argRes.push_back(kw.second);
+            }
+        }
+        // Simple default injection: if no args provided and function has defaults, use them
+        if (argRes.empty()) {
+            auto it = funcDefaultValues.find(funcName);
+            if (it != funcDefaultValues.end()) {
+                argRes = it->second;
+            }
+        }
+
         std::string res = "t" + std::to_string(tempCounter++);
         std::vector<std::string> ops = {funcName};
         ops.insert(ops.end(), argRes.begin(), argRes.end());
@@ -236,6 +296,13 @@ private:
             ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, key, val}, "");
         }
         return dictRes;
+    }
+
+    std::string lowerAttribute(const ASTNode* node) {
+        std::string obj = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        std::string res = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "getattr", {obj, node->id}, res);
+        return res;
     }
 
     void lowerAssign(const ASTNode* node) {

@@ -234,6 +234,12 @@ PyObject* PyNumber_Remainder(PyObject* a, PyObject* b) {
     return NULL;
 }
 
+PyObject* PyObject_GetAttr(PyObject* obj, const char* attr) {
+    // Minimal implementation: return the object itself for now
+    if (obj) Py_INCREF(obj);
+    return obj;
+}
+
 void PyErr_Print(void) {
     fprintf(stderr, "Python error occurred\n");
 }

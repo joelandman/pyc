@@ -22,6 +22,7 @@ PyObject* PyNumber_Subtract(PyObject* a, PyObject* b);
 PyObject* PyNumber_Divide(PyObject* a, PyObject* b);
 PyObject* PyNumber_Remainder(PyObject* a, PyObject* b);
 PyObject* PyUnicode_FromString(const char* s);
+PyObject* PyObject_GetAttr(PyObject* obj, const char* attr);
 PyObject* PyDict_New(void);
 void      PyDict_SetItem(PyObject* dict, PyObject* key, PyObject* value);
 PyObject* PyDict_GetItem(PyObject* dict, PyObject* key);

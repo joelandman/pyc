@@ -71,6 +71,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::Function::Create(increfTy, llvm::Function::ExternalLinkage, "Py_INCREF", module.get());
 
     llvm::PointerType* int8PtrTy = llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0);
+    llvm::FunctionType* unicodeFromStrTy = llvm::FunctionType::get(pyObjectPtrTy, {int8PtrTy}, false);
+    llvm::Function::Create(unicodeFromStrTy, llvm::Function::ExternalLinkage, "PyUnicode_FromString", module.get());
+
+    llvm::FunctionType* getAttrTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, int8PtrTy}, false);
+    llvm::Function::Create(getAttrTy, llvm::Function::ExternalLinkage, "PyObject_GetAttr", module.get());
+
     llvm::FunctionType* objectPrintTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pyObjectPtrTy, int8PtrTy}, false);
     llvm::Function::Create(objectPrintTy, llvm::Function::ExternalLinkage, "PyObject_Print", module.get());
 
@@ -198,11 +204,24 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 continue;
             }
             if (inst.op == "const") {
-                long val = inst.operands.empty() ? 0L : std::stol(inst.operands[0].name);
-                llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
-                if (fromLong) {
-                    llvm::Value* boxed = builder.CreateCall(fromLong, {llvm::ConstantInt::get(context, llvm::APInt(64, val))}, inst.result);
-                    valueMap[inst.result] = boxed;
+                std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
+                if (!val.empty() && (val[0] == '"' || val[0] == '\'')) {
+                    // string constant
+                    llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
+                    if (fromStr) {
+                        // strip quotes
+                        std::string s = val.substr(1, val.size() - 2);
+                        llvm::Value* strConst = builder.CreateGlobalStringPtr(s, "str");
+                        llvm::Value* boxed = builder.CreateCall(fromStr, {strConst}, inst.result);
+                        valueMap[inst.result] = boxed;
+                    }
+                } else {
+                    long v = std::stol(val);
+                    llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
+                    if (fromLong) {
+                        llvm::Value* boxed = builder.CreateCall(fromLong, {llvm::ConstantInt::get(context, llvm::APInt(64, v))}, inst.result);
+                        valueMap[inst.result] = boxed;
+                    }
                 }
             } else if (inst.op == "add") {
                 llvm::Function* numberAdd = module->getFunction("PyNumber_Add");
@@ -251,6 +270,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 if (numberMult) {
                     llvm::Value* prod = builder.CreateCall(numberMult, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = prod;
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            } else if (inst.op == "getattr") {
+                llvm::Function* getAttr = module->getFunction("PyObject_GetAttr");
+                llvm::Value* obj = getOrLoad(inst.operands[0].name);
+                if (getAttr) {
+                    llvm::Value* attrName = builder.CreateGlobalStringPtr(inst.operands[1].name, "attr");
+                    llvm::Value* result = builder.CreateCall(getAttr, {obj, attrName}, inst.result);
+                    valueMap[inst.result] = result;
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }

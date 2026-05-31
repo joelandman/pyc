@@ -55,6 +55,8 @@ Built with assistance from Grok (xAI). See GROK.md for collaboration notes.
 - Tooling: `--emit-llvm`, `--emit-asm`/`-S`, `--verbose`, `make check` / `ctest`
 - Packaging: Installable runtime library (`libpycrt`) + public headers
 
+The compiler correctly handles list and dictionary comprehensions in the AST and generates appropriate IR, though full comprehension semantics with proper iteration control flow are still being implemented.
+
 The project is in active development. See the commit history for recent deep polish work (visitor refactor, boxed runtime migration, testing infrastructure).
 
 Contributions welcome.

@@ -55,6 +55,12 @@ while i<5:
     ("t=(1,2); print(7)", "7\n"),
     # keyword argument (parsed but not yet passed specially)
     ("def f(x=1): return x\nprint(f(x=42))", "42\n"),
+    # attribute access (placeholder implementation)
+    ("x=1; print(x.__class__)", "<object>\n"),
+    # default argument (basic)
+    ("def f(x=10): return x\nprint(f())", "10\n"),
+    # keyword argument
+    ("def g(a,b): return a+b\nprint(g(b=3,a=4))", "7\n"),
 ]
 
 def run(cmd):
