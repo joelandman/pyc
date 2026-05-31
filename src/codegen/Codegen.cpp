@@ -37,8 +37,29 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* fromLongTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt64Ty(context)}, false);
     llvm::Function::Create(fromLongTy, llvm::Function::ExternalLinkage, "PyInt_FromLong", module.get());
 
+    llvm::FunctionType* listNewTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(listNewTy, llvm::Function::ExternalLinkage, "PyList_New", module.get());
+
+    llvm::FunctionType* listGetItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(listGetItemTy, llvm::Function::ExternalLinkage, "PyList_GetItem", module.get());
+
+    llvm::FunctionType* listSetItemTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), pyObjectPtrTy}, false);
+    llvm::Function::Create(listSetItemTy, llvm::Function::ExternalLinkage, "PyList_SetItem", module.get());
+
     llvm::FunctionType* numberAddTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(numberAddTy, llvm::Function::ExternalLinkage, "PyNumber_Add", module.get());
+
+    llvm::FunctionType* numberMultTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(numberMultTy, llvm::Function::ExternalLinkage, "PyNumber_Multiply", module.get());
+
+    llvm::FunctionType* numberSubTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(numberSubTy, llvm::Function::ExternalLinkage, "PyNumber_Subtract", module.get());
+
+    llvm::FunctionType* numberDivTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(numberDivTy, llvm::Function::ExternalLinkage, "PyNumber_Divide", module.get());
+
+    llvm::FunctionType* numberRemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(numberRemTy, llvm::Function::ExternalLinkage, "PyNumber_Remainder", module.get());
 
     llvm::FunctionType* decrefTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy}, false);
     llvm::Function::Create(decrefTy, llvm::Function::ExternalLinkage, "Py_DECREF", module.get());
@@ -187,6 +208,73 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 if (numberAdd) {
                     llvm::Value* sum = builder.CreateCall(numberAdd, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = sum;
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            } else if (inst.op == "sub") {
+                llvm::Function* numberSub = module->getFunction("PyNumber_Subtract");
+                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
+                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                if (numberSub) {
+                    llvm::Value* diff = builder.CreateCall(numberSub, {lhs, rhs}, inst.result);
+                    valueMap[inst.result] = diff;
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            } else if (inst.op == "div") {
+                llvm::Function* numberDiv = module->getFunction("PyNumber_Divide");
+                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
+                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                if (numberDiv) {
+                    llvm::Value* quot = builder.CreateCall(numberDiv, {lhs, rhs}, inst.result);
+                    valueMap[inst.result] = quot;
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            } else if (inst.op == "mod") {
+                llvm::Function* numberRem = module->getFunction("PyNumber_Remainder");
+                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
+                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                if (numberRem) {
+                    llvm::Value* rem = builder.CreateCall(numberRem, {lhs, rhs}, inst.result);
+                    valueMap[inst.result] = rem;
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            } else if (inst.op == "mul") {
+                llvm::Function* numberMult = module->getFunction("PyNumber_Multiply");
+                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
+                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                if (numberMult) {
+                    llvm::Value* prod = builder.CreateCall(numberMult, {lhs, rhs}, inst.result);
+                    valueMap[inst.result] = prod;
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            } else if (inst.op == "subscript") {
+                // Handle list indexing: list[index]
+                llvm::Function* listGetItem = module->getFunction("PyList_GetItem");
+                if (listGetItem) {
+                    llvm::Value* list = getOrLoad(inst.operands[0].name);
+                    llvm::Value* index = getOrLoad(inst.operands[1].name);
+                    // Convert index to i64 if needed
+                    if (index->getType() != llvm::Type::getInt64Ty(context)) {
+                        index = builder.CreateZExtOrTrunc(index, llvm::Type::getInt64Ty(context));
+                    }
+                    llvm::Value* item = builder.CreateCall(listGetItem, {list, index}, inst.result);
+                    valueMap[inst.result] = item;
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            } else if (inst.op == "list") {
+                // Create a new list with the given elements
+                llvm::Function* listNew = module->getFunction("PyList_New");
+                if (listNew) {
+                    // For now, we'll create an empty list and assume elements will be set later
+                    // This is a simplification - in a more complete implementation we'd pass the element count
+                    llvm::Value* listSize = llvm::ConstantInt::get(context, llvm::APInt(64, inst.operands.size()));
+                    llvm::Value* newList = builder.CreateCall(listNew, {listSize}, inst.result);
+                    valueMap[inst.result] = newList;
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }

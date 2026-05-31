@@ -46,6 +46,10 @@ public:
             if (!node->children.empty() && node->children[0]) {
                 lowerExpr(node->children[0].get());
             }
+        } else if (node->type == "ListComp") {
+            lowerListComp(node);
+        } else if (node->type == "DictComp") {
+            lowerDictComp(node);
         } else {
             // expressions or fallthrough
             lowerExpr(node);
@@ -86,7 +90,13 @@ private:
         std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         std::string right = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
         std::string res = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "add", {left, right}, res);
+        std::string op = node->op.empty() ? "add" : node->op;
+        if (op == "Add") op = "add";
+        else if (op == "Sub") op = "sub";
+        else if (op == "Mult") op = "mul";
+        else if (op == "Div" || op == "FloorDiv") op = "div";
+        else if (op == "Mod") op = "mod";
+        ir.addInstruction(currentFunc, op, {left, right}, res);
         return res;
     }
 
@@ -156,6 +166,153 @@ private:
 
     void lowerReturn(const ASTNode* node) {
         lowerReturnExpr(node);
+    }
+
+    void lowerListComp(const ASTNode* node) {
+        // List comprehension structure: [elt for target in iter if ifs]
+        if (node->children.size() < 2) return;
+        
+        // Create a temporary list variable for the result
+        std::string listVar = "list_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"list_create"}, listVar);
+        
+        // Get the element expression (first child)
+        const ASTNode* eltNode = node->children[0].get();
+        std::string eltVal = lowerExpr(eltNode);
+        
+        // Get the generator (second child)
+        const ASTNode* genNode = node->children[1].get();
+        if (genNode->type != "comprehension") return;
+        
+        // Process the generator: target, iter, ifs
+        std::string target = genNode->children[0]->id;  // target variable name
+        std::string iter = lowerExpr(genNode->children[1].get());  // iterator expression
+        
+        // Generate the loop structure for comprehension
+        std::string loopLabel = "list_comp_loop_" + std::to_string(tempCounter++);
+        std::string loopBodyLabel = "list_comp_body_" + std::to_string(tempCounter++);
+        std::string loopEndLabel = "list_comp_end_" + std::to_string(tempCounter++);
+        
+        // Add loop label
+        ir.addInstruction(currentFunc, "label", {}, loopLabel);
+        
+        // Create iterator and check if it has elements
+        std::string iterVar = "iter_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"iter_create", iter}, iterVar);
+        
+        std::string hasNextVar = "has_next_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"iter_has_next", iterVar}, hasNextVar);
+        
+        // Branch to check if we should continue
+        ir.addInstruction(currentFunc, "br", {hasNextVar, loopBodyLabel, loopEndLabel});
+        
+        // Loop body
+        ir.addInstruction(currentFunc, "label", {}, loopBodyLabel);
+        
+        // Get the next value from iterator
+        std::string nextVal = "next_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"iter_next", iterVar}, nextVal);
+        
+        // Assign to target variable
+        ir.addInstruction(currentFunc, "assign", {nextVal}, target);
+        
+        // Handle conditions (ifs)
+        if (genNode->children.size() > 2) {
+            // Process conditions (if clauses) - simple implementation
+            for (size_t i = 2; i < genNode->children.size(); ++i) {
+                std::string cond = lowerExpr(genNode->children[i].get());
+                std::string condLabel = "cond_" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "br", {cond, condLabel, loopEndLabel});
+                ir.addInstruction(currentFunc, "label", {}, condLabel);
+            }
+        }
+        
+        // Add element to list
+        ir.addInstruction(currentFunc, "call", {"list_append", listVar, eltVal}, "");
+        
+        // Continue loop
+        ir.addInstruction(currentFunc, "br", {}, loopLabel);
+        
+        // Loop end
+        ir.addInstruction(currentFunc, "label", {}, loopEndLabel);
+        
+        // Return the list
+        ir.addInstruction(currentFunc, "assign", {listVar}, "temp_list");
+    }
+
+    void lowerDictComp(const ASTNode* node) {
+        // Dict comprehension structure: {key: value for target in iter if ifs}
+        if (node->children.size() < 3) return;
+        
+        // Create a temporary dict variable for the result
+        std::string dictVar = "dict_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"dict_create"}, dictVar);
+        
+        // Get the key and value expressions
+        const ASTNode* keyNode = node->children[0].get();
+        const ASTNode* valueNode = node->children[1].get();
+        
+        std::string keyVal = lowerExpr(keyNode);
+        std::string valueVal = lowerExpr(valueNode);
+        
+        // Get the generator (third child)
+        const ASTNode* genNode = node->children[2].get();
+        if (genNode->type != "comprehension") return;
+        
+        // Process the generator: target, iter, ifs
+        std::string target = genNode->children[0]->id;  // target variable name
+        std::string iter = lowerExpr(genNode->children[1].get());  // iterator expression
+        
+        // Generate the loop structure for comprehension
+        std::string loopLabel = "dict_comp_loop_" + std::to_string(tempCounter++);
+        std::string loopBodyLabel = "dict_comp_body_" + std::to_string(tempCounter++);
+        std::string loopEndLabel = "dict_comp_end_" + std::to_string(tempCounter++);
+        
+        // Add loop label
+        ir.addInstruction(currentFunc, "label", {}, loopLabel);
+        
+        // Create iterator and check if it has elements
+        std::string iterVar = "iter_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"iter_create", iter}, iterVar);
+        
+        std::string hasNextVar = "has_next_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"iter_has_next", iterVar}, hasNextVar);
+        
+        // Branch to check if we should continue
+        ir.addInstruction(currentFunc, "br", {hasNextVar, loopBodyLabel, loopEndLabel});
+        
+        // Loop body
+        ir.addInstruction(currentFunc, "label", {}, loopBodyLabel);
+        
+        // Get the next value from iterator
+        std::string nextVal = "next_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"iter_next", iterVar}, nextVal);
+        
+        // Assign to target variable
+        ir.addInstruction(currentFunc, "assign", {nextVal}, target);
+        
+        // Handle conditions (ifs)
+        if (genNode->children.size() > 2) {
+            // Process conditions (if clauses) - simple implementation
+            for (size_t i = 2; i < genNode->children.size(); ++i) {
+                std::string cond = lowerExpr(genNode->children[i].get());
+                std::string condLabel = "cond_" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "br", {cond, condLabel, loopEndLabel});
+                ir.addInstruction(currentFunc, "label", {}, condLabel);
+            }
+        }
+        
+        // Add key-value pair to dict
+        ir.addInstruction(currentFunc, "call", {"dict_add", dictVar, keyVal, valueVal}, "");
+        
+        // Continue loop
+        ir.addInstruction(currentFunc, "br", {}, loopLabel);
+        
+        // Loop end
+        ir.addInstruction(currentFunc, "label", {}, loopEndLabel);
+        
+        // Return the dict
+        ir.addInstruction(currentFunc, "assign", {dictVar}, "temp_dict");
     }
 };
 

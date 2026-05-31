@@ -9,9 +9,24 @@ extern "C" {
 typedef struct PyObject PyObject;
 
 PyObject* PyInt_FromLong(long v);
+PyObject* PyList_New(size_t size);
+PyObject* PyList_GetItem(PyObject* list, size_t index);
+void      PyList_SetItem(PyObject* list, size_t index, PyObject* item);
 void      Py_DECREF(PyObject* obj);
+void      Py_INCREF(PyObject* obj);
 int       PyObject_Print(PyObject* obj, FILE* fp);
 PyObject* PyNumber_Add(PyObject* a, PyObject* b);
+PyObject* PyNumber_Multiply(PyObject* a, PyObject* b);
+PyObject* PyNumber_Subtract(PyObject* a, PyObject* b);
+PyObject* PyNumber_Divide(PyObject* a, PyObject* b);
+PyObject* PyNumber_Remainder(PyObject* a, PyObject* b);
+PyObject* PyDict_New(void);
+void      PyDict_SetItem(PyObject* dict, PyObject* key, PyObject* value);
+PyObject* PyDict_GetItem(PyObject* dict, PyObject* key);
+PyObject* PyList_Append(PyObject* list, PyObject* item);
+PyObject* PyList_FromArray(PyObject** items, size_t size);
+PyObject* PyList_Range(int start, int end);
+PyObject* PyList_Comprehension(int start, int end);
 void      PyErr_Print(void);
 
 void* pyc_alloc(size_t size);

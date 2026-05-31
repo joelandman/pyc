@@ -26,11 +26,17 @@ def add(a, b): return a + b
 print(add(add(1, 2), 3))
 """, "6\n"),
     ("""
-x = 1
-if x > 0:
-    print(10)
-print(20)
-""", "10\n20\n"),
+    x = 1
+    if x > 0:
+        print(10)
+    print(20)
+    """, "10\n20\n"),
+    # Arithmetic coverage
+    ("print(5-2)", "3\n"),
+    ("print(4*3)", "12\n"),
+    ("print(7//2)", "3\n"),
+    ("print(7%3)", "1\n"),
+    ("print(2+3*4)", "14\n"),
 ]
 
 def run(cmd):

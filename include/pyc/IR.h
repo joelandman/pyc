@@ -27,6 +27,7 @@ public:
     std::vector<IRFunction> functions;
     void addFunction(const std::string& name, const std::vector<std::string>& args = {});
     void addInstruction(const std::string& funcName, const std::string& op, const std::vector<std::string>& operands, const std::string& result = "");
+    void addInstructionRaw(const std::string& funcName, const std::string& op, const std::vector<IRValue>& operands, const std::string& result = "");
 };
 
 } // namespace pyc
