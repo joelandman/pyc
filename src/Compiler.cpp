@@ -84,6 +84,8 @@ public:
     std::string lowerExpr(const ASTNode* node) {
         if (!node || currentFunc.empty()) return "";
         if (node->type == "FunctionDef") return "";
+        if (!node || currentFunc.empty()) return "";
+        if (node->type == "FunctionDef") return "";
 
         if (node->type == "Constant") {
             std::string res = "c" + std::to_string(tempCounter++);
@@ -322,7 +324,7 @@ private:
         lowerReturnExpr(node);
     }
 
-    void lowerListComp(const ASTNode* node) {
+    std::string lowerListComp(const ASTNode* node) {
         // List comprehension structure: [elt for target in iter if ifs]
         if (node->children.size() < 2) return;
         
@@ -391,7 +393,7 @@ private:
         ir.addInstruction(currentFunc, "label", {}, loopEndLabel);
         
         // Return the list
-        ir.addInstruction(currentFunc, "assign", {listVar}, "temp_list");
+        return listVar;
     }
 
     void lowerDictComp(const ASTNode* node) {

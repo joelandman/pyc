@@ -103,6 +103,45 @@ PyObject* PyList_Comprehension(int start, int end) {
     return list;
 }
 
+// Runtime functions for comprehensions
+extern "C" {
+
+PyObject* list_create() {
+    return PyList_New(0);
+}
+
+void list_append(PyObject* list, PyObject* item) {
+    PyList_Append(list, item);
+}
+
+PyObject* dict_create() {
+    return PyDict_New();
+}
+
+void dict_add(PyObject* dict, PyObject* key, PyObject* value) {
+    PyDict_SetItem(dict, key, value);
+}
+
+PyObject* iter_create(PyObject* iterable) {
+    // Return the iterable itself for now
+    Py_INCREF(iterable);
+    return iterable;
+}
+
+int iter_has_next(PyObject* iter) {
+    // This is a simplified version - in a real implementation we'd need to properly track
+    // iteration state, but for our basic use case, just return a valid value
+    return 1;
+}
+
+PyObject* iter_next(PyObject* iter) {
+    // Return a dummy integer for now - in a real implementation, this would fetch
+    // the next item from the iterator
+    return PyInt_FromLong(0);
+}
+
+}
+
 PyObject* PyDict_New() {
     PyObject* obj = (PyObject*)malloc(sizeof(PyObject));
     obj->refcount = 1;
