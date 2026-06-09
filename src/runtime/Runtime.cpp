@@ -104,7 +104,7 @@ PyObject* PyList_FromArray(PyObject** items, size_t size) {
     return obj;
 }
 
-// Boxed wrappers so for-loops can stay entirely in PyObject* world.
+// Boxed wrappers so the compiler can stay entirely in PyObject* world.
 PyObject* PyList_SizeBoxed(PyObject* list) {
     return PyInt_FromLong((long)PyList_Size(list));
 }
@@ -112,6 +112,16 @@ PyObject* PyList_SizeBoxed(PyObject* list) {
 PyObject* PyList_GetItemObj(PyObject* list, PyObject* idx) {
     if (!idx || idx->type != 0) return nullptr;
     return PyList_GetItem(list, (size_t)idx->value);
+}
+
+PyObject* PyList_NewBoxed(PyObject* n) {
+    size_t size = (n && n->type == 0) ? (size_t)n->value : 0;
+    return PyList_New(size);
+}
+
+void PyList_SetItemBoxed(PyObject* list, PyObject* idx, PyObject* item) {
+    if (!idx || idx->type != 0) return;
+    PyList_SetItem(list, (size_t)idx->value, item);
 }
 
 PyObject* PyList_Range(int start, int end) {
@@ -223,6 +233,56 @@ PyObject* PyUnicode_FromString(const char* s) {
     return obj;
 }
 
+// Convert any PyObject to its string representation (no trailing newline).
+// Named PyStr_FromAny to avoid conflict with CPython's PyObject_Str.
+PyObject* PyStr_FromAny(PyObject* obj) {
+    if (!obj) return PyUnicode_FromString("None");
+    if (obj->type == 3) { Py_INCREF(obj); return obj; }
+    if (obj->type == 0) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%ld", obj->value);
+        return PyUnicode_FromString(buf);
+    }
+    if (obj->type == 4) {
+        char buf[64];
+        format_double(buf, sizeof(buf), obj->dvalue);
+        return PyUnicode_FromString(buf);
+    }
+    if (obj->type == 1) {
+        std::string r = "[";
+        for (size_t i = 0; i < obj->list.size(); ++i) {
+            if (i > 0) r += ", ";
+            PyObject* s = PyStr_FromAny(obj->list[i]);
+            if (obj->list[i] && obj->list[i]->type == 3) { r += "'"; r += obj->list[i]->str; r += "'"; }
+            else if (s) r += s->str;
+            if (s) Py_DECREF(s);
+        }
+        r += "]";
+        return PyUnicode_FromString(r.c_str());
+    }
+    return PyUnicode_FromString("<object>");
+}
+
+PyObject* PyString_Concat(PyObject* a, PyObject* b) {
+    if (!a || !b || a->type != 3 || b->type != 3) return nullptr;
+    return PyUnicode_FromString((a->str + b->str).c_str());
+}
+
+PyObject* PyString_Repeat(PyObject* s, PyObject* n) {
+    if (!s || !n || s->type != 3 || n->type != 0) return nullptr;
+    std::string r;
+    for (long i = 0; i < n->value; ++i) r += s->str;
+    return PyUnicode_FromString(r.c_str());
+}
+
+PyObject* PyBuiltin_Len(PyObject* obj) {
+    if (!obj) return PyInt_FromLong(0);
+    if (obj->type == 1) return PyInt_FromLong((long)obj->list.size());
+    if (obj->type == 3) return PyInt_FromLong((long)obj->str.size());
+    if (obj->type == 2) return PyInt_FromLong((long)obj->dict.size());
+    return PyInt_FromLong(0);
+}
+
 // Helper: get numeric value as double regardless of type (int or float).
 static double numeric_val(PyObject* o) {
     if (!o) return 0.0;
@@ -236,6 +296,8 @@ static int is_numeric(PyObject* o) {
 }
 
 PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
+    if (!a || !b) return NULL;
+    if (a->type == 3 && b->type == 3) return PyString_Concat(a, b);
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (a->type == 0 && b->type == 0) return PyInt_FromLong(a->value + b->value);
     return PyFloat_FromDouble(numeric_val(a) + numeric_val(b));
@@ -248,6 +310,9 @@ PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
 }
 
 PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
+    if (!a || !b) return NULL;
+    if (a->type == 3 && b->type == 0) return PyString_Repeat(a, b);
+    if (a->type == 0 && b->type == 3) return PyString_Repeat(b, a);
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (a->type == 0 && b->type == 0) return PyInt_FromLong(a->value * b->value);
     return PyFloat_FromDouble(numeric_val(a) * numeric_val(b));
@@ -309,7 +374,19 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
             case 5: return av >= bv;
         }
     }
-    // Pointer equality fallback for non-numeric types
+    // String comparison
+    if (a->type == 3 && b->type == 3) {
+        int cmp = a->str.compare(b->str);
+        switch (op) {
+            case 0: return cmp == 0;
+            case 1: return cmp != 0;
+            case 2: return cmp <  0;
+            case 3: return cmp >  0;
+            case 4: return cmp <= 0;
+            case 5: return cmp >= 0;
+        }
+    }
+    // Pointer equality fallback
     switch (op) {
         case 0: return a == b;
         case 1: return a != b;

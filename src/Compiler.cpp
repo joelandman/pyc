@@ -92,12 +92,11 @@ public:
             std::string val = node->value;
             if (node->is_float) {
                 ir.addInstruction(currentFunc, "fconst", {val}, res);
+            } else if (node->is_str) {
+                // Wrap in quotes so codegen detects it as a string.
+                // Embedded quotes are not escaped in this MVP.
+                ir.addInstruction(currentFunc, "const", {"\"" + val + "\""}, res);
             } else {
-                // Quote strings so codegen can distinguish them from numbers
-                if (!val.empty() && val.find_first_of("\"'") == std::string::npos) {
-                    bool isNum = val.find_first_not_of("0123456789+-") == std::string::npos;
-                    if (!isNum) val = "\"" + val + "\"";
-                }
                 ir.addInstruction(currentFunc, "const", {val}, res);
             }
             return res;
@@ -120,6 +119,10 @@ public:
             return lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         } else if (node->type == "Return") {
             return lowerReturnExpr(node);
+        } else if (node->type == "JoinedStr") {
+            return lowerJoinedStr(node);
+        } else if (node->type == "FormattedValue") {
+            return lowerFormattedValue(node);
         }
         return "";
     }
@@ -190,6 +193,26 @@ private:
             if (it != funcDefaultValues.end()) {
                 argRes = it->second;
             }
+        }
+
+        // len(obj) → PyBuiltin_Len(obj)
+        if (funcName == "len") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Len", arg}, res);
+            return res;
+        }
+
+        // str(obj) → PyStr_FromAny(obj)
+        if (funcName == "str") {
+            if (argRes.empty()) {
+                std::string res = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"\""}, res);
+                return res;
+            }
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", argRes[0]}, res);
+            return res;
         }
 
         // Normalize range(stop), range(start,stop), range(start,stop,step)
@@ -314,14 +337,17 @@ private:
 
     std::string lowerList(const ASTNode* node) {
         size_t n = node->children.size();
-        std::string sizeStr = std::to_string(n);
+        // Box size as PyObject* so PyList_NewBoxed receives a proper int.
+        std::string sizeConst = "c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
         std::string listRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_New", sizeStr}, listRes);
+        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, listRes);
 
         for (size_t i = 0; i < n; ++i) {
             std::string elem = lowerExpr(node->children[i].get());
-            std::string idxStr = std::to_string(i);
-            ir.addInstruction(currentFunc, "call", {"PyList_SetItem", listRes, idxStr, elem}, "");
+            std::string idxConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elem}, "");
         }
         return listRes;
     }
@@ -360,6 +386,35 @@ private:
 
     void lowerReturn(const ASTNode* node) {
         lowerReturnExpr(node);
+    }
+
+    // Lower a single part of a JoinedStr: Constant (string literal) or FormattedValue
+    std::string lowerFStrPart(const ASTNode* node) {
+        if (node->type == "FormattedValue") return lowerFormattedValue(node);
+        return lowerExpr(node);  // Constant string part
+    }
+
+    std::string lowerFormattedValue(const ASTNode* node) {
+        std::string exprVal = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        std::string res = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", exprVal}, res);
+        return res;
+    }
+
+    std::string lowerJoinedStr(const ASTNode* node) {
+        if (node->children.empty()) {
+            std::string res = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"\""}, res);
+            return res;
+        }
+        std::string acc = lowerFStrPart(node->children[0].get());
+        for (size_t i = 1; i < node->children.size(); ++i) {
+            std::string part = lowerFStrPart(node->children[i].get());
+            std::string newAcc = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyString_Concat", acc, part}, newAcc);
+            acc = newAcc;
+        }
+        return acc;
     }
 
     std::string lowerListComp(const ASTNode* node) {

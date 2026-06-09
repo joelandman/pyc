@@ -36,18 +36,27 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
     if (node->type == "Constant") {
         PyObject* v = PyObject_GetAttrString(pyNode, "value");
         if (v) {
-            if (PyLong_Check(v)) {
+            if (PyBool_Check(v)) {
+                // bool is subclass of int; keep as int 0/1
                 node->value = std::to_string(PyLong_AsLong(v));
-                node->is_float = false;
+            } else if (PyLong_Check(v)) {
+                node->value = std::to_string(PyLong_AsLong(v));
             } else if (PyFloat_Check(v)) {
                 double d = PyFloat_AsDouble(v);
                 char buf[64];
                 snprintf(buf, sizeof(buf), "%.17g", d);
                 node->value = buf;
                 node->is_float = true;
+            } else if (PyUnicode_Check(v)) {
+                const char* utf8 = PyUnicode_AsUTF8(v);
+                node->value = utf8 ? utf8 : "";
+                node->is_str = true;
+            } else if (v == Py_None) {
+                node->value = "None";
+                node->is_str = true;
             } else {
-                node->value = getPyString(pyNode, "value");
-                node->is_float = false;
+                node->value = "";
+                node->is_str = true;
             }
             Py_DECREF(v);
         }
@@ -452,6 +461,35 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(ifs);
+    } else if (node->type == "JoinedStr") {
+        // f-string: values list contains Constant (literal parts) and FormattedValue nodes
+        PyObject* values = PyObject_GetAttrString(pyNode, "values");
+        if (values && PyList_Check(values)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(values); ++i) {
+                PyObject* item = PyList_GetItem(values, i);
+                auto child = std::make_unique<ASTNode>();
+                buildAST(item, child.get());
+                node->children.push_back(std::move(child));
+            }
+        }
+        Py_XDECREF(values);
+    } else if (node->type == "FormattedValue") {
+        // {expr} inside an f-string; conversion: -1=none, 115='s', 114='r', 116='a'
+        PyObject* conv = PyObject_GetAttrString(pyNode, "conversion");
+        if (conv) {
+            node->op = std::to_string(conv == Py_None ? -1 : (int)PyLong_AsLong(conv));
+            Py_DECREF(conv);
+        } else {
+            node->op = "-1";
+        }
+        PyObject* value = PyObject_GetAttrString(pyNode, "value");
+        if (value) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(value, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(value);
+        }
+        // format_spec (e.g. :.2f) — skip for MVP
     }
     if (node->children.empty()) {
         PyObject* body = PyObject_GetAttrString(pyNode, "body");

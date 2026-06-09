@@ -88,6 +88,38 @@ print(s)
     ("x=1.5\nprint(x+0.5)", "2.0\n"),
     # float comparison in while loop
     ("x=0.0\nwhile x<1.0:\n    x=x+0.25\nprint(x)", "1.0\n"),
+    # --- string operations ---
+    # concatenation
+    ('print("hello" + " " + "world")', "hello world\n"),
+    # repetition
+    ('print("ab" * 3)', "ababab\n"),
+    ('print(3 * "xy")', "xyxyxy\n"),
+    # len() on string
+    ('print(len("hello"))', "5\n"),
+    # len() on list
+    ("print(len([1,2,3]))", "3\n"),
+    # str() conversions
+    ("print(str(42))", "42\n"),
+    ("print(str(3.14))", "3.14\n"),
+    # string equality used in control flow
+    ('s="hi"\nif s=="hi":\n    print(1)\nelse:\n    print(0)', "1\n"),
+    # string in variable + concatenation
+    ('a="foo"\nb="bar"\nprint(a+b)', "foobar\n"),
+    # --- f-strings ---
+    ('x=5\nprint(f"x={x}")', "x=5\n"),
+    ('x=5\nprint(f"x+1={x+1}")', "x+1=6\n"),
+    ('print(f"a={1}, b={2}")', "a=1, b=2\n"),
+    ('print(f"pi={3.14}")', "pi=3.14\n"),
+    ('name="Alice"\nprint(f"hello {name}!")', "hello Alice!\n"),
+    # f-string with no interpolation
+    ('print(f"plain")', "plain\n"),
+    # f-string combining range loop result
+    ("""
+s=""
+for i in range(3):
+    s=s+str(i)
+print(s)
+""", "012\n"),
 ]
 
 def run(cmd):
