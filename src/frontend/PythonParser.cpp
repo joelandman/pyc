@@ -461,6 +461,35 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(ifs);
+    } else if (node->type == "BoolOp") {
+        PyObject* op = PyObject_GetAttrString(pyNode, "op");
+        if (op) {
+            node->op = getPyString((PyObject*)Py_TYPE(op), "__name__");  // "And" or "Or"
+            Py_DECREF(op);
+        }
+        PyObject* values = PyObject_GetAttrString(pyNode, "values");
+        if (values && PyList_Check(values)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(values); ++i) {
+                PyObject* v = PyList_GetItem(values, i);
+                auto child = std::make_unique<ASTNode>();
+                buildAST(v, child.get());
+                node->children.push_back(std::move(child));
+            }
+        }
+        Py_XDECREF(values);
+    } else if (node->type == "UnaryOp") {
+        PyObject* op = PyObject_GetAttrString(pyNode, "op");
+        if (op) {
+            node->op = getPyString((PyObject*)Py_TYPE(op), "__name__");  // "Not","USub","UAdd","Invert"
+            Py_DECREF(op);
+        }
+        PyObject* operand = PyObject_GetAttrString(pyNode, "operand");
+        if (operand) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(operand, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(operand);
+        }
     } else if (node->type == "JoinedStr") {
         // f-string: values list contains Constant (literal parts) and FormattedValue nodes
         PyObject* values = PyObject_GetAttrString(pyNode, "values");

@@ -140,6 +140,30 @@ print(s)
     ("x=True\nprint(x)", "True\n"),
     ('print(str(True))', "True\n"),
     ('print(f"val={True}")', "val=True\n"),
+    # --- and / or / not ---
+    ("print(True and True)",   "True\n"),
+    ("print(True and False)",  "False\n"),
+    ("print(False and True)",  "False\n"),
+    ("print(True or False)",   "True\n"),
+    ("print(False or True)",   "True\n"),
+    ("print(False or False)",  "False\n"),
+    ("print(not True)",  "False\n"),
+    ("print(not False)", "True\n"),
+    # short-circuit: return actual value, not just True/False
+    ("x=0\nprint(x or 42)",  "42\n"),
+    ("x=5\nprint(x and 42)", "42\n"),
+    ("x=0\nprint(x and 42)", "0\n"),
+    # chained
+    ("print(1 and 2 and 3)",   "3\n"),
+    ("print(0 or 0 or 42)",    "42\n"),
+    # combined with comparisons
+    ("x=5\nprint(x > 0 and x < 10)",  "True\n"),
+    ("x=15\nprint(x > 0 and x < 10)", "False\n"),
+    # precedence: (True and False) or 99
+    ("print(True and False or 99)", "99\n"),
+    # unary minus
+    ("print(-5)",    "-5\n"),
+    ("print(-3.14)", "-3.14\n"),
 ]
 
 def run(cmd):

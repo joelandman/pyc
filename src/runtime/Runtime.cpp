@@ -53,6 +53,17 @@ PyObject* PyInt_FromLong(long v) {
     return obj;
 }
 
+// Internal truthiness predicate (mirrors Python's bool()).
+static int PyObject_TruthValue(PyObject* obj) {
+    if (!obj) return 0;
+    if (obj->type == 0 || obj->type == 5) return obj->value != 0;
+    if (obj->type == 4) return obj->dvalue != 0.0;
+    if (obj->type == 3) return !obj->str.empty();
+    if (obj->type == 1) return !obj->list.empty();
+    if (obj->type == 2) return !obj->dict.empty();
+    return 1;
+}
+
 PyObject* PyBool_New(int v) {
     PyObject* obj = new PyObject();
     obj->refcount = 1;
@@ -283,6 +294,21 @@ PyObject* PyString_Repeat(PyObject* s, PyObject* n) {
     std::string r;
     for (long i = 0; i < n->value; ++i) r += s->str;
     return PyUnicode_FromString(r.c_str());
+}
+
+PyObject* PyObject_TruthBoxed(PyObject* obj) {
+    return PyBool_New(PyObject_TruthValue(obj));
+}
+
+PyObject* PyObject_Not(PyObject* obj) {
+    return PyBool_New(!PyObject_TruthValue(obj));
+}
+
+PyObject* PyNumber_Negate(PyObject* obj) {
+    if (!obj) return NULL;
+    if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(-obj->value);
+    if (obj->type == 4) return PyFloat_FromDouble(-obj->dvalue);
+    return NULL;
 }
 
 PyObject* PyBuiltin_PrintNewline(void) {

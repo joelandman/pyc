@@ -125,6 +125,10 @@ public:
             return lowerJoinedStr(node);
         } else if (node->type == "FormattedValue") {
             return lowerFormattedValue(node);
+        } else if (node->type == "BoolOp") {
+            return lowerBoolOp(node);
+        } else if (node->type == "UnaryOp") {
+            return lowerUnaryOp(node);
         }
         return "";
     }
@@ -416,6 +420,60 @@ private:
 
     void lowerReturn(const ASTNode* node) {
         lowerReturnExpr(node);
+    }
+
+    // Short-circuit boolean operator (and / or) with N values.
+    // Produces a result alloca variable; codegen loads it for the caller.
+    std::string lowerBoolOp(const ASTNode* node) {
+        if (node->children.empty()) return "";
+        bool isAnd = (node->op == "And");
+
+        // Reserve a single counter for all labels of this boolop instance.
+        int bc = tempCounter++;
+        std::string resultVar = "boolop_r_"   + std::to_string(bc);
+        std::string endLabel  = "boolop_end_" + std::to_string(bc);
+
+        // Evaluate first value; store as initial result.
+        std::string firstVal = lowerExpr(node->children[0].get());
+        ir.addInstruction(currentFunc, "assign", {firstVal}, resultVar);
+
+        for (size_t i = 1; i < node->children.size(); ++i) {
+            std::string rhsLabel = "boolop_rhs_" + std::to_string(bc)
+                                   + "_" + std::to_string(i);
+
+            // Box truthiness so the br handler can unbox it.
+            std::string truthVal = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call",
+                              {"PyObject_TruthBoxed", resultVar}, truthVal);
+
+            // AND: truthy → keep evaluating; OR: truthy → done
+            if (isAnd)
+                ir.addInstruction(currentFunc, "br", {truthVal, rhsLabel, endLabel});
+            else
+                ir.addInstruction(currentFunc, "br", {truthVal, endLabel, rhsLabel});
+
+            ir.addInstruction(currentFunc, "label", {}, rhsLabel);
+            std::string nextVal = lowerExpr(node->children[i].get());
+            ir.addInstruction(currentFunc, "assign", {nextVal}, resultVar);
+            // Codegen inserts fallthrough br to endLabel at the next label instruction.
+        }
+
+        ir.addInstruction(currentFunc, "label", {}, endLabel);
+        return resultVar;
+    }
+
+    std::string lowerUnaryOp(const ASTNode* node) {
+        std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        if (node->op == "UAdd") return val;   // identity
+
+        std::string res = "t" + std::to_string(tempCounter++);
+        if (node->op == "Not")
+            ir.addInstruction(currentFunc, "call", {"PyObject_Not",  val}, res);
+        else if (node->op == "USub")
+            ir.addInstruction(currentFunc, "call", {"PyNumber_Negate", val}, res);
+        else
+            ir.addInstruction(currentFunc, "const", {"0"}, res);   // unknown → 0
+        return res;
     }
 
     // Lower a single part of a JoinedStr: Constant (string literal) or FormattedValue
