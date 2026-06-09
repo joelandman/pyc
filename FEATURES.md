@@ -1,99 +1,109 @@
-# pyc Feature Documentation
+# pyc — Implemented Features
 
-This document explains the new features added to the pyc compiler.
+Current test count: **137/137** (all compared against CPython output).
 
-## List Comprehensions
+## Types and literals
 
-List comprehensions are now supported in pyc with the syntax:
-```python
-# Basic list comprehension
-x = [i for i in range(5)]
-# Results in [0, 1, 2, 3, 4]
+| Type | Notes |
+|------|-------|
+| `int` | Full arithmetic, comparison, floor/true division |
+| `float` | `3.14`, `1e-3`, mixed int/float; shortest round-trip printing |
+| `bool` | `True`/`False`; prints correctly; arithmetic with ints (`True+1=2`) |
+| `str` | Literals, `+`, `*`, f-strings, `%` formatting, all major methods |
+| `list` | Literals, subscript get/set, comprehensions, append/sort/pop |
+| `dict` | Literals, subscript get/set, keys/values/items |
+| `tuple` | Literals and unpacking (mapped to list internally) |
+| `None` | Constant, comparison, printing |
 
-# List comprehension with condition
-x = [i for i in range(10) if i % 2 == 0]
-# Results in [0, 2, 4, 6, 8]
+## Operators
+
+```
++  -  *  /  //  %  **          arithmetic (int, float, bool, str* for +/*)
+==  !=  <  >  <=  >=           comparison (numeric + string + chained 1<x<10)
+is  is not                     identity
+in  not in                     membership (list, str, dict)
+and  or  not                   boolean (short-circuit, returns actual value)
+-x  +x                         unary
++=  -=  *=  /=  //=  %=  **=  augmented (on names and on subscripts a[i]+=1)
 ```
 
-## Dictionary Comprehensions
+## Control flow
 
-Dictionary comprehensions are supported with the syntax:
 ```python
-# Basic dictionary comprehension
-x = {i: i*i for i in range(5)}
-# Results in {0: 0, 1: 1, 2: 4, 3: 9, 4: 16}
-
-# Dictionary comprehension with condition
-x = {i: i*i for i in range(10) if i % 2 == 0}
-# Results in {0: 0, 2: 4, 4: 16, 6: 36, 8: 64}
+if / elif / else
+while ... break / continue
+for x in iterable              (list, range(), enumerate(), zip() results)
+for i, v in enumerate(lst)     tuple-target for-loop
+x if cond else y               ternary
 ```
 
-## Implementation Status
+## Functions
 
-List and dictionary comprehensions are now properly recognized in the AST and generate appropriate IR instructions. The compiler correctly handles:
-- Basic list comprehensions like `[i for i in range(5)]`
-- List comprehensions with conditions like `[i for i in range(10) if i % 2 == 0]`
-- Basic dictionary comprehensions like `{i: i*i for i in range(5)}`
-- Dictionary comprehensions with conditions like `{i: i*i for i in range(10) if i % 2 == 0}`
-
-The current implementation generates proper LLVM IR calls to runtime functions for list creation but still requires full control flow implementation for complete comprehension semantics.
-
-## *args and **kwargs Support
-
-Function calls with variable arguments are now supported:
 ```python
-# *args usage
-def func(a, b, c):
-    print(a, b, c)
+def f(a, b=10, *args):         positional, default, *args (collection NYI)
+    return a, b                multi-value return (returned as list)
 
-args = [1, 2, 3]
-func(*args)
-# Prints: 1 2 3
-
-# **kwargs usage
-def greet(**kwargs):
-    for key, value in kwargs.items():
-        print(f"{key}: {value}")
-
-greet(name="Alice", age=30)
-# Prints: name: Alice
-#         age: 30
+def f(a, b): ...
+f(b=3, a=4)                    keyword call arguments
 ```
 
-## Implementation Details
+Nested functions work. `global x` shares module-level storage via LLVM
+`GlobalVariable`. `try/except` basic form works.
 
-These features were implemented by:
-1. Extending the AST parser to recognize new syntax nodes
-2. Adding IR generation for list/dict comprehensions and starred expressions
-3. Implementing runtime functions for evaluation
-4. Ensuring proper memory management and reference counting
+## Assignment forms
 
-All features produce output that matches CPython behavior exactly.
+```python
+x = 1          # simple
+a = b = 5      # multi-target
+a, b = 1, 2    # tuple unpack
+a[i] = v       # subscript
+d[k] = v       # dict subscript
+```
 
-## For Loops and List Literals
+## Builtins
 
-- `for` loops over lists (index-based iteration)
-- List literals `[a, b, c]`
-- `PyList_Size` runtime support
+`print(*args)`, `range(n)` / `range(s,e)` / `range(s,e,step)`,
+`len(x)`, `str(x)`, `int(x)`, `float(x)`, `abs(x)`,
+`min(a,b,...)` / `min(list)`, `max(a,b,...)` / `max(list)`,
+`list(x)`, `enumerate(iterable)`, `zip(a, b)`
 
-## Dict and Tuple Literals
+## String methods
 
-- Dict literals `{'a': 1, 'b': 2}`
-- Tuple literals `(1, 2, 3)` (currently mapped to lists)
-- Keyword argument parsing in function calls
+`upper()`, `lower()`, `strip()`, `split(sep)`, `join(iterable)`,
+`str % value` (`%d`, `%s`, `%f`, `%.Nf`)
 
-## String Literals and Break/Continue
+## List/dict methods
 
-- String literals and `print("hello")`
-- Basic `break` and `continue` support in `while` loops
+`list.append(x)`, `list.sort()`, `list.pop()`  
+`dict.keys()`, `dict.values()`, `dict.items()`
 
-## Arithmetic Operators
+## Comprehensions
 
-Full arithmetic support:
-- `+` addition (`PyNumber_Add`)
-- `-` subtraction (`PyNumber_Subtract`)
-- `*` multiplication (`PyNumber_Multiply`)
-- `/` `/` floor division (`PyNumber_Divide`)
-- `%` modulo (`PyNumber_Remainder`)
+```python
+[expr for x in iterable]
+[expr for x in iterable if cond]
+[[inner for ...] for ...]      nested
+```
 
-All operators lower through the IR visitor, emit the corresponding runtime call, and are covered by the test suite (`make check`).
+## Runtime architecture
+
+`PyObject` is a flat struct: `{refcount, type, value(long), dvalue(double),
+list, dict, str}`. Type codes: 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool.
+
+All boxed values flow as `PyObject*` through LLVM IR. Arithmetic dispatches
+at runtime via `PyNumber_Add` etc. Comparisons via `PyObject_CompareBool`.
+Truthiness via `PyObject_TruthBoxed`. Global variables use LLVM `GlobalVariable`
+with `InternalLinkage`.
+
+## Not yet implemented
+
+- `sum()`, `sorted()`, `any()`, `all()`, `isinstance()` builtins
+- `str.find()`, `str.replace()`, `str.count()` methods
+- List/string slicing `a[1:3]`
+- Dict comprehensions (list comps work; dict comp stubs not wired)
+- `lambda` expressions
+- `nonlocal` statement
+- Classes and OOP
+- `import` / module system
+- `*args` collection in function body
+- Walrus operator `:=`
