@@ -90,7 +90,9 @@ public:
         if (node->type == "Constant") {
             std::string res = "c" + std::to_string(tempCounter++);
             std::string val = node->value;
-            if (node->is_float) {
+            if (node->is_bool) {
+                ir.addInstruction(currentFunc, "bconst", {val}, res);
+            } else if (node->is_float) {
                 ir.addInstruction(currentFunc, "fconst", {val}, res);
             } else if (node->is_str) {
                 // Wrap in quotes so codegen detects it as a string.

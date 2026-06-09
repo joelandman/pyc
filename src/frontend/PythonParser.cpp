@@ -37,8 +37,8 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         PyObject* v = PyObject_GetAttrString(pyNode, "value");
         if (v) {
             if (PyBool_Check(v)) {
-                // bool is subclass of int; keep as int 0/1
-                node->value = std::to_string(PyLong_AsLong(v));
+                node->value = PyObject_IsTrue(v) ? "True" : "False";
+                node->is_bool = true;
             } else if (PyLong_Check(v)) {
                 node->value = std::to_string(PyLong_AsLong(v));
             } else if (PyFloat_Check(v)) {

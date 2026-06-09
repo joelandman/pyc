@@ -13,6 +13,7 @@ struct ASTNode {
     int lineno = 0;
     bool is_float = false;
     bool is_str   = false;
+    bool is_bool  = false;
     std::vector<std::string> args;
     std::vector<std::unique_ptr<ASTNode>> children;
 };

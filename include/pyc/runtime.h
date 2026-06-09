@@ -43,6 +43,7 @@ PyObject* PyString_Concat(PyObject* a, PyObject* b);
 PyObject* PyString_Repeat(PyObject* s, PyObject* n);
 PyObject* PyBuiltin_Len(PyObject* obj);
 PyObject* PyBuiltin_PrintNewline(void);
+PyObject* PyBool_New(int v);
 void      PyErr_Print(void);
 
 void* pyc_alloc(size_t size);

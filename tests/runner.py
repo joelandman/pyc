@@ -127,6 +127,19 @@ print(s)
     ("print()", "\n"),
     ('x=10\nprint("x =", x)', "x = 10\n"),
     ("a=1\nb=2\nprint(a+b, a*b)", "3 2\n"),
+    # --- bool type ---
+    ("print(True)", "True\n"),
+    ("print(False)", "False\n"),
+    ("print(1 < 2)", "True\n"),
+    ("print(1 > 2)", "False\n"),
+    ("print(1 == 1)", "True\n"),
+    ("print(True + 1)", "2\n"),
+    ("print(True + True)", "2\n"),
+    ("print(True == True)", "True\n"),
+    ("print(True == False)", "False\n"),
+    ("x=True\nprint(x)", "True\n"),
+    ('print(str(True))', "True\n"),
+    ('print(f"val={True}")', "val=True\n"),
 ]
 
 def run(cmd):

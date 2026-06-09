@@ -126,6 +126,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* printNewlineTy = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
     llvm::Function::Create(printNewlineTy, llvm::Function::ExternalLinkage, "PyBuiltin_PrintNewline", module.get());
 
+    // PyBool_New(int) — boxes a 0/1 as a bool PyObject
+    llvm::FunctionType* boolNewTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt32Ty(context)}, false);
+    llvm::Function::Create(boolNewTy, llvm::Function::ExternalLinkage, "PyBool_New", module.get());
+
     // printf no longer used in normal code paths (we use PyObject_Print)
 
     for (const auto& f : ir.functions) {
@@ -228,16 +232,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 llvm::Value* lhsBox = getOrLoad(inst.operands.size() > 1 ? inst.operands[1].name : "");
                 llvm::Value* rhsBox = getOrLoad(inst.operands.size() > 2 ? inst.operands[2].name : "");
 
-                llvm::Function* cmpFn = module->getFunction("PyObject_CompareBool");
-                llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
+                llvm::Function* cmpFn  = module->getFunction("PyObject_CompareBool");
+                llvm::Function* boolNew = module->getFunction("PyBool_New");
                 llvm::Value* boxedCmp = llvm::ConstantPointerNull::get(pyObjectPtrTy);
-                if (cmpFn && fromLong) {
+                if (cmpFn && boolNew) {
+                    // PyObject_CompareBool returns i32 (0 or 1); PyBool_New takes i32
                     llvm::Value* cmpResult = builder.CreateCall(cmpFn, {
                         lhsBox, rhsBox,
                         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), opcode)
                     });
-                    llvm::Value* ext = builder.CreateZExt(cmpResult, llvm::Type::getInt64Ty(context));
-                    boxedCmp = builder.CreateCall(fromLong, {ext}, inst.result);
+                    boxedCmp = builder.CreateCall(boolNew, {cmpResult}, inst.result);
                 }
                 valueMap[inst.result] = boxedCmp;
                 continue;
@@ -260,6 +264,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                             {llvm::ConstantInt::get(context, llvm::APInt(64, v))}, inst.result);
                         valueMap[inst.result] = boxed;
                     }
+                }
+            } else if (inst.op == "bconst") {
+                std::string val = inst.operands.empty() ? "False" : inst.operands[0].name;
+                int bval = (val == "True") ? 1 : 0;
+                llvm::Function* boolNew = module->getFunction("PyBool_New");
+                if (boolNew) {
+                    llvm::Value* boxed = builder.CreateCall(boolNew,
+                        {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), bval)}, inst.result);
+                    valueMap[inst.result] = boxed;
                 }
             } else if (inst.op == "fconst") {
                 double v = std::stod(inst.operands.empty() ? "0" : inst.operands[0].name);

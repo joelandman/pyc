@@ -13,7 +13,7 @@
 // LLVM codegen in Codegen.cpp mirrors fields 0-3: {i32, i32, i64, double}.
 struct PyObject {
     int refcount;
-    int type;   // 0=int, 1=list, 2=dict, 3=str, 4=float
+    int type;   // 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool
     long value;    // type 0
     double dvalue; // type 4
     std::vector<PyObject*> list;
@@ -50,6 +50,14 @@ PyObject* PyInt_FromLong(long v) {
     obj->refcount = 1;
     obj->type = 0;
     obj->value = v;
+    return obj;
+}
+
+PyObject* PyBool_New(int v) {
+    PyObject* obj = new PyObject();
+    obj->refcount = 1;
+    obj->type = 5;
+    obj->value = v ? 1 : 0;
     return obj;
 }
 
@@ -190,6 +198,7 @@ void Py_DECREF(PyObject* obj) {
 int PyObject_Print(PyObject* obj, FILE* fp) {
     if (!fp) fp = stdout;
     if (!obj) return fprintf(fp, "None\n");
+    if (obj->type == 5) return fprintf(fp, "%s\n", obj->value ? "True" : "False");
     if (obj->type == 0) return fprintf(fp, "%ld\n", obj->value);
     if (obj->type == 4) {
         char buf[64];
@@ -237,6 +246,7 @@ PyObject* PyUnicode_FromString(const char* s) {
 // Named PyStr_FromAny to avoid conflict with CPython's PyObject_Str.
 PyObject* PyStr_FromAny(PyObject* obj) {
     if (!obj) return PyUnicode_FromString("None");
+    if (obj->type == 5) return PyUnicode_FromString(obj->value ? "True" : "False");
     if (obj->type == 3) { Py_INCREF(obj); return obj; }
     if (obj->type == 0) {
         char buf[32];
@@ -291,26 +301,31 @@ PyObject* PyBuiltin_Len(PyObject* obj) {
 // Helper: get numeric value as double regardless of type (int or float).
 static double numeric_val(PyObject* o) {
     if (!o) return 0.0;
-    if (o->type == 0) return (double)o->value;
+    if (o->type == 0 || o->type == 5) return (double)o->value;
     if (o->type == 4) return o->dvalue;
     return 0.0;
 }
 
 static int is_numeric(PyObject* o) {
-    return o && (o->type == 0 || o->type == 4);
+    return o && (o->type == 0 || o->type == 4 || o->type == 5);
+}
+
+// True when neither operand is a float — result stays integer.
+static int both_integral(PyObject* a, PyObject* b) {
+    return a->type != 4 && b->type != 4;
 }
 
 PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
     if (!a || !b) return NULL;
     if (a->type == 3 && b->type == 3) return PyString_Concat(a, b);
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
-    if (a->type == 0 && b->type == 0) return PyInt_FromLong(a->value + b->value);
+    if (both_integral(a, b)) return PyInt_FromLong(a->value + b->value);
     return PyFloat_FromDouble(numeric_val(a) + numeric_val(b));
 }
 
 PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
-    if (a->type == 0 && b->type == 0) return PyInt_FromLong(a->value - b->value);
+    if (both_integral(a, b)) return PyInt_FromLong(a->value - b->value);
     return PyFloat_FromDouble(numeric_val(a) - numeric_val(b));
 }
 
@@ -319,17 +334,16 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
     if (a->type == 3 && b->type == 0) return PyString_Repeat(a, b);
     if (a->type == 0 && b->type == 3) return PyString_Repeat(b, a);
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
-    if (a->type == 0 && b->type == 0) return PyInt_FromLong(a->value * b->value);
+    if (both_integral(a, b)) return PyInt_FromLong(a->value * b->value);
     return PyFloat_FromDouble(numeric_val(a) * numeric_val(b));
 }
 
 // Floor division (//)
 PyObject* PyNumber_Divide(PyObject* a, PyObject* b) {
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
-    if (a->type == 0 && b->type == 0) {
+    if (both_integral(a, b)) {
         if (b->value == 0) return NULL;
         long q = a->value / b->value;
-        // Python truncates toward negative infinity
         if ((a->value ^ b->value) < 0 && q * b->value != a->value) q--;
         return PyInt_FromLong(q);
     }
@@ -348,10 +362,9 @@ PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b) {
 
 PyObject* PyNumber_Remainder(PyObject* a, PyObject* b) {
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
-    if (a->type == 0 && b->type == 0) {
+    if (both_integral(a, b)) {
         if (b->value == 0) return NULL;
         long r = a->value % b->value;
-        // Python modulo sign matches divisor
         if (r != 0 && (r ^ b->value) < 0) r += b->value;
         return PyInt_FromLong(r);
     }
