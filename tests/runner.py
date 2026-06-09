@@ -164,6 +164,56 @@ print(s)
     # unary minus
     ("print(-5)",    "-5\n"),
     ("print(-3.14)", "-3.14\n"),
+    # --- elif ---
+    ("x=2\nif x==1:\n    print(1)\nelif x==2:\n    print(2)\nelse:\n    print(3)", "2\n"),
+    ("x=3\nif x==1:\n    print(1)\nelif x==2:\n    print(2)\nelse:\n    print(3)", "3\n"),
+    # --- subscript get ---
+    ("a=[10,20,30]\nprint(a[0])\nprint(a[2])", "10\n30\n"),
+    ('s="hello"\nprint(s[1])', "e\n"),
+    # --- subscript set ---
+    ("a=[1,2,3]\na[1]=99\nprint(a[1])", "99\n"),
+    # --- dict subscript ---
+    ('d={"x":42}\nprint(d["x"])', "42\n"),
+    # --- augmented assignment ---
+    ("x=5\nx+=3\nprint(x)", "8\n"),
+    ("x=6\nx*=2\nprint(x)", "12\n"),
+    ("x=10\nx-=3\nprint(x)", "7\n"),
+    ("x=7\nx//=2\nprint(x)", "3\n"),
+    # --- power ---
+    ("print(2**10)", "1024\n"),
+    ("print(3**3)",  "27\n"),
+    # --- in / not in ---
+    ("print(2 in [1,2,3])",   "True\n"),
+    ("print(5 in [1,2,3])",   "False\n"),
+    ('print("el" in "hello")', "True\n"),
+    ("print(4 not in [1,2,3])", "True\n"),
+    # --- ternary ---
+    ("x=5\nprint(x if x>0 else -1)", "5\n"),
+    ("x=-3\nprint(x if x>0 else -1)", "-1\n"),
+    # --- tuple unpack ---
+    ("a,b=1,2\nprint(a,b)", "1 2\n"),
+    ("a,b,c=10,20,30\nprint(b)", "20\n"),
+    # --- multi return ---
+    ("def f():\n    return 1,2\na,b=f()\nprint(a,b)", "1 2\n"),
+    # --- method calls ---
+    ("a=[]\na.append(1)\na.append(2)\nprint(len(a))", "2\n"),
+    ('print("hello".upper())', "HELLO\n"),
+    ('print("WORLD".lower())', "world\n"),
+    ('print("  hi  ".strip())', "hi\n"),
+    # --- int/float/abs ---
+    ('print(int("42"))',   "42\n"),
+    ('print(float("3.5"))', "3.5\n"),
+    ("print(abs(-7))",     "7\n"),
+    ("print(abs(3.5))",    "3.5\n"),
+    # --- combined: subscript + augmented + for/range ---
+    ("""
+a=[0,0,0]
+for i in range(3):
+    a[i]=i*i
+print(a[0],a[1],a[2])
+""", "0 1 4\n"),
+    # --- dict subscript set ---
+    ('d={}\nd["k"]=99\nprint(d["k"])', "99\n"),
 ]
 
 def run(cmd):

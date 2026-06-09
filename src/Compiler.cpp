@@ -57,9 +57,11 @@ public:
         } else if (node->type == "For") {
             lowerFor(node);
         } else if (node->type == "Break") {
-            ir.addInstruction(currentFunc, "br", {}, "exit");
+            ir.addInstruction(currentFunc, "br", {}, loopBreakLabel);
         } else if (node->type == "Continue") {
-            ir.addInstruction(currentFunc, "br", {}, "loop");
+            ir.addInstruction(currentFunc, "br", {}, loopContinueLabel);
+        } else if (node->type == "AugAssign") {
+            lowerAugAssign(node);
         } else if (node->type == "Assign") {
             lowerAssign(node);
         } else if (node->type == "Return") {
@@ -129,6 +131,10 @@ public:
             return lowerBoolOp(node);
         } else if (node->type == "UnaryOp") {
             return lowerUnaryOp(node);
+        } else if (node->type == "Subscript") {
+            return lowerSubscriptGet(node);
+        } else if (node->type == "IfExp") {
+            return lowerIfExpr(node);
         }
         return "";
     }
@@ -137,6 +143,10 @@ private:
     ModuleIR& ir;
     std::string currentFunc;
     int tempCounter = 0;
+    // Current innermost loop labels — updated by lowerFor/lowerWhile so
+    // break/continue target the right blocks even with nested loops.
+    std::string loopContinueLabel;
+    std::string loopBreakLabel;
     std::unordered_map<std::string, int> funcDefaultCount;
     std::unordered_map<std::string, std::vector<std::string>> funcDefaultValues;
     std::unordered_map<std::string, std::vector<std::string>> funcParamNames;
@@ -152,11 +162,17 @@ private:
         else if (op == "FloorDiv") op = "div";
         else if (op == "Div") op = "truediv";
         else if (op == "Mod") op = "mod";
+        else if (op == "Pow") op = "pow";
         ir.addInstruction(currentFunc, op, {left, right}, res);
         return res;
     }
 
     std::string lowerCall(const ASTNode* node) {
+        // Method call: obj.method(args) — func is an Attribute node
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Attribute") {
+            return lowerMethodCall(node);
+        }
         std::string funcName = (node->children.empty() || !node->children[0]) ? "" : node->children[0]->id;
         std::vector<std::string> argRes;
         std::vector<std::pair<std::string, std::string>> kwArgs; // (name, value)
@@ -237,6 +253,28 @@ private:
             return res;
         }
 
+        // int(x) → PyBuiltin_Int(x)
+        if (funcName == "int") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Int", arg}, res);
+            return res;
+        }
+        // float(x) → PyBuiltin_Float(x)
+        if (funcName == "float") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Float", arg}, res);
+            return res;
+        }
+        // abs(x) → PyBuiltin_Abs(x)
+        if (funcName == "abs") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Abs", arg}, res);
+            return res;
+        }
+
         // str(obj) → PyStr_FromAny(obj)
         if (funcName == "str") {
             if (argRes.empty()) {
@@ -287,39 +325,67 @@ private:
     }
 
     std::string lowerCompare(const ASTNode* node) {
-        std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        std::string left  = lowerExpr(node->children.empty()  ? nullptr : node->children[0].get());
         std::string right = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
-        std::string res = "cmp" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {node->op, left, right}, res);
+        std::string res   = "t" + std::to_string(tempCounter++);
+        if (node->op == "In") {
+            ir.addInstruction(currentFunc, "call", {"PyObject_Contains", right, left}, res);
+        } else if (node->op == "NotIn") {
+            std::string contains = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyObject_Contains", right, left}, contains);
+            ir.addInstruction(currentFunc, "call", {"PyObject_Not", contains}, res);
+        } else {
+            ir.addInstruction(currentFunc, "icmp", {node->op, left, right}, res);
+        }
         return res;
     }
 
     void lowerIf(const ASTNode* node) {
+        int c = tempCounter++;
+        std::string thenL = "if_then_" + std::to_string(c);
+        std::string elseL = "if_else_" + std::to_string(c);
+        std::string endL  = "if_end_"  + std::to_string(c);
+
         std::string cond = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
-        ir.addInstruction(currentFunc, "br", {cond, "then", "else"});
-        ir.addInstruction(currentFunc, "label", {}, "then");
+        ir.addInstruction(currentFunc, "br", {cond, thenL, elseL});
+        ir.addInstruction(currentFunc, "label", {}, thenL);
+
+        // node->value = number of then-body statements (set in parser)
+        size_t bodyCount = node->value.empty() ? 0 : (size_t)std::stoi(node->value);
         size_t n = node->children.size();
-        for (size_t i = 1; i < n - (n > 2 ? 1 : 0); ++i) {
-            lower(node->children[i].get());   // statements, not expr values
-        }
-        ir.addInstruction(currentFunc, "br", {}, "endif");
-        ir.addInstruction(currentFunc, "label", {}, "else");
-        if (n > 2) {
-            lower(node->children[n-1].get());
-        }
-        ir.addInstruction(currentFunc, "label", {}, "endif");
+        for (size_t i = 1; i <= bodyCount && i < n; ++i)
+            lower(node->children[i].get());
+
+        ir.addInstruction(currentFunc, "br", {}, endL);
+        ir.addInstruction(currentFunc, "label", {}, elseL);
+
+        for (size_t i = 1 + bodyCount; i < n; ++i)
+            lower(node->children[i].get());
+
+        ir.addInstruction(currentFunc, "label", {}, endL);
     }
 
     void lowerWhile(const ASTNode* node) {
-        ir.addInstruction(currentFunc, "label", {}, "loop");
+        int c = tempCounter++;
+        std::string loopL = "while_loop_" + std::to_string(c);
+        std::string bodyL = "while_body_" + std::to_string(c);
+        std::string exitL = "while_exit_" + std::to_string(c);
+
+        std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
+        loopContinueLabel = loopL;
+        loopBreakLabel    = exitL;
+
+        ir.addInstruction(currentFunc, "label", {}, loopL);
         std::string cond = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
-        ir.addInstruction(currentFunc, "br", {cond, "body", "exit"});
-        ir.addInstruction(currentFunc, "label", {}, "body");
-        for (size_t i = 1; i < node->children.size(); ++i) {
-            lower(node->children[i].get());   // statements
-        }
-        ir.addInstruction(currentFunc, "br", {}, "loop");
-        ir.addInstruction(currentFunc, "label", {}, "exit");
+        ir.addInstruction(currentFunc, "br", {cond, bodyL, exitL});
+        ir.addInstruction(currentFunc, "label", {}, bodyL);
+        for (size_t i = 1; i < node->children.size(); ++i)
+            lower(node->children[i].get());
+        ir.addInstruction(currentFunc, "br", {}, loopL);
+        ir.addInstruction(currentFunc, "label", {}, exitL);
+
+        loopContinueLabel = savedCont;
+        loopBreakLabel    = savedBreak;
     }
 
     void lowerFor(const ASTNode* node) {
@@ -345,6 +411,10 @@ private:
         std::string exitLabel = "for_exit_" + std::to_string(tempCounter);
         tempCounter++;
 
+        std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
+        loopContinueLabel = loopLabel;
+        loopBreakLabel    = exitLabel;
+
         ir.addInstruction(currentFunc, "label", {}, loopLabel);
         std::string cmpRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpRes);
@@ -367,6 +437,9 @@ private:
 
         ir.addInstruction(currentFunc, "br", {}, loopLabel);
         ir.addInstruction(currentFunc, "label", {}, exitLabel);
+
+        loopContinueLabel = savedCont;
+        loopBreakLabel    = savedBreak;
     }
 
     std::string lowerList(const ASTNode* node) {
@@ -406,10 +479,61 @@ private:
     }
 
     void lowerAssign(const ASTNode* node) {
+        if (node->id == "__subscript__") {
+            if (node->children.size() < 2) return;
+            const ASTNode* sub = node->children[0].get();   // Subscript node
+            std::string obj = lowerExpr(sub->children.size() > 0 ? sub->children[0].get() : nullptr);
+            std::string idx = lowerExpr(sub->children.size() > 1 ? sub->children[1].get() : nullptr);
+            std::string val = lowerExpr(node->children[1].get());
+            std::string dummy = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyObject_SetItem", obj, idx, val}, dummy);
+            return;
+        }
+        if (node->id == "__unpack__") {
+            if (node->children.size() < 2) return;
+            const ASTNode* tupleTgt = node->children[0].get();  // Tuple/List of Name nodes
+            std::string rhs = lowerExpr(node->children[1].get());
+            for (size_t i = 0; i < tupleTgt->children.size(); ++i) {
+                const ASTNode* nm = tupleTgt->children[i].get();
+                if (!nm || nm->id.empty()) continue;
+                std::string ic = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(i)}, ic);
+                std::string elem = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", rhs, ic}, elem);
+                ir.addInstruction(currentFunc, "assign", {elem}, nm->id);
+            }
+            return;
+        }
         if (!node->children.empty() && node->children[0]) {
             std::string val = lowerExpr(node->children[0].get());
             ir.addInstruction(currentFunc, "assign", {val}, node->id);
         }
+    }
+
+    void lowerAugAssign(const ASTNode* node) {
+        if (node->children.empty()) return;
+        std::string rhs = lowerExpr(node->children[0].get());
+        std::string op = node->op;
+        if      (op == "Add")      op = "add";
+        else if (op == "Sub")      op = "sub";
+        else if (op == "Mult")     op = "mul";
+        else if (op == "FloorDiv") op = "div";
+        else if (op == "Div")      op = "truediv";
+        else if (op == "Mod")      op = "mod";
+        else if (op == "Pow")      op = "pow";
+        else                       op = "add";  // fallback
+        std::string result = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, op, {node->id, rhs}, result);
+        ir.addInstruction(currentFunc, "assign", {result}, node->id);
+    }
+
+    std::string lowerSubscriptGet(const ASTNode* node) {
+        // Subscript node: children[0]=object, children[1]=slice/index
+        std::string obj = lowerExpr(node->children.size() > 0 ? node->children[0].get() : nullptr);
+        std::string idx = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
+        std::string res = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyObject_GetItem", obj, idx}, res);
+        return res;
     }
 
     std::string lowerReturnExpr(const ASTNode* node) {
@@ -420,6 +544,91 @@ private:
 
     void lowerReturn(const ASTNode* node) {
         lowerReturnExpr(node);
+    }
+
+    // obj.method(args) dispatch
+    std::string lowerMethodCall(const ASTNode* node) {
+        // node->children[0] = Attribute(obj, method_name)
+        // node->children[1..] = positional args
+        const ASTNode* attr = node->children[0].get();
+        std::string methodName = attr->id;
+        std::string obj = lowerExpr(attr->children.empty() ? nullptr : attr->children[0].get());
+
+        std::vector<std::string> args;
+        for (size_t i = 1; i < node->children.size(); ++i) {
+            if (node->children[i] && node->children[i]->type != "Keyword")
+                args.push_back(lowerExpr(node->children[i].get()));
+        }
+
+        std::string res = "t" + std::to_string(tempCounter++);
+
+        // Known list methods
+        if (methodName == "append") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyList_Append", obj, arg}, res);
+        // Known string methods
+        } else if (methodName == "upper") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Upper", obj}, res);
+        } else if (methodName == "lower") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Lower", obj}, res);
+        } else if (methodName == "strip") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Strip", obj}, res);
+        } else if (methodName == "split") {
+            if (args.empty()) {
+                ir.addInstruction(currentFunc, "call", {"PyString_SplitWhitespace", obj}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyString_Split", obj, args[0]}, res);
+            }
+        } else if (methodName == "join") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_Join", obj, arg}, res);
+        // Dict methods
+        } else if (methodName == "keys") {
+            ir.addInstruction(currentFunc, "call", {"PyDict_Keys", obj}, res);
+        } else if (methodName == "values") {
+            ir.addInstruction(currentFunc, "call", {"PyDict_Values", obj}, res);
+        } else if (methodName == "items") {
+            ir.addInstruction(currentFunc, "call", {"PyDict_Items", obj}, res);
+        // List methods
+        } else if (methodName == "sort") {
+            ir.addInstruction(currentFunc, "call", {"PyList_Sort", obj}, res);
+        } else if (methodName == "pop") {
+            ir.addInstruction(currentFunc, "call", {"PyList_Pop", obj}, res);
+        } else {
+            // Unknown method — return None
+            ir.addInstruction(currentFunc, "const", {"0"}, res);
+        }
+        return res;
+    }
+
+    // x if cond else y  — IfExp (ternary)
+    std::string lowerIfExpr(const ASTNode* node) {
+        if (node->children.size() < 3) return "";
+        int c = tempCounter++;
+        std::string resultVar = "ifexp_r_"    + std::to_string(c);
+        std::string thenL     = "ifexp_then_" + std::to_string(c);
+        std::string elseL     = "ifexp_else_" + std::to_string(c);
+        std::string endL      = "ifexp_end_"  + std::to_string(c);
+
+        // Pre-create the result alloca before the branch so both branches can store to it.
+        std::string initVal = "c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, initVal);
+        ir.addInstruction(currentFunc, "assign", {initVal}, resultVar);
+
+        std::string cond = lowerExpr(node->children[0].get());
+        ir.addInstruction(currentFunc, "br", {cond, thenL, elseL});
+
+        ir.addInstruction(currentFunc, "label", {}, thenL);
+        std::string tv = lowerExpr(node->children[1].get());
+        ir.addInstruction(currentFunc, "assign", {tv}, resultVar);
+        ir.addInstruction(currentFunc, "br", {}, endL);
+
+        ir.addInstruction(currentFunc, "label", {}, elseL);
+        std::string ev = lowerExpr(node->children[2].get());
+        ir.addInstruction(currentFunc, "assign", {ev}, resultVar);
+
+        ir.addInstruction(currentFunc, "label", {}, endL);
+        return resultVar;
     }
 
     // Short-circuit boolean operator (and / or) with N values.

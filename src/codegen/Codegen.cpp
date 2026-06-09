@@ -55,6 +55,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* listGetItemObjTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(listGetItemObjTy, llvm::Function::ExternalLinkage, "PyList_GetItemObj", module.get());
 
+    llvm::FunctionType* listAppendTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(listAppendTy, llvm::Function::ExternalLinkage, "PyList_Append", module.get());
+
     llvm::FunctionType* listNewBoxedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(listNewBoxedTy, llvm::Function::ExternalLinkage, "PyList_NewBoxed", module.get());
 
@@ -126,9 +129,45 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* printNewlineTy = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
     llvm::Function::Create(printNewlineTy, llvm::Function::ExternalLinkage, "PyBuiltin_PrintNewline", module.get());
 
+    // Builtins: int, float, abs; string methods; dict/list methods
+    for (const char* name : {"PyBuiltin_Int","PyBuiltin_Float","PyBuiltin_Abs",
+                              "PyString_Upper","PyString_Lower","PyString_Strip",
+                              "PyString_SplitWhitespace","PyDict_Keys","PyDict_Values",
+                              "PyDict_Items","PyList_Sort","PyList_Pop"}) {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    for (const char* name : {"PyString_Split","PyString_Join"}) {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+
     // PyBool_New(int) — boxes a 0/1 as a bool PyObject
     llvm::FunctionType* boolNewTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt32Ty(context)}, false);
     llvm::Function::Create(boolNewTy, llvm::Function::ExternalLinkage, "PyBool_New", module.get());
+
+    // Dict operations (previously missing — caused PyDict_New/SetItem calls to be silently skipped)
+    llvm::FunctionType* dictNewTy = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
+    llvm::Function::Create(dictNewTy, llvm::Function::ExternalLinkage, "PyDict_New", module.get());
+
+    llvm::FunctionType* dictSetItemTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(dictSetItemTy, llvm::Function::ExternalLinkage, "PyDict_SetItem", module.get());
+
+    llvm::FunctionType* dictGetItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(dictGetItemTy, llvm::Function::ExternalLinkage, "PyDict_GetItem", module.get());
+
+    // Subscript / membership / power
+    llvm::FunctionType* getItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(getItemTy, llvm::Function::ExternalLinkage, "PyObject_GetItem", module.get());
+
+    llvm::FunctionType* setItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(setItemTy, llvm::Function::ExternalLinkage, "PyObject_SetItem", module.get());
+
+    llvm::FunctionType* containsTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(containsTy, llvm::Function::ExternalLinkage, "PyObject_Contains", module.get());
+
+    llvm::FunctionType* powerTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(powerTy, llvm::Function::ExternalLinkage, "PyNumber_Power", module.get());
 
     // Boolean / unary ops
     llvm::FunctionType* truthBoxedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
@@ -322,6 +361,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
+            } else if (inst.op == "pow") {
+                llvm::Function* fn = module->getFunction("PyNumber_Power");
+                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
+                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                if (fn) valueMap[inst.result] = builder.CreateCall(fn, {lhs, rhs}, inst.result);
+                else    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
             } else if (inst.op == "truediv") {
                 llvm::Function* numberTrueDiv = module->getFunction("PyNumber_TrueDivide");
                 llvm::Value* lhs = getOrLoad(inst.operands[0].name);
@@ -434,8 +479,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         for (size_t i = 1; i < inst.operands.size(); ++i) {
                             callArgs.push_back(getOrLoad(inst.operands[i].name));
                         }
-                        llvm::Value* callRes = builder.CreateCall(callee, callArgs, inst.result);
-                        valueMap[inst.result] = callRes;
+                        if (callee->getReturnType()->isVoidTy()) {
+                            builder.CreateCall(callee, callArgs);
+                        } else {
+                            llvm::Value* callRes = builder.CreateCall(callee, callArgs, inst.result);
+                            valueMap[inst.result] = callRes;
+                        }
                     }
                 }
             } else if (inst.op == "ret") {

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <vector>
+#include <algorithm>
 #include <unordered_map>
 #include <string>
 
@@ -311,6 +312,136 @@ PyObject* PyNumber_Negate(PyObject* obj) {
     return NULL;
 }
 
+PyObject* PyBuiltin_Int(PyObject* obj) {
+    if (!obj) return PyInt_FromLong(0);
+    if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(obj->value);
+    if (obj->type == 4) return PyInt_FromLong((long)obj->dvalue);
+    if (obj->type == 3) {
+        try { return PyInt_FromLong(std::stol(obj->str)); } catch (...) {}
+    }
+    return PyInt_FromLong(0);
+}
+
+PyObject* PyBuiltin_Float(PyObject* obj) {
+    if (!obj) return PyFloat_FromDouble(0.0);
+    if (obj->type == 0 || obj->type == 5) return PyFloat_FromDouble((double)obj->value);
+    if (obj->type == 4) { Py_INCREF(obj); return obj; }
+    if (obj->type == 3) {
+        try { return PyFloat_FromDouble(std::stod(obj->str)); } catch (...) {}
+    }
+    return PyFloat_FromDouble(0.0);
+}
+
+PyObject* PyBuiltin_Abs(PyObject* obj) {
+    if (!obj) return PyInt_FromLong(0);
+    if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(obj->value < 0 ? -obj->value : obj->value);
+    if (obj->type == 4) return PyFloat_FromDouble(obj->dvalue < 0.0 ? -obj->dvalue : obj->dvalue);
+    return PyInt_FromLong(0);
+}
+
+PyObject* PyString_Upper(PyObject* s) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    std::string r = s->str;
+    for (char& c : r) c = (char)toupper((unsigned char)c);
+    return PyUnicode_FromString(r.c_str());
+}
+
+PyObject* PyString_Lower(PyObject* s) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    std::string r = s->str;
+    for (char& c : r) c = (char)tolower((unsigned char)c);
+    return PyUnicode_FromString(r.c_str());
+}
+
+PyObject* PyString_Strip(PyObject* s) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    size_t l = 0, r = s->str.size();
+    while (l < r && isspace((unsigned char)s->str[l])) ++l;
+    while (r > l && isspace((unsigned char)s->str[r-1])) --r;
+    return PyUnicode_FromString(s->str.substr(l, r - l).c_str());
+}
+
+PyObject* PyString_Split(PyObject* s, PyObject* sep) {
+    PyObject* result = PyList_New(0);
+    if (!s || s->type != 3) return result;
+    std::string delim = (sep && sep->type == 3) ? sep->str : " ";
+    size_t start = 0, pos;
+    while ((pos = s->str.find(delim, start)) != std::string::npos) {
+        PyList_Append(result, PyUnicode_FromString(s->str.substr(start, pos - start).c_str()));
+        start = pos + delim.size();
+    }
+    PyList_Append(result, PyUnicode_FromString(s->str.substr(start).c_str()));
+    return result;
+}
+
+PyObject* PyString_SplitWhitespace(PyObject* s) {
+    PyObject* result = PyList_New(0);
+    if (!s || s->type != 3) return result;
+    size_t i = 0, n = s->str.size();
+    while (i < n) {
+        while (i < n && isspace((unsigned char)s->str[i])) ++i;
+        size_t j = i;
+        while (j < n && !isspace((unsigned char)s->str[j])) ++j;
+        if (j > i) PyList_Append(result, PyUnicode_FromString(s->str.substr(i, j - i).c_str()));
+        i = j;
+    }
+    return result;
+}
+
+PyObject* PyString_Join(PyObject* sep, PyObject* iterable) {
+    if (!sep || sep->type != 3 || !iterable || iterable->type != 1)
+        return PyUnicode_FromString("");
+    std::string r;
+    for (size_t i = 0; i < iterable->list.size(); ++i) {
+        if (i > 0) r += sep->str;
+        if (iterable->list[i] && iterable->list[i]->type == 3) r += iterable->list[i]->str;
+    }
+    return PyUnicode_FromString(r.c_str());
+}
+
+PyObject* PyDict_Keys(PyObject* d) {
+    PyObject* result = PyList_New(0);
+    if (!d || d->type != 2) return result;
+    for (auto& pair : d->dict) { Py_INCREF(pair.first); PyList_Append(result, pair.first); }
+    return result;
+}
+
+PyObject* PyDict_Values(PyObject* d) {
+    PyObject* result = PyList_New(0);
+    if (!d || d->type != 2) return result;
+    for (auto& pair : d->dict) { Py_INCREF(pair.second); PyList_Append(result, pair.second); }
+    return result;
+}
+
+PyObject* PyDict_Items(PyObject* d) {
+    PyObject* result = PyList_New(0);
+    if (!d || d->type != 2) return result;
+    for (auto& pair : d->dict) {
+        PyObject* item = PyList_New(2);
+        Py_INCREF(pair.first); Py_INCREF(pair.second);
+        PyList_SetItem(item, 0, pair.first);
+        PyList_SetItem(item, 1, pair.second);
+        PyList_Append(result, item);
+    }
+    return result;
+}
+
+PyObject* PyList_Sort(PyObject* lst) {
+    if (!lst || lst->type != 1) return PyInt_FromLong(0);
+    std::sort(lst->list.begin(), lst->list.end(), [](PyObject* a, PyObject* b) -> bool {
+        if (!a || !b) return false;
+        return PyObject_CompareBool(a, b, 2) != 0;  // Lt
+    });
+    return PyInt_FromLong(0);
+}
+
+PyObject* PyList_Pop(PyObject* lst) {
+    if (!lst || lst->type != 1 || lst->list.empty()) return nullptr;
+    PyObject* item = lst->list.back();
+    lst->list.pop_back();
+    return item;
+}
+
 PyObject* PyBuiltin_PrintNewline(void) {
     printf("\n");
     return PyInt_FromLong(0);
@@ -339,6 +470,62 @@ static int is_numeric(PyObject* o) {
 // True when neither operand is a float — result stays integer.
 static int both_integral(PyObject* a, PyObject* b) {
     return a->type != 4 && b->type != 4;
+}
+
+PyObject* PyObject_GetItem(PyObject* obj, PyObject* key) {
+    if (!obj || !key) return nullptr;
+    if (obj->type == 1) return PyList_GetItemObj(obj, key);
+    if (obj->type == 2) {
+        for (auto& pair : obj->dict)
+            if (PyObject_CompareBool(pair.first, key, 0)) return pair.second;
+        return nullptr;
+    }
+    if (obj->type == 3 && (key->type == 0 || key->type == 5)) {
+        long idx = key->value;
+        if (idx < 0) idx += (long)obj->str.size();
+        if (idx >= 0 && (size_t)idx < obj->str.size()) {
+            char buf[2] = {obj->str[(size_t)idx], '\0'};
+            return PyUnicode_FromString(buf);
+        }
+    }
+    return nullptr;
+}
+
+PyObject* PyObject_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
+    if (!obj || !key) return nullptr;
+    if (obj->type == 1) { PyList_SetItemBoxed(obj, key, val); return nullptr; }
+    if (obj->type == 2) { PyDict_SetItem(obj, key, val); return nullptr; }
+    return nullptr;
+}
+
+PyObject* PyObject_Contains(PyObject* container, PyObject* item) {
+    if (!container || !item) return PyBool_New(0);
+    if (container->type == 1) {
+        for (auto* elem : container->list)
+            if (elem && PyObject_CompareBool(elem, item, 0)) return PyBool_New(1);
+        return PyBool_New(0);
+    }
+    if (container->type == 3) {
+        if (item->type == 3)
+            return PyBool_New(container->str.find(item->str) != std::string::npos);
+        return PyBool_New(0);
+    }
+    if (container->type == 2) {
+        for (auto& pair : container->dict)
+            if (PyObject_CompareBool(pair.first, item, 0)) return PyBool_New(1);
+        return PyBool_New(0);
+    }
+    return PyBool_New(0);
+}
+
+PyObject* PyNumber_Power(PyObject* a, PyObject* b) {
+    if (!is_numeric(a) || !is_numeric(b)) return nullptr;
+    if (both_integral(a, b) && b->value >= 0) {
+        long result = 1, base = a->value, exp = b->value;
+        for (long i = 0; i < exp; ++i) result *= base;
+        return PyInt_FromLong(result);
+    }
+    return PyFloat_FromDouble(pow(numeric_val(a), numeric_val(b)));
 }
 
 PyObject* PyNumber_Add(PyObject* a, PyObject* b) {

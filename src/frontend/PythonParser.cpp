@@ -197,6 +197,8 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         }
         PyObject* body = PyObject_GetAttrString(pyNode, "body");
         if (body && PyList_Check(body)) {
+            // For If, store body count so lowerIf can find the orelse split.
+            if (node->type == "If") node->value = std::to_string(PyList_Size(body));
             for (Py_ssize_t i = 0; i < PyList_Size(body); ++i) {
                 PyObject* item = PyList_GetItem(body, i);
                 auto child = std::make_unique<ASTNode>();
@@ -216,6 +218,36 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 }
             }
             Py_XDECREF(orelse);
+        }
+    } else if (node->type == "AugAssign") {
+        // x += val  →  target, op, value
+        PyObject* target = PyObject_GetAttrString(pyNode, "target");
+        if (target) {
+            node->id = PyObject_HasAttrString(target, "id") ? getPyString(target, "id") : "";
+            Py_DECREF(target);
+        }
+        PyObject* op = PyObject_GetAttrString(pyNode, "op");
+        if (op) {
+            node->op = getPyString((PyObject*)Py_TYPE(op), "__name__");
+            Py_DECREF(op);
+        }
+        PyObject* val = PyObject_GetAttrString(pyNode, "value");
+        if (val) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(val, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(val);
+        }
+    } else if (node->type == "IfExp") {
+        // x if test else y  →  children: [test, body, orelse]
+        for (const char* attr : {"test", "body", "orelse"}) {
+            PyObject* v = PyObject_GetAttrString(pyNode, attr);
+            if (v) {
+                auto child = std::make_unique<ASTNode>();
+                buildAST(v, child.get());
+                node->children.push_back(std::move(child));
+                Py_DECREF(v);
+            }
         }
     } else if (node->type == "Compare") {
         PyObject* left = PyObject_GetAttrString(pyNode, "left");
@@ -244,15 +276,27 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         Py_XDECREF(comparators);
     } else if (node->type == "Assign") {
         PyObject* targets = PyObject_GetAttrString(pyNode, "targets");
-        if (targets && PyList_Check(targets)) {
-            PyObject* target = PyList_GetItem(targets, 0);
-            if (target) {
-                if (PyObject_HasAttrString(target, "id")) {
-                    node->id = getPyString(target, "id");
-                } else if (PyObject_HasAttrString(target, "value")) {
-                    // Handle subscript assignment like x[0] = 5
-                    node->id = "subscript";
-                }
+        PyObject* target = (targets && PyList_Check(targets) && PyList_Size(targets) > 0)
+                           ? PyList_GetItem(targets, 0) : nullptr;
+        if (target) {
+            std::string tname = getPyString((PyObject*)Py_TYPE(target), "__name__");
+            if (tname == "Name") {
+                node->id = getPyString(target, "id");
+                // value added by generic children.empty() handler below
+            } else if (tname == "Tuple" || tname == "List") {
+                node->id = "__unpack__";
+                auto t = std::make_unique<ASTNode>(); buildAST(target, t.get());
+                node->children.push_back(std::move(t));   // children[0] = tuple target
+                PyObject* val = PyObject_GetAttrString(pyNode, "value");
+                if (val) { auto v = std::make_unique<ASTNode>(); buildAST(val, v.get());
+                           node->children.push_back(std::move(v)); Py_DECREF(val); }
+            } else {
+                node->id = "__subscript__";
+                auto t = std::make_unique<ASTNode>(); buildAST(target, t.get());
+                node->children.push_back(std::move(t));   // children[0] = subscript
+                PyObject* val = PyObject_GetAttrString(pyNode, "value");
+                if (val) { auto v = std::make_unique<ASTNode>(); buildAST(val, v.get());
+                           node->children.push_back(std::move(v)); Py_DECREF(val); }
             }
         }
         Py_XDECREF(targets);
