@@ -472,7 +472,7 @@ static int both_integral(PyObject* a, PyObject* b) {
     return a->type != 4 && b->type != 4;
 }
 
-PyObject* PyObject_GetItem(PyObject* obj, PyObject* key) {
+PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
     if (!obj || !key) return nullptr;
     if (obj->type == 1) return PyList_GetItemObj(obj, key);
     if (obj->type == 2) {
@@ -491,14 +491,14 @@ PyObject* PyObject_GetItem(PyObject* obj, PyObject* key) {
     return nullptr;
 }
 
-PyObject* PyObject_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
+PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
     if (!obj || !key) return nullptr;
     if (obj->type == 1) { PyList_SetItemBoxed(obj, key, val); return nullptr; }
     if (obj->type == 2) { PyDict_SetItem(obj, key, val); return nullptr; }
     return nullptr;
 }
 
-PyObject* PyObject_Contains(PyObject* container, PyObject* item) {
+PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
     if (!container || !item) return PyBool_New(0);
     if (container->type == 1) {
         for (auto* elem : container->list)
@@ -518,7 +518,7 @@ PyObject* PyObject_Contains(PyObject* container, PyObject* item) {
     return PyBool_New(0);
 }
 
-PyObject* PyNumber_Power(PyObject* a, PyObject* b) {
+PyObject* Pyc_Pow(PyObject* a, PyObject* b) {
     if (!is_numeric(a) || !is_numeric(b)) return nullptr;
     if (both_integral(a, b) && b->value >= 0) {
         long result = 1, base = a->value, exp = b->value;
@@ -526,6 +526,113 @@ PyObject* PyNumber_Power(PyObject* a, PyObject* b) {
         return PyInt_FromLong(result);
     }
     return PyFloat_FromDouble(pow(numeric_val(a), numeric_val(b)));
+}
+
+PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b) {
+    if (!a) return (b ? (Py_INCREF(b), b) : nullptr);
+    if (!b) return (Py_INCREF(a), a);
+    return PyObject_CompareBool(a, b, 2) ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
+}
+PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b) {
+    if (!a) return (b ? (Py_INCREF(b), b) : nullptr);
+    if (!b) return (Py_INCREF(a), a);
+    return PyObject_CompareBool(a, b, 3) ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
+}
+PyObject* PyBuiltin_MinList(PyObject* lst) {
+    if (!lst || lst->type != 1 || lst->list.empty()) return nullptr;
+    PyObject* r = lst->list[0];
+    for (size_t i = 1; i < lst->list.size(); ++i)
+        if (lst->list[i] && PyObject_CompareBool(lst->list[i], r, 2)) r = lst->list[i];
+    Py_INCREF(r); return r;
+}
+PyObject* PyBuiltin_MaxList(PyObject* lst) {
+    if (!lst || lst->type != 1 || lst->list.empty()) return nullptr;
+    PyObject* r = lst->list[0];
+    for (size_t i = 1; i < lst->list.size(); ++i)
+        if (lst->list[i] && PyObject_CompareBool(lst->list[i], r, 3)) r = lst->list[i];
+    Py_INCREF(r); return r;
+}
+PyObject* PyBuiltin_List(PyObject* obj) {
+    if (!obj) return PyList_New(0);
+    if (obj->type == 1) { Py_INCREF(obj); return obj; }
+    if (obj->type == 3) {
+        PyObject* r = PyList_New(obj->str.size());
+        for (size_t i = 0; i < obj->str.size(); ++i) {
+            char buf[2] = {obj->str[i], '\0'};
+            PyList_SetItem(r, i, PyUnicode_FromString(buf));
+        }
+        return r;
+    }
+    return PyList_New(0);
+}
+PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
+    if (!iterable || iterable->type != 1) return PyList_New(0);
+    PyObject* r = PyList_New(iterable->list.size());
+    for (size_t i = 0; i < iterable->list.size(); ++i) {
+        PyObject* pair = PyList_New(2);
+        PyList_SetItem(pair, 0, PyInt_FromLong((long)i));
+        PyObject* v = iterable->list[i];
+        if (v) Py_INCREF(v);
+        PyList_SetItem(pair, 1, v);
+        PyList_SetItem(r, i, pair);
+    }
+    return r;
+}
+PyObject* PyBuiltin_Zip2(PyObject* a, PyObject* b) {
+    if (!a || !b) return PyList_New(0);
+    size_t na = (a->type == 1) ? a->list.size() : 0;
+    size_t nb = (b->type == 1) ? b->list.size() : 0;
+    size_t n = na < nb ? na : nb;
+    PyObject* r = PyList_New(n);
+    for (size_t i = 0; i < n; ++i) {
+        PyObject* pair = PyList_New(2);
+        PyObject* va = a->list[i]; if (va) Py_INCREF(va); PyList_SetItem(pair, 0, va);
+        PyObject* vb = b->list[i]; if (vb) Py_INCREF(vb); PyList_SetItem(pair, 1, vb);
+        PyList_SetItem(r, i, pair);
+    }
+    return r;
+}
+
+// str % val formatting (used via PyNumber_Remainder for string left operand)
+static PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
+    if (!fmt || fmt->type != 3) return nullptr;
+    auto getArg = [&](size_t idx) -> PyObject* {
+        if (!args) return nullptr;
+        if (args->type == 1 && idx < args->list.size()) return args->list[idx];
+        return (idx == 0) ? args : nullptr;
+    };
+    std::string result;
+    const std::string& f = fmt->str;
+    size_t argIdx = 0;
+    for (size_t i = 0; i < f.size(); ) {
+        if (f[i] != '%') { result += f[i++]; continue; }
+        if (i + 1 >= f.size() || f[i+1] == '%') { result += '%'; i += (f[i+1]=='%' ? 2 : 1); continue; }
+        // Find end of format spec
+        size_t j = i + 1;
+        while (j < f.size() && (f[j]=='-'||f[j]=='+'||f[j]==' '||f[j]=='0'||f[j]=='#'||f[j]=='.'||isdigit((unsigned char)f[j]))) ++j;
+        if (j >= f.size()) { result += f[i++]; continue; }
+        char spec = f[j];
+        PyObject* arg = getArg(argIdx++);
+        char buf[256] = {};
+        std::string fs = f.substr(i, j - i + 1);  // full %...spec
+        if (spec == 'd' || spec == 'i') {
+            long v = arg ? ((arg->type==0||arg->type==5) ? arg->value : (arg->type==4 ? (long)arg->dvalue : 0)) : 0;
+            std::string lfs = f.substr(i, j-i) + "ld";
+            snprintf(buf, sizeof(buf), lfs.c_str(), v);
+        } else if (spec == 'f' || spec == 'e' || spec == 'g') {
+            double v = arg ? numeric_val(arg) : 0.0;
+            snprintf(buf, sizeof(buf), fs.c_str(), v);
+        } else if (spec == 's' || spec == 'r') {
+            PyObject* s = arg ? PyStr_FromAny(arg) : PyUnicode_FromString("");
+            snprintf(buf, sizeof(buf), "%s", s ? s->str.c_str() : "");
+            if (s) Py_DECREF(s);
+        } else {
+            result += fs; i = j + 1; continue;
+        }
+        result += buf;
+        i = j + 1;
+    }
+    return PyUnicode_FromString(result.c_str());
 }
 
 PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
@@ -574,6 +681,7 @@ PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b) {
 }
 
 PyObject* PyNumber_Remainder(PyObject* a, PyObject* b) {
+    if (a && a->type == 3) return PyString_Format(a, b);   // "fmt" % val
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) {
         if (b->value == 0) return NULL;

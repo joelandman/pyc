@@ -218,6 +218,38 @@ print(a[0],a[1],a[2])
     ("x=0\ndef f():\n    global x\n    x=1\nf()\nprint(x)", "1\n"),
     ("count=0\ndef inc():\n    global count\n    count=count+1\ninc()\ninc()\ninc()\nprint(count)", "3\n"),
     ("x=42\ndef f():\n    global x\n    return x\nprint(f())", "42\n"),
+    # --- multi-target assign ---
+    ("a=b=5\nprint(a,b)", "5 5\n"),
+    ("a=b=c=0\na=1\nprint(a,b,c)", "1 0 0\n"),
+    # --- aug-assign on subscript ---
+    ("a=[1,2,3]\na[1]+=10\nprint(a[1])", "12\n"),
+    ("a=[10,20,30]\na[0]*=3\nprint(a[0])", "30\n"),
+    # --- chained comparison ---
+    ("x=5\nprint(1<x<10)", "True\n"),
+    ("x=15\nprint(1<x<10)", "False\n"),
+    ("x=1\nprint(1<x<10)", "False\n"),
+    # --- min / max ---
+    ("print(min(3,1,2))", "1\n"),
+    ("print(max(3,1,2))", "3\n"),
+    ("print(min([5,2,8,1]))", "1\n"),
+    ("print(max([5,2,8,1]))", "8\n"),
+    # --- list() constructor ---
+    ("a=list([1,2,3])\nprint(len(a))", "3\n"),
+    # --- enumerate ---
+    ("for i,v in enumerate([10,20,30]):\n    print(i,v)", "0 10\n1 20\n2 30\n"),
+    # --- zip ---
+    ("for a,b in zip([1,2,3],[4,5,6]):\n    print(a+b)", "5\n7\n9\n"),
+    # --- list comprehension ---
+    ("x=[i*2 for i in range(4)]\nprint(x[0],x[1],x[2],x[3])", "0 2 4 6\n"),
+    ("x=[i for i in range(10) if i%2==0]\nprint(x[0],x[2],x[4])", "0 4 8\n"),
+    ("x=[i*i for i in range(5)]\nprint(len(x),x[4])", "5 16\n"),
+    # --- str % formatting ---
+    ("print('%d' % 42)", "42\n"),
+    ("print('%s' % 'hello')", "hello\n"),
+    ("print('%.1f' % 3.14)", "3.1\n"),
+    ("print('x=%d, y=%d' % (1, 2))", "x=1, y=2\n"),
+    # --- dict.keys with list() ---
+    ("d={'a':1,'b':2}\nprint(len(list(d.keys())))", "2\n"),
 ]
 
 def run(cmd):

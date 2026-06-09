@@ -148,6 +148,8 @@ public:
             return lowerBoolOp(node);
         } else if (node->type == "UnaryOp") {
             return lowerUnaryOp(node);
+        } else if (node->type == "ListComp") {
+            return lowerListComp(node);
         } else if (node->type == "Subscript") {
             return lowerSubscriptGet(node);
         } else if (node->type == "IfExp") {
@@ -290,6 +292,50 @@ private:
             return res;
         }
 
+        // min/max — fold pairwise; single list arg uses list variant
+        if (funcName == "min" || funcName == "max") {
+            std::string fn2  = (funcName == "min") ? "PyBuiltin_Min2"    : "PyBuiltin_Max2";
+            std::string fnLst = (funcName == "min") ? "PyBuiltin_MinList" : "PyBuiltin_MaxList";
+            if (argRes.size() == 1) {
+                std::string res = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {fnLst, argRes[0]}, res);
+                return res;
+            }
+            std::string acc = argRes[0];
+            for (size_t i = 1; i < argRes.size(); ++i) {
+                std::string res2 = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {fn2, acc, argRes[i]}, res2);
+                acc = res2;
+            }
+            return acc;
+        }
+        // list(x) → PyBuiltin_List(x)
+        if (funcName == "list") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            if (argRes.empty()) {
+                std::string sc = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, sc);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", arg}, res);
+            }
+            return res;
+        }
+        // enumerate(iterable) → PyBuiltin_Enumerate(iterable)
+        if (funcName == "enumerate") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Enumerate", arg}, res);
+            return res;
+        }
+        // zip(a, b) → PyBuiltin_Zip2(a, b)
+        if (funcName == "zip" && argRes.size() >= 2) {
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Zip2", argRes[0], argRes[1]}, res);
+            return res;
+        }
+
         // int(x) → PyBuiltin_Int(x)
         if (funcName == "int") {
             std::string arg = argRes.empty() ? "" : argRes[0];
@@ -362,19 +408,59 @@ private:
     }
 
     std::string lowerCompare(const ASTNode* node) {
-        std::string left  = lowerExpr(node->children.empty()  ? nullptr : node->children[0].get());
-        std::string right = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
-        std::string res   = "t" + std::to_string(tempCounter++);
-        if (node->op == "In") {
-            ir.addInstruction(currentFunc, "call", {"PyObject_Contains", right, left}, res);
-        } else if (node->op == "NotIn") {
-            std::string contains = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyObject_Contains", right, left}, contains);
-            ir.addInstruction(currentFunc, "call", {"PyObject_Not", contains}, res);
-        } else {
-            ir.addInstruction(currentFunc, "icmp", {node->op, left, right}, res);
+        if (node->children.empty()) return "";
+        // Evaluate all operands exactly once: children[0]=left, children[1..n]=comparators
+        std::vector<std::string> operands;
+        for (const auto& c : node->children)
+            operands.push_back(lowerExpr(c.get()));
+
+        const auto& ops = node->args;   // all op names, populated by parser
+        if (ops.empty()) return "";
+
+        // Helper: emit one pairwise comparison, return result name
+        auto emitPair = [&](const std::string& opName,
+                             const std::string& lhs, const std::string& rhs) {
+            std::string r = "t" + std::to_string(tempCounter++);
+            if (opName == "In") {
+                ir.addInstruction(currentFunc, "call", {"Pyc_Contains", rhs, lhs}, r);
+            } else if (opName == "NotIn") {
+                std::string c2 = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"Pyc_Contains", rhs, lhs}, c2);
+                ir.addInstruction(currentFunc, "call", {"PyObject_Not", c2}, r);
+            } else if (opName == "Is") {
+                // identity: PyObject_CompareBool with Eq (pointer eq handled there)
+                ir.addInstruction(currentFunc, "icmp", {"Eq", lhs, rhs}, r);
+            } else if (opName == "IsNot") {
+                ir.addInstruction(currentFunc, "icmp", {"NotEq", lhs, rhs}, r);
+            } else {
+                ir.addInstruction(currentFunc, "icmp", {opName, lhs, rhs}, r);
+            }
+            return r;
+        };
+
+        // Single comparison — common fast path
+        if (ops.size() == 1 && operands.size() >= 2)
+            return emitPair(ops[0], operands[0], operands[1]);
+
+        // Chained: (a op0 b) and (b op1 c) and ... — short-circuit like BoolOp
+        int bc = tempCounter++;
+        std::string resultVar = "chain_r_"   + std::to_string(bc);
+        std::string endLabel  = "chain_end_" + std::to_string(bc);
+
+        std::string first = emitPair(ops[0], operands[0], operands[1]);
+        ir.addInstruction(currentFunc, "assign", {first}, resultVar);
+
+        for (size_t i = 1; i < ops.size() && i + 1 < operands.size(); ++i) {
+            std::string rhsL = "chain_rhs_" + std::to_string(bc) + "_" + std::to_string(i);
+            std::string truth = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyObject_TruthBoxed", resultVar}, truth);
+            ir.addInstruction(currentFunc, "br", {truth, rhsL, endLabel});
+            ir.addInstruction(currentFunc, "label", {}, rhsL);
+            std::string pairRes = emitPair(ops[i], operands[i], operands[i + 1]);
+            ir.addInstruction(currentFunc, "assign", {pairRes}, resultVar);
         }
-        return res;
+        ir.addInstruction(currentFunc, "label", {}, endLabel);
+        return resultVar;
     }
 
     void lowerIf(const ASTNode* node) {
@@ -460,7 +546,18 @@ private:
         ir.addInstruction(currentFunc, "label", {}, bodyLabel);
         std::string itemRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, idxVar}, itemRes);
-        ir.addInstruction(currentFunc, "assign", {itemRes}, node->id);  // target = node->id
+        if (node->id == "__unpack__") {
+            // for a, b in iterable: unpack each item into multiple variables
+            for (size_t j = 0; j < node->args.size(); ++j) {
+                std::string ic = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(j)}, ic);
+                std::string elem = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", itemRes, ic}, elem);
+                ir.addInstruction(currentFunc, "assign", {elem}, node->args[j]);
+            }
+        } else {
+            ir.addInstruction(currentFunc, "assign", {itemRes}, node->id);
+        }
 
         for (size_t i = 1; i < node->children.size(); ++i)  // body starts at children[1]
             lower(node->children[i].get());
@@ -516,6 +613,13 @@ private:
     }
 
     void lowerAssign(const ASTNode* node) {
+        // Multi-target: a = b = val — args holds all target names
+        if (!node->args.empty()) {
+            std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+            for (const auto& name : node->args)
+                ir.addInstruction(currentFunc, "assign", {val}, name);
+            return;
+        }
         if (node->id == "__subscript__") {
             if (node->children.size() < 2) return;
             const ASTNode* sub = node->children[0].get();   // Subscript node
@@ -523,7 +627,7 @@ private:
             std::string idx = lowerExpr(sub->children.size() > 1 ? sub->children[1].get() : nullptr);
             std::string val = lowerExpr(node->children[1].get());
             std::string dummy = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyObject_SetItem", obj, idx, val}, dummy);
+            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, val}, dummy);
             return;
         }
         if (node->id == "__unpack__") {
@@ -549,7 +653,6 @@ private:
 
     void lowerAugAssign(const ASTNode* node) {
         if (node->children.empty()) return;
-        std::string rhs = lowerExpr(node->children[0].get());
         std::string op = node->op;
         if      (op == "Add")      op = "add";
         else if (op == "Sub")      op = "sub";
@@ -558,10 +661,28 @@ private:
         else if (op == "Div")      op = "truediv";
         else if (op == "Mod")      op = "mod";
         else if (op == "Pow")      op = "pow";
-        else                       op = "add";  // fallback
-        std::string result = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, op, {node->id, rhs}, result);
-        ir.addInstruction(currentFunc, "assign", {result}, node->id);
+        else                       op = "add";
+
+        if (node->id == "__subscript__") {
+            // a[i] op= val — children[0]=Subscript, children[1]=rhs
+            if (node->children.size() < 2) return;
+            const ASTNode* sub = node->children[0].get();
+            std::string obj = lowerExpr(sub->children.size() > 0 ? sub->children[0].get() : nullptr);
+            std::string idx = lowerExpr(sub->children.size() > 1 ? sub->children[1].get() : nullptr);
+            std::string rhs = lowerExpr(node->children[1].get());
+            std::string cur = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, idx}, cur);
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, op, {cur, rhs}, res);
+            std::string dummy = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, res}, dummy);
+        } else {
+            // Normal name: children[0] = rhs
+            std::string rhs = lowerExpr(node->children[0].get());
+            std::string result = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, op, {node->id, rhs}, result);
+            ir.addInstruction(currentFunc, "assign", {result}, node->id);
+        }
     }
 
     std::string lowerSubscriptGet(const ASTNode* node) {
@@ -569,7 +690,7 @@ private:
         std::string obj = lowerExpr(node->children.size() > 0 ? node->children[0].get() : nullptr);
         std::string idx = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
         std::string res = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyObject_GetItem", obj, idx}, res);
+        ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, idx}, res);
         return res;
     }
 
@@ -752,74 +873,69 @@ private:
     }
 
     std::string lowerListComp(const ASTNode* node) {
-        // List comprehension structure: [elt for target in iter if ifs]
+        // [elt for target in iter if cond ...]
+        // children[0] = elt expression
+        // children[1] = comprehension generator node
         if (node->children.size() < 2) return "";
-        
-        // Create a temporary list variable for the result
-        std::string listVar = "list_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"list_create"}, listVar);
-        
-        // Get the element expression (first child)
         const ASTNode* eltNode = node->children[0].get();
-        std::string eltVal = lowerExpr(eltNode);
-        
-        // Get the generator (second child)
         const ASTNode* genNode = node->children[1].get();
-        if (genNode->type != "comprehension") return "";
-        
-        // Process the generator: target, iter, ifs
-        std::string target = genNode->children[0]->id;  // target variable name
-        std::string iter = lowerExpr(genNode->children[1].get());  // iterator expression
-        
-        // Generate the loop structure for comprehension
-        std::string loopLabel = "list_comp_loop_" + std::to_string(tempCounter++);
-        std::string loopBodyLabel = "list_comp_body_" + std::to_string(tempCounter++);
-        std::string loopEndLabel = "list_comp_end_" + std::to_string(tempCounter++);
-        
-        // Add loop label
-        ir.addInstruction(currentFunc, "label", {}, loopLabel);
-        
-        // Create iterator and check if it has elements
-        std::string iterVar = "iter_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"iter_create", iter}, iterVar);
-        
-        std::string hasNextVar = "has_next_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"iter_has_next", iterVar}, hasNextVar);
-        
-        // Branch to check if we should continue
-        ir.addInstruction(currentFunc, "br", {hasNextVar, loopBodyLabel, loopEndLabel});
-        
-        // Loop body
-        ir.addInstruction(currentFunc, "label", {}, loopBodyLabel);
-        
-        // Get the next value from iterator
-        std::string nextVal = "next_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"iter_next", iterVar}, nextVal);
-        
-        // Assign to target variable
-        ir.addInstruction(currentFunc, "assign", {nextVal}, target);
-        
-        // Handle conditions (ifs)
-        if (genNode->children.size() > 2) {
-            // Process conditions (if clauses) - simple implementation
-            for (size_t i = 2; i < genNode->children.size(); ++i) {
-                std::string cond = lowerExpr(genNode->children[i].get());
-                std::string condLabel = "cond_" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "br", {cond, condLabel, loopEndLabel});
-                ir.addInstruction(currentFunc, "label", {}, condLabel);
-            }
+        if (!genNode || genNode->type != "comprehension" || genNode->children.size() < 2)
+            return "";
+
+        // Create result list
+        std::string sc = "c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, sc);
+        std::string listVar = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, listVar);
+
+        // Evaluate iterator once
+        std::string iterVal = lowerExpr(genNode->children[1].get());
+        std::string lenRes  = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterVal}, lenRes);
+
+        // Index variable (unique name to avoid clashes)
+        std::string idxVar  = "lc_i_" + std::to_string(tempCounter++);
+        std::string idxInit = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
+        ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
+
+        int lc = tempCounter++;
+        std::string loopL = "lc_lp_" + std::to_string(lc);
+        std::string bodyL = "lc_bd_" + std::to_string(lc);
+        std::string contL = "lc_ct_" + std::to_string(lc);
+        std::string exitL = "lc_ex_" + std::to_string(lc);
+
+        ir.addInstruction(currentFunc, "label", {}, loopL);
+        std::string cmpR = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpR);
+        ir.addInstruction(currentFunc, "br", {cmpR, bodyL, exitL});
+
+        ir.addInstruction(currentFunc, "label", {}, bodyL);
+        std::string item = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", iterVal, idxVar}, item);
+        ir.addInstruction(currentFunc, "assign", {item}, genNode->children[0]->id);
+
+        // Conditions: if any is false, jump to contL (skip append)
+        for (size_t ci = 2; ci < genNode->children.size(); ++ci) {
+            std::string trueL = "lc_ci_" + std::to_string(tempCounter++);
+            std::string condV = lowerExpr(genNode->children[ci].get());
+            ir.addInstruction(currentFunc, "br", {condV, trueL, contL});
+            ir.addInstruction(currentFunc, "label", {}, trueL);
         }
-        
-        // Add element to list
-        ir.addInstruction(currentFunc, "call", {"list_append", listVar, eltVal}, "");
-        
-        // Continue loop
-        ir.addInstruction(currentFunc, "br", {}, loopLabel);
-        
-        // Loop end
-        ir.addInstruction(currentFunc, "label", {}, loopEndLabel);
-        
-        // Return the list
+
+        // Evaluate element in loop context and append
+        std::string eltVal = lowerExpr(eltNode);
+        ir.addInstruction(currentFunc, "call", {"PyList_Append", listVar, eltVal}, "");
+
+        // Fall through to contL
+        ir.addInstruction(currentFunc, "label", {}, contL);
+        std::string one = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"1"}, one);
+        std::string nxt = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "add", {idxVar, one}, nxt);
+        ir.addInstruction(currentFunc, "assign", {nxt}, idxVar);
+        ir.addInstruction(currentFunc, "br", {}, loopL);
+        ir.addInstruction(currentFunc, "label", {}, exitL);
         return listVar;
     }
 

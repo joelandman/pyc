@@ -129,6 +129,17 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* printNewlineTy = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
     llvm::Function::Create(printNewlineTy, llvm::Function::ExternalLinkage, "PyBuiltin_PrintNewline", module.get());
 
+    // Builtins: min/max, list, enumerate, zip
+    for (const char* name : {"PyBuiltin_MinList","PyBuiltin_MaxList",
+                              "PyBuiltin_List","PyBuiltin_Enumerate"}) {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    for (const char* name : {"PyBuiltin_Min2","PyBuiltin_Max2","PyBuiltin_Zip2"}) {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+
     // Builtins: int, float, abs; string methods; dict/list methods
     for (const char* name : {"PyBuiltin_Int","PyBuiltin_Float","PyBuiltin_Abs",
                               "PyString_Upper","PyString_Lower","PyString_Strip",
@@ -158,16 +169,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     // Subscript / membership / power
     llvm::FunctionType* getItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
-    llvm::Function::Create(getItemTy, llvm::Function::ExternalLinkage, "PyObject_GetItem", module.get());
+    llvm::Function::Create(getItemTy, llvm::Function::ExternalLinkage, "Pyc_GetItem", module.get());
 
     llvm::FunctionType* setItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
-    llvm::Function::Create(setItemTy, llvm::Function::ExternalLinkage, "PyObject_SetItem", module.get());
+    llvm::Function::Create(setItemTy, llvm::Function::ExternalLinkage, "Pyc_SetItem", module.get());
 
     llvm::FunctionType* containsTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
-    llvm::Function::Create(containsTy, llvm::Function::ExternalLinkage, "PyObject_Contains", module.get());
+    llvm::Function::Create(containsTy, llvm::Function::ExternalLinkage, "Pyc_Contains", module.get());
 
     llvm::FunctionType* powerTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
-    llvm::Function::Create(powerTy, llvm::Function::ExternalLinkage, "PyNumber_Power", module.get());
+    llvm::Function::Create(powerTy, llvm::Function::ExternalLinkage, "Pyc_Pow", module.get());
 
     // Boolean / unary ops
     llvm::FunctionType* truthBoxedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
@@ -381,7 +392,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
             } else if (inst.op == "pow") {
-                llvm::Function* fn = module->getFunction("PyNumber_Power");
+                llvm::Function* fn = module->getFunction("Pyc_Pow");
                 llvm::Value* lhs = getOrLoad(inst.operands[0].name);
                 llvm::Value* rhs = getOrLoad(inst.operands[1].name);
                 if (fn) valueMap[inst.result] = builder.CreateCall(fn, {lhs, rhs}, inst.result);
