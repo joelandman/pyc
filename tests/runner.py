@@ -214,6 +214,10 @@ print(a[0],a[1],a[2])
 """, "0 1 4\n"),
     # --- dict subscript set ---
     ('d={}\nd["k"]=99\nprint(d["k"])', "99\n"),
+    # --- global statement ---
+    ("x=0\ndef f():\n    global x\n    x=1\nf()\nprint(x)", "1\n"),
+    ("count=0\ndef inc():\n    global count\n    count=count+1\ninc()\ninc()\ninc()\nprint(count)", "3\n"),
+    ("x=42\ndef f():\n    global x\n    return x\nprint(f())", "42\n"),
 ]
 
 def run(cmd):

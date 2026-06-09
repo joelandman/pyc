@@ -219,6 +219,17 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
             Py_XDECREF(orelse);
         }
+    } else if (node->type == "Global") {
+        // Store the declared global variable names in node->args for the compiler.
+        PyObject* names = PyObject_GetAttrString(pyNode, "names");
+        if (names && PyList_Check(names)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(names); ++i) {
+                PyObject* nm = PyList_GetItem(names, i);
+                const char* s = nm ? PyUnicode_AsUTF8(nm) : nullptr;
+                if (s) node->args.push_back(s);
+            }
+        }
+        Py_XDECREF(names);
     } else if (node->type == "AugAssign") {
         // x += val  →  target, op, value
         PyObject* target = PyObject_GetAttrString(pyNode, "target");

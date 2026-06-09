@@ -181,6 +181,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     // printf no longer used in normal code paths (we use PyObject_Print)
 
+    // Create one LLVM global variable per module-level global name.
+    // Each holds a PyObject* (initialised to null).
+    for (const auto& gname : ir.moduleGlobals) {
+        new llvm::GlobalVariable(
+            *module,
+            pyObjectPtrTy,
+            /*isConstant=*/false,
+            llvm::GlobalValue::InternalLinkage,
+            llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0)),
+            "pyc_global_" + gname);
+    }
+
     for (const auto& f : ir.functions) {
         std::vector<llvm::Type*> argTypes(f.args.size(), pyObjectPtrTy);
         llvm::FunctionType* funcType = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
@@ -199,6 +211,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             arg->setName(f.args[i]);
             valueMap[f.args[i]] = arg;
         }
+        // Pre-populate global variables (after params so params shadow globals).
+        for (const auto& gname : f.globalVars) {
+            if (valueMap.count(gname)) continue;   // param with same name — skip
+            llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + gname);
+            if (gv) valueMap[gname] = gv;
+        }
 
         std::unordered_map<std::string, llvm::BasicBlock*> blockMap;
         blockMap["entry"] = entry;
@@ -214,9 +232,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         auto getOrLoad = [&](const std::string& name) -> llvm::Value* {
             auto it = valueMap.find(name);
             if (it == valueMap.end()) return llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0));
-            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(it->second)) {
+            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(it->second))
                 return builder.CreateLoad(pyObjectPtrTy, alloca, name + ".load");
-            }
+            if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(it->second))
+                return builder.CreateLoad(pyObjectPtrTy, gv, name + ".load");
             return it->second;
         };
 

@@ -23,6 +23,11 @@ public:
             ir.addFunction("main", {});
             currentFunc = "main";
             tempCounter = 0;
+            // Pre-scan: collect all global-declared variable names so main and
+            // functions can share module-level storage for those variables.
+            collectGlobalDecls(node);
+            // main inherits all module globals (top-level code IS the module scope).
+            ir.setFunctionGlobals("main", ir.moduleGlobals);
             for (const auto& c : node->children) {
                 lower(c.get());
             }
@@ -30,6 +35,15 @@ public:
             std::string saved = currentFunc;
             ir.addFunction(node->id, node->args);
             funcParamNames[node->id] = node->args;
+
+            // Collect this function's global declarations (scan body before lowering).
+            std::vector<std::string> funcGlobals = scanFuncGlobals(node);
+            // Remove names that are also parameters (params shadow globals).
+            for (const auto& p : node->args) {
+                funcGlobals.erase(std::remove(funcGlobals.begin(), funcGlobals.end(), p),
+                                  funcGlobals.end());
+            }
+            ir.setFunctionGlobals(node->id, funcGlobals);
 
             // Count defaults and collect their values
             std::vector<std::string> defaults;
@@ -60,6 +74,9 @@ public:
             ir.addInstruction(currentFunc, "br", {}, loopBreakLabel);
         } else if (node->type == "Continue") {
             ir.addInstruction(currentFunc, "br", {}, loopContinueLabel);
+        } else if (node->type == "Global") {
+            // Declaration only — already collected in pre-scan, no IR emitted.
+            return;
         } else if (node->type == "AugAssign") {
             lowerAugAssign(node);
         } else if (node->type == "Assign") {
@@ -150,6 +167,26 @@ private:
     std::unordered_map<std::string, int> funcDefaultCount;
     std::unordered_map<std::string, std::vector<std::string>> funcDefaultValues;
     std::unordered_map<std::string, std::vector<std::string>> funcParamNames;
+
+    // Recursively collect all names from `global` statements in the subtree.
+    void collectGlobalDecls(const ASTNode* node) {
+        if (!node) return;
+        if (node->type == "Global") {
+            for (const auto& name : node->args) ir.addModuleGlobal(name);
+        }
+        for (const auto& c : node->children) collectGlobalDecls(c.get());
+    }
+
+    // Collect names from `global` statements that are direct descendants of a FunctionDef.
+    std::vector<std::string> scanFuncGlobals(const ASTNode* funcNode) {
+        std::vector<std::string> result;
+        for (const auto& c : funcNode->children) {
+            if (c && c->type == "Global") {
+                for (const auto& name : c->args) result.push_back(name);
+            }
+        }
+        return result;
+    }
 
     std::string lowerBinOp(const ASTNode* node) {
         std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());

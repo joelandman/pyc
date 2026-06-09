@@ -34,4 +34,16 @@ void ModuleIR::addInstructionRaw(const std::string& funcName, const std::string&
     }
 }
 
+void ModuleIR::setFunctionGlobals(const std::string& funcName,
+                                   const std::vector<std::string>& globals) {
+    auto it = std::find_if(functions.begin(), functions.end(),
+                           [&](const IRFunction& f){ return f.name == funcName; });
+    if (it != functions.end()) it->globalVars = globals;
+}
+
+void ModuleIR::addModuleGlobal(const std::string& name) {
+    if (std::find(moduleGlobals.begin(), moduleGlobals.end(), name) == moduleGlobals.end())
+        moduleGlobals.push_back(name);
+}
+
 } // namespace pyc
