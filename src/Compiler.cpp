@@ -90,15 +90,16 @@ public:
         if (node->type == "Constant") {
             std::string res = "c" + std::to_string(tempCounter++);
             std::string val = node->value;
-            // Quote strings so codegen can distinguish them from numbers
-            if (!val.empty() && val.find_first_of("\"'") == std::string::npos) {
-                // crude heuristic: if it contains non-digits, treat as string
-                bool isNum = val.find_first_not_of("0123456789+-") == std::string::npos;
-                if (!isNum) {
-                    val = "\"" + val + "\"";
+            if (node->is_float) {
+                ir.addInstruction(currentFunc, "fconst", {val}, res);
+            } else {
+                // Quote strings so codegen can distinguish them from numbers
+                if (!val.empty() && val.find_first_of("\"'") == std::string::npos) {
+                    bool isNum = val.find_first_not_of("0123456789+-") == std::string::npos;
+                    if (!isNum) val = "\"" + val + "\"";
                 }
+                ir.addInstruction(currentFunc, "const", {val}, res);
             }
-            ir.addInstruction(currentFunc, "const", {val}, res);
             return res;
         } else if (node->type == "Name") {
             return node->id;
@@ -139,7 +140,8 @@ private:
         if (op == "Add") op = "add";
         else if (op == "Sub") op = "sub";
         else if (op == "Mult") op = "mul";
-        else if (op == "Div" || op == "FloorDiv") op = "div";
+        else if (op == "FloorDiv") op = "div";
+        else if (op == "Div") op = "truediv";
         else if (op == "Mod") op = "mod";
         ir.addInstruction(currentFunc, op, {left, right}, res);
         return res;
@@ -182,11 +184,42 @@ private:
             }
         }
         // Simple default injection: if no args provided and function has defaults, use them
-        if (argRes.empty()) {
+        // Only use defaults when we have no positional args AND no keyword args
+        if (argRes.empty() && kwArgs.empty()) {
             auto it = funcDefaultValues.find(funcName);
             if (it != funcDefaultValues.end()) {
                 argRes = it->second;
             }
+        }
+
+        // Normalize range(stop), range(start,stop), range(start,stop,step)
+        // → always call PyBuiltin_Range(start, stop, step) with 3 PyObject* args
+        if (funcName == "range") {
+            std::string startRes, stopRes, stepRes;
+            if (argRes.size() == 1) {
+                startRes = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, startRes);
+                stopRes  = argRes[0];
+                stepRes  = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"1"}, stepRes);
+            } else if (argRes.size() == 2) {
+                startRes = argRes[0];
+                stopRes  = argRes[1];
+                stepRes  = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"1"}, stepRes);
+            } else if (argRes.size() >= 3) {
+                startRes = argRes[0];
+                stopRes  = argRes[1];
+                stepRes  = argRes[2];
+            } else {
+                // range() with no args → empty list
+                startRes = stopRes = stepRes = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, startRes);
+            }
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call",
+                              {"PyBuiltin_Range", startRes, stopRes, stepRes}, res);
+            return res;
         }
 
         std::string res = "t" + std::to_string(tempCounter++);
@@ -233,15 +266,22 @@ private:
     }
 
     void lowerFor(const ASTNode* node) {
-        // Simple list-based for: for target in <list-expr>:
-        if (node->children.size() < 2) return;
-        std::string listVal = lowerExpr(node->children[1].get());           // iterator list
-        std::string lenRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_Size", listVal}, lenRes);
+        // For AST layout (from buildAST):
+        //   node->id        = target variable name  (e.g. "i")
+        //   children[0]     = iter expression       (e.g. Call(range,5))
+        //   children[1..n]  = body statements
+        if (node->children.empty()) return;
+        std::string listVal = lowerExpr(node->children[0].get());  // iter
 
-        std::string idx = node->id + "_idx";   // synthetic index var
-        ir.addInstruction(currentFunc, "const", {"0"}, idx);
-        ir.addInstruction(currentFunc, "assign", {idx}, idx);
+        // Boxed length: PyList_SizeBoxed returns PyObject*(int)
+        std::string lenRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", listVal}, lenRes);
+
+        // Use a fresh temp for the initial 0 to avoid name collision with the alloca.
+        std::string idxVar  = node->id + "__idx";     // alloca variable name
+        std::string idxInit = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
+        ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
 
         std::string loopLabel = "for_loop_" + std::to_string(tempCounter);
         std::string bodyLabel = "for_body_" + std::to_string(tempCounter);
@@ -250,25 +290,23 @@ private:
 
         ir.addInstruction(currentFunc, "label", {}, loopLabel);
         std::string cmpRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {"Lt", idx, lenRes}, cmpRes);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpRes);
         ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
 
         ir.addInstruction(currentFunc, "label", {}, bodyLabel);
         std::string itemRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_GetItem", listVal, idx}, itemRes);
-        ir.addInstruction(currentFunc, "assign", {itemRes}, node->children[0]->id);  // target
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, idxVar}, itemRes);
+        ir.addInstruction(currentFunc, "assign", {itemRes}, node->id);  // target = node->id
 
-        // body statements start at child 2
-        for (size_t i = 2; i < node->children.size(); ++i) {
+        for (size_t i = 1; i < node->children.size(); ++i)  // body starts at children[1]
             lower(node->children[i].get());
-        }
 
-        // idx = idx + 1
+        // idxVar = idxVar + 1
         std::string oneRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "const", {"1"}, oneRes);
         std::string nextIdx = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "add", {idx, oneRes}, nextIdx);
-        ir.addInstruction(currentFunc, "assign", {nextIdx}, idx);
+        ir.addInstruction(currentFunc, "add", {idxVar, oneRes}, nextIdx);
+        ir.addInstruction(currentFunc, "assign", {nextIdx}, idxVar);
 
         ir.addInstruction(currentFunc, "br", {}, loopLabel);
         ir.addInstruction(currentFunc, "label", {}, exitLabel);
@@ -326,7 +364,7 @@ private:
 
     std::string lowerListComp(const ASTNode* node) {
         // List comprehension structure: [elt for target in iter if ifs]
-        if (node->children.size() < 2) return;
+        if (node->children.size() < 2) return "";
         
         // Create a temporary list variable for the result
         std::string listVar = "list_" + std::to_string(tempCounter++);
@@ -338,7 +376,7 @@ private:
         
         // Get the generator (second child)
         const ASTNode* genNode = node->children[1].get();
-        if (genNode->type != "comprehension") return;
+        if (genNode->type != "comprehension") return "";
         
         // Process the generator: target, iter, ifs
         std::string target = genNode->children[0]->id;  // target variable name

@@ -38,8 +38,16 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         if (v) {
             if (PyLong_Check(v)) {
                 node->value = std::to_string(PyLong_AsLong(v));
+                node->is_float = false;
+            } else if (PyFloat_Check(v)) {
+                double d = PyFloat_AsDouble(v);
+                char buf[64];
+                snprintf(buf, sizeof(buf), "%.17g", d);
+                node->value = buf;
+                node->is_float = true;
             } else {
                 node->value = getPyString(pyNode, "value");
+                node->is_float = false;
             }
             Py_DECREF(v);
         }
@@ -86,33 +94,47 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                     node->args.push_back(getPyString(arg, "arg"));
                 }
             }
-            // Handle default arguments
+            // Handle default arguments — wrap the expression as a child of Default
             PyObject* defaults = PyObject_GetAttrString(a, "defaults");
             if (defaults && PyList_Check(defaults)) {
                 for (Py_ssize_t i = 0; i < PyList_Size(defaults); ++i) {
                     PyObject* d = PyList_GetItem(defaults, i);
                     auto defNode = std::make_unique<ASTNode>();
-                    buildAST(d, defNode.get());
                     defNode->type = "Default";
+                    auto valueChild = std::make_unique<ASTNode>();
+                    buildAST(d, valueChild.get());
+                    defNode->children.push_back(std::move(valueChild));
                     node->children.push_back(std::move(defNode));
                 }
             }
             Py_XDECREF(defaults);
-            
-            // Handle *args and **kwargs
+
+            // Handle *args and **kwargs — check for None (absent) before pushing
             PyObject* vararg = PyObject_GetAttrString(a, "vararg");
-            if (vararg) {
+            if (vararg && vararg != Py_None) {
                 node->args.push_back("*" + getPyString(vararg, "arg"));
-                Py_DECREF(vararg);
             }
+            Py_XDECREF(vararg);
             PyObject* kwarg = PyObject_GetAttrString(a, "kwarg");
-            if (kwarg) {
+            if (kwarg && kwarg != Py_None) {
                 node->args.push_back("**" + getPyString(kwarg, "arg"));
-                Py_DECREF(kwarg);
             }
-            
+            Py_XDECREF(kwarg);
+
             Py_XDECREF(argList); Py_DECREF(a);
         }
+        // Always process body statements — cannot rely on the generic children.empty()
+        // check because Default nodes are added to children above.
+        PyObject* body = PyObject_GetAttrString(pyNode, "body");
+        if (body && PyList_Check(body)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(body); ++i) {
+                PyObject* item = PyList_GetItem(body, i);
+                auto child = std::make_unique<ASTNode>();
+                buildAST(item, child.get());
+                node->children.push_back(std::move(child));
+            }
+        }
+        Py_XDECREF(body);
     } else if (node->type == "Call") {
         PyObject* func = PyObject_GetAttrString(pyNode, "func");
         if (func) {
@@ -142,7 +164,10 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 if (arg && value) {
                     auto kwNode = std::make_unique<ASTNode>();
                     kwNode->type = "Keyword";
-                    kwNode->id = getPyString(arg, "arg");  // keyword name
+                    // arg is a PyUnicode string (the keyword name), not an object with a .arg attr
+                    kwNode->id = (arg && arg != Py_None && PyUnicode_Check(arg))
+                                 ? (PyUnicode_AsUTF8(arg) ? PyUnicode_AsUTF8(arg) : "")
+                                 : "";
                     auto valChild = std::make_unique<ASTNode>();
                     buildAST(value, valChild.get());
                     kwNode->children.push_back(std::move(valChild));

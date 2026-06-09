@@ -11,6 +11,7 @@ struct ASTNode {
     std::string op;
     std::string id;
     int lineno = 0;
+    bool is_float = false;
     std::vector<std::string> args;
     std::vector<std::unique_ptr<ASTNode>> children;
 };

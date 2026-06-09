@@ -29,7 +29,13 @@ PyObject* PyDict_GetItem(PyObject* dict, PyObject* key);
 PyObject* PyList_Append(PyObject* list, PyObject* item);
 PyObject* PyList_FromArray(PyObject** items, size_t size);
 PyObject* PyList_Range(int start, int end);
+PyObject* PyList_SizeBoxed(PyObject* list);
+PyObject* PyList_GetItemObj(PyObject* list, PyObject* idx);
 PyObject* PyList_Comprehension(int start, int end);
+PyObject* PyFloat_FromDouble(double v);
+PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b);
+PyObject* PyBuiltin_Range(PyObject* start, PyObject* stop, PyObject* step);
+int       PyObject_CompareBool(PyObject* a, PyObject* b, int op);
 void      PyErr_Print(void);
 
 void* pyc_alloc(size_t size);

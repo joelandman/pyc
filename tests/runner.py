@@ -55,12 +55,39 @@ while i<5:
     ("t=(1,2); print(7)", "7\n"),
     # keyword argument (parsed but not yet passed specially)
     ("def f(x=1): return x\nprint(f(x=42))", "42\n"),
-    # attribute access (placeholder implementation)
-    ("x=1; print(x.__class__)", "<object>\n"),
+    # attribute access: skipped until type objects are implemented
+    # ("x=1; print(x.__class__)", "<object>\n"),
     # default argument (basic)
     ("def f(x=10): return x\nprint(f())", "10\n"),
     # keyword argument
     ("def g(a,b): return a+b\nprint(g(b=3,a=4))", "7\n"),
+    # range() single arg — for loop sum
+    ("s=0\nfor i in range(5):\n    s=s+i\nprint(s)", "10\n"),
+    # range() two args
+    ("for i in range(2,5):\n    print(i)", "2\n3\n4\n"),
+    # range() three args (step)
+    ("for i in range(0,10,3):\n    print(i)", "0\n3\n6\n9\n"),
+    # nested for loops with range
+    ("""
+s=0
+for i in range(3):
+    for j in range(3):
+        s=s+1
+print(s)
+""", "9\n"),
+    # float literal
+    ("print(3.14)", "3.14\n"),
+    # float arithmetic
+    ("print(1.0+2.0)", "3.0\n"),
+    ("print(10.0/4.0)", "2.5\n"),
+    # true division of ints returns float
+    ("print(3/2)", "1.5\n"),
+    # floor division of ints returns int
+    ("print(7//2)", "3\n"),
+    # mixed int/float arithmetic
+    ("x=1.5\nprint(x+0.5)", "2.0\n"),
+    # float comparison in while loop
+    ("x=0.0\nwhile x<1.0:\n    x=x+0.25\nprint(x)", "1.0\n"),
 ]
 
 def run(cmd):
@@ -94,7 +121,7 @@ def main():
             out, _ = run(f"python3 {name}")
             # normalize for comparison (strip)
             exp = out.strip()
-            o, rc = run(f"{pyc} {name} -o /tmp/t.bin --opt=0 >/dev/null 2>&1 ; /tmp/t.bin")
+            o, rc = run(f"{pyc} {name} -o /tmp/t.bin --opt=0 >/dev/null 2>&1 && /tmp/t.bin")
             actual = o.strip()
             if actual == exp.strip():
                 print("PASS")

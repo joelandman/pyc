@@ -24,11 +24,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     auto module = std::make_unique<llvm::Module>(moduleName, context);
     llvm::IRBuilder<> builder(context);
 
-    // PyObject struct layout (must match Runtime.cpp)
+    // PyObject struct layout (must match Runtime.cpp flat struct)
+    // Fields: refcount(i32), type(i32), value(i64), dvalue(double)
     llvm::StructType* pyObjectTy = llvm::StructType::create(context, {
-        llvm::Type::getInt32Ty(context),   // refcount
-        llvm::Type::getInt32Ty(context),   // type
-        llvm::Type::getInt64Ty(context)    // value
+        llvm::Type::getInt32Ty(context),    // [0] refcount
+        llvm::Type::getInt32Ty(context),    // [1] type
+        llvm::Type::getInt64Ty(context),    // [2] value  (int)
+        llvm::Type::getDoubleTy(context),   // [3] dvalue (float)
     }, "PyObject");
 
     llvm::PointerType* pyObjectPtrTy = llvm::PointerType::get(context, 0);
@@ -45,6 +47,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     llvm::FunctionType* listSizeTy = llvm::FunctionType::get(llvm::Type::getInt64Ty(context), {pyObjectPtrTy}, false);
     llvm::Function::Create(listSizeTy, llvm::Function::ExternalLinkage, "PyList_Size", module.get());
+
+    // Boxed wrappers: return/accept PyObject* so for-loops stay in the PyObject* world
+    llvm::FunctionType* listSizeBoxedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(listSizeBoxedTy, llvm::Function::ExternalLinkage, "PyList_SizeBoxed", module.get());
+
+    llvm::FunctionType* listGetItemObjTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(listGetItemObjTy, llvm::Function::ExternalLinkage, "PyList_GetItemObj", module.get());
 
     llvm::FunctionType* listSetItemTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), pyObjectPtrTy}, false);
     llvm::Function::Create(listSetItemTy, llvm::Function::ExternalLinkage, "PyList_SetItem", module.get());
@@ -79,6 +88,21 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     llvm::FunctionType* objectPrintTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pyObjectPtrTy, int8PtrTy}, false);
     llvm::Function::Create(objectPrintTy, llvm::Function::ExternalLinkage, "PyObject_Print", module.get());
+
+    llvm::FunctionType* fromDoubleTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getDoubleTy(context)}, false);
+    llvm::Function::Create(fromDoubleTy, llvm::Function::ExternalLinkage, "PyFloat_FromDouble", module.get());
+
+    llvm::FunctionType* trueDivTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(trueDivTy, llvm::Function::ExternalLinkage, "PyNumber_TrueDivide", module.get());
+
+    llvm::FunctionType* rangeTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(rangeTy, llvm::Function::ExternalLinkage, "PyBuiltin_Range", module.get());
+
+    // int PyObject_CompareBool(PyObject* a, PyObject* b, int op)
+    llvm::FunctionType* cmpBoolTy = llvm::FunctionType::get(
+        llvm::Type::getInt32Ty(context),
+        {pyObjectPtrTy, pyObjectPtrTy, llvm::Type::getInt32Ty(context)}, false);
+    llvm::Function::Create(cmpBoolTy, llvm::Function::ExternalLinkage, "PyObject_CompareBool", module.get());
 
     // printf no longer used in normal code paths (we use PyObject_Print)
 
@@ -168,48 +192,39 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
                 continue;
             } else if (inst.op == "icmp") {
+                // Dispatch to PyObject_CompareBool so both int and float work.
+                // op codes: 0=Eq, 1=NotEq, 2=Lt, 3=Gt, 4=LtE, 5=GtE
                 std::string opstr = inst.operands.empty() ? "" : inst.operands[0].name;
-                llvm::CmpInst::Predicate pred = llvm::CmpInst::ICMP_EQ;
-                if (opstr == "Gt" || opstr == "gt") pred = llvm::CmpInst::ICMP_SGT;
-                else if (opstr == "Lt" || opstr == "lt") pred = llvm::CmpInst::ICMP_SLT;
-                else if (opstr == "Eq" || opstr == "eq") pred = llvm::CmpInst::ICMP_EQ;
-                else if (opstr == "GtE") pred = llvm::CmpInst::ICMP_SGE;
-                else if (opstr == "LtE") pred = llvm::CmpInst::ICMP_SLE;
-                else if (opstr == "NotEq") pred = llvm::CmpInst::ICMP_NE;
+                int opcode = 0;
+                if      (opstr == "Eq"    || opstr == "eq") opcode = 0;
+                else if (opstr == "NotEq" || opstr == "ne") opcode = 1;
+                else if (opstr == "Lt"    || opstr == "lt") opcode = 2;
+                else if (opstr == "Gt"    || opstr == "gt") opcode = 3;
+                else if (opstr == "LtE")                    opcode = 4;
+                else if (opstr == "GtE")                    opcode = 5;
 
                 llvm::Value* lhsBox = getOrLoad(inst.operands.size() > 1 ? inst.operands[1].name : "");
                 llvm::Value* rhsBox = getOrLoad(inst.operands.size() > 2 ? inst.operands[2].name : "");
 
-                // Unbox: GEP to the 'value' field (index 2) and load it
-                llvm::Value* lhsVal = unboxToI64(lhsBox);
-                llvm::Value* rhsVal = unboxToI64(rhsBox);
-
-                llvm::Value* rawCmp = builder.CreateICmp(pred, lhsVal, rhsVal);
-
-                // Box the comparison result as PyInt (0 or 1)
+                llvm::Function* cmpFn = module->getFunction("PyObject_CompareBool");
                 llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
-                llvm::Value* boxedCmp;
-                if (fromLong) {
-                    llvm::Value* oneOrZero = builder.CreateSelect(
-                        rawCmp,
-                        llvm::ConstantInt::get(context, llvm::APInt(64, 1)),
-                        llvm::ConstantInt::get(context, llvm::APInt(64, 0))
-                    );
-                    boxedCmp = builder.CreateCall(fromLong, {oneOrZero}, inst.result);
-                } else {
-                    boxedCmp = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                llvm::Value* boxedCmp = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                if (cmpFn && fromLong) {
+                    llvm::Value* cmpResult = builder.CreateCall(cmpFn, {
+                        lhsBox, rhsBox,
+                        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), opcode)
+                    });
+                    llvm::Value* ext = builder.CreateZExt(cmpResult, llvm::Type::getInt64Ty(context));
+                    boxedCmp = builder.CreateCall(fromLong, {ext}, inst.result);
                 }
-
                 valueMap[inst.result] = boxedCmp;
                 continue;
             }
             if (inst.op == "const") {
                 std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
                 if (!val.empty() && (val[0] == '"' || val[0] == '\'')) {
-                    // string constant
                     llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
                     if (fromStr) {
-                        // strip quotes
                         std::string s = val.substr(1, val.size() - 2);
                         llvm::Value* strConst = builder.CreateGlobalStringPtr(s, "str");
                         llvm::Value* boxed = builder.CreateCall(fromStr, {strConst}, inst.result);
@@ -219,9 +234,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     long v = std::stol(val);
                     llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
                     if (fromLong) {
-                        llvm::Value* boxed = builder.CreateCall(fromLong, {llvm::ConstantInt::get(context, llvm::APInt(64, v))}, inst.result);
+                        llvm::Value* boxed = builder.CreateCall(fromLong,
+                            {llvm::ConstantInt::get(context, llvm::APInt(64, v))}, inst.result);
                         valueMap[inst.result] = boxed;
                     }
+                }
+            } else if (inst.op == "fconst") {
+                double v = std::stod(inst.operands.empty() ? "0" : inst.operands[0].name);
+                llvm::Function* fromDouble = module->getFunction("PyFloat_FromDouble");
+                if (fromDouble) {
+                    llvm::Value* boxed = builder.CreateCall(fromDouble,
+                        {llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), v)}, inst.result);
+                    valueMap[inst.result] = boxed;
                 }
             } else if (inst.op == "add") {
                 llvm::Function* numberAdd = module->getFunction("PyNumber_Add");
@@ -249,6 +273,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 llvm::Value* rhs = getOrLoad(inst.operands[1].name);
                 if (numberDiv) {
                     llvm::Value* quot = builder.CreateCall(numberDiv, {lhs, rhs}, inst.result);
+                    valueMap[inst.result] = quot;
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            } else if (inst.op == "truediv") {
+                llvm::Function* numberTrueDiv = module->getFunction("PyNumber_TrueDivide");
+                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
+                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                if (numberTrueDiv) {
+                    llvm::Value* quot = builder.CreateCall(numberTrueDiv, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = quot;
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
