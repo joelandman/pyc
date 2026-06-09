@@ -120,6 +120,13 @@ for i in range(3):
     s=s+str(i)
 print(s)
 """, "012\n"),
+    # --- print() with multiple arguments ---
+    ("print(1, 2, 3)", "1 2 3\n"),
+    ('print("hello", "world")', "hello world\n"),
+    ("print(1, 2.5, \"hi\")", "1 2.5 hi\n"),
+    ("print()", "\n"),
+    ('x=10\nprint("x =", x)', "x = 10\n"),
+    ("a=1\nb=2\nprint(a+b, a*b)", "3 2\n"),
 ]
 
 def run(cmd):

@@ -275,6 +275,11 @@ PyObject* PyString_Repeat(PyObject* s, PyObject* n) {
     return PyUnicode_FromString(r.c_str());
 }
 
+PyObject* PyBuiltin_PrintNewline(void) {
+    printf("\n");
+    return PyInt_FromLong(0);
+}
+
 PyObject* PyBuiltin_Len(PyObject* obj) {
     if (!obj) return PyInt_FromLong(0);
     if (obj->type == 1) return PyInt_FromLong((long)obj->list.size());

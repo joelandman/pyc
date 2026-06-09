@@ -195,6 +195,34 @@ private:
             }
         }
 
+        // print() with no args → bare newline
+        if (funcName == "print" && argRes.empty() && kwArgs.empty()) {
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_PrintNewline"}, res);
+            return res;
+        }
+
+        // print(a, b, c, ...) → build space-separated string, then single-arg print
+        if (funcName == "print" && argRes.size() > 1) {
+            // Convert first arg to its string representation
+            std::string acc = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", argRes[0]}, acc);
+            for (size_t i = 1; i < argRes.size(); ++i) {
+                std::string sp = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\" \""}, sp);
+                std::string withSep = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyString_Concat", acc, sp}, withSep);
+                std::string argStr = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", argRes[i]}, argStr);
+                acc = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyString_Concat", withSep, argStr}, acc);
+            }
+            // Route through the normal single-arg print path in codegen
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"print", acc}, res);
+            return res;
+        }
+
         // len(obj) → PyBuiltin_Len(obj)
         if (funcName == "len") {
             std::string arg = argRes.empty() ? "" : argRes[0];
