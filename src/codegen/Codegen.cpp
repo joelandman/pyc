@@ -221,8 +221,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             llvm::Value* arg = func->getArg(i);
             if (!f.args[i].empty()) {
                 arg->setName(f.args[i]);
+                valueMap[f.args[i]] = arg;
+            } else {
+                // Use a synthetic name if args are empty
+                std::string synthName = "arg" + std::to_string(i);
+                arg->setName(synthName);
+                valueMap[synthName] = arg;
             }
-            valueMap[f.args[i]] = arg;
         }
         // Pre-populate global variables (after params so params shadow globals).
         for (const auto& gname : f.globalVars) {
