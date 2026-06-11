@@ -205,6 +205,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     }
 
     for (const auto& f : ir.functions) {
+        if (f.name.empty()) continue;  // Skip functions without names
         std::vector<llvm::Type*> argTypes(f.args.size(), pyObjectPtrTy);
         llvm::FunctionType* funcType = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
         llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, f.name, module.get());
