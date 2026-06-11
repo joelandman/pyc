@@ -219,7 +219,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         std::unordered_map<std::string, llvm::Value*> valueMap;
         for (size_t i = 0; i < f.args.size(); ++i) {
             llvm::Value* arg = func->getArg(i);
-            arg->setName(f.args[i]);
+            if (!f.args[i].empty()) {
+                arg->setName(f.args[i]);
+            }
             valueMap[f.args[i]] = arg;
         }
         // Pre-populate global variables (after params so params shadow globals).
