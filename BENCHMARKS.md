@@ -33,10 +33,19 @@ The compiler should achieve **50x speedup** over CPython for this benchmark.
 
 Current known issues that impact performance:
 
+- **Compiler segfaults**: The compiler crashes with nbody.py due to AST parsing issues
 - `import` / module system not implemented (sys.argv not supported)
 - Tuple unpacking in nested loops may cause segfaults
 - Excessive heap allocations due to PyObject* boxing
 - High sys time due to memory allocation overhead
+
+## Workaround
+
+As a workaround, use simplified versions of nbody that avoid:
+- Tuple unpacking in nested for loops
+- Module-level list/dict creation with complex expressions
+
+Example: see `/tmp/nbody_simple.py` in development tests.
 
 ### Notes
 
