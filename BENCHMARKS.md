@@ -29,17 +29,27 @@ python3 tests/nbody.py 5000000
 
 The compiler should achieve **50x speedup** over CPython for this benchmark.
 
-### Known Limitations
+### Current Status
+
+**CRITICAL ISSUE: Compiler crashes during Python initialization.**
+
+The compiler crashes during `Py_Initialize()` or `Py_InitializeFromConfig()` when
+trying to parse Python source code. This happens even with simple test files.
+
+- The crash occurs in `PyObject_GetIter()` during Python type initialization
+- This is likely a Python C API embedding issue
+- The issue needs to be investigated before benchmarking can proceed
+
+### Known Limitations (after fixing initialization)
 
 Current known issues that impact performance:
 
-- **Compiler segfaults**: The compiler crashes with nbody.py due to AST parsing issues
 - `import` / module system not implemented (sys.argv not supported)
 - Tuple unpacking in nested loops may cause segfaults
 - Excessive heap allocations due to PyObject* boxing
 - High sys time due to memory allocation overhead
 
-## Workaround
+## Workaround (after fixing initialization)
 
 As a workaround, use simplified versions of nbody that avoid:
 - Tuple unpacking in nested for loops
