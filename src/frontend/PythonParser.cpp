@@ -14,7 +14,7 @@ std::string readFile(const std::string& path) {
 }
 
 std::string getPyString(PyObject* obj, const char* attr) {
-    PyObject* a = PyObject_GetAttrString(obj, attr);
+    PyObject* a = PyObject_GetOptionalAttrString(obj, attr);
     if (!a) return "";
     std::string s = PyUnicode_AsUTF8(a) ? PyUnicode_AsUTF8(a) : "";
     Py_DECREF(a);
@@ -22,7 +22,7 @@ std::string getPyString(PyObject* obj, const char* attr) {
 }
 
 int getPyInt(PyObject* obj, const char* attr) {
-    PyObject* a = PyObject_GetAttrString(obj, attr);
+    PyObject* a = PyObject_GetOptionalAttrString(obj, attr);
     int v = a ? PyLong_AsLong(a) : 0;
     Py_XDECREF(a);
     return v;
