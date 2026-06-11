@@ -14,16 +14,18 @@ std::string readFile(const std::string& path) {
 }
 
 std::string getPyString(PyObject* obj, const char* attr) {
-    PyObject* a = PyObject_GetOptionalAttrString(obj, attr);
-    if (!a) return "";
+    PyObject* a = nullptr;
+    int result = PyObject_GetOptionalAttrString(obj, attr, &a);
+    if (result != 1 || !a) return "";
     std::string s = PyUnicode_AsUTF8(a) ? PyUnicode_AsUTF8(a) : "";
     Py_DECREF(a);
     return s;
 }
 
 int getPyInt(PyObject* obj, const char* attr) {
-    PyObject* a = PyObject_GetOptionalAttrString(obj, attr);
-    int v = a ? PyLong_AsLong(a) : 0;
+    PyObject* a = nullptr;
+    int result = PyObject_GetOptionalAttrString(obj, attr, &a);
+    int v = (result == 1 && a) ? PyLong_AsLong(a) : 0;
     Py_XDECREF(a);
     return v;
 }
