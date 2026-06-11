@@ -528,6 +528,115 @@ PyObject* Pyc_Pow(PyObject* a, PyObject* b) {
     return PyFloat_FromDouble(pow(numeric_val(a), numeric_val(b)));
 }
 
+PyObject* PyBuiltin_Sum(PyObject* lst) {
+    if (!lst || lst->type != 1) return PyInt_FromLong(0);
+    PyObject* total = PyInt_FromLong(0);
+    for (auto* item : lst->list) {
+        if (!item) continue;
+        PyObject* next = PyNumber_Add(total, item);
+        Py_DECREF(total);
+        total = next ? next : PyInt_FromLong(0);
+    }
+    return total;
+}
+
+PyObject* PyBuiltin_Sorted(PyObject* lst) {
+    if (!lst || lst->type != 1) return PyList_New(0);
+    PyObject* r = PyList_New(lst->list.size());
+    for (size_t i = 0; i < lst->list.size(); ++i) {
+        if (lst->list[i]) Py_INCREF(lst->list[i]);
+        PyList_SetItem(r, i, lst->list[i]);
+    }
+    std::sort(r->list.begin(), r->list.end(), [](PyObject* a, PyObject* b) -> bool {
+        if (!a || !b) return false;
+        return PyObject_CompareBool(a, b, 2) != 0;
+    });
+    return r;
+}
+
+PyObject* PyBuiltin_Any(PyObject* lst) {
+    if (!lst || lst->type != 1) return PyBool_New(0);
+    for (auto* item : lst->list)
+        if (PyObject_TruthValue(item)) return PyBool_New(1);
+    return PyBool_New(0);
+}
+
+PyObject* PyBuiltin_All(PyObject* lst) {
+    if (!lst || lst->type != 1) return PyBool_New(1);
+    for (auto* item : lst->list)
+        if (!PyObject_TruthValue(item)) return PyBool_New(0);
+    return PyBool_New(1);
+}
+
+// typecode: 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool; -1=unknown→True
+PyObject* Pyc_IsInstance(PyObject* obj, PyObject* typecode) {
+    if (!obj) return PyBool_New(0);
+    if (!typecode || typecode->type != 0 || typecode->value < 0)
+        return PyBool_New(1);
+    int code = (int)typecode->value;
+    bool ok = (obj->type == code) ||
+              (code == 0 && obj->type == 5);  // bool is-a int
+    return PyBool_New(ok ? 1 : 0);
+}
+
+PyObject* PyString_Find(PyObject* s, PyObject* sub) {
+    if (!s || s->type != 3 || !sub || sub->type != 3)
+        return PyInt_FromLong(-1);
+    size_t pos = s->str.find(sub->str);
+    return PyInt_FromLong(pos == std::string::npos ? -1L : (long)pos);
+}
+
+PyObject* PyString_Count(PyObject* s, PyObject* sub) {
+    if (!s || s->type != 3 || !sub || sub->type != 3 || sub->str.empty())
+        return PyInt_FromLong(0);
+    long count = 0;
+    size_t pos = 0;
+    while ((pos = s->str.find(sub->str, pos)) != std::string::npos) {
+        ++count; pos += sub->str.size();
+    }
+    return PyInt_FromLong(count);
+}
+
+PyObject* PyString_Replace(PyObject* s, PyObject* old_, PyObject* new_) {
+    if (!s || s->type != 3 || !old_ || old_->type != 3 || !new_ || new_->type != 3)
+        return s ? (Py_INCREF(s), s) : nullptr;
+    std::string result = s->str;
+    const std::string& from = old_->str;
+    const std::string& to   = new_->str;
+    if (from.empty()) return PyUnicode_FromString(result.c_str());
+    size_t pos = 0;
+    while ((pos = result.find(from, pos)) != std::string::npos) {
+        result.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+    return PyUnicode_FromString(result.c_str());
+}
+
+PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop) {
+    if (!obj) return PyList_New(0);
+    long n = (obj->type == 1) ? (long)obj->list.size()
+           : (obj->type == 3) ? (long)obj->str.size() : 0;
+    long s = (start && (start->type==0||start->type==5)) ? start->value : 0;
+    long e = (stop  && (stop->type ==0||stop->type ==5) && stop->value >= 0)
+             ? stop->value : n;
+    if (s < 0) s = std::max(0L, n + s);
+    if (e < 0) e = std::max(0L, n + e);
+    if (s > n) s = n;
+    if (e > n) e = n;
+    if (e < s) e = s;
+    if (obj->type == 1) {
+        PyObject* r = PyList_New(e - s);
+        for (long i = s; i < e; ++i) {
+            if (obj->list[i]) Py_INCREF(obj->list[i]);
+            PyList_SetItem(r, i - s, obj->list[i]);
+        }
+        return r;
+    }
+    if (obj->type == 3)
+        return PyUnicode_FromString(obj->str.substr(s, e - s).c_str());
+    return PyList_New(0);
+}
+
 PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b) {
     if (!a) return (b ? (Py_INCREF(b), b) : nullptr);
     if (!b) return (Py_INCREF(a), a);

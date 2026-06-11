@@ -527,8 +527,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         retVal = builder.CreateCall(fromLong, {llvm::ConstantInt::get(context, llvm::APInt(64, 0))});
                     }
                 }
-                builder.CreateRet(retVal);
-                break;
+                if (!curBlock->getTerminator())
+                    builder.CreateRet(retVal);
+                // No break — continue processing labels/branches for other paths
             }
         }
         if (!curBlock->getTerminator()) {

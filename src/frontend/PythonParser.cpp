@@ -219,8 +219,7 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
             Py_XDECREF(orelse);
         }
-    } else if (node->type == "Global") {
-        // Store the declared global variable names in node->args for the compiler.
+    } else if (node->type == "Global" || node->type == "Nonlocal") {
         PyObject* names = PyObject_GetAttrString(pyNode, "names");
         if (names && PyList_Check(names)) {
             for (Py_ssize_t i = 0; i < PyList_Size(names); ++i) {
@@ -230,6 +229,40 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(names);
+    } else if (node->type == "Lambda") {
+        // Lambda(args, body) — args stored in node->args, body in children[0]
+        PyObject* a = PyObject_GetAttrString(pyNode, "args");
+        if (a) {
+            PyObject* argList = PyObject_GetAttrString(a, "args");
+            if (argList && PyList_Check(argList)) {
+                for (Py_ssize_t i = 0; i < PyList_Size(argList); ++i) {
+                    PyObject* arg = PyList_GetItem(argList, i);
+                    node->args.push_back(getPyString(arg, "arg"));
+                }
+            }
+            Py_XDECREF(argList);
+            Py_DECREF(a);
+        }
+        PyObject* body = PyObject_GetAttrString(pyNode, "body");
+        if (body) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(body, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(body);
+        }
+    } else if (node->type == "Slice") {
+        // Slice(lower, upper, step) — None values stored as nullptr children
+        for (const char* attr : {"lower", "upper"}) {
+            PyObject* v = PyObject_GetAttrString(pyNode, attr);
+            if (v && v != Py_None) {
+                auto child = std::make_unique<ASTNode>();
+                buildAST(v, child.get());
+                node->children.push_back(std::move(child));
+            } else {
+                node->children.push_back(nullptr);  // None → placeholder
+            }
+            Py_XDECREF(v);
+        }
     } else if (node->type == "AugAssign") {
         PyObject* target = PyObject_GetAttrString(pyNode, "target");
         if (target) {
