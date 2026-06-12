@@ -53,6 +53,15 @@ The project was then extended substantially in collaboration with Claude Sonnet 
 - **Symbol conflict fix**: renamed `PyObject_GetItem`/`SetItem`/`Contains`/`PyNumber_Power`
   to `Pyc_GetItem`/`Pyc_SetItem`/`Pyc_Contains`/`Pyc_Pow` to prevent them overriding
   CPython's own symbols during `Py_Initialize` (was causing SIGSEGV in MRO computation)
+- **Linker fix**: removed `pyc_runtime` from the `pyc` compiler target's link libraries
+  in `CMakeLists.txt`. The runtime static lib defines its own `struct PyObject` and
+  re-implements many `Py*` functions (`PyList_New`, `PyDict_New`, `PyFloat_FromDouble`,
+  `PyNumber_*`, etc.) with `extern "C"` linkage. When linked into the compiler binary
+  alongside `libpython`, the static lib's symbols were shadowing libpython's in
+  the linker and clobbering type initialization (`mro_invoke` SIGSEGV in
+  `PyObject_GetIter` with `ob_type == NULL` from mismatched PyObject layouts).
+  The runtime is still built as a static lib and correctly linked into the
+  *compiled output* by the codegen linker step.
 
 Test suite grew from ~5 cases to **137 passing tests** (all vs CPython output).
 

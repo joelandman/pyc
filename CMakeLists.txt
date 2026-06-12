@@ -30,7 +30,7 @@ add_executable(pyc
     src/codegen/Codegen.cpp
 )
 
-target_link_libraries(pyc PRIVATE ${llvm_libs} Python3::Python pyc_runtime)
+target_link_libraries(pyc PRIVATE ${llvm_libs} Python3::Python)
 target_include_directories(pyc PRIVATE include)
 
 install(TARGETS pyc DESTINATION bin)
