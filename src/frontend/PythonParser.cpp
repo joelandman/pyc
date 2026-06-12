@@ -644,8 +644,9 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         // format_spec (e.g. :.2f) — skip for MVP
     }
     if (node->children.empty()) {
-        PyObject* body = PyObject_GetAttrString(pyNode, "body");
-        if (body && PyList_Check(body)) {
+        PyObject* body = nullptr;
+        int bodyRes = PyObject_GetOptionalAttrString(pyNode, "body", &body);
+        if (bodyRes == 1 && body && PyList_Check(body)) {
             for (Py_ssize_t i = 0; i < PyList_Size(body); ++i) {
                 PyObject* item = PyList_GetItem(body, i);
                 auto child = std::make_unique<ASTNode>();
@@ -653,12 +654,21 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 node->children.push_back(std::move(child));
             }
         } else {
-            PyObject* val = PyObject_GetAttrString(pyNode, "value");
-            if (val) {
-                auto child = std::make_unique<ASTNode>();
-                buildAST(val, child.get());
-                node->children.push_back(std::move(child));
-                Py_DECREF(val);
+            // Some AST nodes (e.g. Constant) carry a `value` attribute that is a
+            // Python value (int/float/str/...), not an AST node. Avoid recursively
+            // descending into such values — they are already handled in the
+            // dedicated `Constant` branch above.
+            if (node->type != "Constant" && node->type != "Name" &&
+                node->type != "NameConstant" && node->type != "arg" &&
+                node->type != "alias" && node->type != "Slice") {
+                PyObject* val = nullptr;
+                int valRes = PyObject_GetOptionalAttrString(pyNode, "value", &val);
+                if (valRes == 1 && val) {
+                    auto child = std::make_unique<ASTNode>();
+                    buildAST(val, child.get());
+                    node->children.push_back(std::move(child));
+                    Py_DECREF(val);
+                }
             }
         }
         Py_XDECREF(body);

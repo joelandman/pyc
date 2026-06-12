@@ -206,13 +206,21 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     for (const auto& f : ir.functions) {
         if (f.name.empty()) continue;  // Skip functions without names
+        // The C runtime's `main` is provided by src/runtime/MainWrapper.cpp.
+        // To avoid symbol clashes, we rename the user-defined `main`
+        // (the module entry) to `pyc_user_main`; the wrapper then
+        // calls it after setting up `sys`.
+        std::string irName = f.name;
+        if (irName == "main") irName = "pyc_user_main";
         std::vector<llvm::Type*> argTypes(f.args.size(), pyObjectPtrTy);
         llvm::FunctionType* funcType = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
-        llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, f.name, module.get());
+        llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, irName, module.get());
     }
 
     for (const auto& f : ir.functions) {
-        llvm::Function* func = module->getFunction(f.name);
+        std::string irName = f.name;
+        if (irName == "main") irName = "pyc_user_main";
+        llvm::Function* func = module->getFunction(irName);
         if (!func) continue;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", func);
         builder.SetInsertPoint(entry);
@@ -222,7 +230,17 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             llvm::Value* arg = func->getArg(i);
             if (!f.args[i].empty()) {
                 arg->setName(f.args[i]);
-                valueMap[f.args[i]] = arg;
+                // For parameters, create an entry-block alloca that shadows
+                // the parameter, and add the *alloca* to valueMap. This way
+                // subsequent assigns to the parameter name write to the
+                // alloca (and can be observed by future loads), and
+                // initial reads return the parameter value. The alloca is
+                // initialised in the entry block so it dominates all uses.
+                llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                              func->getEntryBlock().begin());
+                llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, f.args[i] + ".slot");
+                entryBuilder.CreateStore(arg, alloca);
+                valueMap[f.args[i]] = alloca;
             } else {
                 // Use a synthetic name if args are empty
                 std::string synthName = "arg" + std::to_string(i);
@@ -249,6 +267,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         }
 
         auto getOrLoad = [&](const std::string& name) -> llvm::Value* {
+            // Special-case `sys` so user code can do `sys.argv` etc. The
+            // runtime provides a `pyc_get_sys_module()` accessor that
+            // returns the same global `sys` object every call.
+            if (name == "sys") {
+                llvm::Function* getSys = module->getFunction("pyc_get_sys_module");
+                if (!getSys) {
+                    llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
+                    getSys = llvm::Function::Create(ty, llvm::Function::ExternalLinkage,
+                                                   "pyc_get_sys_module", module.get());
+                }
+                return builder.CreateCall(getSys, {}, name + ".sys");
+            }
             auto it = valueMap.find(name);
             if (it == valueMap.end()) return llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0));
             if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(it->second))
@@ -475,20 +505,46 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             } else if (inst.op == "assign") {
                 llvm::Value* newVal = getOrLoad(inst.operands[0].name);
 
-                // Basic refcounting for variables: variables own a reference
+                // Basic refcounting for variables: variables own a reference.
+                // For module globals and the very first assignment to a
+                // parameter (which is the alias of the caller's owned
+                // reference), we do NOT DECREF the old value — we don't own
+                // it. We do INCREF the new value so it stays alive across
+                // the function.
                 if (valueMap.find(inst.result) != valueMap.end()) {
-                    // DECREF the old value
-                    llvm::Value* oldVal = builder.CreateLoad(pyObjectPtrTy, valueMap[inst.result], inst.result + ".old");
-                    llvm::Function* decref = module->getFunction("Py_DECREF");
-                    if (decref) {
-                        builder.CreateCall(decref, {oldVal});
+                    llvm::Value* slot = valueMap[inst.result];
+                    bool isGlobal = llvm::isa<llvm::GlobalVariable>(slot);
+                    if (!isGlobal) {
+                        // DECREF the old value (it's an alloca slot —
+                        // either a local variable or a parameter alias).
+                        llvm::Value* oldVal = builder.CreateLoad(pyObjectPtrTy, slot, inst.result + ".old");
+                        llvm::Function* decref = module->getFunction("Py_DECREF");
+                        if (decref) {
+                            builder.CreateCall(decref, {oldVal});
+                        }
+                    } else {
+                        // Globals: caller / module init owns the existing
+                        // reference. We must not DECREF it. We just
+                        // overwrite with the INCREF'd new value.
                     }
                 } else {
-                    llvm::AllocaInst* alloca = builder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result);
+                    // First time we see this name: create the alloca in the
+                    // ENTRY block so it dominates all uses (including uses
+                    // that survive past loops or branches). Skip the INCREF
+                    // on this first definition — the alloca starts
+                    // uninitialised and the upcoming store fills it.
+                    llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                                  func->getEntryBlock().begin());
+                    llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result);
                     valueMap[inst.result] = alloca;
+                    builder.CreateStore(newVal, alloca);
+                    continue;
                 }
 
-                // INCREF the new value (variable takes ownership)
+                // INCREF the new value (variable takes ownership of the new
+                // value's reference; for params/globals this gives us a
+                // borrowed-style reference that we'll either reassign or
+                // not DECREF on exit).
                 llvm::Function* incref = module->getFunction("Py_INCREF");
                 if (incref) {
                     builder.CreateCall(incref, {newVal});

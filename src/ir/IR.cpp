@@ -4,6 +4,14 @@
 namespace pyc {
 
 void ModuleIR::addFunction(const std::string& name, const std::vector<std::string>& args) {
+    // If a function with this name already exists, don't add a duplicate.
+    // (E.g. `main` is added once for module-level code, and again if a user
+    //  shadows it with a `def main():` inside an `if __name__ == '__main__'`
+    //  block.) Re-adding would corrupt the IR's arg list relative to the
+    //  already-declared LLVM FunctionType.
+    auto it = std::find_if(functions.begin(), functions.end(),
+                          [&](const IRFunction& f){ return f.name == name; });
+    if (it != functions.end()) return;
     IRFunction f;
     f.name = name;
     f.args = args;

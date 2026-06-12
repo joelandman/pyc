@@ -83,6 +83,21 @@ PyObject* PyObject_Not(PyObject* obj);
 PyObject* PyNumber_Negate(PyObject* obj);
 void      PyErr_Print(void);
 
+// Build a synthetic `sys` module from C argc/argv. The module has at
+// least `sys.argv` as a list of Python strings. The C entry point
+// (compiled binary's main) is expected to call this before user code
+// runs.
+void pyc_setup_sys(int argc, char** argv);
+
+// Look up a name on the global `sys` module (or NULL if `pyc_setup_sys`
+// has not been called or the attribute is missing). Returns a new
+// strong reference on success.
+PyObject* pyc_get_sys_attr(const char* name);
+
+// Return the global `sys` module object (a new strong reference, or
+// NULL if pyc_setup_sys has not been called).
+PyObject* pyc_get_sys_module(void);
+
 void* pyc_alloc(size_t size);
 void  pyc_free(void* obj);
 

@@ -247,12 +247,42 @@ private:
                 for (auto& kw : kwArgs) argRes.push_back(kw.second);
             }
         }
-        // Simple default injection: if no args provided and function has defaults, use them
-        // Only use defaults when we have no positional args AND no keyword args
-        if (argRes.empty() && kwArgs.empty()) {
-            auto it = funcDefaultValues.find(funcName);
-            if (it != funcDefaultValues.end()) {
-                argRes = it->second;
+        // Default-arg injection: if the function has parameters with defaults,
+        // pad the call's positional args up to the full parameter list using
+        // the stored default values. Slots already filled by positional or
+        // keyword args are left alone. This mirrors CPython's calling
+        // convention (`f(a, b)` for `def f(a, b, c=D)` calls f with
+        // (a, b, D)).
+        {
+            auto dit = funcDefaultValues.find(funcName);
+            auto pit = funcParamNames.find(funcName);
+            if (dit != funcDefaultValues.end() && pit != funcParamNames.end()) {
+                const auto& params = pit->second;
+                const auto& defaults = dit->second;
+                // defaults[] corresponds to the suffix of params[] of length
+                // defaults.size(). If positional/keyword args only filled the
+                // first N positions of params, we need to pad with
+                // defaults[(N - (params.size() - defaults.size())) ..].
+                size_t nparams = params.size();
+                size_t ndefaults = defaults.size();
+                // Resize argRes to nparams, leaving existing slots alone.
+                if (argRes.size() < nparams) argRes.resize(nparams, "");
+                // Fill empty slots at the tail (where defaults live) with the
+                // default values. defaults[i] goes with params[nparams - ndefaults + i].
+                for (size_t i = 0; i < ndefaults; ++i) {
+                    size_t slot = nparams - ndefaults + i;
+                    if (argRes[slot].empty()) {
+                        argRes[slot] = defaults[i];
+                    }
+                }
+                // Strip any trailing empty slots (shouldn't happen but be safe).
+                while (!argRes.empty() && argRes.back().empty()) argRes.pop_back();
+            } else if (argRes.empty() && kwArgs.empty()) {
+                // No param info at all — fall back to using all defaults.
+                auto it = funcDefaultValues.find(funcName);
+                if (it != funcDefaultValues.end()) {
+                    argRes = it->second;
+                }
             }
         }
 
@@ -1068,7 +1098,12 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
                 break;
             }
         }
-        linkCmd += outputPath + ".o" + runtimeLink + " -o " + outputPath + " -O" + std::to_string(optLevel);
+        // The MainWrapper.cpp provides the C `main` that calls
+        // pyc_setup_sys(argc, argv) and then dispatches to the
+        // user code's `pyc_user_main`. We always compile it from
+        // source here for simplicity (it has no other dependencies
+        // beyond the runtime header).
+        linkCmd += outputPath + ".o -Iinclude src/runtime/MainWrapper.cpp" + runtimeLink + " -o " + outputPath + " -O" + std::to_string(optLevel);
         if (std::system(linkCmd.c_str()) == 0) {
             std::cout << "Linked with runtime to " << outputPath << " (static=" << useStatic << ")\n";
         } else {

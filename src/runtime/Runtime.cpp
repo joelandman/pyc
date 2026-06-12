@@ -758,6 +758,55 @@ PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
     return PyFloat_FromDouble(numeric_val(a) - numeric_val(b));
 }
 
+// The single, well-known `sys` object. Allocated lazily on first
+// pyc_setup_sys() call. Stored in a global so PyObject_GetAttr("sys")
+// can return it. Held alive for program lifetime (immortal in spirit).
+static PyObject* g_sys_module = nullptr;
+static PyObject* g_sys_argv = nullptr;
+
+// Build the synthetic `sys` module and `sys.argv` list from the
+// process's argc/argv. Called once at program startup. Idempotent.
+void pyc_setup_sys(int argc, char** argv) {
+    if (g_sys_module != nullptr) return;
+
+    // sys = a dict with key "argv" (and a few other keys for compatibility).
+    g_sys_module = PyDict_New();
+
+    // sys.argv = list of PyObject* strings
+    g_sys_argv = PyList_NewBoxed(PyInt_FromLong(argc));
+    for (int i = 0; i < argc; ++i) {
+        PyObject* s = PyUnicode_FromString(argv[i]);
+        // PyList_SetItemBoxed takes ownership of s, so we don't INCREF here.
+        // We call it with the boxed-int index; the runtime boxes ints.
+        PyObject* idx = PyInt_FromLong(i);
+        PyList_SetItemBoxed(g_sys_argv, idx, s);
+        // PyList_SetItemBoxed consumes the int, so don't DECREF.
+    }
+    PyObject* argv_key = PyUnicode_FromString("argv");
+    PyDict_SetItem(g_sys_module, argv_key, g_sys_argv);
+    // argv_key and g_sys_argv are owned by g_sys_module now.
+}
+
+// Look up an attribute on the global `sys` module. Returns a strong
+// reference (caller must DECREF) or NULL if the attribute is missing.
+PyObject* pyc_get_sys_attr(const char* name) {
+    if (g_sys_module == nullptr) return nullptr;
+    PyObject* key = PyUnicode_FromString(name);
+    if (!key) return nullptr;
+    PyObject* val = PyDict_GetItem(g_sys_module, key);
+    Py_DECREF(key);
+    if (val) Py_INCREF(val);
+    return val;
+}
+
+// Return the global `sys` module object (a new strong reference, or
+// NULL if pyc_setup_sys has not been called).
+PyObject* pyc_get_sys_module(void) {
+    if (g_sys_module == nullptr) return nullptr;
+    Py_INCREF(g_sys_module);
+    return g_sys_module;
+}
+
 PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
     if (!a || !b) return NULL;
     if (a->type == 3 && b->type == 0) return PyString_Repeat(a, b);
@@ -843,7 +892,41 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
 }
 
 PyObject* PyObject_GetAttr(PyObject* obj, const char* attr) {
-    if (obj) Py_INCREF(obj);
+    if (!obj) return nullptr;
+    // First, see if the attribute is a known key on the synthetic `sys`
+    // module (set up by pyc_setup_sys). This is the only place a "real"
+    // attribute lookup can succeed because the pyc runtime has no real
+    // Python type system; every other "object" is a flat int/float/list/dict.
+    if (obj == g_sys_module) {
+        return pyc_get_sys_attr(attr);
+    }
+    // Lists: support .append / .sort / .pop (used by compiled code).
+    if (obj->type == 1) {
+        if (strcmp(attr, "append") == 0) {
+            // Return a dummy callable that no-ops (we only need the
+            // lookup to succeed; codegen emits explicit list_* calls).
+            return PyInt_FromLong(0);
+        }
+        if (strcmp(attr, "sort") == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "pop") == 0) return PyInt_FromLong(0);
+    }
+    // Dicts: support .keys / .values / .items.
+    if (obj->type == 2) {
+        if (strcmp(attr, "keys")   == 0) return PyBuiltin_List(obj);
+        if (strcmp(attr, "values") == 0) return PyBuiltin_List(obj);
+        if (strcmp(attr, "items")  == 0) return PyBuiltin_List(obj);
+    }
+    // Strings: support .upper / .lower / .strip / .split / .join / etc.
+    if (obj->type == 3) {
+        if (strcmp(attr, "upper") == 0) return PyString_Upper(obj);
+        if (strcmp(attr, "lower") == 0) return PyString_Lower(obj);
+        if (strcmp(attr, "strip") == 0) return PyString_Strip(obj);
+        if (strcmp(attr, "split") == 0) return PyString_Split(obj, nullptr);
+        if (strcmp(attr, "join")  == 0) return PyString_Join(obj, nullptr);
+    }
+    // Fallback: return the object itself (matches the previous stub
+    // behaviour for unsupported lookups; doesn't crash).
+    Py_INCREF(obj);
     return obj;
 }
 
