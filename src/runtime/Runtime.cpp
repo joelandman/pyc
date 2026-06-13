@@ -613,29 +613,122 @@ PyObject* PyString_Replace(PyObject* s, PyObject* old_, PyObject* new_) {
     return PyUnicode_FromString(result.c_str());
 }
 
-PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop) {
+PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step) {
     if (!obj) return PyList_New(0);
     long n = (obj->type == 1) ? (long)obj->list.size()
            : (obj->type == 3) ? (long)obj->str.size() : 0;
-    long s = (start && (start->type==0||start->type==5)) ? start->value : 0;
-    long e = (stop  && (stop->type ==0||stop->type ==5) && stop->value >= 0)
-             ? stop->value : n;
-    if (s < 0) s = std::max(0L, n + s);
-    if (e < 0) e = std::max(0L, n + e);
-    if (s > n) s = n;
-    if (e > n) e = n;
-    if (e < s) e = s;
+    long stp = (step && (step->type==0||step->type==5)) ? step->value : 1;
+    if (stp == 0) {
+        return (obj->type == 3) ? PyUnicode_FromString("") : PyList_New(0);
+    }
+    long s = (start && (start->type==0||start->type==5)) ? start->value : (stp > 0 ? 0 : n - 1);
+    long e = (stop  && (stop->type ==0||stop->type ==5)) ? stop->value : (stp > 0 ? n : -1);
+    if (s < 0) s += n;
+    if (e < 0 && (stop && (stop->type==0||stop->type==5))) e += n;
+
+    std::vector<long> idxs;
+    if (stp > 0) {
+        s = std::max(0L, std::min(n, s));
+        e = std::max(0L, std::min(n, e));
+        for (long i = s; i < e; i += stp) idxs.push_back(i);
+    } else {
+        // For negative step, allow stop to be a low sentinel (e.g. -1) meaning "before 0".
+        // Only clamp start into [0, n-1].
+        if (s < 0) s = 0;
+        if (s >= n) s = n - 1;
+        // e may legitimately be -1 or other <0; do not force it up.
+        for (long i = s; i > e && i >= 0; i += stp) {
+            if ((size_t)i < (size_t)n) idxs.push_back(i);
+        }
+    }
+
     if (obj->type == 1) {
-        PyObject* r = PyList_New(e - s);
-        for (long i = s; i < e; ++i) {
-            if (obj->list[i]) Py_INCREF(obj->list[i]);
-            PyList_SetItem(r, i - s, obj->list[i]);
+        PyObject* r = PyList_New(idxs.size());
+        for (size_t k = 0; k < idxs.size(); ++k) {
+            long i = idxs[k];
+            PyObject* item = (i >= 0 && (size_t)i < obj->list.size()) ? obj->list[i] : nullptr;
+            if (item) Py_INCREF(item);
+            PyList_SetItem(r, k, item);
         }
         return r;
     }
-    if (obj->type == 3)
-        return PyUnicode_FromString(obj->str.substr(s, e - s).c_str());
+    if (obj->type == 3) {
+        std::string r;
+        for (long i : idxs) {
+            if (i >= 0 && (size_t)i < obj->str.size()) r += obj->str[(size_t)i];
+        }
+        return PyUnicode_FromString(r.c_str());
+    }
     return PyList_New(0);
+}
+
+PyObject* Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step, PyObject* value) {
+    if (!obj || obj->type != 1) return nullptr;
+    bool explicit_step = (step != nullptr);
+    long n = (long)obj->list.size();
+    long stp = 1;
+    if (explicit_step && (step->type==0||step->type==5)) stp = step->value;
+    if (stp == 0) return nullptr;
+
+    long s = (start && (start->type==0||start->type==5)) ? start->value : (stp > 0 ? 0 : n-1);
+    long e = (stop  && (stop->type==0||stop->type==5)) ? stop->value : (stp > 0 ? n : -1);
+    if (s < 0) s += n;
+    if (e < 0 && (stop && (stop->type==0||stop->type==5))) e += n;
+
+    std::vector<PyObject*> repl;
+    if (value && value->type == 1) {
+        for (auto* v : value->list) { if (v) Py_INCREF(v); repl.push_back(v); }
+    } else if (value) {
+        Py_INCREF(value);
+        repl.push_back(value);
+    }
+
+    if (!explicit_step) {
+        // basic slice: positive direction, length may change
+        if (s < 0) s = 0;
+        if (s > n) s = n;
+        if (e < 0) e = 0;
+        if (e > n) e = n;
+        for (long i = s; i < e; ++i) {
+            if (obj->list[i]) Py_DECREF(obj->list[i]);
+        }
+        obj->list.erase(obj->list.begin() + s, obj->list.begin() + e);
+        obj->list.insert(obj->list.begin() + s, repl.begin(), repl.end());
+        return PyInt_FromLong(0);
+    }
+
+    // extended slice: positions visited, length preserving, exact count preferred
+    std::vector<long> positions;
+    long ss = s, ee = e;
+    if (stp > 0) {
+        if (ss < 0) ss = 0; if (ss > n) ss = n;
+        if (ee < 0) ee = 0; if (ee > n) ee = n;
+        for (long i = ss; i < ee; i += stp) positions.push_back(i);
+    } else {
+        if (ss < 0) ss = 0; if (ss > n) ss = n;
+        long i = ss;
+        if (i == n) i = n-1;
+        for (; i > ee && i >= 0; i += stp) {
+            if ((size_t)i < (size_t)n) positions.push_back(i);
+        }
+    }
+
+    size_t m = repl.size();
+    size_t k = 0;
+    for (long pos : positions) {
+        if (k >= m) break;
+        if (pos >= 0 && (size_t)pos < obj->list.size()) {
+            if (obj->list[pos]) Py_DECREF(obj->list[pos]);
+            obj->list[pos] = repl[k];
+            // repl[k] ref already bumped; list now owns that ref
+        }
+        ++k;
+    }
+    // release any unconsumed replacement refs we bumped
+    for (; k < m; ++k) {
+        if (repl[k]) Py_DECREF(repl[k]);
+    }
+    return PyInt_FromLong(0);
 }
 
 PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b) {

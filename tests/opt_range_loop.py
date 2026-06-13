@@ -14,3 +14,9 @@ for k in range(6):
         break
     skipped += k
 print(skipped)
+
+limit = 4
+dynamic = 0
+for x in range(limit):
+    dynamic += x
+print(dynamic)

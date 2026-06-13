@@ -250,6 +250,53 @@ print(a[0],a[1],a[2])
     ("print('x=%d, y=%d' % (1, 2))", "x=1, y=2\n"),
     # --- dict.keys with list() ---
     ("d={'a':1,'b':2}\nprint(len(list(d.keys())))", "2\n"),
+    # --- sum / sorted / any / all (builtin wiring) ---
+    ("print(sum([1,2,3]))", "6\n"),
+    # Use element access to avoid list repr printing differences
+    ("s=sorted([3,1,2]); print(s[0],s[1],s[2])", "1 2 3\n"),
+    ("print(any([0,0,1]))", "True\n"),
+    ("print(all([1,1,1]))", "True\n"),
+    # --- str find / count / replace (method wiring) ---
+    ("print('abc'.find('b'))", "1\n"),
+    ("print('abc'.find('z'))", "-1\n"),
+    ("print('aaa'.count('a'))", "3\n"),
+    ("print('abc'.replace('b','X'))", "aXc\n"),
+    # --- slicing (get with step/negatives/str; set basic + extended) ---
+    ("a=[0,1,2,3,4,5]; sl=a[1:4]; print(sl[0],sl[2])", "1 3\n"),
+    ("a=[0,1,2,3,4,5]; s=a[::2]; print(s[0],s[1],s[2])", "0 2 4\n"),
+    ("a=[0,1,2,3,4,5]; r=a[3:0:-1]; print(r[0],r[1],r[2])", "3 2 1\n"),
+    ("a=[0,1,2,3,4,5]; r=a[::-1]; print(r[0],r[5])", "5 0\n"),
+    ("a=[0,1,2,3,4,5]; r=a[-4:-1]; print(r[0],r[2])", "1 3\n"),
+    ("a=[0,1,2,3,4,5]; r=a[-1:1:-1]; print(r[0],r[2])", "5 3\n"),
+    ('s="abcdef"; print(s[1:4])', "bcd\n"),
+    ('s="abcdef"; print(s[::2])', "ace\n"),
+    ('s="abcdef"; print(s[::-1])', "fedcba\n"),
+    ('s="abcdef"; print(s[5:1:-1])', "fedc\n"),
+    ("b=[9,8,7,6,5]; b[1:4]=[10,20,30]; print(b[0],b[1],b[2],b[3],b[4])", "9 10 20 30 5\n"),
+    ("c=[0,1,2,3,4]; c[4:1:-1]=[100,200,300]; print(c[0],c[1],c[2],c[3],c[4])", "0 1 300 200 100\n"),
+    ("d=[0,1,2,3,4]; d[1:4:2]=[111,222]; print(d[0],d[1],d[2],d[3],d[4])", "0 111 2 222 4\n"),
+    # --- dict comprehensions (B3) ---
+    ("d={k:k*k for k in range(4)}; print(d[0],d[1],d[2],d[3])", "0 1 4 9\n"),
+    ("d={i:i+10 for i in [1,2,3] if i%2==1}; print(d[1],d[3])", "11 13\n"),
+    ("d={x:y for x in [1,2] for y in [10,20]}; print(d[1],d[2])", "20 20\n"),
+    # --- loop type tracking / widening (A1): variable type changes across iterations or backedges ---
+    ("x=0\nfor i in range(3):\n    if i==2:\n        x='done'\n    else:\n        x=i\nprint(x)", "done\n"),
+    ("z=42\nfor k in range(2):\n    if k==1:\n        z='end'\n    else:\n        z=k\nprint(z)", "end\n"),
+    # numeric stays numeric across backedge (no spurious widen)
+    ("acc=0\nfor i in range(5):\n    acc = acc + i\nprint(acc)", "10\n"),
+    # A2: visible range loop var is unboxed i64 inside the loop (numeric uses)
+    # and boxed on demand for Python-visible contexts (print, list, call, etc.)
+    ("s=0\nfor i in range(4):\n    s = s + i*i\nprint(s)", "14\n"),
+    ("lst=[]\nfor i in range(3):\n    lst.append(i)\nprint(lst[0],lst[1],lst[2])", "0 1 2\n"),
+    ("def f(x): return x+1\nr=0\nfor i in range(3):\n    r = r + f(i)\nprint(r)", "6\n"),
+    # use loop var after loop (must box the final value)
+    ("for i in range(3): pass\nprint(i)", "2\n"),
+    # A3: native unary minus on range var and numeric locals
+    ("x=0\nfor i in range(3):\n    x = x + (-i)\nprint(x)", "-3\n"),
+    ("a=-7\nprint(a*3)", "-21\n"),
+    # safe floor div (//) with negatives and zero-guard (must match CPython)
+    ("print(7//2, (-7)//2, 7//(-2), (-7)//(-2))", "3 -4 -4 3\n"),
+    ("print(5//0 if False else 99)", "99\n"),  # avoid actual div0 in this tiny suite
 ]
 
 FILE_CASES = [

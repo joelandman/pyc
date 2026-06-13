@@ -1,6 +1,11 @@
 # pyc — Implemented Features
 
-Current test count: **143/143** (all compared against CPython output).
+Current test count: **174/174** (all compared against CPython output).
+
+**Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
+Full slicing (get/set, step, negatives, str + list) implemented (B2).
+Dict comprehensions (single/multi-generator, if conditions, nested) implemented (B3).
+Type tracking foundation strengthened for unboxing (A1): i64 normalized to numeric int, valueTypes cleared at function boundaries, conservative loop back-edge widening in while/for/range (prevents incorrect narrow types across iterations).
 
 ## Types and literals
 
@@ -9,8 +14,8 @@ Current test count: **143/143** (all compared against CPython output).
 | `int` | Full arithmetic, comparison, floor/true division |
 | `float` | `3.14`, `1e-3`, mixed int/float; shortest round-trip printing |
 | `bool` | `True`/`False`; prints correctly; arithmetic with ints (`True+1=2`) |
-| `str` | Literals, `+`, `*`, f-strings, `%` formatting, all major methods |
-| `list` | Literals, subscript get/set, simple slices, comprehensions, append/sort/pop |
+| `str` | Literals, `+`, `*`, f-strings, `%` formatting, all major methods, full slicing |
+| `list` | Literals, subscript get/set, full slices (incl. step), comprehensions, append/sort/pop |
 | `dict` | Literals, subscript get/set, keys/values/items |
 | `tuple` | Literals and unpacking (mapped to list internally) |
 | `None` | Constant, comparison, printing |
@@ -33,7 +38,8 @@ and  or  not                   boolean (short-circuit, returns actual value)
 if / elif / else
 while ... break / continue
 for x in iterable              (list, enumerate(), zip() results)
-for x in range(...)            native loop shape; no boxed range list is built
+for x in range(...)            native loop shape and native i64 loop control;
+                               the visible loop variable is still boxed
 for i, v in enumerate(lst)     tuple-target for-loop
 for (a, [b, c]) in iterable    recursive tuple/list destructuring
 x if cond else y               ternary
@@ -42,7 +48,7 @@ x if cond else y               ternary
 ## Functions
 
 ```python
-def f(a, b=10, *args):         positional, default, *args (collection NYI)
+def f(a, b=10, *args):         positional, default, *args (call-site unpacking + callee collection supported; **kwargs NYI)
     return a, b                multi-value return (returned as list)
 
 def f(a, b): ...
@@ -67,11 +73,13 @@ d[k] = v       # dict subscript
 `print(*args)`, `range(n)` / `range(s,e)` / `range(s,e,step)`,
 `len(x)`, `str(x)`, `int(x)`, `float(x)`, `abs(x)`,
 `min(a,b,...)` / `min(list)`, `max(a,b,...)` / `max(list)`,
-`list(x)`, `enumerate(iterable)`, `zip(a, b)`
+`list(x)`, `enumerate(iterable)`, `zip(a, b)`,
+`sum(x)`, `sorted(x)`, `any(x)`, `all(x)`, `isinstance(obj, info)`
 
 ## String methods
 
 `upper()`, `lower()`, `strip()`, `split(sep)`, `join(iterable)`,
+`find()`, `count()`, `replace()`,
 `str % value` (`%d`, `%s`, `%f`, `%.Nf`)
 
 ## List/dict methods
@@ -85,6 +93,8 @@ d[k] = v       # dict subscript
 [expr for x in iterable]
 [expr for x in iterable if cond]
 [[inner for ...] for ...]      nested
+{ k: v for x in iterable if cond }
+{ k: v for x in a for y in b }  product / nested generators
 ```
 
 ## Runtime architecture
@@ -98,28 +108,27 @@ Truthiness via `PyObject_TruthBoxed`. Global variables use LLVM `GlobalVariable`
 with `InternalLinkage`.
 
 IR instructions now also carry conservative result type metadata. This is a
-compiler-side analysis aid for planned unboxed/native paths; it does not by
-itself change Python-visible behavior.
+compiler-side analysis aid for native paths. Codegen only uses it when a
+specific lowering has a boxed fallback for uncertain cases.
 
 ## Optimization status
 
 - `range(...)` for-loops are lowered directly to loop blocks instead of
   allocating a boxed range list.
+- Hidden `range(...)` loop counters use native i64 compare/increment operations.
 - Constants and simple numeric arithmetic are annotated with conservative IR
   result types.
-- Numeric arithmetic and list elements are still boxed in the general path.
-  Unboxed loop counters, numeric locals, and homogeneous numeric-vector lists
-  are planned next.
+- Proven numeric `+`, `-`, and `*` operations use native LLVM integer/double
+  arithmetic, then box their result for Python-visible storage or calls.
+- Division, uncertain types, and list elements still use the boxed general path.
+  Longer-lived unboxed numeric locals and homogeneous numeric-vector lists are
+  planned next.
 
-## Not yet implemented
+## Not yet implemented (or partial)
 
-- `sum()`, `sorted()`, `any()`, `all()`, `isinstance()` builtins
-- `str.find()`, `str.replace()`, `str.count()` methods
-- Full list/string slicing semantics including non-default step
-- Dict comprehensions (list comps work; dict comp stubs not wired)
-- `lambda` expressions
+- `lambda` expressions (lowering, defaults, direct/assigned calls, and *args in signatures are implemented; full first-class callable objects and **kwargs forwarding pending)
 - `nonlocal` statement
 - Classes and OOP
 - `import` / module system
-- `*args` collection in function body
+- `*args` / `**kwargs` (call-site * unpacking works for literals (static) and dynamic lists (via __va wrappers); declared *args collection on the callee side works; **kwargs pending)
 - Walrus operator `:=`

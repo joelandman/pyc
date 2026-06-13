@@ -153,6 +153,26 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
 
+    // Builtins: sum, sorted, any, all; isinstance (2-arg)
+    for (const char* name : {"PyBuiltin_Sum","PyBuiltin_Sorted","PyBuiltin_Any","PyBuiltin_All"}) {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_IsInstance", module.get());
+    }
+
+    // String methods: find, count, replace (find/count return int boxed; replace returns str)
+    for (const char* name : {"PyString_Find","PyString_Count"}) {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_Replace", module.get());
+    }
+
     // PyBool_New(int) — boxes a 0/1 as a bool PyObject
     llvm::FunctionType* boolNewTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt32Ty(context)}, false);
     llvm::Function::Create(boolNewTy, llvm::Function::ExternalLinkage, "PyBool_New", module.get());
@@ -177,8 +197,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* containsTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(containsTy, llvm::Function::ExternalLinkage, "Pyc_Contains", module.get());
 
-    llvm::FunctionType* getSliceTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::FunctionType* getSliceTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(getSliceTy, llvm::Function::ExternalLinkage, "Pyc_GetSlice", module.get());
+
+    llvm::FunctionType* setSliceTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(setSliceTy, llvm::Function::ExternalLinkage, "Pyc_SetSlice", module.get());
 
     llvm::FunctionType* powerTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(powerTy, llvm::Function::ExternalLinkage, "Pyc_Pow", module.get());
@@ -299,7 +322,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 return llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0));
             }
             if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(it->second))
-                return builder.CreateLoad(pyObjectPtrTy, alloca, name + ".load");
+                return builder.CreateLoad(alloca->getAllocatedType(), alloca, name + ".load");
             if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(it->second))
                 return builder.CreateLoad(pyObjectPtrTy, gv, name + ".load");
             return it->second;
@@ -310,6 +333,96 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             if (!boxed || boxed->getType() == llvm::Type::getInt64Ty(context)) return boxed;
             return builder.CreateLoad(llvm::Type::getInt64Ty(context),
                 builder.CreateStructGEP(pyObjectTy, boxed, 2), "unboxed");
+        };
+
+        auto boxI64 = [&](llvm::Value* val, const std::string& name = "") -> llvm::Value* {
+            llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
+            if (!fromLong) return llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            return builder.CreateCall(fromLong, {val}, name);
+        };
+
+        // Return the value for 'name' as a PyObject* suitable for Python-visible
+        // contexts (calls, returns, containers, etc.). If the name is backed by
+        // native i64 or double (from range loop vars or numeric ops), box on demand.
+        auto getAsPyObject = [&](const std::string& name) -> llvm::Value* {
+            llvm::Value* v = getOrLoad(name);
+            if (!v) return llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            if (v->getType() == llvm::Type::getInt64Ty(context)) {
+                return boxI64(v, name + ".boxed");
+            }
+            if (v->getType()->isDoubleTy()) {
+                llvm::Function* fromDouble = module->getFunction("PyFloat_FromDouble");
+                if (!fromDouble) return llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                return builder.CreateCall(fromDouble, {v}, name + ".boxed");
+            }
+            return v;
+        };
+
+        auto unboxToDouble = [&](llvm::Value* boxed) -> llvm::Value* {
+            llvm::Type* doubleTy = llvm::Type::getDoubleTy(context);
+            if (!boxed || boxed->getType() == doubleTy) return boxed;
+            if (boxed->getType() == llvm::Type::getInt64Ty(context)) {
+                return builder.CreateSIToFP(boxed, doubleTy, "i64.to.double");
+            }
+
+            llvm::Value* typeVal = builder.CreateLoad(llvm::Type::getInt32Ty(context),
+                builder.CreateStructGEP(pyObjectTy, boxed, 1), "boxed.type");
+            llvm::Value* intVal = builder.CreateLoad(llvm::Type::getInt64Ty(context),
+                builder.CreateStructGEP(pyObjectTy, boxed, 2), "boxed.int");
+            llvm::Value* intAsDouble = builder.CreateSIToFP(intVal, doubleTy, "boxed.int.double");
+            llvm::Value* doubleVal = builder.CreateLoad(doubleTy,
+                builder.CreateStructGEP(pyObjectTy, boxed, 3), "boxed.double");
+            llvm::Value* isFloat = builder.CreateICmpEQ(typeVal,
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 4), "boxed.isfloat");
+            return builder.CreateSelect(isFloat, doubleVal, intAsDouble, "unboxed.double");
+        };
+
+        auto boxDouble = [&](llvm::Value* val, const std::string& name = "") -> llvm::Value* {
+            llvm::Function* fromDouble = module->getFunction("PyFloat_FromDouble");
+            if (!fromDouble) return llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            return builder.CreateCall(fromDouble, {val}, name);
+        };
+
+        auto emitNativeNumericBinary = [&](const IRInstruction& inst,
+                                           const std::string& op) -> bool {
+            if (inst.operands.size() < 2) return false;
+            if (inst.resultType == "int") {
+                llvm::Value* lhs = unboxToI64(getOrLoad(inst.operands[0].name));
+                llvm::Value* rhs = unboxToI64(getOrLoad(inst.operands[1].name));
+                llvm::Value* native = nullptr;
+                if (op == "add") {
+                    native = builder.CreateAdd(lhs, rhs, inst.result + ".i64");
+                } else if (op == "sub") {
+                    native = builder.CreateSub(lhs, rhs, inst.result + ".i64");
+                } else if (op == "mul") {
+                    native = builder.CreateMul(lhs, rhs, inst.result + ".i64");
+                } else {
+                    return false;
+                }
+                // Store the native i64 in the result temp to allow longer-lived
+                // unboxed numeric values inside numeric regions (A2). Consumers
+                // that need a PyObject* (calls, returns, containers, stores to
+                // boxed locals, etc.) go through getAsPyObject or explicit box.
+                valueMap[inst.result] = native;
+                return true;
+            }
+            if (inst.resultType == "float") {
+                llvm::Value* lhs = unboxToDouble(getOrLoad(inst.operands[0].name));
+                llvm::Value* rhs = unboxToDouble(getOrLoad(inst.operands[1].name));
+                llvm::Value* native = nullptr;
+                if (op == "add") {
+                    native = builder.CreateFAdd(lhs, rhs, inst.result + ".double");
+                } else if (op == "sub") {
+                    native = builder.CreateFSub(lhs, rhs, inst.result + ".double");
+                } else if (op == "mul") {
+                    native = builder.CreateFMul(lhs, rhs, inst.result + ".double");
+                } else {
+                    return false;
+                }
+                valueMap[inst.result] = native;
+                return true;
+            }
+            return false;
         };
 
         llvm::BasicBlock* curBlock = entry;
@@ -363,8 +476,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 else if (opstr == "LtE")                    opcode = 4;
                 else if (opstr == "GtE")                    opcode = 5;
 
-                llvm::Value* lhsBox = getOrLoad(inst.operands.size() > 1 ? inst.operands[1].name : "");
-                llvm::Value* rhsBox = getOrLoad(inst.operands.size() > 2 ? inst.operands[2].name : "");
+                llvm::Value* lhsBox = getAsPyObject(inst.operands.size() > 1 ? inst.operands[1].name : "");
+                llvm::Value* rhsBox = getAsPyObject(inst.operands.size() > 2 ? inst.operands[2].name : "");
 
                 llvm::Function* cmpFn  = module->getFunction("PyObject_CompareBool");
                 llvm::Function* boolNew = module->getFunction("PyBool_New");
@@ -380,7 +493,45 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 valueMap[inst.result] = boxedCmp;
                 continue;
             }
-            if (inst.op == "const") {
+            if (inst.op == "i64const") {
+                long v = std::stol(inst.operands.empty() ? "0" : inst.operands[0].name);
+                valueMap[inst.result] = llvm::ConstantInt::get(context, llvm::APInt(64, v));
+            } else if (inst.op == "i64_from_box") {
+                llvm::Value* boxed = getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name);
+                valueMap[inst.result] = unboxToI64(boxed);
+            } else if (inst.op == "box_i64") {
+                llvm::Value* val = getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name);
+                valueMap[inst.result] = boxI64(val, inst.result);
+            } else if (inst.op == "i64add") {
+                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
+                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                valueMap[inst.result] = builder.CreateAdd(lhs, rhs, inst.result);
+            } else if (inst.op == "i64icmp") {
+                std::string opstr = inst.operands.empty() ? "" : inst.operands[0].name;
+                llvm::Value* lhs = getOrLoad(inst.operands.size() > 1 ? inst.operands[1].name : "");
+                llvm::Value* rhs = getOrLoad(inst.operands.size() > 2 ? inst.operands[2].name : "");
+                llvm::Value* cmp = nullptr;
+                if      (opstr == "Eq"    || opstr == "eq") cmp = builder.CreateICmpEQ(lhs, rhs, inst.result);
+                else if (opstr == "NotEq" || opstr == "ne") cmp = builder.CreateICmpNE(lhs, rhs, inst.result);
+                else if (opstr == "Lt"    || opstr == "lt") cmp = builder.CreateICmpSLT(lhs, rhs, inst.result);
+                else if (opstr == "Gt"    || opstr == "gt") cmp = builder.CreateICmpSGT(lhs, rhs, inst.result);
+                else if (opstr == "LtE")                    cmp = builder.CreateICmpSLE(lhs, rhs, inst.result);
+                else if (opstr == "GtE")                    cmp = builder.CreateICmpSGE(lhs, rhs, inst.result);
+                else                                         cmp = builder.CreateICmpNE(lhs, rhs, inst.result);
+                valueMap[inst.result] = cmp;
+            } else if (inst.op == "i64assign") {
+                llvm::Value* newVal = getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name);
+                auto it = valueMap.find(inst.result);
+                if (it == valueMap.end()) {
+                    llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                                  func->getEntryBlock().begin());
+                    llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(llvm::Type::getInt64Ty(context), nullptr, inst.result);
+                    valueMap[inst.result] = alloca;
+                    builder.CreateStore(newVal, alloca);
+                } else {
+                    builder.CreateStore(newVal, it->second);
+                }
+            } else if (inst.op == "const") {
                 std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
                 if (!val.empty() && (val[0] == '"' || val[0] == '\'')) {
                     llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
@@ -417,9 +568,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = boxed;
                 }
             } else if (inst.op == "add") {
+                if (emitNativeNumericBinary(inst, "add")) continue;
                 llvm::Function* numberAdd = module->getFunction("PyNumber_Add");
-                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
-                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
+                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
                 if (numberAdd) {
                     llvm::Value* sum = builder.CreateCall(numberAdd, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = sum;
@@ -427,9 +579,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
             } else if (inst.op == "sub") {
+                if (emitNativeNumericBinary(inst, "sub")) continue;
                 llvm::Function* numberSub = module->getFunction("PyNumber_Subtract");
-                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
-                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
+                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
                 if (numberSub) {
                     llvm::Value* diff = builder.CreateCall(numberSub, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = diff;
@@ -437,9 +590,37 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
             } else if (inst.op == "div") {
+                if (inst.resultType == "int") {
+                    llvm::Value* lhs = unboxToI64(getOrLoad(inst.operands[0].name));
+                    llvm::Value* rhs = unboxToI64(getOrLoad(inst.operands[1].name));
+                    // Guard div-by-zero: fall back to boxed (runtime returns NULL)
+                    llvm::Value* isZero = builder.CreateICmpEQ(rhs, llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
+                    llvm::Function* numberDiv = module->getFunction("PyNumber_Divide");
+                    llvm::Value* boxedL = getAsPyObject(inst.operands[0].name);
+                    llvm::Value* boxedR = getAsPyObject(inst.operands[1].name);
+                    llvm::Value* quot = nullptr;
+                    if (numberDiv) {
+                        quot = builder.CreateCall(numberDiv, {boxedL, boxedR}, inst.result + ".boxed");
+                    } else {
+                        quot = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                    }
+                    // Native floor path (only if rhs != 0)
+                    llvm::Value* q = builder.CreateSDiv(lhs, rhs);
+                    llvm::Value* r = builder.CreateSRem(lhs, rhs);
+                    llvm::Value* signsDiffer = builder.CreateICmpSLT(builder.CreateXor(lhs, rhs), llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
+                    llvm::Value* hasRem = builder.CreateICmpNE(r, llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
+                    llvm::Value* needAdjust = builder.CreateAnd(signsDiffer, hasRem);
+                    llvm::Value* one = llvm::ConstantInt::get(context, llvm::APInt(64, 1));
+                    llvm::Value* qAdj = builder.CreateSub(q, one);
+                    q = builder.CreateSelect(needAdjust, qAdj, q);
+                    llvm::Value* nativeRes = builder.CreateSelect(isZero, quot, boxI64(q, inst.result + ".i64"), inst.result);
+                    valueMap[inst.result] = nativeRes;
+                    continue;
+                }
+                // float or unknown -> boxed
                 llvm::Function* numberDiv = module->getFunction("PyNumber_Divide");
-                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
-                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
+                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
                 if (numberDiv) {
                     llvm::Value* quot = builder.CreateCall(numberDiv, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = quot;
@@ -448,14 +629,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
             } else if (inst.op == "pow") {
                 llvm::Function* fn = module->getFunction("Pyc_Pow");
-                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
-                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
+                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
                 if (fn) valueMap[inst.result] = builder.CreateCall(fn, {lhs, rhs}, inst.result);
                 else    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
             } else if (inst.op == "truediv") {
                 llvm::Function* numberTrueDiv = module->getFunction("PyNumber_TrueDivide");
-                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
-                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
+                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
                 if (numberTrueDiv) {
                     llvm::Value* quot = builder.CreateCall(numberTrueDiv, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = quot;
@@ -464,8 +645,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
             } else if (inst.op == "mod") {
                 llvm::Function* numberRem = module->getFunction("PyNumber_Remainder");
-                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
-                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
+                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
                 if (numberRem) {
                     llvm::Value* rem = builder.CreateCall(numberRem, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = rem;
@@ -473,12 +654,37 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
             } else if (inst.op == "mul") {
+                if (emitNativeNumericBinary(inst, "mul")) continue;
                 llvm::Function* numberMult = module->getFunction("PyNumber_Multiply");
-                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
-                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
+                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
                 if (numberMult) {
                     llvm::Value* prod = builder.CreateCall(numberMult, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = prod;
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            } else if (inst.op == "neg") {
+                // Unary minus. For proven numeric resultType, keep native result (i64/double)
+                // so it can participate in further unboxed arithmetic (A3 widening).
+                // Box only on escape via getAsPyObject.
+                if (inst.resultType == "int") {
+                    llvm::Value* v = unboxToI64(getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name));
+                    llvm::Value* n = builder.CreateNeg(v, inst.result + ".i64");
+                    valueMap[inst.result] = n;  // native i64 for longer unboxed life
+                    continue;
+                }
+                if (inst.resultType == "float") {
+                    llvm::Value* v = unboxToDouble(getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name));
+                    llvm::Value* n = builder.CreateFNeg(v, inst.result + ".double");
+                    valueMap[inst.result] = n;
+                    continue;
+                }
+                // Fallback: boxed runtime path
+                llvm::Function* fn = module->getFunction("PyNumber_Negate");
+                llvm::Value* arg = getAsPyObject(inst.operands.empty() ? "" : inst.operands[0].name);
+                if (fn) {
+                    valueMap[inst.result] = builder.CreateCall(fn, {arg}, inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
@@ -520,7 +726,43 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
             } else if (inst.op == "assign") {
-                llvm::Value* newVal = getOrLoad(inst.operands[0].name);
+                llvm::Value* src = getOrLoad(inst.operands[0].name);
+                llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
+
+                // If target currently has an i64 slot (e.g. range loop visible var),
+                // decide whether to keep native storage or switch to boxed for this assign.
+                auto tit = valueMap.find(inst.result);
+                if (tit != valueMap.end()) {
+                    if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit->second)) {
+                        if (alloca->getAllocatedType() == i64Ty) {
+                            if (src->getType() == i64Ty) {
+                                builder.CreateStore(src, alloca);
+                            } else {
+                                // src is boxed (general expr). Switch this name's storage
+                                // to a fresh PyObject* slot so arbitrary values (incl. str)
+                                // are supported for the rest of the scope. The range
+                                // machinery (if active) will publish by boxing into the
+                                // current slot on next update.
+                                llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                                              func->getEntryBlock().begin());
+                                llvm::AllocaInst* newAlloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result + ".slot");
+                                llvm::Value* toStore = src;
+                                if (toStore->getType() == i64Ty) toStore = boxI64(toStore);
+                                builder.CreateStore(toStore, newAlloca);
+                                valueMap[inst.result] = newAlloca;
+                            }
+                            continue;
+                        }
+                    }
+                }
+
+                // Normal path: target expects PyObject*. Ensure src is boxed.
+                llvm::Value* newVal = src;
+                if (newVal->getType() == i64Ty) {
+                    newVal = boxI64(newVal, inst.operands[0].name + ".boxed");
+                } else if (newVal->getType()->isDoubleTy()) {
+                    newVal = boxDouble(newVal, inst.operands[0].name + ".boxed");
+                }
 
                 // Basic refcounting for variables: variables own a reference.
                 // For module globals and the very first assignment to a
@@ -567,7 +809,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 if (funcName == "print" || funcName == "pyc_print") {
                     llvm::Function* pyPrint = module->getFunction("PyObject_Print");
                     if (pyPrint) {
-                        llvm::Value* arg = (inst.operands.size() > 1 ? getOrLoad(inst.operands[1].name) : llvm::ConstantPointerNull::get(pyObjectPtrTy));
+                        llvm::Value* arg = (inst.operands.size() > 1 ? getAsPyObject(inst.operands[1].name) : llvm::ConstantPointerNull::get(pyObjectPtrTy));
                         // Pass null — our runtime tolerates it and uses real stdout
                         builder.CreateCall(pyPrint, {arg, llvm::ConstantPointerNull::get(int8PtrTy)});
                     }
@@ -577,7 +819,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     if (callee) {
                         std::vector<llvm::Value*> callArgs;
                         for (size_t i = 1; i < inst.operands.size(); ++i) {
-                            callArgs.push_back(getOrLoad(inst.operands[i].name));
+                            callArgs.push_back(getAsPyObject(inst.operands[i].name));
                         }
                         if (callee->getReturnType()->isVoidTy()) {
                             builder.CreateCall(callee, callArgs);
@@ -589,7 +831,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
             } else if (inst.op == "ret") {
                 std::string retName = inst.operands.empty() ? "" : inst.operands[0].name;
-                llvm::Value* retVal = getOrLoad(retName);
+                llvm::Value* retVal = getAsPyObject(retName);
                 // If we couldn't find a value, return a boxed 0 instead of null
                 if (retVal == llvm::ConstantPointerNull::get(pyObjectPtrTy)) {
                     llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
@@ -612,6 +854,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 builder.CreateRet(llvm::ConstantPointerNull::get(pyObjectPtrTy));
             }
         }
+
+        // Small helper to box an i64 value on demand (used by some numeric
+        // binary paths and for range loop visible var boxing on escape).
+        (void)boxI64; // already defined above; keep reference for future native paths.
     }
     if (llvm::verifyModule(*module, &llvm::errs())) {
         std::cerr << "Module verification failed\n";

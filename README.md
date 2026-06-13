@@ -78,7 +78,8 @@ arguments, nested destructuring, and `tests/nbody.py`.
 
 ### Builtins
 `print()` (multi-arg), `range()`, `len()`, `str()`, `int()`, `float()`, `abs()`,
-`min()`, `max()`, `list()`, `enumerate()`, `zip()`
+`min()`, `max()`, `list()`, `enumerate()`, `zip()`,
+`sum()`, `sorted()`, `any()`, `all()`, `isinstance()`
 
 ### Assignment
 - Simple: `x = 1`
@@ -115,25 +116,28 @@ Linked into every compiled binary.
 **IR**: linear instruction list per function. Instructions: `const`, `fconst`,
 `bconst`, `assign`, `add`/`sub`/`mul`/`div`/`truediv`/`mod`/`pow`, `icmp`, `br`,
 `label`, `call`, `ret`. IR instructions can carry conservative result type
-metadata (`int`, `float`, `bool`, `str`, or `boxed`) for future native/unboxed
-code generation; the current codegen still falls back to boxed `PyObject*`
-unless a specific general lowering path opts out.
+metadata (`int`, `float`, `bool`, `str`, or `boxed`). Codegen uses that metadata
+for specific general native paths, such as range loop counters and numeric
+`+`/`-`/`*`, and otherwise falls back to boxed `PyObject*` runtime operations.
 
 ## Optimization Roadmap
 
-Correctness remains the default path. The first general allocation reduction is
-native lowering for `for ... in range(...)`, which avoids building a Python list
-for the range object. The next planned steps are unboxed integer loop counters,
-unboxed numeric locals, vector-backed homogeneous numeric lists, and specialized
-function variants selected from proven call-site types. Unsupported or uncertain
-cases must continue to use the boxed runtime path.
+Correctness remains the default path. The first general allocation reductions are
+native lowering for `for ... in range(...)` and native i64 loop-control counters,
+which avoid building a Python list for the range object and avoid boxed compare /
+increment operations for the hidden loop counter. The visible Python loop
+variable is still boxed each iteration.
+
+The compiler also lowers proven numeric `+`, `-`, and `*` operations to LLVM
+integer or double arithmetic and boxes the result at the boundary. Division,
+mixed/unknown types, and operations with additional Python edge cases remain on
+the boxed runtime path. The next planned steps are longer-lived unboxed numeric
+locals, vector-backed homogeneous numeric lists, and specialized function
+variants selected from proven call-site types. Unsupported or uncertain cases
+must continue to use the boxed runtime path.
 
 ## Known gaps (planned)
 
-- `sum()`, `sorted()`, `any()`, `all()`, `isinstance()` builtins
-- `str.find()`, `str.replace()` string methods
-- Full slicing semantics including slice step
-- Dict comprehensions (list comps work; dict comp stubs not yet wired)
 - `lambda` expressions
 - `nonlocal` statement
 - Classes (`class`, `self`, method dispatch)
