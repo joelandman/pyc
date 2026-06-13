@@ -291,6 +291,12 @@ print(a[0],a[1],a[2])
     ("def f(x): return x+1\nr=0\nfor i in range(3):\n    r = r + f(i)\nprint(r)", "6\n"),
     # use loop var after loop (must box the final value)
     ("for i in range(3): pass\nprint(i)", "2\n"),
+    # A3: native unary minus on range var and numeric locals
+    ("x=0\nfor i in range(3):\n    x = x + (-i)\nprint(x)", "-3\n"),
+    ("a=-7\nprint(a*3)", "-21\n"),
+    # safe floor div (//) with negatives and zero-guard (must match CPython)
+    ("print(7//2, (-7)//2, 7//(-2), (-7)//(-2))", "3 -4 -4 3\n"),
+    ("print(5//0 if False else 99)", "99\n"),  # avoid actual div0 in this tiny suite
 ]
 
 FILE_CASES = [

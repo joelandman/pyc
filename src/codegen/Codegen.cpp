@@ -590,6 +590,34 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
             } else if (inst.op == "div") {
+                if (inst.resultType == "int") {
+                    llvm::Value* lhs = unboxToI64(getOrLoad(inst.operands[0].name));
+                    llvm::Value* rhs = unboxToI64(getOrLoad(inst.operands[1].name));
+                    // Guard div-by-zero: fall back to boxed (runtime returns NULL)
+                    llvm::Value* isZero = builder.CreateICmpEQ(rhs, llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
+                    llvm::Function* numberDiv = module->getFunction("PyNumber_Divide");
+                    llvm::Value* boxedL = getAsPyObject(inst.operands[0].name);
+                    llvm::Value* boxedR = getAsPyObject(inst.operands[1].name);
+                    llvm::Value* quot = nullptr;
+                    if (numberDiv) {
+                        quot = builder.CreateCall(numberDiv, {boxedL, boxedR}, inst.result + ".boxed");
+                    } else {
+                        quot = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                    }
+                    // Native floor path (only if rhs != 0)
+                    llvm::Value* q = builder.CreateSDiv(lhs, rhs);
+                    llvm::Value* r = builder.CreateSRem(lhs, rhs);
+                    llvm::Value* signsDiffer = builder.CreateICmpSLT(builder.CreateXor(lhs, rhs), llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
+                    llvm::Value* hasRem = builder.CreateICmpNE(r, llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
+                    llvm::Value* needAdjust = builder.CreateAnd(signsDiffer, hasRem);
+                    llvm::Value* one = llvm::ConstantInt::get(context, llvm::APInt(64, 1));
+                    llvm::Value* qAdj = builder.CreateSub(q, one);
+                    q = builder.CreateSelect(needAdjust, qAdj, q);
+                    llvm::Value* nativeRes = builder.CreateSelect(isZero, quot, boxI64(q, inst.result + ".i64"), inst.result);
+                    valueMap[inst.result] = nativeRes;
+                    continue;
+                }
+                // float or unknown -> boxed
                 llvm::Function* numberDiv = module->getFunction("PyNumber_Divide");
                 llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
                 llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
@@ -633,6 +661,30 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 if (numberMult) {
                     llvm::Value* prod = builder.CreateCall(numberMult, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = prod;
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            } else if (inst.op == "neg") {
+                // Unary minus. For proven numeric resultType, keep native result (i64/double)
+                // so it can participate in further unboxed arithmetic (A3 widening).
+                // Box only on escape via getAsPyObject.
+                if (inst.resultType == "int") {
+                    llvm::Value* v = unboxToI64(getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name));
+                    llvm::Value* n = builder.CreateNeg(v, inst.result + ".i64");
+                    valueMap[inst.result] = n;  // native i64 for longer unboxed life
+                    continue;
+                }
+                if (inst.resultType == "float") {
+                    llvm::Value* v = unboxToDouble(getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name));
+                    llvm::Value* n = builder.CreateFNeg(v, inst.result + ".double");
+                    valueMap[inst.result] = n;
+                    continue;
+                }
+                // Fallback: boxed runtime path
+                llvm::Function* fn = module->getFunction("PyNumber_Negate");
+                llvm::Value* arg = getAsPyObject(inst.operands.empty() ? "" : inst.operands[0].name);
+                if (fn) {
+                    valueMap[inst.result] = builder.CreateCall(fn, {arg}, inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }

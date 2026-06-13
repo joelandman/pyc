@@ -1247,8 +1247,15 @@ private:
             if (resultType != "int" && resultType != "float" && resultType != "bool") {
                 resultType = "boxed";
             }
-            ir.addInstruction(currentFunc, "call", {"PyNumber_Negate", val}, res, resultType);
-            noteType(res, resultType);
+            if (resultType == "int" || resultType == "float") {
+                // Emit native neg; codegen will unbox operand if needed and
+                // keep the result as native i64/double when possible (A3).
+                ir.addInstruction(currentFunc, "neg", {val}, res, resultType);
+                noteType(res, resultType);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyNumber_Negate", val}, res, resultType);
+                noteType(res, resultType);
+            }
         } else {
             ir.addInstruction(currentFunc, "const", {"0"}, res, "int");   // unknown → 0
             noteType(res, "int");
