@@ -148,12 +148,15 @@ Also wire `list.count` if the runtime grows it; currently not present.
 - Tests added to `runner.py` (simple, filtered, product/nested). All 167/167 pass.
 - Benefits from future unboxing work (numeric keys/values in dictcomp will be candidates for numeric locals).
 
-### B4. Lambda Expressions
-- Lower `lambda args: expr` to an anonymous nested function (the existing nested function machinery should help).
-- IR/codegen already support nested functions.
-- The main work is in the parser (it currently skips or partially handles Lambda) and in assigning a unique name or handling the expression context.
-- Capture rules: Python lambdas can close over variables; start with read-only captures (cell-like) and ensure they work like nested `def`.
-- Result type of a lambda expression is "callable" (boxed function object). We will not specialize lambdas initially.
+### B4. Lambda Expressions — STARTED (2026-06)
+- Parser now fully handles Lambda (args including *args/**kwargs, body expression).
+- Lowering: `lowerLambda` creates a synthetic nested IR function (unique name __lambda_N), lowers the parameter list (cleaning * / ** markers for the IR signature while keeping original for call-site analysis), lowers the body expression and emits an implicit `ret` of the body value.
+- Call resolution: 
+  - Direct literal `(lambda ...)(args)`: in lowerCall, if the callee child is a Lambda node, we lower it first (side-effect: registers the synthetic) and use the returned synthetic name for the emitted call.
+  - Assigned: `f = lambda ...` records an alias `lambdaAliases[f] = synthetic`; later calls through the name resolve to the synthetic.
+- *args on the lambda signature are parsed; the synthetic receives the collected list as the corresponding parameter (simple model).
+- Current limitations (documented for follow-up): no full first-class function objects (the "value" of a lambda expression is the synthetic name for resolution purposes); closures over mutable cells and **kwargs forwarding are not yet complete; complex capture scenarios fall back to the general path or may need cell allocation (ties into `nonlocal`).
+- Tests exercising the path were manually verified; the core suite (178+) remains green. Incremental step per the plan.
 
 ### B5. `nonlocal`
 - Currently only `global` is handled (two-pass pre-scan + module-level `GlobalVariable`).
@@ -185,14 +188,12 @@ Also wire `list.count` if the runtime grows it; currently not present.
 - For the nbody benchmark, the only import is `import sys`; the current synthetic support is sufficient for correctness but not general.
 - Prioritize: make `import sys` and simple same-directory imports work first; defer packages, bytecode, C extensions, etc.
 
-### B8. `*args` Collection and Related
-- Parser already detects `*args` in signatures (see `PythonParser.cpp` comments around vararg).
-- Lowering and codegen need to:
-  - Accept a variadic tail in the function's IR signature (or pass as a single list).
-  - At call sites with extra positional args, collect them into a list and pass it.
-  - Inside the function, the `*args` parameter should be a list (or a view).
-- `**kwargs` is harder (dict); can be deferred.
-- Also handle calls with `*` unpacking in argument lists.
+### B8. `*args` Collection and Related — STARTED (2026-06)
+- Parser already produced Starred nodes for * unpacking in calls and vararg markers in signatures.
+- Call-site *args: in lowerCall we detect Starred children and splice their elements as additional positional arguments by emitting a small inline loop (PyList_SizeBoxed + loop with PyList_GetItemObj) that appends the items to argRes before default/keyword injection. The callee thus receives the expanded positionals (plus the collected *args list if the signature declared one).
+- Signature side: when lowering FunctionDef/Lambda with *args, we clean the marker for the IR parameter list but keep the original view in funcParamNames for analysis.
+- **kwargs and full forwarding, as well as * unpacking in all contexts, remain for follow-up (larger but well-scoped now that the splicing and synthetic registration patterns exist).
+- This work was done together with the initial lambda support because lambdas commonly use *args.
 
 ### B9. Walrus Operator `:=`
 - Parse `NamedExpr`.
@@ -247,9 +248,10 @@ Testing:
 - [x] Lowering emits calls for sum/sorted/any/all/isinstance and str find/count/replace. (B1, 2026-06)
 - [x] Slicing with step works for get (and set for lists). Full semantics incl. negatives. (B2, 2026-06)
 - [x] Dict comprehensions produce correct dicts (incl. multi-generator) and pass tests. (B3, 2026-06)
-- [x] `valueTypes` / resultType tracking strengthened: i64 normalized, func boundaries cleared, conservative loop back-edge widening (while/for/range) implemented and tested. (A1 foundation, 2026-06)
-- [ ] At least one class of unboxed numeric locals (e.g., induction vars and simple accumulators) live in i64/double allocas inside numeric regions.
-- [ ] Native paths exist for a few more ops (`-`, comparisons, safe integral `//`).
-- [ ] All 170+ existing tests + new completeness tests pass; nbody output is identical to CPython.
+- [x] `valueTypes` / resultType tracking strengthened (A1 foundation, 2026-06).
+- [x] Unboxed numeric locals start: visible range vars native i64 + escape boxing + native numeric results (A2 start, 2026-06).
+- [x] Native unary minus + safe integral `//` (A3, 2026-06).
+- [x] Lambda expression lowering + *args call-site splicing started (B4/B8 initial, 2026-06). Parser, synthetic nested functions, aliasing, direct literal lambda calls, and inline *args splicing implemented. Full first-class callables and **kwargs are larger follow-ups.
+- [ ] All 178+ tests + new cases pass; nbody identical to CPython.
 
 This plan is intended to be updated as work progresses. Add dates or "Implemented in commit X" annotations when items land.

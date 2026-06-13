@@ -242,6 +242,17 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                     node->args.push_back(getPyString(arg, "arg"));
                 }
             }
+            // *args / **kwargs for lambda (match FunctionDef handling)
+            PyObject* vararg = PyObject_GetAttrString(a, "vararg");
+            if (vararg && vararg != Py_None) {
+                node->args.push_back("*" + getPyString(vararg, "arg"));
+            }
+            Py_XDECREF(vararg);
+            PyObject* kwarg = PyObject_GetAttrString(a, "kwarg");
+            if (kwarg && kwarg != Py_None) {
+                node->args.push_back("**" + getPyString(kwarg, "arg"));
+            }
+            Py_XDECREF(kwarg);
             Py_XDECREF(argList);
             Py_DECREF(a);
         }

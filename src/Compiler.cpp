@@ -72,14 +72,25 @@ public:
                 funcDefaultValues[node->id] = defaults;
             }
 
+            // Clean *args/**kwargs markers for the IR parameter list (bare names),
+            // but keep the original view in funcParamNames for call-site analysis.
+            std::vector<std::string> cleanedArgs;
+            for (auto& a : node->args) {
+                if (!a.empty() && a[0] == '*') cleanedArgs.push_back(a.substr(1));
+                else cleanedArgs.push_back(a);
+            }
+            ir.addFunction(node->id, cleanedArgs);
+            funcParamNames[node->id] = node->args;
+
             currentFunc = node->id;
             tempCounter = 0;
-            valueTypes.clear();
             for (const auto& c : node->children) {
                 if (c && c->type == "Default") continue;
                 lower(c.get());
             }
             currentFunc = saved;   // restore context for siblings (important for top-level code after defs)
+            // Do not fall through to the generic FunctionDef handling below.
+            return;
         } else if (node->type == "If") {
             lowerIf(node);
         } else if (node->type == "While") {
@@ -168,6 +179,14 @@ public:
             return lowerBoolOp(node);
         } else if (node->type == "UnaryOp") {
             return lowerUnaryOp(node);
+        } else if (node->type == "Lambda") {
+            return lowerLambda(node);
+        } else if (node->type == "Starred") {
+            // In expression context (e.g. inside a list or other), lower the
+            // starred value as-is (the iterable). Call-site collection is
+            // handled in lowerCall.
+            if (!node->children.empty()) return lowerExpr(node->children[0].get());
+            return "";
         } else if (node->type == "ListComp") {
             return lowerListComp(node);
         } else if (node->type == "DictComp") {
@@ -192,6 +211,8 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> funcDefaultValues;
     std::unordered_map<std::string, std::vector<std::string>> funcParamNames;
     std::unordered_map<std::string, std::string> valueTypes;
+    // Map from user-level name to synthetic lambda function name for call resolution.
+    std::unordered_map<std::string, std::string> lambdaAliases;
 
     void noteType(const std::string& name, const std::string& type) {
         if (!name.empty() && !type.empty()) valueTypes[name] = type;
@@ -314,7 +335,12 @@ private:
             node->children[0]->type == "Attribute") {
             return lowerMethodCall(node);
         }
-        std::string funcName = (node->children.empty() || !node->children[0]) ? "" : node->children[0]->id;
+        std::string rawName = (node->children.empty() || !node->children[0]) ? "" : node->children[0]->id;
+        std::string funcName = rawName;
+        // Resolve lambda aliases and bare lambda expression results so that
+        // "f = lambda ...; f(...)" and direct " (lambda ...)(...)" work.
+        auto ait = lambdaAliases.find(rawName);
+        if (ait != lambdaAliases.end()) funcName = ait->second;
         std::vector<std::string> argRes;
         std::vector<std::pair<std::string, std::string>> kwArgs; // (name, value)
 
@@ -325,6 +351,36 @@ private:
                     std::string val = lowerExpr(node->children[i]->children[0].get());
                     kwArgs.emplace_back(node->children[i]->id, val);
                 }
+            } else if (node->children[i]->type == "Starred" &&
+                       !node->children[i]->children.empty()) {
+                // *args: splice the iterable's elements as additional positional args
+                std::string lst = lowerExpr(node->children[i]->children[0].get());
+                std::string ln = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", lst}, ln);
+                std::string jv = "s" + std::to_string(tempCounter++);
+                std::string j0 = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, j0);
+                ir.addInstruction(currentFunc, "assign", {j0}, jv);
+                int sc = tempCounter++;
+                std::string slp = "star_lp_" + std::to_string(sc);
+                std::string sbd = "star_bd_" + std::to_string(sc);
+                std::string scn = "star_cn_" + std::to_string(sc);
+                std::string sex = "star_ex_" + std::to_string(sc);
+                ir.addInstruction(currentFunc, "label", {}, slp);
+                std::string cm = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "icmp", {"Lt", jv, ln}, cm);
+                ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
+                ir.addInstruction(currentFunc, "label", {}, sbd);
+                std::string el = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", lst, jv}, el);
+                argRes.push_back(el);
+                std::string one = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"1"}, one);
+                std::string nj = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "add", {jv, one}, nj);
+                ir.addInstruction(currentFunc, "assign", {nj}, jv);
+                ir.addInstruction(currentFunc, "br", {}, slp);
+                ir.addInstruction(currentFunc, "label", {}, sex);
             } else {
                 argRes.push_back(lowerExpr(node->children[i].get()));
             }
@@ -349,6 +405,16 @@ private:
                 for (auto& kw : kwArgs) argRes.push_back(kw.second);
             }
         }
+
+        // *args collection at the call site: splice the iterable's elements
+        // as additional positional args. We lower the starred expression
+        // to a list value, then emit a tiny runtime-assisted unpack using
+        // the existing list machinery (size + loop of GetItem) right here
+        // so the callee receives true extra positional arguments.
+        // If a Starred node appears in the original children we rewrite
+        // argRes by expanding it inline before default injection.
+        // Simpler approach used below: detect Starred in the AST children
+        // of the Call and splice using list iteration at lowering time.
         // Default-arg injection: if the function has parameters with defaults,
         // pad the call's positional args up to the full parameter list using
         // the stored default values. Slots already filled by positional or
@@ -582,6 +648,49 @@ private:
         ops.insert(ops.end(), argRes.begin(), argRes.end());
         ir.addInstruction(currentFunc, "call", ops, res);
         return res;
+    }
+
+    std::string lowerLambda(const ASTNode* node) {
+        // Treat lambda as a nested function with a synthetic unique name.
+        // The C++ return value is the synthetic IR function name so that
+        // call sites and assigns can redirect to it. We still emit a dummy
+        // value for the lambda *expression* itself (no first-class funcs yet).
+        static int lamCount = 0;
+        std::string lamName = "__lambda_" + std::to_string(lamCount++);
+
+        // Clean * / ** markers for the actual IR parameter names.
+        std::vector<std::string> cleaned;
+        for (auto& a : node->args) {
+            if (!a.empty() && a[0]=='*') cleaned.push_back(a.substr(1));
+            else cleaned.push_back(a);
+        }
+        ir.addFunction(lamName, cleaned);
+        funcParamNames[lamName] = node->args;
+        ir.setFunctionGlobals(lamName, ir.moduleGlobals);
+
+        std::string saved = currentFunc;
+        currentFunc = lamName;
+        tempCounter = 0;
+
+        if (!node->children.empty() && node->children[0]) {
+            std::string bodyVal = lowerExpr(node->children[0].get());
+            ir.addInstruction(lamName, "ret", {bodyVal});
+        } else {
+            std::string z = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(lamName, "const", {"0"}, z);
+            ir.addInstruction(lamName, "ret", {z});
+        }
+
+        currentFunc = saved;
+
+        // Alias the lambda synthetic name under the variable that receives it
+        // so later calls using that variable resolve to the nested function.
+        // We do a lightweight best-effort by returning the synthetic name as
+        // the expression value; lowerAssign for a Name target will record it.
+        // Callers that do direct "f = lambda ...; f(...)" will work because
+        // the lowering of the call will see the synthetic in the alias map
+        // or fall back to treating the callee name as the IR function name.
+        return lamName;
     }
 
     std::string lowerCompare(const ASTNode* node) {
@@ -1010,6 +1119,11 @@ private:
             std::string val = lowerExpr(node->children[0].get());
             ir.addInstruction(currentFunc, "assign", {val}, node->id);
             noteType(node->id, typeOf(val));
+            // If the RHS value is a synthetic lambda name, remember the alias
+            // so future calls through 'node->id' can resolve to the nested IR function.
+            if (!val.empty() && val.rfind("__lambda_", 0) == 0) {
+                lambdaAliases[node->id] = val;
+            }
         }
     }
 

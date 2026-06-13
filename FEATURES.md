@@ -124,11 +124,11 @@ specific lowering has a boxed fallback for uncertain cases.
   Longer-lived unboxed numeric locals and homogeneous numeric-vector lists are
   planned next.
 
-## Not yet implemented
+## Not yet implemented (or partial)
 
-- `lambda` expressions
+- `lambda` expressions (basic lowering and call resolution in place; full first-class callable objects and robust **kwargs pending)
 - `nonlocal` statement
 - Classes and OOP
 - `import` / module system
-- `*args` collection in function body
+- `*args` / `**kwargs` full collection and forwarding (call-site splicing started)
 - Walrus operator `:=`
