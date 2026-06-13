@@ -253,6 +253,22 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 node->args.push_back("**" + getPyString(kwarg, "arg"));
             }
             Py_XDECREF(kwarg);
+
+            // Handle default arguments for lambda (mirror FunctionDef)
+            PyObject* defaults = PyObject_GetAttrString(a, "defaults");
+            if (defaults && PyList_Check(defaults)) {
+                for (Py_ssize_t i = 0; i < PyList_Size(defaults); ++i) {
+                    PyObject* d = PyList_GetItem(defaults, i);
+                    auto defNode = std::make_unique<ASTNode>();
+                    defNode->type = "Default";
+                    auto valueChild = std::make_unique<ASTNode>();
+                    buildAST(d, valueChild.get());
+                    defNode->children.push_back(std::move(valueChild));
+                    node->children.push_back(std::move(defNode));
+                }
+            }
+            Py_XDECREF(defaults);
+
             Py_XDECREF(argList);
             Py_DECREF(a);
         }
@@ -360,7 +376,15 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                             node->args.push_back(getPyString(tn, "id"));
                     }
                 }
-                // value added by generic children.empty() handler below
+                // Capture RHS value so lowerAssign can see children[0] for
+                // normal value lowering and for list-literal tracking (*args static expansion).
+                PyObject* val = PyObject_GetAttrString(pyNode, "value");
+                if (val) {
+                    auto v = std::make_unique<ASTNode>();
+                    buildAST(val, v.get());
+                    node->children.push_back(std::move(v));
+                    Py_DECREF(val);
+                }
             } else if (tname == "Tuple" || tname == "List") {
                 node->id = "__unpack__";
                 auto t = std::make_unique<ASTNode>(); buildAST(target, t.get());

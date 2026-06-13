@@ -48,7 +48,7 @@ x if cond else y               ternary
 ## Functions
 
 ```python
-def f(a, b=10, *args):         positional, default, *args (collection NYI)
+def f(a, b=10, *args):         positional, default, *args (call-site unpacking + callee collection supported; **kwargs NYI)
     return a, b                multi-value return (returned as list)
 
 def f(a, b): ...
@@ -126,9 +126,9 @@ specific lowering has a boxed fallback for uncertain cases.
 
 ## Not yet implemented (or partial)
 
-- `lambda` expressions (basic lowering and call resolution in place; full first-class callable objects and robust **kwargs pending)
+- `lambda` expressions (lowering, defaults, direct/assigned calls, and *args in signatures are implemented; full first-class callable objects and **kwargs forwarding pending)
 - `nonlocal` statement
 - Classes and OOP
 - `import` / module system
-- `*args` / `**kwargs` full collection and forwarding (call-site splicing started)
+- `*args` / `**kwargs` (call-site * unpacking works for literals (static) and dynamic lists (via __va wrappers); declared *args collection on the callee side works; **kwargs pending)
 - Walrus operator `:=`

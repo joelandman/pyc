@@ -27,7 +27,7 @@ make -j
 - Top-level statements
 - List comprehensions (`[i for i in range(5)]`)
 - Dictionary comprehensions (`{i: i*i for i in range(5)}`)
-- Function calls with *args (`func(*args)`) and **kwargs (`func(**kwargs)`)
+- Function calls with *args unpacking (`func(*args)`) at call sites (static for literals, dynamic via wrappers); **kwargs pending
 
 More features (strings, lists, classes, exceptions, etc.) are planned in future phases.
 
