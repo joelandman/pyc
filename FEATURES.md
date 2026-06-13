@@ -1,6 +1,6 @@
 # pyc — Implemented Features
 
-Current test count: **170/170** (all compared against CPython output).
+Current test count: **174/174** (all compared against CPython output).
 
 **Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
 Full slicing (get/set, step, negatives, str + list) implemented (B2).

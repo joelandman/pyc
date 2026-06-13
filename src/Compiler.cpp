@@ -910,10 +910,12 @@ private:
         ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
 
         ir.addInstruction(currentFunc, "label", {}, bodyLabel);
-        std::string boxedLoopValue = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "box_i64", {idxVar}, boxedLoopValue, "int");
-        ir.addInstruction(currentFunc, "assign", {boxedLoopValue}, node->id);
-        noteType(node->id, "int");
+        // Unbox the visible loop variable as native i64 inside the range region.
+        // Uses of the name in numeric contexts will load the i64 directly.
+        // Contexts that need a PyObject* (calls, containers, print, return, etc.)
+        // will box on demand at the use site.
+        ir.addInstruction(currentFunc, "i64assign", {idxVar}, node->id, "i64");
+        noteType(node->id, "i64");
         for (size_t i = iterIndex + 1; i < node->children.size(); ++i)
             lower(node->children[i].get());
 
@@ -1057,7 +1059,9 @@ private:
             // Normal name: children[0] = rhs
             std::string rhs = lowerExpr(node->children[0].get());
             std::string result = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, op, {node->id, rhs}, result);
+            std::string resultType = numericResultType(op, node->id, rhs);
+            ir.addInstruction(currentFunc, op, {node->id, rhs}, result, resultType);
+            noteType(result, resultType);
             ir.addInstruction(currentFunc, "assign", {result}, node->id);
         }
     }

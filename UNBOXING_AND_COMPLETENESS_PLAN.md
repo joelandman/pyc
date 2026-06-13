@@ -51,17 +51,24 @@ Remaining for a solid A1 milestone (before heavy unboxing in A2):
 
 Milestone: `valueTypes` + IR resultType + loop widening are reliable enough that we can trust "int"/"float" annotations for deciding native storage and arithmetic inside regions without breaking the full test suite (currently 170 tests). This is the prerequisite for A2 (unboxed numeric locals).
 
-### A2. Unboxed Numeric Locals (Core Feature)
-- In codegen, for names proven to be "i64" or "double" throughout their live range (or a sub-region), allocate a native `alloca i64` or `alloca double` instead of (or in addition to) the PyObject* slot.
-  - Keep the Python-visible name mapping to a boxed view at function boundaries, call sites, and any point where the variable might escape (return, list append, global assign, passing to a non-specialized call).
-  - On assignment from a boxed source or at region exit, lazily box; on use in a numeric context inside the region, unbox once and reuse the native value.
-- Extend `assign` / `i64assign` / `box_i64` / `i64_from_box` patterns so lowering can emit "stay unboxed" variants.
-- For range loops: keep the hidden `__range_idx_*` as today (already i64). Optionally allow the visible loop variable (`node->id`) to live unboxed *inside the loop body* when all uses inside the loop are numeric and there are no assignments of non-int to it. Re-box only on loop exit if the variable is live after the loop.
-  - This is a high-value win for microbenchmarks like `for i in range(N): x = i` or `x += i`.
-- Handle control flow: when a numeric local is assigned in one branch but not another, or assigned a boxed value on one path, fall back to boxed storage for that name (or insert phi-like re-boxing at merge points).
-- Refcounting: unboxed scalars have no refs. Only boxed values participate in INCREF/DECREF. Ensure we never DECREF a native scalar.
+### A2. Unboxed Numeric Locals (Core Feature) — **IN PROGRESS (2026-06)**
+Work completed in this increment:
+- Lowering change in `lowerRangeFor` (`Compiler.cpp`): the visible Python loop variable (`node->id`) is now published via `i64assign` + `noteType "i64"` instead of `box_i64` + `assign` on every iteration. This keeps the value as a native i64 alloca inside the loop body.
+- Codegen infrastructure (`Codegen.cpp`):
+  - Added `getAsPyObject(name)` helper: returns a PyObject* for any name. If the underlying storage is native i64 (or later double), it boxes on demand using the existing `boxI64`/`boxDouble` paths.
+  - Updated all escape points that need Python objects (call arguments, `PyNumber_*` / runtime calls for mixed/boxed ops, `icmp` for general compares, `ret`, `print`, list subscript etc.) to go through `getAsPyObject` (or equivalent boxing) instead of raw `getOrLoad`.
+  - `emitNativeNumericBinary` now stores the raw i64/double result in the instruction's result temp (instead of immediately boxing). This enables longer-lived unboxed temporaries and locals inside numeric regions. Boxing happens later only if/when the value must escape.
+  - `assign` handling was extended: when the target is currently an i64 slot and the source is not i64, we switch the name's storage to a fresh PyObject* slot (so later arbitrary values, including strings from type-widening paths, are supported). When the source *is* i64 we keep the native slot.
+- Tests: added several A2-specific cases in `runner.py` exercising the visible range var in pure numeric contexts (`s += i*i`), list append, calls (`f(i)`), and use-after-loop (final value must be correctly boxed for the print after the loop). The existing A1 widening cases (int→str assignment inside a range loop) continue to pass, confirming that the "switch to boxed storage" path works.
+- All 174/174 tests pass (including nbody.py and opt_* files).
 
-Milestone: `tests/opt_numeric_locals.py` (and similar) run with measurably fewer allocations; all existing tests still pass.
+Remaining for fuller A2:
+- General unboxed numeric locals (not just range induction variables): detect simple accumulators and temporaries that stay numeric for their live range and allocate native i64/double slots for them.
+- More complete escape analysis / use-site boxing (e.g. when a numeric local is stored into a list that may later be read as a general object).
+- Interaction with control flow merges inside loops (phi-like re-boxing or slot switching at certain points).
+- Measurement: show reduced allocations for hot numeric microbenchmarks.
+
+Milestone (updated): Visible `range` loop variables are unboxed; the getAsPyObject + native-result-temp infrastructure is in place. This is the first real step toward longer-lived unboxed numeric locals. Full general unboxed locals and allocation reduction will be expanded in follow-ups. All existing tests (174) remain green.
 
 ### A3. Widen Native Arithmetic
 - Currently only `+ - *` with proven `resultType=int|float` go native (`Codegen.cpp:527,538,585`).

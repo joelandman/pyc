@@ -284,6 +284,13 @@ print(a[0],a[1],a[2])
     ("z=42\nfor k in range(2):\n    if k==1:\n        z='end'\n    else:\n        z=k\nprint(z)", "end\n"),
     # numeric stays numeric across backedge (no spurious widen)
     ("acc=0\nfor i in range(5):\n    acc = acc + i\nprint(acc)", "10\n"),
+    # A2: visible range loop var is unboxed i64 inside the loop (numeric uses)
+    # and boxed on demand for Python-visible contexts (print, list, call, etc.)
+    ("s=0\nfor i in range(4):\n    s = s + i*i\nprint(s)", "14\n"),
+    ("lst=[]\nfor i in range(3):\n    lst.append(i)\nprint(lst[0],lst[1],lst[2])", "0 1 2\n"),
+    ("def f(x): return x+1\nr=0\nfor i in range(3):\n    r = r + f(i)\nprint(r)", "6\n"),
+    # use loop var after loop (must box the final value)
+    ("for i in range(3): pass\nprint(i)", "2\n"),
 ]
 
 FILE_CASES = [
