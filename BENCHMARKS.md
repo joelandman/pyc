@@ -45,17 +45,22 @@ Current known issues that impact performance:
 ## Current General Optimization Work
 
 The compiler now lowers `for ... in range(...)` directly to loop control-flow
-blocks instead of allocating a boxed range list. This is the first general
-allocation reduction on the path toward fast numeric loops.
+blocks instead of allocating a boxed range list. Hidden `range` loop counters
+use native i64 compare/increment operations, while the Python-visible loop
+variable remains boxed for correctness.
+
+Proven numeric `+`, `-`, and `*` operations now lower to native LLVM arithmetic
+and box the result afterward. Division remains on the boxed runtime path because
+the runtime currently handles divide-by-zero by returning `NULL`; native floating
+division would silently produce `inf`/`nan` and change behavior.
 
 The next planned optimizations are:
 
-1. Unboxed integer loop counters for native `range` loops.
-2. Unboxed numeric locals inside proven numeric regions.
-3. Homogeneous numeric-vector list representations for `list[int]` and
+1. Longer-lived unboxed numeric locals inside proven numeric regions.
+2. Homogeneous numeric-vector list representations for `list[int]` and
    `list[float]`.
-4. Specialized function variants selected from proven call-site argument types.
-5. Allocation sinking for temporary boxed numbers that do not escape.
+3. Specialized function variants selected from proven call-site argument types.
+4. Allocation sinking for temporary boxed numbers that do not escape.
 
 Every optimization should preserve the boxed fallback path for uncertain or
 mixed-type code.

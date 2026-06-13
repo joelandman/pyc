@@ -299,7 +299,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 return llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0));
             }
             if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(it->second))
-                return builder.CreateLoad(pyObjectPtrTy, alloca, name + ".load");
+                return builder.CreateLoad(alloca->getAllocatedType(), alloca, name + ".load");
             if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(it->second))
                 return builder.CreateLoad(pyObjectPtrTy, gv, name + ".load");
             return it->second;
@@ -310,6 +310,75 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             if (!boxed || boxed->getType() == llvm::Type::getInt64Ty(context)) return boxed;
             return builder.CreateLoad(llvm::Type::getInt64Ty(context),
                 builder.CreateStructGEP(pyObjectTy, boxed, 2), "unboxed");
+        };
+
+        auto boxI64 = [&](llvm::Value* val, const std::string& name = "") -> llvm::Value* {
+            llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
+            if (!fromLong) return llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            return builder.CreateCall(fromLong, {val}, name);
+        };
+
+        auto unboxToDouble = [&](llvm::Value* boxed) -> llvm::Value* {
+            llvm::Type* doubleTy = llvm::Type::getDoubleTy(context);
+            if (!boxed || boxed->getType() == doubleTy) return boxed;
+            if (boxed->getType() == llvm::Type::getInt64Ty(context)) {
+                return builder.CreateSIToFP(boxed, doubleTy, "i64.to.double");
+            }
+
+            llvm::Value* typeVal = builder.CreateLoad(llvm::Type::getInt32Ty(context),
+                builder.CreateStructGEP(pyObjectTy, boxed, 1), "boxed.type");
+            llvm::Value* intVal = builder.CreateLoad(llvm::Type::getInt64Ty(context),
+                builder.CreateStructGEP(pyObjectTy, boxed, 2), "boxed.int");
+            llvm::Value* intAsDouble = builder.CreateSIToFP(intVal, doubleTy, "boxed.int.double");
+            llvm::Value* doubleVal = builder.CreateLoad(doubleTy,
+                builder.CreateStructGEP(pyObjectTy, boxed, 3), "boxed.double");
+            llvm::Value* isFloat = builder.CreateICmpEQ(typeVal,
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 4), "boxed.isfloat");
+            return builder.CreateSelect(isFloat, doubleVal, intAsDouble, "unboxed.double");
+        };
+
+        auto boxDouble = [&](llvm::Value* val, const std::string& name = "") -> llvm::Value* {
+            llvm::Function* fromDouble = module->getFunction("PyFloat_FromDouble");
+            if (!fromDouble) return llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            return builder.CreateCall(fromDouble, {val}, name);
+        };
+
+        auto emitNativeNumericBinary = [&](const IRInstruction& inst,
+                                          const std::string& op) -> bool {
+            if (inst.operands.size() < 2) return false;
+            if (inst.resultType == "int") {
+                llvm::Value* lhs = unboxToI64(getOrLoad(inst.operands[0].name));
+                llvm::Value* rhs = unboxToI64(getOrLoad(inst.operands[1].name));
+                llvm::Value* native = nullptr;
+                if (op == "add") {
+                    native = builder.CreateAdd(lhs, rhs, inst.result + ".i64");
+                } else if (op == "sub") {
+                    native = builder.CreateSub(lhs, rhs, inst.result + ".i64");
+                } else if (op == "mul") {
+                    native = builder.CreateMul(lhs, rhs, inst.result + ".i64");
+                } else {
+                    return false;
+                }
+                valueMap[inst.result] = boxI64(native, inst.result);
+                return true;
+            }
+            if (inst.resultType == "float") {
+                llvm::Value* lhs = unboxToDouble(getOrLoad(inst.operands[0].name));
+                llvm::Value* rhs = unboxToDouble(getOrLoad(inst.operands[1].name));
+                llvm::Value* native = nullptr;
+                if (op == "add") {
+                    native = builder.CreateFAdd(lhs, rhs, inst.result + ".double");
+                } else if (op == "sub") {
+                    native = builder.CreateFSub(lhs, rhs, inst.result + ".double");
+                } else if (op == "mul") {
+                    native = builder.CreateFMul(lhs, rhs, inst.result + ".double");
+                } else {
+                    return false;
+                }
+                valueMap[inst.result] = boxDouble(native, inst.result);
+                return true;
+            }
+            return false;
         };
 
         llvm::BasicBlock* curBlock = entry;
@@ -380,7 +449,45 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 valueMap[inst.result] = boxedCmp;
                 continue;
             }
-            if (inst.op == "const") {
+            if (inst.op == "i64const") {
+                long v = std::stol(inst.operands.empty() ? "0" : inst.operands[0].name);
+                valueMap[inst.result] = llvm::ConstantInt::get(context, llvm::APInt(64, v));
+            } else if (inst.op == "i64_from_box") {
+                llvm::Value* boxed = getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name);
+                valueMap[inst.result] = unboxToI64(boxed);
+            } else if (inst.op == "box_i64") {
+                llvm::Value* val = getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name);
+                valueMap[inst.result] = boxI64(val, inst.result);
+            } else if (inst.op == "i64add") {
+                llvm::Value* lhs = getOrLoad(inst.operands[0].name);
+                llvm::Value* rhs = getOrLoad(inst.operands[1].name);
+                valueMap[inst.result] = builder.CreateAdd(lhs, rhs, inst.result);
+            } else if (inst.op == "i64icmp") {
+                std::string opstr = inst.operands.empty() ? "" : inst.operands[0].name;
+                llvm::Value* lhs = getOrLoad(inst.operands.size() > 1 ? inst.operands[1].name : "");
+                llvm::Value* rhs = getOrLoad(inst.operands.size() > 2 ? inst.operands[2].name : "");
+                llvm::Value* cmp = nullptr;
+                if      (opstr == "Eq"    || opstr == "eq") cmp = builder.CreateICmpEQ(lhs, rhs, inst.result);
+                else if (opstr == "NotEq" || opstr == "ne") cmp = builder.CreateICmpNE(lhs, rhs, inst.result);
+                else if (opstr == "Lt"    || opstr == "lt") cmp = builder.CreateICmpSLT(lhs, rhs, inst.result);
+                else if (opstr == "Gt"    || opstr == "gt") cmp = builder.CreateICmpSGT(lhs, rhs, inst.result);
+                else if (opstr == "LtE")                    cmp = builder.CreateICmpSLE(lhs, rhs, inst.result);
+                else if (opstr == "GtE")                    cmp = builder.CreateICmpSGE(lhs, rhs, inst.result);
+                else                                         cmp = builder.CreateICmpNE(lhs, rhs, inst.result);
+                valueMap[inst.result] = cmp;
+            } else if (inst.op == "i64assign") {
+                llvm::Value* newVal = getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name);
+                auto it = valueMap.find(inst.result);
+                if (it == valueMap.end()) {
+                    llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                                  func->getEntryBlock().begin());
+                    llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(llvm::Type::getInt64Ty(context), nullptr, inst.result);
+                    valueMap[inst.result] = alloca;
+                    builder.CreateStore(newVal, alloca);
+                } else {
+                    builder.CreateStore(newVal, it->second);
+                }
+            } else if (inst.op == "const") {
                 std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
                 if (!val.empty() && (val[0] == '"' || val[0] == '\'')) {
                     llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
@@ -417,6 +524,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = boxed;
                 }
             } else if (inst.op == "add") {
+                if (emitNativeNumericBinary(inst, "add")) continue;
                 llvm::Function* numberAdd = module->getFunction("PyNumber_Add");
                 llvm::Value* lhs = getOrLoad(inst.operands[0].name);
                 llvm::Value* rhs = getOrLoad(inst.operands[1].name);
@@ -427,6 +535,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
             } else if (inst.op == "sub") {
+                if (emitNativeNumericBinary(inst, "sub")) continue;
                 llvm::Function* numberSub = module->getFunction("PyNumber_Subtract");
                 llvm::Value* lhs = getOrLoad(inst.operands[0].name);
                 llvm::Value* rhs = getOrLoad(inst.operands[1].name);
@@ -473,6 +582,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
             } else if (inst.op == "mul") {
+                if (emitNativeNumericBinary(inst, "mul")) continue;
                 llvm::Function* numberMult = module->getFunction("PyNumber_Multiply");
                 llvm::Value* lhs = getOrLoad(inst.operands[0].name);
                 llvm::Value* rhs = getOrLoad(inst.operands[1].name);

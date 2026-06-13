@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 #ifndef PYC_SOURCE_DIR
 #define PYC_SOURCE_DIR "."
@@ -208,6 +209,29 @@ private:
             return (lt == "float" || rt == "float") ? "float" : "int";
         }
         return "boxed";
+    }
+
+    void mergeBranchTypes(const std::unordered_map<std::string, std::string>& before,
+                          const std::unordered_map<std::string, std::string>& thenTypes,
+                          const std::unordered_map<std::string, std::string>& elseTypes) {
+        std::unordered_set<std::string> names;
+        for (const auto& kv : before) names.insert(kv.first);
+        for (const auto& kv : thenTypes) names.insert(kv.first);
+        for (const auto& kv : elseTypes) names.insert(kv.first);
+
+        std::unordered_map<std::string, std::string> merged = before;
+        for (const auto& name : names) {
+            auto bit = before.find(name);
+            std::string incoming = bit == before.end() ? "boxed" : bit->second;
+
+            auto tit = thenTypes.find(name);
+            auto eit = elseTypes.find(name);
+            std::string thenType = tit == thenTypes.end() ? incoming : tit->second;
+            std::string elseType = eit == elseTypes.end() ? incoming : eit->second;
+
+            merged[name] = (thenType == elseType) ? thenType : "boxed";
+        }
+        valueTypes = std::move(merged);
     }
 
     // Recursively collect all names from `global` statements in the subtree.
@@ -428,21 +452,28 @@ private:
         if (funcName == "int") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Int", arg}, res);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Int", arg}, res, "int");
+            noteType(res, "int");
             return res;
         }
         // float(x) → PyBuiltin_Float(x)
         if (funcName == "float") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Float", arg}, res);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Float", arg}, res, "float");
+            noteType(res, "float");
             return res;
         }
         // abs(x) → PyBuiltin_Abs(x)
         if (funcName == "abs") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Abs", arg}, res);
+            std::string resultType = typeOf(arg);
+            if (resultType != "int" && resultType != "float" && resultType != "bool") {
+                resultType = "boxed";
+            }
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Abs", arg}, res, resultType);
+            noteType(res, resultType);
             return res;
         }
 
@@ -559,6 +590,9 @@ private:
 
         std::string cond = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         ir.addInstruction(currentFunc, "br", {cond, thenL, elseL});
+
+        auto beforeTypes = valueTypes;
+
         ir.addInstruction(currentFunc, "label", {}, thenL);
 
         // node->value = number of then-body statements (set in parser)
@@ -566,14 +600,18 @@ private:
         size_t n = node->children.size();
         for (size_t i = 1; i <= bodyCount && i < n; ++i)
             lower(node->children[i].get());
+        auto thenTypes = valueTypes;
 
         ir.addInstruction(currentFunc, "br", {}, endL);
         ir.addInstruction(currentFunc, "label", {}, elseL);
 
+        valueTypes = beforeTypes;
         for (size_t i = 1 + bodyCount; i < n; ++i)
             lower(node->children[i].get());
+        auto elseTypes = valueTypes;
 
         ir.addInstruction(currentFunc, "label", {}, endL);
+        mergeBranchTypes(beforeTypes, thenTypes, elseTypes);
     }
 
     void lowerWhile(const ASTNode* node) {
@@ -610,7 +648,7 @@ private:
                             (node->children[0]->type == "Tuple" || node->children[0]->type == "List"))
                                ? 1 : 0;
         if (node->children.size() <= iterIndex) return;
-        if (node->id != "__unpack__" && isRangeCall(node->children[iterIndex].get())) {
+        if (node->id != "__unpack__" && isNativeRangeCandidate(node->children[iterIndex].get())) {
             lowerRangeFor(node, iterIndex);
             return;
         }
@@ -682,6 +720,13 @@ private:
                node->children[0]->id == "range";
     }
 
+    bool isNativeRangeCandidate(const ASTNode* node) const {
+        if (!isRangeCall(node)) return false;
+        size_t argc = node->children.size() > 0 ? node->children.size() - 1 : 0;
+        if (argc < 3) return true;
+        return constantStepSign(node->children[3].get()) != 0;
+    }
+
     int constantStepSign(const ASTNode* node) const {
         if (!node) return 1;
         if (node->type == "Constant") {
@@ -701,7 +746,45 @@ private:
             } catch (...) {
             }
         }
-        return 1;
+        return 0;
+    }
+
+    bool constantI64Value(const ASTNode* node, long& out) const {
+        if (!node) return false;
+        if (node->type == "Constant") {
+            try {
+                out = std::stol(node->value);
+                return true;
+            } catch (...) {
+                return false;
+            }
+        }
+        if (node->type == "UnaryOp" && node->op == "USub" &&
+            !node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Constant") {
+            try {
+                out = -std::stol(node->children[0]->value);
+                return true;
+            } catch (...) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    std::string lowerRangeI64Arg(const ASTNode* arg) {
+        long constVal = 0;
+        if (constantI64Value(arg, constVal)) {
+            std::string nativeConst = "i" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "i64const", {std::to_string(constVal)}, nativeConst, "i64");
+            noteType(nativeConst, "i64");
+            return nativeConst;
+        }
+        std::string boxed = lowerExpr(arg);
+        std::string native = "i" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "i64_from_box", {boxed}, native, "i64");
+        noteType(native, "i64");
+        return native;
     }
 
     void lowerRangeFor(const ASTNode* node, size_t iterIndex) {
@@ -714,34 +797,34 @@ private:
         int stepSign = 1;
 
         if (argc == 1) {
-            startRes = "c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {"0"}, startRes, "int");
-            noteType(startRes, "int");
-            stopRes = lowerExpr(call->children[1].get());
-            stepRes = "c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {"1"}, stepRes, "int");
-            noteType(stepRes, "int");
+            startRes = "i" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "i64const", {"0"}, startRes, "i64");
+            noteType(startRes, "i64");
+            stopRes = lowerRangeI64Arg(call->children[1].get());
+            stepRes = "i" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "i64const", {"1"}, stepRes, "i64");
+            noteType(stepRes, "i64");
         } else if (argc >= 2) {
-            startRes = lowerExpr(call->children[1].get());
-            stopRes = lowerExpr(call->children[2].get());
+            startRes = lowerRangeI64Arg(call->children[1].get());
+            stopRes = lowerRangeI64Arg(call->children[2].get());
             if (argc >= 3) {
                 stepSign = constantStepSign(call->children[3].get());
-                stepRes = lowerExpr(call->children[3].get());
+                stepRes = lowerRangeI64Arg(call->children[3].get());
             } else {
-                stepRes = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"1"}, stepRes, "int");
-                noteType(stepRes, "int");
+                stepRes = "i" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "i64const", {"1"}, stepRes, "i64");
+                noteType(stepRes, "i64");
             }
         } else {
-            startRes = "c" + std::to_string(tempCounter++);
-            stopRes = "c" + std::to_string(tempCounter++);
-            stepRes = "c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {"0"}, startRes, "int");
-            ir.addInstruction(currentFunc, "const", {"0"}, stopRes, "int");
-            ir.addInstruction(currentFunc, "const", {"1"}, stepRes, "int");
-            noteType(startRes, "int");
-            noteType(stopRes, "int");
-            noteType(stepRes, "int");
+            startRes = "i" + std::to_string(tempCounter++);
+            stopRes = "i" + std::to_string(tempCounter++);
+            stepRes = "i" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "i64const", {"0"}, startRes, "i64");
+            ir.addInstruction(currentFunc, "i64const", {"0"}, stopRes, "i64");
+            ir.addInstruction(currentFunc, "i64const", {"1"}, stepRes, "i64");
+            noteType(startRes, "i64");
+            noteType(stopRes, "i64");
+            noteType(stepRes, "i64");
         }
 
         int c = tempCounter++;
@@ -751,30 +834,32 @@ private:
         std::string incrLabel = "range_incr_" + std::to_string(c);
         std::string exitLabel = "range_exit_" + std::to_string(c);
 
-        ir.addInstruction(currentFunc, "assign", {startRes}, idxVar);
-        noteType(idxVar, "int");
+        ir.addInstruction(currentFunc, "i64assign", {startRes}, idxVar, "i64");
+        noteType(idxVar, "i64");
 
         std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
         loopContinueLabel = incrLabel;
         loopBreakLabel = exitLabel;
 
         ir.addInstruction(currentFunc, "label", {}, loopLabel);
-        std::string cmpRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {stepSign < 0 ? "Gt" : "Lt", idxVar, stopRes}, cmpRes);
+        std::string cmpRes = "i" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "i64icmp", {stepSign < 0 ? "Gt" : "Lt", idxVar, stopRes}, cmpRes, "bool");
         ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
 
         ir.addInstruction(currentFunc, "label", {}, bodyLabel);
-        ir.addInstruction(currentFunc, "assign", {idxVar}, node->id);
+        std::string boxedLoopValue = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "box_i64", {idxVar}, boxedLoopValue, "int");
+        ir.addInstruction(currentFunc, "assign", {boxedLoopValue}, node->id);
         noteType(node->id, "int");
         for (size_t i = iterIndex + 1; i < node->children.size(); ++i)
             lower(node->children[i].get());
 
         ir.addInstruction(currentFunc, "label", {}, incrLabel);
-        std::string nextIdx = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "add", {idxVar, stepRes}, nextIdx, "int");
-        noteType(nextIdx, "int");
-        ir.addInstruction(currentFunc, "assign", {nextIdx}, idxVar);
-        noteType(idxVar, "int");
+        std::string nextIdx = "i" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "i64add", {idxVar, stepRes}, nextIdx, "i64");
+        noteType(nextIdx, "i64");
+        ir.addInstruction(currentFunc, "i64assign", {nextIdx}, idxVar, "i64");
+        noteType(idxVar, "i64");
         ir.addInstruction(currentFunc, "br", {}, loopLabel);
         ir.addInstruction(currentFunc, "label", {}, exitLabel);
 
@@ -1061,12 +1146,20 @@ private:
         if (node->op == "UAdd") return val;   // identity
 
         std::string res = "t" + std::to_string(tempCounter++);
-        if (node->op == "Not")
-            ir.addInstruction(currentFunc, "call", {"PyObject_Not",  val}, res);
-        else if (node->op == "USub")
-            ir.addInstruction(currentFunc, "call", {"PyNumber_Negate", val}, res);
-        else
-            ir.addInstruction(currentFunc, "const", {"0"}, res);   // unknown → 0
+        if (node->op == "Not") {
+            ir.addInstruction(currentFunc, "call", {"PyObject_Not",  val}, res, "bool");
+            noteType(res, "bool");
+        } else if (node->op == "USub") {
+            std::string resultType = typeOf(val);
+            if (resultType != "int" && resultType != "float" && resultType != "bool") {
+                resultType = "boxed";
+            }
+            ir.addInstruction(currentFunc, "call", {"PyNumber_Negate", val}, res, resultType);
+            noteType(res, resultType);
+        } else {
+            ir.addInstruction(currentFunc, "const", {"0"}, res, "int");   // unknown → 0
+            noteType(res, "int");
+        }
         return res;
     }
 

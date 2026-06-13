@@ -115,18 +115,25 @@ Linked into every compiled binary.
 **IR**: linear instruction list per function. Instructions: `const`, `fconst`,
 `bconst`, `assign`, `add`/`sub`/`mul`/`div`/`truediv`/`mod`/`pow`, `icmp`, `br`,
 `label`, `call`, `ret`. IR instructions can carry conservative result type
-metadata (`int`, `float`, `bool`, `str`, or `boxed`) for future native/unboxed
-code generation; the current codegen still falls back to boxed `PyObject*`
-unless a specific general lowering path opts out.
+metadata (`int`, `float`, `bool`, `str`, or `boxed`). Codegen uses that metadata
+for specific general native paths, such as range loop counters and numeric
+`+`/`-`/`*`, and otherwise falls back to boxed `PyObject*` runtime operations.
 
 ## Optimization Roadmap
 
-Correctness remains the default path. The first general allocation reduction is
-native lowering for `for ... in range(...)`, which avoids building a Python list
-for the range object. The next planned steps are unboxed integer loop counters,
-unboxed numeric locals, vector-backed homogeneous numeric lists, and specialized
-function variants selected from proven call-site types. Unsupported or uncertain
-cases must continue to use the boxed runtime path.
+Correctness remains the default path. The first general allocation reductions are
+native lowering for `for ... in range(...)` and native i64 loop-control counters,
+which avoid building a Python list for the range object and avoid boxed compare /
+increment operations for the hidden loop counter. The visible Python loop
+variable is still boxed each iteration.
+
+The compiler also lowers proven numeric `+`, `-`, and `*` operations to LLVM
+integer or double arithmetic and boxes the result at the boundary. Division,
+mixed/unknown types, and operations with additional Python edge cases remain on
+the boxed runtime path. The next planned steps are longer-lived unboxed numeric
+locals, vector-backed homogeneous numeric lists, and specialized function
+variants selected from proven call-site types. Unsupported or uncertain cases
+must continue to use the boxed runtime path.
 
 ## Known gaps (planned)
 

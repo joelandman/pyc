@@ -33,7 +33,8 @@ and  or  not                   boolean (short-circuit, returns actual value)
 if / elif / else
 while ... break / continue
 for x in iterable              (list, enumerate(), zip() results)
-for x in range(...)            native loop shape; no boxed range list is built
+for x in range(...)            native loop shape and native i64 loop control;
+                               the visible loop variable is still boxed
 for i, v in enumerate(lst)     tuple-target for-loop
 for (a, [b, c]) in iterable    recursive tuple/list destructuring
 x if cond else y               ternary
@@ -98,18 +99,21 @@ Truthiness via `PyObject_TruthBoxed`. Global variables use LLVM `GlobalVariable`
 with `InternalLinkage`.
 
 IR instructions now also carry conservative result type metadata. This is a
-compiler-side analysis aid for planned unboxed/native paths; it does not by
-itself change Python-visible behavior.
+compiler-side analysis aid for native paths. Codegen only uses it when a
+specific lowering has a boxed fallback for uncertain cases.
 
 ## Optimization status
 
 - `range(...)` for-loops are lowered directly to loop blocks instead of
   allocating a boxed range list.
+- Hidden `range(...)` loop counters use native i64 compare/increment operations.
 - Constants and simple numeric arithmetic are annotated with conservative IR
   result types.
-- Numeric arithmetic and list elements are still boxed in the general path.
-  Unboxed loop counters, numeric locals, and homogeneous numeric-vector lists
-  are planned next.
+- Proven numeric `+`, `-`, and `*` operations use native LLVM integer/double
+  arithmetic, then box their result for Python-visible storage or calls.
+- Division, uncertain types, and list elements still use the boxed general path.
+  Longer-lived unboxed numeric locals and homogeneous numeric-vector lists are
+  planned next.
 
 ## Not yet implemented
 
