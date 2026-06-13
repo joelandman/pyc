@@ -116,25 +116,22 @@ In `Compiler.cpp` (lowerCall + lowerMethodCall):
 
 Also wire `list.count` if the runtime grows it; currently not present.
 
-### B2. Full Slicing (Including Step)
-- Parser (`PythonParser.cpp:256` and around `Subscript`/`Slice`): already builds up to 3 children for `Slice`.
-- Lowering (`lowerSubscriptGet` and the assign path for slices):
-  - Extend to pass the step child (may be None) through to a new or extended runtime call.
-- Runtime:
-  - Extend `Pyc_GetSlice` (and add `Pyc_SetSlice` for `a[i:j:k] = ...`) to accept a step PyObject* (or three separate start/stop/step).
-  - Implement Python slice semantics: negative indices, step sign/direction, empty slices, etc. (the current start/stop implementation is partial).
-  - For set-slice, handle resizing for lists and error cases for str (str slices are not assignable).
-- In codegen, the existing `subscript` path and `Pyc_GetItem`/`Pyc_SetItem` dispatch will need to recognize slice objects (currently slices are represented as lists or special nodes? — check how the parser materializes them).
-- Add regression tests for `lst[::2]`, `s[1:10:3]`, negative steps, assignment to slices, and str slicing.
+### B2. Full Slicing (Including Step) — **DONE (2026-06)**
+- Parser (`PythonParser.cpp:256` Slice now walks "step" too): builds up to 3 children (lower/upper/step), None as nullptr placeholders.
+- Lowering (`Compiler.cpp:lowerSubscriptGet`, assign path for `__subscript__`): pass step (empty string sentinel when absent) to `Pyc_GetSlice`/`Pyc_SetSlice`. Slice assignment now dispatches `Pyc_SetSlice` for Slice targets (get still uses `Pyc_GetItem` for simple index).
+- Runtime: `Pyc_GetSlice(obj, start, stop, step)` and new `Pyc_SetSlice(obj, start, stop, step, value)` implement full Python semantics (negative indices, positive/negative step, empty results, length-changing basic slices, length-preserving extended slices with exact count matching).
+- Codegen: updated declarations (4-arg GetSlice, 5-arg SetSlice).
+- Tests: many new cases in `tests/runner.py` (step, negatives, str, list get+set, `[::-1]`, `[4:1:-1]=...` etc.). All 167/167 pass.
+- Preserves boxed fallback; no native paths for slices yet.
 
-### B3. Dict Comprehensions
-- Current `lowerDictComp` (`Compiler.cpp:1262`) is a stub that emits calls to `dict_create`/`iter_create` etc. that do not exist in the runtime or codegen.
-- Options:
-  - A. Implement the missing tiny runtime helpers (`dict_create`, `iter_*`) to make the stub work (quick but low-quality).
-  - B. Rewrite `lowerDictComp` to use the same real for-loop + assign machinery used by list comprehensions (preferred for correctness and to benefit from future unboxing).
-- Target syntax: `{k: v for ... in ... if ...}` and nested.
-- Ensure the result is a real dict (use `PyDict_New` + `PyDict_SetItem`).
-- Add tests.
+### B3. Dict Comprehensions — **DONE (2026-06)**
+- `lowerDictComp` fully rewritten in `Compiler.cpp` (now also registered in `lowerExpr`).
+- Uses the same real index/len/loop/if machinery as list comprehensions (no fake `iter_create` etc.).
+- Supports: single generator + ifs, multiple generators (product / nested `for`), target unpack (Name or Tuple/List).
+- Emits `PyDict_New` + `PyDict_SetItem` per qualifying iteration.
+- Parser already provided the AST shape (key, value, then comprehension generator nodes with target/iter/ifs).
+- Tests added to `runner.py` (simple, filtered, product/nested). All 167/167 pass.
+- Benefits from future unboxing work (numeric keys/values in dictcomp will be candidates for numeric locals).
 
 ### B4. Lambda Expressions
 - Lower `lambda args: expr` to an anonymous nested function (the existing nested function machinery should help).
@@ -232,12 +229,12 @@ Testing:
 
 ## Summary Checklist (Near-term)
 
-- [ ] Lowering emits calls for sum/sorted/any/all/isinstance and str find/count/replace.
-- [ ] Slicing with step works for get (and set for lists).
-- [ ] Dict comprehensions produce correct dicts and pass tests.
+- [x] Lowering emits calls for sum/sorted/any/all/isinstance and str find/count/replace. (B1, 2026-06)
+- [x] Slicing with step works for get (and set for lists). Full semantics incl. negatives. (B2, 2026-06)
+- [x] Dict comprehensions produce correct dicts (incl. multi-generator) and pass tests. (B3, 2026-06)
 - [ ] `valueTypes` / resultType tracking is loop-aware and trusted for storage decisions.
 - [ ] At least one class of unboxed numeric locals (e.g., induction vars and simple accumulators) live in i64/double allocas inside numeric regions.
 - [ ] Native paths exist for a few more ops (`-`, comparisons, safe integral `//`).
-- [ ] All 143+ existing tests + new completeness tests pass; nbody output is identical to CPython.
+- [ ] All 167+ existing tests + new completeness tests pass; nbody output is identical to CPython.
 
 This plan is intended to be updated as work progresses. Add dates or "Implemented in commit X" annotations when items land.

@@ -168,6 +168,8 @@ public:
             return lowerUnaryOp(node);
         } else if (node->type == "ListComp") {
             return lowerListComp(node);
+        } else if (node->type == "DictComp") {
+            return lowerDictComp(node);
         } else if (node->type == "Subscript") {
             return lowerSubscriptGet(node);
         } else if (node->type == "IfExp") {
@@ -955,8 +957,18 @@ private:
             if (node->children.size() < 2) return;
             const ASTNode* sub = node->children[0].get();   // Subscript node
             std::string obj = lowerExpr(sub->children.size() > 0 ? sub->children[0].get() : nullptr);
-            std::string idx = lowerExpr(sub->children.size() > 1 ? sub->children[1].get() : nullptr);
+            const ASTNode* idxnode = (sub->children.size() > 1 ? sub->children[1].get() : nullptr);
             std::string val = lowerExpr(node->children[1].get());
+            if (idxnode && idxnode->type == "Slice") {
+                std::string start = lowerExpr(idxnode->children.size() > 0 ? idxnode->children[0].get() : nullptr);
+                std::string stop  = lowerExpr(idxnode->children.size() > 1 ? idxnode->children[1].get() : nullptr);
+                std::string step  = (idxnode->children.size() > 2 && idxnode->children[2])
+                                       ? lowerExpr(idxnode->children[2].get()) : "";
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"Pyc_SetSlice", obj, start, stop, step, val}, dummy);
+                return;
+            }
+            std::string idx = lowerExpr(idxnode);
             std::string dummy = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, val}, dummy);
             return;
@@ -1034,8 +1046,10 @@ private:
             const ASTNode* slice = node->children[1].get();
             std::string start = lowerExpr(slice->children.size() > 0 ? slice->children[0].get() : nullptr);
             std::string stop = lowerExpr(slice->children.size() > 1 ? slice->children[1].get() : nullptr);
+            std::string step = (slice->children.size() > 2 && slice->children[2])
+                                   ? lowerExpr(slice->children[2].get()) : "";
             std::string res = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_GetSlice", obj, start, stop}, res);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetSlice", obj, start, stop, step}, res);
             return res;
         }
         std::string idx = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
@@ -1310,79 +1324,106 @@ private:
         return listVar;
     }
 
-    void lowerDictComp(const ASTNode* node) {
-        // Dict comprehension structure: {key: value for target in iter if ifs}
-        if (node->children.size() < 3) return;
-        
-        // Create a temporary dict variable for the result
-        std::string dictVar = "dict_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"dict_create"}, dictVar);
-        
-        // Get the key and value expressions
-        const ASTNode* keyNode = node->children[0].get();
-        const ASTNode* valueNode = node->children[1].get();
-        
-        std::string keyVal = lowerExpr(keyNode);
-        std::string valueVal = lowerExpr(valueNode);
-        
-        // Get the generator (third child)
-        const ASTNode* genNode = node->children[2].get();
-        if (genNode->type != "comprehension") return;
-        
-        // Process the generator: target, iter, ifs
-        std::string target = genNode->children[0]->id;  // target variable name
-        std::string iter = lowerExpr(genNode->children[1].get());  // iterator expression
-        
-        // Generate the loop structure for comprehension
-        std::string loopLabel = "dict_comp_loop_" + std::to_string(tempCounter++);
-        std::string loopBodyLabel = "dict_comp_body_" + std::to_string(tempCounter++);
-        std::string loopEndLabel = "dict_comp_end_" + std::to_string(tempCounter++);
-        
-        // Add loop label
-        ir.addInstruction(currentFunc, "label", {}, loopLabel);
-        
-        // Create iterator and check if it has elements
-        std::string iterVar = "iter_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"iter_create", iter}, iterVar);
-        
-        std::string hasNextVar = "has_next_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"iter_has_next", iterVar}, hasNextVar);
-        
-        // Branch to check if we should continue
-        ir.addInstruction(currentFunc, "br", {hasNextVar, loopBodyLabel, loopEndLabel});
-        
-        // Loop body
-        ir.addInstruction(currentFunc, "label", {}, loopBodyLabel);
-        
-        // Get the next value from iterator
-        std::string nextVal = "next_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"iter_next", iterVar}, nextVal);
-        
-        // Assign to target variable
-        ir.addInstruction(currentFunc, "assign", {nextVal}, target);
-        
-        // Handle conditions (ifs)
-        if (genNode->children.size() > 2) {
-            // Process conditions (if clauses) - simple implementation
-            for (size_t i = 2; i < genNode->children.size(); ++i) {
-                std::string cond = lowerExpr(genNode->children[i].get());
-                std::string condLabel = "cond_" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "br", {cond, condLabel, loopEndLabel});
-                ir.addInstruction(currentFunc, "label", {}, condLabel);
-            }
+    std::string lowerDictComp(const ASTNode* node) {
+        // {key: val for target in iter if conds ...}  (supports multiple generators for product/nested)
+        if (node->children.size() < 2) {
+            std::string dictRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
+            return dictRes;
         }
-        
-        // Add key-value pair to dict
-        ir.addInstruction(currentFunc, "call", {"dict_add", dictVar, keyVal, valueVal}, "");
-        
-        // Continue loop
-        ir.addInstruction(currentFunc, "br", {}, loopLabel);
-        
-        // Loop end
-        ir.addInstruction(currentFunc, "label", {}, loopEndLabel);
-        
-        // Return the dict
-        ir.addInstruction(currentFunc, "assign", {dictVar}, "temp_dict");
+        const ASTNode* keyNode = node->children[0].get();
+        const ASTNode* valNode = node->children[1].get();
+
+        // Collect generator nodes (comprehension children after key/value)
+        std::vector<const ASTNode*> gens;
+        for (size_t i = 2; i < node->children.size(); ++i) {
+            if (node->children[i] && node->children[i]->type == "comprehension")
+                gens.push_back(node->children[i].get());
+        }
+        if (gens.empty()) {
+            std::string dictRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
+            return dictRes;
+        }
+
+        // Create result dict
+        std::string dictRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
+
+        // Recursive emitter for nested generators.
+        // gi: current generator index; after last, emit the key:val insertion.
+        std::function<void(size_t)> emitLevel = [&](size_t gi) {
+            if (gi == gens.size()) {
+                // innermost: compute key/val and insert
+                std::string kVal = lowerExpr(keyNode);
+                std::string vVal = lowerExpr(valNode);
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, kVal, vVal}, dummy);
+                return;
+            }
+            const ASTNode* g = gens[gi];
+            // iter for this level
+            std::string iterVal = lowerExpr(g->children.size() > 1 ? g->children[1].get() : nullptr);
+            std::string lenRes  = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterVal}, lenRes);
+
+            // per-level index
+            std::string idxVar  = "dc_i" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            std::string idxInit = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
+            ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
+
+            int dc = tempCounter++;
+            std::string loopL = "dc_lp" + std::to_string(gi) + "_" + std::to_string(dc);
+            std::string bodyL = "dc_bd" + std::to_string(gi) + "_" + std::to_string(dc);
+            std::string contL = "dc_ct" + std::to_string(gi) + "_" + std::to_string(dc);
+            std::string exitL = "dc_ex" + std::to_string(gi) + "_" + std::to_string(dc);
+
+            ir.addInstruction(currentFunc, "label", {}, loopL);
+            std::string cmpR = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpR);
+            ir.addInstruction(currentFunc, "br", {cmpR, bodyL, exitL});
+
+            ir.addInstruction(currentFunc, "label", {}, bodyL);
+            std::string item = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", iterVal, idxVar}, item);
+            // target is the first child of the comprehension (Name or unpack pattern)
+            if (g->children.size() > 0 && g->children[0]) {
+                if (g->children[0]->type == "Name") {
+                    ir.addInstruction(currentFunc, "assign", {item}, g->children[0]->id);
+                } else {
+                    // tuple/list target unpack (reuse the unpack helper)
+                    lowerUnpackTarget(g->children[0].get(), item);
+                }
+            }
+
+            // per-generator if conditions
+            std::string afterCondsL = "dc_ac" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            std::string cur = afterCondsL;
+            for (size_t ci = 2; ci < g->children.size(); ++ci) {
+                if (!g->children[ci]) continue;
+                std::string trueL = "dc_ci" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+                std::string condV = lowerExpr(g->children[ci].get());
+                ir.addInstruction(currentFunc, "br", {condV, trueL, contL});
+                ir.addInstruction(currentFunc, "label", {}, trueL);
+            }
+            // now emit next level (or body insert)
+            emitLevel(gi + 1);
+
+            // increment and continue outer loop
+            ir.addInstruction(currentFunc, "label", {}, afterCondsL);  // fallthrough from body if no ifs
+            ir.addInstruction(currentFunc, "label", {}, contL);
+            std::string one = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, one);
+            std::string nxt = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "add", {idxVar, one}, nxt);
+            ir.addInstruction(currentFunc, "assign", {nxt}, idxVar);
+            ir.addInstruction(currentFunc, "br", {}, loopL);
+            ir.addInstruction(currentFunc, "label", {}, exitL);
+        };
+
+        emitLevel(0);
+        return dictRes;
     }
 };
 

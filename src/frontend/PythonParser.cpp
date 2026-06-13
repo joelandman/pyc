@@ -254,7 +254,7 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         }
     } else if (node->type == "Slice") {
         // Slice(lower, upper, step) — None values stored as nullptr children
-        for (const char* attr : {"lower", "upper"}) {
+        for (const char* attr : {"lower", "upper", "step"}) {
             PyObject* v = PyObject_GetAttrString(pyNode, attr);
             if (v && v != Py_None) {
                 auto child = std::make_unique<ASTNode>();

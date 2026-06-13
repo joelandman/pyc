@@ -138,8 +138,6 @@ must continue to use the boxed runtime path.
 
 ## Known gaps (planned)
 
-- Full slicing semantics including slice step
-- Dict comprehensions (list comps work; dict comp stubs not yet wired)
 - `lambda` expressions
 - `nonlocal` statement
 - Classes (`class`, `self`, method dispatch)

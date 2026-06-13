@@ -261,6 +261,24 @@ print(a[0],a[1],a[2])
     ("print('abc'.find('z'))", "-1\n"),
     ("print('aaa'.count('a'))", "3\n"),
     ("print('abc'.replace('b','X'))", "aXc\n"),
+    # --- slicing (get with step/negatives/str; set basic + extended) ---
+    ("a=[0,1,2,3,4,5]; sl=a[1:4]; print(sl[0],sl[2])", "1 3\n"),
+    ("a=[0,1,2,3,4,5]; s=a[::2]; print(s[0],s[1],s[2])", "0 2 4\n"),
+    ("a=[0,1,2,3,4,5]; r=a[3:0:-1]; print(r[0],r[1],r[2])", "3 2 1\n"),
+    ("a=[0,1,2,3,4,5]; r=a[::-1]; print(r[0],r[5])", "5 0\n"),
+    ("a=[0,1,2,3,4,5]; r=a[-4:-1]; print(r[0],r[2])", "1 3\n"),
+    ("a=[0,1,2,3,4,5]; r=a[-1:1:-1]; print(r[0],r[2])", "5 3\n"),
+    ('s="abcdef"; print(s[1:4])', "bcd\n"),
+    ('s="abcdef"; print(s[::2])', "ace\n"),
+    ('s="abcdef"; print(s[::-1])', "fedcba\n"),
+    ('s="abcdef"; print(s[5:1:-1])', "fedc\n"),
+    ("b=[9,8,7,6,5]; b[1:4]=[10,20,30]; print(b[0],b[1],b[2],b[3],b[4])", "9 10 20 30 5\n"),
+    ("c=[0,1,2,3,4]; c[4:1:-1]=[100,200,300]; print(c[0],c[1],c[2],c[3],c[4])", "0 1 300 200 100\n"),
+    ("d=[0,1,2,3,4]; d[1:4:2]=[111,222]; print(d[0],d[1],d[2],d[3],d[4])", "0 111 2 222 4\n"),
+    # --- dict comprehensions (B3) ---
+    ("d={k:k*k for k in range(4)}; print(d[0],d[1],d[2],d[3])", "0 1 4 9\n"),
+    ("d={i:i+10 for i in [1,2,3] if i%2==1}; print(d[1],d[3])", "11 13\n"),
+    ("d={x:y for x in [1,2] for y in [10,20]}; print(d[1],d[2])", "20 20\n"),
 ]
 
 FILE_CASES = [

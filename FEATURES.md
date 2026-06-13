@@ -1,8 +1,10 @@
 # pyc — Implemented Features
 
-Current test count: **151/151** (all compared against CPython output).
+Current test count: **167/167** (all compared against CPython output).
 
-**Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1 in the unboxing/completeness plan).
+**Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
+Full slicing (get/set, step, negatives, str + list) implemented (B2).
+Dict comprehensions (single/multi-generator, if conditions, nested) implemented (B3).
 
 ## Types and literals
 
@@ -11,8 +13,8 @@ Current test count: **151/151** (all compared against CPython output).
 | `int` | Full arithmetic, comparison, floor/true division |
 | `float` | `3.14`, `1e-3`, mixed int/float; shortest round-trip printing |
 | `bool` | `True`/`False`; prints correctly; arithmetic with ints (`True+1=2`) |
-| `str` | Literals, `+`, `*`, f-strings, `%` formatting, all major methods |
-| `list` | Literals, subscript get/set, simple slices, comprehensions, append/sort/pop |
+| `str` | Literals, `+`, `*`, f-strings, `%` formatting, all major methods, full slicing |
+| `list` | Literals, subscript get/set, full slices (incl. step), comprehensions, append/sort/pop |
 | `dict` | Literals, subscript get/set, keys/values/items |
 | `tuple` | Literals and unpacking (mapped to list internally) |
 | `None` | Constant, comparison, printing |
@@ -90,6 +92,8 @@ d[k] = v       # dict subscript
 [expr for x in iterable]
 [expr for x in iterable if cond]
 [[inner for ...] for ...]      nested
+{ k: v for x in iterable if cond }
+{ k: v for x in a for y in b }  product / nested generators
 ```
 
 ## Runtime architecture
@@ -121,8 +125,6 @@ specific lowering has a boxed fallback for uncertain cases.
 
 ## Not yet implemented
 
-- Full list/string slicing semantics including non-default step
-- Dict comprehensions (list comps work; dict comp stubs not wired)
 - `lambda` expressions
 - `nonlocal` statement
 - Classes and OOP
