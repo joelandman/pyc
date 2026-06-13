@@ -32,6 +32,7 @@ add_executable(pyc
 
 target_link_libraries(pyc PRIVATE ${llvm_libs} Python3::Python)
 target_include_directories(pyc PRIVATE include)
+target_compile_definitions(pyc PRIVATE PYC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 install(TARGETS pyc DESTINATION bin)
 
@@ -43,10 +44,19 @@ install(FILES include/pyc/runtime.h DESTINATION include/pyc)
 # Testing support
 enable_testing()
 
+set(PYC_CORRECTNESS_TEST_FILES
+  tests/opt_range_loop.py
+  tests/opt_numeric_locals.py
+  tests/opt_numeric_lists.py
+  tests/opt_args_defaults.py
+  tests/opt_nested_destructuring.py
+  tests/nbody.py
+)
+
 # Convenience target: make check (or make pyc-check)
 add_custom_target(check
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/runner.py
-  DEPENDS pyc
+  DEPENDS pyc ${PYC_CORRECTNESS_TEST_FILES}
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   COMMENT "Running pyc test suite"
   USES_TERMINAL

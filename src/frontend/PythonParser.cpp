@@ -391,6 +391,9 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             } else if (tname == "Tuple" || tname == "List") {
                 // for i, v in ...: — store element names in args
                 node->id = "__unpack__";
+                auto targetNode = std::make_unique<ASTNode>();
+                buildAST(target, targetNode.get());
+                node->children.push_back(std::move(targetNode));
                 PyObject* elts = PyObject_GetAttrString(target, "elts");
                 if (elts && PyList_Check(elts)) {
                     for (Py_ssize_t j = 0; j < PyList_Size(elts); ++j) {

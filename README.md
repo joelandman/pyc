@@ -5,8 +5,8 @@ source using the Python C API, lowers the AST through a visitor-based IR, genera
 LLVM IR, optimizes it, and produces standalone native executables via a minimal
 `PyObject*`-based boxed runtime with refcounting.
 
-Written in C++ with Clang++ and LLVM 18. No C/C++ intermediate language.
-**137 tests passing** against CPython output.
+Written in C++ with Clang++ and LLVM 18. No C/C++ intermediate language for
+the normal compiler path. **143 tests passing** against CPython output.
 
 ## Build
 
@@ -35,7 +35,10 @@ cd build && make check   # or: ctest
 ```
 
 The test suite in `tests/runner.py` compiles each case and compares output
-against CPython.
+against CPython. It also runs file-based regression programs in `tests/` that
+cover optimization-sensitive behavior such as native `range` loops, numeric
+locals, numeric list mutation and aliasing, command-line arguments, default
+arguments, nested destructuring, and `tests/nbody.py`.
 
 ## What compiles today
 
@@ -45,8 +48,8 @@ against CPython.
 - **bool** — `True`/`False`, prints correctly, arithmetic with ints works
 - **str** — literals, concatenation (`+`), repetition (`*`), `len()`, `str()`,
   f-strings `f"x={x}"`, `upper()`/`lower()`/`strip()`/`split()`/`join()`, `% formatting`
-- **list** — literals, subscript get/set, `append()`, `sort()`, `pop()`, `len()`,
-  list comprehensions `[x*2 for x in range(n) if cond]`
+- **list** — literals, subscript get/set, slicing, `append()`, `sort()`, `pop()`,
+  `len()`, list comprehensions `[x*2 for x in range(n) if cond]`
 - **dict** — literals, subscript get/set, `keys()`/`values()`/`items()`
 - **tuple** — literals (mapped to list internally), unpacking `a, b = 1, 2`
 - **None** — `x = None`, `print(None)`
@@ -61,7 +64,9 @@ against CPython.
 ### Control flow
 - `if` / `elif` / `else`
 - `while` with `break` / `continue`
-- `for` loop over any list/range with optional tuple-target (`for i, v in enumerate(...)`)
+- `for` loop over lists and other list-like iterables
+- `for` loop over `range(...)` lowered without materializing a boxed range list
+- Recursive tuple/list destructuring in loop targets
 - Ternary `x if cond else y`
 
 ### Functions
@@ -109,13 +114,25 @@ Linked into every compiled binary.
 
 **IR**: linear instruction list per function. Instructions: `const`, `fconst`,
 `bconst`, `assign`, `add`/`sub`/`mul`/`div`/`truediv`/`mod`/`pow`, `icmp`, `br`,
-`label`, `call`, `ret`.
+`label`, `call`, `ret`. IR instructions can carry conservative result type
+metadata (`int`, `float`, `bool`, `str`, or `boxed`) for future native/unboxed
+code generation; the current codegen still falls back to boxed `PyObject*`
+unless a specific general lowering path opts out.
+
+## Optimization Roadmap
+
+Correctness remains the default path. The first general allocation reduction is
+native lowering for `for ... in range(...)`, which avoids building a Python list
+for the range object. The next planned steps are unboxed integer loop counters,
+unboxed numeric locals, vector-backed homogeneous numeric lists, and specialized
+function variants selected from proven call-site types. Unsupported or uncertain
+cases must continue to use the boxed runtime path.
 
 ## Known gaps (planned)
 
 - `sum()`, `sorted()`, `any()`, `all()`, `isinstance()` builtins
 - `str.find()`, `str.replace()` string methods
-- List/string slicing `a[1:3]`
+- Full slicing semantics including slice step
 - Dict comprehensions (list comps work; dict comp stubs not yet wired)
 - `lambda` expressions
 - `nonlocal` statement

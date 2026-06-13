@@ -2,7 +2,7 @@
 """Basic test runner for pyc (MVI).
 Runs pyc on cases, compares stdout to python3.
 """
-import subprocess, tempfile, os, sys
+import subprocess, tempfile, os, sys, shlex
 
 CASES = [
     ("x=2+3; print(x)", "5\n"),
@@ -252,6 +252,15 @@ print(a[0],a[1],a[2])
     ("d={'a':1,'b':2}\nprint(len(list(d.keys())))", "2\n"),
 ]
 
+FILE_CASES = [
+    ("opt_range_loop.py", []),
+    ("opt_numeric_locals.py", []),
+    ("opt_numeric_lists.py", []),
+    ("opt_args_defaults.py", ["1"]),
+    ("opt_nested_destructuring.py", []),
+    ("nbody.py", ["100"]),
+]
+
 def run(cmd):
     p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
     return p.stdout, p.returncode
@@ -276,7 +285,9 @@ def main():
         print("ERROR: Could not find pyc binary. Set PYC_BINARY env var or build first.")
         sys.exit(1)
     ok=0
+    total=0
     for src, expected in CASES:
+        total += 1
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(src); name=f.name
         try:
@@ -295,8 +306,28 @@ def main():
                 print("ACT:", repr(actual))
         finally:
             os.unlink(name)
-    print(f"{ok}/{len(CASES)}")
-    sys.exit(0 if ok==len(CASES) else 1)
+
+    tests_dir = os.path.dirname(os.path.abspath(__file__))
+    for rel_path, args in FILE_CASES:
+        total += 1
+        src_path = os.path.join(tests_dir, rel_path)
+        quoted_src = shlex.quote(src_path)
+        quoted_args = " ".join(shlex.quote(a) for a in args)
+        out, _ = run(f"python3 {quoted_src} {quoted_args}")
+        exp = out.strip()
+        o, rc = run(f"{pyc} {quoted_src} -o /tmp/t.bin --opt=3 >/dev/null 2>&1 && /tmp/t.bin {quoted_args}")
+        actual = o.strip()
+        if actual == exp:
+            print("PASS")
+            ok += 1
+        else:
+            print("FAIL")
+            print("SRCFILE:", rel_path)
+            print("EXP:", repr(exp))
+            print("ACT:", repr(actual))
+
+    print(f"{ok}/{total}")
+    sys.exit(0 if ok==total else 1)
 
 if __name__=="__main__":
     main()
