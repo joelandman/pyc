@@ -448,6 +448,44 @@ private:
             return res;
         }
 
+        // sum(iterable) → PyBuiltin_Sum
+        if (funcName == "sum") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sum", arg}, res);
+            return res;
+        }
+        // sorted(iterable) → PyBuiltin_Sorted
+        if (funcName == "sorted") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sorted", arg}, res);
+            return res;
+        }
+        // any(iterable) → PyBuiltin_Any (bool result)
+        if (funcName == "any") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Any", arg}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+        // all(iterable) → PyBuiltin_All (bool result)
+        if (funcName == "all") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_All", arg}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+        // isinstance(obj, classinfo) → Pyc_IsInstance
+        if (funcName == "isinstance" && argRes.size() >= 2) {
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_IsInstance", argRes[0], argRes[1]}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+
         // int(x) → PyBuiltin_Int(x)
         if (funcName == "int") {
             std::string arg = argRes.empty() ? "" : argRes[0];
@@ -1052,6 +1090,19 @@ private:
         } else if (methodName == "join") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyString_Join", obj, arg}, res);
+        } else if (methodName == "find") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_Find", obj, arg}, res, "int");
+            noteType(res, "int");
+        } else if (methodName == "count") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_Count", obj, arg}, res, "int");
+            noteType(res, "int");
+        } else if (methodName == "replace") {
+            std::string a = args.size() > 0 ? args[0] : "";
+            std::string b = args.size() > 1 ? args[1] : "";
+            ir.addInstruction(currentFunc, "call", {"PyString_Replace", obj, a, b}, res);
+            noteType(res, "str");
         // Dict methods
         } else if (methodName == "keys") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Keys", obj}, res);

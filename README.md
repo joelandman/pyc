@@ -78,7 +78,8 @@ arguments, nested destructuring, and `tests/nbody.py`.
 
 ### Builtins
 `print()` (multi-arg), `range()`, `len()`, `str()`, `int()`, `float()`, `abs()`,
-`min()`, `max()`, `list()`, `enumerate()`, `zip()`
+`min()`, `max()`, `list()`, `enumerate()`, `zip()`,
+`sum()`, `sorted()`, `any()`, `all()`, `isinstance()`
 
 ### Assignment
 - Simple: `x = 1`
@@ -137,8 +138,6 @@ must continue to use the boxed runtime path.
 
 ## Known gaps (planned)
 
-- `sum()`, `sorted()`, `any()`, `all()`, `isinstance()` builtins
-- `str.find()`, `str.replace()` string methods
 - Full slicing semantics including slice step
 - Dict comprehensions (list comps work; dict comp stubs not yet wired)
 - `lambda` expressions

@@ -153,6 +153,26 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
 
+    // Builtins: sum, sorted, any, all; isinstance (2-arg)
+    for (const char* name : {"PyBuiltin_Sum","PyBuiltin_Sorted","PyBuiltin_Any","PyBuiltin_All"}) {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_IsInstance", module.get());
+    }
+
+    // String methods: find, count, replace (find/count return int boxed; replace returns str)
+    for (const char* name : {"PyString_Find","PyString_Count"}) {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_Replace", module.get());
+    }
+
     // PyBool_New(int) — boxes a 0/1 as a bool PyObject
     llvm::FunctionType* boolNewTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt32Ty(context)}, false);
     llvm::Function::Create(boolNewTy, llvm::Function::ExternalLinkage, "PyBool_New", module.get());

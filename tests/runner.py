@@ -250,6 +250,17 @@ print(a[0],a[1],a[2])
     ("print('x=%d, y=%d' % (1, 2))", "x=1, y=2\n"),
     # --- dict.keys with list() ---
     ("d={'a':1,'b':2}\nprint(len(list(d.keys())))", "2\n"),
+    # --- sum / sorted / any / all (builtin wiring) ---
+    ("print(sum([1,2,3]))", "6\n"),
+    # Use element access to avoid list repr printing differences
+    ("s=sorted([3,1,2]); print(s[0],s[1],s[2])", "1 2 3\n"),
+    ("print(any([0,0,1]))", "True\n"),
+    ("print(all([1,1,1]))", "True\n"),
+    # --- str find / count / replace (method wiring) ---
+    ("print('abc'.find('b'))", "1\n"),
+    ("print('abc'.find('z'))", "-1\n"),
+    ("print('aaa'.count('a'))", "3\n"),
+    ("print('abc'.replace('b','X'))", "aXc\n"),
 ]
 
 FILE_CASES = [

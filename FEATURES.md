@@ -1,6 +1,8 @@
 # pyc — Implemented Features
 
-Current test count: **143/143** (all compared against CPython output).
+Current test count: **151/151** (all compared against CPython output).
+
+**Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1 in the unboxing/completeness plan).
 
 ## Types and literals
 
@@ -68,11 +70,13 @@ d[k] = v       # dict subscript
 `print(*args)`, `range(n)` / `range(s,e)` / `range(s,e,step)`,
 `len(x)`, `str(x)`, `int(x)`, `float(x)`, `abs(x)`,
 `min(a,b,...)` / `min(list)`, `max(a,b,...)` / `max(list)`,
-`list(x)`, `enumerate(iterable)`, `zip(a, b)`
+`list(x)`, `enumerate(iterable)`, `zip(a, b)`,
+`sum(x)`, `sorted(x)`, `any(x)`, `all(x)`, `isinstance(obj, info)`
 
 ## String methods
 
 `upper()`, `lower()`, `strip()`, `split(sep)`, `join(iterable)`,
+`find()`, `count()`, `replace()`,
 `str % value` (`%d`, `%s`, `%f`, `%.Nf`)
 
 ## List/dict methods
@@ -117,8 +121,6 @@ specific lowering has a boxed fallback for uncertain cases.
 
 ## Not yet implemented
 
-- `sum()`, `sorted()`, `any()`, `all()`, `isinstance()` builtins
-- `str.find()`, `str.replace()`, `str.count()` methods
 - Full list/string slicing semantics including non-default step
 - Dict comprehensions (list comps work; dict comp stubs not wired)
 - `lambda` expressions
