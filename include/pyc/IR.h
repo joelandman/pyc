@@ -14,6 +14,9 @@ struct IRInstruction {
     std::string op;
     std::vector<IRValue> operands;
     std::string result;
+    // Conservative compiler-known type for result values. Current codegen
+    // still treats values as boxed unless it explicitly opts into a native path.
+    std::string resultType;
 };
 
 struct IRFunction {
@@ -31,8 +34,8 @@ public:
     std::vector<std::string> moduleGlobals;
 
     void addFunction(const std::string& name, const std::vector<std::string>& args = {});
-    void addInstruction(const std::string& funcName, const std::string& op, const std::vector<std::string>& operands, const std::string& result = "");
-    void addInstructionRaw(const std::string& funcName, const std::string& op, const std::vector<IRValue>& operands, const std::string& result = "");
+    void addInstruction(const std::string& funcName, const std::string& op, const std::vector<std::string>& operands, const std::string& result = "", const std::string& resultType = "boxed");
+    void addInstructionRaw(const std::string& funcName, const std::string& op, const std::vector<IRValue>& operands, const std::string& result = "", const std::string& resultType = "boxed");
     void setFunctionGlobals(const std::string& funcName, const std::vector<std::string>& globals);
     void addModuleGlobal(const std::string& name);
 };

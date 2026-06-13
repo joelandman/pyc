@@ -9,6 +9,10 @@
 #include <string>
 #include <unordered_map>
 
+#ifndef PYC_SOURCE_DIR
+#define PYC_SOURCE_DIR "."
+#endif
+
 namespace pyc {
 
 class LoweringVisitor {
@@ -20,14 +24,14 @@ public:
         if (!funcName.empty()) currentFunc = funcName;
 
         if (node->type == "Module") {
-            ir.addFunction("main", {});
-            currentFunc = "main";
+            ir.addFunction("__module__", {});
+            currentFunc = "__module__";
             tempCounter = 0;
-            // Pre-scan: collect all global-declared variable names so main and
-            // functions can share module-level storage for those variables.
+            // Pre-scan: collect module bindings and global-declared variable
+            // names so top-level assignments are visible from functions.
+            collectModuleBindings(node);
             collectGlobalDecls(node);
-            // main inherits all module globals (top-level code IS the module scope).
-            ir.setFunctionGlobals("main", ir.moduleGlobals);
+            ir.setFunctionGlobals("__module__", ir.moduleGlobals);
             for (const auto& c : node->children) {
                 lower(c.get());
             }
@@ -38,6 +42,10 @@ public:
 
             // Collect this function's global declarations (scan body before lowering).
             std::vector<std::string> funcGlobals = scanFuncGlobals(node);
+            for (const auto& g : ir.moduleGlobals) {
+                if (std::find(funcGlobals.begin(), funcGlobals.end(), g) == funcGlobals.end())
+                    funcGlobals.push_back(g);
+            }
             // Remove names that are also parameters (params shadow globals).
             for (const auto& p : node->args) {
                 funcGlobals.erase(std::remove(funcGlobals.begin(), funcGlobals.end(), p),
@@ -47,10 +55,14 @@ public:
 
             // Count defaults and collect their values
             std::vector<std::string> defaults;
+            size_t defaultIndex = 0;
             for (const auto& c : node->children) {
                 if (c && c->type == "Default") {
                     std::string defVal = lowerExpr(c.get());
-                    defaults.push_back(defVal);
+                    std::string slot = "__default_" + node->id + "_" + std::to_string(defaultIndex++);
+                    ir.addModuleGlobal(slot);
+                    ir.addInstruction(saved, "assign", {defVal}, slot);
+                    defaults.push_back(slot);
                 }
             }
             if (!defaults.empty()) {
@@ -61,6 +73,7 @@ public:
             currentFunc = node->id;
             tempCounter = 0;
             for (const auto& c : node->children) {
+                if (c && c->type == "Default") continue;
                 lower(c.get());
             }
             currentFunc = saved;   // restore context for siblings (important for top-level code after defs)
@@ -110,15 +123,19 @@ public:
             std::string res = "c" + std::to_string(tempCounter++);
             std::string val = node->value;
             if (node->is_bool) {
-                ir.addInstruction(currentFunc, "bconst", {val}, res);
+                ir.addInstruction(currentFunc, "bconst", {val}, res, "bool");
+                noteType(res, "bool");
             } else if (node->is_float) {
-                ir.addInstruction(currentFunc, "fconst", {val}, res);
+                ir.addInstruction(currentFunc, "fconst", {val}, res, "float");
+                noteType(res, "float");
             } else if (node->is_str) {
                 // Wrap in quotes so codegen detects it as a string.
                 // Embedded quotes are not escaped in this MVP.
-                ir.addInstruction(currentFunc, "const", {"\"" + val + "\""}, res);
+                ir.addInstruction(currentFunc, "const", {"\"" + val + "\""}, res, "str");
+                noteType(res, "str");
             } else {
-                ir.addInstruction(currentFunc, "const", {val}, res);
+                ir.addInstruction(currentFunc, "const", {val}, res, "int");
+                noteType(res, "int");
             }
             return res;
         } else if (node->type == "Name") {
@@ -169,6 +186,29 @@ private:
     std::unordered_map<std::string, int> funcDefaultCount;
     std::unordered_map<std::string, std::vector<std::string>> funcDefaultValues;
     std::unordered_map<std::string, std::vector<std::string>> funcParamNames;
+    std::unordered_map<std::string, std::string> valueTypes;
+
+    void noteType(const std::string& name, const std::string& type) {
+        if (!name.empty() && !type.empty()) valueTypes[name] = type;
+    }
+
+    std::string typeOf(const std::string& name) const {
+        auto it = valueTypes.find(name);
+        return it == valueTypes.end() ? "boxed" : it->second;
+    }
+
+    std::string numericResultType(const std::string& op,
+                                  const std::string& left,
+                                  const std::string& right) const {
+        std::string lt = typeOf(left);
+        std::string rt = typeOf(right);
+        if (op == "truediv") return "float";
+        if ((lt == "int" || lt == "bool" || lt == "float") &&
+            (rt == "int" || rt == "bool" || rt == "float")) {
+            return (lt == "float" || rt == "float") ? "float" : "int";
+        }
+        return "boxed";
+    }
 
     // Recursively collect all names from `global` statements in the subtree.
     void collectGlobalDecls(const ASTNode* node) {
@@ -177,6 +217,22 @@ private:
             for (const auto& name : node->args) ir.addModuleGlobal(name);
         }
         for (const auto& c : node->children) collectGlobalDecls(c.get());
+    }
+
+    void collectModuleBindings(const ASTNode* moduleNode) {
+        if (!moduleNode || moduleNode->type != "Module") return;
+        for (const auto& c : moduleNode->children) {
+            if (!c) continue;
+            if (c->type == "Assign") {
+                if (!c->args.empty()) {
+                    for (const auto& name : c->args) ir.addModuleGlobal(name);
+                } else if (!c->id.empty() && c->id != "__subscript__" && c->id != "__unpack__") {
+                    ir.addModuleGlobal(c->id);
+                }
+            } else if (c->type == "FunctionDef") {
+                ir.addModuleGlobal(c->id);
+            }
+        }
     }
 
     // Collect names from `global` statements that are direct descendants of a FunctionDef.
@@ -202,7 +258,9 @@ private:
         else if (op == "Div") op = "truediv";
         else if (op == "Mod") op = "mod";
         else if (op == "Pow") op = "pow";
-        ir.addInstruction(currentFunc, op, {left, right}, res);
+        std::string resultType = numericResultType(op, left, right);
+        ir.addInstruction(currentFunc, op, {left, right}, res, resultType);
+        noteType(res, resultType);
         return res;
     }
 
@@ -544,10 +602,19 @@ private:
     void lowerFor(const ASTNode* node) {
         // For AST layout (from buildAST):
         //   node->id        = target variable name  (e.g. "i")
-        //   children[0]     = iter expression       (e.g. Call(range,5))
-        //   children[1..n]  = body statements
+        //   children[0]     = iter expression, or tuple/list target pattern
+        //   children[1]     = iter expression when children[0] is a pattern
         if (node->children.empty()) return;
-        std::string listVal = lowerExpr(node->children[0].get());  // iter
+        size_t iterIndex = (node->id == "__unpack__" &&
+                            node->children[0] &&
+                            (node->children[0]->type == "Tuple" || node->children[0]->type == "List"))
+                               ? 1 : 0;
+        if (node->children.size() <= iterIndex) return;
+        if (node->id != "__unpack__" && isRangeCall(node->children[iterIndex].get())) {
+            lowerRangeFor(node, iterIndex);
+            return;
+        }
+        std::string listVal = lowerExpr(node->children[iterIndex].get());  // iter
 
         // Boxed length: PyList_SizeBoxed returns PyObject*(int)
         std::string lenRes = "t" + std::to_string(tempCounter++);
@@ -577,19 +644,22 @@ private:
         std::string itemRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, idxVar}, itemRes);
         if (node->id == "__unpack__") {
-            // for a, b in iterable: unpack each item into multiple variables
-            for (size_t j = 0; j < node->args.size(); ++j) {
-                std::string ic = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {std::to_string(j)}, ic);
-                std::string elem = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", itemRes, ic}, elem);
-                ir.addInstruction(currentFunc, "assign", {elem}, node->args[j]);
+            if (iterIndex == 1) {
+                lowerUnpackTarget(node->children[0].get(), itemRes);
+            } else {
+                for (size_t j = 0; j < node->args.size(); ++j) {
+                    std::string ic = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {std::to_string(j)}, ic);
+                    std::string elem = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", itemRes, ic}, elem);
+                    ir.addInstruction(currentFunc, "assign", {elem}, node->args[j]);
+                }
             }
         } else {
             ir.addInstruction(currentFunc, "assign", {itemRes}, node->id);
         }
 
-        for (size_t i = 1; i < node->children.size(); ++i)  // body starts at children[1]
+        for (size_t i = iterIndex + 1; i < node->children.size(); ++i)
             lower(node->children[i].get());
 
         // idxVar = idxVar + 1
@@ -604,6 +674,112 @@ private:
 
         loopContinueLabel = savedCont;
         loopBreakLabel    = savedBreak;
+    }
+
+    bool isRangeCall(const ASTNode* node) const {
+        return node && node->type == "Call" &&
+               !node->children.empty() && node->children[0] &&
+               node->children[0]->id == "range";
+    }
+
+    int constantStepSign(const ASTNode* node) const {
+        if (!node) return 1;
+        if (node->type == "Constant") {
+            try {
+                long v = std::stol(node->value);
+                if (v > 0) return 1;
+                if (v < 0) return -1;
+            } catch (...) {
+            }
+        }
+        if (node->type == "UnaryOp" && node->op == "USub" &&
+            !node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Constant") {
+            try {
+                long v = std::stol(node->children[0]->value);
+                if (v > 0) return -1;
+            } catch (...) {
+            }
+        }
+        return 1;
+    }
+
+    void lowerRangeFor(const ASTNode* node, size_t iterIndex) {
+        const ASTNode* call = node->children[iterIndex].get();
+        size_t argc = call->children.size() > 0 ? call->children.size() - 1 : 0;
+
+        std::string startRes;
+        std::string stopRes;
+        std::string stepRes;
+        int stepSign = 1;
+
+        if (argc == 1) {
+            startRes = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, startRes, "int");
+            noteType(startRes, "int");
+            stopRes = lowerExpr(call->children[1].get());
+            stepRes = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, stepRes, "int");
+            noteType(stepRes, "int");
+        } else if (argc >= 2) {
+            startRes = lowerExpr(call->children[1].get());
+            stopRes = lowerExpr(call->children[2].get());
+            if (argc >= 3) {
+                stepSign = constantStepSign(call->children[3].get());
+                stepRes = lowerExpr(call->children[3].get());
+            } else {
+                stepRes = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"1"}, stepRes, "int");
+                noteType(stepRes, "int");
+            }
+        } else {
+            startRes = "c" + std::to_string(tempCounter++);
+            stopRes = "c" + std::to_string(tempCounter++);
+            stepRes = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, startRes, "int");
+            ir.addInstruction(currentFunc, "const", {"0"}, stopRes, "int");
+            ir.addInstruction(currentFunc, "const", {"1"}, stepRes, "int");
+            noteType(startRes, "int");
+            noteType(stopRes, "int");
+            noteType(stepRes, "int");
+        }
+
+        int c = tempCounter++;
+        std::string idxVar = node->id + "__range_idx_" + std::to_string(c);
+        std::string loopLabel = "range_loop_" + std::to_string(c);
+        std::string bodyLabel = "range_body_" + std::to_string(c);
+        std::string incrLabel = "range_incr_" + std::to_string(c);
+        std::string exitLabel = "range_exit_" + std::to_string(c);
+
+        ir.addInstruction(currentFunc, "assign", {startRes}, idxVar);
+        noteType(idxVar, "int");
+
+        std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
+        loopContinueLabel = incrLabel;
+        loopBreakLabel = exitLabel;
+
+        ir.addInstruction(currentFunc, "label", {}, loopLabel);
+        std::string cmpRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {stepSign < 0 ? "Gt" : "Lt", idxVar, stopRes}, cmpRes);
+        ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
+
+        ir.addInstruction(currentFunc, "label", {}, bodyLabel);
+        ir.addInstruction(currentFunc, "assign", {idxVar}, node->id);
+        noteType(node->id, "int");
+        for (size_t i = iterIndex + 1; i < node->children.size(); ++i)
+            lower(node->children[i].get());
+
+        ir.addInstruction(currentFunc, "label", {}, incrLabel);
+        std::string nextIdx = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "add", {idxVar, stepRes}, nextIdx, "int");
+        noteType(nextIdx, "int");
+        ir.addInstruction(currentFunc, "assign", {nextIdx}, idxVar);
+        noteType(idxVar, "int");
+        ir.addInstruction(currentFunc, "br", {}, loopLabel);
+        ir.addInstruction(currentFunc, "label", {}, exitLabel);
+
+        loopContinueLabel = savedCont;
+        loopBreakLabel = savedBreak;
     }
 
     std::string lowerList(const ASTNode* node) {
@@ -646,8 +822,10 @@ private:
         // Multi-target: a = b = val — args holds all target names
         if (!node->args.empty()) {
             std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
-            for (const auto& name : node->args)
+            for (const auto& name : node->args) {
                 ir.addInstruction(currentFunc, "assign", {val}, name);
+                noteType(name, typeOf(val));
+            }
             return;
         }
         if (node->id == "__subscript__") {
@@ -664,20 +842,30 @@ private:
             if (node->children.size() < 2) return;
             const ASTNode* tupleTgt = node->children[0].get();  // Tuple/List of Name nodes
             std::string rhs = lowerExpr(node->children[1].get());
-            for (size_t i = 0; i < tupleTgt->children.size(); ++i) {
-                const ASTNode* nm = tupleTgt->children[i].get();
-                if (!nm || nm->id.empty()) continue;
-                std::string ic = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {std::to_string(i)}, ic);
-                std::string elem = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", rhs, ic}, elem);
-                ir.addInstruction(currentFunc, "assign", {elem}, nm->id);
-            }
+            lowerUnpackTarget(tupleTgt, rhs);
             return;
         }
         if (!node->children.empty() && node->children[0]) {
             std::string val = lowerExpr(node->children[0].get());
             ir.addInstruction(currentFunc, "assign", {val}, node->id);
+            noteType(node->id, typeOf(val));
+        }
+    }
+
+    void lowerUnpackTarget(const ASTNode* target, const std::string& value) {
+        if (!target) return;
+        if (target->type == "Name") {
+            if (!target->id.empty()) ir.addInstruction(currentFunc, "assign", {value}, target->id);
+            noteType(target->id, typeOf(value));
+            return;
+        }
+        if (target->type != "Tuple" && target->type != "List") return;
+        for (size_t i = 0; i < target->children.size(); ++i) {
+            std::string ic = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(i)}, ic);
+            std::string elem = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", value, ic}, elem);
+            lowerUnpackTarget(target->children[i].get(), elem);
         }
     }
 
@@ -718,6 +906,15 @@ private:
     std::string lowerSubscriptGet(const ASTNode* node) {
         // Subscript node: children[0]=object, children[1]=slice/index
         std::string obj = lowerExpr(node->children.size() > 0 ? node->children[0].get() : nullptr);
+        if (node->children.size() > 1 && node->children[1] &&
+            node->children[1]->type == "Slice") {
+            const ASTNode* slice = node->children[1].get();
+            std::string start = lowerExpr(slice->children.size() > 0 ? slice->children[0].get() : nullptr);
+            std::string stop = lowerExpr(slice->children.size() > 1 ? slice->children[1].get() : nullptr);
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetSlice", obj, start, stop}, res);
+            return res;
+        }
         std::string idx = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
         std::string res = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, idx}, res);
@@ -1061,6 +1258,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         return false;
     }
     if (verbose) std::cout << "Parsed AST root: " << ast->type << " (depth " << ast->children.size() << ")\n";
+
     ModuleIR ir;
     lowerAST(ast.get(), ir);
     llvm::LLVMContext context;
@@ -1089,7 +1287,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
 
         // Prefer prebuilt static runtime lib if available (from build or install)
         // Otherwise fall back to compiling the small runtime source (always works during development)
-        std::string runtimeLink = " src/runtime/Runtime.cpp";
+        std::string sourceDir = PYC_SOURCE_DIR;
+        std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
         // Try common locations for libpycrt.a
         for (const auto& libdir : {"./build", "../build", ".", "/usr/local/lib", "/usr/lib"}) {
             std::string libpath = std::string(libdir) + "/libpycrt.a";
@@ -1103,7 +1302,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         // user code's `pyc_user_main`. We always compile it from
         // source here for simplicity (it has no other dependencies
         // beyond the runtime header).
-        linkCmd += outputPath + ".o -Iinclude src/runtime/MainWrapper.cpp" + runtimeLink + " -o " + outputPath + " -O" + std::to_string(optLevel);
+        linkCmd += outputPath + ".o -I" + sourceDir + "/include " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -o " + outputPath + " -O" + std::to_string(optLevel);
         if (std::system(linkCmd.c_str()) == 0) {
             std::cout << "Linked with runtime to " << outputPath << " (static=" << useStatic << ")\n";
         } else {

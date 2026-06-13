@@ -1,6 +1,6 @@
 # pyc — Implemented Features
 
-Current test count: **137/137** (all compared against CPython output).
+Current test count: **143/143** (all compared against CPython output).
 
 ## Types and literals
 
@@ -10,7 +10,7 @@ Current test count: **137/137** (all compared against CPython output).
 | `float` | `3.14`, `1e-3`, mixed int/float; shortest round-trip printing |
 | `bool` | `True`/`False`; prints correctly; arithmetic with ints (`True+1=2`) |
 | `str` | Literals, `+`, `*`, f-strings, `%` formatting, all major methods |
-| `list` | Literals, subscript get/set, comprehensions, append/sort/pop |
+| `list` | Literals, subscript get/set, simple slices, comprehensions, append/sort/pop |
 | `dict` | Literals, subscript get/set, keys/values/items |
 | `tuple` | Literals and unpacking (mapped to list internally) |
 | `None` | Constant, comparison, printing |
@@ -32,8 +32,10 @@ and  or  not                   boolean (short-circuit, returns actual value)
 ```python
 if / elif / else
 while ... break / continue
-for x in iterable              (list, range(), enumerate(), zip() results)
+for x in iterable              (list, enumerate(), zip() results)
+for x in range(...)            native loop shape; no boxed range list is built
 for i, v in enumerate(lst)     tuple-target for-loop
+for (a, [b, c]) in iterable    recursive tuple/list destructuring
 x if cond else y               ternary
 ```
 
@@ -90,16 +92,30 @@ d[k] = v       # dict subscript
 `PyObject` is a flat struct: `{refcount, type, value(long), dvalue(double),
 list, dict, str}`. Type codes: 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool.
 
-All boxed values flow as `PyObject*` through LLVM IR. Arithmetic dispatches
+Most values still flow as boxed `PyObject*` through LLVM IR. Arithmetic dispatches
 at runtime via `PyNumber_Add` etc. Comparisons via `PyObject_CompareBool`.
 Truthiness via `PyObject_TruthBoxed`. Global variables use LLVM `GlobalVariable`
 with `InternalLinkage`.
+
+IR instructions now also carry conservative result type metadata. This is a
+compiler-side analysis aid for planned unboxed/native paths; it does not by
+itself change Python-visible behavior.
+
+## Optimization status
+
+- `range(...)` for-loops are lowered directly to loop blocks instead of
+  allocating a boxed range list.
+- Constants and simple numeric arithmetic are annotated with conservative IR
+  result types.
+- Numeric arithmetic and list elements are still boxed in the general path.
+  Unboxed loop counters, numeric locals, and homogeneous numeric-vector lists
+  are planned next.
 
 ## Not yet implemented
 
 - `sum()`, `sorted()`, `any()`, `all()`, `isinstance()` builtins
 - `str.find()`, `str.replace()`, `str.count()` methods
-- List/string slicing `a[1:3]`
+- Full list/string slicing semantics including non-default step
 - Dict comprehensions (list comps work; dict comp stubs not wired)
 - `lambda` expressions
 - `nonlocal` statement

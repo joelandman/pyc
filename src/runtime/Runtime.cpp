@@ -187,8 +187,9 @@ void PyDict_SetItem(PyObject* dict, PyObject* key, PyObject* value) {
 
 PyObject* PyDict_GetItem(PyObject* dict, PyObject* key) {
     if (dict && dict->type == 2) {
-        auto it = dict->dict.find(key);
-        if (it != dict->dict.end()) return it->second;
+        for (auto& pair : dict->dict) {
+            if (PyObject_CompareBool(pair.first, key, 0)) return pair.second;
+        }
     }
     return nullptr;
 }

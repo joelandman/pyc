@@ -177,6 +177,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* containsTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(containsTy, llvm::Function::ExternalLinkage, "Pyc_Contains", module.get());
 
+    llvm::FunctionType* getSliceTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(getSliceTy, llvm::Function::ExternalLinkage, "Pyc_GetSlice", module.get());
+
     llvm::FunctionType* powerTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(powerTy, llvm::Function::ExternalLinkage, "Pyc_Pow", module.get());
 
@@ -204,22 +207,24 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             "pyc_global_" + gname);
     }
 
+    auto llvmFunctionName = [](const std::string& name) {
+        if (name == "__module__") return std::string("pyc_user_main");
+        if (name == "main") return std::string("pyc_py_main");
+        return name;
+    };
+
     for (const auto& f : ir.functions) {
         if (f.name.empty()) continue;  // Skip functions without names
         // The C runtime's `main` is provided by src/runtime/MainWrapper.cpp.
-        // To avoid symbol clashes, we rename the user-defined `main`
-        // (the module entry) to `pyc_user_main`; the wrapper then
-        // calls it after setting up `sys`.
-        std::string irName = f.name;
-        if (irName == "main") irName = "pyc_user_main";
+        // The module entry and a Python `def main` are distinct symbols.
+        std::string irName = llvmFunctionName(f.name);
         std::vector<llvm::Type*> argTypes(f.args.size(), pyObjectPtrTy);
         llvm::FunctionType* funcType = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
         llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, irName, module.get());
     }
 
     for (const auto& f : ir.functions) {
-        std::string irName = f.name;
-        if (irName == "main") irName = "pyc_user_main";
+        std::string irName = llvmFunctionName(f.name);
         llvm::Function* func = module->getFunction(irName);
         if (!func) continue;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", func);
@@ -270,6 +275,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             // Special-case `sys` so user code can do `sys.argv` etc. The
             // runtime provides a `pyc_get_sys_module()` accessor that
             // returns the same global `sys` object every call.
+            if (name == "__name__") {
+                llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
+                llvm::Value* strConst = builder.CreateGlobalStringPtr("__main__", "str");
+                return builder.CreateCall(fromStr, {strConst}, name + ".name");
+            }
             if (name == "sys") {
                 llvm::Function* getSys = module->getFunction("pyc_get_sys_module");
                 if (!getSys) {
@@ -280,7 +290,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 return builder.CreateCall(getSys, {}, name + ".sys");
             }
             auto it = valueMap.find(name);
-            if (it == valueMap.end()) return llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0));
+            if (it == valueMap.end()) {
+                llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + name);
+                if (gv) {
+                    valueMap[name] = gv;
+                    return builder.CreateLoad(pyObjectPtrTy, gv, name + ".load");
+                }
+                return llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0));
+            }
             if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(it->second))
                 return builder.CreateLoad(pyObjectPtrTy, alloca, name + ".load");
             if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(it->second))
@@ -512,22 +529,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 // it. We do INCREF the new value so it stays alive across
                 // the function.
                 if (valueMap.find(inst.result) != valueMap.end()) {
-                    llvm::Value* slot = valueMap[inst.result];
-                    bool isGlobal = llvm::isa<llvm::GlobalVariable>(slot);
-                    if (!isGlobal) {
-                        // DECREF the old value (it's an alloca slot —
-                        // either a local variable or a parameter alias).
-                        llvm::Value* oldVal = builder.CreateLoad(pyObjectPtrTy, slot, inst.result + ".old");
-                        llvm::Function* decref = module->getFunction("Py_DECREF");
-                        if (decref) {
-                            builder.CreateCall(decref, {oldVal});
-                        }
-                    } else {
-                        // Globals: caller / module init owns the existing
-                        // reference. We must not DECREF it. We just
-                        // overwrite with the INCREF'd new value.
-                    }
+                    // Existing slots may hold borrowed function arguments,
+                    // module globals, or default argument objects. Do not
+                    // DECREF the previous value on assignment; doing so can
+                    // invalidate objects still reachable elsewhere.
                 } else {
+                    if (llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + inst.result)) {
+                        valueMap[inst.result] = gv;
+                        builder.CreateStore(newVal, gv);
+                        continue;
+                    }
                     // First time we see this name: create the alloca in the
                     // ENTRY block so it dominates all uses (including uses
                     // that survive past loops or branches). Skip the INCREF
@@ -559,15 +570,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         llvm::Value* arg = (inst.operands.size() > 1 ? getOrLoad(inst.operands[1].name) : llvm::ConstantPointerNull::get(pyObjectPtrTy));
                         // Pass null — our runtime tolerates it and uses real stdout
                         builder.CreateCall(pyPrint, {arg, llvm::ConstantPointerNull::get(int8PtrTy)});
-
-                        // Basic refcounting: consume the printed value if it was a temp
-                        llvm::Function* decref = module->getFunction("Py_DECREF");
-                        if (decref) {
-                            builder.CreateCall(decref, {arg});
-                        }
                     }
                 } else {
                     llvm::Function* callee = module->getFunction(funcName);
+                    if (!callee) callee = module->getFunction(llvmFunctionName(funcName));
                     if (callee) {
                         std::vector<llvm::Value*> callArgs;
                         for (size_t i = 1; i < inst.operands.size(); ++i) {

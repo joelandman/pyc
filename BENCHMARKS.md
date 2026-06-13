@@ -28,29 +28,45 @@ python3 tests/nbody.py 5000000
 ### Performance Target
 
 The compiler should achieve **50x speedup** over CPython for this benchmark.
+That target is for the general compiler path, not benchmark-specific codegen.
+Special-casing `tests/nbody.py` is intentionally avoided.
 
 ### Known Limitations
 
 Current known issues that impact performance:
 
-- `import` / module system not implemented (sys.argv not supported)
-- Tuple unpacking in nested loops may cause segfaults
+- The runtime provides only a synthetic `sys` module for `sys.argv`, not a full
+  import/module system
 - Excessive heap allocations due to PyObject* boxing
 - High sys time due to memory allocation overhead
+- Numeric list elements are still represented as boxed objects
+- Numeric arithmetic in hot loops still allocates boxed result objects
 
-## Workaround
+## Current General Optimization Work
 
-As a workaround, use simplified versions of nbody that avoid:
-- Tuple unpacking in nested for loops
-- Module-level list/dict creation with complex expressions
+The compiler now lowers `for ... in range(...)` directly to loop control-flow
+blocks instead of allocating a boxed range list. This is the first general
+allocation reduction on the path toward fast numeric loops.
 
-Example: see `/tmp/nbody_simple.py` in development tests.
+The next planned optimizations are:
+
+1. Unboxed integer loop counters for native `range` loops.
+2. Unboxed numeric locals inside proven numeric regions.
+3. Homogeneous numeric-vector list representations for `list[int]` and
+   `list[float]`.
+4. Specialized function variants selected from proven call-site argument types.
+5. Allocation sinking for temporary boxed numbers that do not escape.
+
+Every optimization should preserve the boxed fallback path for uncertain or
+mixed-type code.
 
 ### Notes
 
 - The benchmark uses 5,000,000 iterations for meaningful timing
 - Python 3.14+ required (uses modern AST structure)
 - Compiler flags: `--opt=2` or `--opt=3` for optimization
+- `tests/runner.py` includes `tests/nbody.py 100` as a correctness regression
+  for the general compiler path
 
 ## Additional Benchmarks
 
