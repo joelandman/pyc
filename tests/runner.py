@@ -279,6 +279,11 @@ print(a[0],a[1],a[2])
     ("d={k:k*k for k in range(4)}; print(d[0],d[1],d[2],d[3])", "0 1 4 9\n"),
     ("d={i:i+10 for i in [1,2,3] if i%2==1}; print(d[1],d[3])", "11 13\n"),
     ("d={x:y for x in [1,2] for y in [10,20]}; print(d[1],d[2])", "20 20\n"),
+    # --- loop type tracking / widening (A1): variable type changes across iterations or backedges ---
+    ("x=0\nfor i in range(3):\n    if i==2:\n        x='done'\n    else:\n        x=i\nprint(x)", "done\n"),
+    ("z=42\nfor k in range(2):\n    if k==1:\n        z='end'\n    else:\n        z=k\nprint(z)", "end\n"),
+    # numeric stays numeric across backedge (no spurious widen)
+    ("acc=0\nfor i in range(5):\n    acc = acc + i\nprint(acc)", "10\n"),
 ]
 
 FILE_CASES = [

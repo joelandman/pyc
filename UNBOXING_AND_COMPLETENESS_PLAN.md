@@ -31,17 +31,25 @@ Files of interest:
 
 Goal: Reduce PyObject* allocations and refcount traffic for hot numeric code while preserving full Python semantics via conservative analysis + boxed fallback.
 
-### A1. Strengthen Type Tracking (Foundation)
-- Extend `valueTypes` (and the IR `resultType` annotations) to track locals across loops and repeated assignments.
-  - Improve `mergeBranchTypes` to handle `while` and `for` (currently only if/else merge at `Compiler.cpp:614`).
-  - On loop back-edges, conservatively widen types to "boxed" unless we can prove the variable stays numeric (or stays i64 for range counters).
-  - Teach `numericResultType` to consider more sources: `int(x)`, `float(x)`, `abs(x)`, unary `-`, and range-loop induction variables.
-- Add a tiny "proven numeric" lattice: `i64 | double | int_boxed | float_boxed | bool_boxed | unknown_boxed`.
-  - "i64" means the *storage* can be a native i64 (no boxing inside a region).
-  - Distinguish "this expression result is numeric" vs "this name's storage is unboxed".
-- Add per-function "numeric region" inference: a contiguous block of code where a set of names are proven to only hold int/float values derived from constants, range counters, or prior numeric ops. (Start simple: intra-procedural, forward dataflow on the linear IR body.)
+### A1. Strengthen Type Tracking (Foundation) — **IN PROGRESS (2026-06)**
+Concrete steps taken so far (foundation layer):
+- `valueTypes` (the per-lowering type map) and `noteType`/`typeOf`/`numericResultType` are the central mechanisms. `resultType` annotations flow from them into IR instructions and are consulted by codegen for native `+ - *` etc.
+- Normalized "i64" (native range counters from lowerRangeFor) to "int" inside `typeOf` and `numericResultType` so range induction variables participate in numeric result type decisions and do not force "boxed" for `+ - *` etc. (`Compiler.cpp`).
+- Added `valueTypes.clear()` at module and per-function entry points so prior function state does not leak.
+- Added `widenLoopTypes(entryTypes)` helper (conservative back-edge widening): at the end of while/for/range bodies, any name whose type differs from the type it had on entry to the loop head is widened to "boxed". This prevents the rest of the function (and future iterations) from assuming a type that is not stable across all iterations.
+- Wired the widening calls into `lowerWhile`, general `lowerFor`, and `lowerRangeFor` (right before the back-edge branch).
+- Added 3 regression cases in `tests/runner.py`:
+  - Variables that become non-numeric on a later iteration (e.g., `x=i` then `x="done"`) must be "boxed" after the loop / on the path that observes the string.
+  - Stable numeric accumulation across a range loop remains "int" (no spurious widen).
+- All 170/170 tests continue to pass (the new cases specifically exercise the widening logic).
+- `mergeBranchTypes` still only handles if/else; while/for widening is intentionally conservative (widens on any observed divergence at back-edge). This is the correct first step before a fuller lattice or per-region analysis.
 
-Milestone: `valueTypes` and IR resultType are accurate enough that we can trust them for storage decisions without breaking the 143+ tests.
+Remaining for a solid A1 milestone (before heavy unboxing in A2):
+- Teach `numericResultType` / callers about more sources that produce numeric results even if the input is "boxed" at the IR level but proven numeric at runtime (e.g., `int(x)`, `float(x)`, `abs(x)`, unary `-` on a name).
+- Consider a tiny explicit lattice in comments or a small enum if we need to distinguish "i64 storage" vs "int boxed" vs "unknown" more precisely for codegen decisions.
+- Optionally add a debug dump of `valueTypes` under `--verbose` for future tuning.
+
+Milestone: `valueTypes` + IR resultType + loop widening are reliable enough that we can trust "int"/"float" annotations for deciding native storage and arithmetic inside regions without breaking the full test suite (currently 170 tests). This is the prerequisite for A2 (unboxed numeric locals).
 
 ### A2. Unboxed Numeric Locals (Core Feature)
 - In codegen, for names proven to be "i64" or "double" throughout their live range (or a sub-region), allocate a native `alloca i64` or `alloca double` instead of (or in addition to) the PyObject* slot.
@@ -232,9 +240,9 @@ Testing:
 - [x] Lowering emits calls for sum/sorted/any/all/isinstance and str find/count/replace. (B1, 2026-06)
 - [x] Slicing with step works for get (and set for lists). Full semantics incl. negatives. (B2, 2026-06)
 - [x] Dict comprehensions produce correct dicts (incl. multi-generator) and pass tests. (B3, 2026-06)
-- [ ] `valueTypes` / resultType tracking is loop-aware and trusted for storage decisions.
+- [x] `valueTypes` / resultType tracking strengthened: i64 normalized, func boundaries cleared, conservative loop back-edge widening (while/for/range) implemented and tested. (A1 foundation, 2026-06)
 - [ ] At least one class of unboxed numeric locals (e.g., induction vars and simple accumulators) live in i64/double allocas inside numeric regions.
 - [ ] Native paths exist for a few more ops (`-`, comparisons, safe integral `//`).
-- [ ] All 167+ existing tests + new completeness tests pass; nbody output is identical to CPython.
+- [ ] All 170+ existing tests + new completeness tests pass; nbody output is identical to CPython.
 
 This plan is intended to be updated as work progresses. Add dates or "Implemented in commit X" annotations when items land.

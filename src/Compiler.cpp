@@ -28,6 +28,7 @@ public:
             ir.addFunction("__module__", {});
             currentFunc = "__module__";
             tempCounter = 0;
+            valueTypes.clear();
             // Pre-scan: collect module bindings and global-declared variable
             // names so top-level assignments are visible from functions.
             collectModuleBindings(node);
@@ -73,6 +74,7 @@ public:
 
             currentFunc = node->id;
             tempCounter = 0;
+            valueTypes.clear();
             for (const auto& c : node->children) {
                 if (c && c->type == "Default") continue;
                 lower(c.get());
@@ -197,25 +199,28 @@ private:
 
     std::string typeOf(const std::string& name) const {
         auto it = valueTypes.find(name);
-        return it == valueTypes.end() ? "boxed" : it->second;
+        std::string t = it == valueTypes.end() ? "boxed" : it->second;
+        if (t == "i64") return "int";
+        return t;
     }
 
     std::string numericResultType(const std::string& op,
-                                  const std::string& left,
-                                  const std::string& right) const {
+                                   const std::string& left,
+                                   const std::string& right) const {
         std::string lt = typeOf(left);
         std::string rt = typeOf(right);
         if (op == "truediv") return "float";
-        if ((lt == "int" || lt == "bool" || lt == "float") &&
-            (rt == "int" || rt == "bool" || rt == "float")) {
+        // treat i64 (native range counters) as int for numeric ops
+        auto isNum = [](const std::string& t){ return t=="int" || t=="bool" || t=="float" || t=="i64"; };
+        if (isNum(lt) && isNum(rt)) {
             return (lt == "float" || rt == "float") ? "float" : "int";
         }
         return "boxed";
     }
 
     void mergeBranchTypes(const std::unordered_map<std::string, std::string>& before,
-                          const std::unordered_map<std::string, std::string>& thenTypes,
-                          const std::unordered_map<std::string, std::string>& elseTypes) {
+                           const std::unordered_map<std::string, std::string>& thenTypes,
+                           const std::unordered_map<std::string, std::string>& elseTypes) {
         std::unordered_set<std::string> names;
         for (const auto& kv : before) names.insert(kv.first);
         for (const auto& kv : thenTypes) names.insert(kv.first);
@@ -234,6 +239,19 @@ private:
             merged[name] = (thenType == elseType) ? thenType : "boxed";
         }
         valueTypes = std::move(merged);
+    }
+
+    // Conservative loop back-edge widening: if a variable's type at the end
+    // of the body differs from its type on entry to the loop head, widen to
+    // "boxed" so subsequent iterations (and code after the loop) do not
+    // assume a type that is not stable across all iterations.
+    void widenLoopTypes(const std::unordered_map<std::string, std::string>& entryTypes) {
+        for (auto& kv : valueTypes) {
+            auto eit = entryTypes.find(kv.first);
+            if (eit != entryTypes.end() && eit->second != kv.second) {
+                kv.second = "boxed";
+            }
+        }
     }
 
     // Recursively collect all names from `global` statements in the subtree.
@@ -665,11 +683,13 @@ private:
         loopBreakLabel    = exitL;
 
         ir.addInstruction(currentFunc, "label", {}, loopL);
+        auto loopEntryTypes = valueTypes;
         std::string cond = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         ir.addInstruction(currentFunc, "br", {cond, bodyL, exitL});
         ir.addInstruction(currentFunc, "label", {}, bodyL);
         for (size_t i = 1; i < node->children.size(); ++i)
             lower(node->children[i].get());
+        widenLoopTypes(loopEntryTypes);
         ir.addInstruction(currentFunc, "br", {}, loopL);
         ir.addInstruction(currentFunc, "label", {}, exitL);
 
@@ -714,6 +734,7 @@ private:
         loopBreakLabel    = exitLabel;
 
         ir.addInstruction(currentFunc, "label", {}, loopLabel);
+        auto loopEntryTypes = valueTypes;
         std::string cmpRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpRes);
         ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
@@ -747,6 +768,7 @@ private:
         ir.addInstruction(currentFunc, "add", {idxVar, oneRes}, nextIdx);
         ir.addInstruction(currentFunc, "assign", {nextIdx}, idxVar);
 
+        widenLoopTypes(loopEntryTypes);
         ir.addInstruction(currentFunc, "br", {}, loopLabel);
         ir.addInstruction(currentFunc, "label", {}, exitLabel);
 
@@ -881,6 +903,7 @@ private:
         loopContinueLabel = incrLabel;
         loopBreakLabel = exitLabel;
 
+        auto loopEntryTypes = valueTypes;
         ir.addInstruction(currentFunc, "label", {}, loopLabel);
         std::string cmpRes = "i" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "i64icmp", {stepSign < 0 ? "Gt" : "Lt", idxVar, stopRes}, cmpRes, "bool");
@@ -900,6 +923,7 @@ private:
         noteType(nextIdx, "i64");
         ir.addInstruction(currentFunc, "i64assign", {nextIdx}, idxVar, "i64");
         noteType(idxVar, "i64");
+        widenLoopTypes(loopEntryTypes);
         ir.addInstruction(currentFunc, "br", {}, loopLabel);
         ir.addInstruction(currentFunc, "label", {}, exitLabel);
 
