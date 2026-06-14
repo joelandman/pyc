@@ -102,6 +102,10 @@ PyObject* pyc_get_sys_module(void);
 void* pyc_alloc(size_t size);
 void  pyc_free(void* obj);
 
+// B4/B8 support: apply a callable token (string naming a registered IR function)
+// to a Python list of arguments. Returns the result (boxed) or NULL on error.
+PyObject* Pyc_Apply(PyObject* token, PyObject* argList);
+
 #ifdef __cplusplus
 }
 #endif

@@ -21,10 +21,12 @@ struct IRInstruction {
 
 struct IRFunction {
     std::string name;
-    std::vector<std::string> args;
+    std::vector<std::string> args;        // cleaned (no * markers)
     std::vector<IRInstruction> body;
     // Variables that should use module-level (global) storage in this function.
     std::vector<std::string> globalVars;
+    // Original parameter names with * markers (for *vararg detection in adapters/forwarders).
+    std::vector<std::string> paramNames;
 };
 
 class ModuleIR {

@@ -131,7 +131,12 @@ PyObject* PyList_SizeBoxed(PyObject* list) {
 
 PyObject* PyList_GetItemObj(PyObject* list, PyObject* idx) {
     if (!idx || idx->type != 0) return nullptr;
-    return PyList_GetItem(list, (size_t)idx->value);
+    if (!list || list->type != 1) return nullptr;
+    long n = (long)list->list.size();
+    long i = (long)idx->value;
+    if (i < 0) i += n;
+    if (i < 0 || i >= n) return nullptr;
+    return PyList_GetItem(list, (size_t)i);
 }
 
 PyObject* PyList_NewBoxed(PyObject* n) {
@@ -1049,5 +1054,23 @@ PyObject* PyDict_Comprehension(int start, int end) {
 
 void* pyc_alloc(size_t size) { return ::operator new(size); }
 void  pyc_free(void* obj)    { ::operator delete(obj); }
+
+// ---- B4/B8 callable dispatch (lambdas as values, dynamic call via token) ----
+
+// Simple registry: token name -> function pointer that accepts a PyObject* list and returns a boxed result.
+static std::unordered_map<std::string, PyObject* (*)(PyObject*)> g_callableRegistry;
+
+extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObject*)) {
+    if (name && func) g_callableRegistry[std::string(name)] = func;
+}
+
+// Pyc_Apply(tokenStr, argList) -> boxed result
+extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
+    if (!token || token->type != 3) return nullptr;
+    std::string name = token->str;
+    auto it = g_callableRegistry.find(name);
+    if (it == g_callableRegistry.end()) return nullptr;
+    return it->second ? it->second(argList) : nullptr;
+}
 
 } // extern "C"
