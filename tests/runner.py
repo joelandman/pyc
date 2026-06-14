@@ -361,6 +361,87 @@ print(d['inc'](5), d['dbl'](7))
     add20 = make_add_twenty()
     print(add20(10))
     """, "30\n"),
+    # B5 (nonlocal/cells): basic read + assign via nonlocal in a nested function.
+    # The enclosing scope owns the cell; the nested function receives it via a hidden
+    # leading parameter and routes loads/stores through PyCell_Get/PyCell_Set.
+    ("""
+x=1
+def outer():
+    x=2
+    def inner():
+        nonlocal x
+        x=3
+    inner()
+    print(x)
+outer()
+print(x)
+""", "3\n1\n"),
+    # B5 multi-level: two levels of nesting with nonlocal assign (outer owns, middle
+    # receives+assigns, inner receives+assigns). Exercises cell forwarding through an
+    # intermediate scope that also mutates.
+    ("""
+x=0
+def outer():
+    x=1
+    def middle():
+        nonlocal x
+        x=2
+        def inner():
+            nonlocal x
+            x=3
+        inner()
+        print("middle", x)
+    middle()
+    print("outer", x)
+outer()
+print("global", x)
+""", "middle 3\nouter 3\nglobal 0\n"),
+    # B5 multi-level forward-only: middle declares nonlocal (to allow deeper resolution)
+    # and forwards the cell without assigning in middle itself; inner performs the assign.
+    ("""
+x=0
+def outer():
+    x=1
+    def middle():
+        nonlocal x
+        def inner():
+            nonlocal x
+            x=2
+        inner()
+        print("middle", x)
+    middle()
+    print("outer", x)
+outer()
+print("global", x)
+""", "middle 2\nouter 2\nglobal 0\n"),
+    # B5: AugAssign to a nonlocal (x += 1 inside a nested function).
+    ("""
+x=10
+def outer():
+    x=20
+    def bump():
+        nonlocal x
+        x += 3
+    bump()
+    print(x)
+outer()
+print(x)
+""", "23\n10\n"),
+    # B5: unpack assignment into nonlocal targets.
+    ("""
+a=0
+b=0
+def outer():
+    a=1
+    b=2
+    def swap():
+        nonlocal a,b
+        a,b = b,a
+    swap()
+    print(a,b)
+outer()
+print(a,b)
+""", "2 1\n0 0\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

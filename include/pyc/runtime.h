@@ -106,6 +106,18 @@ void  pyc_free(void* obj);
 // to a Python list of arguments. Returns the result (boxed) or NULL on error.
 PyObject* Pyc_Apply(PyObject* token, PyObject* argList);
 
+// B5 (nonlocal/cells): minimal cell primitives.
+// A cell is a PyObject with type==6 whose cell_content holds the target PyObject*.
+// PyCell_New(initial) allocates a cell holding 'initial' (may be NULL); returns new cell (owned ref).
+// PyCell_Get(cell) returns a new reference to the cell's content (or NULL if empty).
+// PyCell_Set(cell, val) stores 'val' into the cell (INCREF new, DECREF old if present); returns cell.
+PyObject* PyCell_New(PyObject* initial);
+PyObject* PyCell_Get(PyObject* cell);
+PyObject* PyCell_Set(PyObject* cell, PyObject* val);
+
+// B5 helper: return 1 if obj is a cell (type==6), else 0.
+int PyCell_Check(PyObject* obj);
+
 #ifdef __cplusplus
 }
 #endif

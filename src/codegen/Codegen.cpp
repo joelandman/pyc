@@ -220,6 +220,19 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* negateTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(negateTy, llvm::Function::ExternalLinkage, "PyNumber_Negate", module.get());
 
+    // B5 (cells for nonlocal): declare the minimal cell primitives so lowering can emit calls.
+    llvm::FunctionType* cellNewTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(cellNewTy, llvm::Function::ExternalLinkage, "PyCell_New", module.get());
+
+    llvm::FunctionType* cellGetTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(cellGetTy, llvm::Function::ExternalLinkage, "PyCell_Get", module.get());
+
+    llvm::FunctionType* cellSetTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(cellSetTy, llvm::Function::ExternalLinkage, "PyCell_Set", module.get());
+
+    llvm::FunctionType* cellCheckTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(cellCheckTy, llvm::Function::ExternalLinkage, "PyCell_Check", module.get());
+
     // printf no longer used in normal code paths (we use PyObject_Print)
 
     // Create one LLVM global variable per module-level global name.
@@ -412,6 +425,33 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             if (valueMap.count(gname)) continue;   // param with same name — skip
             llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + gname);
             if (gv) valueMap[gname] = gv;
+        }
+
+        // B5 (cells): pre-populate slots for cell-backed parameters (hidden leading args
+        // named "<pythonname>_cell"). Treat them as normal PyObject* cell objects.
+        // Also create local cell slots for any owned cell names declared in f.cellVars
+        // so that loads/stores via PyCell_Get/PyCell_Set can find them in valueMap.
+        for (const auto& cname : f.freeCellVars) {
+            // freeCellVars holds Python names; the actual parameter names are "<python>_cell"
+            std::string slot = cname + "_cell";
+            if (valueMap.count(slot)) continue;
+            // The parameter itself is a PyObject* (the cell). Create an entry alloca for it.
+            llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                           func->getEntryBlock().begin());
+            llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, slot + ".slot");
+            // The real argument will be wired by the caller; here we just reserve the slot name.
+            // The actual incoming cell arg will be matched by LLVM arg position; for safety,
+            // if a parameter with this exact name exists, store it into the alloca.
+            // (Codegen arg loop above already handled named args by the same name.)
+            valueMap[slot] = alloca;
+        }
+        for (const auto& cname : f.cellVars) {
+            std::string slot = cname + "_cell";
+            if (valueMap.count(slot)) continue;
+            llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                           func->getEntryBlock().begin());
+            llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, slot + ".slot");
+            valueMap[slot] = alloca;
         }
 
         std::unordered_map<std::string, llvm::BasicBlock*> blockMap;

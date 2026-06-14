@@ -14,12 +14,13 @@
 // LLVM codegen in Codegen.cpp mirrors fields 0-3: {i32, i32, i64, double}.
 struct PyObject {
     int refcount;
-    int type;   // 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool
+    int type;   // 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool, 6=cell (B5 nonlocal/closure)
     long value;    // type 0
     double dvalue; // type 4
     std::vector<PyObject*> list;
     std::unordered_map<PyObject*, PyObject*> dict;
     std::string str;
+    PyObject* cell_content; // type 6: the PyObject* held by this cell (for nonlocal)
 };
 
 void Py_INCREF(PyObject* obj) {
@@ -249,6 +250,7 @@ int PyObject_Print(PyObject* obj, FILE* fp) {
         return 0;
     }
     if (obj->type == 3) return fprintf(fp, "%s\n", obj->str.c_str());
+    if (obj->type == 6) return fprintf(fp, "<cell>\n");
     return fprintf(fp, "<object>\n");
 }
 
@@ -1071,6 +1073,39 @@ extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
     auto it = g_callableRegistry.find(name);
     if (it == g_callableRegistry.end()) return nullptr;
     return it->second ? it->second(argList) : nullptr;
+}
+
+// ---- B5 (nonlocal / cells) minimal primitives ----
+// A cell is a PyObject with type==6; cell_content holds the target PyObject*.
+// Cells are allocated in an enclosing scope and passed (or reachable) into nested functions
+// so that nonlocal writes are visible to all readers/writers sharing the cell.
+
+extern "C" PyObject* PyCell_New(PyObject* initial) {
+    PyObject* c = new PyObject();
+    c->refcount = 1;
+    c->type = 6;                 // cell
+    c->cell_content = initial;
+    if (initial) Py_INCREF(initial);
+    return c;
+}
+
+extern "C" PyObject* PyCell_Get(PyObject* cell) {
+    if (!cell || cell->type != 6) return nullptr;
+    PyObject* v = cell->cell_content;
+    if (v) Py_INCREF(v);
+    return v;
+}
+
+extern "C" PyObject* PyCell_Set(PyObject* cell, PyObject* val) {
+    if (!cell || cell->type != 6) return nullptr;
+    if (cell->cell_content) Py_DECREF(cell->cell_content);
+    cell->cell_content = val;
+    if (val) Py_INCREF(val);
+    return cell;
+}
+
+extern "C" int PyCell_Check(PyObject* obj) {
+    return (obj && obj->type == 6) ? 1 : 0;
 }
 
 } // extern "C"
