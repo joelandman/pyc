@@ -162,6 +162,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_IsInstance", module.get());
     }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_Apply", module.get());
+    }
 
     // String methods: find, count, replace (find/count return int boxed; replace returns str)
     for (const char* name : {"PyString_Find","PyString_Count"}) {
@@ -216,6 +220,19 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* negateTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(negateTy, llvm::Function::ExternalLinkage, "PyNumber_Negate", module.get());
 
+    // B5 (cells for nonlocal): declare the minimal cell primitives so lowering can emit calls.
+    llvm::FunctionType* cellNewTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(cellNewTy, llvm::Function::ExternalLinkage, "PyCell_New", module.get());
+
+    llvm::FunctionType* cellGetTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(cellGetTy, llvm::Function::ExternalLinkage, "PyCell_Get", module.get());
+
+    llvm::FunctionType* cellSetTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(cellSetTy, llvm::Function::ExternalLinkage, "PyCell_Set", module.get());
+
+    llvm::FunctionType* cellCheckTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(cellCheckTy, llvm::Function::ExternalLinkage, "PyCell_Check", module.get());
+
     // printf no longer used in normal code paths (we use PyObject_Print)
 
     // Create one LLVM global variable per module-level global name.
@@ -246,12 +263,139 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, irName, module.get());
     }
 
+    // B4/B8: create __apply__<name> adapters for indirect callable dispatch.
+    // Each adapter takes a single PyObject* list of positional arguments (flat user list,
+    // with * contents already spliced at the call site) and calls the real target after
+    // shape-aware unpacking based on the target's original paramNames (which retain * markers).
+    // This supports both simple indirect calls and indirect calls that use dynamic *args
+    // against targets that declare *vararg in their signature.
+    // Also register each adapter with the runtime so Pyc_Apply(token, list) works.
+    for (const auto& f : ir.functions) {
+        if (f.name.empty() || f.name == "__module__") continue;
+        std::string adapterName = "__apply__" + f.name;
+        llvm::FunctionType* aty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function* adapter = llvm::Function::Create(aty, llvm::Function::ExternalLinkage, adapterName, module.get());
+
+        llvm::BasicBlock* aentry = llvm::BasicBlock::Create(context, "entry", adapter);
+        llvm::IRBuilder<> abuilder(aentry);
+        llvm::Value* argListVal = adapter->getArg(0);
+        argListVal->setName("args");
+
+        std::string realName = llvmFunctionName(f.name);
+        llvm::Function* real = module->getFunction(realName);
+        if (!real) real = module->getFunction(f.name);
+        if (!real) {
+            abuilder.CreateRet(llvm::ConstantPointerNull::get(pyObjectPtrTy));
+            continue;
+        }
+
+        // Use original param names (with * markers) to find a *vararg slot, if any.
+        const auto& pnames = f.paramNames.empty() ? f.args : f.paramNames;
+        size_t vidx = (size_t)-1;
+        for (size_t j = 0; j < pnames.size(); ++j) {
+            if (!pnames[j].empty() && pnames[j][0] == '*') { vidx = j; break; }
+        }
+        bool hasVar = (vidx != (size_t)-1);
+        size_t fixed = hasVar ? vidx : real->arg_size();
+
+        std::vector<llvm::Value*> cargs;
+        llvm::Function* listGet = module->getFunction("PyList_GetItem");
+        llvm::Function* listSize = module->getFunction("PyList_Size");
+        llvm::Function* listNew  = module->getFunction("PyList_New");
+        llvm::Function* listAppend = module->getFunction("PyList_Append");
+
+        // Leading fixed prefix (before any *vararg in the target).
+        for (size_t i = 0; i < fixed; ++i) {
+            llvm::Value* idx = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i);
+            llvm::Value* el = nullptr;
+            if (listGet) {
+                el = abuilder.CreateCall(listGet, {argListVal, idx}, "a" + std::to_string(i));
+            } else {
+                el = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            }
+            cargs.push_back(el);
+        }
+
+        if (hasVar) {
+            // Collect [fixed .. len) from the incoming flat list into a fresh list for the * slot.
+            llvm::Value* ln = nullptr;
+            if (listSize) {
+                ln = abuilder.CreateCall(listSize, {argListVal}, "ln");
+            } else {
+                ln = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
+            }
+            llvm::Value* startC = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), fixed);
+            llvm::Value* zero = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
+            llvm::Value* rest = nullptr;
+            if (listNew) {
+                rest = abuilder.CreateCall(listNew, {zero}, "rest");
+            } else {
+                rest = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            }
+
+            // Inline counted loop: j = start; while j < ln { append GetItem(j); j++ }
+            llvm::AllocaInst* jAlloca = abuilder.CreateAlloca(llvm::Type::getInt64Ty(context), nullptr, "j");
+            abuilder.CreateStore(startC, jAlloca);
+
+            llvm::BasicBlock* lp = llvm::BasicBlock::Create(context, "tail_lp", adapter);
+            llvm::BasicBlock* bd = llvm::BasicBlock::Create(context, "tail_bd", adapter);
+            llvm::BasicBlock* ex = llvm::BasicBlock::Create(context, "tail_ex", adapter);
+            abuilder.CreateBr(lp);
+            abuilder.SetInsertPoint(lp);
+            llvm::Value* jcur = abuilder.CreateLoad(llvm::Type::getInt64Ty(context), jAlloca, "jcur");
+            llvm::Value* cmp = abuilder.CreateICmpSLT(jcur, ln, "cm");
+            abuilder.CreateCondBr(cmp, bd, ex);
+            abuilder.SetInsertPoint(bd);
+            llvm::Value* el = nullptr;
+            if (listGet) {
+                el = abuilder.CreateCall(listGet, {argListVal, jcur}, "el");
+            } else {
+                el = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            }
+            if (listAppend && rest) {
+                abuilder.CreateCall(listAppend, {rest, el});
+            }
+            llvm::Value* one = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 1);
+            llvm::Value* jn = abuilder.CreateAdd(jcur, one, "jn");
+            abuilder.CreateStore(jn, jAlloca);
+            abuilder.CreateBr(lp);
+            abuilder.SetInsertPoint(ex);
+
+            cargs.push_back(rest ? rest : llvm::ConstantPointerNull::get(pyObjectPtrTy));
+        }
+
+        llvm::Value* r = abuilder.CreateCall(real, cargs, "r");
+        abuilder.CreateRet(r);
+    }
+
+    // Declare the registration function so we can call it from the module ctor.
+    llvm::FunctionType* regTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {int8PtrTy, pyObjectPtrTy}, false);
+    llvm::Function* regFn = module->getFunction("pyc_register_callable");
+    if (!regFn) regFn = llvm::Function::Create(regTy, llvm::Function::ExternalLinkage, "pyc_register_callable", module.get());
+    llvm::Function* regCallable = regFn; // local alias used in the per-function registration below
+
     for (const auto& f : ir.functions) {
         std::string irName = llvmFunctionName(f.name);
         llvm::Function* func = module->getFunction(irName);
         if (!func) continue;
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", func);
         builder.SetInsertPoint(entry);
+
+        // B4/B8: register all __apply__ adapters at module startup so Pyc_Apply can
+        // dispatch to user functions and lambdas by their synthetic/user name token.
+        if (f.name == "__module__") {
+            for (const auto& rf : ir.functions) {
+                if (rf.name.empty() || rf.name == "__module__") continue;
+                std::string adapterName = "__apply__" + rf.name;
+                llvm::Function* adp = module->getFunction(adapterName);
+                if (!adp) continue;
+                llvm::Value* nameStr = builder.CreateGlobalStringPtr(rf.name, "reg." + rf.name);
+                // regFn is the registration function declared above.
+                if (regFn) {
+                    builder.CreateCall(regFn, {nameStr, adp});
+                }
+            }
+        }
 
         std::unordered_map<std::string, llvm::Value*> valueMap;
         for (size_t i = 0; i < f.args.size(); ++i) {
@@ -281,6 +425,33 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             if (valueMap.count(gname)) continue;   // param with same name — skip
             llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + gname);
             if (gv) valueMap[gname] = gv;
+        }
+
+        // B5 (cells): pre-populate slots for cell-backed parameters (hidden leading args
+        // named "<pythonname>_cell"). Treat them as normal PyObject* cell objects.
+        // Also create local cell slots for any owned cell names declared in f.cellVars
+        // so that loads/stores via PyCell_Get/PyCell_Set can find them in valueMap.
+        for (const auto& cname : f.freeCellVars) {
+            // freeCellVars holds Python names; the actual parameter names are "<python>_cell"
+            std::string slot = cname + "_cell";
+            if (valueMap.count(slot)) continue;
+            // The parameter itself is a PyObject* (the cell). Create an entry alloca for it.
+            llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                           func->getEntryBlock().begin());
+            llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, slot + ".slot");
+            // The real argument will be wired by the caller; here we just reserve the slot name.
+            // The actual incoming cell arg will be matched by LLVM arg position; for safety,
+            // if a parameter with this exact name exists, store it into the alloca.
+            // (Codegen arg loop above already handled named args by the same name.)
+            valueMap[slot] = alloca;
+        }
+        for (const auto& cname : f.cellVars) {
+            std::string slot = cname + "_cell";
+            if (valueMap.count(slot)) continue;
+            llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                           func->getEntryBlock().begin());
+            llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, slot + ".slot");
+            valueMap[slot] = alloca;
         }
 
         std::unordered_map<std::string, llvm::BasicBlock*> blockMap;

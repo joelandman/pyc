@@ -21,10 +21,22 @@ struct IRInstruction {
 
 struct IRFunction {
     std::string name;
-    std::vector<std::string> args;
+    std::vector<std::string> args;        // cleaned (no * markers)
     std::vector<IRInstruction> body;
     // Variables that should use module-level (global) storage in this function.
     std::vector<std::string> globalVars;
+    // Original parameter names with * markers (for *vararg detection in adapters/forwarders).
+    std::vector<std::string> paramNames;
+
+    // B5 (cells/nonlocal):
+    // Python-level names in this function whose storage is a cell (PyCell_New/Get/Set).
+    // This includes names declared 'nonlocal' here, and names assigned here that
+    // descendant nested functions access via 'nonlocal'.
+    std::vector<std::string> cellVars;
+    // For a nested function that uses cells from an enclosing scope, the Python names
+    // of those cells. Lowering will synthesize hidden parameters for them; codegen
+    // will receive them as leading PyObject* cell parameters.
+    std::vector<std::string> freeCellVars;
 };
 
 class ModuleIR {

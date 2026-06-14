@@ -1,6 +1,6 @@
 # pyc — Implemented Features
 
-Current test count: **174/174** (all compared against CPython output).
+Current test count: **186/186** (curated cases; `make check` is green; optimizer-sensitive FILE_CASES run at --opt=0 while A-side work proceeds).
 
 **Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
 Full slicing (get/set, step, negatives, str + list) implemented (B2).
@@ -57,6 +57,18 @@ f(b=3, a=4)                    keyword call arguments
 
 Nested functions work. `global x` shares module-level storage via LLVM
 `GlobalVariable`. `try/except` basic form works.
+
+Lambdas (B4 complete for the token-based model): `lambda` expressions produce a
+synthetic nested IR function and a string "callable token" (the synthetic name)
+as their runtime value. You can assign them, pass them as arguments, store them
+in containers, return them from functions, unpack them, subscript them, and call
+them directly or indirectly. Indirect calls use `Pyc_Apply(token, list)` where
+the token is the runtime string value and the list is the flat argument list
+(with dynamic * contents spliced in for indirect callees). Generated
+`__apply__<name>` adapters (registered at module startup) perform the actual
+dispatch and are shape-aware for targets that declare `*vararg`. Direct targets
+use fast paths or `__va_*` wrappers. **kwargs and full first-class objects with
+cells/closures remain future work.
 
 ## Assignment forms
 
@@ -126,9 +138,9 @@ specific lowering has a boxed fallback for uncertain cases.
 
 ## Not yet implemented (or partial)
 
-- `lambda` expressions (lowering, defaults, direct/assigned calls, and *args in signatures are implemented; full first-class callable objects and **kwargs forwarding pending)
-- `nonlocal` statement
+- `lambda` expressions (B4 complete for the common model): write `lambda`, assign/pass/store/return/unpack/subscript it, call directly or indirectly via string "callable tokens" + `Pyc_Apply(token, list)` + generated `__apply__<name>` adapters (registered at startup). Dynamic `*args` works at indirect call sites (spliced into the flat list for `Pyc_Apply`). Lambdas may declare `*args` in their signature; callee-side collection works. Adapters are shape-aware for targets that declare `*vararg`. Limitations still pending: full first-class function objects (identity/equality), cells/`nonlocal`/true closures, `**kwargs`.
+- `nonlocal` statement (B5): single- and multi-level nesting (owner, assigning intermediates, forward-only scopes that only declare `nonlocal` to forward the cell); AugAssign to cell-backed names (`x += k`, etc. — explicit `PyCell_Get` of LHS + `PyCell_Set` of result); multi-target unpack into nonlocals (`a,b = b,a`). Cells allocated in the owning scope (with param capture), hidden leading `<name>_cell` parameters synthesized and passed on direct calls, uniform `<name>_cell` slot convention, `isCellBackedHere` predicate, and `PyCell_New/Get/Set/Check` (type=6). 4+ curated B5 cases (incl. augassign + unpack + multi-level) are green at --opt=0. Deeper aliasing, lambdas capturing cells, and class interactions remain future work.
 - Classes and OOP
 - `import` / module system
-- `*args` / `**kwargs` (call-site * unpacking works for literals (static) and dynamic lists (via __va wrappers); declared *args collection on the callee side works; **kwargs pending)
+- `*args` / `**kwargs` (call-site * works for literals (static) and dynamic cases (via __va wrappers for direct targets or flat-list splice for indirect `Pyc_Apply`); declared * collection on callee side works; adapters support *vararg targets; **kwargs pending)
 - Walrus operator `:=`
