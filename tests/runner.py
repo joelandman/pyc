@@ -334,28 +334,33 @@ print(a(10), b(10))
     # B4: call the result of a call that returns a lambda, without intermediate assign
     # (non-capturing lambda so no cells/closures required)
     ("""
-def make_const():
-    return lambda x: x + 100
-print(make_const()(20))
-""", "120\n"),
+    def make_const():
+        return lambda x: x + 100
+    print(make_const()(20))
+    """, "120\n"),
+    # B4 explicit: pure direct-expression call of the result of a call that returns
+    # a non-capturing lambda (no intermediate assignment of the lambda value itself).
+    # This exercises the full token-return + immediate Pyc_Apply path for call-result callees.
+    ("""
+    def make_doubler():
+        return lambda x: x * 2
+    print(make_doubler()(7))
+    """, "14\n"),
     # B4: lambda stored in dict and called via subscript
     ("""
 d = {'inc': lambda x: x+1, 'dbl': lambda x: x*2}
 print(d['inc'](5), d['dbl'](7))
 """, "6 14\n"),
-    # B4: call the result of a call that returns a lambda, without intermediate assign.
-    # Non-capturing version using a helper that does not capture (to avoid needing
-    # cells/nonlocal). We assign the result first (a form that is solidly green) to
-    # keep the suite stable while any last corner in the pure direct-expression
-    # "make_adder(10)(20)" style is polished. The assigned form still exercises the
-    # full B4 path (call returns a token; the token is stored; a later call loads
-    # it and routes via Pyc_Apply with a correct arg list).
+    # B4: assigned result of call returning a (non-capturing) lambda, then called.
+    # Capturing lambdas (e.g. lambda referencing an enclosing parameter like "make_adder(n)")
+    # require cells/nonlocal and are out of scope for B4 (see B5). The pure direct-expression
+    # form for non-capturing returned lambdas is also covered (see make_const case above).
     ("""
-def make_add_twenty():
-    return lambda x: x + 20
-add20 = make_add_twenty()
-print(add20(10))
-""", "30\n"),
+    def make_add_twenty():
+        return lambda x: x + 20
+    add20 = make_add_twenty()
+    print(add20(10))
+    """, "30\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
