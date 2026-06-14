@@ -267,6 +267,16 @@ public:
                 }
             }
 
+            // B5: detect whether *this* function itself is a closure (captures any cells
+            // from an outer scope). If so, mark it so that its "value" (for a def name or
+            // a lambda expr) is produced as a descriptor bundle rather than a bare token.
+            {
+                auto fit = funcFreeCells.find(node->id);
+                if (fit != funcFreeCells.end() && !fit->second.empty()) {
+                    closureFunctions.insert(node->id);
+                }
+            }
+
             currentFunc = node->id;
             tempCounter = 0;
             listLiteralElemASTs.clear();
@@ -308,6 +318,50 @@ public:
                 }
             }
 
+            // B5 (lambda cells): for each *owned* cell in this scope, if the body of any
+            // nested lambda (or nested def) references that name, we must ensure the
+            // lambda's synthetic will receive the cell via a hidden param. We do this
+            // by walking nested Lambda nodes and adding their referenced owned names
+            // into the current function's freeCellVars (so later, when lowering the
+            // lambda as a nested FunctionDef, the demanded path will mark it and the
+            // lambda will get the hidden cell param from *this* scope).
+            {
+                std::function<void(const ASTNode*)> markLambdaDemands = [&](const ASTNode* n) {
+                    if (!n) return;
+                    if (n->type == "Lambda") {
+                        const ASTNode* body = nullptr;
+                        for (const auto& c : n->children) {
+                            if (c && c->type != "Default") { body = c.get(); break; }
+                        }
+                        if (body) {
+                            auto used = collectNames(body);
+                            auto oit2 = funcOwnedCells.find(node->id);
+                            if (oit2 != funcOwnedCells.end()) {
+                                for (const auto& nm : oit2->second) {
+                                    if (used.count(nm)) {
+                                        auto& frees = funcFreeCells[node->id];
+                                        if (std::find(frees.begin(), frees.end(), nm) == frees.end())
+                                            frees.push_back(nm);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for (const auto& c : n->children) markLambdaDemands(c.get());
+                };
+                for (const auto& c : node->children) markLambdaDemands(c.get());
+            }
+
+            // B5 (closure functions): if *this* function captures any cells (freeCellVars),
+            // mark it as a closure so that any "value" of it (def name mention or lambda expr)
+            // is lowered as a descriptor bundle [token, cell0, cell1, ...] instead of a bare token.
+            {
+                auto fit = funcFreeCells.find(node->id);
+                if (fit != funcFreeCells.end() && !fit->second.empty()) {
+                    closureFunctions.insert(node->id);
+                }
+            }
+
             for (const auto& c : node->children) {
                 if (c && c->type == "Default") continue;
                 lower(c.get());
@@ -320,6 +374,18 @@ public:
                 functionsThatReturnCallables.insert(node->id);
             }
             currentFnReturnsCallable = false;
+            // B5 (closures): if the function body contained a return of a bundle, record it
+            // so callers can mark results as bundles and extract cells at use sites.
+            if (currentFnReturnsBundle) {
+                functionsThatReturnBundles.insert(node->id);
+                if (!currentReturnedBundleSynthetic.empty())
+                    functionReturnedBundleSynthetic[node->id] = currentReturnedBundleSynthetic;
+                if (!currentReturnedBundleCaps.empty())
+                    functionReturnedBundleCaps[node->id] = currentReturnedBundleCaps;
+            }
+            currentFnReturnsBundle = false;
+            currentReturnedBundleSynthetic.clear();
+            currentReturnedBundleCaps.clear();
             // Do not fall through to the generic FunctionDef handling below.
             return;
         } else if (node->type == "If") {
@@ -438,12 +504,64 @@ public:
             return lowerUnaryOp(node);
         } else if (node->type == "Lambda") {
             std::string lamName = lowerLambda(node);
-            // Emit a string constant holding the synthetic name as the *value*
-            // of the lambda expression. This string acts as a "callable token"
-            // that can be assigned, passed as an argument, stored in containers,
-            // etc. When such a token appears as the callee expression in a Call,
-            // lowerCall can resolve it to the real target (B4 progress toward
-            // lambdas as values).
+            // B5 (lambda as closure): if this lambda closes over any cells from the definition
+            // scope, its *value* must be a descriptor bundle [token, cell0, cell1, ...] so that
+            // call sites can extract the cells and pass them as leading args to the synthetic.
+            {
+                const ASTNode* body = nullptr;
+                for (const auto& c : node->children) {
+                    if (c && c->type != "Default") { body = c.get(); break; }
+                }
+                std::vector<std::string> caps;
+                if (body) {
+                    auto used = collectNames(body);
+                    auto oit = funcOwnedCells.find(currentFunc);
+                    if (oit != funcOwnedCells.end()) {
+                        for (const auto& nm : oit->second) if (used.count(nm)) caps.push_back(nm);
+                    }
+                    auto fit = funcFreeCells.find(currentFunc);
+                    if (fit != funcFreeCells.end()) {
+                        for (const auto& nm : fit->second) if (used.count(nm)) {
+                            if (std::find(caps.begin(), caps.end(), nm) == caps.end()) caps.push_back(nm);
+                        }
+                    }
+                }
+                if (!caps.empty()) {
+                    // Build a list: [ tokenString, cell0, cell1, ... ]
+                    std::string zero = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, zero);
+                    std::string lst = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, lst);
+
+                    // token (synthetic name string)
+                    std::string tok = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + lamName + "\""}, tok, "str");
+                    std::string d1 = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, tok}, d1);
+
+                    // cells in definition scope order (use the uniform <nm>_cell slots)
+                    for (const auto& nm : caps) {
+                        std::string cellSlot = nm + "_cell";
+                        std::string d = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, cellSlot}, d);
+                    }
+
+                    // Remember mapping for call-site extraction and token propagation.
+                    descriptorCells[lst] = caps;
+                    bundleToSynthetic[lst] = lamName;
+                    bundleTemps.insert(lst);
+
+                    // Also keep the B4 token path working for direct resolution inside this scope.
+                    callableTokenToSynthetic[lst] = lamName;
+                    callableTokenTemps.insert(lamName);
+
+                    lastLambdaSynthetic = lamName;
+                    closureFunctions.insert(lamName);
+                    return lst;
+                }
+            }
+
+            // Non-capturing path (original B4): bare string token.
             std::string res = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + lamName + "\""}, res, "str");
             noteType(res, "str");
@@ -498,6 +616,8 @@ private:
     // Used to decide whether a bare-name callee should load its runtime value
     // as the token for Pyc_Apply (B4 completeness for returned/aliased lambdas).
     std::unordered_set<std::string> namesThatMayHoldCallableTokens;
+    // B5: bare names whose runtime value is a descriptor bundle for a capturing lambda/closure.
+    std::unordered_set<std::string> namesThatMayHoldBundles;
     // Temps (consts or results) whose runtime value is a callable token string.
     std::unordered_set<std::string> callableTokenTemps;
     // User functions (defs or synthetic lambdas) that contain a return of a
@@ -539,6 +659,31 @@ private:
     // B5: names for which *this* function allocates the cell (owns the binding for closed-over descendants).
     // Distinct from funcFreeCells (which are received via hidden params because this function declared nonlocal).
     std::unordered_map<std::string, std::vector<std::string>> funcOwnedCells;
+
+    // B5: set of synthetic names (defs or lambdas) whose lowered "value" must carry cells
+    // (a descriptor bundle) rather than a bare string token. When such a value flows to a
+    // call site we will extract the cells from the bundle and pass them as leading args.
+    std::unordered_set<std::string> closureFunctions;
+
+    // B5: for a descriptor bundle temp (value of a capturing lambda/closure), the ordered
+    // Python-level cell names it carries. Used at call sites to splice the right cells.
+    std::unordered_map<std::string, std::vector<std::string>> descriptorCells;
+
+    // B5: descriptor bundle temp -> synthetic IR name (so call sites can resolve the real target).
+    std::unordered_map<std::string, std::string> bundleToSynthetic;
+
+    // B5: temps that are known descriptor bundles (for propagation through assign/return/etc.).
+    std::unordered_set<std::string> bundleTemps;
+
+    // B5: functions that return descriptor bundles (capturing lambdas returned from makers etc.).
+    std::unordered_set<std::string> functionsThatReturnBundles;
+    std::unordered_map<std::string, std::string> functionReturnedBundleSynthetic;
+    std::unordered_map<std::string, std::vector<std::string>> functionReturnedBundleCaps;
+
+    // Per-FunctionDef state for returns of bundles (to record at end of the def).
+    bool currentFnReturnsBundle = false;
+    std::string currentReturnedBundleSynthetic;
+    std::vector<std::string> currentReturnedBundleCaps;
 
     // B5 helper (member, callable during lowering of exprs/stmts in a FunctionDef body):
     // Returns true if 'nm' must be treated as cell-backed while lowering the *current* function.
@@ -726,6 +871,20 @@ private:
         std::sort(result.begin(), result.end());
         result.erase(std::unique(result.begin(), result.end()), result.end());
         return result;
+    }
+
+    // B5: collect bare Name ids referenced anywhere in the subtree.
+    // Used for lambdas (and future nested scopes) to discover which names from
+    // the definition scope they close over so we can force those names to cells.
+    std::unordered_set<std::string> collectNames(const ASTNode* node) {
+        std::unordered_set<std::string> out;
+        std::function<void(const ASTNode*)> w = [&](const ASTNode* n) {
+            if (!n) return;
+            if (n->type == "Name" && !n->id.empty()) out.insert(n->id);
+            for (const auto& c : n->children) w(c.get());
+        };
+        w(node);
+        return out;
     }
 
     std::string lowerBinOp(const ASTNode* node) {
@@ -1504,14 +1663,39 @@ private:
         }
 
         // Normal direct call path (B5: may need to pass hidden cell objects for free nonlocals).
+        // Also handle descriptor bundles at the callee expression (capturing lambdas-as-values).
         {
-            std::vector<std::string> finalOps = {funcName};
-            auto fit = funcFreeCells.find(funcName);
-            if (fit != funcFreeCells.end() && !fit->second.empty()) {
-                for (const auto& fc : fit->second) {
-                    finalOps.push_back(fc + "_cell");
+            std::vector<std::string> finalOps;
+            // If the callee value is a descriptor bundle, splice its cells first, then user args.
+            auto bit = bundleTemps.find(calleeVal);
+            if (bit != bundleTemps.end()) {
+                auto dit = descriptorCells.find(calleeVal);
+                if (dit != descriptorCells.end()) {
+                    int k = 0;
+                    for (const auto& nm : dit->second) {
+                        std::string ic = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {std::to_string(1 + k)}, ic);
+                        std::string cellObj = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", calleeVal, ic}, cellObj);
+                        finalOps.push_back(cellObj);
+                        ++k;
+                    }
+                }
+                // Resolve the real target synthetic for the call.
+                auto sit = bundleToSynthetic.find(calleeVal);
+                if (sit != bundleToSynthetic.end()) {
+                    funcName = sit->second;
+                }
+            } else {
+                // Existing free-cell path for direct named callees (defs that close over cells).
+                auto fit = funcFreeCells.find(funcName);
+                if (fit != funcFreeCells.end() && !fit->second.empty()) {
+                    for (const auto& fc : fit->second) {
+                        finalOps.push_back(fc + "_cell");
+                    }
                 }
             }
+            finalOps.insert(finalOps.begin(), funcName);
             finalOps.insert(finalOps.end(), argRes.begin(), argRes.end());
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", finalOps, res);
@@ -1520,6 +1704,15 @@ private:
             // so subsequent assign/unpack/call through that result can propagate tokens.
             if (functionsThatReturnCallables.count(funcName)) {
                 callableTokenTemps.insert(res);
+            }
+            // B5: if the callee is known to return a bundle, mark the result accordingly
+            // so later bare-name callees and assign targets can extract cells.
+            if (functionsThatReturnBundles.count(funcName)) {
+                bundleTemps.insert(res);
+                auto sit = functionReturnedBundleSynthetic.find(funcName);
+                if (sit != functionReturnedBundleSynthetic.end()) bundleToSynthetic[res] = sit->second;
+                auto cit = functionReturnedBundleCaps.find(funcName);
+                if (cit != functionReturnedBundleCaps.end()) descriptorCells[res] = cit->second;
             }
             return res;
         }
@@ -2108,6 +2301,21 @@ private:
                 }
                 return;
             }
+            // B5 (closure propagation): if RHS is a descriptor bundle, mark the target as carrying
+            // a bundle so later bare-name callees and calls can extract cells from it.
+            if (!val.empty() && bundleTemps.count(val)) {
+                bundleTemps.insert(node->id);
+                auto bit = bundleToSynthetic.find(val);
+                if (bit != bundleToSynthetic.end()) bundleToSynthetic[node->id] = bit->second;
+                auto dit = descriptorCells.find(val);
+                if (dit != descriptorCells.end()) descriptorCells[node->id] = dit->second;
+                namesThatMayHoldBundles.insert(node->id);
+            }
+            // B5 (function-returned bundle propagation via assign): if RHS is a call result
+            // we previously marked as returning a bundle, mark the target name accordingly.
+            if (!val.empty() && bundleTemps.count(val)) {
+                // already handled above
+            }
             ir.addInstruction(currentFunc, "assign", {val}, node->id);
             noteType(node->id, typeOf(val));
             // If the RHS value is a synthetic lambda name (or we just lowered a lambda
@@ -2266,6 +2474,15 @@ private:
         // known to return callables), mark the current function so callers can propagate tokens.
         if (!val.empty() && (callableTokenTemps.count(val) || callableTokenToSynthetic.count(val))) {
             currentFnReturnsCallable = true;
+        }
+        // B5 (closures): if this return carries a descriptor bundle (capturing lambda/closure),
+        // mark the current function so callers can propagate bundles and extract cells.
+        if (!val.empty() && bundleTemps.count(val)) {
+            currentFnReturnsBundle = true;
+            auto sit = bundleToSynthetic.find(val);
+            if (sit != bundleToSynthetic.end()) currentReturnedBundleSynthetic = sit->second;
+            auto dit = descriptorCells.find(val);
+            if (dit != descriptorCells.end()) currentReturnedBundleCaps = dit->second;
         }
         return val;
     }
