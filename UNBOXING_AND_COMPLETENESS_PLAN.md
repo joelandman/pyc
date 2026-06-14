@@ -16,7 +16,7 @@ Current state (as of 2026-06):
 - Runtime.cpp already implements many "missing" builtins and methods (sum/sorted/any/all/isinstance, str find/count/replace, etc.), but lowering does not emit calls for most of them.
 - Slicing: parser produces `Slice` with up to 3 children (start/stop/step); lowering and `Pyc_GetSlice` only handle start/stop.
 - Dict comprehensions: `lowerDictComp` is a non-functional stub using undefined runtime helpers.
-- Lambda (B4) and *args (B8) have partial but useful implementations (see sections below); no support yet for: `nonlocal`, `class`, general `import`, walrus `:=`, **kwargs.
+- Lambda (B4) and *args (B8) are substantially complete for the common cases (see sections below): lambdas as values (assign/pass/store + indirect call via callable tokens + Pyc_Apply + __apply__ adapters), dynamic * under indirect callees, and adapter support for *vararg targets. Still missing: full first-class function objects with cells, `nonlocal`, `class`, general `import`, walrus `:=`, **kwargs.
 
 Files of interest:
 - Lowering: `src/Compiler.cpp` (LoweringVisitor, lowerRangeFor, numericResultType, noteType, lowerCall/lowerMethodCall/lowerSubscriptGet/lowerListComp/lowerDictComp).
@@ -148,17 +148,20 @@ Also wire `list.count` if the runtime grows it; currently not present.
 - Tests added to `runner.py` (simple, filtered, product/nested). All 167/167 pass.
 - Benefits from future unboxing work (numeric keys/values in dictcomp will be candidates for numeric locals).
 
-### B4. Lambda Expressions — PROGRESS (2026-06)
+### B4. Lambda Expressions — PROGRESS (2026-06, substantially complete for common patterns)
 - Parser fully handles Lambda (args including *args/**kwargs, defaults via Default children, body expression).
-- Lowering (`lowerLambda`): creates a unique synthetic nested IR function (`__lambda_N`), cleans * / ** markers for the IR parameter list while preserving the original view in funcParamNames, lowers defaults (evaluated in definition context, stored as module globals for call-site injection), lowers the body expression as an implicit `ret`.
-- Call resolution:
-  - Direct literal calls: `(lambda ...)(args)` — lowerCall detects a Lambda callee child, lowers it (registers the synthetic + defaults), and emits the call to the returned synthetic name.
-  - Assigned: `f = lambda ...` records `lambdaAliases[f] = synthetic`; subsequent calls through the name resolve via the alias map.
-  - Lambdas can be passed to other functions and invoked indirectly in simple cases.
-- *args in lambda signatures are parsed and the synthetic receives the collected list for the corresponding parameter.
-- Defaults on lambdas are supported (mirrors FunctionDef default handling + injection).
-- Limitations (follow-up): no full first-class function objects (the expression "value" is the synthetic name for resolution); closures over cells, `nonlocal`, and **kwargs forwarding are incomplete; complex capture falls back or may require cell allocation.
-- Manual cases (including defaults, direct calls, assigned, passed lambdas, and *args on lambdas) pass; core suite (178/178) green.
+- Lowering (`lowerLambda`): creates a unique synthetic nested IR function (`__lambda_N`), cleans * / ** markers for the IR parameter list while preserving the original view in funcParamNames (and now also `IRFunction::paramNames`), lowers defaults (evaluated in definition context, stored as module globals for call-site injection), lowers the body expression as an implicit `ret`. Lambdas always produce a boxed `PyObject*` result (explicit boxing of native i64/double bodies).
+- Callable tokens (B4 core): the value of a lambda expression is a string constant holding the synthetic name. This token can be assigned, passed as an argument, stored in lists/containers, and later used as a callee. `callableTokenToSynthetic` maps the const temp to the synthetic; `knownIRFunctions` tracks both user `def`s and lambdas.
+- Call resolution (direct + indirect):
+  - Direct literal/assigned: handled via `lowerLambda` + `lambdaAliases`.
+  - Indirect (lambda-as-value): early detection in `lowerCall` (before * processing) decides `useDynamicApply`. For bare parameter names that are not known direct IR functions we route via `Pyc_Apply(token, argList)` where the token is the runtime value of the name. For subscripts and other expressions we use the lowered callee value as the token.
+  - `Pyc_Apply` + registry + adapters: `Codegen` emits `__apply__<name>` adapters for every user function/lambda. These are registered at module startup via `pyc_register_callable`. `Pyc_Apply` looks up the token string and invokes the adapter with a flat arg list. Adapters unpack according to the target's original `paramNames` (supporting *vararg via a counted tail-collection loop inside the adapter).
+- Dynamic * under indirect callees: `lowerCall` now builds an `indirectArgListTemp` (empty + append only) before processing arguments. Starred dynamic cases under an indirect callee splice their contents (after flushing any fixed prefix) into this list instead of creating a `__va_<param>` wrapper. The final `Pyc_Apply` uses this pre-built list.
+- *args in lambda signatures + callee collection: unchanged from prior (the synthetic receives the collected list).
+- Defaults on lambdas: supported.
+- New tests in `runner.py` (CASES): indirect via param (`call_it(lambda x: x*x, 6)`), list-of-lambdas subscript + call (`fns=[lambda..., lambda...]; fns[0](1)`), and indirect *args against a lambda (`app(lambda *a: len(a), [1,2,3])`).
+- Limitations (follow-up): no full first-class function objects with identity/equality/closure cells; `nonlocal`; **kwargs. Complex aliasing across containers may still be limited.
+- All 180/180 green (including the new indirect B4/B8 cases).
 
 ### B5. `nonlocal`
 - Currently only `global` is handled (two-pass pre-scan + module-level `GlobalVariable`).
@@ -190,15 +193,17 @@ Also wire `list.count` if the runtime grows it; currently not present.
 - For the nbody benchmark, the only import is `import sys`; the current synthetic support is sufficient for correctness but not general.
 - Prioritize: make `import sys` and simple same-directory imports work first; defer packages, bytecode, C extensions, etc.
 
-### B8. `*args` Collection and Related — PROGRESS (2026-06)
+### B8. `*args` Collection and Related — PROGRESS (2026-06, extended to indirect callees)
 - Parser produces Starred nodes for * unpacking in calls and vararg markers (`*name`) in FunctionDef/Lambda signatures (plus **kwargs markers).
 - Call-site *args handling in lowerCall:
   - Static expansion: when the starred source is a list/tuple literal tracked via `listLiteralElemASTs` (assigned earlier in the function) or appears directly as a List/Tuple child of the Starred, its elements are lowered as separate positional operands on the emitted `call`. This yields an exact-arity call; normal default injection and callee * collection still apply.
-  - Dynamic cases: a small runtime splice (PyList_SizeBoxed + loop + PyList_GetItemObj + PyList_Append) builds a collected "va" list of the effective positionals (fixed prefix + starred elements). The call is routed to a generated wrapper `__va_<target>` (registered via `ensureVaWrapper`).
-- Wrapper + forwarding (`ensureVaWrapper`, `emitForwardCallFromList`): the wrapper takes a single list parameter and emits a signature-aware unpack that supplies the correct number of operands to the original target (fixed params before any *vararg, plus a runtime-collected tail list for the * slot if the target declares one). The wrapper then returns the target's result.
-- Signature side: FunctionDef/Lambda with *args clean the marker for the IR parameter list but retain the original view (with `*` prefix) in `funcParamNames` for call-site and callee-collection analysis. Callee-side collection for declared *vararg parameters is implemented (excess positionals after the fixed prefix before the * are gathered into a list and supplied as the *param value).
-- **kwargs, ** unpacking at call sites, and some corner cases (keyword-only after *, complex aliasing) remain for follow-up.
-- This was advanced together with lambda support; the original `test_comprehensions.py` (*args via name) and many manual cases (direct literal lists, name-based, mixed) exercise the paths. Core suite stays green.
+  - Dynamic cases for direct targets: a small runtime splice (PyList_SizeBoxed + loop + PyList_GetItemObj + PyList_Append) builds a collected "va" list; the call is routed to a generated wrapper `__va_<target>`.
+  - Dynamic cases for indirect callees (lambdas-as-values): lowering builds a flat user argument list (`indirectArgListTemp`, always start-empty + append) before processing args. A Starred under an indirect callee flushes any prior fixed prefix into this list, then splices the starred iterable's elements via the same Size/GetItem/Append pattern. The final `Pyc_Apply` receives the correctly ordered flat list (no __va wrapper is created for a parameter name).
+- Wrapper + forwarding (`ensureVaWrapper`, `emitForwardCallFromList`): unchanged for the direct path; the wrapper unpacks fixed prefix + collected tail for a declared * slot.
+- Adapters for indirect dispatch: `__apply__<name>` adapters (generated for every user def/lambda) are now shape-aware. They consult the target's original `paramNames` (retained on `IRFunction`) to detect a *vararg slot. For targets with *vararg they perform a counted tail-collection loop over the incoming flat list (starting after the fixed prefix) and pass a fresh list for the * slot to the real target. This enables `fns[0](1,2,3)` when `fns[0]` is a lambda that declares `*a`.
+- Signature side: `IRFunction` now carries both `args` (cleaned) and `paramNames` (original with * markers) so adapters and forwarders can make correct decisions without re-parsing source. `funcParamNames` continues to be used by lowering.
+- **kwargs, ** unpacking at call sites, and some corner cases (keyword-only after *, complex aliasing across many containers) remain for follow-up.
+- Tests: the new indirect B4 cases in `runner.py` specifically exercise dynamic * against a lambda value passed as a parameter. Core suite + new cases at 180/180.
 
 ### B9. Walrus Operator `:=`
 - Parse `NamedExpr`.
@@ -256,7 +261,7 @@ Testing:
 - [x] `valueTypes` / resultType tracking strengthened (A1 foundation, 2026-06).
 - [x] Unboxed numeric locals start: visible range vars native i64 + escape boxing + native numeric results (A2 start, 2026-06).
 - [x] Native unary minus + safe integral `//` (A3, 2026-06).
-- [x] Lambda expression lowering + *args call-site support (B4/B8, 2026-06). Parser handles Lambda (incl. *args/**kwargs) and Starred. lowerLambda creates synthetic nested IR functions with body-as-implicit-return and default handling. Call resolution covers direct literal lambdas, assigned lambdas, and passing lambdas. *args at call sites: static expansion for tracked list/tuple literals (assigned names + direct List/Tuple in * position) and runtime splice + generated `__va_<target>` wrappers with `emitForwardCallFromList` for dynamic cases; wrappers unpack to the target's fixed params (+ collected tail for declared *vararg). Callee-side *args collection for declared varargs is supported. **kwargs and full first-class callables remain follow-ups.
-- [ ] All 178+ tests + new cases pass; nbody identical to CPython.
+- [x] Lambda expression lowering + *args call-site support (B4/B8, 2026-06). Parser handles Lambda (incl. *args/**kwargs) and Starred. lowerLambda creates synthetic nested IR functions with body-as-implicit-return and default handling. Call resolution covers direct literal/assigned lambdas and lambdas-as-values (assign, pass, store in containers, indirect call). Indirect dispatch uses string "callable tokens" + `Pyc_Apply(token, list)` + generated `__apply__<name>` adapters registered at startup. Dynamic * under indirect callees splices into a flat arg list for `Pyc_Apply` (no stray __va for a parameter name). Adapters are shape-aware using `IRFunction::paramNames` and correctly collect tails for targets that declare *vararg. Callee-side * collection for declared varargs is supported. **kwargs and full first-class callable objects (identity, cells, equality) remain follow-ups.
+- [x] All 180/180 tests + new indirect B4/B8 cases (param-carried lambda, list-of-lambdas subscript call, indirect * against lambda) pass; nbody identical to CPython.
 
 This plan is intended to be updated as work progresses. Add dates or "Implemented in commit X" annotations when items land.

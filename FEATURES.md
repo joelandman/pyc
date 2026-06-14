@@ -1,6 +1,6 @@
 # pyc — Implemented Features
 
-Current test count: **174/174** (all compared against CPython output).
+Current test count: **180/180** (all compared against CPython output).
 
 **Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
 Full slicing (get/set, step, negatives, str + list) implemented (B2).
@@ -57,6 +57,15 @@ f(b=3, a=4)                    keyword call arguments
 
 Nested functions work. `global x` shares module-level storage via LLVM
 `GlobalVariable`. `try/except` basic form works.
+
+Lambdas are supported as values (B4): you can assign them, pass them as arguments,
+store them in lists, and call them indirectly. The implementation uses string
+"callable tokens" (synthetic names) resolved at call time via a small runtime
+registry + `Pyc_Apply` + generated `__apply__<name>` adapters. Dynamic `*args`
+at call sites works for both direct targets (via `__va_*` wrappers) and indirect
+callables (spliced into the flat arg list passed to `Pyc_Apply`). Adapters are
+shape-aware and correctly handle targets that declare `*vararg`. **kwargs and
+full first-class function objects (with cells/closures) are still pending.
 
 ## Assignment forms
 
@@ -126,9 +135,9 @@ specific lowering has a boxed fallback for uncertain cases.
 
 ## Not yet implemented (or partial)
 
-- `lambda` expressions (lowering, defaults, direct/assigned calls, and *args in signatures are implemented; full first-class callable objects and **kwargs forwarding pending)
+- `lambda` expressions (as values: assign, pass as argument, store in containers, and call indirectly via callable tokens + `Pyc_Apply` + `__apply__` adapters; direct/assigned calls, *args in lambda signatures, and dynamic * at indirect call sites are supported; full first-class callable objects and **kwargs forwarding pending)
 - `nonlocal` statement
 - Classes and OOP
 - `import` / module system
-- `*args` / `**kwargs` (call-site * unpacking works for literals (static) and dynamic lists (via __va wrappers); declared *args collection on the callee side works; **kwargs pending)
+- `*args` / `**kwargs` (call-site * unpacking works for literals (static) and dynamic lists (via __va wrappers or indirect `Pyc_Apply` arg lists); declared *args collection on the callee side works; adapters support *vararg targets for indirect dispatch; **kwargs pending)
 - Walrus operator `:=`

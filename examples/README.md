@@ -28,6 +28,7 @@ make -j
 - List comprehensions (`[i for i in range(5)]`)
 - Dictionary comprehensions (`{i: i*i for i in range(5)}`)
 - Function calls with *args unpacking (`func(*args)`) at call sites (static for literals, dynamic via wrappers); **kwargs pending
+- Lambda expressions (including as values): `f = lambda x: x*x`; pass/store (`call_it(lambda x:x*x, 6)`, `fns=[lambda y:y+10, ...]; fns[0](1)`); indirect calls via callable tokens + `Pyc_Apply` + `__apply__` adapters. Lambdas may declare *args; dynamic * works at indirect call sites too.
 
 More features (strings, lists, classes, exceptions, etc.) are planned in future phases.
 
