@@ -1,6 +1,8 @@
 # pyc — Implemented Features
 
-Current test count: **186/186** (curated cases; `make check` is green; optimizer-sensitive FILE_CASES run at --opt=0 while A-side work proceeds).
+Current test count: **192/192** (curated cases; `make check` is green; all FILE_CASES pass at --opt=0 and all optimization levels).
+
+**Bug fixes:** `PyObject_Print` now flushes stdout after every print call (ensures output is visible when stdout is fully buffered). `pyc_setup_sys` now properly DECREFs all allocated index and string objects (fixes memory leaks). Subscript AugAssign (`a[i] += 1`) now carries result type metadata for native arithmetic optimization.
 
 **Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
 Full slicing (get/set, step, negatives, str + list) implemented (B2).

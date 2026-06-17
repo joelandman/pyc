@@ -216,13 +216,13 @@ void Py_DECREF(PyObject* obj) {
 
 int PyObject_Print(PyObject* obj, FILE* fp) {
     if (!fp) fp = stdout;
-    if (!obj) return fprintf(fp, "None\n");
-    if (obj->type == 5) return fprintf(fp, "%s\n", obj->value ? "True" : "False");
-    if (obj->type == 0) return fprintf(fp, "%ld\n", obj->value);
+    if (!obj) { int r = fprintf(fp, "None\n"); fflush(fp); return r; }
+    if (obj->type == 5) { int r = fprintf(fp, "%s\n", obj->value ? "True" : "False"); fflush(fp); return r; }
+    if (obj->type == 0) { int r = fprintf(fp, "%ld\n", obj->value); fflush(fp); return r; }
     if (obj->type == 4) {
         char buf[64];
         format_double(buf, sizeof(buf), obj->dvalue);
-        return fprintf(fp, "%s\n", buf);
+        int r = fprintf(fp, "%s\n", buf); fflush(fp); return r;
     }
     if (obj->type == 1) {
         fprintf(fp, "[");
@@ -231,9 +231,10 @@ int PyObject_Print(PyObject* obj, FILE* fp) {
             if (obj->list[i] && obj->list[i]->type == 3)
                 fprintf(fp, "'%s'", obj->list[i]->str.c_str());
             else
-                PyObject_Print(obj->list[i], stdout);  // recurse without newline — TODO
+                PyObject_Print(obj->list[i], fp);
         }
         fprintf(fp, "]\n");
+        fflush(fp);
         return 0;
     }
     if (obj->type == 2) {
@@ -247,11 +248,12 @@ int PyObject_Print(PyObject* obj, FILE* fp) {
             first = false;
         }
         fprintf(fp, "}\n");
+        fflush(fp);
         return 0;
     }
-    if (obj->type == 3) return fprintf(fp, "%s\n", obj->str.c_str());
-    if (obj->type == 6) return fprintf(fp, "<cell>\n");
-    return fprintf(fp, "<object>\n");
+    if (obj->type == 3) { int r = fprintf(fp, "%s\n", obj->str.c_str()); fflush(fp); return r; }
+    if (obj->type == 6) { int r = fprintf(fp, "<cell>\n"); fflush(fp); return r; }
+    { int r = fprintf(fp, "<object>\n"); fflush(fp); return r; }
 }
 
 PyObject* PyUnicode_FromString(const char* s) {
@@ -874,14 +876,17 @@ void pyc_setup_sys(int argc, char** argv) {
     g_sys_module = PyDict_New();
 
     // sys.argv = list of PyObject* strings
-    g_sys_argv = PyList_NewBoxed(PyInt_FromLong(argc));
+    {
+        PyObject* argcBoxed = PyInt_FromLong(argc);
+        g_sys_argv = PyList_NewBoxed(argcBoxed);
+        Py_DECREF(argcBoxed);
+    }
     for (int i = 0; i < argc; ++i) {
         PyObject* s = PyUnicode_FromString(argv[i]);
-        // PyList_SetItemBoxed takes ownership of s, so we don't INCREF here.
-        // We call it with the boxed-int index; the runtime boxes ints.
         PyObject* idx = PyInt_FromLong(i);
         PyList_SetItemBoxed(g_sys_argv, idx, s);
-        // PyList_SetItemBoxed consumes the int, so don't DECREF.
+        Py_DECREF(idx);
+        Py_DECREF(s);
     }
     PyObject* argv_key = PyUnicode_FromString("argv");
     PyDict_SetItem(g_sys_module, argv_key, g_sys_argv);

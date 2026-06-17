@@ -2408,8 +2408,11 @@ private:
             std::string rhs = lowerExpr(node->children[1].get());
             std::string cur = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, idx}, cur);
+            noteType(cur, typeOf(rhs));
             std::string res = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, op, {cur, rhs}, res);
+            std::string resultType = numericResultType(op, cur, rhs);
+            ir.addInstruction(currentFunc, op, {cur, rhs}, res, resultType);
+            noteType(res, resultType);
             std::string dummy = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, res}, dummy);
         } else {
