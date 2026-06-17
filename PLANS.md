@@ -12,6 +12,8 @@ The primary correctness concern is **reference count integrity** in the runtime 
 
 **Problem:** `Codegen.cpp` lines 944-948 skip DECREF of the old value when a variable slot is reassigned. The comment says "existing slots may hold borrowed function arguments, module globals, or default argument objects" and conservatively avoids DECREF everywhere. This means every reassignment of a user variable leaks the previous PyObject*. In a tight loop (nbody: ~20 reassignments per iteration), this leaks ~20 heap objects per iteration — 580 MB at 50 000 iterations.
 
+**Status: ⚠️ TODO**
+
 **Fix:** Separate the valueMap into two kinds of slots:
 - **Borrowed slots** (parameters, globals): created by the entry-block setup at lines 401-428 and 424-428. These never need DECREF because the codegen doesn't own these references.
 - **Owned slots** (user-assigned variables): created by the first-time assign path at lines 960-965. These DO need DECREF on reassignment.
@@ -25,6 +27,8 @@ Track which slots are owned by recording the creation path. In the assign codege
 ### 1.2 — Fix `PyList_Pop` to DECREF before removing from list
 
 **Problem:** `Runtime.cpp` line 448-453. `PyList_Pop` removes an item from the list's vector and returns it, but does not DECREF the list's reference first. The list INCREF'd the item on `PyList_SetItem` (line 109). After pop, the item has one extra refcount that no one owns — it leaks until the program exits.
+
+**Status: ✅ COMPLETE** (2024-06-17)
 
 **Fix:** Add `Py_DECREF(item)` before `pop_back()`:
 
@@ -40,11 +44,15 @@ PyObject* PyList_Pop(PyObject* lst) {
 
 **Success criterion:** A test that pushes then pops multiple times through the loop shows no memory growth over iterations.
 
+**Tests:** `tests/final_correctness_test.sh` — 3 tests covering pop operations (pop_single, pop_all, pop_push_cycle). All passing at --opt=0.
+
 **Effort:** <1 day.
 
 ### 1.3 — Fix `PyDict_GetItem` to return a new reference or document borrowed semantics
 
 **Problem:** `Runtime.cpp` lines 194-201. `PyDict_GetItem` returns `pair.second` from the internal map without INCREF. The return type `PyObject*` is indistinguishable from functions that return new references (like `PyInt_FromLong`). Callers cannot know whether they need to DECREF the result.
+
+**Status: ⚠️ TODO**
 
 **Fix:** Either (a) INCREF before returning (like CPython's `PyDict_GetItemRef`), or (b) add a wrapper `PyDict_GetItemRef` that INCREFs and use it everywhere, keeping `PyDict_GetItem` as the borrowed reference version.
 
@@ -58,6 +66,8 @@ Option (a) is simpler and less error-prone — always return new refs. The calle
 
 **Problem:** `Codegen.cpp` line 1033. When `verifyModule` fails, the error is printed but compilation continues and returns the broken module. The resulting binary may crash or produce incorrect output with no diagnostic.
 
+**Status: ⚠️ TODO**
+
 **Fix:** After the verification check, call `return module;` only if verification passes. If verification fails, `return nullptr;` and let the caller report an error.
 
 **Success criterion:** No broken binaries are ever produced. CI catches any IR regressions immediately.
@@ -67,6 +77,8 @@ Option (a) is simpler and less error-prone — always return new refs. The calle
 ### 1.5 — Add a valgrind-memcheck test target to CI
 
 **Problem:** Memory bugs (leaks, use-after-free, double-free) are invisible to the existing text-comparison test suite. A program can produce correct output while leaking 500 MB of heap.
+
+**Status: ⚠️ TODO**
 
 **Fix:** Add a `make valgrind-test` target (or extend `make check`) that runs each test under `valgrind --leak-check=full --error-exitcode=1`. Prioritize the FILE_CASES (especially nbody) since they exercise the most runtime code paths.
 
