@@ -15,6 +15,7 @@
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/raw_ostream.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <fstream>
 #include <iostream>
 
@@ -398,6 +399,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         }
 
         std::unordered_map<std::string, llvm::Value*> valueMap;
+        std::unordered_set<std::string> ownedSlots;
         for (size_t i = 0; i < f.args.size(); ++i) {
             llvm::Value* arg = func->getArg(i);
             if (!f.args[i].empty()) {
@@ -935,17 +937,25 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     newVal = boxDouble(newVal, inst.operands[0].name + ".boxed");
                 }
 
-                // Basic refcounting for variables: variables own a reference.
-                // For module globals and the very first assignment to a
-                // parameter (which is the alias of the caller's owned
-                // reference), we do NOT DECREF the old value — we don't own
-                // it. We do INCREF the new value so it stays alive across
-                // the function.
+               // Basic refcounting for variables: variables own a reference.
+                // For module globals we never DECREF the old value (the module
+                // owns them). For alloca-backed slots (params and user-assigned
+                // locals), DECREF the old value on reassignment.
                 if (valueMap.find(inst.result) != valueMap.end()) {
-                    // Existing slots may hold borrowed function arguments,
-                    // module globals, or default argument objects. Do not
-                    // DECREF the previous value on assignment; doing so can
-                    // invalidate objects still reachable elsewhere.
+                    llvm::Value* oldVal = builder.CreateLoad(pyObjectPtrTy, valueMap[inst.result], inst.result + ".old");
+                    if (llvm::GlobalVariable* gv = llvm::dyn_cast<llvm::GlobalVariable>(valueMap[inst.result])) {
+                        // Module global: never DECREF (the module owns this ref)
+                        builder.CreateStore(newVal, gv);
+                    } else if (ownedSlots.find(inst.result) != ownedSlots.end()) {
+                        // Owned alloca slot: DECREF the old value before overwrite
+                        llvm::Function* decref = module->getFunction("Py_DECREF");
+                        if (decref) builder.CreateCall(decref, {oldVal});
+                        builder.CreateStore(newVal, valueMap[inst.result]);
+                    } else {
+                        // Borrowed alloca slot (function param, cell, etc.):
+                        // do not DECREF the initial borrowed value.
+                        builder.CreateStore(newVal, valueMap[inst.result]);
+                    }
                 } else {
                     if (llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + inst.result)) {
                         valueMap[inst.result] = gv;
@@ -958,9 +968,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     // on this first definition — the alloca starts
                     // uninitialised and the upcoming store fills it.
                     llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
-                                                  func->getEntryBlock().begin());
+                                                   func->getEntryBlock().begin());
                     llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result);
                     valueMap[inst.result] = alloca;
+                    ownedSlots.insert(inst.result);
                     builder.CreateStore(newVal, alloca);
                     continue;
                 }
@@ -1032,6 +1043,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     }
     if (llvm::verifyModule(*module, &llvm::errs())) {
         std::cerr << "Module verification failed\n";
+        return nullptr;
     }
     return module;
 }

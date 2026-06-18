@@ -389,9 +389,66 @@ public:
             currentReturnedBundleCaps.clear();
             // Do not fall through to the generic FunctionDef handling below.
             return;
-        } else if (node->type == "ClassDef") {
+      } else if (node->type == "ClassDef") {
             lowerClass(node);
             return;
+      } else if (node->type == "With") {
+            // with ctx as target: body
+            // Lowers to: target = ctx.__enter__(); body; ctx.__exit__(None, None, None)
+            if (node->children.empty()) return;
+            const ASTNode* withItem = node->children[0].get();
+            // withitem has context_expr in children[0], optional_vars in children[1]
+            if (withItem->children.empty()) return;
+            std::string ctxExpr = lowerExpr(withItem->children[0].get());
+            // Call __enter__
+            std::string enterConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"__enter__\""}, enterConst, "str");
+            std::string enterCall = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, enterConst}, enterCall);
+            // Build arg list for __enter__ (just self)
+            std::string enterArgList = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, "enter_arg_count");
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "enter_arg_count"}, enterArgList);
+            std::string zeroConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, zeroConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", enterArgList, zeroConst, ctxExpr}, "enter_set0");
+            std::string enterResult = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", enterCall, enterArgList}, enterResult);
+            // Bind result to target if present
+            if (withItem->children.size() > 1 && withItem->children[1]) {
+                const ASTNode* target = withItem->children[1].get();
+                if (target->type == "Name") {
+                    ir.addInstruction(currentFunc, "assign", {enterResult}, target->id);
+                }
+            }
+            // Lower body
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                if (node->children[i]) {
+                    lower(node->children[i].get());
+                }
+            }
+            // Call __exit__(None, None, None) in finally
+            std::string exitConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"__exit__\""}, exitConst, "str");
+            std::string exitCall = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, exitConst}, exitCall);
+            // Build arg list for __exit__ (self, None, None, None)
+            std::string exitArgList = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"4"}, "exit_arg_count");
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "exit_arg_count"}, exitArgList);
+            std::string oneConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, oneConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgList, oneConst, ctxExpr}, "exit_set1");
+            // Add three None values
+            for (int j = 0; j < 3; ++j) {
+                std::string jConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(j)}, jConst);
+                ir.addInstruction(currentFunc, "const", {"0"}, "none_val");
+                std::string noneKey = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(j + 2)}, noneKey);
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgList, noneKey, "none_val"}, "exit_set");
+            }
+            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", exitCall, exitArgList}, "exit_result");
         } else if (node->type == "If") {
             lowerIf(node);
         } else if (node->type == "While") {
@@ -1024,7 +1081,7 @@ private:
             node->children[0]->type == "Attribute") {
             return lowerMethodCall(node);
         }
-        // Class instantiation: ClassName(args) — create instance dict and call __init__
+    // Class instantiation: ClassName(args) — create instance dict and call __init__
         std::string funcName;
         if (!node->children.empty() && node->children[0] && node->children[0]->type == "Name") {
             funcName = node->children[0]->id;
@@ -1032,6 +1089,10 @@ private:
             if (classIt != knownClasses.end()) {
                 std::string instanceDict = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyDict_New"}, instanceDict);
+                // Store class reference on instance for method lookup
+                std::string classKeyConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"__class__\""}, classKeyConst, "str");
+                ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", instanceDict, classKeyConst, funcName}, "class_set");
                 // Build __init__ function with correct parameters
                 std::string initName = funcName + "__init__";
                 std::vector<std::string> initParams;
@@ -2634,13 +2695,18 @@ private:
             ir.addInstruction(currentFunc, "call", {"PyList_Sort", obj}, res);
         } else if (methodName == "pop") {
             ir.addInstruction(currentFunc, "call", {"PyList_Pop", obj}, res);
-        } else {
-            // Try to call as user-defined method — look up method on instance dict
-            // and call it with self (obj) prepended
+     } else {
+            // Try to call as user-defined method
+            // For class instances: look up method on class dict
             std::string methodLookup = "t" + std::to_string(tempCounter++);
             std::string methodNameConst = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
-            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, methodNameConst}, methodLookup);
+            // Get __class__ from instance, then look up method on class dict
+            std::string classKeyConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"__class__\""}, classKeyConst, "str");
+            std::string classRef = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, classKeyConst}, classRef);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", classRef, methodNameConst}, methodLookup);
             // Build args list with self prepended
             std::vector<std::string> methodArgs;
             methodArgs.push_back(obj);
@@ -2674,54 +2740,90 @@ private:
     void lowerClass(const ASTNode* node) {
         std::string className = node->id;
         knownClasses.insert(className);
-        // Register class as module-level callable token
+        // Register class as module-level global
         ir.addModuleGlobal(className);
-        std::string classToken = "c" + std::to_string(tempCounter++);
-        ir.addInstruction("__module__", "const", {"\"" + className + "\""}, classToken, "str");
-        ir.addInstruction("__module__", "assign", {classToken}, className);
-        noteType(className, "str");
+        // Create class dict to hold methods
+        std::string classDictTemp = "c" + std::to_string(tempCounter++);
+        ir.addInstruction("__module__", "call", {"PyDict_New"}, classDictTemp, "dict");
         // Register class name as known IR function so it can be called directly
         knownIRFunctions.insert(className);
-        // Collect all method names for later use
-        std::vector<std::string> methodNames;
+        // Process all methods
         for (const auto& c : node->children) {
-            if (!c) continue;
-            if (c->type == "FunctionDef") {
-                std::string methodName = c->id;
-                knownIRFunctions.insert(methodName);
-                if (methodName == "__init__") {
-                    // Store __init__ param names from the AST
-                    std::string initParams;
-                    for (size_t i = 0; i < c->args.size(); ++i) {
-                        if (i > 0) initParams += ",";
-                        std::string pname = c->args[i];
-                        if (!pname.empty() && pname[0] == '*') pname = pname.substr(1);
-                        initParams += pname;
-                    }
-                    classInitParams[className] = initParams;
-                    // Generate __init__ function with correct params
-                    std::string initFuncName = className + "__init__";
-                    std::vector<std::string> initFuncParams;
-                    std::stringstream ss(initParams);
-                    std::string param;
-                    while (std::getline(ss, param, ',')) {
-                        initFuncParams.push_back(param);
-                    }
-                    ir.addFunction(initFuncName, initFuncParams);
-                    // Lower __init__ body into the init function
-                    std::string savedFunc = currentFunc;
-                    currentFunc = initFuncName;
-                    for (size_t i = 0; i < c->children.size(); ++i) {
-                        if (c->children[i] && c->children[i]->type != "Default") {
-                            lower(c->children[i].get());
-                        }
-                    }
-                    currentFunc = savedFunc;
-                } else {
-                    methodNames.push_back(methodName);
+            if (!c || c->type != "FunctionDef") continue;
+            std::string methodName = c->id;
+            knownIRFunctions.insert(methodName);
+            if (methodName == "__init__") {
+                // Store __init__ param names from the AST
+                std::string initParams;
+                for (size_t i = 0; i < c->args.size(); ++i) {
+                    if (i > 0) initParams += ",";
+                    std::string pname = c->args[i];
+                    if (!pname.empty() && pname[0] == '*') pname = pname.substr(1);
+                    initParams += pname;
                 }
+                classInitParams[className] = initParams;
+                // Generate __init__ function with correct params
+                std::string initFuncName = className + "__init__";
+                std::vector<std::string> initFuncParams;
+                std::stringstream ss(initParams);
+                std::string param;
+                while (std::getline(ss, param, ',')) {
+                    initFuncParams.push_back(param);
+                }
+                ir.addFunction(initFuncName, initFuncParams);
+                // Lower __init__ body into the init function
+                std::string savedFunc = currentFunc;
+                currentFunc = initFuncName;
+                for (size_t i = 0; i < c->children.size(); ++i) {
+                    if (c->children[i] && c->children[i]->type != "Default") {
+                        lower(c->children[i].get());
+                    }
+                }
+            // __init__ must return self (the first argument)
+                ir.addInstruction(initFuncName, "ret", {"self"});
+                // Store __init__ in class dict as a callable token (string name)
+                std::string methodConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"" + methodName + "\""}, methodConst, "str");
+                std::string methodToken = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"" + initFuncName + "\""}, methodToken, "str");
+                knownIRFunctions.insert(initFuncName);
+                // Store the function name string in the class dict
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
+                currentFunc = savedFunc;
+           } else {
+                // Lower regular method
+                std::string methodFuncName = className + "__" + methodName;
+                std::vector<std::string> methodParams;
+                for (size_t i = 0; i < c->args.size(); ++i) {
+                    std::string pname = c->args[i];
+                    if (!pname.empty() && pname[0] == '*') pname = pname.substr(1);
+                    methodParams.push_back(pname);
+                }
+                ir.addFunction(methodFuncName, methodParams);
+                knownIRFunctions.insert(methodFuncName);
+           // Lower method body
+                std::string savedFunc = currentFunc;
+                currentFunc = methodFuncName;
+                for (size_t i = 0; i < c->children.size(); ++i) {
+                    if (c->children[i] && c->children[i]->type != "Default") {
+                        lower(c->children[i].get());
+                    }
+                }
+                // Store method in class dict as a callable token
+                std::string methodConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"" + methodName + "\""}, methodConst, "str");
+                std::string methodToken = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"" + methodFuncName + "\""}, methodToken, "str");
+                knownIRFunctions.insert(methodFuncName);
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
+                currentFunc = savedFunc;
             }
         }
+        // Store class dict as the class value
+        ir.addInstruction("__module__", "assign", {classDictTemp}, className);
+        noteType(className, "dict");
     }
 
     // x if cond else y  — IfExp (ternary)

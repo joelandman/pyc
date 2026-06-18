@@ -793,7 +793,21 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 }
             }
         }
-        Py_XDECREF(body);
+     Py_XDECREF(body);
+    } else if (node->type == "With") {
+        // With(items, body) — each withitem has context_expr and optional_vars
+        for (const char* attr : {"items", "body"}) {
+            PyObject* listObj = PyObject_GetAttrString(pyNode, attr);
+            if (listObj && PyList_Check(listObj)) {
+                for (Py_ssize_t i = 0; i < PyList_Size(listObj); ++i) {
+                    PyObject* item = PyList_GetItem(listObj, i);
+                    auto child = std::make_unique<ASTNode>();
+                    buildAST(item, child.get());
+                    node->children.push_back(std::move(child));
+                }
+            }
+            Py_XDECREF(listObj);
+        }
     }
 }
 

@@ -194,7 +194,10 @@ void PyDict_SetItem(PyObject* dict, PyObject* key, PyObject* value) {
 PyObject* PyDict_GetItem(PyObject* dict, PyObject* key) {
     if (dict && dict->type == 2) {
         for (auto& pair : dict->dict) {
-            if (PyObject_CompareBool(pair.first, key, 0)) return pair.second;
+            if (PyObject_CompareBool(pair.first, key, 0)) {
+                Py_INCREF(pair.second);
+                return pair.second;
+            }
         }
     }
     return nullptr;
@@ -214,8 +217,8 @@ void Py_DECREF(PyObject* obj) {
     }
 }
 
-int PyObject_Print(PyObject* obj, FILE* fp) {
-    if (!fp) fp = stdout;
+static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
+    // Base printing without __str__/__repr__ checks (to avoid recursion)
     if (!obj) { int r = fprintf(fp, "None\n"); fflush(fp); return r; }
     if (obj->type == 5) { int r = fprintf(fp, "%s\n", obj->value ? "True" : "False"); fflush(fp); return r; }
     if (obj->type == 0) { int r = fprintf(fp, "%ld\n", obj->value); fflush(fp); return r; }
@@ -231,7 +234,7 @@ int PyObject_Print(PyObject* obj, FILE* fp) {
             if (obj->list[i] && obj->list[i]->type == 3)
                 fprintf(fp, "'%s'", obj->list[i]->str.c_str());
             else
-                PyObject_Print(obj->list[i], fp);
+                PyObject_PrintBase(obj->list[i], fp);
         }
         fprintf(fp, "]\n");
         fflush(fp);
@@ -242,9 +245,9 @@ int PyObject_Print(PyObject* obj, FILE* fp) {
         bool first = true;
         for (auto& pair : obj->dict) {
             if (!first) fprintf(fp, ", ");
-            PyObject_Print(pair.first, fp);
+            PyObject_PrintBase(pair.first, fp);
             fprintf(fp, ": ");
-            PyObject_Print(pair.second, fp);
+            PyObject_PrintBase(pair.second, fp);
             first = false;
         }
         fprintf(fp, "}\n");
@@ -254,6 +257,71 @@ int PyObject_Print(PyObject* obj, FILE* fp) {
     if (obj->type == 3) { int r = fprintf(fp, "%s\n", obj->str.c_str()); fflush(fp); return r; }
     if (obj->type == 6) { int r = fprintf(fp, "<cell>\n"); fflush(fp); return r; }
     { int r = fprintf(fp, "<object>\n"); fflush(fp); return r; }
+}
+
+static PyObject* GetStrOrRepr(PyObject* obj, const char* method) {
+    // Check for __str__ or __repr__ method on dict-backed objects (class instances)
+    // First check instance dict, then class dict
+    if (!obj || obj->type != 2) return nullptr;
+    // Check instance dict first
+    for (auto& pair : obj->dict) {
+        if (pair.first && pair.first->type == 3 && pair.first->str == method) {
+            return pair.second;
+        }
+    }
+    // Check class dict
+    for (auto& pair : obj->dict) {
+        if (pair.first && pair.first->type == 3 && pair.first->str == "__class__") {
+            PyObject* classDict = pair.second;
+            if (classDict && classDict->type == 2) {
+                for (auto& cpair : classDict->dict) {
+                    if (cpair.first && cpair.first->type == 3 && cpair.first->str == method) {
+                        return cpair.second;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    return nullptr;
+}
+
+int PyObject_Print(PyObject* obj, FILE* fp) {
+    if (!fp) fp = stdout;
+    if (!obj) { int r = fprintf(fp, "None\n"); fflush(fp); return r; }
+    // Check for __str__ method first (used by print())
+    PyObject* strMethod = GetStrOrRepr(obj, "__str__");
+    if (strMethod && strMethod->type == 3) {
+        PyObject* argList = PyList_NewBoxed(PyInt_FromLong(1));
+        PyList_SetItemBoxed(argList, PyInt_FromLong(0), obj);
+        PyObject* strResult = Pyc_Apply(strMethod, argList);
+        if (strResult && strResult->type == 3) {
+            int r = fprintf(fp, "%s\n", strResult->str.c_str());
+            fflush(fp);
+            Py_DECREF(strResult);
+            Py_DECREF(argList);
+            return r;
+        }
+        Py_DECREF(strResult);
+        Py_DECREF(argList);
+    }
+    // Check for __repr__ method (fallback)
+    PyObject* reprMethod = GetStrOrRepr(obj, "__repr__");
+    if (reprMethod && reprMethod->type == 3) {
+        PyObject* argList = PyList_NewBoxed(PyInt_FromLong(1));
+        PyList_SetItemBoxed(argList, PyInt_FromLong(0), obj);
+        PyObject* reprResult = Pyc_Apply(reprMethod, argList);
+        if (reprResult && reprResult->type == 3) {
+            int r = fprintf(fp, "%s\n", reprResult->str.c_str());
+            fflush(fp);
+            Py_DECREF(reprResult);
+            Py_DECREF(argList);
+            return r;
+        }
+        Py_DECREF(reprResult);
+        Py_DECREF(argList);
+    }
+    return PyObject_PrintBase(obj, fp);
 }
 
 PyObject* PyUnicode_FromString(const char* s) {
@@ -901,7 +969,6 @@ PyObject* pyc_get_sys_attr(const char* name) {
     if (!key) return nullptr;
     PyObject* val = PyDict_GetItem(g_sys_module, key);
     Py_DECREF(key);
-    if (val) Py_INCREF(val);
     return val;
 }
 

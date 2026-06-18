@@ -72,3 +72,12 @@ add_test(
   COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/runner.py
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
+
+# Valgrind memory check target
+add_custom_target(valgrind-test
+  COMMAND ${CMAKE_SOURCE_DIR}/tests/run_correctness_tests.sh
+  DEPENDS pyc
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  COMMENT "Running valgrind memory check"
+  USES_TERMINAL
+)

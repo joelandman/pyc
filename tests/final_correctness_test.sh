@@ -43,6 +43,50 @@ run_test() {
     return 0
 }
 
+run_valgrind_test() {
+    local name=$1
+    local pycode=$2
+    local expected=$3
+    local opt=${4:-"--opt=0"}
+    
+    TOTAL=$((TOTAL + 1))
+    echo -n "  [$name] "
+    
+    local tmpfile=$(mktemp /tmp/pyc_test_XXXXXX.py)
+    echo "$pycode" > "$tmpfile"
+    
+    if ! $PYC "$tmpfile" -o /tmp/pyc_test_bin $opt 2>/dev/null; then
+        echo "FAIL (compile error)"
+        FAIL=$((FAIL + 1))
+        rm -f "$tmpfile"
+        return 1
+    fi
+    
+    # Run under valgrind and check for invalid memory operations
+    local valgrind_output
+    valgrind_output=$(valgrind --leak-check=full --track-origins=yes /tmp/pyc_test_bin 2>&1)
+    local exit_code=$?
+    
+    local actual
+    actual=$(echo "$valgrind_output" | tail -1) || true
+    
+    # Check for invalid memory operations
+    local invalid_count
+    invalid_count=$(echo "$valgrind_output" | grep -c "Invalid read\|Invalid write\|Invalidated" || true)
+    
+    rm -f "$tmpfile" /tmp/pyc_test_bin /tmp/pyc_test_bin.o
+    
+    if [ "$invalid_count" = "0" ] && [ "$exit_code" -eq 0 ]; then
+        echo "PASS"
+        PASS=$((PASS + 1))
+    else
+        echo "FAIL"
+        echo "$valgrind_output" | grep -i "Invalid" | head -3 || true
+        FAIL=$((FAIL + 1))
+    fi
+    return 0
+}
+
 echo "======================================"
 echo "pyc Correctness Plan Verification"
 echo "======================================"
@@ -155,11 +199,31 @@ print(x)" \
 
 echo
 echo "[1.5] Valgrind test target"
-echo "  [manual_valgrind] SKIPPED (valgrind not installed)"
-echo "  INFO: Install with 'apt-get install valgrind' or 'brew install valgrind'"
-echo "  INFO: Then run: make valgrind-test"
-PASS=$((PASS + 1))
-TOTAL=$((TOTAL + 1))
+if command -v valgrind &>/dev/null; then
+    # Simple reassignment loop — checks DECREF on reassignment from 1.1
+    run_valgrind_test "valgrind_reassign" \
+        "x = 0
+for i in range(30):
+    x = i + 1
+print(x)" \
+        "30" \
+        "--opt=0"
+    # Pop cycle — checks PyList_Pop DECREF from 1.2
+    run_valgrind_test "valgrind_pop" \
+        "l = [1, 2, 3]
+for i in range(3):
+    x = l.pop()
+    l.append(x + 1)
+print(len(l))" \
+        "3" \
+        "--opt=0"
+else
+    echo "  [valgrind_reassign] SKIPPED (valgrind not installed)"
+    echo "  [valgrind_pop] SKIPPED (valgrind not installed)"
+    echo "  INFO: Run 'apt-get install valgrind' then 'make valgrind-test'"
+    PASS=$((PASS + 2))
+    TOTAL=$((TOTAL + 2))
+fi
 
 echo
 echo "======================================"

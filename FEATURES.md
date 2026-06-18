@@ -2,7 +2,15 @@
 
 Current test count: **192/192** (curated cases; `make check` is green; all FILE_CASES pass at --opt=0 and all optimization levels).
 
-**Bug fixes:** `PyObject_Print` now flushes stdout after every print call (ensures output is visible when stdout is fully buffered). `pyc_setup_sys` now properly DECREFs all allocated index and string objects (fixes memory leaks). Subscript AugAssign (`a[i] += 1`) now carries result type metadata for native arithmetic optimization.
+**Bug fixes:** `PyObject_Print` now flushes stdout after every print call (ensures output is visible when stdout is fully buffered). `pyc_setup_sys` now properly DECREFs all allocated index and string objects (fixes memory leaks). Subscript AugAssign (`a[i] += 1`) now carries result type metadata for native arithmetic optimization. Corrected `llvm::cast` → `llvm::dyn_cast` in class codegen. Fixed `PyDict_GetItem` to always return new references (caller responsible for DECREF). Added `ownedSlots` tracking in codegen assign path to DECREF old values on reassignment. LLVM verification failures are now fatal.
+
+**Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
+Full slicing (get/set, step, negatives, str + list) implemented (B2).
+Dict comprehensions (single/multi-generator, if conditions, nested) implemented (B3).
+Type tracking foundation strengthened for unboxing (A1): i64 normalized to numeric int, valueTypes cleared at function boundaries, conservative loop back-edge widening in while/for/range (prevents incorrect narrow types across iterations).
+Valgrind test target added to CI.
+Class statements with `__init__`, instance attributes, method calls, and `__str__`/`__repr__` protocol implemented.
+With statement support added for context managers with `__enter__`/`__exit__`.
 
 **Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
 Full slicing (get/set, step, negatives, str + list) implemented (B2).
@@ -138,11 +146,58 @@ specific lowering has a boxed fallback for uncertain cases.
   Longer-lived unboxed numeric locals and homogeneous numeric-vector lists are
   planned next.
 
+## Classes
+
+A minimal `class` that supports `__init__`, instance attributes via `self`, and method calls. No class inheritance, no descriptors, no property, no metaclasses.
+
+```python
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def distance(self, other):
+        return ((self.x - other.x)**2 + (self.y - other.y)**2)**0.5
+
+p1 = Point(0, 0)
+p2 = Point(3, 4)
+print(p1.distance(p2))  # 5.0
+```
+
+## `__str__` and `__repr__` protocol
+
+User-defined classes can override `__str__` and `__repr__`. The `print()` function calls `__str__` on objects that have it.
+
+```python
+class Name:
+    def __init__(self, n):
+        self.n = n
+    def __str__(self):
+        return self.n
+    def __repr__(self):
+        return f"Name({self.n})"
+
+print(Name("hello"))   # hello
+```
+
+## `with` statements (partial)
+
+`with context_manager:` for objects that implement `__enter__` and `__exit__`. The `as` clause binding needs further work.
+
+```python
+class Dummy:
+    def __enter__(self):
+        return "entered"
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return False
+
+with Dummy():
+    print("in with")
+```
+
 ## Not yet implemented (or partial)
 
 - `lambda` expressions (B4 complete for the common model): write `lambda`, assign/pass/store/return/unpack/subscript it, call directly or indirectly via string "callable tokens" + `Pyc_Apply(token, list)` + generated `__apply__<name>` adapters (registered at startup). Dynamic `*args` works at indirect call sites (spliced into the flat list for `Pyc_Apply`). Lambdas may declare `*args` in their signature; callee-side collection works. Adapters are shape-aware for targets that declare `*vararg`. Limitations still pending: full first-class function objects (identity/equality), cells/`nonlocal`/true closures, `**kwargs`.
 - `nonlocal` statement (B5): single- and multi-level nesting (owner, assigning intermediates, forward-only scopes that only declare `nonlocal` to forward the cell); AugAssign to cell-backed names (`x += k`, etc. — explicit `PyCell_Get` of LHS + `PyCell_Set` of result); multi-target unpack into nonlocals (`a,b = b,a`). Cells allocated in the owning scope (with param capture), hidden leading `<name>_cell` parameters synthesized and passed on direct calls, uniform `<name>_cell` slot convention, `isCellBackedHere` predicate, and `PyCell_New/Get/Set/Check` (type=6). 4+ curated B5 cases (incl. augassign + unpack + multi-level) are green at --opt=0. Deeper aliasing, lambdas capturing cells, and class interactions remain future work.
-- Classes and OOP
-- `import` / module system
+- `import` / module system (partial): `import sys` registers `sys` as a module-level global, but `sys.version` and other attributes are not available. User module imports not yet supported.
 - `*args` / `**kwargs` (call-site * works for literals (static) and dynamic cases (via __va wrappers for direct targets or flat-list splice for indirect `Pyc_Apply`); declared * collection on callee side works; adapters support *vararg targets; **kwargs pending)
 - Walrus operator `:=`
