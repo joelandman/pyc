@@ -5,6 +5,7 @@
 #include <llvm/IR/LLVMContext.h>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <cstdlib>
 #include <string>
 #include <unordered_map>
@@ -388,6 +389,9 @@ public:
             currentReturnedBundleCaps.clear();
             // Do not fall through to the generic FunctionDef handling below.
             return;
+        } else if (node->type == "ClassDef") {
+            lowerClass(node);
+            return;
         } else if (node->type == "If") {
             lowerIf(node);
         } else if (node->type == "While") {
@@ -610,6 +614,10 @@ private:
     // Names of IR functions we have registered (for deciding static vs dynamic
     // call lowering in B4/B8 indirect callable support).
     std::unordered_set<std::string> knownIRFunctions;
+    // Set of class names for class instantiation support.
+    std::unordered_set<std::string> knownClasses;
+    // Map from class name to __init__ parameter names (comma-separated).
+    std::unordered_map<std::string, std::string> classInitParams;
     // Names that have been assigned (or unpacked into) values that may be
     // callable tokens at runtime (lambdas, results of calls that return lambdas,
     // elements of containers holding lambdas, copies of such names, etc.).
@@ -998,11 +1006,53 @@ private:
 
     std::string lowerCall(const ASTNode* node) {
         // Method call: obj.method(args) — func is an Attribute node
-        if (!node->children.empty() && node->children[0] &&
+         if (!node->children.empty() && node->children[0] &&
             node->children[0]->type == "Attribute") {
             return lowerMethodCall(node);
         }
+        // Class instantiation: ClassName(args) — create instance dict and call __init__
         std::string funcName;
+        if (!node->children.empty() && node->children[0] && node->children[0]->type == "Name") {
+            funcName = node->children[0]->id;
+            auto classIt = knownClasses.find(funcName);
+            if (classIt != knownClasses.end()) {
+                std::string instanceDict = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyDict_New"}, instanceDict);
+                // Build __init__ function with correct parameters
+                std::string initName = funcName + "__init__";
+                std::vector<std::string> initParams;
+                auto pit = classInitParams.find(funcName);
+                if (pit != classInitParams.end() && !pit->second.empty()) {
+                    std::string params = pit->second;
+                    std::stringstream ss(params);
+                    std::string param;
+                    while (std::getline(ss, param, ',')) {
+                        initParams.push_back(param);
+                    }
+                } else {
+                    initParams.push_back("self");
+                }
+                ir.addFunction(initName, initParams);
+                knownIRFunctions.insert(initName);
+                // Build args list: self + user args
+                std::vector<std::string> callArgs;
+                callArgs.push_back(initName);
+                callArgs.push_back(instanceDict);
+                for (size_t i = 1; i < node->children.size(); ++i) {
+                    if (node->children[i]) {
+                        callArgs.push_back(lowerExpr(node->children[i].get()));
+                    }
+                }
+                std::string initCallRes = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", callArgs, initCallRes);
+                return instanceDict;
+            }
+        }
+        if (!node->children.empty() && node->children[0] && node->children[0]->type == "Name") {
+            funcName = node->children[0]->id;
+        } else {
+            funcName = "";
+        }
         // If the callee is a literal lambda expression, lower it first (this
         // registers the synthetic nested function and any defaults). The
         // returned name is the IR function to call. We bypass the "value" path
@@ -2231,7 +2281,9 @@ private:
     std::string lowerAttribute(const ASTNode* node) {
         std::string obj = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         std::string res = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "getattr", {obj, node->id}, res);
+        std::string attrNameConst = "c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"\"" + node->id + "\""}, attrNameConst, "str");
+        ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, attrNameConst}, res);
         return res;
     }
 
@@ -2257,6 +2309,19 @@ private:
             for (auto& ch : node->children[0]->children) listLiteralElemASTs[node->id].push_back(ch.get());
             // B4: we conservatively mark the list name here too; lowerList will do the
             // precise marking of listsContainingCallableTokens when it sees token elements.
+        }
+        if (node->id == "__attr_assign__") {
+            // Attribute assignment: self.x = value — store in instance dict
+            if (node->children.size() < 2) return;
+            const ASTNode* attrTarget = node->children[0].get();  // Attribute node
+            std::string obj = lowerExpr(attrTarget->children.size() > 0 ? attrTarget->children[0].get() : nullptr);
+            std::string attrName = attrTarget->id;  // attribute name (e.g., "x")
+            std::string val = lowerExpr(node->children[1].get());
+            std::string attrConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + attrName + "\""}, attrConst, "str");
+            std::string dummy = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, attrConst, val}, dummy);
+            return;
         }
         if (node->id == "__subscript__") {
             if (node->children.size() < 2) return;
@@ -2556,10 +2621,93 @@ private:
         } else if (methodName == "pop") {
             ir.addInstruction(currentFunc, "call", {"PyList_Pop", obj}, res);
         } else {
-            // Unknown method — return None
-            ir.addInstruction(currentFunc, "const", {"0"}, res);
+            // Try to call as user-defined method — look up method on instance dict
+            // and call it with self (obj) prepended
+            std::string methodLookup = "t" + std::to_string(tempCounter++);
+            std::string methodNameConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, methodNameConst}, methodLookup);
+            // Build args list with self prepended
+            std::vector<std::string> methodArgs;
+            methodArgs.push_back(obj);
+            for (auto& a : args) {
+                methodArgs.push_back(a);
+            }
+            // Build flat arg list for Pyc_Apply
+            std::string argList = "t" + std::to_string(tempCounter++);
+            std::string argCount = std::to_string(methodArgs.size());
+            std::string argCountConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
+            for (size_t i = 0; i < methodArgs.size(); ++i) {
+                std::string idxConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+                std::string setRes = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
+            }
+            // Call method via Pyc_Apply
+            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
         }
         return res;
+    }
+
+    // Class definition lowering for minimal data-only classes.
+    // A class becomes:
+    // 1. A module-level global that is a callable token (string name)
+    // 2. When called, creates an instance dict and calls __init__ on it
+    // 3. Method calls on instances are attribute lookups on the instance dict
+    //    followed by a call with 'self' prepended
+    void lowerClass(const ASTNode* node) {
+        std::string className = node->id;
+        knownClasses.insert(className);
+        // Register class as module-level callable token
+        ir.addModuleGlobal(className);
+        std::string classToken = "c" + std::to_string(tempCounter++);
+        ir.addInstruction("__module__", "const", {"\"" + className + "\""}, classToken, "str");
+        ir.addInstruction("__module__", "assign", {classToken}, className);
+        noteType(className, "str");
+        // Register class name as known IR function so it can be called directly
+        knownIRFunctions.insert(className);
+        // Collect all method names for later use
+        std::vector<std::string> methodNames;
+        for (const auto& c : node->children) {
+            if (!c) continue;
+            if (c->type == "FunctionDef") {
+                std::string methodName = c->id;
+                knownIRFunctions.insert(methodName);
+                if (methodName == "__init__") {
+                    // Store __init__ param names from the AST
+                    std::string initParams;
+                    for (size_t i = 0; i < c->args.size(); ++i) {
+                        if (i > 0) initParams += ",";
+                        std::string pname = c->args[i];
+                        if (!pname.empty() && pname[0] == '*') pname = pname.substr(1);
+                        initParams += pname;
+                    }
+                    classInitParams[className] = initParams;
+                    // Generate __init__ function with correct params
+                    std::string initFuncName = className + "__init__";
+                    std::vector<std::string> initFuncParams;
+                    std::stringstream ss(initParams);
+                    std::string param;
+                    while (std::getline(ss, param, ',')) {
+                        initFuncParams.push_back(param);
+                    }
+                    ir.addFunction(initFuncName, initFuncParams);
+                    // Lower __init__ body into the init function
+                    std::string savedFunc = currentFunc;
+                    currentFunc = initFuncName;
+                    for (size_t i = 0; i < c->children.size(); ++i) {
+                        if (c->children[i] && c->children[i]->type != "Default") {
+                            lower(c->children[i].get());
+                        }
+                    }
+                    currentFunc = savedFunc;
+                } else {
+                    methodNames.push_back(methodName);
+                }
+            }
+        }
     }
 
     // x if cond else y  — IfExp (ternary)

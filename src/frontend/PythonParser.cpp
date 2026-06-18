@@ -390,15 +390,26 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 auto t = std::make_unique<ASTNode>(); buildAST(target, t.get());
                 node->children.push_back(std::move(t));   // children[0] = tuple target
                 PyObject* val = PyObject_GetAttrString(pyNode, "value");
-                if (val) { auto v = std::make_unique<ASTNode>(); buildAST(val, v.get());
-                           node->children.push_back(std::move(v)); Py_DECREF(val); }
+            if (val) { auto v = std::make_unique<ASTNode>(); buildAST(val, v.get());
+                            node->children.push_back(std::move(v)); Py_DECREF(val); }
             } else {
-                node->id = "__subscript__";
-                auto t = std::make_unique<ASTNode>(); buildAST(target, t.get());
-                node->children.push_back(std::move(t));   // children[0] = subscript
-                PyObject* val = PyObject_GetAttrString(pyNode, "value");
-                if (val) { auto v = std::make_unique<ASTNode>(); buildAST(val, v.get());
-                           node->children.push_back(std::move(v)); Py_DECREF(val); }
+                // Check if target is an Attribute (self.x) vs Subscript (a[i])
+                std::string targetType = getPyString((PyObject*)Py_TYPE(target), "__name__");
+                if (targetType == "Attribute") {
+                    node->id = "__attr_assign__";
+                    auto t = std::make_unique<ASTNode>(); buildAST(target, t.get());
+                    node->children.push_back(std::move(t));   // children[0] = Attribute node
+                    PyObject* val = PyObject_GetAttrString(pyNode, "value");
+                    if (val) { auto v = std::make_unique<ASTNode>(); buildAST(val, v.get());
+                               node->children.push_back(std::move(v)); Py_DECREF(val); }
+                } else {
+                    node->id = "__subscript__";
+                    auto t = std::make_unique<ASTNode>(); buildAST(target, t.get());
+                    node->children.push_back(std::move(t));   // children[0] = subscript
+                    PyObject* val = PyObject_GetAttrString(pyNode, "value");
+                    if (val) { auto v = std::make_unique<ASTNode>(); buildAST(val, v.get());
+                               node->children.push_back(std::move(v)); Py_DECREF(val); }
+                }
             }
         }
         Py_XDECREF(targets);
@@ -680,6 +691,44 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             Py_DECREF(value);
         }
         // format_spec (e.g. :.2f) — skip for MVP
+    } else if (node->type == "ClassDef") {
+        // ClassDef(name, bases, body) — capture class name and base classes
+        node->id = getPyString(pyNode, "name");
+        PyObject* bases = PyObject_GetAttrString(pyNode, "bases");
+        if (bases && PyList_Check(bases)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(bases); ++i) {
+                PyObject* base = PyList_GetItem(bases, i);
+                std::string baseName;
+                if (base && PyObject_HasAttrString(base, "id")) {
+                    baseName = getPyString(base, "id");
+                } else {
+                    // Try to get the full expression as a string
+                    PyObject* typeObj = (PyObject*)Py_TYPE(base);
+                    std::string typeStr = getPyString(typeObj, "__name__");
+                    if (typeStr == "Name") {
+                        baseName = getPyString(base, "id");
+                    } else {
+                        baseName = "(complex base)";
+                    }
+                }
+                if (!baseName.empty()) {
+                    node->args.push_back(baseName);
+                }
+                Py_XDECREF(base);
+            }
+        }
+        Py_XDECREF(bases);
+        // Process body statements
+        PyObject* body = PyObject_GetAttrString(pyNode, "body");
+        if (body && PyList_Check(body)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(body); ++i) {
+                PyObject* item = PyList_GetItem(body, i);
+                auto child = std::make_unique<ASTNode>();
+                buildAST(item, child.get());
+                node->children.push_back(std::move(child));
+            }
+        }
+        Py_XDECREF(body);
     }
     if (node->children.empty()) {
         PyObject* body = nullptr;
