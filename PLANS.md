@@ -242,7 +242,87 @@ Option (a) is more invasive but gives the most benefit. Start with a small subse
 
 ---
 
-## Cross-cutting Concerns
+## 1.6 — Fix memory leaks from unmanaged reference counting
+
+**Full analysis in:** [REMEDIATION.md](REMEDIATION.md)
+
+### Root Cause
+
+The fundamental architectural problem is that `valueMap` stores `llvm::Value*` pointers without tracking whether each value is an **owned reference** (caller must DECREF) or a **borrowed reference** (caller does not own it). The current INCREF/DECREF logic in the `assign` handler only fires when a variable is reassigned, which means:
+
+1. Values used in a single expression chain (constant → compare → branch) are never DECREF'd
+2. Values returned from functions and passed directly to other functions are never DECREF'd
+3. The unconditional INCREF after store corrupts the refcount of newly-created values
+
+### Leak Sources (Priority-Ordered)
+
+| # | Source | File:Line | Pattern | Severity |
+|---|--------|-----------|---------|----------|
+| L1 | `const` instruction | Codegen.cpp:707-742 | `PyInt_FromLong`/`PyFloat_FromDouble`/`PyBool_New`/`PyUnicode_FromString` created, stored in valueMap, never DECREF'd | **HIGH** — Every constant in every program leaks |
+| L2 | Binary ops | Codegen.cpp:743-839 | `PyNumber_Add`/`Subtract`/`Multiply`/`Divide`/`Pow`/etc. results stored in valueMap, never DECREF'd when used directly | **HIGH** — Every arithmetic op leaks its result |
+| L3 | INCREF-after-store | Codegen.cpp:979-988 | Newly-created values (refcount=1) INCREF'd to refcount=2, making them immortal | **HIGH** — Every variable assignment doubles refcount |
+| L4 | Global reassignment | Codegen.cpp:944-958 | Old global value never DECREF'd before overwrite | **HIGH** — Every loop iteration leaks one object |
+| L5 | Call args | Codegen.cpp:989-1013 | Arguments passed as borrowed refs never DECREF'd; return values stored in valueMap never DECREF'd | **HIGH** — Every function call leaks |
+| L6 | `icmp` instruction | Codegen.cpp:640-667 | `PyBool_New` result stored in valueMap, never DECREF'd after branch | **HIGH** — Every comparison leaks |
+| L7 | `ret` default | Codegen.cpp:1029-1038 | Default `PyInt_FromLong(0)` return never DECREF'd | **MEDIUM** — Every function exit leaks |
+| L8 | `PyBuiltin_PrintNewline` | Runtime.cpp:523-526 | Returns new ref never DECREF'd | **MEDIUM** — Every print leaks |
+| L9 | Multi-arg print | Compiler.cpp:1499-1517 | Intermediate `PyStr_FromAny`/`PyString_Concat` results never DECREF'd | **MEDIUM** — Only print(a,b,c) |
+| L10 | `PyObject_Not`/`TruthBoxed` | Compiler.cpp:1965-1966 | New ref never DECREF'd | **MEDIUM** — Affects `not in`, `not` |
+| L11 | `PyCell_Get` | Compiler.cpp:545-551 | New reference from cell read never DECREF'd | **LOW** — Only nonlocal/closure |
+
+### Evidence
+
+```
+fibn.py with n=20: 98,522 allocs, 7 frees, 14.2 MB leaked (99.993% leak rate)
+nbody.py with 100k steps: 58.6M allocs, 100k frees, 8.4 GB leaked (99.83% leak rate)
+```
+
+### Remediation Strategy
+
+**Phase 1: Owned vs. Borrowed tracking (highest impact, ~3 days)**
+
+Replace the current blind `valueMap<string, Value*>` with `valueMap<string, Value*>` + `ownedTemps: set<string>` that tracks which temps are owned references (created with `PyInt_FromLong`, `PyNumber_Add`, etc.) vs borrowed (loaded from alloca, params, globals).
+
+Key changes:
+1. `const`, `i64const`, `bconst`, `fconst` — mark result as **owned** (already refcount=1)
+2. Binary ops (`add`, `sub`, etc.) — mark result as **owned** (PyNumber_* returns new ref)
+3. `icmp` — mark result as **owned** (PyBool_New returns new ref)
+4. Call instructions — mark result as **owned** (most functions return new refs)
+5. `load`/`getOrLoad` — **borrowed** (returns what valueMap already owns)
+6. In `assign` handler: DECREF old value regardless of owned/borrowed source. Only INCREF when source is **borrowed** (not already owned).
+7. After every instruction that consumes an **owned** temp as a borrowed arg (function call operand, binary op operand, comparison operand), emit DECREF on the consumed temp.
+
+This is the single biggest fix. It will eliminate >90% of leaked objects.
+
+**Phase 2: Global reassignment fix (~0.5 day)**
+
+In the assign handler, always DECREF the old global value before overwriting. The module "owns" the final value, not every intermediate value.
+
+```cpp
+if (llvm::GlobalVariable* gv = llvm::dyn_cast<...>(valueMap[inst.result])) {
+    builder.CreateCall(decref, {oldVal});  // Release old ref
+    builder.CreateStore(newVal, gv);
+}
+```
+
+**Phase 3: Print/PrintNewline fixes (~0.5 day)**
+
+- Make `PyBuiltin_PrintNewline` return `void` instead of `PyObject*`
+- In multi-arg print path, DECREF intermediate accumulators
+
+**Phase 4: Minor fixes (~1 day)**
+
+- `PyObject_Not`/`TruthBoxed`: DECREF after use
+- `PyCell_Get`: DECREF after borrowed use
+- Default return value: use a shared sentinel
+
+### Success Criteria
+
+- `fibn.py` with n=20: <1000 leaked objects (vs. 98,500 currently)
+- `nbody.py` with 100k steps: <100,000 leaked objects (vs. 58.5M currently)
+- Valgrind reports <100 "definitely lost" blocks for any test program
+
+---
 
 ### Simplicity
 
@@ -259,3 +339,7 @@ Every plan item should have a corresponding CI gate. The `.github/workflows/` (o
 1. `make check` — correctness
 2. `make valgrind-test` — memory safety (1.5 complete)
 3. `make bench` — performance regression (once 3.1 is done)
+
+### Additional Resources
+
+- [REMEDIATION.md](REMEDIATION.md) — Detailed memory leak analysis with all 11 leak sources, reference counting contract, code-level evidence, and step-by-step remediation strategy
