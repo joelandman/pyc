@@ -405,9 +405,23 @@ public:
         } else if (node->type == "Global") {
             // Declaration only — already collected in pre-scan, no IR emitted.
             return;
-        } else if (node->type == "Nonlocal") {
+    } else if (node->type == "Nonlocal") {
             // Declaration only — recorded by scanFuncNonlocals during FunctionDef lowering.
             // No IR emitted here; cells + load/store rewrite happen in B5 phases.
+            return;
+        } else if (node->type == "Import") {
+            // import sys, import math as m
+            // Register imported module names as module-level globals
+            for (const auto& name : node->args) {
+                ir.addModuleGlobal(name);
+            }
+            return;
+        } else if (node->type == "ImportFrom") {
+            // from math import sqrt
+            // Register imported names as module-level globals
+            for (const auto& name : node->args) {
+                ir.addModuleGlobal(name);
+            }
             return;
         } else if (node->type == "AugAssign") {
             lowerAugAssign(node);

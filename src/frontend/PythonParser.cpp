@@ -691,6 +691,41 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             Py_DECREF(value);
         }
         // format_spec (e.g. :.2f) — skip for MVP
+    } else if (node->type == "Import") {
+        // Import(names=[alias(name='sys', asname='s')])
+        PyObject* names = PyObject_GetAttrString(pyNode, "names");
+        if (names && PyList_Check(names)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(names); ++i) {
+                PyObject* alias = PyList_GetItem(names, i);
+                std::string name = getPyString(alias, "name");
+                std::string asname = getPyString(alias, "asname");
+                if (!asname.empty()) {
+                    node->args.push_back(asname);
+                } else {
+                    node->args.push_back(name);
+                }
+                Py_XDECREF(alias);
+            }
+        }
+        Py_XDECREF(names);
+    } else if (node->type == "ImportFrom") {
+        // ImportFrom(module='math', names=[alias(name='sqrt')], level=0)
+        node->id = getPyString(pyNode, "module");
+        PyObject* names = PyObject_GetAttrString(pyNode, "names");
+        if (names && PyList_Check(names)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(names); ++i) {
+                PyObject* alias = PyList_GetItem(names, i);
+                std::string name = getPyString(alias, "name");
+                std::string asname = getPyString(alias, "asname");
+                if (!asname.empty()) {
+                    node->args.push_back(asname);
+                } else {
+                    node->args.push_back(name);
+                }
+                Py_XDECREF(alias);
+            }
+        }
+        Py_XDECREF(names);
     } else if (node->type == "ClassDef") {
         // ClassDef(name, bases, body) — capture class name and base classes
         node->id = getPyString(pyNode, "name");
