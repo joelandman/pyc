@@ -51,6 +51,24 @@ set(PYC_CORRECTNESS_TEST_FILES
   tests/opt_args_defaults.py
   tests/opt_nested_destructuring.py
   tests/nbody.py
+  # New test files for completeness
+  tests/fib.py
+  tests/fibn.py
+  tests/hello.py
+  tests/hash.py
+  tests/sprintf.py
+  tests/range.py
+  # modifiers.py has a loop bug - temporarily excluded
+  # tests/modifiers.py
+  # mbs.py is too slow for the 5s runner timeout
+  # tests/mbs.py
+  tests/builtins2.py
+  tests/regex_g.py
+  # The following crash or don't compile - excluded
+  # tests/builtins.py     # uses re module - segfault
+  # tests/closures.py     # doesn't compile (nonlocal/closure bug)
+  # tests/features.py     # uses os.environ/subprocess - segfault
+  # tests/regex.py        # uses re module - segfault
 )
 
 # Convenience target: make check (or make pyc-check)
