@@ -2,6 +2,7 @@
 #include <cctype>
 #include <algorithm>
 #include <stdexcept>
+#include <iostream>
 
 namespace pyc::lexer {
 
@@ -66,10 +67,12 @@ std::vector<Token> tokenize(const std::string& source) {
             size_t current_line_start = pos;
             // Find beginning of current line
             size_t start_of_line = pos;
-            for (size_t i = pos; i > 0; --i) {
-                if (source[i - 1] == '\n') { start_of_line = i; break; }
-                start_of_line = i;
+            size_t j = pos;
+            while (j > 0) {
+                if (source[j - 1] == '\n') { start_of_line = j; break; }
+                --j;
             }
+            if (j == 0) start_of_line = 0;
 
             // Count spaces after last newline
             size_t line_indent = start_of_line;
@@ -84,7 +87,7 @@ std::vector<Token> tokenize(const std::string& source) {
 
             if (indent < line_indent) {
                 // Dedent - emit one DECREMENT per level
-                while ((line_indent - indent) > 0) { // simplified
+                while ((int)(line_indent - indent) > 0) { // simplified
                     tokens.push_back({TokenType::DECREMENT, ""});
                     line_indent -= 4; // rough
                 }

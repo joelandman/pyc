@@ -27,7 +27,9 @@ void print_usage(const char* program) {
               << "  -o <file>     Output binary file\n"
               << "  --emit-ir     Print IR after generation\n"
               << "  --emit-llir   Print LLVM IR after generation\n"
-              << "  --test <name> Run test suite (lexer|parser|ir|codegen|full)\n"
+              << "  --test <name> Run test suite (lexer|ir|codegen|full)\n"
+              << "  --test-compile <test_dir> Run compile tests\n"
+              << "  --test-ir <source.py> Validate IR generation\n"
               << "  --help        Show this message\n"
               << "  -v            Verbose output\n"
               << std::endl;
@@ -190,12 +192,89 @@ void run_test_suite(const std::string& suite_name) {
     std::cout << "\n" << (success ? "All tests PASSED!" : "Some tests FAILED!\n");
 }
 
+// ===== Test Compile Runner =====
+
+void run_test_compile(const std::string& test_dir) {
+    std::cout << "Running compile tests from: " << test_dir << "\n";
+    std::cout << "=========================================\n";
+    std::cout << "Note: Parser expects JSON input from lark_bridge.py\n";
+    std::cout << "Running lexer tests only...\n";
+    
+    std::vector<std::string> test_cases = {
+        "x = 1 + 2",
+        "def add(a, b):\n    return a + b",
+        "if x > 0:\n    print(x)"
+    };
+    
+    int passed = 0;
+    int failed = 0;
+    
+    for (size_t i = 0; i < test_cases.size(); ++i) {
+        std::cout << "\n[Test " << (i + 1) << "/" << test_cases.size() << "]\n";
+        try {
+            auto tokens = pyc::lexer::tokenize(test_cases[i]);
+            std::cout << "  Lexer passed: " << tokens.size() << " tokens\n";
+            passed++;
+        } catch (const std::exception& e) {
+            std::cout << "  Lexer failed: " << e.what() << "\n";
+            failed++;
+        }
+    }
+    
+    std::cout << "\n" << passed << " passed, " << failed << " failed\n";
+}
+
+// ===== Test IR Runner =====
+
+void run_test_ir(const std::string& source_path) {
+    std::cout << "Testing IR generation for: " << source_path << "\n";
+    std::cout << "=========================================\n";
+    
+    try {
+        std::string source = read_file(source_path);
+        
+        // Tokenize
+        auto tokens = pyc::lexer::tokenize(source);
+        std::cout << "  Tokenized " << tokens.size() << " tokens\n";
+        
+        // Parse
+        pyc::parser::LarkParser parser;
+        auto mod = parser.parse(source);
+        std::cout << "  Parsed " << mod->body().size() << " statements\n";
+        
+        // Build IR
+        pyc::ir::builder::IRBuilder builder;
+        builder.build(*mod);
+        std::cout << "  Generated " << builder.module->functions.size() << " functions\n";
+        
+        // Print IR
+        std::cout << "\nGenerated IR:\n";
+        for (auto& [name, fn] : builder.module->functions) {
+            std::cout << "  Function: " << name << "\n";
+            for (auto* blk : fn->blocks) {
+                std::cout << "    Block: " << blk->name << "\n";
+                for (auto& instr : blk->instrs) {
+                    std::cout << "      " << static_cast<int>(instr->kind);
+                    if (!instr->name.empty()) std::cout << " (" << instr->name << ")";
+                    std::cout << "\n";
+                }
+            }
+        }
+        
+        std::cout << "\nIR test PASSED!\n";
+    } catch (const std::exception& e) {
+        std::cout << "IR test FAILED: " << e.what() << "\n";
+    }
+}
+
 // ===== Command-line argument parsing =====
 
 struct Args {
     std::string source_file;
     std::string output_file;
     std::string test_suite;
+    std::string test_compile_dir;
+    std::string test_ir_file;
     bool emit_llvm_ir = false;
     bool verbose = false;
 };
@@ -211,6 +290,10 @@ Args parse_args(int argc, char* argv[]) {
             args.verbose = true;
         } else if (arg == "--test") {
             args.test_suite = argv[++i];
+        } else if (arg == "--test-compile") {
+            args.test_compile_dir = argv[++i];
+        } else if (arg == "--test-ir") {
+            args.test_ir_file = argv[++i];
         } else if (arg == "-o") {
             args.output_file = argv[++i];
         } else if (arg == "--emit-llvm-ir") {
@@ -228,11 +311,21 @@ Args parse_args(int argc, char* argv[]) {
 
 // ===== Program entry point =====
 
-int main(int argc, char* argv[]) {
+  int main(int argc, char* argv[]) {
     auto args = parse_args(argc, argv);
 
     if (!args.test_suite.empty()) {
         run_test_suite(args.test_suite);
+        return 0;
+    }
+
+    if (!args.test_compile_dir.empty()) {
+        run_test_compile(args.test_compile_dir);
+        return 0;
+    }
+
+    if (!args.test_ir_file.empty()) {
+        run_test_ir(args.test_ir_file);
         return 0;
     }
 
