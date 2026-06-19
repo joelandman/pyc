@@ -269,127 +269,171 @@ PyValue Interpreter::call_function_impl(const std::string& name, const std::vect
 // ===== Execute one instruction =====
 
 PyValue Interpreter::execute_instruction(std::unique_ptr<CallFrame>& frame, IRInst& inst,
-                                          uint32_t& block_idx, uint32_t& inst_idx) {
+                                           uint32_t& block_idx, uint32_t& inst_idx) {
     auto kind = inst.kind;
+    PyValue result;
 
     switch (kind) {
         case IRInstKind::LOADCONST_INT:
         case IRInstKind::LOADCONST_FLOAT:
         case IRInstKind::LOADCONST_STR:
-            return handle_load_const(frame, inst);
+            result = handle_load_const(frame, inst);
+            break;
 
         case IRInstKind::LOADLOCAL:
-            return handle_load_local(frame, inst);
+            result = handle_load_local(frame, inst);
+            break;
 
         case IRInstKind::STORELOCAL:
-            return handle_store_local(frame, inst);
+            result = handle_store_local(frame, inst);
+            break;
 
         case IRInstKind::LOADGLOBAL:
-            return handle_load_global(frame, inst);
+            result = handle_load_global(frame, inst);
+            break;
 
         case IRInstKind::STOREGLOBAL:
-            return handle_store_global(frame, inst);
+            result = handle_store_global(frame, inst);
+            break;
 
         case IRInstKind::GETATTR:
-            return handle_getattr(frame, inst);
+            result = handle_getattr(frame, inst);
+            break;
 
         case IRInstKind::SETATTR:
-            return handle_setattr(frame, inst);
+            result = handle_setattr(frame, inst);
+            break;
 
         case IRInstKind::CALL:
-            return handle_call(frame, inst);
+            result = handle_call(frame, inst);
+            break;
 
         case IRInstKind::RETURN:
-            return handle_return(frame, inst);
+            result = handle_return(frame, inst);
+            break;
 
         case IRInstKind::ADD:
-            return handle_add(frame, inst);
+            result = handle_add(frame, inst);
+            break;
 
         case IRInstKind::SUB:
-            return handle_sub(frame, inst);
+            result = handle_sub(frame, inst);
+            break;
 
         case IRInstKind::MUL:
-            return handle_mul(frame, inst);
+            result = handle_mul(frame, inst);
+            break;
 
         case IRInstKind::DIV:
-            return handle_div(frame, inst);
+            result = handle_div(frame, inst);
+            break;
 
         case IRInstKind::MOD:
-            return handle_mod(frame, inst);
+            result = handle_mod(frame, inst);
+            break;
 
         case IRInstKind::POW:
-            return handle_pow(frame, inst);
+            result = handle_pow(frame, inst);
+            break;
 
         case IRInstKind::LT:
-            return handle_lt(frame, inst);
+            result = handle_lt(frame, inst);
+            break;
 
         case IRInstKind::LE:
-            return handle_le(frame, inst);
+            result = handle_le(frame, inst);
+            break;
 
         case IRInstKind::GT:
-            return handle_gt(frame, inst);
+            result = handle_gt(frame, inst);
+            break;
 
         case IRInstKind::GE:
-            return handle_ge(frame, inst);
+            result = handle_ge(frame, inst);
+            break;
 
         case IRInstKind::EQ:
-            return handle_eq(frame, inst);
+            result = handle_eq(frame, inst);
+            break;
 
         case IRInstKind::NE:
-            return handle_ne(frame, inst);
+            result = handle_ne(frame, inst);
+            break;
 
         case IRInstKind::AND:
-            return handle_and(frame, inst);
+            result = handle_and(frame, inst);
+            break;
 
         case IRInstKind::OR:
-            return handle_or(frame, inst);
+            result = handle_or(frame, inst);
+            break;
 
         case IRInstKind::NOT:
-            return handle_not(frame, inst);
+            result = handle_not(frame, inst);
+            break;
 
         case IRInstKind::JUMP:
-            return handle_jump(frame, inst, block_idx, inst_idx);
+            result = handle_jump(frame, inst, block_idx, inst_idx);
+            break;
 
         case IRInstKind::BRANCH:
-            return handle_branch(frame, inst, block_idx, inst_idx);
+            result = handle_branch(frame, inst, block_idx, inst_idx);
+            break;
 
         case IRInstKind::PHI:
-            return handle_phi(frame, inst);
+            result = handle_phi(frame, inst);
+            break;
 
         case IRInstKind::ALLOC:
-            return handle_alloc(frame, inst);
+            result = handle_alloc(frame, inst);
+            break;
 
         case IRInstKind::STORE:
-            return handle_store(frame, inst);
+            result = handle_store(frame, inst);
+            break;
 
         case IRInstKind::LOAD:
-            return handle_load(frame, inst);
+            result = handle_load(frame, inst);
+            break;
 
         case IRInstKind::BINOP:
-            return handle_binop(frame, inst);
+            result = handle_binop(frame, inst);
+            break;
 
         case IRInstKind::CMP:
-            return handle_cmp_op(frame, inst);
+            result = handle_cmp_op(frame, inst);
+            break;
 
         case IRInstKind::INTRINSIC_PRINT:
-            return handle_intrinsic_print(frame, inst);
+            result = handle_intrinsic_print(frame, inst);
+            break;
 
         case IRInstKind::INTRINSIC_RANGE:
-            return handle_intrinsic_range(frame, inst);
+            result = handle_intrinsic_range(frame, inst);
+            break;
 
         case IRInstKind::INTRINSIC_TYPE:
-            return handle_intrinsic_type(frame, inst);
+            result = handle_intrinsic_type(frame, inst);
+            break;
 
         case IRInstKind::INTRINSIC_LEN:
-            return handle_intrinsic_len(frame, inst);
+            result = handle_intrinsic_len(frame, inst);
+            break;
 
         case IRInstKind::INTRINSIC_INIT:
-            return handle_intrinsic_init(frame, inst);
+            result = handle_intrinsic_init(frame, inst);
+            break;
 
         default:
             // Unknown instruction - treat as no-op
-            return PyValue(int64_t(0));
+            result = PyValue(int64_t(0));
+            break;
     }
+    
+    // Cache instruction result for O(1) lookup
+    frame->cache_result(inst.id, result);
+    
+    return result;
 }
 
 // ===== Instruction handlers =====

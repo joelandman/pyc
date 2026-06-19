@@ -12,6 +12,9 @@
 #include <llvm/IR/Instructions.h>
 #include <llvm/IR/InstrTypes.h>
 #include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/Passes/PassBuilder.h>
+#include <llvm/Passes/PassPlugin.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/ADT/ArrayRef.h>
 
@@ -559,6 +562,15 @@ private:
 
 std::string translate_module(pyc::ir::IRModule& ir_mod) {
     detail::IR2LLVMPass pass(ir_mod);
+    auto* mod = pass.get_module();
+    
+    // Apply LLVM optimization passes
+    llvm::PassBuilder pb;
+    llvm::ModuleAnalysisManager mam;
+    pb.registerModuleAnalyses(mam);
+    auto opt_pipe = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+    opt_pipe.run(*mod, mam);
+    
     return pass.run();
 }
 

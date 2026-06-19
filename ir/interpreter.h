@@ -27,6 +27,9 @@ struct CallFrame {
     uint32_t block_idx;   // which block we are in
     uint32_t inst_idx;    // index into block->instrs
     std::unordered_map<std::string, uint64_t> name_to_slot;
+    
+    // Instruction result cache: maps instruction ID to computed value
+    std::unordered_map<uint32_t, PyValue> instr_results;
 
     // We store actual values into a slots vector
     std::vector<PyValue> slots;
@@ -36,6 +39,16 @@ struct CallFrame {
         auto n = slot_count++;
         slots.resize(n + 1);
         return n;
+    }
+    
+    void cache_result(uint32_t instr_id, PyValue value) {
+        instr_results[instr_id] = value;
+    }
+    
+    std::optional<PyValue> get_cached_result(uint32_t instr_id) const {
+        auto it = instr_results.find(instr_id);
+        if (it != instr_results.end()) return it->second;
+        return std::nullopt;
     }
 
     CallFrame(IRFunction* f) : func(f), block_idx(0), inst_idx(0) {

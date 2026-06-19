@@ -73,3 +73,27 @@ test/ directory contains 7 test files:
 - 05_lists.py - List literals, len(), list indexing
 - 06_strings.py - String literals, len() on strings
 - 07_booleans.py - Boolean literals, comparisons, print
+
+## Performance Work - Step 6
+
+### Instruction Result Cache
+- Added `instr_results` map to `CallFrame` (ir/interpreter.h:29)
+- Added `cache_result()` and `get_cached_result()` methods
+- Modified `execute_instruction()` to cache all instruction results (ir/interpreter.cpp:269-415)
+- Enables O(1) lookup of instruction results by ID
+
+### LLVM Optimization Pipeline
+- Added `PassBuilder` and `ModuleAnalysisManager` includes (codegen/ir2ll.cpp:15-18)
+- Applied O2 optimization pipeline in `translate_module()` (codegen/ir2ll.cpp:560-571)
+- Uses `buildPerModuleDefaultPipeline(OptimizationLevel::O2)`
+
+### Benchmark Suite
+- Created `test/benchmarks/` directory with 7 benchmark programs:
+  - `tight_loop.py` - 1M iteration numeric loop
+  - `function_calls.py` - 100K function call overhead test
+  - `list_ops.py` - 100K list create/append/access
+  - `dict_ops.py` - 50K dict create/insert/access
+  - `string_ops.py` - 10K string concatenation
+  - `recursion.py` - factorial(20) recursion test
+  - `nbody.py` - N-body gravitational simulation (50 bodies, 100 steps)
+- Created `run_benchmarks.sh` runner script with timing measurements
