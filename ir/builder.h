@@ -32,6 +32,7 @@ private:
     void build_assign_stmt(const ast::AssignStmt& as);
     void build_return_stmt(const ast::ReturnStmt& ret);
     void build_augassign_stmt(const ast::AugAssignStmt& aug);
+    void build_import_stmt(const ast::ImportStmt& imp);
     
     uint32_t build_expr(const ast::Expr& expr);
     uint32_t build_int_literal(const ast::IntLiteral& lit);

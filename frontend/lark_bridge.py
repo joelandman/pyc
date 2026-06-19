@@ -82,6 +82,10 @@ stmt_with: "with" with_item ("," with_item)* ":" NEWLINE INDENT statements DEDEN
 stmt_assign: exprlist "=" testlist
 stmt_augassign: expr AUGOP test
 
+// ===== IMPORT =====
+dotted_name: NAME ("." NAME)*
+stmt_import: "import" dotted_name ("," dotted_name)*
+
 // ===== CONTROL FLOW =====
 stmt_return: "return" [testlist]
 stmt_raise: "raise" [test ["from" test]]
@@ -214,6 +218,14 @@ def visit_statement(stmt_tree):
             'return_type': return_type,
             'body': list(body)
         })
+    
+    elif stmt_tree.data == 'stmt_import':
+        modules = []
+        for child in stmt_tree.children:
+            if isinstance(child, Tree) and child.data == 'dotted_name':
+                mod_name = '.'.join(str(c.value) for c in child.children if isinstance(c, Token))
+                modules.append(mod_name)
+        result['modules'] = modules
     
     return result
 

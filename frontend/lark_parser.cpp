@@ -316,6 +316,25 @@ std::shared_ptr<ast::Node> build_ast_node(const std::shared_ptr<Value>& node) {
         return std::make_shared<ast::ReturnStmt>(val);
     }
 
+    // Import statement
+    if (type == "stmt_import") {
+        std::vector<std::string> modules;
+        for (auto& c : node->children) {
+            if (c->type == "dotted_name") {
+                // Extract module name from dotted_name children
+                std::string mod_name;
+                for (auto& child : c->children) {
+                    if (!mod_name.empty()) mod_name += ".";
+                    mod_name += child->value;
+                }
+                modules.push_back(mod_name);
+            }
+        }
+        // Create ImportFrom with module names (simplified - no 'from ... import ...' support yet)
+        auto from_import = std::make_shared<ast::ImportFrom>(modules.empty() ? "" : modules[0], 0);
+        return std::make_shared<ast::ImportStmt>(from_import);
+    }
+
     // Assignment statement
     if (type == "stmt_assign") {
         std::vector<std::string> targets;

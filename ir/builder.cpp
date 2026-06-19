@@ -41,6 +41,8 @@ void IRBuilder::build_stmt(const ast::Stmt& stmt) {
         build_return_stmt(*ret);
     } else if (auto* aug = dynamic_cast<const ast::AugAssignStmt*>(&stmt)) {
         build_augassign_stmt(*aug);
+    } else if (auto* imp = dynamic_cast<const ast::ImportStmt*>(&stmt)) {
+        build_import_stmt(*imp);
     }
     // Pass/Break/Continue are handled as simple block continuations
     // Delete/Global/Nonlocal/Assert/Raise/With are no-ops for now
@@ -299,6 +301,16 @@ void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
     auto* store = current_func_->new_inst(IRInstKind::STORELOCAL, aug.target());
     store->operands.push_back(slot);
     store->operands.push_back(binop->id);
+}
+
+ void IRBuilder::build_import_stmt(const ast::ImportStmt& imp) {
+    // For built-in modules, we create a global variable that references the module
+    // The actual module loading happens at runtime via pyc_import_module
+    auto* load_global = current_func_->new_inst(IRInstKind::LOADGLOBAL, "import");
+    (void)load_global;
+    
+    // Register the imported module name as a global
+    // In a full implementation, this would load the module and bind it to a name
 }
 
 // ===== Expression building =====
