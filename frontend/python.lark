@@ -1,0 +1,227 @@
+// python.lark - Complete Python 3 Grammar for Lark PEG parser
+// Based on CPython's official Grammar/python.peg
+// Maps to pyc AST nodes defined in ast.h
+
+// ===== ENTRY POINT =====
+?start: module
+
+module: (statement NEWLINE)* ENDMARKER
+
+// ===== STATEMENTS =====
+?statement: stmt_func
+          | stmt_class
+          | stmt_if
+          | stmt_for
+          | stmt_while
+          | stmt_try_stmt
+          | stmt_with
+          | stmt_match
+          | stmt_import
+          | stmt_assign
+          | stmt_augassign
+          | stmt_return
+          | stmt_raise
+          | stmt_break
+          | stmt_continue
+          | stmt_pass
+          | stmt_delete
+          | stmt_global
+          | stmt_nonlocal
+          | stmt_assert
+          | stmt_expr_stmt
+
+// ===== FUNCTION DEFINITION =====
+stmt_func: "def" NAME "(" [parameters] ")" ["->" test] ":" NEWLINE INDENT statement_list DEDENT
+?parameters: param ("," param)* [","]
+?param: NAME [":" test] ["=" test]
+      | NAME "/" ("," param)* [","]      // positional-only (PEP 570)
+      | "*" ("*" [NAME] | NAME ["," args_star])  // *args / **kwargs
+      | args_star
+?args_star: NAME ["," NAME]
+
+// ===== CLASS DEFINITION =====
+stmt_class: "class" NAME ["(" [arglist] ")"] ":" NEWLINE INDENT statement_list DEDENT
+
+// ===== IF STATEMENT =====
+stmt_if: "if" test ":" NEWLINE INDENT statement_list DEDENT ("elif" test ":" NEWLINE INDENT statement_list DEDENT)* ["else" ":" NEWLINE INDENT statement_list DEDENT]
+
+// ===== FOR STATEMENT =====
+stmt_for: "for" exprlist "in" testlist ":" NEWLINE INDENT statement_list DEDENT ["else" ":" NEWLINE INDENT statement_list DEDENT]
+
+// ===== WHILE STATEMENT =====
+stmt_while: "while" test ":" NEWLINE INDENT statement_list DEDENT ["else" ":" NEWLINE INDENT statement_list DEDENT]
+
+// ===== TRY/EXCEPT/FINALLY =====
+stmt_try_stmt: "try" ":" NEWLINE INDENT statement_list DEDENT except_clause+ ["finally" ":" NEWLINE INDENT statement_list DEDENT]
+             | "try" ":" NEWLINE INDENT statement_list DEDENT "finally" ":" NEWLINE INDENT statement_list DEDENT
+?except_clause: "except" [test ["as" NAME]] ":" NEWLINE INDENT statement_list DEDENT
+              | "except" "*" NAME ["as" NAME] ":" NEWLINE INDENT statement_list DEDENT  // PEP 654
+
+// ===== WITH STATEMENT =====
+stmt_with: "with" with_item ("," with_item)* ":" NEWLINE INDENT statement_list DEDENT
+?with_item: test "as" NAME | test
+
+// ===== MATCH/CASE =====
+stmt_match: "match" subject ":" NEWLINE INDENT pattern_case* DEDENT
+?subject: test
+?pattern_case: "case" patterns_body
+?patterns_body: guard_patterns ":" NEWLINE INDENT statement_list DEDENT
+?guard_patterns: alt_patterns ["if" test]
+?alt_patterns: pattern ("|" pattern)*
+?pattern: NAME ["as" NAME]
+        | literal_pattern
+        | sequence_pattern
+        | mapping_pattern
+        | class_pattern
+?literal_pattern: NUMBER | STRING | NAME
+?sequence_pattern: "[" [patterns_list "]"]
+?patterns_list: alt_patterns ("," alt_patterns)* [","]
+?mapping_pattern: "{" [items_pattern "}"]
+?items_pattern: (":" ("," ":")* ["]) | pattern [","]]*
+?class_pattern: NAME ["(" [pattern_args "]"]
+?pattern_args: pattern_args_rest ["," | ","]
+?pattern_args_rest: pattern ("," pattern)* [","]
+
+// ===== IMPORT STATEMENTS =====
+stmt_import: "import" dotted_name ("," dotted_name)*
+           | import_from
+?dotted_name: NAME ("." NAME)*
+import_from: "from" ("."* dotted_name) "import" import_names
+?import_names: "("? NAME ["as" NAME] [","]* ")"?
+
+// ===== ASSIGNMENT =====
+stmt_assign: exprlist "=" testlist
+stmt_augassign: expr AUGOP test
+?AUGOP: "+=" | "-=" | "*=" | "/=" | "//=" | "%=" | "**=" | "&=" | "|=" | "^=" | "<<=" | ">>="
+
+// ===== RETURN/RAISE =====
+stmt_return: "return" [testlist]
+stmt_raise: "raise" [test ["from" test]]
+
+// ===== CONTROL FLOW =====
+stmt_break: "break"
+stmt_continue: "continue"
+stmt_pass: "pass"
+
+// ===== DELETE/GLOBAL/NONLOCAL =====
+stmt_delete: "del" exprlist
+stmt_global: "global" NAME ("," NAME)*
+stmt_nonlocal: "nonlocal" NAME ("," NAME)*
+stmt_assert: "assert" test ["," test]
+
+// ===== EXPRESSION STATEMENT =====
+stmt_expr_stmt: testlist_expr
+
+// ===== EXPRESSIONS (Operator Precedence - Low to High) =====
+
+?test: or_expr
+    | lambda_expr
+
+?or_expr: and_expr ("or" and_expr)*
+?and_expr: not_expr ("and" not_expr)*
+?not_expr: "not" not_expr
+         | comparison
+
+?comparison: bitwise_or (comp_op bitwise_or)*
+?comp_op: EQ | NE | LT | GT | LE | GE
+        | "in" | "not" "in" | "is" ["not"]
+
+?bitwise_or: xor_expr ("|" xor_expr)*
+?xor_expr: and_expr ("^" and_expr)*
+?and_expr: shift_expr ("&" shift_expr)*
+?shift_expr: add_expr (("<<" | ">>") add_expr)*
+?add_expr: mul_expr (("=" | "/") mul_expr)*
+?mul_expr: power (("*" | "/" | "//" | "%") power)*
+?power: primary_expr ("**" unary_expr)?
+?unary_expr: ("+" | "-" | "~") unary_expr
+           | primary_expr
+
+?primary_expr: atom ["[" [subscript] "]"] [ "." NAME ]
+?atom: NAME | NUMBER | STRING
+    | "(" [test] ")"
+    | "[" [list_comprehension | list_literal] "]"
+    | "{" [dict_or_set_literal] "}"
+    | "/" "." "."     // ellipsis literal ...
+
+// ===== ARGUMENTS =====
+?arglist: argument ("," argument)* [","]
+?argument: test [comp_for]                     // positional
+         | NAME "=" test                        // keyword
+         | "*" test                             // *args
+         | "**" test                            // **kwargs
+
+// ===== COMPREHENSIONS =====
+?list_comprehension: test "for" exprlist "in" testlist (gen_expr_iter)*
+?gen_expr_iter: "if" test | comp_for
+?comp_for: "for" exprlist "in" testlist (gen_expr_iter)*
+?items_pattern: pattern ":" (pattern | ",")* [","]
+?dict_or_set_literal: (dict_item | test) ("," (dict_item | test))* [","]
+?dict_item: test ":" test
+?list_literal: [test ("," test)* [","]]
+
+// ===== SUBJECTS & TARGETS =====
+?exprlist: expr ("," expr)* [","]
+?testlist: test ("," test)* [","]
+?testlist_expr: test ("," test)*
+?subject: test
+
+// ===== LAMBDA =====
+lambda_expr: "lambda" [NAME ["," NAME]* ["," NAME]] ":" test
+
+// ===== TERMINALS =====
+NAME: /\w+/
+
+EQ: "=="
+NE: "!="
+LT: /(?<![=!<>])</  // not preceded by = < >
+GT: /(?<![=!<>])>/
+LE: "<="
+GE: ">="
+
+"def": "def"
+"class": "class"  
+"return": "return"
+"if": "if"
+"elif": "elif"
+"else": "else"
+"for": "for"
+"while": "while"
+"try": "try"
+"except": "except"
+"finally": "finally"
+"with": "with"
+"as": "as"
+"import": "import"
+"from": "from"
+"global": "global"
+"nonlocal": "nonlocal"
+"assert": "assert"
+"del": "del"
+"pass": "pass"
+"break": "break"
+"continue": "continue"
+"raise": "raise"
+"yield": "yield"
+"await": "await"
+"and": "and"
+"or": "or"
+"not": "not"
+"is": "is"
+"True": "True"
+"False": "False"
+"None": "None"
+"lambda": "lambda"
+"match": "match"
+"case": "case"
+
+NUMBER: /[1-9][0-9]*|0(xX)[\da-fA-F]+|0[oO][0-7]+|0[bB][01]+|[0-9]+\.[0-9]+/
+STRING: /(['"])\1/ | /(?:[fRrUu]*[bB])?['"]["\s\S]*?['"]\1/
+
+INDENT: /\t+/
+NEWLINE: /\n/
+DEDENT: /(?=\S)/
+ENDMARKER: /\r?\n/
+
+%ignore /[ \t]+/
+%ignore /#[^\n]*/
+%ignore /\r/
