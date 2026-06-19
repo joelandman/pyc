@@ -520,9 +520,8 @@ PyObject* PyList_Pop(PyObject* lst) {
     return item;
 }
 
-PyObject* PyBuiltin_PrintNewline(void) {
+void PyBuiltin_PrintNewline(void) {
     printf("\n");
-    return PyInt_FromLong(0);
 }
 
 PyObject* PyBuiltin_Len(PyObject* obj) {

@@ -127,7 +127,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* builtinLenTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(builtinLenTy, llvm::Function::ExternalLinkage, "PyBuiltin_Len", module.get());
 
-    llvm::FunctionType* printNewlineTy = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
+    llvm::FunctionType* printNewlineTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
     llvm::Function::Create(printNewlineTy, llvm::Function::ExternalLinkage, "PyBuiltin_PrintNewline", module.get());
 
     // Builtins: min/max, list, enumerate, zip
@@ -246,6 +246,35 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             llvm::GlobalValue::InternalLinkage,
             llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0)),
             "pyc_global_" + gname);
+    }
+
+    // Shared sentinel: a zeroed PyObject* used as the default return value
+    // when a function has no explicit return path. This avoids creating a
+    // new boxed int (refcount=1) each time, which would leak because the
+    // returned value is never DECREF'd by the caller (especially for main).
+    llvm::GlobalVariable* sentinelGV = new llvm::GlobalVariable(
+        *module,
+        pyObjectPtrTy,
+       /*isConstant=*/false,
+        llvm::GlobalValue::InternalLinkage,
+        llvm::ConstantPointerNull::get(pyObjectPtrTy),
+        "pyc_sentinel_zero");
+
+    // Module constructor: initialize pyc_sentinel_zero to PyInt_FromLong(0)
+    // so all functions can share a single boxed 0 sentinel.
+    llvm::Function* initFn = llvm::Function::Create(
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false),
+        llvm::GlobalValue::InternalLinkage,
+        "pyc_init_sentinel", module.get());
+    {
+        llvm::BasicBlock* bb = llvm::BasicBlock::Create(context, "entry", initFn);
+        llvm::IRBuilder<> builder(bb);
+        llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
+        if (fromLong) {
+            llvm::Value* zero = builder.CreateCall(fromLong, {llvm::ConstantInt::get(context, llvm::APInt(64, 0))});
+            builder.CreateStore(zero, sentinelGV);
+        }
+        builder.CreateRetVoid();
     }
 
     auto llvmFunctionName = [](const std::string& name) {
@@ -382,9 +411,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", func);
         builder.SetInsertPoint(entry);
 
-        // B4/B8: register all __apply__ adapters at module startup so Pyc_Apply can
+         // B4/B8: register all __apply__ adapters at module startup so Pyc_Apply can
         // dispatch to user functions and lambdas by their synthetic/user name token.
         if (f.name == "__module__") {
+            // Initialize the sentinel boxed 0 (must run before any user code).
+            builder.CreateCall(initFn);
             for (const auto& rf : ir.functions) {
                 if (rf.name.empty() || rf.name == "__module__") continue;
                 std::string adapterName = "__apply__" + rf.name;
@@ -396,10 +427,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     builder.CreateCall(regFn, {nameStr, adp});
                 }
             }
-        }
+      }
 
+        // Ensure builder's insert point is at the start of this function's entry block.
+        builder.SetInsertPoint(&func->getEntryBlock());
         std::unordered_map<std::string, llvm::Value*> valueMap;
         std::unordered_set<std::string> ownedSlots;
+        std::unordered_set<std::string> ownedTemps;
         for (size_t i = 0; i < f.args.size(); ++i) {
             llvm::Value* arg = func->getArg(i);
             if (!f.args[i].empty()) {
@@ -556,12 +590,73 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             return builder.CreateCall(fromDouble, {val}, name);
         };
 
-        auto emitNativeNumericBinary = [&](const IRInstruction& inst,
-                                           const std::string& op) -> bool {
+       // Get a PyObject* for a name, boxing native i64/double values on demand
+        // and tracking the boxed result so it can be DECREF'd later.
+        // Returns the boxed value; if a new boxed temp was created it is tracked
+        // in boxedTemps so the caller can DECREF it after use.
+        auto getBoxedOwned = [&](const std::string& name,
+                                 std::vector<std::string>& boxedTemps) -> llvm::Value* {
+            auto it = valueMap.find(name);
+            if (it != valueMap.end()) {
+                if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(it->second)) {
+                    if (alloca->getAllocatedType() == llvm::Type::getInt64Ty(context)) {
+                        llvm::Value* v = builder.CreateLoad(llvm::Type::getInt64Ty(context), alloca, name + ".boxed");
+                        v = boxI64(v);
+                        std::string bName = "__box_" + name;
+                        valueMap[bName] = v;
+                        ownedTemps.insert(bName);
+                        boxedTemps.push_back(bName);
+                        return v;
+                    }
+                    if (alloca->getAllocatedType()->isDoubleTy()) {
+                        llvm::Value* v = builder.CreateLoad(alloca->getAllocatedType(), alloca, name + ".boxed");
+                        v = boxDouble(v);
+                        std::string bName = "__box_" + name;
+                        valueMap[bName] = v;
+                        ownedTemps.insert(bName);
+                        boxedTemps.push_back(bName);
+                        return v;
+                    }
+                }
+            }
+            return getAsPyObject(name);
+        };
+
+        // DECREF an owned temp and remove from ownedTemps.
+        // Returns true if the temp was owned and was DECREF'd.
+        auto decRefOwned = [&](const std::string& name) -> bool {
+            if (ownedTemps.erase(name) == 0) return false;
+            auto it = valueMap.find(name);
+            if (it == valueMap.end()) return true;
+            llvm::Value* val = it->second;
+            if (!val || val->getType() != pyObjectPtrTy) return true;
+            llvm::Function* decref = module->getFunction("Py_DECREF");
+            if (decref) {
+                builder.CreateCall(decref, {val});
+            }
+            return true;
+        };
+
+        // Consume owned operands as borrowed refs: emit DECREF for each
+        // owned operand after the current instruction has been emitted.
+        auto consumeOwnedOperands = [&](const std::vector<IRValue>& operands) {
+            for (const auto& op : operands) {
+                if (!op.name.empty()) decRefOwned(op.name);
+            }
+        };
+
+   auto emitNativeNumericBinary = [&](const IRInstruction& inst,
+                                            const std::string& op) -> bool {
             if (inst.operands.size() < 2) return false;
             if (inst.resultType == "int") {
+                // Create GEP+LOAD for BOTH operands BEFORE any DECREF (need the
+                // boxed values to extract i64; DECREF frees the boxed object).
                 llvm::Value* lhs = unboxToI64(getOrLoad(inst.operands[0].name));
                 llvm::Value* rhs = unboxToI64(getOrLoad(inst.operands[1].name));
+                // Now safe to DECREF owned operands (consumed as borrowed refs).
+                for (auto& opName : inst.operands) {
+                    if (!opName.name.empty()) decRefOwned(opName.name);
+                }
                 llvm::Value* native = nullptr;
                 if (op == "add") {
                     native = builder.CreateAdd(lhs, rhs, inst.result + ".i64");
@@ -580,8 +675,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 return true;
             }
             if (inst.resultType == "float") {
+                // Create GEP+LOAD for BOTH operands BEFORE any DECREF.
                 llvm::Value* lhs = unboxToDouble(getOrLoad(inst.operands[0].name));
                 llvm::Value* rhs = unboxToDouble(getOrLoad(inst.operands[1].name));
+                // Now safe to DECREF owned operands (consumed as borrowed refs).
+                for (auto& opName : inst.operands) {
+                    if (!opName.name.empty()) decRefOwned(opName.name);
+                }
                 llvm::Value* native = nullptr;
                 if (op == "add") {
                     native = builder.CreateFAdd(lhs, rhs, inst.result + ".double");
@@ -664,6 +764,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     boxedCmp = builder.CreateCall(boolNew, {cmpResult}, inst.result);
                 }
                 valueMap[inst.result] = boxedCmp;
+                ownedTemps.insert(inst.result);
+                if (inst.operands.size() > 1 && !inst.operands[1].name.empty())
+                    decRefOwned(inst.operands[1].name);
+                if (inst.operands.size() > 2 && !inst.operands[2].name.empty())
+                    decRefOwned(inst.operands[2].name);
                 continue;
             }
             if (inst.op == "i64const") {
@@ -713,6 +818,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         llvm::Value* strConst = builder.CreateGlobalStringPtr(s, "str");
                         llvm::Value* boxed = builder.CreateCall(fromStr, {strConst}, inst.result);
                         valueMap[inst.result] = boxed;
+                        ownedTemps.insert(inst.result);
                     }
                 } else {
                     long v = std::stol(val);
@@ -721,6 +827,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         llvm::Value* boxed = builder.CreateCall(fromLong,
                             {llvm::ConstantInt::get(context, llvm::APInt(64, v))}, inst.result);
                         valueMap[inst.result] = boxed;
+                        ownedTemps.insert(inst.result);
                     }
                 }
             } else if (inst.op == "bconst") {
@@ -731,6 +838,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     llvm::Value* boxed = builder.CreateCall(boolNew,
                         {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), bval)}, inst.result);
                     valueMap[inst.result] = boxed;
+                    ownedTemps.insert(inst.result);
                 }
             } else if (inst.op == "fconst") {
                 double v = std::stod(inst.operands.empty() ? "0" : inst.operands[0].name);
@@ -739,29 +847,38 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     llvm::Value* boxed = builder.CreateCall(fromDouble,
                         {llvm::ConstantFP::get(llvm::Type::getDoubleTy(context), v)}, inst.result);
                     valueMap[inst.result] = boxed;
+                    ownedTemps.insert(inst.result);
                 }
-            } else if (inst.op == "add") {
+           } else if (inst.op == "add") {
                 if (emitNativeNumericBinary(inst, "add")) continue;
                 llvm::Function* numberAdd = module->getFunction("PyNumber_Add");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::vector<std::string> boxedTemps;
+                llvm::Value* lhs = getBoxedOwned(inst.operands[0].name, boxedTemps);
+                llvm::Value* rhs = getBoxedOwned(inst.operands[1].name, boxedTemps);
                 if (numberAdd) {
                     llvm::Value* sum = builder.CreateCall(numberAdd, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = sum;
+                    ownedTemps.insert(inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
-            } else if (inst.op == "sub") {
+                for (auto& bt : boxedTemps) decRefOwned(bt);
+                consumeOwnedOperands(inst.operands);
+         } else if (inst.op == "sub") {
                 if (emitNativeNumericBinary(inst, "sub")) continue;
                 llvm::Function* numberSub = module->getFunction("PyNumber_Subtract");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::vector<std::string> boxedTemps;
+                llvm::Value* lhs = getBoxedOwned(inst.operands[0].name, boxedTemps);
+                llvm::Value* rhs = getBoxedOwned(inst.operands[1].name, boxedTemps);
                 if (numberSub) {
                     llvm::Value* diff = builder.CreateCall(numberSub, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = diff;
+                    ownedTemps.insert(inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
+                for (auto& bt : boxedTemps) decRefOwned(bt);
+                consumeOwnedOperands(inst.operands);
             } else if (inst.op == "div") {
                 if (inst.resultType == "int") {
                     llvm::Value* lhs = unboxToI64(getOrLoad(inst.operands[0].name));
@@ -797,46 +914,65 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 if (numberDiv) {
                     llvm::Value* quot = builder.CreateCall(numberDiv, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = quot;
+                    ownedTemps.insert(inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
+                consumeOwnedOperands(inst.operands);
             } else if (inst.op == "pow") {
                 llvm::Function* fn = module->getFunction("Pyc_Pow");
                 llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
                 llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
-                if (fn) valueMap[inst.result] = builder.CreateCall(fn, {lhs, rhs}, inst.result);
-                else    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
-            } else if (inst.op == "truediv") {
+                if (fn) {
+                    valueMap[inst.result] = builder.CreateCall(fn, {lhs, rhs}, inst.result);
+                    ownedTemps.insert(inst.result);
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+                consumeOwnedOperands(inst.operands);
+         } else if (inst.op == "truediv") {
                 llvm::Function* numberTrueDiv = module->getFunction("PyNumber_TrueDivide");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::vector<std::string> boxedTemps;
+                llvm::Value* lhs = getBoxedOwned(inst.operands[0].name, boxedTemps);
+                llvm::Value* rhs = getBoxedOwned(inst.operands[1].name, boxedTemps);
                 if (numberTrueDiv) {
                     llvm::Value* quot = builder.CreateCall(numberTrueDiv, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = quot;
+                    ownedTemps.insert(inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
+                for (auto& bt : boxedTemps) decRefOwned(bt);
+                consumeOwnedOperands(inst.operands);
             } else if (inst.op == "mod") {
                 llvm::Function* numberRem = module->getFunction("PyNumber_Remainder");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::vector<std::string> boxedTemps;
+                llvm::Value* lhs = getBoxedOwned(inst.operands[0].name, boxedTemps);
+                llvm::Value* rhs = getBoxedOwned(inst.operands[1].name, boxedTemps);
                 if (numberRem) {
                     llvm::Value* rem = builder.CreateCall(numberRem, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = rem;
+                    ownedTemps.insert(inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
-            } else if (inst.op == "mul") {
+                for (auto& bt : boxedTemps) decRefOwned(bt);
+                consumeOwnedOperands(inst.operands);
+           } else if (inst.op == "mul") {
                 if (emitNativeNumericBinary(inst, "mul")) continue;
                 llvm::Function* numberMult = module->getFunction("PyNumber_Multiply");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::vector<std::string> boxedTemps;
+                llvm::Value* lhs = getBoxedOwned(inst.operands[0].name, boxedTemps);
+                llvm::Value* rhs = getBoxedOwned(inst.operands[1].name, boxedTemps);
                 if (numberMult) {
                     llvm::Value* prod = builder.CreateCall(numberMult, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = prod;
+                    ownedTemps.insert(inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
+                for (auto& bt : boxedTemps) decRefOwned(bt);
+                consumeOwnedOperands(inst.operands);
             } else if (inst.op == "neg") {
                 // Unary minus. For proven numeric resultType, keep native result (i64/double)
                 // so it can participate in further unboxed arithmetic (A3 widening).
@@ -853,14 +989,19 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = n;
                     continue;
                 }
-                // Fallback: boxed runtime path
+               // Fallback: boxed runtime path
                 llvm::Function* fn = module->getFunction("PyNumber_Negate");
-                llvm::Value* arg = getAsPyObject(inst.operands.empty() ? "" : inst.operands[0].name);
+                std::vector<std::string> boxedTemps;
+                llvm::Value* arg = getBoxedOwned(inst.operands.empty() ? "" : inst.operands[0].name, boxedTemps);
                 if (fn) {
                     valueMap[inst.result] = builder.CreateCall(fn, {arg}, inst.result);
+                    ownedTemps.insert(inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
+                for (auto& bt : boxedTemps) decRefOwned(bt);
+                if (!inst.operands.empty() && !inst.operands[0].name.empty())
+                    decRefOwned(inst.operands[0].name);
             } else if (inst.op == "getattr") {
                 llvm::Function* getAttr = module->getFunction("PyObject_GetAttr");
                 llvm::Value* obj = getOrLoad(inst.operands[0].name);
@@ -868,9 +1009,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     llvm::Value* attrName = builder.CreateGlobalStringPtr(inst.operands[1].name, "attr");
                     llvm::Value* result = builder.CreateCall(getAttr, {obj, attrName}, inst.result);
                     valueMap[inst.result] = result;
+                    ownedTemps.insert(inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
+                if (!inst.operands.empty() && !inst.operands[0].name.empty())
+                    decRefOwned(inst.operands[0].name);
             } else if (inst.op == "subscript") {
                 // Handle list indexing: list[index]
                 llvm::Function* listGetItem = module->getFunction("PyList_GetItem");
@@ -887,23 +1031,34 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
             } else if (inst.op == "list") {
-                // Create a new list with the given elements
+                // Create a new list with the given elements.
+                // Immediately assign to a local slot so the slot owns the reference
+                // and subsequent uses don't DECREF it (the list may be used in
+                // multiple subscript-set calls before being stored to a global).
                 llvm::Function* listNew = module->getFunction("PyList_New");
                 if (listNew) {
-                    // For now, we'll create an empty list and assume elements will be set later
-                    // This is a simplification - in a more complete implementation we'd pass the element count
                     llvm::Value* listSize = llvm::ConstantInt::get(context, llvm::APInt(64, inst.operands.size()));
                     llvm::Value* newList = builder.CreateCall(listNew, {listSize}, inst.result);
-                    valueMap[inst.result] = newList;
+                    llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                                   func->getEntryBlock().begin());
+                    llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result);
+                    valueMap[inst.result] = alloca;
+                    ownedSlots.insert(inst.result);
+                    builder.CreateStore(newList, alloca);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
-            } else if (inst.op == "assign") {
+             } else if (inst.op == "assign") {
+                // Check if source is an owned temp (created by const, binary op, etc.)
+                bool sourceIsOwnedTemp = !inst.operands.empty() &&
+                                          !inst.operands[0].name.empty() &&
+                                          ownedTemps.count(inst.operands[0].name);
+
                 llvm::Value* src = getOrLoad(inst.operands[0].name);
                 llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
 
-                // If target currently has an i64 slot (e.g. range loop visible var),
-                // decide whether to keep native storage or switch to boxed for this assign.
+                // If target currently has an i64 slot, decide whether to keep
+                // native storage or switch to boxed for this assign.
                 auto tit = valueMap.find(inst.result);
                 if (tit != valueMap.end()) {
                     if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit->second)) {
@@ -911,13 +1066,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                             if (src->getType() == i64Ty) {
                                 builder.CreateStore(src, alloca);
                             } else {
-                                // src is boxed (general expr). Switch this name's storage
-                                // to a fresh PyObject* slot so arbitrary values (incl. str)
-                                // are supported for the rest of the scope. The range
-                                // machinery (if active) will publish by boxing into the
-                                // current slot on next update.
                                 llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
-                                                              func->getEntryBlock().begin());
+                                                               func->getEntryBlock().begin());
                                 llvm::AllocaInst* newAlloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result + ".slot");
                                 llvm::Value* toStore = src;
                                 if (toStore->getType() == i64Ty) toStore = boxI64(toStore);
@@ -929,7 +1079,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     }
                 }
 
-                // Normal path: target expects PyObject*. Ensure src is boxed.
+                // Ensure src is boxed.
                 llvm::Value* newVal = src;
                 if (newVal->getType() == i64Ty) {
                     newVal = boxI64(newVal, inst.operands[0].name + ".boxed");
@@ -937,88 +1087,133 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     newVal = boxDouble(newVal, inst.operands[0].name + ".boxed");
                 }
 
-               // Basic refcounting for variables: variables own a reference.
-                // For module globals we never DECREF the old value (the module
-                // owns them). For alloca-backed slots (params and user-assigned
-                // locals), DECREF the old value on reassignment.
+                // DECREF old value and INCREF new value as needed.
                 if (valueMap.find(inst.result) != valueMap.end()) {
                     llvm::Value* oldVal = builder.CreateLoad(pyObjectPtrTy, valueMap[inst.result], inst.result + ".old");
                     if (llvm::GlobalVariable* gv = llvm::dyn_cast<llvm::GlobalVariable>(valueMap[inst.result])) {
-                        // Module global: never DECREF (the module owns this ref)
-                        builder.CreateStore(newVal, gv);
-                    } else if (ownedSlots.find(inst.result) != ownedSlots.end()) {
-                        // Owned alloca slot: DECREF the old value before overwrite
+                        // Module global: DECREF old value (module owns final value)
                         llvm::Function* decref = module->getFunction("Py_DECREF");
                         if (decref) builder.CreateCall(decref, {oldVal});
+                        builder.CreateStore(newVal, gv);
+                    } else if (ownedSlots.find(inst.result) != ownedSlots.end()) {
+                        // Owned alloca slot: DECREF old value.
+                        llvm::Function* decref = module->getFunction("Py_DECREF");
+                        if (decref) builder.CreateCall(decref, {oldVal});
+                        // INCREF new value if source is not an owned temp.
+                        if (!sourceIsOwnedTemp) {
+                            llvm::Function* incref = module->getFunction("Py_INCREF");
+                            if (incref) builder.CreateCall(incref, {newVal});
+                        }
                         builder.CreateStore(newVal, valueMap[inst.result]);
                     } else {
-                        // Borrowed alloca slot (function param, cell, etc.):
-                        // do not DECREF the initial borrowed value.
+                        // Borrowed alloca slot (param, cell): DECREF old value.
+                        llvm::Function* decref = module->getFunction("Py_DECREF");
+                        if (decref) builder.CreateCall(decref, {oldVal});
+                        if (!sourceIsOwnedTemp) {
+                            llvm::Function* incref = module->getFunction("Py_INCREF");
+                            if (incref) builder.CreateCall(incref, {newVal});
+                        }
                         builder.CreateStore(newVal, valueMap[inst.result]);
+                    }
+                    // Transfer ownership from owned temp if source was owned.
+                    if (sourceIsOwnedTemp) {
+                        ownedTemps.erase(inst.operands[0].name);
                     }
                 } else {
                     if (llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + inst.result)) {
                         valueMap[inst.result] = gv;
                         builder.CreateStore(newVal, gv);
+                        if (sourceIsOwnedTemp) {
+                            ownedTemps.erase(inst.operands[0].name);
+                        }
                         continue;
                     }
-                    // First time we see this name: create the alloca in the
-                    // ENTRY block so it dominates all uses (including uses
-                    // that survive past loops or branches). Skip the INCREF
-                    // on this first definition — the alloca starts
-                    // uninitialised and the upcoming store fills it.
-                    llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
-                                                   func->getEntryBlock().begin());
-                    llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result);
-                    valueMap[inst.result] = alloca;
-                    ownedSlots.insert(inst.result);
-                    builder.CreateStore(newVal, alloca);
-                    continue;
+                   // First time: create alloca, store value.
+                // The value has refcount=1 from creation (const, binary op, etc.)
+                // and the alloca takes that reference directly.
+                llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                               func->getEntryBlock().begin());
+                llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result);
+                valueMap[inst.result] = alloca;
+                ownedSlots.insert(inst.result);
+                if (!sourceIsOwnedTemp) {
+                    // Source is a slot: INCREF the value (new slot also owns a reference).
+                    llvm::Function* incref = module->getFunction("Py_INCREF");
+                    if (incref) builder.CreateCall(incref, {newVal});
                 }
-
-                // INCREF the new value (variable takes ownership of the new
-                // value's reference; for params/globals this gives us a
-                // borrowed-style reference that we'll either reassign or
-                // not DECREF on exit).
-                llvm::Function* incref = module->getFunction("Py_INCREF");
-                if (incref) {
-                    builder.CreateCall(incref, {newVal});
+                builder.CreateStore(newVal, alloca);
+                if (sourceIsOwnedTemp) {
+                    ownedTemps.erase(inst.operands[0].name);
                 }
-
-                builder.CreateStore(newVal, valueMap[inst.result]);
+                }
             } else if (inst.op == "call") {
                 std::string funcName = inst.operands.empty() ? "" : inst.operands[0].name;
                 if (funcName == "print" || funcName == "pyc_print") {
                     llvm::Function* pyPrint = module->getFunction("PyObject_Print");
                     if (pyPrint) {
                         llvm::Value* arg = (inst.operands.size() > 1 ? getAsPyObject(inst.operands[1].name) : llvm::ConstantPointerNull::get(pyObjectPtrTy));
-                        // Pass null — our runtime tolerates it and uses real stdout
                         builder.CreateCall(pyPrint, {arg, llvm::ConstantPointerNull::get(int8PtrTy)});
                     }
-                } else {
+                    if (inst.operands.size() > 1 && !inst.operands[1].name.empty())
+                        decRefOwned(inst.operands[1].name);
+              } else {
                     llvm::Function* callee = module->getFunction(funcName);
                     if (!callee) callee = module->getFunction(llvmFunctionName(funcName));
                     if (callee) {
+                        // For owned operands (e.g., keyword args), INCREF before
+                        // passing to callee. The callee may keep the reference
+                        // (e.g., by returning it), and we don't want it freed
+                        // when the caller DECREF's the owned temp later.
+                        auto getCallArg = [&](const std::string& name) -> llvm::Value* {
+                            if (ownedTemps.count(name)) {
+                                llvm::Value* val = getAsPyObject(name);
+                                llvm::Function* incref = module->getFunction("Py_INCREF");
+                                if (incref) builder.CreateCall(incref, {val});
+                                ownedTemps.erase(name);  // callee now owns it
+                                return val;
+                            }
+                            return getAsPyObject(name);
+                        };
                         std::vector<llvm::Value*> callArgs;
                         for (size_t i = 1; i < inst.operands.size(); ++i) {
-                            callArgs.push_back(getAsPyObject(inst.operands[i].name));
+                            callArgs.push_back(getCallArg(inst.operands[i].name));
                         }
                         if (callee->getReturnType()->isVoidTy()) {
                             builder.CreateCall(callee, callArgs);
                         } else {
                             llvm::Value* callRes = builder.CreateCall(callee, callArgs, inst.result);
                             valueMap[inst.result] = callRes;
+                            ownedTemps.insert(inst.result);
                         }
+                    }
+                    // DECREF owned operands after the call. Skip operand 1 for
+                    // setter functions (PyList_SetItemBoxed, PyDict_SetItem,
+                    // Pyc_SetItem, PyList_Append) — the container is mutated
+                    // in place and must not be freed.
+                    bool isSetter = (funcName == "PyList_SetItemBoxed" ||
+                                     funcName == "PyDict_SetItem" ||
+                                     funcName == "Pyc_SetItem" ||
+                                     funcName == "PyList_Append");
+                    size_t startDecref = isSetter ? 2 : 1;
+                    for (size_t i = startDecref; i < inst.operands.size(); ++i) {
+                        if (!inst.operands[i].name.empty())
+                            decRefOwned(inst.operands[i].name);
                     }
                 }
             } else if (inst.op == "ret") {
                 std::string retName = inst.operands.empty() ? "" : inst.operands[0].name;
                 llvm::Value* retVal = getAsPyObject(retName);
-                // If we couldn't find a value, return a boxed 0 instead of null
+       // If we couldn't find a value, return the shared sentinel (boxed 0)
                 if (retVal == llvm::ConstantPointerNull::get(pyObjectPtrTy)) {
-                    llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
-                    if (fromLong) {
-                        retVal = builder.CreateCall(fromLong, {llvm::ConstantInt::get(context, llvm::APInt(64, 0))});
+                    retVal = builder.CreateLoad(pyObjectPtrTy, sentinelGV, "sentinel");
+                    // Sentinel already has refcount=1; caller gets it as-is (no INCREF).
+                } else {
+                    // The return value is a borrowed reference from a slot/alloca.
+                    // The function returns an owned reference to the caller, so
+                    // INCREF to give the caller ownership.
+                    llvm::Function* incref = module->getFunction("Py_INCREF");
+                    if (incref) {
+                        builder.CreateCall(incref, {retVal});
                     }
                 }
                 if (!curBlock->getTerminator())
@@ -1027,14 +1222,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             }
         }
         if (!curBlock->getTerminator()) {
-            // Return a boxed 0 as a sensible default instead of null
-            llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
-            if (fromLong) {
-                llvm::Value* zero = builder.CreateCall(fromLong, {llvm::ConstantInt::get(context, llvm::APInt(64, 0))});
-                builder.CreateRet(zero);
-            } else {
-                builder.CreateRet(llvm::ConstantPointerNull::get(pyObjectPtrTy));
-            }
+            // Return the shared sentinel (boxed 0) as a sensible default
+            llvm::Value* sentinel = builder.CreateLoad(pyObjectPtrTy, sentinelGV, "sentinel");
+            builder.CreateRet(sentinel);
         }
 
         // Small helper to box an i64 value on demand (used by some numeric

@@ -42,7 +42,7 @@ PyObject* PyStr_FromAny(PyObject* obj);
 PyObject* PyString_Concat(PyObject* a, PyObject* b);
 PyObject* PyString_Repeat(PyObject* s, PyObject* n);
 PyObject* PyBuiltin_Len(PyObject* obj);
-PyObject* PyBuiltin_PrintNewline(void);
+void PyBuiltin_PrintNewline(void);
 PyObject* PyBool_New(int v);
 PyObject* PyBuiltin_Sum(PyObject* lst);
 PyObject* PyBuiltin_Sorted(PyObject* lst);
