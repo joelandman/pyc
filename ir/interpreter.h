@@ -147,6 +147,10 @@ private:
 
     // Internal call implementation
     PyValue call_function_impl(const std::string& name, const std::vector<PyValue>& args);
+    
+    // Current function/block context for intrinsic code generation
+    IRFunction* current_func_ = nullptr;
+    IRBlock* current_block_ = nullptr;
 };
 
 // Utility: check if any value in a pair is int/float

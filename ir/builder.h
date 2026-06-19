@@ -22,6 +22,13 @@ private:
     std::string current_scope_;  // function name
     IRFunction* current_func_ = nullptr;
     IRBlock* current_block_ = nullptr;
+    
+    // Loop context for break/continue
+    struct LoopContext {
+        uint32_t cond_block;
+        uint32_t merge_block;
+    };
+    std::vector<LoopContext> loop_stack_;
 
     void build_function(const ast::FunctionDef& func);
     void build_class(const ast::ClassDef& cls);
@@ -33,6 +40,17 @@ private:
     void build_return_stmt(const ast::ReturnStmt& ret);
     void build_augassign_stmt(const ast::AugAssignStmt& aug);
     void build_import_stmt(const ast::ImportStmt& imp);
+    void build_class_call(const ast::CallExpr& call, const std::string& class_name);
+    
+    void build_delete_stmt(const ast::DeleteStmt& del);
+    void build_global_stmt(const ast::GlobalStmt& gl);
+    void build_nonlocal_stmt(const ast::NonlocalStmt& nt);
+    void build_assert_stmt(const ast::AssertStmt& asp);
+    void build_raise_stmt(const ast::RaiseStmt& ra);
+    void build_with_stmt(const ast::WithStmt& wt);
+    void build_try_stmt(const ast::TryStmt& tr);
+    void build_break_stmt();
+    void build_continue_stmt();
     
     uint32_t build_expr(const ast::Expr& expr);
     uint32_t build_int_literal(const ast::IntLiteral& lit);
@@ -46,6 +64,7 @@ private:
     uint32_t build_call(const ast::CallExpr& expr);
     uint32_t build_attr(const ast::AttrExpr& expr);
     uint32_t build_list(const ast::ListExpr& expr);
+    uint32_t build_subscript(const ast::SubscriptExpr& expr);
 
     IRInstKind augment_to_binop(ast::AugAssignStmt::Op op);
 

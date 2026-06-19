@@ -190,9 +190,15 @@ public:
     static PyObject* builtin_items(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_get(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_setdefault(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_pop_dict(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_dict_clear(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_join(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_split(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_strip(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_replace(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_upper(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_lower(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_find(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_format(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_contains(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_repr(PyObject* self, std::vector<PyObject*> args);

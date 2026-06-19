@@ -102,6 +102,16 @@ private:
             llvm::FunctionType::get(get_i8_ptr(ctx_), str_val_params, false),
             llvm::Function::ExternalLinkage, "pyc_str_value", mod_.get());
 
+        std::vector<llvm::Type*> getattr_params = {obj_type, get_i8_ptr(ctx_)};
+        llvm::Function::Create(
+            llvm::FunctionType::get(obj_type, getattr_params, false),
+            llvm::Function::ExternalLinkage, "pyc_getattr", mod_.get());
+
+        std::vector<llvm::Type*> setattr_params = {obj_type, get_i8_ptr(ctx_), obj_type};
+        llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), setattr_params, false),
+            llvm::Function::ExternalLinkage, "pyc_setattr", mod_.get());
+
         std::vector<llvm::Type*> pow_params = {i64_type, i64_type};
         llvm::Function::Create(
             llvm::FunctionType::get(builder_.getDoubleTy(), pow_params, false),
@@ -336,13 +346,38 @@ private:
                 record(i64());
                 break;
 
-            case pyc::ir::IRInstKind::GETATTR:
-            case pyc::ir::IRInstKind::LOAD_ATTR:
-                record(i64());
+           case pyc::ir::IRInstKind::GETATTR:
+            case pyc::ir::IRInstKind::LOAD_ATTR: {
+                if (inst->operands.size() >= 1) {
+                    auto* getattr_fn = mod_->getFunction("pyc_getattr");
+                    if (getattr_fn) {
+                        std::vector<llvm::Value*> args = {
+                            val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                        };
+                        record(builder_.CreateCall(getattr_fn, args, "getattr"));
+                    } else {
+                        record(i64());
+                    }
+                } else {
+                    record(i64());
+                }
                 break;
+            }
 
-            case pyc::ir::IRInstKind::SETATTR:
+            case pyc::ir::IRInstKind::SETATTR: {
+                if (inst->operands.size() >= 2) {
+                    auto* setattr_fn = mod_->getFunction("pyc_setattr");
+                    if (setattr_fn) {
+                        std::vector<llvm::Value*> args = {
+                            val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                            llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                            val(inst->operands[1]) ? val(inst->operands[1]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                        };
+                        builder_.CreateCall(setattr_fn, args);
+                    }
+                }
                 break;
+            }
 
             case pyc::ir::IRInstKind::CALL: {
                 auto fit = func_map_.find(inst->name);
@@ -425,7 +460,7 @@ private:
                 record(builder_.CreateSRem(val(inst->operands[0]) ? val(inst->operands[0]) : i64(),
                                             val(inst->operands[1]) ? val(inst->operands[1]) : i64(), "mod"));
                 break;
-            case pyc::ir::IRInstKind::POW: {
+             case pyc::ir::IRInstKind::POW: {
                 if (inst->operands.size() >= 2) {
                     auto* pow_fn = mod_->getFunction("pyc_pow");
                     if (pow_fn) {
@@ -441,7 +476,7 @@ private:
                         auto* exp = val(inst->operands[1]) ? val(inst->operands[1]) : i64();
                         auto* base_dbl = builder_.CreateSIToFP(base, builder_.getDoubleTy(), "base_dbl");
                         auto* exp_dbl = builder_.CreateSIToFP(exp, builder_.getDoubleTy(), "exp_dbl");
-                        auto* result_dbl = builder_.CreateFMul(base_dbl, exp_dbl, "pow_fallback");
+                        auto* result_dbl = builder_.CreateCall(builder_.CreateIntrinsic(llvm::Intrinsic::pow, {builder_.getDoubleTy()}, {}), {base_dbl, exp_dbl}, "pow_fallback");
                         record(builder_.CreateFPToSI(result_dbl, builder_.getInt64Ty(), "pow_result"));
                     }
                 } else {

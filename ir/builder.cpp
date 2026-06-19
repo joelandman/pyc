@@ -43,9 +43,26 @@ void IRBuilder::build_stmt(const ast::Stmt& stmt) {
         build_augassign_stmt(*aug);
     } else if (auto* imp = dynamic_cast<const ast::ImportStmt*>(&stmt)) {
         build_import_stmt(*imp);
+    } else if (auto* del = dynamic_cast<const ast::DeleteStmt*>(&stmt)) {
+        build_delete_stmt(*del);
+    } else if (auto* gl = dynamic_cast<const ast::GlobalStmt*>(&stmt)) {
+        build_global_stmt(*gl);
+    } else if (auto* nt = dynamic_cast<const ast::NonlocalStmt*>(&stmt)) {
+        build_nonlocal_stmt(*nt);
+    } else if (auto* asp = dynamic_cast<const ast::AssertStmt*>(&stmt)) {
+        build_assert_stmt(*asp);
+    } else if (auto* ra = dynamic_cast<const ast::RaiseStmt*>(&stmt)) {
+        build_raise_stmt(*ra);
+    } else if (auto* wt = dynamic_cast<const ast::WithStmt*>(&stmt)) {
+        build_with_stmt(*wt);
+    } else if (auto* tr = dynamic_cast<const ast::TryStmt*>(&stmt)) {
+        build_try_stmt(*tr);
+    } else if (auto* br = dynamic_cast<const ast::BreakStmt*>(&stmt)) {
+        build_break_stmt();
+    } else if (auto* co = dynamic_cast<const ast::ContinueStmt*>(&stmt)) {
+        build_continue_stmt();
     }
-    // Pass/Break/Continue are handled as simple block continuations
-    // Delete/Global/Nonlocal/Assert/Raise/With are no-ops for now
+    // Pass is a no-op
 }
 
 // ===== Function/class building =====
@@ -97,11 +114,31 @@ void IRBuilder::build_function(const ast::FunctionDef& func) {
 }
 
 void IRBuilder::build_class(const ast::ClassDef& cls) {
-    // Create a constructor function for the class
+    // Create a class object using NEWOBJ instruction
+    // The class object will store methods and base classes
+    
+    // Create the class constructor function
     auto* ctor_ir = new IRFunction();
     ctor_ir->name = cls.name() + ".__init__";
     ctor_ir->param_names.push_back("self");
     alloc_local("self");
+    
+    // Store base class names as class attributes
+    for (auto& base_name : cls.bases()) {
+        auto* load_str = current_func_->new_inst(IRInstKind::LOADCONST_STR, "base");
+        load_str->is_const = true;
+        load_str->const_val = base_name;
+        
+        auto* self_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "self");
+        auto self_slot = locals_["self"];
+        self_load->operands.push_back(self_slot);
+        
+        auto* setattr = current_func_->new_inst(IRInstKind::SETATTR, "__bases__");
+        setattr->operands.push_back(self_load->id);
+        setattr->operands.push_back(load_str->id);
+        
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(setattr));
+    }
     
     auto* entry_block = ctor_ir->new_block("entry");
     ctor_ir->entry_block_id = entry_block->id;
@@ -112,36 +149,34 @@ void IRBuilder::build_class(const ast::ClassDef& cls) {
     // Build class body methods as separate functions
     for (auto& stmt : cls.body()) {
         if (auto* fd = dynamic_cast<const ast::FunctionDef*>(stmt.get())) {
-            if (fd->name() != "__init__") {
-                auto* method_ir = new IRFunction();
-                method_ir->name = cls.name() + "." + fd->name();
-                method_ir->param_names.push_back("self");
-                alloc_local("self");
-                for (auto& arg : fd->args()) {
-                    method_ir->param_names.push_back(arg.name);
-                    alloc_local(arg.name);
-                }
-                
-                auto* method_block = method_ir->new_block("entry");
-                method_ir->entry_block_id = method_block->id;
-                current_func_ = method_ir;
-                current_block_ = method_block;
-                method_ir->blocks.push_back(method_block);
-                
-                for (auto& body_stmt : fd->body()) {
-                    build_stmt(*body_stmt);
-                }
-                
-                // Implicit return
-                auto* ret_inst = method_ir->new_inst(IRInstKind::RETURN, "");
-                auto* zero = method_ir->new_inst(IRInstKind::LOADCONST_INT, "");
-                zero->is_const = true;
-                std::get<double>(zero->const_val) = 0.0;
-                ret_inst->operands.push_back(zero->id);
-                
-                module->functions[cls.name() + "." + fd->name()] = method_ir;
-                module->func_list.push_back(method_ir);
+            auto* method_ir = new IRFunction();
+            method_ir->name = cls.name() + "." + fd->name();
+            method_ir->param_names.push_back("self");
+            alloc_local("self");
+            for (auto& arg : fd->args()) {
+                method_ir->param_names.push_back(arg.name);
+                alloc_local(arg.name);
             }
+            
+            auto* method_block = method_ir->new_block("entry");
+            method_ir->entry_block_id = method_block->id;
+            current_func_ = method_ir;
+            current_block_ = method_block;
+            method_ir->blocks.push_back(method_block);
+            
+            for (auto& body_stmt : fd->body()) {
+                build_stmt(*body_stmt);
+            }
+            
+            // Implicit return
+            auto* ret_inst = method_ir->new_inst(IRInstKind::RETURN, "");
+            auto* zero = method_ir->new_inst(IRInstKind::LOADCONST_INT, "");
+            zero->is_const = true;
+            std::get<double>(zero->const_val) = 0.0;
+            ret_inst->operands.push_back(zero->id);
+            
+            module->functions[cls.name() + "." + fd->name()] = method_ir;
+            module->func_list.push_back(method_ir);
         }
     }
     
@@ -195,6 +230,9 @@ void IRBuilder::build_for_stmt(const ast::ForStmt& fs) {
     loop_cond_blk->successors.push_back(loop_merge_blk->id);
     loop_body_blk->successors.push_back(loop_cond_blk->id);
     
+    // Push loop context
+    loop_stack_.push_back({loop_cond_blk->id, loop_merge_blk->id});
+    
     // Load the iterator expression
     auto loop_val = build_expr(*fs.iter());
     
@@ -229,6 +267,9 @@ void IRBuilder::build_for_stmt(const ast::ForStmt& fs) {
         build_stmt(*s);
     }
     
+    // Pop loop context
+    loop_stack_.pop_back();
+    
     // Merge block
     current_block_ = loop_merge_blk;
 }
@@ -241,6 +282,9 @@ void IRBuilder::build_while_stmt(const ast::WhileStmt& ws) {
     cond_blk->successors.push_back(body_blk->id);
     cond_blk->successors.push_back(merge_blk->id);
     body_blk->successors.push_back(cond_blk->id);
+    
+    // Push loop context
+    loop_stack_.push_back({cond_blk->id, merge_blk->id});
     
     // Evaluate test expression
     current_block_ = cond_blk;
@@ -259,6 +303,9 @@ void IRBuilder::build_while_stmt(const ast::WhileStmt& ws) {
     for (auto& s : ws.body()) {
         build_stmt(*s);
     }
+    
+    // Pop loop context
+    loop_stack_.pop_back();
     
     // Merge block
     current_block_ = merge_blk;
@@ -303,7 +350,7 @@ void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
     store->operands.push_back(binop->id);
 }
 
- void IRBuilder::build_import_stmt(const ast::ImportStmt& imp) {
+  void IRBuilder::build_import_stmt(const ast::ImportStmt& imp) {
     // For built-in modules, we create a global variable that references the module
     // The actual module loading happens at runtime via pyc_import_module
     auto* load_global = current_func_->new_inst(IRInstKind::LOADGLOBAL, "import");
@@ -311,6 +358,158 @@ void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
     
     // Register the imported module name as a global
     // In a full implementation, this would load the module and bind it to a name
+}
+
+void IRBuilder::build_delete_stmt(const ast::DeleteStmt& del) {
+    for (auto& target : del.targets()) {
+        auto slot = alloc_local(target);
+        auto* store = current_func_->new_inst(IRInstKind::STORELOCAL, target);
+        store->operands.push_back(slot);
+        auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "");
+        zero->is_const = true;
+        std::get<double>(zero->const_val) = 0.0;
+        store->operands.push_back(zero->id);
+    }
+}
+
+void IRBuilder::build_global_stmt(const ast::GlobalStmt& gl) {
+    for (auto& name : gl.names()) {
+        auto* inst = current_func_->new_inst(IRInstKind::LOADGLOBAL, name);
+        (void)inst;
+    }
+}
+
+void IRBuilder::build_nonlocal_stmt(const ast::NonlocalStmt& nt) {
+    for (auto& name : nt.names()) {
+        auto* inst = current_func_->new_inst(IRInstKind::LOADGLOBAL, name);
+        (void)inst;
+    }
+}
+
+void IRBuilder::build_assert_stmt(const ast::AssertStmt& asp) {
+    auto test_val = build_expr(*asp.test());
+    
+    auto* cond_true_blk = current_func_->new_block("assert_true");
+    auto* cond_false_blk = current_func_->new_block("assert_false");
+    auto* merge_blk = current_func_->new_block("assert_merge");
+    
+    cond_true_blk->successors.push_back(merge_blk->id);
+    cond_false_blk->successors.push_back(merge_blk->id);
+    
+    auto* branch = current_func_->new_inst(IRInstKind::BRANCH, "assert_branch");
+    branch->operands = {test_val, cond_true_blk->id, cond_false_blk->id};
+    current_block_->successors.push_back(cond_true_blk->id);
+    current_block_->successors.push_back(cond_false_blk->id);
+    
+    current_block_ = cond_true_blk;
+    
+    current_block_ = cond_false_blk;
+    if (asp.msg()) {
+        build_expr(*asp.msg());
+    }
+    current_block_->successors.push_back(merge_blk->id);
+    auto* jump = current_func_->new_inst(IRInstKind::JUMP, "assert_jump");
+    jump->operands.push_back(merge_blk->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump));
+    
+    current_block_ = merge_blk;
+}
+
+void IRBuilder::build_raise_stmt(const ast::RaiseStmt& ra) {
+    if (ra.exc()) {
+        build_expr(*ra.exc());
+    }
+    auto* ret = current_func_->new_inst(IRInstKind::RETURN, "raise_return");
+    auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "");
+    zero->is_const = true;
+    std::get<double>(zero->const_val) = 0.0;
+    ret->operands.push_back(zero->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(ret));
+    current_block_ = nullptr;
+}
+
+void IRBuilder::build_with_stmt(const ast::WithStmt& wt) {
+    for (auto& item : wt.items()) {
+        auto ctx_val = build_expr(*item.context_);
+        if (!item.optional_vars_.empty()) {
+            auto slot = alloc_local(item.optional_vars_);
+            auto* store = current_func_->new_inst(IRInstKind::STORELOCAL, item.optional_vars_);
+            store->operands.push_back(slot);
+            store->operands.push_back(ctx_val);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
+        }
+    }
+    
+    for (auto& s : wt.body()) {
+        build_stmt(*s);
+    }
+}
+
+void IRBuilder::build_try_stmt(const ast::TryStmt& tr) {
+    auto try_blk = current_func_->new_block("try_body");
+    auto except_blk = current_func_->new_block("except_body");
+    auto merge_blk = current_func_->new_block("try_merge");
+    
+    try_blk->successors.push_back(except_blk->id);
+    try_blk->successors.push_back(merge_blk->id);
+    except_blk->successors.push_back(merge_blk->id);
+    
+    current_block_ = try_blk;
+    for (auto& s : tr.body()) {
+        build_stmt(*s);
+    }
+    auto* jump_to_merge = current_func_->new_inst(IRInstKind::JUMP, "try_jump");
+    jump_to_merge->operands.push_back(merge_blk->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_to_merge));
+    
+    current_block_ = except_blk;
+    for (auto& handler : tr.handlers()) {
+        for (auto& s : handler.body_) {
+            build_stmt(*s);
+        }
+    }
+    
+    current_block_ = merge_blk;
+}
+
+void IRBuilder::build_break_stmt() {
+    if (!loop_stack_.empty()) {
+        auto* jump = current_func_->new_inst(IRInstKind::JUMP, "break");
+        jump->operands.push_back(loop_stack_.back().merge_block);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump));
+    }
+    current_block_ = nullptr;
+}
+
+void IRBuilder::build_continue_stmt() {
+    if (!loop_stack_.empty()) {
+        auto* jump = current_func_->new_inst(IRInstKind::JUMP, "continue");
+        jump->operands.push_back(loop_stack_.back().cond_block);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump));
+    }
+    current_block_ = nullptr;
+}
+
+void IRBuilder::build_class_call(const ast::CallExpr& call, const std::string& class_name) {
+    // Create a new instance of the class using NEWOBJ
+    auto* new_obj = current_func_->new_inst(IRInstKind::NEWOBJ, class_name);
+    
+    // Get constructor function: ClassName.__init__
+    std::string ctor_name = class_name + ".__init__";
+    
+    // Create instance (self)
+    auto* alloc_inst = current_func_->new_inst(IRInstKind::ALLOC, "instance");
+    new_obj->operands.push_back(alloc_inst->id);
+    
+    // Call __init__(self, *args)
+    auto* call_inst = current_func_->new_inst(IRInstKind::CALL, ctor_name);
+    call_inst->operands.push_back(alloc_inst->id); // self
+    
+    // Add arguments
+    for (auto& arg : call.args()) {
+        auto arg_id = build_expr(*arg);
+        call_inst->operands.push_back(arg_id);
+    }
 }
 
 // ===== Expression building =====
@@ -327,6 +526,7 @@ uint32_t IRBuilder::build_expr(const ast::Expr& expr) {
     if (auto* c = dynamic_cast<const ast::CallExpr*>(&expr)) return build_call(*c);
     if (auto* a = dynamic_cast<const ast::AttrExpr*>(&expr)) return build_attr(*a);
     if (auto* l = dynamic_cast<const ast::ListExpr*>(&expr)) return build_list(*l);
+    if (auto* s = dynamic_cast<const ast::SubscriptExpr*>(&expr)) return build_subscript(*s);
     return UINT32_MAX;
 }
 
@@ -413,9 +613,17 @@ uint32_t IRBuilder::build_unary(const ast::UnaryOpExpr& expr) {
     
     IRInstKind op_kind;
     switch (expr.op()) {
-        case ast::UnaryOpExpr::NEG: op_kind = IRInstKind::SUB; break;
+        case ast::UnaryOpExpr::NEG: {
+            auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "");
+            zero->is_const = true;
+            std::get<double>(zero->const_val) = 0.0;
+            auto* inst = current_func_->new_inst(IRInstKind::SUB, "neg");
+            inst->operands.push_back(zero->id);
+            inst->operands.push_back(operand);
+            return inst->id;
+        }
         case ast::UnaryOpExpr::NOT: op_kind = IRInstKind::NOT; break;
-        case ast::UnaryOpExpr::UPLUS: op_kind = IRInstKind::ADD; break;
+        case ast::UnaryOpExpr::UPLUS: return operand;
         default: op_kind = IRInstKind::LOADLOCAL; break;
     }
     
@@ -425,6 +633,14 @@ uint32_t IRBuilder::build_unary(const ast::UnaryOpExpr& expr) {
 }
 
 uint32_t IRBuilder::build_call(const ast::CallExpr& expr) {
+    auto* func_expr = expr.func();
+    auto* name_expr = dynamic_cast<const ast::Name*>(func_expr);
+    if (name_expr && module->functions.count(name_expr->id() + ".__init__") > 0) {
+        build_class_call(expr, name_expr->id());
+        auto* load = current_func_->new_inst(IRInstKind::LOADGLOBAL, name_expr->id());
+        return load->id;
+    }
+    
     auto* inst = current_func_->new_inst(IRInstKind::CALL, "");
     
     auto func_id = build_expr(*expr.func());
@@ -454,6 +670,17 @@ uint32_t IRBuilder::build_list(const ast::ListExpr& expr) {
         auto elem_id = build_expr(*elem);
         inst->operands.push_back(elem_id);
     }
+    
+    return inst->id;
+}
+
+uint32_t IRBuilder::build_subscript(const ast::SubscriptExpr& expr) {
+    auto obj_id = build_expr(*expr.obj());
+    auto slice_id = build_expr(*expr.slice());
+    
+    auto* inst = current_func_->new_inst(IRInstKind::LIST_GET, "subscript");
+    inst->operands.push_back(obj_id);
+    inst->operands.push_back(slice_id);
     
     return inst->id;
 }

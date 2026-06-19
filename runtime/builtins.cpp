@@ -6,6 +6,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <functional>
 #include <vector>
 #include <string>
@@ -24,7 +25,7 @@ static PyObject* to_int(PyObject* obj) {
             new_obj->data = obj->data;
             break;
         case TYPE_FLOAT:
-            new_obj->data = static_cast<uint64_t>(*reinterpret_cast<double*>(obj->data));
+            new_obj->data = *reinterpret_cast<uint64_t*>(&obj->data);
             break;
         case TYPE_STR:
             if (obj->str_value) {
@@ -610,6 +611,325 @@ PyObject* BuiltinFunctions::builtin_import(PyObject* /*self*/, std::vector<PyObj
     return PyObjectFactory::create_dict(nullptr);
 }
 
+// ===== LIST METHODS =====
+
+PyObject* BuiltinFunctions::builtin_append(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2) return nullptr;
+    auto* lst = args[0];
+    if (!lst->list_elements) return nullptr;
+    lst->list_elements->push_back(args[1]);
+    return PyObjectFactory::get_singleton(TYPE_NONE);
+}
+
+PyObject* BuiltinFunctions::builtin_extend(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2) return nullptr;
+    auto* lst = args[0];
+    auto* other = args[1];
+    if (!lst->list_elements) return nullptr;
+    if (other->list_elements) {
+        for (auto* elem : *other->list_elements) {
+            lst->list_elements->push_back(elem);
+        }
+    }
+    return PyObjectFactory::get_singleton(TYPE_NONE);
+}
+
+PyObject* BuiltinFunctions::builtin_pop(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* lst = args[0];
+    if (!lst->list_elements || lst->list_elements->empty()) return nullptr;
+    
+    int64_t idx = -1;
+    if (args.size() >= 2) {
+        idx = static_cast<int64_t>(args[1]->data);
+    }
+    
+    if (idx < 0) idx = lst->list_elements->size() + idx;
+    if (idx < 0 || idx >= static_cast<int64_t>(lst->list_elements->size())) return nullptr;
+    
+    auto* result = (*lst->list_elements)[static_cast<size_t>(idx)];
+    lst->list_elements->erase(lst->list_elements->begin() + idx);
+    return result;
+}
+
+PyObject* BuiltinFunctions::builtin_remove(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2) return PyObjectFactory::get_singleton(TYPE_NONE);
+    auto* lst = args[0];
+    auto* value = args[1];
+    if (!lst->list_elements) return nullptr;
+    
+    for (auto it = lst->list_elements->begin(); it != lst->list_elements->end(); ++it) {
+        if ((*it)->data == value->data) {
+            lst->list_elements->erase(it);
+            return PyObjectFactory::get_singleton(TYPE_NONE);
+        }
+    }
+    return nullptr;
+}
+
+PyObject* BuiltinFunctions::builtin_clear(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* lst = args[0];
+    if (lst->list_elements) lst->list_elements->clear();
+    return PyObjectFactory::get_singleton(TYPE_NONE);
+}
+
+PyObject* BuiltinFunctions::builtin_count(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2) return nullptr;
+    auto* lst = args[0];
+    auto* value = args[1];
+    int64_t cnt = 0;
+    if (lst->list_elements) {
+        for (auto* elem : *lst->list_elements) {
+            if (elem->data == value->data) cnt++;
+        }
+    }
+    return PyObjectFactory::create_int(nullptr, cnt);
+}
+
+PyObject* BuiltinFunctions::builtin_index(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2) return nullptr;
+    auto* lst = args[0];
+    auto* value = args[1];
+    if (lst->list_elements) {
+        for (size_t i = 0; i < lst->list_elements->size(); ++i) {
+            if ((*lst->list_elements)[i]->data == value->data) {
+                return PyObjectFactory::create_int(nullptr, static_cast<int64_t>(i));
+            }
+        }
+    }
+    return nullptr;
+}
+
+// ===== DICT METHODS =====
+
+PyObject* BuiltinFunctions::builtin_get(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* dct = args[0];
+    if (!dct->dict_entries) return nullptr;
+    
+    std::string key;
+    if (args.size() >= 2) {
+        if (args[1]->str_value) key = *args[1]->str_value;
+        else key = py_object_to_string(args[1]);
+    }
+    
+    auto it = dct->dict_entries->find(key);
+    if (it != dct->dict_entries->end()) return it->second;
+    
+    if (args.size() >= 3) return args[2];
+    return PyObjectFactory::get_singleton(TYPE_NONE);
+}
+
+PyObject* BuiltinFunctions::builtin_keys(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* dct = args[0];
+    auto* result = PyObjectFactory::create_list(nullptr);
+    if (dct->dict_entries && result->list_elements) {
+        for (auto& [k, v] : *dct->dict_entries) {
+            result->list_elements->push_back(PyObjectFactory::create_str(nullptr, k));
+        }
+    }
+    return result;
+}
+
+PyObject* BuiltinFunctions::builtin_values(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* dct = args[0];
+    auto* result = PyObjectFactory::create_list(nullptr);
+    if (dct->dict_entries && result->list_elements) {
+        for (auto& [k, v] : *dct->dict_entries) {
+            result->list_elements->push_back(v);
+        }
+    }
+    return result;
+}
+
+PyObject* BuiltinFunctions::builtin_items(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* dct = args[0];
+    auto* result = PyObjectFactory::create_list(nullptr);
+    if (dct->dict_entries && result->list_elements) {
+        for (auto& [k, v] : *dct->dict_entries) {
+            auto* pair = PyObjectFactory::create_tuple(nullptr);
+            if (pair->list_elements) {
+                pair->list_elements->push_back(PyObjectFactory::create_str(nullptr, k));
+                pair->list_elements->push_back(v);
+            }
+            result->list_elements->push_back(pair);
+        }
+    }
+    return result;
+}
+
+PyObject* BuiltinFunctions::builtin_pop_dict(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2) return nullptr;
+    auto* dct = args[0];
+    if (!dct->dict_entries) return nullptr;
+    
+    std::string key;
+    if (args[1]->str_value) key = *args[1]->str_value;
+    else key = py_object_to_string(args[1]);
+    
+    auto it = dct->dict_entries->find(key);
+    if (it == dct->dict_entries->end()) {
+        if (args.size() >= 3) return args[2];
+        return nullptr;
+    }
+    
+    auto* result = it->second;
+    dct->dict_entries->erase(it);
+    return result;
+}
+
+PyObject* BuiltinFunctions::builtin_setdefault(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2) return nullptr;
+    auto* dct = args[0];
+    if (!dct->dict_entries) return nullptr;
+    
+    std::string key;
+    if (args[1]->str_value) key = *args[1]->str_value;
+    else key = py_object_to_string(args[1]);
+    
+    auto it = dct->dict_entries->find(key);
+    if (it != dct->dict_entries->end()) return it->second;
+    
+    PyObject* default_val = (args.size() >= 3) ? args[2] : nullptr;
+    (*dct->dict_entries)[key] = default_val;
+    return default_val;
+}
+
+PyObject* BuiltinFunctions::builtin_dict_clear(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* dct = args[0];
+    if (dct->dict_entries) dct->dict_entries->clear();
+    return PyObjectFactory::get_singleton(TYPE_NONE);
+}
+
+// ===== STRING METHODS =====
+
+PyObject* BuiltinFunctions::builtin_join(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2) return nullptr;
+    auto* sep_obj = args[0];
+    auto* iterable = args[1];
+    
+    std::string sep;
+    if (sep_obj->str_value) sep = *sep_obj->str_value;
+    
+    std::string result;
+    if (iterable->list_elements) {
+        bool first = true;
+        for (auto* elem : *iterable->list_elements) {
+            if (!first) result += sep;
+            result += py_object_to_string(elem);
+            first = false;
+        }
+    }
+    return PyObjectFactory::create_str(nullptr, result);
+}
+
+PyObject* BuiltinFunctions::builtin_split(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* str_obj = args[0];
+    if (!str_obj->str_value) return nullptr;
+    
+    std::string sep;
+    if (args.size() >= 2 && args[1]->str_value) sep = *args[1]->str_value;
+    
+    std::vector<std::string> parts;
+    if (sep.empty()) {
+        parts.push_back(*str_obj->str_value);
+    } else {
+        size_t start = 0;
+        size_t end = str_obj->str_value->find(sep);
+        while (end != std::string::npos) {
+            parts.push_back(str_obj->str_value->substr(start, end - start));
+            start = end + sep.size();
+            end = str_obj->str_value->find(sep, start);
+        }
+        parts.push_back(str_obj->str_value->substr(start));
+    }
+    
+    auto* result = PyObjectFactory::create_list(nullptr);
+    if (result->list_elements) {
+        for (auto& p : parts) {
+            result->list_elements->push_back(PyObjectFactory::create_str(nullptr, p));
+        }
+    }
+    return result;
+}
+
+PyObject* BuiltinFunctions::builtin_strip(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* str_obj = args[0];
+    if (!str_obj->str_value) return nullptr;
+    
+    std::string s = *str_obj->str_value;
+    size_t start = 0;
+    size_t end = s.size();
+    
+    while (start < end && std::isspace(s[start])) start++;
+    while (end > start && std::isspace(s[end - 1])) end--;
+    
+    return PyObjectFactory::create_str(nullptr, s.substr(start, end - start));
+}
+
+PyObject* BuiltinFunctions::builtin_replace(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 3) return nullptr;
+    auto* str_obj = args[0];
+    if (!str_obj->str_value) return nullptr;
+    
+    std::string old_str, new_str;
+    if (args[1]->str_value) old_str = *args[1]->str_value;
+    if (args[2]->str_value) new_str = *args[2]->str_value;
+    
+    std::string s = *str_obj->str_value;
+    size_t pos = 0;
+    while ((pos = s.find(old_str, pos)) != std::string::npos) {
+        s.replace(pos, old_str.size(), new_str);
+        pos += new_str.size();
+    }
+    return PyObjectFactory::create_str(nullptr, s);
+}
+
+PyObject* BuiltinFunctions::builtin_upper(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* str_obj = args[0];
+    if (!str_obj->str_value) return nullptr;
+    
+    std::string s = *str_obj->str_value;
+    std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+    return PyObjectFactory::create_str(nullptr, s);
+}
+
+PyObject* BuiltinFunctions::builtin_lower(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* str_obj = args[0];
+    if (!str_obj->str_value) return nullptr;
+    
+    std::string s = *str_obj->str_value;
+    std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+    return PyObjectFactory::create_str(nullptr, s);
+}
+
+PyObject* BuiltinFunctions::builtin_find(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2) return nullptr;
+    auto* str_obj = args[0];
+    if (!str_obj->str_value) return nullptr;
+    
+    std::string sub;
+    if (args[1]->str_value) sub = *args[1]->str_value;
+    
+    size_t pos = str_obj->str_value->find(sub);
+    if (pos == std::string::npos) return PyObjectFactory::create_int(nullptr, -1);
+    return PyObjectFactory::create_int(nullptr, static_cast<int64_t>(pos));
+}
+
+PyObject* BuiltinFunctions::builtin_format(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    return builtin_str(nullptr, args);
+}
+
 void BuiltinFunctions::register_builtins(std::unordered_map<std::string, PyObject*>& builtins) {
     auto add_builtin = [&](const std::string& name, 
                            std::function<PyObject*(PyObject*, std::vector<PyObject*>)>* func) {
@@ -699,7 +1019,7 @@ void BuiltinFunctions::register_builtins(std::unordered_map<std::string, PyObjec
     static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> bool_func = 
         [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
             if (args.empty()) return PyObjectFactory::create_bool(nullptr, false);
-            return PyObjectFactory::create_bool(nullptr, !args[0]->data);
+            return PyObjectFactory::create_bool(nullptr, args[0]->data != 0);
         };
     add_builtin("bool", &bool_func);
     
@@ -720,6 +1040,114 @@ void BuiltinFunctions::register_builtins(std::unordered_map<std::string, PyObjec
             return builtin_isinstance(self, args);
         };
     add_builtin("isinstance", &isinstance_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> append_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_append(self, args);
+        };
+    add_builtin("append", &append_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> extend_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_extend(self, args);
+        };
+    add_builtin("extend", &extend_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> pop_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_pop(self, args);
+        };
+    add_builtin("pop", &pop_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> remove_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_remove(self, args);
+        };
+    add_builtin("remove", &remove_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> clear_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_clear(self, args);
+        };
+    add_builtin("clear", &clear_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> count_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_count(self, args);
+        };
+    add_builtin("count", &count_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> index_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_index(self, args);
+        };
+    add_builtin("index", &index_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> get_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_get(self, args);
+        };
+    add_builtin("get", &get_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> keys_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_keys(self, args);
+        };
+    add_builtin("keys", &keys_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> values_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_values(self, args);
+        };
+    add_builtin("values", &values_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> items_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_items(self, args);
+        };
+    add_builtin("items", &items_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> join_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_join(self, args);
+        };
+    add_builtin("join", &join_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> split_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_split(self, args);
+        };
+    add_builtin("split", &split_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> strip_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_strip(self, args);
+        };
+    add_builtin("strip", &strip_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> replace_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_replace(self, args);
+        };
+    add_builtin("replace", &replace_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> upper_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_upper(self, args);
+        };
+    add_builtin("upper", &upper_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> lower_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_lower(self, args);
+        };
+    add_builtin("lower", &lower_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> find_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_find(self, args);
+        };
+    add_builtin("find", &find_func);
 }
 
 } // namespace pyc::runtime

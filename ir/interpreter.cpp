@@ -198,6 +198,10 @@ PyValue Interpreter::call_function_impl(const std::string& name, const std::vect
 
     push_frame(std::move(frame));
 
+    // Set current context for intrinsics
+    current_func_ = fn;
+    current_block_ = nullptr;
+
     // Execute blocks with proper control flow tracking
     uint32_t current_block_idx = 0;
     uint32_t current_inst_idx = 0;
@@ -210,6 +214,7 @@ PyValue Interpreter::call_function_impl(const std::string& name, const std::vect
         if (current_block_idx >= fn->blocks.size()) break;
         
         auto* block = fn->blocks[current_block_idx];
+        current_block_ = block;
         if (!block) {
             current_block_idx++;
             current_inst_idx = 0;
@@ -444,12 +449,23 @@ PyValue Interpreter::handle_store_global(std::unique_ptr<CallFrame>& frame, IRIn
 }
 
 PyValue Interpreter::handle_getattr(std::unique_ptr<CallFrame>& frame, IRInst& inst) {
-    // Stub - would need PyObject integration
+    if (inst.operands.empty()) return PyValue(int64_t(0));
+    auto obj_val = get_slot(frame.get(), inst.operands[0]);
+    std::string attr_name = inst.name;
+    
+    std::string key = "instance_attr_" + std::to_string(inst.operands[0]) + "_" + attr_name;
+    auto it = global_vars_.find(key);
+    if (it != global_vars_.end()) {
+        return it->second;
+    }
     return PyValue(int64_t(0));
 }
 
 PyValue Interpreter::handle_setattr(std::unique_ptr<CallFrame>& frame, IRInst& inst) {
-    // Stub
+    if (inst.operands.size() < 2) return PyValue(int64_t(0));
+    std::string attr_name = inst.name;
+    std::string key = "instance_attr_" + std::to_string(inst.operands[0]) + "_" + attr_name;
+    global_vars_[key] = get_slot(frame.get(), inst.operands[1]);
     return PyValue(int64_t(0));
 }
 
@@ -707,8 +723,9 @@ PyValue Interpreter::handle_intrinsic_print(std::unique_ptr<CallFrame>& frame, I
 }
 
 PyValue Interpreter::handle_intrinsic_range(std::unique_ptr<CallFrame>& frame, IRInst& inst) {
-    (void)frame; (void)inst;
-    return PyValue(int64_t(0));  // stub
+    (void)frame;
+    (void)inst;
+    return PyValue(int64_t(0));
 }
 
 PyValue Interpreter::handle_intrinsic_type(std::unique_ptr<CallFrame>& frame, IRInst& inst) {
