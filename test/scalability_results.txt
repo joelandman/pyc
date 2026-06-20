@@ -1,0 +1,17 @@
+PyC Scalability Test Results
+=============================
+Sat Jun 20 12:16:07 AM UTC 2026
+
+=== Compile Time (lines of code) ===
+  10 lines: 14ms
+  50 lines: 11ms
+  100 lines: 8ms
+  500 lines: 7ms
+
+=== LLVM IR Size (bytes) ===
+  10 lines: SKIPPED (parser error)
+  50 lines: SKIPPED (parser error)
+  100 lines: SKIPPED (parser error)
+  500 lines: SKIPPED (parser error)
+
+Scalability test complete.

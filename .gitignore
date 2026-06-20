@@ -1,2 +1,3 @@
 build/
 pyc
+build_asan/

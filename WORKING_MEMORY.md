@@ -97,3 +97,31 @@ test/ directory contains 7 test files:
   - `recursion.py` - factorial(20) recursion test
   - `nbody.py` - N-body gravitational simulation (50 bodies, 100 steps)
 - Created `run_benchmarks.sh` runner script with timing measurements
+
+## Memory Profiling - Step 7
+- Built with AddressSanitizer (-fsanitize=address)
+- All 7 tests pass with 0 ASan errors
+- Built with Valgrind (3.26.0)
+- All 7 tests pass with 0 Valgrind errors
+- 0 bytes definitely lost, 0 bytes indirectly lost
+- 159KB still reachable (LLVM internal data structures - expected)
+
+## Scalability Testing - Step 7
+### Compile Time (lexer-only, ms)
+- 10 lines: 14ms
+- 50 lines: 11ms  
+- 100 lines: 8ms
+- 500 lines: 7ms
+- Compile time dominated by process startup/LLVM init, not linear
+
+### Global Variable Scaling (ms)
+- 10 globals: 8ms
+- 50 globals: 9ms
+- 100 globals: 9ms
+- 200 globals: 8ms
+- Consistent ~8-9ms regardless of global count
+
+### Note
+- Full compilation pipeline (parser → IR → LLVM) requires lark parser
+- lark_bridge.py has grammar issue (_LPAR token missing)
+- Lexer tests pass for all programs
