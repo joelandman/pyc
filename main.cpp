@@ -11,7 +11,7 @@
 
 #include "frontend/lexer.h"
 #include "frontend/ast.h"
-#include "frontend/lark_parser.h"
+#include "frontend/parser.h"
 #include "ir/ir.h"
 #include "ir/builder.h"
 #include "codegen/ir2ll.h"
@@ -67,10 +67,10 @@ void compiler_pipeline(const std::string& source_path, bool verbose, bool emit_l
         }
     }
 
-    // Phase 3: Parse (using Lark parser via python.lark)
+    // Phase 3: Parse (using recursive descent parser)
     std::cout << "\n[Phase 3] Parsing...\n";
-    pyc::parser::LarkParser lark_parser;
-    auto ast_module = lark_parser.parse(source);
+    pyc::parser::Parser parser(tokens);
+    auto ast_module = parser.parse();
     std::cout << "  Parsed AST with " << ast_module->body().size() << " statements\n";
 
     // Phase 4: Classify classes/types in AST
@@ -128,11 +128,11 @@ void run_test_suite(const std::string& suite_name) {
 
     if (suite_name == "parser" || suite_name == "full") {
         std::cout << "\n[Test: Parser]\n";
-        std::string test_code = R"("def add(x, y):\n    return x + y\na = 1 + 2b = 'hello'")";
+        std::string test_code = "def add(x, y):\n    return x + y\na = 1 + 2\nb = 'hello'\n";
         try {
             auto tokens = pyc::lexer::tokenize(test_code);
-            pyc::parser::LarkParser parser;
-            auto mod = parser.parse(test_code);
+            pyc::parser::Parser parser(tokens);
+            auto mod = parser.parse();
             std::cout << "  Parser passed: " << mod->body().size() << " statements\n";
         } catch (const std::exception& e) {
             std::cout << "  Parser failed: " << e.what();
@@ -142,11 +142,11 @@ void run_test_suite(const std::string& suite_name) {
 
     if (suite_name == "ir" || suite_name == "full") {
         std::cout << "\n[Test: IR]\n";
-        std::string test_code = "def add(x, y):\n    return x + y\nmain():\n    x = 42\n    return x";
+        std::string test_code = "def add(x, y):\n    return x + y\n";
         try {
             auto tokens = pyc::lexer::tokenize(test_code);
-            pyc::parser::LarkParser parser;
-            auto mod = parser.parse(test_code);
+            pyc::parser::Parser parser(tokens);
+            auto mod = parser.parse();
             pyc::ir::builder::IRBuilder builder;
             builder.build(*mod);
             auto func_count = builder.module->functions.size();
@@ -159,11 +159,11 @@ void run_test_suite(const std::string& suite_name) {
 
     if (suite_name == "codegen" || suite_name == "full") {
         std::cout << "\n[Test: Codegen (LLVM IR)\n";
-        std::string test_code = "main():\n    x = 10\n    y = 10\n    z = x +y\n";
+        std::string test_code = "def main():\n    x = 10\n    y = 20\n    z = x + y\n";
         try {
             auto tokens = pyc::lexer::tokenize(test_code);
-            pyc::parser::LarkParser parser;
-            auto mod = parser.parse(test_code);
+            pyc::parser::Parser parser(tokens);
+            auto mod = parser.parse();
             pyc::ir::builder::IRBuilder builder;
             builder.build(*mod);
             auto llir = pyc::codegen::translate_module(*builder.module);
@@ -238,8 +238,8 @@ void run_test_ir(const std::string& source_path) {
         std::cout << "  Tokenized " << tokens.size() << " tokens\n";
         
         // Parse
-        pyc::parser::LarkParser parser;
-        auto mod = parser.parse(source);
+        pyc::parser::Parser parser(tokens);
+        auto mod = parser.parse();
         std::cout << "  Parsed " << mod->body().size() << " statements\n";
         
         // Build IR

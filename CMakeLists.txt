@@ -27,6 +27,7 @@ set(SOURCES
     frontend/lexer.cpp
     frontend/ast.cpp
     frontend/lark_parser.cpp
+    frontend/parser.cpp
     ir/ir.cpp
     ir/builder.cpp
     ir/interpreter.cpp

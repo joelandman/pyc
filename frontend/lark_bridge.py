@@ -40,12 +40,12 @@ start: module
           | stmt_expr
 
 // ===== FUNCTION DEFINITIONS =====
-stmt_func_def: "def" NAME "(" [parameters] ")" ["->" test] ":" NEWLINE INDENT statements DEDENT
+stmt_func_def: "def" NAME "(" [parameters] ")" ["->" test] ":" stmt_list
 
 ?parameters: parameter ("," parameter)* [","]
 ?parameter: NAME [":" test] ["=" test]
-          | NAME "/" ("," parameter)*
-          | "*" (test | NAME ["," test])
+          | "*" NAME ["," NAME]
+          | "**" NAME
           | test
           | args_star
 ?args_star: NAME ["," NAME]
@@ -137,24 +137,18 @@ stmt_assert: "assert" test ["," test]
 ?lambda_expr: "lambda" [NAME ("," NAME)*] ":" test
 
 // ===== LITERALS =====
+NAME: /[^\W\d]\w*/
 NUMBER: INT | FLOAT | COMPLEX
 INT: /[1-9][0-9]*|0[xX][\da-fA-F]+|0[oO][0-7]+|0[bB][01]+/
 FLOAT: /[0-9]+\.[0-9]+/
 COMPLEX: /[0-9]+[jJ]/
 
-%import common.NAME
-%import common.NUMBER
-%import common.NEWLINE
-%import common.INDENT
-%import common.DEDENT
 %import common.ESCAPED_STRING as STRING
 %import common.ASSIGNOP as AUGOP
 %import common.WS_INLINE
 %ignore WS_INLINE
 %ignore COMMENT
 %ignore NEWLINE
-%ignore INDENT
-%ignore DEDENT
 """
 
 # Build parser
