@@ -67,6 +67,9 @@ private:
     uint32_t build_subscript(const ast::SubscriptExpr& expr);
     uint32_t build_lambda_expr(const ast::LambdaExpr& expr);
     uint32_t build_list_comp(const ast::ListComp& expr);
+    uint32_t build_set_comp(const ast::SetComp& expr);
+    uint32_t build_gen_expr(const ast::GenExpr& expr);
+    uint32_t build_dict_comp(const ast::DictComp& expr);
 
     IRInstKind augment_to_binop(ast::AugAssignStmt::Op op);
 

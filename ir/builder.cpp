@@ -604,6 +604,9 @@ uint32_t IRBuilder::build_expr(const ast::Expr& expr) {
     if (auto* s = dynamic_cast<const ast::SubscriptExpr*>(&expr)) return build_subscript(*s);
     if (auto* lam = dynamic_cast<const ast::LambdaExpr*>(&expr)) return build_lambda_expr(*lam);
     if (auto* comp = dynamic_cast<const ast::ListComp*>(&expr)) return build_list_comp(*comp);
+    if (auto* comp = dynamic_cast<const ast::SetComp*>(&expr)) return build_set_comp(*comp);
+    if (auto* comp = dynamic_cast<const ast::GenExpr*>(&expr)) return build_gen_expr(*comp);
+    if (auto* comp = dynamic_cast<const ast::DictComp*>(&expr)) return build_dict_comp(*comp);
     return UINT32_MAX;
 }
 
@@ -922,6 +925,332 @@ uint32_t IRBuilder::build_list_comp(const ast::ListComp& expr) {
     current_block_ = loop_merge_blk;
     
     // Load result list
+    auto* final_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "final_result");
+    final_load->operands.push_back(result_slot);
+    
+    return final_load->id;
+}
+
+uint32_t IRBuilder::build_set_comp(const ast::SetComp& expr) {
+    // Translate {expr for target in iterable} to:
+    // result = []
+    // for target in iterable:
+    //     result.append(expr)
+    // result (returned as list, sets not fully supported)
+    
+    auto* result_list = current_func_->new_inst(IRInstKind::MAKE_LIST, "set_comp_result");
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(result_list));
+    
+    auto result_slot = alloc_local("__set_comp_result__");
+    auto* result_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__set_comp_result__");
+    result_store->operands.push_back(result_slot);
+    result_store->operands.push_back(result_list->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(result_store));
+    
+    auto loop_cond_blk = current_func_->new_block("set_comp_cond");
+    auto loop_body_blk = current_func_->new_block("set_comp_body");
+    auto loop_merge_blk = current_func_->new_block("set_comp_merge");
+    
+    loop_cond_blk->successors.push_back(loop_body_blk->id);
+    loop_cond_blk->successors.push_back(loop_merge_blk->id);
+    loop_body_blk->successors.push_back(loop_cond_blk->id);
+    
+    loop_stack_.push_back({loop_cond_blk->id, loop_merge_blk->id});
+    
+    auto iter_val = build_expr(*expr.comprehensions_[0].iterable);
+    auto iter_slot = alloc_local("__set_comp_iter__");
+    auto* iter_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__set_comp_iter__");
+    iter_store->operands.push_back(iter_slot);
+    iter_store->operands.push_back(iter_val);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(iter_store));
+    
+    current_block_ = loop_cond_blk;
+    
+    auto index_slot = alloc_local("__set_comp_index__");
+    auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "zero");
+    zero->is_const = true;
+    std::get<double>(zero->const_val) = 0.0;
+    auto* index_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__set_comp_index__");
+    index_store->operands.push_back(index_slot);
+    index_store->operands.push_back(zero->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(index_store));
+    
+    auto* index_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "idx_load");
+    index_load->operands.push_back(index_slot);
+    
+    auto* iter_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "iter_load");
+    iter_load->operands.push_back(iter_slot);
+    
+    auto* len_inst = current_func_->new_inst(IRInstKind::INTRINSIC_LEN, "list_len");
+    len_inst->operands.push_back(iter_load->id);
+    
+    auto* cmp_inst = current_func_->new_inst(IRInstKind::LT, "idx_lt_len");
+    cmp_inst->operands.push_back(index_load->id);
+    cmp_inst->operands.push_back(len_inst->id);
+    
+    auto* branch_inst = current_func_->new_inst(IRInstKind::BRANCH, "set_comp_branch");
+    branch_inst->operands.push_back(cmp_inst->id);
+    branch_inst->operands.push_back(loop_body_blk->id);
+    branch_inst->operands.push_back(loop_merge_blk->id);
+    current_block_->successors.push_back(loop_body_blk->id);
+    current_block_->successors.push_back(loop_merge_blk->id);
+    
+    current_block_ = loop_body_blk;
+    
+    auto* get_elem = current_func_->new_inst(IRInstKind::LIST_GET, "get_elem");
+    get_elem->operands.push_back(iter_load->id);
+    get_elem->operands.push_back(index_load->id);
+    
+    auto target_slot = alloc_local(expr.comprehensions_[0].target);
+    auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, expr.comprehensions_[0].target);
+    target_store->operands.push_back(target_slot);
+    target_store->operands.push_back(get_elem->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+    
+    auto expr_val = build_expr(*expr.elt());
+    
+    auto* append_call = current_func_->new_inst(IRInstKind::CALL, "append");
+    auto* result_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "result_load");
+    result_load->operands.push_back(result_slot);
+    append_call->operands.push_back(result_load->id);
+    append_call->operands.push_back(get_elem->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(append_call));
+    
+    auto* one = current_func_->new_inst(IRInstKind::LOADCONST_INT, "one");
+    one->is_const = true;
+    std::get<double>(one->const_val) = 1.0;
+    auto* add_inst = current_func_->new_inst(IRInstKind::ADD, "idx_inc");
+    add_inst->operands.push_back(index_load->id);
+    add_inst->operands.push_back(one->id);
+    auto* inc_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__set_comp_index__");
+    inc_store->operands.push_back(index_slot);
+    inc_store->operands.push_back(add_inst->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inc_store));
+    
+    auto* jump_inst = current_func_->new_inst(IRInstKind::JUMP, "set_comp_jump");
+    jump_inst->operands.push_back(loop_cond_blk->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_inst));
+    
+    loop_stack_.pop_back();
+    current_block_ = loop_merge_blk;
+    
+    auto* final_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "final_result");
+    final_load->operands.push_back(result_slot);
+    
+    return final_load->id;
+}
+
+uint32_t IRBuilder::build_gen_expr(const ast::GenExpr& expr) {
+    // Translate (expr for target in iterable) to list (generators not fully supported)
+    // Same implementation as list comp but with different naming
+    
+    auto* result_list = current_func_->new_inst(IRInstKind::MAKE_LIST, "gen_expr_result");
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(result_list));
+    
+    auto result_slot = alloc_local("__gen_expr_result__");
+    auto* result_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__gen_expr_result__");
+    result_store->operands.push_back(result_slot);
+    result_store->operands.push_back(result_list->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(result_store));
+    
+    auto loop_cond_blk = current_func_->new_block("gen_expr_cond");
+    auto loop_body_blk = current_func_->new_block("gen_expr_body");
+    auto loop_merge_blk = current_func_->new_block("gen_expr_merge");
+    
+    loop_cond_blk->successors.push_back(loop_body_blk->id);
+    loop_cond_blk->successors.push_back(loop_merge_blk->id);
+    loop_body_blk->successors.push_back(loop_cond_blk->id);
+    
+    loop_stack_.push_back({loop_cond_blk->id, loop_merge_blk->id});
+    
+    auto iter_val = build_expr(*expr.comprehensions_[0].iterable);
+    auto iter_slot = alloc_local("__gen_expr_iter__");
+    auto* iter_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__gen_expr_iter__");
+    iter_store->operands.push_back(iter_slot);
+    iter_store->operands.push_back(iter_val);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(iter_store));
+    
+    current_block_ = loop_cond_blk;
+    
+    auto index_slot = alloc_local("__gen_expr_index__");
+    auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "zero");
+    zero->is_const = true;
+    std::get<double>(zero->const_val) = 0.0;
+    auto* index_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__gen_expr_index__");
+    index_store->operands.push_back(index_slot);
+    index_store->operands.push_back(zero->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(index_store));
+    
+    auto* index_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "idx_load");
+    index_load->operands.push_back(index_slot);
+    
+    auto* iter_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "iter_load");
+    iter_load->operands.push_back(iter_slot);
+    
+    auto* len_inst = current_func_->new_inst(IRInstKind::INTRINSIC_LEN, "list_len");
+    len_inst->operands.push_back(iter_load->id);
+    
+    auto* cmp_inst = current_func_->new_inst(IRInstKind::LT, "idx_lt_len");
+    cmp_inst->operands.push_back(index_load->id);
+    cmp_inst->operands.push_back(len_inst->id);
+    
+    auto* branch_inst = current_func_->new_inst(IRInstKind::BRANCH, "gen_expr_branch");
+    branch_inst->operands.push_back(cmp_inst->id);
+    branch_inst->operands.push_back(loop_body_blk->id);
+    branch_inst->operands.push_back(loop_merge_blk->id);
+    current_block_->successors.push_back(loop_body_blk->id);
+    current_block_->successors.push_back(loop_merge_blk->id);
+    
+    current_block_ = loop_body_blk;
+    
+    auto* get_elem = current_func_->new_inst(IRInstKind::LIST_GET, "get_elem");
+    get_elem->operands.push_back(iter_load->id);
+    get_elem->operands.push_back(index_load->id);
+    
+    auto target_slot = alloc_local(expr.comprehensions_[0].target);
+    auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, expr.comprehensions_[0].target);
+    target_store->operands.push_back(target_slot);
+    target_store->operands.push_back(get_elem->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+    
+    auto expr_val = build_expr(*expr.elt());
+    
+    auto* append_call = current_func_->new_inst(IRInstKind::CALL, "append");
+    auto* result_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "result_load");
+    result_load->operands.push_back(result_slot);
+    append_call->operands.push_back(result_load->id);
+    append_call->operands.push_back(get_elem->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(append_call));
+    
+    auto* one = current_func_->new_inst(IRInstKind::LOADCONST_INT, "one");
+    one->is_const = true;
+    std::get<double>(one->const_val) = 1.0;
+    auto* add_inst = current_func_->new_inst(IRInstKind::ADD, "idx_inc");
+    add_inst->operands.push_back(index_load->id);
+    add_inst->operands.push_back(one->id);
+    auto* inc_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__gen_expr_index__");
+    inc_store->operands.push_back(index_slot);
+    inc_store->operands.push_back(add_inst->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inc_store));
+    
+    auto* jump_inst = current_func_->new_inst(IRInstKind::JUMP, "gen_expr_jump");
+    jump_inst->operands.push_back(loop_cond_blk->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_inst));
+    
+    loop_stack_.pop_back();
+    current_block_ = loop_merge_blk;
+    
+    auto* final_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "final_result");
+    final_load->operands.push_back(result_slot);
+    
+    return final_load->id;
+}
+
+uint32_t IRBuilder::build_dict_comp(const ast::DictComp& expr) {
+    // Translate {k: v for target in iterable} to:
+    // result = {}
+    // for target in iterable:
+    //     result[key] = value
+    // result
+    
+    auto* result_dict = current_func_->new_inst(IRInstKind::MAKE_LIST, "dict_comp_result");
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(result_dict));
+    
+    auto result_slot = alloc_local("__dict_comp_result__");
+    auto* result_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__dict_comp_result__");
+    result_store->operands.push_back(result_slot);
+    result_store->operands.push_back(result_dict->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(result_store));
+    
+    auto loop_cond_blk = current_func_->new_block("dict_comp_cond");
+    auto loop_body_blk = current_func_->new_block("dict_comp_body");
+    auto loop_merge_blk = current_func_->new_block("dict_comp_merge");
+    
+    loop_cond_blk->successors.push_back(loop_body_blk->id);
+    loop_cond_blk->successors.push_back(loop_merge_blk->id);
+    loop_body_blk->successors.push_back(loop_cond_blk->id);
+    
+    loop_stack_.push_back({loop_cond_blk->id, loop_merge_blk->id});
+    
+    auto iter_val = build_expr(*expr.comprehensions_[0].iterable);
+    auto iter_slot = alloc_local("__dict_comp_iter__");
+    auto* iter_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__dict_comp_iter__");
+    iter_store->operands.push_back(iter_slot);
+    iter_store->operands.push_back(iter_val);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(iter_store));
+    
+    current_block_ = loop_cond_blk;
+    
+    auto index_slot = alloc_local("__dict_comp_index__");
+    auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "zero");
+    zero->is_const = true;
+    std::get<double>(zero->const_val) = 0.0;
+    auto* index_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__dict_comp_index__");
+    index_store->operands.push_back(index_slot);
+    index_store->operands.push_back(zero->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(index_store));
+    
+    auto* index_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "idx_load");
+    index_load->operands.push_back(index_slot);
+    
+    auto* iter_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "iter_load");
+    iter_load->operands.push_back(iter_slot);
+    
+    auto* len_inst = current_func_->new_inst(IRInstKind::INTRINSIC_LEN, "list_len");
+    len_inst->operands.push_back(iter_load->id);
+    
+    auto* cmp_inst = current_func_->new_inst(IRInstKind::LT, "idx_lt_len");
+    cmp_inst->operands.push_back(index_load->id);
+    cmp_inst->operands.push_back(len_inst->id);
+    
+    auto* branch_inst = current_func_->new_inst(IRInstKind::BRANCH, "dict_comp_branch");
+    branch_inst->operands.push_back(cmp_inst->id);
+    branch_inst->operands.push_back(loop_body_blk->id);
+    branch_inst->operands.push_back(loop_merge_blk->id);
+    current_block_->successors.push_back(loop_body_blk->id);
+    current_block_->successors.push_back(loop_merge_blk->id);
+    
+    current_block_ = loop_body_blk;
+    
+    auto* get_elem = current_func_->new_inst(IRInstKind::LIST_GET, "get_elem");
+    get_elem->operands.push_back(iter_load->id);
+    get_elem->operands.push_back(index_load->id);
+    
+    auto target_slot = alloc_local(expr.comprehensions_[0].target);
+    auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, expr.comprehensions_[0].target);
+    target_store->operands.push_back(target_slot);
+    target_store->operands.push_back(get_elem->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+    
+    auto key_val = build_expr(*expr.key());
+    auto val_val = build_expr(*expr.value());
+    
+    auto* setitem_call = current_func_->new_inst(IRInstKind::CALL, "setitem");
+    auto* result_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "result_load");
+    result_load->operands.push_back(result_slot);
+    setitem_call->operands.push_back(result_load->id);
+    setitem_call->operands.push_back(key_val);
+    setitem_call->operands.push_back(val_val);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(setitem_call));
+    
+    auto* one = current_func_->new_inst(IRInstKind::LOADCONST_INT, "one");
+    one->is_const = true;
+    std::get<double>(one->const_val) = 1.0;
+    auto* add_inst = current_func_->new_inst(IRInstKind::ADD, "idx_inc");
+    add_inst->operands.push_back(index_load->id);
+    add_inst->operands.push_back(one->id);
+    auto* inc_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__dict_comp_index__");
+    inc_store->operands.push_back(index_slot);
+    inc_store->operands.push_back(add_inst->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inc_store));
+    
+    auto* jump_inst = current_func_->new_inst(IRInstKind::JUMP, "dict_comp_jump");
+    jump_inst->operands.push_back(loop_cond_blk->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_inst));
+    
+    loop_stack_.pop_back();
+    current_block_ = loop_merge_blk;
+    
     auto* final_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "final_result");
     final_load->operands.push_back(result_slot);
     
