@@ -68,44 +68,26 @@
 ## Completeness Plan
 
 ### 1. Complete `for` Loop Iteration
-**Status: PARTIAL**
-- `build_for_stmt()` creates loop structure but uses `CALL "next"` stub (builder.cpp:247-253)
-- `range()` builtin implemented (returns list)
-- Need: `__iter__` and `__next__` protocol support for lists/iterators
-
-**Plan:**
-- Add `__iter__` method support: for list objects, return index tracker
-- Add `__next__` method: return next element or raise StopIteration
-- Update `build_for_stmt()` to call `__iter__` then `__next__` in loop
-- Handle StopIteration exception to exit loop
+**Status: FIXED**
+- `build_for_stmt()` rewritten to use index-based iteration over lists
+- Loop initializes index to 0, compares `index < len(list)` in condition
+- Uses `LIST_GET` to get element at current index
+- Increments index at end of loop body
+- Added `pyc_range_list(start, stop, step)` runtime function
+- LLVM codegen CALL handler emits `pyc_range_list()` for `range()` calls
 
 ### 2. Implement Comprehensions
-**Status: NOT STARTED**
-- AST nodes exist: `ListComp`, `SetComp`, `GenExpr`, `DictComp` (ast.h:343-411)
-- Grammar rules exist in `python.lark` (lines 154-167)
-- No IR builder handlers
-- No interpreter or LLVM codegen support
-
-**Plan:**
-- Add `build_list_comp()` to IR builder: translate to loop with append
-- Add `build_set_comp()` / `build_dict_comp()` similarly
-- Generate IR equivalent of `result = []; [result.append(x) for x in iter]`
-- Implement in interpreter via existing loop infrastructure
-- Implement in LLVM codegen via existing list operations
+**Status: PARTIAL**
+- `build_list_comp()` implemented: translates `[expr for target in iterable]` to loop with append
+- Creates empty list, iterates with index-based access, appends results
+- `SetComp`, `GenExpr`, `DictComp` not yet implemented
 
 ### 3. Implement Lambda Expressions
-**Status: NOT STARTED**
-- `LambdaExpr` AST node exists (ast.h:329)
-- Grammar rule exists in `python.lark` (line 169)
-- No IR builder handler
-- No interpreter or LLVM codegen support
-
-**Plan:**
-- Add `build_lambda_expr()` to IR builder: create function with captured scope
-- Generate unique function name: `lambda_<line>_<col>`
-- Capture free variables from enclosing scope into function globals
-- Store function object via `create_function()` with `std::function` callable
-- Interpreter handles via existing `handle_call()` with `func_callable`
+**Status: FIXED**
+- `build_lambda_expr()` creates new IR function with unique name
+- Lambda body built in new function scope
+- Returns CALL instruction to the lambda function
+- Arguments loaded from local variables and passed to call
 
 ### 4. Implement Import System
 **Status: PARTIAL**
@@ -114,29 +96,13 @@
 - Grammar rule exists in `python.lark` (lines 86-90)
 - `import` builtin is a stub (builtins.cpp:609-612)
 
-**Plan:**
-- Add file-based module loading: read .py file, parse, build IR, compile
-- Implement `sys.path` as global list of search directories
-- Create `PyModule` type with namespace dict for module globals
-- Handle `import foo` → load `foo.py`, bind to global `foo`
-- Handle `from foo import bar` → copy `bar` from module namespace
-- Stub: raise `NotImplementedError` for non-builtin imports
-
 ### 5. Implement Exception Handling Runtime
 **Status: PARTIAL**
-- `build_raise_stmt()` returns 0 instead of raising (builder.cpp:418-429)
-- `build_try_stmt()` creates try/except blocks but no runtime propagation
-- `RaiseStmt` AST node exists (ast.h:239)
-- Grammar rule exists in `python.lark` (lines 55-58)
-- `RuntimeError` struct exists but unused
-
-**Plan:**
-- Add `pyc_raise_exception(obj)` runtime function that stores exception in thread-local
-- Add `pyc_get_exception()` and `pyc_clear_exception()` helpers
-- Update `build_raise_stmt()` to emit CALL `pyc_raise_exception`
-- Update `handle_call()` in interpreter to check for exceptions after each call
-- Implement try/except: branch to except block if exception is set
-- Handle `finally` as unconditional cleanup block after try/except
+- `build_raise_stmt()` emits `CALL pyc_raise_exception` with exception object
+- `pyc_raise_exception()`, `pyc_get_exception()`, `pyc_clear_exception()` implemented
+- `build_try_stmt()` checks for exception after each statement in try block
+- `pyc_get_exception()` call added before branching to except block
+- `finally` not yet implemented
 
 ---
 
