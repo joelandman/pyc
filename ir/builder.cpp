@@ -587,6 +587,7 @@ uint32_t IRBuilder::build_expr(const ast::Expr& expr) {
     if (auto* a = dynamic_cast<const ast::AttrExpr*>(&expr)) return build_attr(*a);
     if (auto* l = dynamic_cast<const ast::ListExpr*>(&expr)) return build_list(*l);
     if (auto* s = dynamic_cast<const ast::SubscriptExpr*>(&expr)) return build_subscript(*s);
+    if (auto* lam = dynamic_cast<const ast::LambdaExpr*>(&expr)) return build_lambda_expr(*lam);
     return UINT32_MAX;
 }
 
@@ -743,6 +744,54 @@ uint32_t IRBuilder::build_subscript(const ast::SubscriptExpr& expr) {
     inst->operands.push_back(slice_id);
     
     return inst->id;
+}
+
+uint32_t IRBuilder::build_lambda_expr(const ast::LambdaExpr& expr) {
+    static uint32_t lambda_counter = 0;
+    std::string lambda_name = "lambda_" + std::to_string(lambda_counter++);
+    
+    auto* lambda_fn = new IRFunction();
+    lambda_fn->name = lambda_name;
+    
+    for (auto& arg : expr.args()) {
+        lambda_fn->param_names.push_back(arg.name);
+        alloc_local(arg.name);
+    }
+    
+    auto* entry_block = lambda_fn->new_block("entry");
+    lambda_fn->entry_block_id = entry_block->id;
+    
+    auto* saved_block = current_block_;
+    auto* saved_func = current_func_;
+    
+    current_func_ = lambda_fn;
+    current_block_ = entry_block;
+    lambda_fn->blocks.push_back(entry_block);
+    
+    auto body_val = build_expr(*expr.body());
+    
+    auto* ret_inst = lambda_fn->new_inst(IRInstKind::RETURN, "lambda_return");
+    ret_inst->operands.push_back(body_val);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(ret_inst));
+    
+    module->functions[lambda_name] = lambda_fn;
+    module->func_list.push_back(lambda_fn);
+    
+    current_func_ = saved_func;
+    current_block_ = saved_block;
+    
+    auto* call_inst = current_func_->new_inst(IRInstKind::CALL, lambda_name);
+    for (auto& arg : expr.args()) {
+        auto it = locals_.find(arg.name);
+        if (it != locals_.end()) {
+            auto* load = current_func_->new_inst(IRInstKind::LOADLOCAL, arg.name);
+            load->operands.push_back(it->second);
+            call_inst->operands.push_back(load->id);
+        }
+    }
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(call_inst));
+    
+    return call_inst->id;
 }
 
 // ===== Helper methods =====
