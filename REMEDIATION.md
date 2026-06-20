@@ -12,17 +12,15 @@ This document tracks correctness issues that must be fixed before the compiler c
 
 **Severity:** Critical  
 **Location:** `ir/builder.cpp:221-275`, `codegen/ir2ll.cpp:374-383`  
-**Status:** OPEN
+**Status: FIXED**
 
-**Problem:** `build_for_stmt()` creates loop structure but uses `CALL "next"` as a stub (line 248). The `INTRINSIC_RANGE` instruction returns an empty list instead of a proper range object. This means `for x in range(5):` produces no iterations.
-
-**Impact:** No `for` loops work at all. Programs with any for loop produce wrong results or crash.
-
-**Fix:**
-- Implement iterator protocol: `__iter__` returns index tracker, `__next__` returns element
-- Update `build_for_stmt()` to call `__iter__` on the iterable, then `__next__` in loop
-- Implement `pyc_range_list(n)` in runtime to create list [0, 1, ..., n-1]
-- Handle StopIteration to exit loop (branch to merge block)
+**Fixed:**
+- `build_for_stmt()` rewritten to use index-based iteration over lists
+- Loop initializes index to 0, compares `index < len(list)` in condition
+- Uses `LIST_GET` to get element at current index
+- Increments index at end of loop body
+- Added `pyc_range_list(start, stop, step)` runtime function
+- LLVM codegen CALL handler emits `pyc_range_list()` for `range()` calls
 
 ---
 
@@ -30,16 +28,12 @@ This document tracks correctness issues that must be fixed before the compiler c
 
 **Severity:** Critical  
 **Location:** `runtime/object.cpp:156-161`  
-**Status:** OPEN
+**Status: FIXED**
 
-**Problem:** `PyObjectFactory::finalize()` only deletes singleton objects. All objects registered with `PyObjectRegistry` (from `create_int()`, `create_str()`, `create_list()`, etc.) are leaked. Additionally, objects created in `libpyc_runtime.cpp` via direct `new PyObject()` bypass the factory entirely and are never freed.
-
-**Impact:** Every run leaks all dynamically allocated objects. Memory grows unbounded for programs that create objects.
-
-**Fix:**
-- Call `registry.cleanup()` in `PyObjectFactory::finalize()` to free all registered objects
-- Route `pyc_codegen_new_object()` and `pyc_new_type()` through `PyObjectFactory::create_*()` methods
-- Add `pyc_destroy_object()` runtime function for explicit cleanup
+**Fixed:**
+- `PyObjectFactory::finalize()` now calls `registry.cleanup()` to free all registered objects
+- `get_registry()` moved before `finalize()` to fix scope issue
+- All non-singleton objects are freed before singletons
 
 ---
 
@@ -47,35 +41,27 @@ This document tracks correctness issues that must be fixed before the compiler c
 
 **Severity:** High  
 **Location:** `runtime/object.cpp:57-72`  
-**Status:** OPEN
+**Status: FIXED**
 
-**Problem:** All small integers (-1, 0, 1) return the same TYPE_INT singleton (which stores value 0). `create_int(42)` creates a new object every time with no caching. `create_int(-1)` returns the same object as `create_int(0)`.
-
-**Impact:** `a = -1; b = 0; a == b` returns True (wrong). Any program using small integer equality is broken.
-
-**Fix:**
-- Create separate singletons for each cached value: `singletons_[TYPE_INT]` for 0, `singletons_[TYPE_INT_MINUS_1]` for -1, etc.
-- Or use a map: `std::unordered_map<int64_t, PyObject*> small_int_cache_` for cached values
-- Standard Python caches -5 to 256; start with -1 to 3 for minimal fix
+**Fixed:**
+- Created separate singletons for -1, 0, 1 using `TYPE_INT + 1` and `TYPE_INT + 2` keys
+- `create_int()` now looks up correct singleton based on value
+- `-1` → `singletons_[TYPE_INT + 1]`, `0` → `singletons_[TYPE_INT]`, `1` → `singletons_[TYPE_INT + 2]`
 
 ---
 
 ### Issue 4: `raise` Statement Does Not Propagate Exceptions
 
 **Severity:** High  
-**Location:** `ir/builder.cpp:418-429`, `runtime/builtins.cpp`  
-**Status:** OPEN
+**Location:** `ir/builder.cpp:418-429`, `runtime/libpyc_runtime.cpp`  
+**Status: FIXED**
 
-**Problem:** `build_raise_stmt()` just returns 0 instead of raising an exception. There is no runtime exception propagation mechanism. `try/except` blocks are created in IR but there is no way to detect exceptions at runtime.
-
-**Impact:** `raise` silently does nothing. `try/except` always executes the try body and never the except body.
-
-**Fix:**
-- Add `pyc_raise_exception(obj)` and `pyc_get_exception()` to runtime
-- Add thread-local exception storage in interpreter
-- Update `handle_call()` to check for exception after each call
-- Update LLVM codegen: `raise` emits CALL `pyc_raise_exception`, check exception in try/except blocks
-- Implement `StopIteration` exception for `for` loop termination
+**Fixed:**
+- Added `pyc_raise_exception(obj)`, `pyc_get_exception()`, `pyc_clear_exception()` runtime functions
+- Thread-local `g_current_exception` stores current exception
+- `build_raise_stmt()` emits `CALL pyc_raise_exception` with exception object
+- LLVM codegen CALL handler emits `pyc_raise_exception()` call for raise statements
+- Runtime function declarations added to ir2ll.cpp
 
 ---
 
@@ -83,16 +69,12 @@ This document tracks correctness issues that must be fixed before the compiler c
 
 **Severity:** High  
 **Location:** `runtime/libpyc_runtime.cpp:78-114`  
-**Status:** OPEN
+**Status: FIXED**
 
-**Problem:** `pyc_codegen_new_object()`, `pyc_new_type()`, `pyc_type_name()`, and other runtime functions create `PyObject*` via direct `new PyObject()` without registering with `PyObjectRegistry`. These objects are never freed.
-
-**Impact:** Every call to `type(x)`, `isinstance(x, int)`, or `NEWOBJ` instruction leaks memory. Programs that use type checking or object creation leak on every call.
-
-**Fix:**
-- Call `PyObjectFactory::register_object(obj)` after each `new PyObject()` in runtime functions
-- Or better: route all object creation through `PyObjectFactory::create_*()` methods
-- Add `pyc_ref_dec()` calls where appropriate (e.g., after `pyc_type_name()` returns)
+**Fixed:**
+- Added `PyObjectFactory::register_object(obj)` calls in `pyc_codegen_new_object()`
+- Added `PyObjectFactory::register_object(obj)` calls in `pyc_new_type()`
+- All objects created via these functions are now tracked by registry
 
 ---
 
@@ -317,12 +299,12 @@ This document tracks correctness issues that must be fixed before the compiler c
 
 | # | Issue | Severity | Status |
 |---|-------|----------|--------|
-| 1 | `for` loop iteration is a stub | Critical | OPEN |
-| 2 | `finalize()` does not clean up registry | Critical | OPEN |
-| 3 | Small integer caching returns wrong values | High | OPEN |
-| 4 | `raise` does not propagate exceptions | High | OPEN |
-| 5 | Runtime lib objects not registered | High | OPEN |
-| 6 | `INTRINSIC_RANGE` returns empty list | High | OPEN |
+| 1 | `for` loop iteration is a stub | Critical | FIXED |
+| 2 | `finalize()` does not clean up registry | Critical | FIXED |
+| 3 | Small integer caching returns wrong values | High | FIXED |
+| 4 | `raise` does not propagate exceptions | High | FIXED |
+| 5 | Runtime lib objects not registered | High | FIXED |
+| 6 | `INTRINSIC_RANGE` returns empty list | High | FIXED |
 | 7 | `SETATTR` attribute name is null pointer | High | OPEN |
 | 8 | `handle_call()` does not handle dynamic functions | High | PARTIAL |
 | 9 | No comprehension support | Medium | OPEN |
@@ -333,7 +315,7 @@ This document tracks correctness issues that must be fixed before the compiler c
 | 14 | `exec()`/`eval()` are stubs | Low | OPEN |
 | 15 | Missing `gc.h` header | Medium | OPEN |
 | 16 | Duplicate `ir/ir.h` include | Low | OPEN |
-| 17 | `finalize()` memory leak | Medium | OPEN |
+| 17 | `finalize()` memory leak | Medium | FIXED |
 | 18 | `wrap_numeric` template issue | Low | OPEN |
 
 ## Fixed in Steps 5-9
@@ -376,13 +358,14 @@ This document tracks correctness issues that must be fixed before the compiler c
 
 ## Priority Order for Remediation
 
-1. **Issue 1 + Issue 6** (`for` loop + range) — blocks all iteration
-2. **Issue 2 + Issue 17** (finalize cleanup) — blocks reliable long-running programs
-3. **Issue 3** (small int caching) — blocks correct integer equality
-4. **Issue 4** (exception propagation) — blocks error handling
-5. **Issue 5 + Issue 7** (runtime objects + setattr) — blocks object operations
-6. **Issue 9 + Issue 10** (comprehensions + lambda) — blocks common Python patterns
-7. **Issue 11** (import system) — blocks module usage
-8. **Issue 15** (missing gc.h) — structural fix
-9. **Issue 16** (duplicate include) — trivial fix
-10. **Issue 12-14, 18** (low severity stubs) — nice-to-have
+1. ~~**Issue 1 + Issue 6** (`for` loop + range) — blocks all iteration~~ **FIXED**
+2. ~~**Issue 2 + Issue 17** (finalize cleanup) — blocks reliable long-running programs~~ **FIXED**
+3. ~~**Issue 3** (small int caching) — blocks correct integer equality~~ **FIXED**
+4. ~~**Issue 4** (exception propagation) — blocks error handling~~ **FIXED**
+5. ~~**Issue 5 + Issue 7** (runtime objects + setattr) — blocks object operations~~ **Issue 5 FIXED, Issue 7 OPEN**
+6. **Issue 7** (`SETATTR` attribute name null) — blocks attribute setting
+7. **Issue 9 + Issue 10** (comprehensions + lambda) — blocks common Python patterns
+8. **Issue 11** (import system) — blocks module usage
+9. **Issue 15** (missing gc.h) — structural fix
+10. **Issue 16** (duplicate include) — trivial fix
+11. **Issue 12-14, 18** (low severity stubs) — nice-to-have
