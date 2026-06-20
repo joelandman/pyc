@@ -40,6 +40,7 @@ pyc_obj_t pyc_new_type(pyc_type_kind_t type_kind);
 // List operations
 pyc_obj_t pyc_list_get(pyc_obj_t list_obj, int64_t index);
 void pyc_list_set(pyc_obj_t list_obj, int64_t index, pyc_obj_t value);
+pyc_obj_t pyc_range_list(int64_t start, int64_t stop, int64_t step);
 
 // String operations
 const char* pyc_str_value(pyc_obj_t str_obj);

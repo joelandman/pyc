@@ -34,6 +34,20 @@ void PyObjectFactory::initialize() {
     int0_obj->data = 0;
     singletons_[TYPE_INT] = int0_obj;
 
+    // Create singleton for value -1 (small int caching)
+    auto int_neg1_obj = new PyObject();
+    int_neg1_obj->refcount = 1;
+    int_neg1_obj->type_object = static_cast<uint32_t>(TYPE_INT) | PY_FLAG_SINGLETON;
+    int_neg1_obj->data = static_cast<uint64_t>(-1);
+    singletons_[static_cast<PyTypeKind>(TYPE_INT + 1)] = int_neg1_obj;
+
+    // Create singleton for value 1 (small int caching)
+    auto int1_obj = new PyObject();
+    int1_obj->refcount = 1;
+    int1_obj->type_object = static_cast<uint32_t>(TYPE_INT) | PY_FLAG_SINGLETON;
+    int1_obj->data = 1;
+    singletons_[static_cast<PyTypeKind>(TYPE_INT + 2)] = int1_obj;
+
     // Create singleton TYPE_TYPE for type objects
     auto type_obj = new PyObject();
     type_obj->refcount = 1;
@@ -57,7 +71,12 @@ PyObject* PyObjectFactory::create_bool(PyObject* /*type_obj*/, bool value) {
 PyObject* PyObjectFactory::create_int(PyObject* /*type_obj*/, int64_t value) {
     if (value >= -1 && value <= 1) {
         // Small integers are cached as singletons
-        auto it = singletons_.find(TYPE_INT);
+        PyTypeKind singleton_kind;
+        if (value == -1) singleton_kind = static_cast<PyTypeKind>(TYPE_INT + 1);
+        else if (value == 0) singleton_kind = TYPE_INT;
+        else singleton_kind = static_cast<PyTypeKind>(TYPE_INT + 2);
+        
+        auto it = singletons_.find(singleton_kind);
         if (it != singletons_.end()) {
             it->second->refcount++;
             return it->second;
@@ -153,16 +172,26 @@ PyObject* PyObjectFactory::get_singleton(PyTypeKind kind) {
     return nullptr;
 }
 
+static PyObjectRegistry& get_registry() {
+    static PyObjectRegistry reg;
+    return reg;
+}
+
 void PyObjectFactory::finalize() {
+    // Clean up all non-singleton registered objects
+    auto& reg = get_registry();
+    for (auto* obj : reg.objects()) {
+        if (obj && !(obj->type_object & PY_FLAG_SINGLETON)) {
+            delete obj;
+        }
+    }
+    reg.cleanup();
+    
+    // Then clean up singletons
     for (auto& [kind, obj] : singletons_) {
         delete obj;
     }
     singletons_.clear();
-}
-
-static PyObjectRegistry& get_registry() {
-    static PyObjectRegistry reg;
-    return reg;
 }
 
 void PyObjectFactory::register_object(PyObject* obj) {

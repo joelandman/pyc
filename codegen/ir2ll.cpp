@@ -455,16 +455,62 @@ private:
             }
 
             case pyc::ir::IRInstKind::CALL: {
-                auto fit = func_map_.find(inst->name);
-                if (fit != func_map_.end()) {
-                    std::vector<llvm::Value*> call_args;
-                    for (size_t i = 1; i < inst->operands.size(); ++i) {
-                        auto* a = val(inst->operands[i]);
-                        call_args.push_back(a ? a : i64());
+                // Special handling for builtins
+                if (inst->name == "range") {
+                    auto* range_fn = mod_->getFunction("pyc_range_list");
+                    if (range_fn && inst->operands.size() >= 2) {
+                        // range(stop) or range(start, stop) or range(start, stop, step)
+                        int64_t start = 0, stop = 0, step = 1;
+                        
+                        if (inst->operands.size() >= 2) {
+                            auto* stop_val = val(inst->operands[1]);
+                            if (stop_val) stop = static_cast<int64_t>(llvm::cast<llvm::ConstantInt>(stop_val)->getSExtValue());
+                        }
+                        if (inst->operands.size() >= 3) {
+                            auto* start_val = val(inst->operands[2]);
+                            if (start_val) start = static_cast<int64_t>(llvm::cast<llvm::ConstantInt>(start_val)->getSExtValue());
+                        }
+                        if (inst->operands.size() >= 4) {
+                            auto* step_val = val(inst->operands[3]);
+                            if (step_val) step = static_cast<int64_t>(llvm::cast<llvm::ConstantInt>(step_val)->getSExtValue());
+                        }
+                        
+                        auto* i64_type = llvm::Type::getInt64Ty(ctx_);
+                        auto* start_c = llvm::ConstantInt::get(i64_type, static_cast<int64_t>(start));
+                        auto* stop_c = llvm::ConstantInt::get(i64_type, static_cast<int64_t>(stop));
+                        auto* step_c = llvm::ConstantInt::get(i64_type, static_cast<int64_t>(step));
+                        llvm::SmallVector<llvm::Value*, 3> range_args;
+                        range_args.push_back(start_c);
+                        range_args.push_back(stop_c);
+                        range_args.push_back(step_c);
+                        record(builder_.CreateCall(range_fn, range_args, "range_call"));
+                    } else {
+                        record(i64());
                     }
-                    record(builder_.CreateCall(fit->second, call_args));
+                } else if (inst->name == "print") {
+                    auto* print_fn = mod_->getFunction("pyc_print");
+                    if (print_fn && inst->operands.size() >= 2) {
+                        std::vector<llvm::Value*> call_args;
+                        for (size_t i = 1; i < inst->operands.size(); ++i) {
+                            auto* a = val(inst->operands[i]);
+                            call_args.push_back(a ? a : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)));
+                        }
+                        record(builder_.CreateCall(print_fn, call_args));
+                    } else {
+                        record(i64());
+                    }
                 } else {
-                    record(i64());
+                    auto fit = func_map_.find(inst->name);
+                    if (fit != func_map_.end()) {
+                        std::vector<llvm::Value*> call_args;
+                        for (size_t i = 1; i < inst->operands.size(); ++i) {
+                            auto* a = val(inst->operands[i]);
+                            call_args.push_back(a ? a : i64());
+                        }
+                        record(builder_.CreateCall(fit->second, call_args));
+                    } else {
+                        record(i64());
+                    }
                 }
                 break;
             }

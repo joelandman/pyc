@@ -86,6 +86,7 @@ pyc_obj_t pyc_codegen_new_object(pyc_type_kind_t type_kind) {
     obj->dict_entries = nullptr;
     obj->instance_attrs = nullptr;
     obj->next = nullptr;
+    PyObjectFactory::register_object(obj);
     return from_pyobj(obj);
 }
 
@@ -110,6 +111,7 @@ pyc_obj_t pyc_new_type(pyc_type_kind_t type_kind) {
     obj->dict_entries = nullptr;
     obj->instance_attrs = nullptr;
     obj->next = nullptr;
+    PyObjectFactory::register_object(obj);
     return from_pyobj(obj);
 }
 
@@ -137,6 +139,27 @@ void pyc_list_set(pyc_obj_t list_obj, int64_t index, pyc_obj_t value) {
     if (index >= 0 && index < static_cast<int64_t>(lst->list_elements->size())) {
         (*lst->list_elements)[static_cast<size_t>(index)] = to_pyobj(value);
     }
+}
+
+pyc_obj_t pyc_range_list(int64_t start, int64_t stop, int64_t step) {
+    auto* result = PyObjectFactory::create_list(nullptr);
+    if (!result || !result->list_elements) return from_pyobj(result);
+    
+    if (step == 0) step = 1;
+    
+    if (step > 0) {
+        for (int64_t i = start; i < stop; i += step) {
+            auto* int_obj = PyObjectFactory::create_int(nullptr, i);
+            result->list_elements->push_back(int_obj);
+        }
+    } else {
+        for (int64_t i = start; i > stop; i += step) {
+            auto* int_obj = PyObjectFactory::create_int(nullptr, i);
+            result->list_elements->push_back(int_obj);
+        }
+    }
+    
+    return from_pyobj(result);
 }
 
 // ===== String Operations =====

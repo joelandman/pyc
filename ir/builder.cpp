@@ -220,6 +220,7 @@ void IRBuilder::build_if_stmt(const ast::IfStmt& ifs) {
 
 void IRBuilder::build_for_stmt(const ast::ForStmt& fs) {
     uint32_t iter_slot = alloc_local("__for_iter__");
+    uint32_t index_slot = alloc_local("__for_index__");
     
     // Create loop blocks
     auto loop_cond_blk = current_func_->new_block("for_cond");
@@ -240,17 +241,40 @@ void IRBuilder::build_for_stmt(const ast::ForStmt& fs) {
     auto* store_inst = current_func_->new_inst(IRInstKind::STORELOCAL, "__for_iter__");
     store_inst->operands.push_back(iter_slot);
     store_inst->operands.push_back(loop_val);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(store_inst));
+    
+    // Initialize index to 0
+    auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "index_init");
+    zero->is_const = true;
+    std::get<double>(zero->const_val) = 0.0;
+    auto* index_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__for_index__");
+    index_store->operands.push_back(index_slot);
+    index_store->operands.push_back(zero->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(index_store));
     
     // Set up loop condition block
     current_block_ = loop_cond_blk;
     
-    // Get next item from iterator (stub: just use the iterator value)
-    auto* next_call = current_func_->new_inst(IRInstKind::CALL, "next");
-    next_call->operands.push_back(iter_slot);
+    // Load current index
+    auto* index_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "index_load");
+    index_load->operands.push_back(index_slot);
     
-    // Check if iteration is done (branch based on result)
+    // Load iterator (list)
+    auto* iter_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "iter_load");
+    iter_load->operands.push_back(iter_slot);
+    
+    // Get length of list via INTRINSIC_LEN
+    auto* len_inst = current_func_->new_inst(IRInstKind::INTRINSIC_LEN, "list_len");
+    len_inst->operands.push_back(iter_load->id);
+    
+    // Compare: index < len
+    auto* cmp_inst = current_func_->new_inst(IRInstKind::LT, "index_lt_len");
+    cmp_inst->operands.push_back(index_load->id);
+    cmp_inst->operands.push_back(len_inst->id);
+    
+    // Branch based on comparison
     auto* branch_inst = current_func_->new_inst(IRInstKind::BRANCH, "for_branch");
-    branch_inst->operands.push_back(next_call->id);
+    branch_inst->operands.push_back(cmp_inst->id);
     branch_inst->operands.push_back(loop_body_blk->id);
     branch_inst->operands.push_back(loop_merge_blk->id);
     current_block_->successors.push_back(loop_body_blk->id);
@@ -258,14 +282,38 @@ void IRBuilder::build_for_stmt(const ast::ForStmt& fs) {
     
     // Body block
     current_block_ = loop_body_blk;
+    
+    // Get element at current index via LIST_GET
     auto body_alloc = alloc_local(fs.target());
-    auto* assign_inst = current_func_->new_inst(IRInstKind::STORELOCAL, fs.target());
-    assign_inst->operands.push_back(body_alloc);
-    assign_inst->operands.push_back(next_call->id);
+    auto* list_get = current_func_->new_inst(IRInstKind::LIST_GET, "get_item");
+    list_get->operands.push_back(iter_load->id);
+    list_get->operands.push_back(index_load->id);
+    
+    auto* body_store = current_func_->new_inst(IRInstKind::STORELOCAL, fs.target());
+    body_store->operands.push_back(body_alloc);
+    body_store->operands.push_back(list_get->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(body_store));
     
     for (auto& s : fs.body()) {
         build_stmt(*s);
     }
+    
+    // Increment index: index = index + 1
+    auto* one = current_func_->new_inst(IRInstKind::LOADCONST_INT, "one");
+    one->is_const = true;
+    std::get<double>(one->const_val) = 1.0;
+    auto* add_inst = current_func_->new_inst(IRInstKind::ADD, "index_inc");
+    add_inst->operands.push_back(index_load->id);
+    add_inst->operands.push_back(one->id);
+    auto* inc_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__for_index__");
+    inc_store->operands.push_back(index_slot);
+    inc_store->operands.push_back(add_inst->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inc_store));
+    
+    // Jump back to condition
+    auto* jump_inst = current_func_->new_inst(IRInstKind::JUMP, "for_jump");
+    jump_inst->operands.push_back(loop_cond_blk->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_inst));
     
     // Pop loop context
     loop_stack_.pop_back();
