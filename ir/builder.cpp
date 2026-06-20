@@ -517,10 +517,22 @@ void IRBuilder::build_try_stmt(const ast::TryStmt& tr) {
     current_block_ = try_blk;
     for (auto& s : tr.body()) {
         build_stmt(*s);
+        
+        // Check for exception after each statement
+        auto* check_exc = current_func_->new_inst(IRInstKind::CALL, "pyc_get_exception");
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(check_exc));
+        
+        auto* branch_inst = current_func_->new_inst(IRInstKind::BRANCH, "try_branch");
+        branch_inst->operands.push_back(check_exc->id);
+        branch_inst->operands.push_back(except_blk->id);
+        branch_inst->operands.push_back(merge_blk->id);
+        current_block_->successors.push_back(except_blk->id);
+        current_block_->successors.push_back(merge_blk->id);
+        
+        auto* jump_inst = current_func_->new_inst(IRInstKind::JUMP, "try_continue");
+        jump_inst->operands.push_back(merge_blk->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_inst));
     }
-    auto* jump_to_merge = current_func_->new_inst(IRInstKind::JUMP, "try_jump");
-    jump_to_merge->operands.push_back(merge_blk->id);
-    current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_to_merge));
     
     current_block_ = except_blk;
     for (auto& handler : tr.handlers()) {
@@ -528,6 +540,9 @@ void IRBuilder::build_try_stmt(const ast::TryStmt& tr) {
             build_stmt(*s);
         }
     }
+    auto* jump_to_merge = current_func_->new_inst(IRInstKind::JUMP, "except_jump");
+    jump_to_merge->operands.push_back(merge_blk->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_to_merge));
     
     current_block_ = merge_blk;
 }
