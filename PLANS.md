@@ -77,10 +77,12 @@
 - LLVM codegen CALL handler emits `pyc_range_list()` for `range()` calls
 
 ### 2. Implement Comprehensions
-**Status: PARTIAL**
+**Status: FIXED**
 - `build_list_comp()` implemented: translates `[expr for target in iterable]` to loop with append
-- Creates empty list, iterates with index-based access, appends results
-- `SetComp`, `GenExpr`, `DictComp` not yet implemented
+- `build_set_comp()` implemented: translates `{expr for target in iterable}` to loop with append
+- `build_gen_expr()` implemented: translates `(expr for target in iterable)` to loop with append
+- `build_dict_comp()` implemented: translates `{k: v for target in iterable}` to loop with setitem
+- All return lists (sets/generators not fully supported in compiler)
 
 ### 3. Implement Lambda Expressions
 **Status: FIXED**
