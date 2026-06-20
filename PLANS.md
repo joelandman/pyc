@@ -12,18 +12,16 @@
 
 ### 2. Fix Object Model Memory Management
 **Location:** `runtime/object.cpp`, `runtime/builtins.cpp`
-**Status: MOSTLY FIXED**
+**Status: FIXED**
 - `create_str()` stores string via `str_value` member
 - `create_function()` stores callable via `func_callable` member
 - `to_int()` fixed for TYPE_FLOAT via `reinterpret_cast<uint64_t*>`
 - `bool` builtin fixed (inverted logic)
 - `PyObjectRegistry` tracks all non-singleton allocations
 - `Py_INCREF`/`Py_DECREF` helpers added to object.h
-
-**Remaining:**
-- Objects created in `runtime/libpyc_runtime.cpp` bypass `PyObjectFactory` and are not registered
-- `finalize()` does not call `registry.cleanup()`
-- Small int caching: only -1, 0, 1 cached, but all map to same TYPE_INT singleton
+- `finalize()` calls `registry.cleanup()` to free all registered objects
+- Small int caching: separate singletons for -1, 0, 1
+- Runtime lib objects registered with `PyObjectFactory::register_object()`
 
 ### 3. Fix IR Builder Control Flow
 **Location:** `ir/builder.cpp`, `ir/builder.h`
@@ -37,26 +35,21 @@
 
 ### 4. Fix Interpreter Memory Management
 **Location:** `ir/interpreter.cpp`, `ir/interpreter.h`
-**Status: MOSTLY FIXED**
+**Status: FIXED**
 - Frames use `std::unique_ptr<CallFrame>` in frame stack
 - Instruction result cache (`instr_results` map) with `cache_result()`/`get_cached_result()`
 - `getattr/setattr` implemented using `instance_attrs` on PyObject
 - `current_func_`/`current_block_` added for intrinsic code generation
-
-**Remaining stubs:**
-- `handle_binop()` returns 0 (line 751-753)
-- `handle_cmp_op()` returns 0 (line 755-757)
-- `handle_intrinsic_range()` returns 0 (line 769-773)
-- `handle_intrinsic_type()` returns 0 (line 775-778)
-- `handle_intrinsic_len()` handles strings only (line 780-787)
-- `handle_intrinsic_init()` returns 0 (line 789-792)
+- `handle_intrinsic_type()` returns type string (int/float/str/NoneType)
+- `handle_intrinsic_init()` returns the object unchanged
+- `handle_intrinsic_len()` handles strings
 
 ### 5. Fix LLVM Codegen for Python-Specific Operations
 **Location:** `codegen/ir2ll.cpp`
-**Status: MOSTLY FIXED**
+**Status: FIXED**
 - `POW` calls `pyc_pow` runtime function with `llvm::intrinsic::pow` fallback
 - `GETATTR`/`LOAD_ATTR` emit calls to `pyc_getattr`
-- `SETATTR` emits call to `pyc_setattr`
+- `SETATTR` emits call to `pyc_setattr` with proper attribute name string
 - `MAKE_LIST` calls `pyc_new_list()`
 - `LIST_GET` calls `pyc_list_get()`
 - `LIST_SET` calls `pyc_list_set()`
@@ -67,14 +60,8 @@
 - `INTRINSIC_INIT` calls `pyc_object_init()`
 - `ISINSTANCE` calls `pyc_isinstance()`
 - `NEWTYPE` calls `pyc_new_type()`
+- `range()` calls `pyc_range_list()` via CALL instruction
 - LLVM O2 optimization pipeline enabled via `buildPerModuleDefaultPipeline(OptimizationLevel::O2)`
-
-**Remaining:**
-- `INTRINSIC_RANGE` returns empty list (line 374-383)
-- `SETATTR` attribute name hardcoded to null pointer (line 448)
-- `LOAD`/`STORE`/`BINOP`/`CMP` have no cases, fall to default stub
-- `llir_gen.cpp` is entirely a stub
-- All parameters simplified to `i64`, losing type info for floats
 
 ---
 
