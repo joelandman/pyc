@@ -4,338 +4,426 @@
 
 ### 1. Fix Garbage Collector Fundamentals
 **Location:** `runtime/gc.cpp`, `runtime/object.h`
-**Status: IN PROGRESS**
-**Issues:**
-- `mark_object()` increments refcount during marking, which corrupts reference counting semantics (gc.cpp:53)
-- `del_ref()` checks `!mark_set_.count(obj)` to decide whether to delete, but this inverts the correct logic — an object should be deleted when it is NOT marked during sweep (gc.cpp:70)
-- `new_object()` adds every object to `roots_`, but roots are never pruned during sweep, making the collector ineffective
-- `roots_` is never cleaned up, causing the root set to grow monotonically
-
-**Plan:**
-- Rewrite `mark_object()` to only set the mark bit without touching refcount
-- Implement proper sweep: iterate `roots_`, delete unmarked objects, remove them from roots
-- Separate root management from object creation — objects should not auto-register as roots
-- Add root scopes so roots are automatically popped when a scope exits
+**Status: FIXED**
+- `mark_object()` only sets mark bit, no longer touches refcount
+- `del_ref()` deletes at refcount zero without mark set check
+- `collect()` rebuilds `roots_` after sweep to contain only marked objects
+- `new_object()` no longer auto-registers as root
 
 ### 2. Fix Object Model Memory Management
 **Location:** `runtime/object.cpp`, `runtime/builtins.cpp`
-**Status: PARTIALLY FIXED**
-**Fixed:**
-- `create_str()` now stores string value via `str_value` member (object.cpp:75-80)
-- `create_function()` now stores callable via `func_callable` member (object.cpp:107-113)
-- `to_int()` fixed for TYPE_FLOAT: uses `reinterpret_cast<uint64_t*>(&obj->data)` (builtins.cpp:27)
-- `bool` builtin fixed: `args[0]->data != 0` instead of `!args[0]->data` (builtins.cpp:1021)
+**Status: MOSTLY FIXED**
+- `create_str()` stores string via `str_value` member
+- `create_function()` stores callable via `func_callable` member
+- `to_int()` fixed for TYPE_FLOAT via `reinterpret_cast<uint64_t*>`
+- `bool` builtin fixed (inverted logic)
+- `PyObjectRegistry` tracks all non-singleton allocations
+- `Py_INCREF`/`Py_DECREF` helpers added to object.h
 
 **Remaining:**
-- Every `create_int()`, `create_float()`, `create_str()`, `create_list()`, `create_dict()` allocates with `new` but there is no corresponding free path
-- `finalize()` only cleans up singletons, not all allocated objects
+- Objects created in `runtime/libpyc_runtime.cpp` bypass `PyObjectFactory` and are not registered
+- `finalize()` does not call `registry.cleanup()`
+- Small int caching: only -1, 0, 1 cached, but all map to same TYPE_INT singleton
 
-**Plan:**
-- Implement proper refcounting: `Py_INCREF`/`Py_DECREF` semantics with automatic deletion at zero
-- Add a `PyInterpreter::cleanup()` that frees all non-singleton objects
-
-### 3. Fix IR Builder Duplicate Code and Control Flow
+### 3. Fix IR Builder Control Flow
 **Location:** `ir/builder.cpp`, `ir/builder.h`
 **Status: FIXED**
-**Fixed in Step 5:**
-- `build_unary()` fixed: NEG now emits `0 - operand`, UPLUS returns operand directly (builder.cpp:487-500)
-- `build_call()` now detects class constructors and calls `build_class_call()` (builder.cpp:635-652)
-- `build_class_call()` implemented: creates NEWOBJ + CALL for class instantiation (builder.cpp:493-512)
-- `build_subscript()` added for list/dict indexing via LIST_GET (builder.cpp:654-663)
-- Loop context tracking added via `LoopContext` struct for break/continue (builder.h:27-30)
-- `build_break_stmt()` and `build_continue_stmt()` use loop context for proper jumps (builder.cpp:534-547)
-- All new statement handlers added: delete, global, nonlocal, assert, raise, with, try, break, continue
+- `build_unary()` fixed: NEG emits `0 - operand`, UPLUS returns operand directly
+- `build_call()` detects class constructors via `build_class_call()`
+- `build_class_call()` creates NEWOBJ + CALL for instantiation
+- `build_subscript()` added for LIST_GET
+- Loop context tracking via `LoopContext` struct for break/continue
+- All 10 statement handlers added: delete, global, nonlocal, assert, raise, with, try, break, continue
 
-### 4. Fix Interpreter Memory Management and Control Flow
+### 4. Fix Interpreter Memory Management
 **Location:** `ir/interpreter.cpp`, `ir/interpreter.h`
-**Status: PARTIALLY FIXED**
-**Fixed:**
-- Frames now use `std::unique_ptr<CallFrame>` in frame stack (interpreter.cpp:87-95)
-- Instruction result cache added to CallFrame: `instr_results` map with `cache_result()`/`get_cached_result()` (interpreter.h:30-39)
-- `execute_instruction()` now caches all instruction results (interpreter.cpp:269-420)
-- `getattr/setattr` implemented using global_vars_ with key format `instance_attr_{obj_id}_{attr_name}` (interpreter.cpp:446-462)
-- `current_func_` and `current_block_` added to Interpreter for intrinsic code generation (interpreter.h:154-155)
+**Status: MOSTLY FIXED**
+- Frames use `std::unique_ptr<CallFrame>` in frame stack
+- Instruction result cache (`instr_results` map) with `cache_result()`/`get_cached_result()`
+- `getattr/setattr` implemented using `instance_attrs` on PyObject
+- `current_func_`/`current_block_` added for intrinsic code generation
 
-**Remaining:**
-- `resolve_value()` still has O(N^2) linear scan (but is dead code - never called)
+**Remaining stubs:**
+- `handle_binop()` returns 0 (line 751-753)
+- `handle_cmp_op()` returns 0 (line 755-757)
+- `handle_intrinsic_range()` returns 0 (line 769-773)
+- `handle_intrinsic_type()` returns 0 (line 775-778)
+- `handle_intrinsic_len()` handles strings only (line 780-787)
+- `handle_intrinsic_init()` returns 0 (line 789-792)
 
 ### 5. Fix LLVM Codegen for Python-Specific Operations
 **Location:** `codegen/ir2ll.cpp`
-**Status: PARTIALLY FIXED**
-**Fixed:**
-- `POW` now calls `pyc_pow` runtime function with `llvm::intrinsic::pow` fallback (ir2ll.cpp:463-486)
-- `GETATTR`/`LOAD_ATTR` now emit calls to `pyc_getattr` runtime function (ir2ll.cpp:349-365)
-- `SETATTR` now emits call to `pyc_setattr` runtime function (ir2ll.cpp:367-382)
-- `pyc_getattr` and `pyc_setattr` runtime functions declared (ir2ll.cpp:104-112)
-- LLVM O2 optimization pipeline enabled via `buildPerModuleDefaultPipeline(OptimizationLevel::O2)` (ir2ll.cpp:560-571)
+**Status: MOSTLY FIXED**
+- `POW` calls `pyc_pow` runtime function with `llvm::intrinsic::pow` fallback
+- `GETATTR`/`LOAD_ATTR` emit calls to `pyc_getattr`
+- `SETATTR` emits call to `pyc_setattr`
+- `MAKE_LIST` calls `pyc_new_list()`
+- `LIST_GET` calls `pyc_list_get()`
+- `LIST_SET` calls `pyc_list_set()`
+- `NEWOBJ` calls `pyc_codegen_new_object()`
+- `INTRINSIC_PRINT` calls `pyc_print()`
+- `INTRINSIC_TYPE` calls `pyc_type_name()`
+- `INTRINSIC_LEN` calls `pyc_len()`
+- `INTRINSIC_INIT` calls `pyc_object_init()`
+- `ISINSTANCE` calls `pyc_isinstance()`
+- `NEWTYPE` calls `pyc_new_type()`
+- LLVM O2 optimization pipeline enabled via `buildPerModuleDefaultPipeline(OptimizationLevel::O2)`
 
 **Remaining:**
-- `NEWOBJ`, `NEWTYPE`, `MAKE_LIST`, `LIST_GET`, `LIST_SET`, `ISINSTANCE`, `INTRINSIC_*` still return `i64(0)` stubs
-- `CALL` only works for functions in `func_map_` by name, not for dynamic function objects
-- `LOADCONST_STR` creates a `GlobalVariable` but never loads the actual string bytes
-- All parameters are simplified to `i64`, losing type information for floating point
+- `INTRINSIC_RANGE` returns empty list (line 374-383)
+- `SETATTR` attribute name hardcoded to null pointer (line 448)
+- `LOAD`/`STORE`/`BINOP`/`CMP` have no cases, fall to default stub
+- `llir_gen.cpp` is entirely a stub
+- All parameters simplified to `i64`, losing type info for floats
 
 ---
 
 ## Completeness Plan
 
-### 1. Establish Test Infrastructure
-**Status: COMPLETE**
-- `test/` directory with 7 test files (01_arithmetic.py through 07_booleans.py)
-- `--test-compile` mode works for lexer testing
-- `--test-ir` mode implemented (requires lark_bridge.py JSON output)
-- `test/benchmarks/` with 7 benchmark programs
-- `test/scalability_results.txt` with scalability measurements
-
-### 2. Implement Import System
+### 1. Complete `for` Loop Iteration
 **Status: PARTIAL**
-- `build_import_stmt()` added to IR builder (builder.cpp:353-361)
-- Import statement parsing works via lark_bridge.py
-- Full module loading not implemented
+- `build_for_stmt()` creates loop structure but uses `CALL "next"` stub (builder.cpp:247-253)
+- `range()` builtin implemented (returns list)
+- Need: `__iter__` and `__next__` protocol support for lists/iterators
 
-### 3. Implement Class System
+**Plan:**
+- Add `__iter__` method support: for list objects, return index tracker
+- Add `__next__` method: return next element or raise StopIteration
+- Update `build_for_stmt()` to call `__iter__` then `__next__` in loop
+- Handle StopIteration exception to exit loop
+
+### 2. Implement Comprehensions
+**Status: NOT STARTED**
+- AST nodes exist: `ListComp`, `SetComp`, `GenExpr`, `DictComp` (ast.h:343-411)
+- Grammar rules exist in `python.lark` (lines 154-167)
+- No IR builder handlers
+- No interpreter or LLVM codegen support
+
+**Plan:**
+- Add `build_list_comp()` to IR builder: translate to loop with append
+- Add `build_set_comp()` / `build_dict_comp()` similarly
+- Generate IR equivalent of `result = []; [result.append(x) for x in iter]`
+- Implement in interpreter via existing loop infrastructure
+- Implement in LLVM codegen via existing list operations
+
+### 3. Implement Lambda Expressions
+**Status: NOT STARTED**
+- `LambdaExpr` AST node exists (ast.h:329)
+- Grammar rule exists in `python.lark` (line 169)
+- No IR builder handler
+- No interpreter or LLVM codegen support
+
+**Plan:**
+- Add `build_lambda_expr()` to IR builder: create function with captured scope
+- Generate unique function name: `lambda_<line>_<col>`
+- Capture free variables from enclosing scope into function globals
+- Store function object via `create_function()` with `std::function` callable
+- Interpreter handles via existing `handle_call()` with `func_callable`
+
+### 4. Implement Import System
 **Status: PARTIAL**
-- `build_class()` creates `__init__` and method functions (builder.cpp:99-168)
-- `build_class_call()` handles class instantiation (builder.cpp:493-512)
-- `getattr/setattr` implemented in interpreter and LLVM codegen
-- MRO for inheritance not implemented
-- `super()` not implemented
+- `build_import_stmt()` is a stub (builder.cpp:353-361)
+- `ImportStmt` AST node exists (ast.h:312)
+- Grammar rule exists in `python.lark` (lines 86-90)
+- `import` builtin is a stub (builtins.cpp:609-612)
 
-### 4. Implement Exception Handling
+**Plan:**
+- Add file-based module loading: read .py file, parse, build IR, compile
+- Implement `sys.path` as global list of search directories
+- Create `PyModule` type with namespace dict for module globals
+- Handle `import foo` → load `foo.py`, bind to global `foo`
+- Handle `from foo import bar` → copy `bar` from module namespace
+- Stub: raise `NotImplementedError` for non-builtin imports
+
+### 5. Implement Exception Handling Runtime
 **Status: PARTIAL**
-- `build_raise_stmt()` implemented (builder.cpp:406-416)
-- `build_try_stmt()` implemented with try/except/merge blocks (builder.cpp:448-471)
-- `RaiseStmt` AST node exists
-- Runtime exception propagation not implemented
-- `finally` not implemented
+- `build_raise_stmt()` returns 0 instead of raising (builder.cpp:418-429)
+- `build_try_stmt()` creates try/except blocks but no runtime propagation
+- `RaiseStmt` AST node exists (ast.h:239)
+- Grammar rule exists in `python.lark` (lines 55-58)
+- `RuntimeError` struct exists but unused
 
-### 5. Implement Remaining Language Features
-**Status: MOSTLY COMPLETE**
-**Fixed in Step 5:**
-- **With statements:** `build_with_stmt()` implemented (builder.cpp:418-430)
-- **Delete:** `build_delete_stmt()` stores 0 to target slots (builder.cpp:363-373)
-- **Global/Nonlocal:** `build_global_stmt()`/`build_nonlocal_stmt()` emit LOADGLOBAL (builder.cpp:375-387)
-- **Assert:** `build_assert_stmt()` with conditional branch (builder.cpp:389-404)
-- **Break/Continue:** With loop context tracking for proper jumps (builder.cpp:534-547)
-- **Subscript:** `build_subscript()` for LIST_GET (builder.cpp:654-663)
-
-**Remaining:**
-- **Comprehensions:** Not implemented (grammar exists but no codegen)
-- **F-strings:** Not implemented
-- **Tuple unpacking:** Not implemented
-- **Match/case:** Grammar exists but no codegen
+**Plan:**
+- Add `pyc_raise_exception(obj)` runtime function that stores exception in thread-local
+- Add `pyc_get_exception()` and `pyc_clear_exception()` helpers
+- Update `build_raise_stmt()` to emit CALL `pyc_raise_exception`
+- Update `handle_call()` in interpreter to check for exceptions after each call
+- Implement try/except: branch to except block if exception is set
+- Handle `finally` as unconditional cleanup block after try/except
 
 ---
 
-## Performance Testing Plan
+## Performance Plan
 
-### 1. Establish Micro-Benchmark Suite
-**Status: COMPLETE**
-- `test/benchmarks/` with 7 benchmark programs:
-  - `tight_loop.py` - 1M iteration numeric loop
-  - `function_calls.py` - 100K function call overhead test
-  - `list_ops.py` - 100K list create/append/access
-  - `dict_ops.py` - 50K dict create/insert/access
-  - `string_ops.py` - 10K string concatenation
-  - `recursion.py` - factorial(20) recursion test
-  - `nbody.py` - N-body gravitational simulation (50 bodies, 100 steps)
-- `test/benchmarks/run_benchmarks.sh` runner script
+### 1. Introduce Type-Specialized IR Instructions
+**Current bottleneck:** Every arithmetic operation boxes values into `PyObject*`, calls runtime functions, checks types, and unboxes. A simple `a + b` compiles to: LOADGLOBAL → LOADGLOBAL → CALL pyc_runtime_add → STORELOCAL.
 
-### 2. N-Body Benchmark (Reference Implementation)
-**Status: COMPLETE**
-- `test/benchmarks/nbody.py` created
-- Full N-body simulation with 50 bodies, 100 steps
-- Measures kinetic energy, potential energy, COM momentum
-- Full compilation requires working lark parser (currently has grammar issue)
+**Plan:**
+- Add type metadata to IR: `LOADCONST_INT` already exists but all operations treat values as generic `i64`
+- Extend `IRInst` with `TypeKind` field to track whether a value is int/float/object
+- In LLVM codegen, emit native `add`/`mul`/`sub` for int/float operations instead of calling runtime
+- Only call runtime functions for object operations (getattr, len, type, isinstance)
+- Add `IS_INT`/`IS_FLOAT` type check instructions to branch between specialized and generic paths
 
-### 3. Memory Profiling with Valgrind/ASan
-**Status: COMPLETE**
-- All 7 tests pass under AddressSanitizer: 0 errors
-- All 7 tests pass under Valgrind 3.26.0: 0 errors, 0 bytes lost
-- 159KB "still reachable" from LLVM internals (expected, not a leak)
-- `build_asan/` directory for ASan builds
-- Valgrind installed and tested
+### 2. Add IR-Level Constant Folding
+**Current bottleneck:** No compile-time evaluation of constant expressions. `1 + 2 * 3` becomes runtime operations.
 
-### 4. LLVM Optimization Pipeline Validation
-**Status: COMPLETE**
-- O2 optimization pipeline enabled in `translate_module()` (ir2ll.cpp:560-571)
-- Uses `buildPerModuleDefaultPipeline(OptimizationLevel::O2)`
-- Enables LLVM's standard optimization passes (inlining, constant folding, DCE, etc.)
-- Full validation requires working lark parser for end-to-end testing
+**Plan:**
+- After building each IR function, run a constant folding pass over linear blocks
+- For each instruction, check if all operands are constants (`is_const == true`)
+- If yes, evaluate the operation and replace with a `LOADCONST` instruction
+- Handle arithmetic ops (ADD, SUB, MUL, DIV, MOD, POW), comparisons (LT, LE, GT, GE, EQ, NE), and boolean ops (AND, OR, NOT)
+- This eliminates entire expression trees at compile time
+- Expected speedup: 20-40% for programs with many constant expressions (math, benchmarks)
 
-### 5. Scalability Testing
-**Status: COMPLETE**
-- `test/scalability_test.sh` - compile time/binary size tests
-- `test/runtime_scalability_test.sh` - function/global scaling tests
-- Results in `test/scalability_results.txt`:
-  - Compile time: 7-14ms for 10-500 line programs
-  - Global variable scaling: consistent 8-9ms for 10-200 globals
-  - Compile time dominated by process startup/LLVM init, not linear
+### 3. Inline Small Built-in Functions
+**Current bottleneck:** Every builtin call (print, len, type, range, etc.) goes through `std::function` indirection and PyObject allocation. `len(x)` compiles to: LOADGLOBAL len → LOADLOCAL x → CALL builtin_len → result.
+
+**Plan:**
+- In LLVM codegen, detect calls to known builtins by name and emit inline code
+- `len(x)` → call `pyc_len(x)` directly (already done) but eliminate the LOADGLOBAL step
+- `print(x)` → call `pyc_print(x)` directly without function lookup
+- `type(x)` → call `pyc_type_name(x)` directly
+- `range(n)` → create list with `pyc_new_list()` and loop with `pyc_list_set()`
+- Add a builtin dispatch table in ir2ll.cpp that maps builtin names to inline LLVM IR
+- Expected speedup: 30-50% for programs heavy on builtin calls
+
+### 4. Optimize Object Allocation with Arena Allocator
+**Current bottleneck:** Every `new PyObject()` goes through `malloc`/`new` with per-object overhead. Hot loops create and destroy thousands of small objects.
+
+**Plan:**
+- Create `PyObjectArena` class that pre-allocates 4KB blocks and hands out objects from them
+- Track allocations per arena; free entire arena at once instead of individual objects
+- Add `arena_alloc()` to PyObjectFactory as primary allocation path
+- Singletons still use direct `new`; arena used for all runtime objects
+- Add arena per function scope; reclaim at function return
+- Expected speedup: 15-30% for programs with heavy object creation (list append, dict insert)
+
+### 5. Enable LLVM Inlining and Profile-Guided Optimization
+**Current bottleneck:** LLVM O2 pipeline is enabled but aggressive inlining is not configured. Runtime functions like `pyc_list_get`, `pyc_getattr` are not inlined across call boundaries.
+
+**Plan:**
+- Configure LLVM passes for aggressive inlining: `PassBuilderOptions.setInliningThreshold(InliningMode::Standard)`
+- Add `alwaysinline` attribute to small runtime functions: `pyc_int_from_double`, `pyc_isinstance`, `pyc_len`
+- Add `noinline` to large functions: `py_object_to_string`, `pyc_print`
+- Use `opt` command-line tool to inspect generated LLVM IR and verify inlining
+- Add `llvm::Attribute::InlineHint` to hot call sites (builtins, list operations)
+- Expected speedup: 10-25% for programs with many small function calls
 
 ---
 
 ## Future Implementation Plans
 
-### Issue 9: Complete LLVM Codegen Runtime Functions
+### Issue: Complete Object Registry Cleanup
+**Location:** `runtime/object.cpp`, `runtime/object_registry.cpp`
+**Severity: Medium**
 
-**Location:** `codegen/ir2ll.cpp`, `runtime/` (new file needed)  
-**Severity:** High  
-**Status:** PARTIALLY FIXED (POW, GETATTR, SETATTR done; O2 optimization enabled)
+**Problem:** `finalize()` only frees singletons. Objects registered with `PyObjectRegistry` are not cleaned up. Objects created in `libpyc_runtime.cpp` bypass the factory entirely.
 
-#### Current State
-The following LLVM codegen stubs already call runtime functions (but runtime may not exist):
-- `MAKE_LIST` → calls `pyc_new_list()` (ir2ll.cpp:268-276)
-- `LIST_GET` → calls `pyc_list_get(obj, index)` (ir2ll.cpp:279-294)
-- `LIST_SET` → calls `pyc_list_set(obj, index, value)` (ir2ll.cpp:297-309)
-- `NEWOBJ` → calls `pyc_new_object(type_kind)` (ir2ll.cpp:312-321)
-- `INTRINSIC_PRINT` → calls `pyc_print(obj)` (ir2ll.cpp:324-332)
-- `INTRINSIC_RANGE` → calls `pyc_new_list()` (ir2ll.cpp:335-343)
-- `GETATTR` → calls `pyc_getattr(obj, name_ptr)` (ir2ll.cpp:352-367)
-- `SETATTR` → calls `pyc_setattr(obj, name_ptr, value)` (ir2ll.cpp:369-383)
+**Plan:**
+- Call `registry.cleanup()` in `PyObjectFactory::finalize()`
+- Route `pyc_codegen_new_object()` and `pyc_new_type()` through `PyObjectFactory`
+- Add `PyObjectRegistry::get_stats()` for debugging (live_count, peak_count)
 
-The following are still stubs:
-- `INTRINSIC_TYPE` → returns `i64(0)` (ir2ll.cpp:346-347)
-- `INTRINSIC_LEN` → returns `i64(0)` (ir2ll.cpp:347)
-- `INTRINSIC_INIT` → returns `i64(0)` (ir2ll.cpp:348)
-- `ISINSTANCE` → returns `i64(0)` (ir2ll.cpp:531-532)
-- `NEWTYPE` → falls through to default `i64(0)` (ir2ll.cpp:535-536)
+### Issue: Fix Small Integer Caching
+**Location:** `runtime/object.cpp:57-72`
+**Severity: Medium**
 
-#### Runtime Functions Declared (in ir2ll.cpp:declare_runtime_functions)
-```cpp
-pyc_new_object(i32 type_kind) -> i8*
-pyc_new_list() -> i8*
-pyc_list_get(i8* list, i64 index) -> i8*
-pyc_list_set(i8* list, i64 index, i8* value) -> void
-pyc_print(i8* obj) -> void
-pyc_str_value(i8* obj) -> i8*
-pyc_pow(i64 base, i64 exp) -> double
-pyc_int_from_double(double val) -> i64
-pyc_getattr(i8* obj, i8* name) -> i8*
-pyc_setattr(i8* obj, i8* name, i8* value) -> void
-```
+**Problem:** All small integers (-1, 0, 1) return the same TYPE_INT singleton (value 0). `create_int(42)` creates a new object every time with no caching.
 
-#### Plan
+**Plan:**
+- Create separate singletons for -1, 0, 1, 2, 3 (Python standard is -5 to 256)
+- Use `singletons_[TYPE_INT + offset]` for each cached value
+- Cache 42 in a separate map: `std::unordered_map<int64_t, PyObject*> small_int_cache_`
+- Look up in cache before allocating new object
 
-**Step 1: Create runtime library (runtime/libpyc_runtime.cpp)**
-- Implement all declared runtime functions
-- Each function takes/returns `i8*` (PyObject*) and casts appropriately
-- Use PyObjectFactory for object creation
-- Use py_object_to_string() for string output
+### Issue: Fix `INTRINSIC_RANGE` and `for` Loop Together
+**Location:** `codegen/ir2ll.cpp:374-383`, `ir/builder.cpp:221-275`
+**Severity: High**
 
-**Step 2: Implement INTRINSIC_TYPE**
-- Add `pyc_type_name(i8* obj) -> i8*` runtime function
-- Return type name string (e.g., "<class 'int'>")
-- Update ir2ll.cpp case to call runtime function
+**Problem:** `range()` builtin returns a list, but `for` loop iteration is a stub calling `CALL "next"` which doesn't exist.
 
-**Step 3: Implement INTRINSIC_LEN**
-- Extend `pyc_list_get` or add `pyc_len(i8* obj) -> i64`
-- Handle str, list, dict, tuple types
-- Update ir2ll.cpp case to call runtime function
-
-**Step 4: Implement INTRINSIC_INIT**
-- Add `pyc_object_init(i8* obj) -> i8*` 
-- Call PyObject destructor or __init__ if present
-- Update ir2ll.cpp case to call runtime function
-
-**Step 5: Implement ISINSTANCE**
-- Add `pyc_isinstance(i8* obj, i32 type_kind) -> i64`
-- Compare obj type against type_kind
-- Update ir2ll.cpp case to call runtime function
-
-**Step 6: Implement NEWTYPE**
-- Add `pyc_new_type(i32 type_kind) -> i8*`
-- Create type object via PyObjectFactory
-- Update ir2ll.cpp case to call runtime function
-
-**Step 7: Create CMakeLists.txt entry for runtime library**
-- Build libpyc_runtime.a from runtime/libpyc_runtime.cpp
-- Link against main executable
-
-**Step 8: End-to-end testing**
-- Test list creation, access, mutation
-- Test object creation and attribute access
-- Test type/len intrinsics
-- Verify no crashes or memory errors
-
-#### Files to Create/Modify
-- **Create:** `runtime/libpyc_runtime.cpp` (~300 lines)
-- **Create:** `runtime/libpyc_runtime.h` (function declarations)
-- **Modify:** `CMakeLists.txt` (add runtime library target)
-- **Modify:** `codegen/ir2ll.cpp` (update INTRINSIC_TYPE, INTRINSIC_LEN, INTRINSIC_INIT, ISINSTANCE, NEWTYPE cases)
+**Plan:**
+- Implement `pyc_range_list(n)` in runtime: creates list [0, 1, ..., n-1]
+- Update `build_for_stmt()` to use list iteration: iterate over list elements directly
+- Or implement iterator protocol: `__iter__` returns index 0, `__next__` returns element or raises
 
 ---
 
-### Issue 2: Complete Object Model Memory Management
+## Performance Plans: Relative to Python Interpreter
 
-**Location:** `runtime/object.cpp`, `runtime/object.h`, `runtime/gc.cpp`  
-**Severity:** Critical  
-**Status:** PARTIALLY FIXED (create_str stores str_value, create_function stores func_callable)
+### 1. Benchmark Against CPython for Same Programs
+**Goal:** Establish baseline performance gap and identify hotspots.
 
-#### Current State
-**Fixed:**
-- `create_str()` stores string in `obj->str_value` (object.cpp:79)
-- `create_function()` stores callable in `obj->func_callable` (object.cpp:112)
-- `to_int()` fixed for TYPE_FLOAT (builtins.cpp:27)
-- `bool` builtin fixed (builtins.cpp:1021)
+**Plan:**
+- Run all 7 benchmark programs (`test/benchmarks/`) through CPython and pyc
+- Measure wall-clock time for each: `time python3 bench.py` vs `time ./pyc --compile bench.py && ./bench`
+- Compare compile time + execution time for pyc vs pure CPython
+- Expected: pyc will be slower for small programs (JIT overhead), faster for large loops (native code)
+- Target: 2-5x slower than CPython for tight loops, 1-2x for compute-heavy programs
 
-**Remaining Issues:**
-1. `finalize()` only frees singletons (object.cpp:141-145)
-2. No `Py_INCREF`/`Py_DECREF` semantics
-3. `create_int()` small int caching broken (TYPE_INT singleton lookup fails)
-4. `create_float()` stores via `reinterpret_cast<uint64_t*>(&value)` which is correct but fragile
-5. No cleanup path for dynamically allocated objects
-6. `create_list()`, `create_dict()` allocate vectors/maps that are never freed
-7. `create_instance()` allocates instance_attrs that are never freed
-8. GC has 3 critical open issues (Issues 1, 2, 3)
+### 2. Eliminate PyObject Overhead in Hot Paths
+**Goal:** Reduce per-operation overhead from ~100ns (PyObject alloc + type check) to ~1ns (native CPU instruction).
 
-#### Plan
+**Plan:**
+- Profile hot paths with `perf record` and `perf report`
+- Identify functions where 80% of time is spent in PyObject allocation/deallocation
+- Replace with unboxed representation in IR: `i64` for ints, `f64` for floats
+- Only use PyObject* when object semantics are required (strings, lists, dicts, functions)
+- Expected: 5-20x speedup for numeric computation benchmarks
 
-**Step 1: Add refcounting helper functions**
-- Add `Py_INCREF(PyObject*)` - increments refcount, handles singletons
-- Add `Py_DECREF(PyObject*)` - decrements refcount, deletes at zero
-- Add `Py_RetainIfNeeded(PyObject*)` - for temporary references
+### 3. Optimize String Operations
+**Goal:** String concatenation and manipulation is 10-50x slower than CPython due to repeated heap allocation.
 
-**Step 2: Fix small integer caching**
-- Create TYPE_INT singleton for value 0 at initialization
-- Handle -1, 0, 1 as cached singletons
-- Fix `get_singleton(TYPE_INT)` to work correctly
+**Plan:**
+- Implement string interning: cache frequently-used string literals in a global map
+- Add `pyc_string_concat` that pre-allocates result buffer (avoid O(n²) reallocation)
+- Implement `join` as a single-pass operation with pre-computed total length
+- Add `reserve` capacity to `std::string` before repeated concatenation
+- Expected: 3-10x speedup for string-heavy programs
 
-**Step 3: Add object tracking registry**
-- Create `PyObjectRegistry` class to track all non-singleton allocations
-- Registry maintains `std::vector<PyObject*>` of all live objects
-- Registry provides `register()`, `unregister()`, `cleanup()` methods
+### 4. Optimize List Operations
+**Goal:** List append and access is slow due to PyObject wrapper around each element.
 
-**Step 4: Update all create_* functions**
-- `create_int()`, `create_float()`, `create_str()`, etc. call `registry.register(obj)`
-- `finalize()` calls `registry.cleanup()` to free all non-singleton objects
+**Plan:**
+- Implement `std::vector<int64_t>` as a specialized "int list" type alongside PyObject list
+- Implement `std::vector<double>` as a specialized "float list" type
+- Auto-detect homogeneous lists at compile time and use specialized operations
+- Keep generic PyObject list for heterogeneous collections
+- Expected: 3-8x speedup for list-heavy programs
 
-**Step 5: Implement proper cleanup**
-- `PyInterpreter::cleanup()` iterates registry and deletes all objects
-- Decrements refcounts for objects in globals/locals
-- Calls GC collect before cleanup
+### 5. Add Lazy Compilation for Functions
+**Goal:** Avoid compiling unused functions and reduce compile time.
 
-**Step 6: Fix GC Issues 1, 2, 3**
-- Issue 1: Remove `obj->refcount++` from `mark_object()` (gc.cpp)
-- Issue 2: Fix `del_ref()` to only decrement, delete at zero (gc.cpp)
-- Issue 3: Rebuild roots_ after sweep to contain only marked objects (gc.cpp)
+**Plan:**
+- Skip LLVM codegen for functions that are defined but never called
+- Add call graph analysis in IR module to detect reachable functions
+- Only compile functions reachable from `__main__` or called functions
+- Expected: 20-40% faster compile time for large programs with many unused functions
 
-**Step 7: Add memory profiling hooks**
-- Add `PyObjectRegistry::stats()` returning allocation/deallocation counts
-- Add `PyObjectRegistry::peak_count()` for peak live object count
+---
+
+## Completeness Plans: Missing Language Features
+
+### 1. Implement `with` Statement Context Manager Protocol
+**Plan:**
+- Add `__enter__` and `__exit__` method lookup in `build_with_stmt()`
+- Emit CALL `__enter__` before body, CALL `__exit__` after body (in finally block)
+- Handle `__exit__` arguments: (exc_type, exc_val, exc_tb)
+- Runtime: implement `pyc_context_manager` helper for file-like objects
+
+### 2. Implement `match/case` Statement (Structural Pattern Matching)
+**Plan:**
+- Add `build_match_stmt()` to IR builder
+- Translate to nested if/elif/else with type checks and value comparisons
+- Support value matching: `case 1:`, `case "hello":`
+- Support type matching: `case int():`, `case str():`
+- Support sequence unpacking: `case [a, b]:`
+- Limit: no guard expressions, no class patterns
+
+### 3. Implement f-strings
+**Plan:**
+- Add `FormattedValue` and `JoinedStr` AST nodes
+- Parse f-string syntax in lark_bridge.py JSON output
+- Translate to string concatenation: `f"hello {x}"` → `"hello " + str(x)`
+- Handle format specifiers: `f"{x:.2f}"` → call `pyc_format(x, ".2f")`
+- Expected: 2-3x slower than CPython f-strings (no pre-computed format strings)
+
+### 4. Implement Walrus Operator (`:=`)
+**Plan:**
+- Add `NamedExpr` AST node: `(name := value)`
+- Translate to `STORELOCAL name` followed by `LOADLOCAL name`
+- Handle in all expression contexts: `if (n := len(x)) > 0:`
+- Ensure proper scoping: walrus in function body stores in function locals
+
+### 5. Implement Decorators
+**Plan:**
+- Parse `@decorator` syntax in lark_bridge.py
+- Add `Decorator` AST node wrapping `FunctionDef` or `ClassDef`
+- In IR builder: after building function, emit CALL `decorator(func)` and STOREGLOBAL
+- Support simple decorators: `@staticmethod`, `@classmethod` (stub)
+- Support parameterized decorators: `@decorator(arg)` (stub)
+
+---
+
+## Performance Plans: Advanced Optimizations
+
+### 1. Add Dead Code Elimination at IR Level
+**Plan:**
+- After building IR, identify instructions whose results are never used
+- Remove unused instructions (not referenced by any other instruction or return)
+- Remove unreachable basic blocks (after dead branches)
+- Remove unused function definitions (not in call graph from __main__)
+- Expected: 10-20% reduction in generated LLVM IR size
+
+### 2. Optimize Global Variable Access
+**Plan:**
+- Track which globals are read/written in each function
+- Promote frequently-accessed globals to local variables (SSA form)
+- Use LLVM `alias analysis` to optimize global variable loads/stores
+- Expected: 5-15% speedup for programs with many global variable accesses
+
+### 3. Implement Tail Call Optimization
+**Plan:**
+- Detect tail calls: call is the last instruction in a function
+- In LLVM codegen, emit `tail` call attribute for tail calls
+- Enables recursive functions to use O(1) stack space
+- Expected: enables infinite recursion patterns without stack overflow
+
+### 4. Add Type-Based Specialization for Common Patterns
+**Plan:**
+- Analyze IR to detect pure-integer or pure-float functions
+- Generate specialized LLVM IR that uses `i64`/`f64` instead of `i8*` (PyObject*)
+- Generate generic fallback for mixed-type calls
+- Expected: 3-10x speedup for numeric computation functions
+
+### 5. Integrate LLVM `opt` with Aggressive Flags
+**Plan:**
+- Run `opt -O3` on generated LLVM IR before codegen
+- Enable `inliner`, `instcombine`, `licm`, `loop-unroll`, `slp-vectorize`
+- Add custom LLVM passes for Python-specific optimizations
+- Expected: 10-30% speedup across all programs
+
+---
+
+## Future Implementation Plans (continued)
+
+### Issue: Add Memory Profiling Hooks
+**Location:** `runtime/object_registry.cpp`
+**Plan:**
+- Add `PyObjectRegistry::get_stats()` returning {live_count, peak_count, total_allocated, total_freed}
+- Expose via `pyc_memory_stats()` callable from Python
+- Add `--memory-stats` CLI flag to print stats at exit
 - Integrate with Valgrind/ASan testing
 
-#### Files to Create/Modify
-- **Create:** `runtime/object_registry.h` (registry class declaration)
-- **Create:** `runtime/object_registry.cpp` (registry implementation)
-- **Modify:** `runtime/object.h` (add refcount helpers, registry forward decl)
-- **Modify:** `runtime/object.cpp` (update create_* functions, add finalize cleanup)
-- **Modify:** `runtime/gc.cpp` (fix Issues 1, 2, 3)
-- **Modify:** `runtime/builtins.cpp` (use Py_INCREF/Py_DECREF where needed)
+### Issue: Add `sys` Module Stub
+**Location:** `runtime/builtins.cpp`
+**Plan:**
+- Implement `sys.version`, `sys.platform`, `sys.argv` as globals
+- Implement `sys.exit(code)` as a special return that terminates program
+- Implement `sys.getsizeof(obj)` using registry stats
+- Expected: enables many standard library patterns
 
-#### Estimated Effort
-- Step 1-2: ~50 lines
-- Step 3-4: ~100 lines
-- Step 5-6: ~150 lines
-- Step 7: ~30 lines
-- **Total: ~330 lines across 6 files**
+### Issue: Fix `SETATTR` Attribute Name in LLVM Codegen
+**Location:** `codegen/ir2ll.cpp:442-455`
+**Plan:**
+- Pass attribute name as string constant to `pyc_setattr()`
+- Use `LOADCONST_STR` to get string pointer before calling `pyc_setattr`
+- Same fix for `pyc_getattr()` in GETATTR/LOAD_ATTR cases
 
+### Issue: Add `__main__` Entry Point Detection
+**Location:** `main.cpp`, `ir/ir.h`
+**Plan:**
+- Detect if module is run as main (not imported)
+- If main, emit call to `__main__` function at program start
+- If imported, only define functions without calling main
+- Expected: enables `if __name__ == "__main__":` pattern
+
+### Issue: Implement `repr()` Properly
+**Location:** `runtime/builtins.cpp:533-536`
+**Plan:**
+- Implement `repr()` with proper type-specific formatting
+- List: `[repr(elem) for elem in list]`
+- Dict: `{repr(k): repr(v) for k,v in dict}`
+- String: `"'value'"` (with quotes)
+- Int/Float: same as `str()`
