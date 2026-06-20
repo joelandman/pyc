@@ -120,6 +120,45 @@ private:
             llvm::FunctionType::get(builder_.getDoubleTy(), pow_params, false),
             llvm::Function::ExternalLinkage, "pyc_pow", mod_.get());
 
+        // INTRINSIC_TYPE: pyc_type_name(obj) -> obj
+        std::vector<llvm::Type*> type_name_params = {obj_type};
+        llvm::Function::Create(
+            llvm::FunctionType::get(obj_type, type_name_params, false),
+            llvm::Function::ExternalLinkage, "pyc_type_name", mod_.get());
+
+        // INTRINSIC_LEN: pyc_len(obj) -> i64
+        std::vector<llvm::Type*> len_params = {obj_type};
+        llvm::Function::Create(
+            llvm::FunctionType::get(i64_type, len_params, false),
+            llvm::Function::ExternalLinkage, "pyc_len", mod_.get());
+
+        // INTRINSIC_INIT: pyc_object_init(obj) -> obj
+        std::vector<llvm::Type*> init_params = {obj_type};
+        llvm::Function::Create(
+            llvm::FunctionType::get(obj_type, init_params, false),
+            llvm::Function::ExternalLinkage, "pyc_object_init", mod_.get());
+
+        // ISINSTANCE: pyc_isinstance(obj, type_kind) -> i64
+        std::vector<llvm::Type*> isinstance_params = {obj_type, i32_type};
+        llvm::Function::Create(
+            llvm::FunctionType::get(i64_type, isinstance_params, false),
+            llvm::Function::ExternalLinkage, "pyc_isinstance", mod_.get());
+
+        // NEWTYPE: pyc_new_type(type_kind) -> obj
+        llvm::Function::Create(
+            llvm::FunctionType::get(obj_type, {i32_type}, false),
+            llvm::Function::ExternalLinkage, "pyc_new_type", mod_.get());
+
+        // refcount helpers
+        std::vector<llvm::Type*> ref_inc_params = {obj_type};
+        llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), ref_inc_params, false),
+            llvm::Function::ExternalLinkage, "pyc_ref_inc", mod_.get());
+
+        llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), ref_inc_params, false),
+            llvm::Function::ExternalLinkage, "pyc_ref_dec", mod_.get());
+
         std::vector<llvm::Type*> int_from_dbl_params = {builder_.getDoubleTy()};
         llvm::Function::Create(
             llvm::FunctionType::get(i64_type, int_from_dbl_params, false),
@@ -343,11 +382,44 @@ private:
                 break;
             }
 
-            case pyc::ir::IRInstKind::INTRINSIC_TYPE:
-            case pyc::ir::IRInstKind::INTRINSIC_LEN:
-            case pyc::ir::IRInstKind::INTRINSIC_INIT:
-                record(i64());
+            case pyc::ir::IRInstKind::INTRINSIC_TYPE: {
+                auto* type_name_fn = mod_->getFunction("pyc_type_name");
+                if (type_name_fn && inst->operands.size() >= 1) {
+                    std::vector<llvm::Value*> args = {
+                        val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                    };
+                    record(builder_.CreateCall(type_name_fn, args, "type_name"));
+                } else {
+                    record(i64());
+                }
                 break;
+            }
+
+            case pyc::ir::IRInstKind::INTRINSIC_LEN: {
+                auto* len_fn = mod_->getFunction("pyc_len");
+                if (len_fn && inst->operands.size() >= 1) {
+                    std::vector<llvm::Value*> args = {
+                        val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                    };
+                    record(builder_.CreateCall(len_fn, args, "len_call"));
+                } else {
+                    record(i64());
+                }
+                break;
+            }
+
+            case pyc::ir::IRInstKind::INTRINSIC_INIT: {
+                auto* init_fn = mod_->getFunction("pyc_object_init");
+                if (init_fn && inst->operands.size() >= 1) {
+                    std::vector<llvm::Value*> args = {
+                        val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                    };
+                    record(builder_.CreateCall(init_fn, args, "object_init"));
+                } else {
+                    record(i64());
+                }
+                break;
+            }
 
            case pyc::ir::IRInstKind::GETATTR:
             case pyc::ir::IRInstKind::LOAD_ATTR: {
@@ -531,9 +603,32 @@ private:
                 record(builder_.CreateNot(val(inst->operands[0]) ? val(inst->operands[0]) : i64(), "not"));
                 break;
 
-            case pyc::ir::IRInstKind::ISINSTANCE:
-                record(i64());
+            case pyc::ir::IRInstKind::ISINSTANCE: {
+                auto* isinstance_fn = mod_->getFunction("pyc_isinstance");
+                if (isinstance_fn && inst->operands.size() >= 2) {
+                    std::vector<llvm::Value*> args = {
+                        val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                        val(inst->operands[1]) ? val(inst->operands[1]) : i64()
+                    };
+                    record(builder_.CreateCall(isinstance_fn, args, "isinstance_call"));
+                } else {
+                    record(i64());
+                }
                 break;
+            }
+
+            case pyc::ir::IRInstKind::NEWTYPE: {
+                auto* new_type_fn = mod_->getFunction("pyc_new_type");
+                if (new_type_fn && inst->operands.size() >= 1) {
+                    std::vector<llvm::Value*> args = {
+                        val(inst->operands[0]) ? val(inst->operands[0]) : i64()
+                    };
+                    record(builder_.CreateCall(new_type_fn, args, "new_type"));
+                } else {
+                    record(i64());
+                }
+                break;
+            }
 
             default:
                 record(i64());
