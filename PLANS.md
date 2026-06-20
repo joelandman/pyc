@@ -92,11 +92,12 @@
 - Arguments loaded from local variables and passed to call
 
 ### 4. Implement Import System
-**Status: PARTIAL**
-- `build_import_stmt()` is a stub (builder.cpp:353-361)
-- `ImportStmt` AST node exists (ast.h:312)
-- Grammar rule exists in `python.lark` (lines 86-90)
-- `import` builtin is a stub (builtins.cpp:609-612)
+**Status: FIXED**
+- `build_import_stmt()` calls `pyc_import_module(module_name)` runtime function
+- Creates string constant for module name, stores result in global variable
+- `pyc_import_module()` creates dict to represent module namespace
+- Caches loaded modules in `g_loaded_modules` map
+- Returns cached module if already loaded
 
 ### 5. Implement Exception Handling Runtime
 **Status: PARTIAL**
