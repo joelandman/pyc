@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <sstream>
 #include <iomanip>
+#include <iostream>
 
 namespace pyc::runtime {
 
@@ -74,7 +75,7 @@ static std::string py_object_to_string(PyObject* obj) {
 
 // ===== Object Creation =====
 
-pyc_obj_t pyc_new_object(pyc_type_kind_t type_kind) {
+pyc_obj_t pyc_codegen_new_object(pyc_type_kind_t type_kind) {
     auto* obj = new PyObject();
     obj->refcount = 1;
     obj->type_object = static_cast<uint32_t>(type_kind);
@@ -99,8 +100,17 @@ pyc_obj_t pyc_new_dict() {
 }
 
 pyc_obj_t pyc_new_type(pyc_type_kind_t type_kind) {
-    auto* obj = pyc_new_object(type_kind);
-    return obj;
+    PyObject* obj = new PyObject();
+    obj->refcount = 1;
+    obj->type_object = static_cast<uint32_t>(type_kind);
+    obj->data = 0;
+    obj->str_value = nullptr;
+    obj->func_callable = nullptr;
+    obj->list_elements = nullptr;
+    obj->dict_entries = nullptr;
+    obj->instance_attrs = nullptr;
+    obj->next = nullptr;
+    return from_pyobj(obj);
 }
 
 // ===== List Operations =====

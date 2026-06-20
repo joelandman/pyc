@@ -29,8 +29,10 @@ enum pyc_type_kind_t {
 
 // ===== Runtime Function Declarations =====
 
+namespace pyc::runtime {
+
 // Object creation
-pyc_obj_t pyc_new_object(pyc_type_kind_t type_kind);
+pyc_obj_t pyc_codegen_new_object(pyc_type_kind_t type_kind);
 pyc_obj_t pyc_new_list();
 pyc_obj_t pyc_new_dict();
 pyc_obj_t pyc_new_type(pyc_type_kind_t type_kind);
@@ -62,3 +64,5 @@ void pyc_print(pyc_obj_t obj);
 // Memory management
 void pyc_ref_inc(pyc_obj_t obj);
 void pyc_ref_dec(pyc_obj_t obj);
+
+} // namespace pyc::runtime

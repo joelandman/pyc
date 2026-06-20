@@ -34,6 +34,7 @@ set(SOURCES
     codegen/llir_gen.cpp
     runtime/object.cpp
     runtime/object_registry.cpp
+    runtime/libpyc_runtime.cpp
     runtime/builtins.cpp
     runtime/gc.cpp
     main.cpp
