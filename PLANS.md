@@ -392,6 +392,13 @@
 
 The compiler has a solid foundation with working lexer, parser, IR builder, LLVM codegen, and runtime. However, several significant gaps remain before it can be considered a usable MVP.
 
+**CRITICAL BLOCKER - Lark Parser:** The Lark parser has fundamental issues that prevent end-to-end testing:
+- INDENT/DEDENT tokens are not properly handled (Python-specific lexer needed)
+- Grammar syntax conflicts with Lark's internal parser (OP, _LPAR token errors)
+- Cannot parse any Python source code currently
+- **Impact:** No end-to-end testing possible until parser is fixed
+- **Recommendation:** Consider switching to a custom recursive descent parser or using a different parsing library
+
 ### What Works (MVP Core)
 - Arithmetic, comparison, boolean operators
 - Functions with parameters and return values
