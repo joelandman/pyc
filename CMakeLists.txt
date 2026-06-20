@@ -33,6 +33,7 @@ set(SOURCES
     codegen/ir2ll.cpp
     codegen/llir_gen.cpp
     runtime/object.cpp
+    runtime/object_registry.cpp
     runtime/builtins.cpp
     runtime/gc.cpp
     main.cpp

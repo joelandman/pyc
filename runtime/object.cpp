@@ -2,6 +2,7 @@
 // Contains PyObject, PyTypeObject, and PyObjectFactory implementations
 
 #include "runtime/object.h"
+#include "runtime/object_registry.h"
 #include <iostream>
 #include <algorithm>
 #include <cmath>
@@ -26,9 +27,14 @@ void PyObjectFactory::initialize() {
     true_obj->data = 1;
     singletons_[TYPE_BOOL] = true_obj;
 
-    // Create singleton False (reuses TYPE_BOOL singleton with data=0)
-    // False is handled by create_bool with value=false, not a singleton
-    // But we need a TYPE_TYPE singleton for type objects
+    // Create singleton TYPE_INT for value 0 (small int caching)
+    auto int0_obj = new PyObject();
+    int0_obj->refcount = 1;
+    int0_obj->type_object = static_cast<uint32_t>(TYPE_INT) | PY_FLAG_SINGLETON;
+    int0_obj->data = 0;
+    singletons_[TYPE_INT] = int0_obj;
+
+    // Create singleton TYPE_TYPE for type objects
     auto type_obj = new PyObject();
     type_obj->refcount = 1;
     type_obj->type_object = static_cast<uint32_t>(TYPE_TYPE) | PY_FLAG_SINGLETON;
@@ -61,6 +67,7 @@ PyObject* PyObjectFactory::create_int(PyObject* /*type_obj*/, int64_t value) {
     obj->refcount = 1;
     obj->type_object = static_cast<uint32_t>(TYPE_INT);
     obj->data = static_cast<uint64_t>(value);
+    register_object(obj);
     return obj;
 }
 
@@ -69,6 +76,7 @@ PyObject* PyObjectFactory::create_float(PyObject* /*type_obj*/, double value) {
     obj->refcount = 1;
     obj->type_object = static_cast<uint32_t>(TYPE_FLOAT);
     obj->data = *reinterpret_cast<uint64_t*>(&value);
+    register_object(obj);
     return obj;
 }
 
@@ -77,6 +85,7 @@ PyObject* PyObjectFactory::create_str(PyObject* /*type_obj*/, const std::string&
     obj->refcount = 1;
     obj->type_object = static_cast<uint32_t>(TYPE_STR) | PY_FLAG_STRING;
     obj->str_value = new std::string(value);
+    register_object(obj);
     return obj;
 }
 
@@ -85,6 +94,7 @@ PyObject* PyObjectFactory::create_list(PyObject* /*type_obj*/) {
     obj->refcount = 1;
     obj->type_object = static_cast<uint32_t>(TYPE_LIST) | PY_FLAG_LIST;
     obj->list_elements = new std::vector<PyObject*>();
+    register_object(obj);
     return obj;
 }
 
@@ -93,6 +103,7 @@ PyObject* PyObjectFactory::create_dict(PyObject* /*type_obj*/) {
     obj->refcount = 1;
     obj->type_object = static_cast<uint32_t>(TYPE_DICT) | PY_FLAG_DICT;
     obj->dict_entries = new std::unordered_map<std::string, PyObject*>();
+    register_object(obj);
     return obj;
 }
 
@@ -101,15 +112,17 @@ PyObject* PyObjectFactory::create_tuple(PyObject* /*type_obj*/) {
     obj->refcount = 1;
     obj->type_object = static_cast<uint32_t>(TYPE_TUPLE) | PY_FLAG_TUPLE;
     obj->list_elements = new std::vector<PyObject*>();
+    register_object(obj);
     return obj;
 }
 
 PyObject* PyObjectFactory::create_function(PyObject* /*type_obj*/, std::string /*name*/,
-                                            std::function<PyObject*(PyObject*, std::vector<PyObject*>)>* func) {
+                                             std::function<PyObject*(PyObject*, std::vector<PyObject*>)>* func) {
     auto obj = new PyObject();
     obj->refcount = 1;
     obj->type_object = static_cast<uint32_t>(TYPE_FUNCTION) | PY_FLAG_FUNCTION;
     obj->func_callable = func;
+    register_object(obj);
     return obj;
 }
 
@@ -118,14 +131,16 @@ PyObject* PyObjectFactory::create_instance(PyObject* /*type_obj*/, std::shared_p
     obj->refcount = 1;
     obj->type_object = static_cast<uint32_t>(TYPE_INSTANCE) | PY_FLAG_INSTANCE;
     obj->instance_attrs = new std::unordered_map<std::string, PyObject*>();
+    register_object(obj);
     return obj;
 }
 
 PyObject* PyObjectFactory::create_class(PyObject* /*type_obj*/, std::string name,
-                                         PyTypeObject* methods) {
+                                          PyTypeObject* methods) {
     auto obj = new PyObject();
     obj->refcount = 1;
     obj->type_object = static_cast<uint32_t>(TYPE_CLASS) | PY_FLAG_CLASS;
+    register_object(obj);
     return obj;
 }
 
@@ -143,6 +158,19 @@ void PyObjectFactory::finalize() {
         delete obj;
     }
     singletons_.clear();
+}
+
+static PyObjectRegistry& get_registry() {
+    static PyObjectRegistry reg;
+    return reg;
+}
+
+void PyObjectFactory::register_object(PyObject* obj) {
+    get_registry().register_object(obj);
+}
+
+void PyObjectFactory::unregister_object(PyObject* obj) {
+    get_registry().unregister_object(obj);
 }
 
 // ===== PyTypeObject Methods =====

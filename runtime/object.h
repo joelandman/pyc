@@ -118,6 +118,23 @@ struct PyTypeObject {
     PyObject* call_method(const std::string& name, PyObject* self, std::vector<PyObject*> args);
 };
 
+// ===== Reference Counting Helpers =====
+
+inline void Py_INCREF(PyObject* obj) {
+    if (!obj) return;
+    if (obj->type_object & PY_FLAG_SINGLETON) return;
+    obj->refcount++;
+}
+
+inline void Py_DECREF(PyObject* obj) {
+    if (!obj) return;
+    if (obj->type_object & PY_FLAG_SINGLETON) return;
+    obj->refcount--;
+    if (obj->refcount <= 0) {
+        delete obj;
+    }
+}
+
 // ===== GC SYSTEM =====
 
 class GarbageCollector {
@@ -226,6 +243,8 @@ public:
 
 // ===== OBJECT FACTORY =====
 
+class PyObjectRegistry;
+
 class PyObjectFactory {
 public:
     static PyObject* create_none(PyObject* type_obj = nullptr);
@@ -237,10 +256,10 @@ public:
     static PyObject* create_dict(PyObject* type_obj = nullptr);
     static PyObject* create_tuple(PyObject* type_obj = nullptr);
     static PyObject* create_function(PyObject* type_obj = nullptr, std::string name = "",
-                                      std::function<PyObject*(PyObject*, std::vector<PyObject*>)>* func = nullptr);
+                                       std::function<PyObject*(PyObject*, std::vector<PyObject*>)>* func = nullptr);
     static PyObject* create_instance(PyObject* type_obj = nullptr, std::shared_ptr<PyTypeObject> class_type = nullptr);
     static PyObject* create_class(PyObject* type_obj = nullptr, std::string name = "",
-                                   PyTypeObject* methods = nullptr);
+                                    PyTypeObject* methods = nullptr);
     
     static PyObject* create_singleton(PyTypeKind kind);
     static PyObject* get_singleton(PyTypeKind kind);
@@ -249,6 +268,9 @@ public:
     static void finalize();
     
     static std::unordered_map<PyTypeKind, PyObject*> singletons_;
+    
+    static void register_object(PyObject* obj);
+    static void unregister_object(PyObject* obj);
 };
 
 // ===== FRAME AND EXECUTION CONTEXT =====
