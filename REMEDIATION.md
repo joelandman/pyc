@@ -244,3 +244,84 @@ Function signature takes `PyValue` parameters but the template may have deductio
 - All 7 tests pass under AddressSanitizer (0 errors)
 - All 7 tests pass under Valgrind (0 errors, 0 bytes lost)
 - Scalability testing completed (compile time, global variable scaling)
+
+---
+
+## Detailed Implementation Plans for Open Issues
+
+### Issue 9: LLVM Codegen Stubs - Implementation Plan
+
+**Files to Create:**
+- `runtime/libpyc_runtime.cpp` (~300 lines)
+- `runtime/libpyc_runtime.h` (declarations)
+
+**Files to Modify:**
+- `CMakeLists.txt` (add runtime library target)
+- `codegen/ir2ll.cpp` (update 5 stub cases)
+
+**Runtime Functions to Implement:**
+```
+pyc_type_name(obj) -> str       // INTRINSIC_TYPE
+pyc_len(obj) -> i64             // INTRINSIC_LEN  
+pyc_object_init(obj) -> obj     // INTRINSIC_INIT
+pyc_isinstance(obj, type_kind) -> bool    // ISINSTANCE
+pyc_new_type(type_kind) -> obj  // NEWTYPE
+```
+
+**Steps:**
+1. Create libpyc_runtime.cpp with all function implementations
+2. Update ir2ll.cpp INTRINSIC_TYPE case to call pyc_type_name
+3. Update ir2ll.cpp INTRINSIC_LEN case to call pyc_len
+4. Update ir2ll.cpp INTRINSIC_INIT case to call pyc_object_init
+5. Update ir2ll.cpp ISINSTANCE case to call pyc_isinstance
+6. Update ir2ll.cpp NEWTYPE case to call pyc_new_type
+7. Add runtime library to CMakeLists.txt
+8. Test end-to-end
+
+---
+
+### Issue 2: Object Model Memory Management - Implementation Plan
+
+**Files to Create:**
+- `runtime/object_registry.h`
+- `runtime/object_registry.cpp`
+
+**Files to Modify:**
+- `runtime/object.h` (add refcount helpers)
+- `runtime/object.cpp` (update create_*, finalize)
+- `runtime/gc.cpp` (fix Issues 1, 2, 3)
+- `runtime/builtins.cpp` (use refcount helpers)
+
+**Steps:**
+1. Add Py_INCREF/Py_DECREF helper functions
+2. Fix small integer caching for TYPE_INT singleton
+3. Create PyObjectRegistry to track all allocations
+4. Update all create_* functions to register with registry
+5. Implement PyInterpreter::cleanup() using registry
+6. Fix GC Issues 1 (mark_object refcount), 2 (del_ref logic), 3 (roots pruning)
+7. Add memory profiling stats to registry
+
+---
+
+## Summary of Open Issues
+
+| # | Issue | Severity | Status | Plan |
+|---|-------|----------|--------|------|
+| 1 | GC `mark_object` corrupts refcounts | Critical | OPEN | Step 6 of Issue 2 plan |
+| 2 | GC `del_ref` logic inverted | Critical | OPEN | Step 6 of Issue 2 plan |
+| 3 | Roots never pruned | Critical | OPEN | Step 6 of Issue 2 plan |
+| 4 | `create_str()` discards string value | Critical | FIXED | - |
+| 5 | `create_function()` discards callable | Critical | FIXED | - |
+| 6 | Duplicate `build_function`/`build_expr` | High | FIXED | - |
+| 7 | Incomplete loop/if control flow | High | FIXED | - |
+| 8 | Frame ownership broken | High | FIXED | - |
+| 9 | LLVM codegen stubs return 0 | High | PARTIAL | See Issue 9 plan below |
+| 10 | `argv[i++]()` call-to-function bug | High | FIXED | - |
+| 11 | Wrong option flag in help | Medium | OPEN | Trivial fix |
+| 12 | `resolve_value` O(N^2) linear scan | Medium | FIXED (dead code) | - |
+| 13 | Missing `gc.h` header | Medium | OPEN | Create or fix include |
+| 14 | Duplicate `ir/ir.h` include | Low | OPEN | Remove duplicate |
+| 15 | `finalize()` only frees singletons | Medium | OPEN | See Issue 2 plan below |
+| 16 | `build_class()` creates empty IR | Medium | FIXED | - |
+| 17 | Double shared_ptr ownership | Medium | OPEN | Use static_pointer_cast |
+| 18 | `wrap_numeric` template issue | Low | OPEN | Fix signature |

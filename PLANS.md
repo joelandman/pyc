@@ -171,3 +171,171 @@
   - Compile time: 7-14ms for 10-500 line programs
   - Global variable scaling: consistent 8-9ms for 10-200 globals
   - Compile time dominated by process startup/LLVM init, not linear
+
+---
+
+## Future Implementation Plans
+
+### Issue 9: Complete LLVM Codegen Runtime Functions
+
+**Location:** `codegen/ir2ll.cpp`, `runtime/` (new file needed)  
+**Severity:** High  
+**Status:** PARTIALLY FIXED (POW, GETATTR, SETATTR done; O2 optimization enabled)
+
+#### Current State
+The following LLVM codegen stubs already call runtime functions (but runtime may not exist):
+- `MAKE_LIST` → calls `pyc_new_list()` (ir2ll.cpp:268-276)
+- `LIST_GET` → calls `pyc_list_get(obj, index)` (ir2ll.cpp:279-294)
+- `LIST_SET` → calls `pyc_list_set(obj, index, value)` (ir2ll.cpp:297-309)
+- `NEWOBJ` → calls `pyc_new_object(type_kind)` (ir2ll.cpp:312-321)
+- `INTRINSIC_PRINT` → calls `pyc_print(obj)` (ir2ll.cpp:324-332)
+- `INTRINSIC_RANGE` → calls `pyc_new_list()` (ir2ll.cpp:335-343)
+- `GETATTR` → calls `pyc_getattr(obj, name_ptr)` (ir2ll.cpp:352-367)
+- `SETATTR` → calls `pyc_setattr(obj, name_ptr, value)` (ir2ll.cpp:369-383)
+
+The following are still stubs:
+- `INTRINSIC_TYPE` → returns `i64(0)` (ir2ll.cpp:346-347)
+- `INTRINSIC_LEN` → returns `i64(0)` (ir2ll.cpp:347)
+- `INTRINSIC_INIT` → returns `i64(0)` (ir2ll.cpp:348)
+- `ISINSTANCE` → returns `i64(0)` (ir2ll.cpp:531-532)
+- `NEWTYPE` → falls through to default `i64(0)` (ir2ll.cpp:535-536)
+
+#### Runtime Functions Declared (in ir2ll.cpp:declare_runtime_functions)
+```cpp
+pyc_new_object(i32 type_kind) -> i8*
+pyc_new_list() -> i8*
+pyc_list_get(i8* list, i64 index) -> i8*
+pyc_list_set(i8* list, i64 index, i8* value) -> void
+pyc_print(i8* obj) -> void
+pyc_str_value(i8* obj) -> i8*
+pyc_pow(i64 base, i64 exp) -> double
+pyc_int_from_double(double val) -> i64
+pyc_getattr(i8* obj, i8* name) -> i8*
+pyc_setattr(i8* obj, i8* name, i8* value) -> void
+```
+
+#### Plan
+
+**Step 1: Create runtime library (runtime/libpyc_runtime.cpp)**
+- Implement all declared runtime functions
+- Each function takes/returns `i8*` (PyObject*) and casts appropriately
+- Use PyObjectFactory for object creation
+- Use py_object_to_string() for string output
+
+**Step 2: Implement INTRINSIC_TYPE**
+- Add `pyc_type_name(i8* obj) -> i8*` runtime function
+- Return type name string (e.g., "<class 'int'>")
+- Update ir2ll.cpp case to call runtime function
+
+**Step 3: Implement INTRINSIC_LEN**
+- Extend `pyc_list_get` or add `pyc_len(i8* obj) -> i64`
+- Handle str, list, dict, tuple types
+- Update ir2ll.cpp case to call runtime function
+
+**Step 4: Implement INTRINSIC_INIT**
+- Add `pyc_object_init(i8* obj) -> i8*` 
+- Call PyObject destructor or __init__ if present
+- Update ir2ll.cpp case to call runtime function
+
+**Step 5: Implement ISINSTANCE**
+- Add `pyc_isinstance(i8* obj, i32 type_kind) -> i64`
+- Compare obj type against type_kind
+- Update ir2ll.cpp case to call runtime function
+
+**Step 6: Implement NEWTYPE**
+- Add `pyc_new_type(i32 type_kind) -> i8*`
+- Create type object via PyObjectFactory
+- Update ir2ll.cpp case to call runtime function
+
+**Step 7: Create CMakeLists.txt entry for runtime library**
+- Build libpyc_runtime.a from runtime/libpyc_runtime.cpp
+- Link against main executable
+
+**Step 8: End-to-end testing**
+- Test list creation, access, mutation
+- Test object creation and attribute access
+- Test type/len intrinsics
+- Verify no crashes or memory errors
+
+#### Files to Create/Modify
+- **Create:** `runtime/libpyc_runtime.cpp` (~300 lines)
+- **Create:** `runtime/libpyc_runtime.h` (function declarations)
+- **Modify:** `CMakeLists.txt` (add runtime library target)
+- **Modify:** `codegen/ir2ll.cpp` (update INTRINSIC_TYPE, INTRINSIC_LEN, INTRINSIC_INIT, ISINSTANCE, NEWTYPE cases)
+
+---
+
+### Issue 2: Complete Object Model Memory Management
+
+**Location:** `runtime/object.cpp`, `runtime/object.h`, `runtime/gc.cpp`  
+**Severity:** Critical  
+**Status:** PARTIALLY FIXED (create_str stores str_value, create_function stores func_callable)
+
+#### Current State
+**Fixed:**
+- `create_str()` stores string in `obj->str_value` (object.cpp:79)
+- `create_function()` stores callable in `obj->func_callable` (object.cpp:112)
+- `to_int()` fixed for TYPE_FLOAT (builtins.cpp:27)
+- `bool` builtin fixed (builtins.cpp:1021)
+
+**Remaining Issues:**
+1. `finalize()` only frees singletons (object.cpp:141-145)
+2. No `Py_INCREF`/`Py_DECREF` semantics
+3. `create_int()` small int caching broken (TYPE_INT singleton lookup fails)
+4. `create_float()` stores via `reinterpret_cast<uint64_t*>(&value)` which is correct but fragile
+5. No cleanup path for dynamically allocated objects
+6. `create_list()`, `create_dict()` allocate vectors/maps that are never freed
+7. `create_instance()` allocates instance_attrs that are never freed
+8. GC has 3 critical open issues (Issues 1, 2, 3)
+
+#### Plan
+
+**Step 1: Add refcounting helper functions**
+- Add `Py_INCREF(PyObject*)` - increments refcount, handles singletons
+- Add `Py_DECREF(PyObject*)` - decrements refcount, deletes at zero
+- Add `Py_RetainIfNeeded(PyObject*)` - for temporary references
+
+**Step 2: Fix small integer caching**
+- Create TYPE_INT singleton for value 0 at initialization
+- Handle -1, 0, 1 as cached singletons
+- Fix `get_singleton(TYPE_INT)` to work correctly
+
+**Step 3: Add object tracking registry**
+- Create `PyObjectRegistry` class to track all non-singleton allocations
+- Registry maintains `std::vector<PyObject*>` of all live objects
+- Registry provides `register()`, `unregister()`, `cleanup()` methods
+
+**Step 4: Update all create_* functions**
+- `create_int()`, `create_float()`, `create_str()`, etc. call `registry.register(obj)`
+- `finalize()` calls `registry.cleanup()` to free all non-singleton objects
+
+**Step 5: Implement proper cleanup**
+- `PyInterpreter::cleanup()` iterates registry and deletes all objects
+- Decrements refcounts for objects in globals/locals
+- Calls GC collect before cleanup
+
+**Step 6: Fix GC Issues 1, 2, 3**
+- Issue 1: Remove `obj->refcount++` from `mark_object()` (gc.cpp)
+- Issue 2: Fix `del_ref()` to only decrement, delete at zero (gc.cpp)
+- Issue 3: Rebuild roots_ after sweep to contain only marked objects (gc.cpp)
+
+**Step 7: Add memory profiling hooks**
+- Add `PyObjectRegistry::stats()` returning allocation/deallocation counts
+- Add `PyObjectRegistry::peak_count()` for peak live object count
+- Integrate with Valgrind/ASan testing
+
+#### Files to Create/Modify
+- **Create:** `runtime/object_registry.h` (registry class declaration)
+- **Create:** `runtime/object_registry.cpp` (registry implementation)
+- **Modify:** `runtime/object.h` (add refcount helpers, registry forward decl)
+- **Modify:** `runtime/object.cpp` (update create_* functions, add finalize cleanup)
+- **Modify:** `runtime/gc.cpp` (fix Issues 1, 2, 3)
+- **Modify:** `runtime/builtins.cpp` (use Py_INCREF/Py_DECREF where needed)
+
+#### Estimated Effort
+- Step 1-2: ~50 lines
+- Step 3-4: ~100 lines
+- Step 5-6: ~150 lines
+- Step 7: ~30 lines
+- **Total: ~330 lines across 6 files**
+
