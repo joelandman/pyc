@@ -163,6 +163,20 @@ private:
         llvm::Function::Create(
             llvm::FunctionType::get(i64_type, int_from_dbl_params, false),
             llvm::Function::ExternalLinkage, "pyc_int_from_double", mod_.get());
+
+        // Exception handling
+        std::vector<llvm::Type*> exc_params = {obj_type};
+        llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), exc_params, false),
+            llvm::Function::ExternalLinkage, "pyc_raise_exception", mod_.get());
+
+        llvm::Function::Create(
+            llvm::FunctionType::get(obj_type, {}, false),
+            llvm::Function::ExternalLinkage, "pyc_get_exception", mod_.get());
+
+        llvm::Function::Create(
+            llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), {}, false),
+            llvm::Function::ExternalLinkage, "pyc_clear_exception", mod_.get());
     }
 
     llvm::Value* val(uint32_t id) const {
@@ -498,6 +512,18 @@ private:
                         record(builder_.CreateCall(print_fn, call_args));
                     } else {
                         record(i64());
+                    }
+                } else if (inst->name == "pyc_raise_exception") {
+                    auto* raise_fn = mod_->getFunction("pyc_raise_exception");
+                    if (raise_fn) {
+                        llvm::SmallVector<llvm::Value*, 1> exc_args;
+                        if (!inst->operands.empty()) {
+                            auto* exc_val = val(inst->operands[0]);
+                            exc_args.push_back(exc_val ? exc_val : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)));
+                        } else {
+                            exc_args.push_back(llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)));
+                        }
+                        builder_.CreateCall(raise_fn, exc_args);
                     }
                 } else {
                     auto fit = func_map_.find(inst->name);

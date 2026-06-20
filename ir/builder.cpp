@@ -464,15 +464,27 @@ void IRBuilder::build_assert_stmt(const ast::AssertStmt& asp) {
 }
 
 void IRBuilder::build_raise_stmt(const ast::RaiseStmt& ra) {
+    // Raise the exception object
     if (ra.exc()) {
-        build_expr(*ra.exc());
+        auto exc_val = build_expr(*ra.exc());
+        
+        // Call pyc_raise_exception(exc)
+        auto* raise_call = current_func_->new_inst(IRInstKind::CALL, "pyc_raise_exception");
+        raise_call->operands.push_back(exc_val);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(raise_call));
+    } else {
+        // Re-raise current exception (no operand)
+        auto* raise_call = current_func_->new_inst(IRInstKind::CALL, "pyc_raise_exception");
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(raise_call));
     }
-    auto* ret = current_func_->new_inst(IRInstKind::RETURN, "raise_return");
+    
+    // Return 0 after raise (unreachable but needed for IR validity)
+    auto* ret_inst = current_func_->new_inst(IRInstKind::RETURN, "raise_return");
     auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "");
     zero->is_const = true;
     std::get<double>(zero->const_val) = 0.0;
-    ret->operands.push_back(zero->id);
-    current_block_->instrs.push_back(std::unique_ptr<IRInst>(ret));
+    ret_inst->operands.push_back(zero->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(ret_inst));
     current_block_ = nullptr;
 }
 

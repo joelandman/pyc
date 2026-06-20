@@ -334,4 +334,33 @@ void pyc_ref_dec(pyc_obj_t obj) {
     }
 }
 
+// ===== Exception Handling =====
+
+static PyObject* g_current_exception = nullptr;
+
+void pyc_raise_exception(pyc_obj_t exc) {
+    if (g_current_exception) {
+        pyc_ref_dec(g_current_exception);
+    }
+    g_current_exception = to_pyobj(exc);
+    if (g_current_exception) {
+        pyc_ref_inc(g_current_exception);
+    }
+}
+
+pyc_obj_t pyc_get_exception() {
+    if (g_current_exception) {
+        pyc_ref_inc(g_current_exception);
+        return from_pyobj(g_current_exception);
+    }
+    return nullptr;
+}
+
+void pyc_clear_exception() {
+    if (g_current_exception) {
+        pyc_ref_dec(g_current_exception);
+        g_current_exception = nullptr;
+    }
+}
+
 } // namespace pyc::runtime

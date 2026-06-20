@@ -66,4 +66,9 @@ void pyc_print(pyc_obj_t obj);
 void pyc_ref_inc(pyc_obj_t obj);
 void pyc_ref_dec(pyc_obj_t obj);
 
+// Exception handling
+void pyc_raise_exception(pyc_obj_t exc);
+pyc_obj_t pyc_get_exception();
+void pyc_clear_exception();
+
 } // namespace pyc::runtime
