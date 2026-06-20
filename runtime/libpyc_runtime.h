@@ -71,4 +71,7 @@ void pyc_raise_exception(pyc_obj_t exc);
 pyc_obj_t pyc_get_exception();
 void pyc_clear_exception();
 
+// Module loading
+pyc_obj_t pyc_import_module(const char* module_name);
+
 } // namespace pyc::runtime

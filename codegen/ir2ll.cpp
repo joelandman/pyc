@@ -177,6 +177,12 @@ private:
         llvm::Function::Create(
             llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), {}, false),
             llvm::Function::ExternalLinkage, "pyc_clear_exception", mod_.get());
+
+        // Module loading
+        std::vector<llvm::Type*> import_params = {get_i8_ptr(ctx_)};
+        llvm::Function::Create(
+            llvm::FunctionType::get(obj_type, import_params, false),
+            llvm::Function::ExternalLinkage, "pyc_import_module", mod_.get());
     }
 
     llvm::Value* val(uint32_t id) const {

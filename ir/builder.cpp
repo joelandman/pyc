@@ -399,13 +399,26 @@ void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
 }
 
   void IRBuilder::build_import_stmt(const ast::ImportStmt& imp) {
-    // For built-in modules, we create a global variable that references the module
-    // The actual module loading happens at runtime via pyc_import_module
-    auto* load_global = current_func_->new_inst(IRInstKind::LOADGLOBAL, "import");
-    (void)load_global;
+    auto* from_imp = imp.from_import_ptr();
+    if (!from_imp) return;
     
-    // Register the imported module name as a global
-    // In a full implementation, this would load the module and bind it to a name
+    std::string module_name = from_imp->module_name_;
+    
+    // Call pyc_import_module(module_name)
+    auto* import_call = current_func_->new_inst(IRInstKind::CALL, "pyc_import_module");
+    
+    // Create string constant for module name
+    auto* str_const = current_func_->new_inst(IRInstKind::LOADCONST_STR, "module_name");
+    str_const->is_const = true;
+    str_const->const_val = module_name;
+    import_call->operands.push_back(str_const->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(str_const));
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(import_call));
+    
+    // Store result in global variable with module name
+    auto* store = current_func_->new_inst(IRInstKind::STOREGLOBAL, module_name);
+    store->operands.push_back(import_call->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
 }
 
 void IRBuilder::build_delete_stmt(const ast::DeleteStmt& del) {
