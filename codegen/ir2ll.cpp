@@ -457,9 +457,17 @@ private:
                 if (inst->operands.size() >= 2) {
                     auto* setattr_fn = mod_->getFunction("pyc_setattr");
                     if (setattr_fn) {
+                        // Create a GlobalVariable for the attribute name string
+                        std::string attr_name = inst->name.empty() ? "" : inst->name;
+                        auto* attr_gv = new llvm::GlobalVariable(
+                            *mod_, llvm::ArrayType::get(get_i8(ctx_), attr_name.size() + 1),
+                            true, llvm::GlobalValue::PrivateLinkage,
+                            llvm::ConstantDataArray::getString(builder_.getContext(), attr_name),
+                            "setattr_attr_name");
+                        
                         std::vector<llvm::Value*> args = {
                             val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
-                            llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                            attr_gv,
                             val(inst->operands[1]) ? val(inst->operands[1]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
                         };
                         builder_.CreateCall(setattr_fn, args);

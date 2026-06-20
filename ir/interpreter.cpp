@@ -775,8 +775,19 @@ PyValue Interpreter::handle_intrinsic_range(std::unique_ptr<CallFrame>& frame, I
 }
 
 PyValue Interpreter::handle_intrinsic_type(std::unique_ptr<CallFrame>& frame, IRInst& inst) {
-    (void)frame; (void)inst;
-    return PyValue(int64_t(0));  // stub
+    if (inst.operands.empty()) return PyValue(std::string("NoneType"));
+    auto val = get_slot(frame.get(), inst.operands[0]);
+    std::string type_name;
+    if (std::holds_alternative<int64_t>(val)) {
+        type_name = "int";
+    } else if (std::holds_alternative<double>(val)) {
+        type_name = "float";
+    } else if (std::holds_alternative<std::string>(val)) {
+        type_name = "str";
+    } else {
+        type_name = "NoneType";
+    }
+    return PyValue(type_name);
 }
 
 PyValue Interpreter::handle_intrinsic_len(std::unique_ptr<CallFrame>& frame, IRInst& inst) {
@@ -785,14 +796,12 @@ PyValue Interpreter::handle_intrinsic_len(std::unique_ptr<CallFrame>& frame, IRI
     if (auto* s = std::get_if<std::string>(&val)) {
         return PyValue((int64_t)s->size());
     }
-    // For list/dict, we need to access the PyObject
-    // This is a simplified implementation
     return PyValue(int64_t(0));
 }
 
 PyValue Interpreter::handle_intrinsic_init(std::unique_ptr<CallFrame>& frame, IRInst& inst) {
-    (void)frame; (void)inst;
-    return PyValue(int64_t(0));  // stub
+    if (inst.operands.empty()) return PyValue(int64_t(0));
+    return get_slot(frame.get(), inst.operands[0]);
 }
 
 // ===== Globals =====
