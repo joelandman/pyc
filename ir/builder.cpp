@@ -372,6 +372,7 @@ void IRBuilder::build_assign_stmt(const ast::AssignStmt& as) {
         auto* store = current_func_->new_inst(IRInstKind::STORELOCAL, target);
         store->operands.push_back(slot);
         store->operands.push_back(val);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
     }
 }
 
@@ -383,6 +384,7 @@ void IRBuilder::build_return_stmt(const ast::ReturnStmt& ret) {
     
     auto* ret_inst = current_func_->new_inst(IRInstKind::RETURN, "return");
     ret_inst->operands.push_back(val);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(ret_inst));
 }
 
 void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
@@ -391,16 +393,19 @@ void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
     
     auto* load = current_func_->new_inst(IRInstKind::LOADLOCAL, aug.target());
     load->operands.push_back(slot);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(load));
     
     auto rhs = build_expr(*aug.value());
     
     auto* binop = current_func_->new_inst(op);
     binop->operands.push_back(load->id);
     binop->operands.push_back(rhs);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(binop));
     
     auto* store = current_func_->new_inst(IRInstKind::STORELOCAL, aug.target());
     store->operands.push_back(slot);
     store->operands.push_back(binop->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
 }
 
   void IRBuilder::build_import_stmt(const ast::ImportStmt& imp) {
