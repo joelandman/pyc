@@ -17,6 +17,7 @@
 #include <llvm/IR/Verifier.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Passes/PassPlugin.h>
+#include <llvm/IR/PassManager.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/ADT/ArrayRef.h>
 
@@ -757,12 +758,21 @@ std::string translate_module(pyc::ir::IRModule& ir_mod) {
     detail::IR2LLVMPass pass(ir_mod);
     auto* mod = pass.get_module();
     
-    // Skip LLVM optimization passes for now (InferFunctionAttrsPass crashes)
-    // llvm::PassBuilder pb;
-    // llvm::ModuleAnalysisManager mam;
-    // pb.registerModuleAnalyses(mam);
-    // auto opt_pipe = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
-    // opt_pipe.run(*mod, mam);
+      // Apply optimization passes - disabled due to LLVM 21 InferFunctionAttrsPass crash
+    // TODO: Re-enable with proper PassBuilder setup for LLVM 21
+    // {
+    //     llvm::PassBuilder pb;
+    //     llvm::ModuleAnalysisManager mam;
+    //     llvm::FunctionAnalysisManager fam;
+    //     llvm::CGSCCAnalysisManager cgscc_am;
+    //     pb.registerModuleAnalyses(mam);
+    //     pb.registerFunctionAnalyses(fam);
+    //     pb.registerCGSCCAnalyses(cgscc_am);
+    //     llvm::ModulePassManager mpm;
+    //     auto pipeline = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O0);
+    //     mpm.addPass(std::move(pipeline));
+    //     mpm.run(*mod, mam);
+    // }
     
     return pass.run();
 }

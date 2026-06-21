@@ -61,7 +61,7 @@
 - `ISINSTANCE` calls `pyc_isinstance()`
 - `NEWTYPE` calls `pyc_new_type()`
 - `range()` calls `pyc_range_list()` via CALL instruction
-- LLVM O2 optimization pipeline enabled via `buildPerModuleDefaultPipeline(OptimizationLevel::O2)`
+- LLVM O2 optimization pipeline disabled (InferFunctionAttrsPass crashes on LLVM 21)
 
 ---
 
@@ -481,7 +481,7 @@ To reach a usable MVP (80%+ complete), the following should be implemented in or
 
 **Phase 1: Critical Fixes (2-3 weeks)**
 1. LLVM codegen now generates function bodies - DONE
-2. Fix LLVM optimization pass crash (InferFunctionAttrsPass)
+2. LLVM optimization pass disabled (InferFunctionAttrsPass crashes on LLVM 21) - DISABLED
 3. Implement file-based module loading for import system
 4. Add `from module import name` support
 5. Implement `sys` module with `argv`, `exit`
@@ -523,11 +523,11 @@ To reach a usable MVP (80%+ complete), the following should be implemented in or
 | **Parser** | COMPLETE | Recursive descent parser, handles all Python syntax |
 | **AST** | COMPLETE | All node types defined |
 | **IR Builder** | 90% complete | Most features implemented, blocks fixed |
-| **LLVM Codegen** | 75% complete | Runtime functions + function bodies working |
+| **LLVM Codegen** | 75% complete | Runtime functions + function bodies working, optimization pass disabled |
 | **Interpreter** | 70% complete | Many intrinsics stubbed |
 | **Runtime** | 60% complete | Many builtins stubbed |
 | **GC** | 70% complete | Core works, edge cases remain |
 | **Testing** | 30% complete | Lexer, parser, IR, codegen tests pass |
-| **Performance** | 30% complete | No optimizations beyond O2 |
+| **Performance** | 25% complete | LLVM optimization pass disabled (InferFunctionAttrsPass crash on LLVM 21) |
 
 **Overall: 70-75% complete for MVP**
