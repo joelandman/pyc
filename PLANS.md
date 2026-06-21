@@ -388,16 +388,9 @@
 
 ## MVP Assessment: Are We Close?
 
-**Verdict: Approximately 70-75% complete for a basic Python compiler MVP**
+**Verdict: Approximately 75-80% complete for a basic Python compiler MVP**
 
-The compiler has a solid foundation with working lexer, recursive descent parser, IR builder, LLVM codegen, and runtime. The Lark parser has been replaced with a custom recursive descent parser that handles all Python syntax.
-
-**CRITICAL BLOCKER - LLVM Codegen:** The codegen is not generating function bodies:
-- Only runtime function `declare` statements are present in LLVM IR
-- The `main` function is not being defined
-- LLVM optimization pass crashes in `InferFunctionAttrsPass` due to incomplete IR
-- **Impact:** Compiled programs cannot execute - no function bodies generated
-- **Recommendation:** Fix codegen to properly translate IR instructions to LLVM IR
+The compiler has a solid foundation with working lexer, recursive descent parser, IR builder, LLVM codegen, and runtime. The Lark parser has been replaced with a custom recursive descent parser that handles all Python syntax. LLVM codegen now correctly generates function bodies in the LLVM IR output.
 
 ### What Works (MVP Core)
 - Arithmetic, comparison, boolean operators
@@ -418,15 +411,7 @@ The compiler has a solid foundation with working lexer, recursive descent parser
 
 ### Significant Remaining Issues
 
-#### 1. LLVM Codegen Not Generating Function Bodies (HIGH PRIORITY)
-**Status:** Codegen generates LLVM IR declarations but not function bodies
-- The `main` function is not being defined in the LLVM IR output
-- Only runtime function `declare` statements are present
-- LLVM optimization pass crashes in `InferFunctionAttrsPass` due to incomplete IR
-- **Impact:** Compiled programs cannot execute - no function bodies generated
-- **Recommendation:** Fix codegen to properly translate IR instructions to LLVM IR
-
-#### 2. Missing Core Language Features (HIGH PRIORITY)
+#### 1. Missing Core Language Features (HIGH PRIORITY)
 **Status:** Several essential features not implemented
 
 | Feature | Status | Impact |
@@ -446,7 +431,7 @@ The compiler has a solid foundation with working lexer, recursive descent parser
 
 **Impact:** Many common Python patterns are broken or unavailable.
 
-#### 3. Performance Gap vs CPython (MEDIUM PRIORITY)
+#### 2. Performance Gap vs CPython (MEDIUM PRIORITY)
 **Status:** Significant performance overhead
 
 | Issue | Current State | Expected Impact |
@@ -459,19 +444,19 @@ The compiler has a solid foundation with working lexer, recursive descent parser
 
 **Impact:** Compiled code will be significantly slower than CPython for most programs.
 
-#### 4. Testing Infrastructure Gap (MEDIUM PRIORITY)
+#### 3. Testing Infrastructure Gap (MEDIUM PRIORITY)
 **Status:** No end-to-end testing
 
 | Issue | Current State |
 |-------|---------------|
 | Recursive descent parser | WORKING - parses all Python syntax |
-| End-to-end tests | None (codegen not generating function bodies) |
-| CPython benchmarks | Not run (can't execute compiled code) |
+| End-to-end tests | POSSIBLE - codegen now generates function bodies |
+| CPython benchmarks | Not run (no execution yet, but IR generated) |
 | Regression tests | Lexer, parser, IR, codegen tests pass |
 
 **Impact:** Cannot verify compiler correctness on real Python programs.
 
-#### 5. Runtime Completeness (MEDIUM PRIORITY)
+#### 4. Runtime Completeness (MEDIUM PRIORITY)
 **Status:** Many stubs remain
 
 | Builtin | Status |
@@ -495,7 +480,7 @@ The compiler has a solid foundation with working lexer, recursive descent parser
 To reach a usable MVP (80%+ complete), the following should be implemented in order:
 
 **Phase 1: Critical Fixes (2-3 weeks)**
-1. Fix LLVM codegen to generate function bodies
+1. LLVM codegen now generates function bodies - DONE
 2. Fix LLVM optimization pass crash (InferFunctionAttrsPass)
 3. Implement file-based module loading for import system
 4. Add `from module import name` support
@@ -538,11 +523,11 @@ To reach a usable MVP (80%+ complete), the following should be implemented in or
 | **Parser** | COMPLETE | Recursive descent parser, handles all Python syntax |
 | **AST** | COMPLETE | All node types defined |
 | **IR Builder** | 90% complete | Most features implemented, blocks fixed |
-| **LLVM Codegen** | 50% complete | Runtime functions done, function bodies missing |
+| **LLVM Codegen** | 75% complete | Runtime functions + function bodies working |
 | **Interpreter** | 70% complete | Many intrinsics stubbed |
 | **Runtime** | 60% complete | Many builtins stubbed |
 | **GC** | 70% complete | Core works, edge cases remain |
-| **Testing** | 20% complete | Only lexer tests work |
+| **Testing** | 30% complete | Lexer, parser, IR, codegen tests pass |
 | **Performance** | 30% complete | No optimizations beyond O2 |
 
-**Overall: 60-70% complete for MVP**
+**Overall: 70-75% complete for MVP**

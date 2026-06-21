@@ -57,10 +57,8 @@ public:
         declare_runtime_functions();
     }
 
-    std::string run() {
-        std::cerr << "DEBUG: func_list size = " << ir_mod_.func_list.size() << std::endl;
+   std::string run() {
         for (auto* f : ir_mod_.func_list) {
-            std::cerr << "DEBUG: translating function " << f->name << " with " << f->blocks.size() << " blocks" << std::endl;
             translate_fn(*f);
         }
 

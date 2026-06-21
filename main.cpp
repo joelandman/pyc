@@ -190,16 +190,9 @@ void run_test_suite(const std::string& suite_name) {
             auto llir = pyc::codegen::translate_module(*builder.module);
             if (!llir.empty()) {
                 std::cout << "\n  Codegen passed! Generated LLVM IR\n";
-                std::cout << "\n(Truncated output - " << llir.length() << " bytes)\n";
-                // Print first 20 lines of LLVM IR
-                size_t pos = 0, line_count = 0;
-                while (pos < llir.size() && line_count < 20) {
-                    size_t next = llir.find('\n', pos);
-                    if (next == std::string::npos) next = llir.size();
-                    std::cout << "  " << llir.substr(pos, next - pos) << "\n";
-                    pos = next + 1;
-                    line_count++;
-                }
+                std::cout << "\n<<LLVM_IR_OUTPUT>>\n";
+                std::cout << llir;
+                std::cout << "\n<<LLVM_IR_OUTPUT_END>>\n";
             } else {
                 std::cout << "  Codegen: no LLVM IR generated\n";
                 success = false;

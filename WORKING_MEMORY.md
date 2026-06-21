@@ -9,6 +9,14 @@ Working on building a Python 3 compiler that generates native binaries with mini
 
 ## Recent Work - Step 5: Remaining Language Features
 
+### LLVM Codegen Verification
+- **Confirmed: LLVM codegen IS generating function bodies correctly**
+- The issue was test output truncation (only first 20 lines printed, which were all runtime `declare` statements)
+- Full LLVM IR output (1229 bytes) includes `define i64 @main()` with complete body
+- Test updated to print full LLVM IR output without truncation
+- All 4 tests pass: Lexer, Parser, IR, Codegen
+- LLVM IR includes: 21 runtime function declarations + `define main()` + `define _pyc_main()`
+
 ### Critical Bug Fixes
 1. **POW bug** (`codegen/ir2ll.cpp:463-486`): Was using `CreateFMul` (multiplication) instead of actual power. Fixed to call `pyc_pow` runtime function with LLVM `intrinsic::pow` fallback.
 2. **to_int bug** (`runtime/builtins.cpp:27`): `reinterpret_cast<double*>(obj->data)` was wrong - obj->data is uint64_t, not a double pointer. Fixed to use `reinterpret_cast<uint64_t*>(&obj->data)`.
