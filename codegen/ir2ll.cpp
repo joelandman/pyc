@@ -3,6 +3,8 @@
 
 #include "codegen/ir2ll.h"
 #include "ir/ir.h"
+#include <iostream>
+#include <fstream>
 
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Type.h>
@@ -56,8 +58,11 @@ public:
     }
 
     std::string run() {
-        for (auto* f : ir_mod_.func_list)
+        std::cerr << "DEBUG: func_list size = " << ir_mod_.func_list.size() << std::endl;
+        for (auto* f : ir_mod_.func_list) {
+            std::cerr << "DEBUG: translating function " << f->name << " with " << f->blocks.size() << " blocks" << std::endl;
             translate_fn(*f);
+        }
 
         if (!ir_mod_.has_main)
             gen_main_entry();
@@ -65,6 +70,7 @@ public:
         std::string out;
         llvm::raw_string_ostream ss(out);
         mod_->print(ss, nullptr);
+        
         return out;
     }
 
