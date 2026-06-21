@@ -89,7 +89,6 @@ void IRBuilder::build_function(const ast::FunctionDef& func) {
     auto* entry_block = func_ir->new_block("entry");
     current_func_->entry_block_id = entry_block->id;
     current_block_ = entry_block;
-    func_ir->blocks.push_back(entry_block);
     
     for (auto& stmt : func.body()) {
         build_stmt(*stmt);
@@ -111,6 +110,7 @@ void IRBuilder::build_function(const ast::FunctionDef& func) {
             zero->is_const = true;
             set_const_double(zero->const_val, 0.0);
             ret_inst->operands.push_back(zero->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(ret_inst));
         }
     }
     
@@ -149,7 +149,6 @@ void IRBuilder::build_class(const ast::ClassDef& cls) {
     ctor_ir->entry_block_id = entry_block->id;
     current_func_ = ctor_ir;
     current_block_ = entry_block;
-    ctor_ir->blocks.push_back(entry_block);
     
     // Build class body methods as separate functions
     for (auto& stmt : cls.body()) {
@@ -167,7 +166,6 @@ void IRBuilder::build_class(const ast::ClassDef& cls) {
             method_ir->entry_block_id = method_block->id;
             current_func_ = method_ir;
             current_block_ = method_block;
-            method_ir->blocks.push_back(method_block);
             
             for (auto& body_stmt : fd->body()) {
                 build_stmt(*body_stmt);
@@ -824,7 +822,6 @@ uint32_t IRBuilder::build_lambda_expr(const ast::LambdaExpr& expr) {
     
     current_func_ = lambda_fn;
     current_block_ = entry_block;
-    lambda_fn->blocks.push_back(entry_block);
     
     auto body_val = build_expr(*expr.body());
     

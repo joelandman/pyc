@@ -753,7 +753,7 @@ std::string translate_module(pyc::ir::IRModule& ir_mod) {
     detail::IR2LLVMPass pass(ir_mod);
     auto* mod = pass.get_module();
     
-    // Skip LLVM optimization passes for now (causes segfault)
+    // Skip LLVM optimization passes for now (InferFunctionAttrsPass crashes)
     // llvm::PassBuilder pb;
     // llvm::ModuleAnalysisManager mam;
     // pb.registerModuleAnalyses(mam);
