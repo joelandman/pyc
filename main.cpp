@@ -161,38 +161,32 @@ void run_test_suite(const std::string& suite_name) {
         std::cout << "\n[Test: Codegen (LLVM IR)\n";
         std::string test_code = "def main():\n    x = 10\n    y = 20\n    z = x + y\n";
         try {
-            std::cout << "  Parsing code...\n";
             auto tokens = pyc::lexer::tokenize(test_code);
-            std::cout << "  Tokens: " << tokens.size() << "\n";
-            for (size_t i = 0; i < tokens.size(); i++) {
-                std::cout << "    " << i << ": kind=" << static_cast<int>(tokens[i].kind) << " value='" << tokens[i].value << "'\n";
-            }
-            std::cout << "  Creating parser...\n";
             pyc::parser::Parser parser(tokens);
-            std::cout << "  Parsing...\n";
             auto mod = parser.parse();
-            std::cout << "  AST: " << mod->body().size() << " statements\n";
-            for (auto& stmt : mod->body()) {
-                std::cout << "    Stmt: " << typeid(*stmt).name() << "\n";
-            }
-            std::cout << "  Building IR...\n";
             pyc::ir::builder::IRBuilder builder;
             builder.build(*mod);
-            std::cout << "  IR built successfully\n";
             
-            // Debug: print IR
-            std::cout << "  Debug: IR functions = " << builder.module->functions.size() << "\n";
+            std::cout << "  IR functions: " << builder.module->functions.size() << "\n";
             for (auto& [name, fn] : builder.module->functions) {
-                std::cout << "  Debug: function " << name << " has " << fn->blocks.size() << " blocks\n";
+                std::cout << "  Function: " << name << "\n";
+                std::cout << "    Params: " << fn->param_names.size() << "\n";
+                std::cout << "    Blocks: " << fn->blocks.size() << "\n";
                 for (size_t i = 0; i < fn->blocks.size(); i++) {
                     std::cout << "    Block " << i << ": " << fn->blocks[i]->instrs.size() << " instrs\n";
                     for (auto& instr : fn->blocks[i]->instrs) {
-                        std::cout << "      Instr: kind=" << static_cast<int>(instr->kind) << " name=" << instr->name << "\n";
+                        std::cout << "      " << static_cast<int>(instr->kind) << " " << instr->name;
+                        if (instr->is_const) std::cout << " [const]";
+                        std::cout << " ops=[";
+                        for (size_t j = 0; j < instr->operands.size(); j++) {
+                            if (j > 0) std::cout << ",";
+                            std::cout << instr->operands[j];
+                        }
+                        std::cout << "]\n";
                     }
                 }
             }
             
-            std::cout << "  Running codegen...\n";
             auto llir = pyc::codegen::translate_module(*builder.module);
             if (!llir.empty()) {
                 std::cout << "\n  Codegen passed! Generated LLVM IR\n";

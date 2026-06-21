@@ -753,12 +753,12 @@ std::string translate_module(pyc::ir::IRModule& ir_mod) {
     detail::IR2LLVMPass pass(ir_mod);
     auto* mod = pass.get_module();
     
-    // Apply LLVM optimization passes
-    llvm::PassBuilder pb;
-    llvm::ModuleAnalysisManager mam;
-    pb.registerModuleAnalyses(mam);
-    auto opt_pipe = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
-    opt_pipe.run(*mod, mam);
+    // Skip LLVM optimization passes for now (causes segfault)
+    // llvm::PassBuilder pb;
+    // llvm::ModuleAnalysisManager mam;
+    // pb.registerModuleAnalyses(mam);
+    // auto opt_pipe = pb.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+    // opt_pipe.run(*mod, mam);
     
     return pass.run();
 }
