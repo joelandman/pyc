@@ -14,6 +14,11 @@
 
 namespace pyc::ir::builder {
 
+// Helper to set constant values on an instruction
+static void set_const_double(std::variant<int, double, std::string>& val, double value) {
+    val = value;
+}
+
 // ===== Module build =====
 
 void IRBuilder::build(const ast::Module& mod) {
@@ -104,7 +109,7 @@ void IRBuilder::build_function(const ast::FunctionDef& func) {
             auto* ret_inst = func_ir->new_inst(IRInstKind::RETURN, "");
             auto* zero = func_ir->new_inst(IRInstKind::LOADCONST_INT, "");
             zero->is_const = true;
-            std::get<double>(zero->const_val) = 0.0;
+            set_const_double(zero->const_val, 0.0);
             ret_inst->operands.push_back(zero->id);
         }
     }
@@ -172,7 +177,7 @@ void IRBuilder::build_class(const ast::ClassDef& cls) {
             auto* ret_inst = method_ir->new_inst(IRInstKind::RETURN, "");
             auto* zero = method_ir->new_inst(IRInstKind::LOADCONST_INT, "");
             zero->is_const = true;
-            std::get<double>(zero->const_val) = 0.0;
+            set_const_double(zero->const_val, 0.0);
             ret_inst->operands.push_back(zero->id);
             
             module->functions[cls.name() + "." + fd->name()] = method_ir;
@@ -246,7 +251,7 @@ void IRBuilder::build_for_stmt(const ast::ForStmt& fs) {
     // Initialize index to 0
     auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "index_init");
     zero->is_const = true;
-    std::get<double>(zero->const_val) = 0.0;
+    set_const_double(zero->const_val, 0.0);
     auto* index_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__for_index__");
     index_store->operands.push_back(index_slot);
     index_store->operands.push_back(zero->id);
@@ -301,7 +306,7 @@ void IRBuilder::build_for_stmt(const ast::ForStmt& fs) {
     // Increment index: index = index + 1
     auto* one = current_func_->new_inst(IRInstKind::LOADCONST_INT, "one");
     one->is_const = true;
-    std::get<double>(one->const_val) = 1.0;
+    set_const_double(one->const_val, 1.0);
     auto* add_inst = current_func_->new_inst(IRInstKind::ADD, "index_inc");
     add_inst->operands.push_back(index_load->id);
     add_inst->operands.push_back(one->id);
@@ -428,7 +433,7 @@ void IRBuilder::build_delete_stmt(const ast::DeleteStmt& del) {
         store->operands.push_back(slot);
         auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "");
         zero->is_const = true;
-        std::get<double>(zero->const_val) = 0.0;
+        set_const_double(zero->const_val, 0.0);
         store->operands.push_back(zero->id);
     }
 }
@@ -495,7 +500,7 @@ void IRBuilder::build_raise_stmt(const ast::RaiseStmt& ra) {
     auto* ret_inst = current_func_->new_inst(IRInstKind::RETURN, "raise_return");
     auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "");
     zero->is_const = true;
-    std::get<double>(zero->const_val) = 0.0;
+    set_const_double(zero->const_val, 0.0);
     ret_inst->operands.push_back(zero->id);
     current_block_->instrs.push_back(std::unique_ptr<IRInst>(ret_inst));
     current_block_ = nullptr;
@@ -626,14 +631,16 @@ uint32_t IRBuilder::build_expr(const ast::Expr& expr) {
 uint32_t IRBuilder::build_int_literal(const ast::IntLiteral& lit) {
     auto* inst = current_func_->new_inst(IRInstKind::LOADCONST_INT, "const");
     inst->is_const = true;
-    std::get<double>(inst->const_val) = static_cast<double>(lit.value());
+    set_const_double(inst->const_val, static_cast<double>(lit.value()));
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     return inst->id;
 }
 
 uint32_t IRBuilder::build_float_literal(const ast::FloatLiteral& lit) {
     auto* inst = current_func_->new_inst(IRInstKind::LOADCONST_FLOAT, "const");
     inst->is_const = true;
-    std::get<double>(inst->const_val) = lit.value();
+    set_const_double(inst->const_val, lit.value());
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     return inst->id;
 }
 
@@ -641,13 +648,15 @@ uint32_t IRBuilder::build_str_literal(const ast::StrLiteral& lit) {
     auto* inst = current_func_->new_inst(IRInstKind::LOADCONST_STR, "const");
     inst->is_const = true;
     inst->const_val = lit.value();
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     return inst->id;
 }
 
 uint32_t IRBuilder::build_bool_literal(const ast::BoolLiteral& lit) {
     auto* inst = current_func_->new_inst(IRInstKind::LOADCONST_INT, "const");
     inst->is_const = true;
-    std::get<double>(inst->const_val) = lit.value() ? 1.0 : 0.0;
+    set_const_double(inst->const_val, lit.value() ? 1.0 : 0.0);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     return inst->id;
 }
 
@@ -655,7 +664,8 @@ uint32_t IRBuilder::build_ellipsis_literal(const ast::EllipsisLiteral& lit) {
     (void)lit;
     auto* inst = current_func_->new_inst(IRInstKind::LOADCONST_INT, "const");
     inst->is_const = true;
-    std::get<double>(inst->const_val) = -1.0;
+    set_const_double(inst->const_val, -1.0);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     return inst->id;
 }
 
@@ -665,9 +675,11 @@ uint32_t IRBuilder::build_name(const ast::Name& name) {
     if (it != locals_.end()) {
         auto* inst = current_func_->new_inst(IRInstKind::LOADLOCAL, name_str);
         inst->operands.push_back(it->second);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
         return inst->id;
     }
     auto* inst = current_func_->new_inst(IRInstKind::LOADGLOBAL, name_str);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     return inst->id;
 }
 
@@ -698,6 +710,7 @@ uint32_t IRBuilder::build_binop(const ast::BinOpExpr& expr) {
     auto* inst = current_func_->new_inst(op_kind);
     inst->operands.push_back(lhs);
     inst->operands.push_back(rhs);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     return inst->id;
 }
 
@@ -709,10 +722,12 @@ uint32_t IRBuilder::build_unary(const ast::UnaryOpExpr& expr) {
         case ast::UnaryOpExpr::NEG: {
             auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "");
             zero->is_const = true;
-            std::get<double>(zero->const_val) = 0.0;
+            set_const_double(zero->const_val, 0.0);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(zero));
             auto* inst = current_func_->new_inst(IRInstKind::SUB, "neg");
             inst->operands.push_back(zero->id);
             inst->operands.push_back(operand);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
             return inst->id;
         }
         case ast::UnaryOpExpr::NOT: op_kind = IRInstKind::NOT; break;
@@ -722,6 +737,7 @@ uint32_t IRBuilder::build_unary(const ast::UnaryOpExpr& expr) {
     
     auto* inst = current_func_->new_inst(op_kind);
     inst->operands.push_back(operand);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     return inst->id;
 }
 
@@ -731,6 +747,7 @@ uint32_t IRBuilder::build_call(const ast::CallExpr& expr) {
     if (name_expr && module->functions.count(name_expr->id() + ".__init__") > 0) {
         build_class_call(expr, name_expr->id());
         auto* load = current_func_->new_inst(IRInstKind::LOADGLOBAL, name_expr->id());
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(load));
         return load->id;
     }
     
@@ -744,6 +761,7 @@ uint32_t IRBuilder::build_call(const ast::CallExpr& expr) {
         inst->operands.push_back(arg_id);
     }
     
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     return inst->id;
 }
 
@@ -752,6 +770,7 @@ uint32_t IRBuilder::build_attr(const ast::AttrExpr& expr) {
     
     auto* inst = current_func_->new_inst(IRInstKind::GETATTR, expr.attr());
     inst->operands.push_back(obj_id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     
     return inst->id;
 }
@@ -764,6 +783,7 @@ uint32_t IRBuilder::build_list(const ast::ListExpr& expr) {
         inst->operands.push_back(elem_id);
     }
     
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     return inst->id;
 }
 
@@ -774,6 +794,7 @@ uint32_t IRBuilder::build_subscript(const ast::SubscriptExpr& expr) {
     auto* inst = current_func_->new_inst(IRInstKind::LIST_GET, "subscript");
     inst->operands.push_back(obj_id);
     inst->operands.push_back(slice_id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
     
     return inst->id;
 }
@@ -818,6 +839,7 @@ uint32_t IRBuilder::build_lambda_expr(const ast::LambdaExpr& expr) {
         if (it != locals_.end()) {
             auto* load = current_func_->new_inst(IRInstKind::LOADLOCAL, arg.name);
             load->operands.push_back(it->second);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(load));
             call_inst->operands.push_back(load->id);
         }
     }
@@ -867,7 +889,7 @@ uint32_t IRBuilder::build_list_comp(const ast::ListComp& expr) {
     auto index_slot = alloc_local("__list_comp_index__");
     auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "zero");
     zero->is_const = true;
-    std::get<double>(zero->const_val) = 0.0;
+    set_const_double(zero->const_val, 0.0);
     auto* index_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__list_comp_index__");
     index_store->operands.push_back(index_slot);
     index_store->operands.push_back(zero->id);
@@ -921,7 +943,7 @@ uint32_t IRBuilder::build_list_comp(const ast::ListComp& expr) {
     // Increment index
     auto* one = current_func_->new_inst(IRInstKind::LOADCONST_INT, "one");
     one->is_const = true;
-    std::get<double>(one->const_val) = 1.0;
+    set_const_double(one->const_val, 1.0);
     auto* add_inst = current_func_->new_inst(IRInstKind::ADD, "idx_inc");
     add_inst->operands.push_back(index_load->id);
     add_inst->operands.push_back(one->id);
@@ -982,7 +1004,7 @@ uint32_t IRBuilder::build_set_comp(const ast::SetComp& expr) {
     auto index_slot = alloc_local("__set_comp_index__");
     auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "zero");
     zero->is_const = true;
-    std::get<double>(zero->const_val) = 0.0;
+    set_const_double(zero->const_val, 0.0);
     auto* index_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__set_comp_index__");
     index_store->operands.push_back(index_slot);
     index_store->operands.push_back(zero->id);
@@ -1031,7 +1053,7 @@ uint32_t IRBuilder::build_set_comp(const ast::SetComp& expr) {
     
     auto* one = current_func_->new_inst(IRInstKind::LOADCONST_INT, "one");
     one->is_const = true;
-    std::get<double>(one->const_val) = 1.0;
+    set_const_double(one->const_val, 1.0);
     auto* add_inst = current_func_->new_inst(IRInstKind::ADD, "idx_inc");
     add_inst->operands.push_back(index_load->id);
     add_inst->operands.push_back(one->id);
@@ -1088,7 +1110,7 @@ uint32_t IRBuilder::build_gen_expr(const ast::GenExpr& expr) {
     auto index_slot = alloc_local("__gen_expr_index__");
     auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "zero");
     zero->is_const = true;
-    std::get<double>(zero->const_val) = 0.0;
+    set_const_double(zero->const_val, 0.0);
     auto* index_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__gen_expr_index__");
     index_store->operands.push_back(index_slot);
     index_store->operands.push_back(zero->id);
@@ -1137,7 +1159,7 @@ uint32_t IRBuilder::build_gen_expr(const ast::GenExpr& expr) {
     
     auto* one = current_func_->new_inst(IRInstKind::LOADCONST_INT, "one");
     one->is_const = true;
-    std::get<double>(one->const_val) = 1.0;
+    set_const_double(one->const_val, 1.0);
     auto* add_inst = current_func_->new_inst(IRInstKind::ADD, "idx_inc");
     add_inst->operands.push_back(index_load->id);
     add_inst->operands.push_back(one->id);
@@ -1197,7 +1219,7 @@ uint32_t IRBuilder::build_dict_comp(const ast::DictComp& expr) {
     auto index_slot = alloc_local("__dict_comp_index__");
     auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "zero");
     zero->is_const = true;
-    std::get<double>(zero->const_val) = 0.0;
+    set_const_double(zero->const_val, 0.0);
     auto* index_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__dict_comp_index__");
     index_store->operands.push_back(index_slot);
     index_store->operands.push_back(zero->id);
@@ -1248,7 +1270,7 @@ uint32_t IRBuilder::build_dict_comp(const ast::DictComp& expr) {
     
     auto* one = current_func_->new_inst(IRInstKind::LOADCONST_INT, "one");
     one->is_const = true;
-    std::get<double>(one->const_val) = 1.0;
+    set_const_double(one->const_val, 1.0);
     auto* add_inst = current_func_->new_inst(IRInstKind::ADD, "idx_inc");
     add_inst->operands.push_back(index_load->id);
     add_inst->operands.push_back(one->id);

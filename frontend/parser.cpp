@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <cstring>
+#include <iostream>
 
 namespace pyc::parser {
 
@@ -312,7 +313,6 @@ std::shared_ptr<ast::Stmt> Parser::parse_function_def() {
     advance();
 
     expect(pyc::lexer::TokenType::LPAREN);
-    advance();
     std::vector<ast::FunctionDef::Arg> args;
     while (has_more() && current().kind != pyc::lexer::TokenType::RPAREN) {
         if (current().kind == pyc::lexer::TokenType::NAME) {
@@ -668,6 +668,10 @@ bool Parser::has_more() const {
 }
 
 const pyc::lexer::Token& Parser::current() {
+    if (pos_ >= tokens_.size()) {
+        static const pyc::lexer::Token eof_token{pyc::lexer::TokenType::EOF_, ""};
+        return eof_token;
+    }
     return tokens_[pos_];
 }
 
@@ -679,8 +683,10 @@ void Parser::advance() {
 
 void Parser::expect(pyc::lexer::TokenType type) {
     if (current().kind != type) {
-        throw std::runtime_error(std::string("Expected ") + std::to_string(static_cast<int>(type)) +
-            " got " + current().value);
+        std::string type_names[] = {"NAME", "INT", "FLOAT", "STR", "IADD", "ISUB", "IMUL", "IDIV", "POW", "PERCENT", "LT", "LE", "GT", "GE", "EQ", "NE", "ASSIGN", "COLON", "COMMA", "LPAREN", "RPAREN", "LBRACKET", "RBRACKET", "DOT", "MINUS", "PLUS", "NEWLINE", "DECREMENT", "DEF", "CLASS", "PASS", "BREAK", "CONTINUE", "EOF_"};
+        std::string type_name = (static_cast<int>(type) >= 0 && static_cast<int>(type) < 34) ? type_names[static_cast<int>(type)] : "UNKNOWN";
+        std::string current_name = (static_cast<int>(current().kind) >= 0 && static_cast<int>(current().kind) < 34) ? type_names[static_cast<int>(current().kind)] : "UNKNOWN";
+        throw std::runtime_error(std::string("Expected ") + type_name + " (" + std::to_string(static_cast<int>(type)) + ") got " + current_name + " (" + std::to_string(static_cast<int>(current().kind)) + ") value='" + current().value + "'");
     }
     advance();
 }

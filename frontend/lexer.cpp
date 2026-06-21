@@ -63,7 +63,7 @@ std::vector<Token> tokenize(const std::string& source) {
                 ++line_start;
             size_t indent = line_start - (pos + 1);
 
-            // Count current indentation
+             // Count current indentation
             size_t current_line_start = pos;
             // Find beginning of current line
             size_t start_of_line = pos;
@@ -73,11 +73,16 @@ std::vector<Token> tokenize(const std::string& source) {
                 --j;
             }
             if (j == 0) start_of_line = 0;
+            // start_of_line is now the newline character, so move to next char
+            if (start_of_line < len && source[start_of_line] == '\n')
+                start_of_line++;
 
-            // Count spaces after last newline
-            size_t line_indent = start_of_line;
-            while (line_indent < len && (source[line_indent] == ' ' || source[line_indent] == '\t'))
-                ++line_indent;
+      // Count spaces after last newline
+            size_t line_indent_start = start_of_line;
+            size_t line_indent_end = start_of_line;
+            while (line_indent_end < len && (source[line_indent_end] == ' ' || source[line_indent_end] == '\t'))
+                ++line_indent_end;
+            size_t line_indent = line_indent_end - line_indent_start;  // number of spaces
 
             if (line_start >= len || source[line_start] == '\n') {
                 // Blank line
@@ -85,11 +90,17 @@ std::vector<Token> tokenize(const std::string& source) {
                 continue;
             }
 
+            if (indent > line_indent) {
+                // Indent increased - no token needed (simplified)
+                tokens.push_back({TokenType::NEWLINE, "\n"});
+                ++pos;
+                continue;
+            }
             if (indent < line_indent) {
                 // Dedent - emit one DECREMENT per level
                 while ((int)(line_indent - indent) > 0) { // simplified
                     tokens.push_back({TokenType::DECREMENT, ""});
-                    line_indent -= 4; // rough
+                    indent += 4; // rough
                 }
                 tokens.push_back({TokenType::NEWLINE, "\n"});
                 ++pos;

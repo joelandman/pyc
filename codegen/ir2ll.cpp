@@ -266,7 +266,11 @@ private:
             switch (kind) {
             case pyc::ir::IRInstKind::LOADCONST_INT:
                 if (inst->is_const) {
-                    auto dbl = std::get<double>(inst->const_val);
+                    double dbl = 0.0;
+                    if (std::holds_alternative<int>(inst->const_val))
+                        dbl = static_cast<double>(std::get<int>(inst->const_val));
+                    else if (std::holds_alternative<double>(inst->const_val))
+                        dbl = std::get<double>(inst->const_val);
                     record(builder_.CreateFPToSI(
                         llvm::ConstantFP::get(builder_.getDoubleTy(), dbl),
                         builder_.getInt64Ty(), "const_int"));
@@ -275,8 +279,12 @@ private:
 
             case pyc::ir::IRInstKind::LOADCONST_FLOAT:
                 if (inst->is_const) {
-                    record(llvm::ConstantFP::get(builder_.getDoubleTy(),
-                        std::get<double>(inst->const_val)));
+                    double dbl = 0.0;
+                    if (std::holds_alternative<int>(inst->const_val))
+                        dbl = static_cast<double>(std::get<int>(inst->const_val));
+                    else if (std::holds_alternative<double>(inst->const_val))
+                        dbl = std::get<double>(inst->const_val);
+                    record(llvm::ConstantFP::get(builder_.getDoubleTy(), dbl));
                 }
                 break;
 
