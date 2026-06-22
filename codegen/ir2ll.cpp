@@ -793,9 +793,37 @@ private:
                 record(builder_.CreateOr(val(inst->operands[0]) ? val(inst->operands[0]) : i64(),
                                           val(inst->operands[1]) ? val(inst->operands[1]) : i64(), "or"));
                 break;
-            case pyc::ir::IRInstKind::NOT:
+              case pyc::ir::IRInstKind::NOT:
                 record(builder_.CreateNot(val(inst->operands[0]) ? val(inst->operands[0]) : i64(), "not"));
                 break;
+
+            case pyc::ir::IRInstKind::IN: {
+                auto* in_fn = mod_->getFunction("pyc_contains");
+                if (in_fn && inst->operands.size() >= 2) {
+                    std::vector<llvm::Value*> args = {
+                        val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                        val(inst->operands[1]) ? val(inst->operands[1]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                    };
+                    record(builder_.CreateCall(in_fn, args, "in"));
+                } else {
+                    record(i64());
+                }
+                break;
+            }
+
+            case pyc::ir::IRInstKind::IS: {
+                auto* is_fn = mod_->getFunction("pyc_is");
+                if (is_fn && inst->operands.size() >= 2) {
+                    std::vector<llvm::Value*> args = {
+                        val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                        val(inst->operands[1]) ? val(inst->operands[1]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                    };
+                    record(builder_.CreateCall(is_fn, args, "is"));
+                } else {
+                    record(i64());
+                }
+                break;
+            }
 
             case pyc::ir::IRInstKind::ISINSTANCE: {
                 auto* isinstance_fn = mod_->getFunction("pyc_isinstance");

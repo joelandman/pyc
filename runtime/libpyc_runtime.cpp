@@ -142,6 +142,27 @@ pyc_obj_t pyc_dict_get(pyc_obj_t dict_obj, pyc_obj_t key_obj) {
     return nullptr;
 }
 
+int64_t pyc_contains(pyc_obj_t obj, pyc_obj_t item) {
+    auto* pyobj = to_pyobj(obj);
+    auto* pyitem = to_pyobj(item);
+    if (!pyobj || !pyitem) return 0;
+    if (pyobj->list_elements) {
+        for (auto* elem : *pyobj->list_elements) {
+            if (elem == pyitem) return 1;
+        }
+        return 0;
+    }
+    if (pyobj->dict_entries && pyitem->str_value) {
+        std::string key = *pyitem->str_value;
+        return pyobj->dict_entries->count(key) > 0 ? 1 : 0;
+    }
+    return 0;
+}
+
+int64_t pyc_is(pyc_obj_t obj, pyc_obj_t other) {
+    return (to_pyobj(obj) == to_pyobj(other)) ? 1 : 0;
+}
+
 pyc_obj_t pyc_new_type(pyc_type_kind_t type_kind) {
     PyObject* obj = new PyObject();
     obj->refcount = 1;

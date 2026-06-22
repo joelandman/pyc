@@ -54,7 +54,7 @@ public:
 
 class BinOpExpr final : public Expr {
 public:
-    enum Op { ADD, SUB, MUL, DIV, FLOOR_DIV, MOD, POW, LT, LE, GT, GE, EQ, NE, AND, OR };
+    enum Op { ADD, SUB, MUL, DIV, FLOOR_DIV, MOD, POW, LT, LE, GT, GE, EQ, NE, AND, OR, IN, IS };
     Op op_;
     std::shared_ptr<Expr> left_, right_;
     BinOpExpr(Op o, std::shared_ptr<Expr> l, std::shared_ptr<Expr> r)

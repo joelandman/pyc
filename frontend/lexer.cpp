@@ -38,6 +38,7 @@ const char* token_type_name(TokenType t) {
         case TokenType::PLUS: return "PLUS";
         case TokenType::NEWLINE: return "NEWLINE";
         case TokenType::DECREMENT: return "DECREMENT";
+        case TokenType::IN: return "IN";
         case TokenType::DEF: return "DEF";
         case TokenType::CLASS: return "CLASS";
         case TokenType::PASS: return "PASS";
@@ -187,7 +188,7 @@ std::vector<Token> tokenize(const std::string& source) {
             else if (kw == "True") tokens.push_back({TokenType::NAME, kw});
             else if (kw == "False") tokens.push_back({TokenType::NAME, kw});
             else if (kw == "None") tokens.push_back({TokenType::NAME, kw});
-            else if (kw == "in") tokens.push_back({TokenType::NAME, kw});
+            else if (kw == "in") tokens.push_back({TokenType::IN, kw});
             else {
                 tokens.push_back({TokenType::NAME, kw});
             }

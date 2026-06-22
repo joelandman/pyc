@@ -47,6 +47,10 @@ pyc_obj_t pyc_range_list(int64_t start, int64_t stop, int64_t step);
 pyc_obj_t pyc_dict_set(pyc_obj_t dict_obj, pyc_obj_t key_obj, pyc_obj_t val_obj);
 pyc_obj_t pyc_dict_get(pyc_obj_t dict_obj, pyc_obj_t key_obj);
 
+// Membership and identity
+int64_t pyc_contains(pyc_obj_t obj, pyc_obj_t item);
+int64_t pyc_is(pyc_obj_t obj, pyc_obj_t other);
+
 // String operations
 const char* pyc_str_value(pyc_obj_t str_obj);
 pyc_obj_t pyc_type_name(pyc_obj_t obj);

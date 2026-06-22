@@ -742,6 +742,8 @@ uint32_t IRBuilder::build_binop(const ast::BinOpExpr& expr) {
         case ast::BinOpExpr::GE:   op_kind = IRInstKind::GE; break;
         case ast::BinOpExpr::AND:  op_kind = IRInstKind::AND; break;
         case ast::BinOpExpr::OR:   op_kind = IRInstKind::OR; break;
+        case ast::BinOpExpr::IN:   op_kind = IRInstKind::IN; break;
+        case ast::BinOpExpr::IS:   op_kind = IRInstKind::IS; break;
         default: op_kind = IRInstKind::ADD; break;
     }
     

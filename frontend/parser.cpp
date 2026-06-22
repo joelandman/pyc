@@ -506,7 +506,8 @@ std::shared_ptr<ast::Expr> Parser::parse_comparison_expr() {
     auto left = parse_add_expr();
     while (has_more() && (current().kind == pyc::lexer::TokenType::LT || current().kind == pyc::lexer::TokenType::LE ||
            current().kind == pyc::lexer::TokenType::GT || current().kind == pyc::lexer::TokenType::GE ||
-           current().kind == pyc::lexer::TokenType::EQ || current().kind == pyc::lexer::TokenType::NE)) {
+           current().kind == pyc::lexer::TokenType::EQ || current().kind == pyc::lexer::TokenType::NE ||
+           current().kind == pyc::lexer::TokenType::IN)) {
         pyc::lexer::TokenType kind = current().kind;
         advance();
         auto right = parse_add_expr();
@@ -518,6 +519,7 @@ std::shared_ptr<ast::Expr> Parser::parse_comparison_expr() {
             case pyc::lexer::TokenType::GE: op = ast::BinOpExpr::GE; break;
             case pyc::lexer::TokenType::EQ: op = ast::BinOpExpr::EQ; break;
             case pyc::lexer::TokenType::NE: op = ast::BinOpExpr::NE; break;
+            case pyc::lexer::TokenType::IN: op = ast::BinOpExpr::IN; break;
             default: op = ast::BinOpExpr::EQ; break;
         }
         left = std::make_shared<ast::BinOpExpr>(op, std::move(left), std::move(right));
