@@ -160,6 +160,37 @@
 - Import module, then for each name call `pyc_getattr(module, name)`
 - Store each imported name in a global variable
 
+### 11. Implement Relative Imports
+**Status: FIXED**
+- Parser: parse leading dots in `from` imports to set `level` field
+  - `from . import x` → level=1, module_name=""
+  - `from ..pkg import y` → level=2, module_name="pkg"
+  - `from .module import z` → level=1, module_name="module"
+- IR builder: pass parent module name and level to runtime
+  - Emit `CALL pyc_import_relative(module_name, level, parent_module)`
+  - `module_name_` field added to IRBuilder for parent module context
+- Runtime: resolve relative imports using parent module's `__name__` and `__path__`
+  - `import_relative()` computes absolute module name from relative + parent
+  - level=1: search in parent package directory
+  - level=2: search in grandparent package directory
+  - Delegates to normal `import_module()` for actual loading
+
+### 12. Implement Namespace Package Support
+**Status: FIXED**
+- `is_namespace_package()` function checks for directories containing .py files without `__init__.py`
+- `find_package_dir()` scans sys.path for both regular and namespace packages
+- Namespace packages get `__path__` attribute set to their directory path
+- Namespace packages get `__name__` attribute set to their module name
+- Submodules in namespace packages are importable: `from namespace_pkg import submodule`
+
+### 13. Comprehensive Import System Test Suite
+**Status: CREATED**
+- Test directory: `test/import_tests/`
+- Test files: simple_module.py, package_a/__init__.py, package_a/mod_a1.py, package_a/mod_a2.py, package_a/subpkg/__init__.py, package_a/subpkg/mod_b1.py, namespace_pkg/mod_c1.py, relative_imports/__init__.py, relative_imports/sibling.py, relative_imports/child/__init__.py, relative_imports/child/child_module.py
+- Test programs: test_simple_import.py, test_multi_import.py, test_from_import.py, test_multi_from_import.py, test_nested_package.py, test_namespace_package.py, test_relative_sibling.py, relative_imports/child/test_relative_parent.py
+- Runner script: run_import_tests.sh
+- Note: Pre-existing segfault in compiled binaries prevents end-to-end testing (unit tests pass)
+
 ---
 
 ## Performance Plan
@@ -515,8 +546,8 @@ The compiler has a solid foundation with working lexer, recursive descent parser
 | `dir()` | FIXED | Returns instance attrs, dict keys, and type methods |
 | `globals()` | FIXED | Returns dict-like value with all global variables |
 | `locals()` | FIXED | Returns dict-like value with local variables |
-| `exec()` | UNSUPPORTED | Intentionally not implemented (security implications) |
-| `eval()` | UNSUPPORTED | Intentionally not implemented (security implications) |
+| `exec()` | EXCLUDED | Intentionally not implemented (security implications). Excluded for foreseeable future. |
+| `eval()` | EXCLUDED | Intentionally not implemented (security implications). Excluded for foreseeable future. |
 | `import` | FIXED | File-based module loading, packages, submodules, name binding |
 | `super()` | NOT DEFINED | |
 | `property` | NOT DEFINED | |

@@ -11,11 +11,13 @@ namespace pyc::ir::builder {
 class IRBuilder {
 public:
     std::unique_ptr<IRModule> module;
+    std::string module_name_;
 
     IRBuilder() : module(std::make_unique<IRModule>()) {}
 
     // Build an IRModule from an AST Module
     void build(const ast::Module& mod);
+    void build(const ast::Module& mod, const std::string& mod_name);
 
 private:
     std::unordered_map<std::string, uint32_t> locals_;

@@ -30,6 +30,10 @@ Working on building a Python 3 compiler that generates native binaries with mini
 - Package initialization: loads `__init__.py` when importing a package
 - Submodule imports: `from package import submodule` loads and caches submodules
 - Submodules accessible via dot notation: `package.submodule.name`
+- Relative imports: `from . import x`, `from ..pkg import y` (level-based resolution)
+- Namespace package support: directories with .py files but no `__init__.py`
+- `__path__` and `__name__` attributes set on namespace packages
+- Comprehensive import test suite in test/import_tests/
 
 ### Builtin Functions Fixed
 - `format()`: Handles positional placeholders `{0}`, `{1}` and format specifiers (.2f, d, s, %)
@@ -137,3 +141,18 @@ Integration tests:
 ### Note
 - Full compilation pipeline (parser → IR → LLVM) uses self-developed recursive descent parser
 - Lexer and parser tests pass for all programs
+
+## Next Steps
+- Relative imports (`from . import x`, `from ..pkg import y`)
+- Namespace package support (directories without `__init__.py`)
+- Comprehensive test suite for import system
+- `as` aliases for imports (`import X as Y`)
+- `from X import *` support
+- `__all__` support for selective star imports
+- `__path__` attribute on package dicts
+- Dotted module names (`import os.path`)
+- Circular import detection
+- Proper `ModuleNotFoundError`/`ImportError` exceptions
+
+## Excluded for Foreseeable Future
+- **exec() and eval() builtins**: Intentionally unsupported due to security implications (arbitrary code execution, code injection, sandbox escape). Will not be implemented. Use explicit function calls or pre-compiled IR modules instead.

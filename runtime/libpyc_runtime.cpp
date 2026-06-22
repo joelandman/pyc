@@ -446,4 +446,12 @@ pyc_obj_t pyc_import_module(const char* module_name) {
     return from_pyobj(module_dict);
 }
 
+pyc_obj_t pyc_import_relative(const char* module_name, int level, const char* parent_module) {
+    std::string mod = module_name ? module_name : "";
+    std::string parent = parent_module ? parent_module : "";
+    
+    auto* result = pyc::runtime::import_relative(mod, level, parent);
+    return from_pyobj(result);
+}
+
 } // namespace pyc::runtime

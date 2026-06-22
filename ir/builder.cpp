@@ -23,10 +23,14 @@ static void set_const_double(std::variant<int, double, std::string>& val, double
 
 void IRBuilder::build(const ast::Module& mod) {
     module = std::make_unique<IRModule>();
-    
     for (auto& stmt : mod.body()) {
         build_stmt(*stmt);
     }
+}
+
+void IRBuilder::build(const ast::Module& mod, const std::string& mod_name) {
+    module_name_ = mod_name;
+    build(mod);
 }
 
 void IRBuilder::build_stmt(const ast::Stmt& stmt) {
@@ -434,6 +438,65 @@ void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
             // Store result in global variable with module name
             auto* store = current_func_->new_inst(IRInstKind::STOREGLOBAL, module_name);
             store->operands.push_back(import_call->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
+        }
+        return;
+    }
+    
+    // Handle relative imports: from . import x, from ..pkg import y
+    if (from_imp->level > 0) {
+        // Determine parent module name based on current function's module context
+        // The parent module is the module being compiled (module_name_)
+        std::string parent_module = module_name_.empty() ? "" : module_name_;
+        
+        // Call pyc_import_relative(module_name, level, parent_module)
+        auto* import_call = current_func_->new_inst(IRInstKind::CALL, "pyc_import_relative");
+        
+        // Module name (may be empty for "from . import x")
+        auto* mod_const = current_func_->new_inst(IRInstKind::LOADCONST_STR, "rel_module");
+        mod_const->is_const = true;
+        mod_const->const_val = from_imp->module_name_;
+        import_call->operands.push_back(mod_const->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(mod_const));
+        
+        // Level (relative import depth)
+        auto* level_const = current_func_->new_inst(IRInstKind::LOADCONST_INT, "rel_level");
+        level_const->is_const = true;
+        level_const->const_val = from_imp->level;
+        import_call->operands.push_back(level_const->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(level_const));
+        
+        // Parent module name
+        auto* parent_const = current_func_->new_inst(IRInstKind::LOADCONST_STR, "rel_parent");
+        parent_const->is_const = true;
+        parent_const->const_val = parent_module;
+        import_call->operands.push_back(parent_const->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(parent_const));
+        
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(import_call));
+        
+        // For each imported name, get it from the result and store in global
+        std::string result_var = "__rel_import_result__";
+        auto* module_store = current_func_->new_inst(IRInstKind::STOREGLOBAL, result_var);
+        module_store->operands.push_back(import_call->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(module_store));
+        
+        for (auto& name : from_imp->names_) {
+            auto* module_load = current_func_->new_inst(IRInstKind::LOADGLOBAL, result_var);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(module_load));
+            
+            auto* attr_const = current_func_->new_inst(IRInstKind::LOADCONST_STR, "attr_name");
+            attr_const->is_const = true;
+            attr_const->const_val = name;
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(attr_const));
+            
+            auto* getattr_call = current_func_->new_inst(IRInstKind::CALL, "pyc_getattr");
+            getattr_call->operands.push_back(module_load->id);
+            getattr_call->operands.push_back(attr_const->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(getattr_call));
+            
+            auto* store = current_func_->new_inst(IRInstKind::STOREGLOBAL, name);
+            store->operands.push_back(getattr_call->id);
             current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
         }
         return;

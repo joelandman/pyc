@@ -86,5 +86,6 @@ void pyc_clear_exception();
 
 // Module loading
 pyc_obj_t pyc_import_module(const char* module_name);
+pyc_obj_t pyc_import_relative(const char* module_name, int level, const char* parent_module);
 
 } // namespace pyc::runtime

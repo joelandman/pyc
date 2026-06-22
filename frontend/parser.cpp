@@ -131,6 +131,11 @@ std::shared_ptr<ast::Stmt> Parser::parse_stmt() {
     // from ... import ...
     if (tok.kind == pyc::lexer::TokenType::NAME && tok.value == "from") {
         advance();
+        int level = 0;
+        while (has_more() && current().kind == pyc::lexer::TokenType::DOT) {
+            level++;
+            advance();
+        }
         std::string module;
         if (has_more() && current().kind == pyc::lexer::TokenType::NAME) {
             module = current().value;
@@ -139,7 +144,7 @@ std::shared_ptr<ast::Stmt> Parser::parse_stmt() {
         if (has_more() && current().kind == pyc::lexer::TokenType::NAME && current().value == "import") {
             advance();
         }
-        auto imp = std::make_shared<ast::ImportFrom>(module, 0);
+        auto imp = std::make_shared<ast::ImportFrom>(module, level);
         // Capture imported names
         while (has_more() && current().kind != pyc::lexer::TokenType::NEWLINE && current().kind != pyc::lexer::TokenType::DECREMENT) {
             if (current().kind == pyc::lexer::TokenType::NAME) {
