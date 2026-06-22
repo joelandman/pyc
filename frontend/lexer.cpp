@@ -31,6 +31,8 @@ const char* token_type_name(TokenType t) {
         case TokenType::RPAREN: return "RPAREN";
         case TokenType::LBRACKET: return "LBRACKET";
         case TokenType::RBRACKET: return "RBRACKET";
+        case TokenType::LBRACE: return "LBRACE";
+        case TokenType::RBRACE: return "RBRACE";
         case TokenType::DOT: return "DOT";
         case TokenType::MINUS: return "MINUS";
         case TokenType::PLUS: return "PLUS";
@@ -255,6 +257,8 @@ std::vector<Token> tokenize(const std::string& source) {
             case ')': tokens.push_back({TokenType::RPAREN, ")"}); break;
             case '[': tokens.push_back({TokenType::LBRACKET, "["}); break;
             case ']': tokens.push_back({TokenType::RBRACKET, "]"}); break;
+            case '{': tokens.push_back({TokenType::LBRACE, "{"}); break;
+            case '}': tokens.push_back({TokenType::RBRACE, "}"}); break;
             case '.': tokens.push_back({TokenType::DOT, "."}); break;
             default:
                 throw std::runtime_error(std::string("Unexpected char: ") + source[pos]);

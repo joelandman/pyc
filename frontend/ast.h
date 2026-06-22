@@ -111,6 +111,14 @@ public:
     const auto& elems() const { return elems_; }
 };
 
+class DictLiteral final : public Expr {
+    std::vector<std::pair<std::shared_ptr<Expr>, std::shared_ptr<Expr>>> pairs_;
+public:
+    explicit DictLiteral(std::vector<std::pair<std::shared_ptr<Expr>, std::shared_ptr<Expr>>> p)
+        : pairs_(std::move(p)) {}
+    const auto& pairs() const { return pairs_; }
+};
+
 // ===== Statements =====
 
 class AssignStmt final : public Stmt {

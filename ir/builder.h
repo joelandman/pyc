@@ -64,6 +64,7 @@ private:
     uint32_t build_call(const ast::CallExpr& expr);
     uint32_t build_attr(const ast::AttrExpr& expr);
     uint32_t build_list(const ast::ListExpr& expr);
+    uint32_t build_dict(const ast::DictLiteral& expr);
     uint32_t build_subscript(const ast::SubscriptExpr& expr);
     uint32_t build_lambda_expr(const ast::LambdaExpr& expr);
     uint32_t build_list_comp(const ast::ListComp& expr);

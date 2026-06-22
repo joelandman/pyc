@@ -102,6 +102,41 @@ pyc_obj_t pyc_new_dict() {
     return from_pyobj(obj);
 }
 
+pyc_obj_t pyc_dict_set(pyc_obj_t dict_obj, pyc_obj_t key_obj, pyc_obj_t val_obj) {
+    auto* dct = to_pyobj(dict_obj);
+    if (!dct || !dct->dict_entries) {
+        dct = to_pyobj(pyc_new_dict());
+        if (dct) dct->dict_entries = new std::unordered_map<std::string, PyObject*>();
+    }
+    if (dct && dct->dict_entries && key_obj) {
+        auto* key_pyobj = to_pyobj(key_obj);
+        std::string key_str;
+        if (key_pyobj && key_pyobj->str_value) {
+            key_str = *key_pyobj->str_value;
+        } else if (key_pyobj) {
+            key_str = std::to_string(key_pyobj->data);
+        }
+        auto* val_pyobj = to_pyobj(val_obj);
+        (*dct->dict_entries)[key_str] = val_pyobj;
+    }
+    return dict_obj;
+}
+
+pyc_obj_t pyc_dict_get(pyc_obj_t dict_obj, pyc_obj_t key_obj) {
+    auto* dct = to_pyobj(dict_obj);
+    if (!dct || !dct->dict_entries) return nullptr;
+    auto* key_pyobj = to_pyobj(key_obj);
+    std::string key_str;
+    if (key_pyobj && key_pyobj->str_value) {
+        key_str = *key_pyobj->str_value;
+    } else if (key_pyobj) {
+        key_str = std::to_string(key_pyobj->data);
+    }
+    auto it = dct->dict_entries->find(key_str);
+    if (it != dct->dict_entries->end()) return from_pyobj(it->second);
+    return nullptr;
+}
+
 pyc_obj_t pyc_new_type(pyc_type_kind_t type_kind) {
     PyObject* obj = new PyObject();
     obj->refcount = 1;

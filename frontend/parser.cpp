@@ -650,6 +650,21 @@ std::shared_ptr<ast::Expr> Parser::parse_primary_expr() {
         return std::make_shared<ast::ListExpr>(std::move(elems));
     }
 
+    // Dict literal
+    if (tok.kind == pyc::lexer::TokenType::LBRACE) {
+        advance();
+        std::vector<std::pair<std::shared_ptr<ast::Expr>, std::shared_ptr<ast::Expr>>> pairs;
+        while (has_more() && current().kind != pyc::lexer::TokenType::RBRACE) {
+            auto key = parse_expr();
+            if (has_more() && current().kind == pyc::lexer::TokenType::COLON) advance();
+            auto val = parse_expr();
+            pairs.emplace_back(std::move(key), std::move(val));
+            if (has_more() && current().kind == pyc::lexer::TokenType::COMMA) advance();
+        }
+        if (has_more() && current().kind == pyc::lexer::TokenType::RBRACE) advance();
+        return std::make_shared<ast::DictLiteral>(std::move(pairs));
+    }
+
     // Parenthesized expression
     if (tok.kind == pyc::lexer::TokenType::LPAREN) {
         advance();

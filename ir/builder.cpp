@@ -655,6 +655,7 @@ uint32_t IRBuilder::build_expr(const ast::Expr& expr) {
     if (auto* c = dynamic_cast<const ast::CallExpr*>(&expr)) return build_call(*c);
     if (auto* a = dynamic_cast<const ast::AttrExpr*>(&expr)) return build_attr(*a);
     if (auto* l = dynamic_cast<const ast::ListExpr*>(&expr)) return build_list(*l);
+    if (auto* d = dynamic_cast<const ast::DictLiteral*>(&expr)) return build_dict(*d);
     if (auto* s = dynamic_cast<const ast::SubscriptExpr*>(&expr)) return build_subscript(*s);
     if (auto* lam = dynamic_cast<const ast::LambdaExpr*>(&expr)) return build_lambda_expr(*lam);
     if (auto* comp = dynamic_cast<const ast::ListComp*>(&expr)) return build_list_comp(*comp);
@@ -817,6 +818,20 @@ uint32_t IRBuilder::build_list(const ast::ListExpr& expr) {
     for (auto& elem : expr.elems()) {
         auto elem_id = build_expr(*elem);
         inst->operands.push_back(elem_id);
+    }
+    
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
+    return inst->id;
+}
+
+uint32_t IRBuilder::build_dict(const ast::DictLiteral& expr) {
+    auto* inst = current_func_->new_inst(IRInstKind::MAKE_DICT, "dict");
+    
+    for (auto& [key_expr, val_expr] : expr.pairs()) {
+        auto key_id = build_expr(*key_expr);
+        auto val_id = build_expr(*val_expr);
+        inst->operands.push_back(key_id);
+        inst->operands.push_back(val_id);
     }
     
     current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));

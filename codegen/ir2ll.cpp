@@ -381,6 +381,63 @@ private:
                 break;
             }
 
+            case pyc::ir::IRInstKind::MAKE_DICT: {
+                auto* dict_fn = mod_->getFunction("pyc_new_dict");
+                if (dict_fn) {
+                    std::vector<llvm::Value*> empty_args;
+                    auto* dict_val = builder_.CreateCall(dict_fn, empty_args, "new_dict");
+                    // Set key-value pairs
+                    for (size_t i = 0; i + 1 < inst->operands.size(); i += 2) {
+                        auto* dict_set_fn = mod_->getFunction("pyc_dict_set");
+                        if (dict_set_fn) {
+                            std::vector<llvm::Value*> args = {
+                                dict_val,
+                                val(inst->operands[i]) ? val(inst->operands[i]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                                val(inst->operands[i+1]) ? val(inst->operands[i+1]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                            };
+                            builder_.CreateCall(dict_set_fn, args);
+                        }
+                    }
+                    record(dict_val);
+                } else {
+                    record(builder_.getInt64(0));
+                }
+                break;
+            }
+
+            case pyc::ir::IRInstKind::DICT_GET: {
+                if (inst->operands.size() >= 2) {
+                    auto* dict_get_fn = mod_->getFunction("pyc_dict_get");
+                    if (dict_get_fn) {
+                        std::vector<llvm::Value*> args = {
+                            val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                            val(inst->operands[1]) ? val(inst->operands[1]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                        };
+                        record(builder_.CreateCall(dict_get_fn, args, "dict_get"));
+                    } else {
+                        record(i64());
+                    }
+                } else {
+                    record(i64());
+                }
+                break;
+            }
+
+            case pyc::ir::IRInstKind::DICT_SET: {
+                if (inst->operands.size() >= 3) {
+                    auto* dict_set_fn = mod_->getFunction("pyc_dict_set");
+                    if (dict_set_fn) {
+                        std::vector<llvm::Value*> args = {
+                            val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                            val(inst->operands[1]) ? val(inst->operands[1]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                            val(inst->operands[2]) ? val(inst->operands[2]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                        };
+                        builder_.CreateCall(dict_set_fn, args);
+                    }
+                }
+                break;
+            }
+
             case pyc::ir::IRInstKind::NEWOBJ: {
                 auto* new_obj_fn = mod_->getFunction("pyc_new_object");
                 if (new_obj_fn) {
