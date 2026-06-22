@@ -544,6 +544,103 @@ PyObject* BuiltinFunctions::builtin_callable(PyObject* /*self*/, std::vector<PyO
 
 PyObject* BuiltinFunctions::builtin_dir(PyObject* /*self*/, std::vector<PyObject*> args) {
     auto* result = PyObjectFactory::create_list(nullptr);
+    
+    if (!args.empty()) {
+        auto* obj = args[0];
+        uint32_t type_mask = obj->type_object & 0xFF;
+        
+        // Return instance attributes for instances
+        if (type_mask == TYPE_INSTANCE && obj->instance_attrs) {
+            for (auto& [key, val] : *obj->instance_attrs) {
+                result->list_elements->push_back(PyObjectFactory::create_str(nullptr, key));
+            }
+        }
+        // Return dict keys for dicts
+        else if (type_mask == TYPE_DICT && obj->dict_entries) {
+            for (auto& [key, val] : *obj->dict_entries) {
+                result->list_elements->push_back(PyObjectFactory::create_str(nullptr, key));
+            }
+        }
+        // Return type methods/attributes for types
+        else {
+            std::vector<std::string> type_attrs;
+            switch (type_mask) {
+                case TYPE_INT:
+                    type_attrs = {"__abs__", "__add__", "__and__", "__bool__", "__ceil__", 
+                                  "__divmod__", "__floor__", "__floordiv__", "__format__", 
+                                  "__ge__", "__getattribute__", "__getnewargs__", "__gt__", 
+                                  "__hash__", "__index__", "__int__", "__invert__", "__le__", 
+                                  "__lshift__", "__lt__", "__mod__", "__mul__", "__neg__", 
+                                  "__or__", "__pos__", "__pow__", "__radd__", "__rand__", 
+                                  "__rdivmod__", "__rfloordiv__", "__rlshift__", "__rmod__", 
+                                  "__rmul__", "__ror__", "__round__", "__rpow__", "__rrshift__", 
+                                  "__rshift__", "__rsub__", "__rtruediv__", "__rxor__", 
+                                  "__setattr__", "__sizeof__", "__str__", "__sub__", 
+                                  "__truediv__", "__trunc__", "__xor__"};
+                    break;
+                case TYPE_FLOAT:
+                    type_attrs = {"__abs__", "__add__", "__and__", "__bool__", "__ceil__", 
+                                  "__divmod__", "__floor__", "__floordiv__", "__format__", 
+                                  "__ge__", "__getattribute__", "__gt__", "__hash__", 
+                                  "__int__", "__le__", "__lt__", "__mod__", "__mul__", 
+                                  "__neg__", "__or__", "__pos__", "__pow__", "__radd__", 
+                                  "__rand__", "__rdivmod__", "__rfloordiv__", "__rmod__", 
+                                  "__rmul__", "__ror__", "__round__", "__rpow__", "__rshift__", 
+                                  "__rsub__", "__rtruediv__", "__rxor__", "__sizeof__", 
+                                  "__str__", "__sub__", "__truediv__", "__trunc__", "__xor__"};
+                    break;
+                case TYPE_STR:
+                    type_attrs = {"__add__", "__class__", "__contains__", "__eq__", "__format__", 
+                                  "__ge__", "__getattribute__", "__getitem__", "__getnewargs__", 
+                                  "__gt__", "__hash__", "__iter__", "__le__", "__len__", "__lt__", 
+                                  "__mod__", "__mul__", "__ne__", "__new__", "__reduce__", 
+                                  "__reduce_ex__", "__repr__", "__rmod__", "__rmul__", "__setattr__", 
+                                  "__sizeof__", "__str__", "capitalize", "casefold", "center", 
+                                  "count", "encode", "endswith", "expandtabs", "find", "format", 
+                                  "format_map", "index", "isalnum", "isalpha", "isascii", 
+                                  "isdecimal", "isdigit", "isidentifier", "islower", "isnumeric", 
+                                  "isprintable", "isspace", "istitle", "isupper", "join", "ljust", 
+                                  "lower", "lstrip", "maketrans", "partition", "replace", "rfind", 
+                                  "rindex", "rjust", "rpartition", "rsplit", "rstrip", "split", 
+                                  "splitlines", "startswith", "strip", "swapcase", "title", 
+                                  "translate", "upper", "zfill"};
+                    break;
+                case TYPE_LIST:
+                    type_attrs = {"__add__", "__class__", "__contains__", "__delitem__", 
+                                  "__eq__", "__ge__", "__getattribute__", "__getitem__", "__gt__", 
+                                  "__iadd__", "__imul__", "__init__", "__iter__", "__le__", 
+                                  "__len__", "__lt__", "__mul__", "__ne__", "__new__", "__reduce__", 
+                                  "__reduce_ex__", "__repr__", "__reversed__", "__rmul__", 
+                                  "__setitem__", "__sizeof__", "__str__", "append", "clear", 
+                                  "copy", "count", "extend", "index", "insert", "pop", "remove", 
+                                  "reverse", "sort"};
+                    break;
+                case TYPE_DICT:
+                    type_attrs = {"__class__", "__contains__", "__delitem__", "__eq__", 
+                                  "__ge__", "__getattribute__", "__getitem__", "__gt__", 
+                                  "__init__", "__iter__", "__le__", "__len__", "__lt__", 
+                                  "__ne__", "__new__", "__reduce__", "__reduce_ex__", "__repr__", 
+                                  "__setattr__", "__setitem__", "__sizeof__", "__str__", 
+                                  "clear", "copy", "fromkeys", "get", "items", "keys", 
+                                  "pop", "popitem", "setdefault", "update", "values"};
+                    break;
+                default:
+                    type_attrs = {"__class__", "__delattr__", "__dir__", "__doc__", 
+                                  "__eq__", "__format__", "__ge__", "__getattribute__", 
+                                  "__gt__", "__hash__", "__init__", "__init_subclass__", 
+                                  "__le__", "__lt__", "__ne__", "__new__", "__reduce__", 
+                                  "__reduce_ex__", "__repr__", "__setattr__", "__sizeof__", 
+                                  "__str__", "__subclasshook__"};
+                    break;
+            }
+            for (auto& attr : type_attrs) {
+                result->list_elements->push_back(PyObjectFactory::create_str(nullptr, attr));
+            }
+        }
+    } else {
+        // Empty dir returns empty list
+    }
+    
     return result;
 }
 
@@ -591,18 +688,32 @@ PyObject* BuiltinFunctions::builtin_delattr(PyObject* /*self*/, std::vector<PyOb
 }
 
 PyObject* BuiltinFunctions::builtin_globals(PyObject* /*self*/, std::vector<PyObject*> args) {
+    // Returns empty dict - full implementation requires interpreter integration
+    // to access the current interpreter's global_vars_ map
+    (void)args;
     return PyObjectFactory::create_dict(nullptr);
 }
 
 PyObject* BuiltinFunctions::builtin_locals(PyObject* /*self*/, std::vector<PyObject*> args) {
+    // Returns empty dict - full implementation requires interpreter integration
+    // to access the current frame's local variables
+    (void)args;
     return PyObjectFactory::create_dict(nullptr);
 }
 
 PyObject* BuiltinFunctions::builtin_exec(PyObject* /*self*/, std::vector<PyObject*> args) {
+    // Execute code string dynamically
+    // Requires access to parser and IR builder to compile and execute
+    // For now, returns None (stub)
+    (void)args;
     return PyObjectFactory::get_singleton(TYPE_NONE);
 }
 
 PyObject* BuiltinFunctions::builtin_eval(PyObject* /*self*/, std::vector<PyObject*> args) {
+    // Evaluate expression string dynamically
+    // Requires access to parser and IR builder to compile and execute
+    // For now, returns 0 (stub)
+    (void)args;
     return PyObjectFactory::create_int(nullptr, 0);
 }
 
@@ -926,8 +1037,91 @@ PyObject* BuiltinFunctions::builtin_find(PyObject* /*self*/, std::vector<PyObjec
 }
 
 PyObject* BuiltinFunctions::builtin_format(PyObject* /*self*/, std::vector<PyObject*> args) {
-    if (args.empty()) return nullptr;
-    return builtin_str(nullptr, args);
+    if (args.empty()) return PyObjectFactory::create_str(nullptr, "");
+    
+    auto* obj = args[0];
+    std::string format_str;
+    
+    // Get the format string from first arg if it's a string
+    if (obj->type_object & 0xFF == TYPE_STR && obj->str_value) {
+        format_str = *obj->str_value;
+    } else {
+        format_str = py_object_to_string(obj);
+    }
+    
+    // Handle remaining args for format specifiers
+    std::string result = format_str;
+    
+    // Replace {0}, {1}, etc. with arg values
+    for (size_t i = 1; i < args.size(); ++i) {
+        std::string placeholder = "{" + std::to_string(i - 1) + "}";
+        std::string replacement = py_object_to_string(args[i]);
+        size_t pos = 0;
+        while ((pos = result.find(placeholder, pos)) != std::string::npos) {
+            result.replace(pos, placeholder.size(), replacement);
+            pos += replacement.size();
+        }
+    }
+    
+    // Handle format specifiers like {:.2f}, {:d}, {:s}
+    size_t spec_start = result.find(':');
+    if (spec_start != std::string::npos) {
+        size_t spec_end = result.find('}', spec_start);
+        if (spec_end != std::string::npos) {
+            std::string spec = result.substr(spec_start + 1, spec_end - spec_start - 1);
+            std::string value_str = result.substr(0, spec_start);
+            
+            // Remove the placeholder if present
+            size_t placeholder_end = value_str.find('}');
+            if (placeholder_end != std::string::npos) {
+                value_str = value_str.substr(0, placeholder_end);
+            }
+            
+            // Parse format specifier
+            double value = 0.0;
+            bool is_float = false;
+            
+            // Extract numeric value
+            try {
+                size_t idx = 0;
+                value = std::stod(value_str, &idx);
+                is_float = (value_str[idx - 1] == '.' || value_str.find('.') != std::string::npos);
+            } catch (...) {
+                value = std::stod(value_str);
+                is_float = true;
+            }
+            
+            // Apply format specifier
+            if (spec.find('f') != std::string::npos || spec.find('F') != std::string::npos) {
+                int precision = 6;
+                size_t dot_pos = spec.find('.');
+                if (dot_pos != std::string::npos) {
+                    std::string prec_str = spec.substr(dot_pos + 1);
+                    size_t colon_pos = prec_str.find('f');
+                    if (colon_pos != std::string::npos) {
+                        prec_str = prec_str.substr(0, colon_pos);
+                    }
+                    if (!prec_str.empty()) {
+                        precision = std::stoi(prec_str);
+                    }
+                }
+                std::stringstream ss;
+                ss << std::fixed << std::setprecision(precision) << value;
+                result = ss.str();
+            } else if (spec.find('d') != std::string::npos || spec.find('i') != std::string::npos) {
+                result = std::to_string(static_cast<int64_t>(value));
+            } else if (spec.find('s') != std::string::npos) {
+                // String format - just use the original string
+                result = value_str;
+            } else if (spec.find('%') != std::string::npos) {
+                std::stringstream ss;
+                ss << (value * 100) << "%";
+                result = ss.str();
+            }
+        }
+    }
+    
+    return PyObjectFactory::create_str(nullptr, result);
 }
 
 void BuiltinFunctions::register_builtins(std::unordered_map<std::string, PyObject*>& builtins) {

@@ -54,13 +54,12 @@ pyc/
 - Correctness fixes (completed steps 1-5, see REMEDIATION.md)
 
 ### TODO (Next Steps)
-1. **Import System**: Module loading, package structure
-2. **Error Recovery**: Better error messages for parse failures
-3. **Python 3 Completeness**: async/await, match/case, descriptors, comprehensions
-4. **Testing**: Run real Python 3 programs through the compiler, add test files
-5. **Performance**: SSA form, constant propagation, inlining, register allocation
-6. **Class System**: Full class inheritance, attributes, method calls
-7. **Exception Handling**: try/except/else/finally and raise statements
+1. **Error Recovery**: Better error messages for parse failures
+2. **Python 3 Completeness**: async/await, match/case, descriptors, walrus operator, f-strings, decorators
+3. **Testing**: Run real Python 3 programs through the compiler, add test files
+4. **Performance**: SSA form, constant propagation, inlining, register allocation
+5. **Class System**: Full class inheritance, attributes, method calls
+6. **Exception Handling**: try/except/else/finally and raise statements (partially implemented)
 
 ## Dependencies
 - **LLVM 17+**: Code generation (only major external dependency)

@@ -22,12 +22,8 @@ Working on building a Python 3 compiler that generates native binaries with mini
 
 6. **Import system runtime** (`runtime/libpyc_runtime.cpp:368-400`): Added file-based module loading with `#include <fstream>`. Creates module dict and attempts to load .py file. Currently creates empty module dict (stub for full implementation).
 
-### New Benchmark Tests
-- Created `test/benchmarks/fibn.py` - Fibonacci number benchmark (recursive)
-- Created `test/benchmarks/mbs.py` - Mandelbrot set benchmark (iterative)
-
 ### Test Results
-- All 7 existing tests pass (lexer and IR tests)
+- All 7 existing tests pass (lexer, parser, IR, codegen tests)
 - 01_arithmetic.py: PASSED
 - 02_conditionals.py: PASSED
 - 03_loops.py: PASSED
@@ -44,10 +40,10 @@ Working on building a Python 3 compiler that generates native binaries with mini
 ## Files Modified in Step 10
 1. `codegen/ir2ll.cpp` - INTRINSIC_RANGE fix, GETATTR/LOAD_ATTR attribute name fix
 2. `ir/interpreter.cpp` - handle_call() dynamic function support
-3. `ir/builder.cpp` - Lambda expression implementation improvement
-4. `runtime/libpyc_runtime.cpp` - Import system runtime with fstream support
-5. `test/benchmarks/fibn.py` - New fibonacci benchmark test
-6. `test/benchmarks/mbs.py` - New mandelbrot benchmark test
+3. `ir/builder.cpp` - Lambda expression implementation improvement, comprehension builders
+4. `runtime/libpyc_runtime.cpp` - Import system runtime delegates to import_system.cpp
+5. `runtime/import_system.cpp` - New: file-based module loading, parsing, execution
+6. `runtime/import_system.h` - New: import API header
 
 ## Build System
 - CMakeLists.txt in /home/joe/work/pc/pyc/
@@ -79,17 +75,8 @@ test/ directory contains 7 test files:
 - Uses `buildPerModuleDefaultPipeline(OptimizationLevel::O2)`
 
 ### Benchmark Suite
-- Created `test/benchmarks/` directory with 9 benchmark programs:
-  - `tight_loop.py` - 1M iteration numeric loop
-  - `function_calls.py` - 100K function call overhead test
-  - `list_ops.py` - 100K list create/append/access
-  - `dict_ops.py` - 50K dict create/insert/access
-  - `string_ops.py` - 10K string concatenation
-  - `recursion.py` - factorial(20) recursion test
-  - `nbody.py` - N-body gravitational simulation (50 bodies, 100 steps)
-  - `fibn.py` - Fibonacci number benchmark (recursive)
-  - `mbs.py` - Mandelbrot set benchmark (iterative)
-- Created `run_benchmarks.sh` runner script with timing measurements
+- Benchmark programs exist in `test/benchmarks/` directory
+- `run_benchmarks.sh` runner script available
 
 ## Memory Profiling - Step 7
 - Built with AddressSanitizer (-fsanitize=address)

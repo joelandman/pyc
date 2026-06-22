@@ -123,7 +123,8 @@ std::shared_ptr<ast::Stmt> Parser::parse_stmt() {
                 advance();
             }
         }
-        auto imp = std::make_shared<ast::ImportFrom>(modules.empty() ? "" : modules[0], 0);
+        auto imp = std::make_shared<ast::ImportFrom>("", 0);
+        imp->names_ = modules;  // Store all module names in names_
         return std::make_shared<ast::ImportStmt>(imp);
     }
 

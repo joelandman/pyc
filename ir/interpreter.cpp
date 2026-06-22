@@ -2,6 +2,7 @@
 // Executes IR directly (without LLVM) using a frame stack and value slots
 
 #include "ir/interpreter.h"
+#include "runtime/object.h"
 #include <stdexcept>
 #include <iostream>
 #include <cmath>
@@ -9,6 +10,9 @@
 #include <cstdlib>
 
 namespace pyc::ir {
+
+// Thread-local pointer to current interpreter instance
+static thread_local Interpreter* g_current_interpreter = nullptr;
 
 // ===== Static builtins =====
 
@@ -29,6 +33,31 @@ static PyValue builtin_print_impl(std::vector<PyValue> args) {
 // ===== Interpreter Constructor =====
 
 Interpreter::Interpreter() : last_result_(PyValue(int64_t(0))) {}
+
+Interpreter* Interpreter::current() {
+    return g_current_interpreter;
+}
+
+pyc::runtime::PyObject* Interpreter::pyvalue_to_pyobject(const PyValue& v) {
+    if (std::holds_alternative<int64_t>(v)) {
+        return pyc::runtime::PyObjectFactory::create_int(nullptr, std::get<int64_t>(v));
+    } else if (std::holds_alternative<double>(v)) {
+        return pyc::runtime::PyObjectFactory::create_float(nullptr, std::get<double>(v));
+    } else if (std::holds_alternative<std::string>(v)) {
+        return pyc::runtime::PyObjectFactory::create_str(nullptr, std::get<std::string>(v));
+    } else if (auto* dict_ptr = std::get_if<std::shared_ptr<PyDict>>(&v)) {
+        auto* dict = dict_ptr->get();
+        auto* result = pyc::runtime::PyObjectFactory::create_dict(nullptr);
+        if (result->dict_entries) {
+            for (auto& [key, val] : dict->entries) {
+                (void)val;
+                (*result->dict_entries)[key] = pyc::runtime::PyObjectFactory::create_str(nullptr, key);
+            }
+        }
+        return result;
+    }
+    return pyc::runtime::PyObjectFactory::get_singleton(pyc::runtime::TYPE_NONE);
+}
 
 // ===== Helper: downcast variant =====
 
@@ -144,6 +173,7 @@ PyValue Interpreter::resolve_literal(const std::variant<int, double, std::string
 
 PyValue Interpreter::run(const std::shared_ptr<IRModule>& module) {
     module_ = module;
+    g_current_interpreter = this;
 
     // Find and execute the 'main' function, or first function
     std::string entry_name = "main";
@@ -164,6 +194,7 @@ PyValue Interpreter::run(const std::shared_ptr<IRModule>& module) {
     // Execute the function
     auto result = call_function_impl(entry_name, {});
     last_result_ = result;
+    g_current_interpreter = nullptr;
     return result;
 }
 
@@ -855,6 +886,44 @@ std::unordered_map<std::string, PyValue>& Interpreter::globals() {
 
 void Interpreter::register_builtin(const std::string& name, std::function<PyValue(std::vector<PyValue>)> fn) {
     builtins_[name] = fn;
+}
+
+// ===== Globals/Locals Builtins =====
+
+PyValue builtin_globals_impl(std::vector<PyValue> /*args*/) {
+    auto* interp = Interpreter::current();
+    if (!interp) {
+        auto dict = std::make_shared<PyDict>();
+        return PyValue(dict);
+    }
+    auto& globals = interp->globals();
+    auto dict = std::make_shared<PyDict>();
+    for (auto& [key, val] : globals) {
+        (void)val;
+        dict->entries[key] = std::make_shared<PyDict>();
+    }
+    return PyValue(dict);
+}
+
+PyValue builtin_locals_impl(std::vector<PyValue> /*args*/) {
+    auto* interp = Interpreter::current();
+    if (!interp) {
+        auto dict = std::make_shared<PyDict>();
+        return PyValue(dict);
+    }
+    auto& frame_ref = interp->current_frame();
+    if (!frame_ref) {
+        auto dict = std::make_shared<PyDict>();
+        return PyValue(dict);
+    }
+    auto& frame = *frame_ref;
+    auto dict = std::make_shared<PyDict>();
+    for (auto& [name, slot] : frame.name_to_slot) {
+        if (slot < frame.slots.size()) {
+            dict->entries[name] = std::make_shared<PyDict>();
+        }
+    }
+    return PyValue(dict);
 }
 
 } // namespace pyc::ir

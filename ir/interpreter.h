@@ -6,13 +6,19 @@
 #include <vector>
 #include <string>
 #include <optional>
+#include "runtime/object.h"
 
 namespace pyc::ir {
+
+// Forward declaration for dict type
+struct PyDict {
+    std::unordered_map<std::string, std::shared_ptr<PyDict>> entries;
+};
 
 // Opaque type for all Python object values - the interpreter works with these
 // In a real implementation, this would be PyObject*; here we use a variant of
 // primitive types for simplicity (int64, double, string)
-using PyValue = std::variant<std::monostate, int64_t, double, std::string>;
+using PyValue = std::variant<std::monostate, int64_t, double, std::string, std::shared_ptr<PyDict>>;
 
 class RuntimeError {
 public:
@@ -77,6 +83,16 @@ public:
 
     // Set up builtin function
     void register_builtin(const std::string& name, std::function<PyValue(std::vector<PyValue>)> fn);
+
+    // Get current interpreter instance (for builtin access to globals/locals)
+    static Interpreter* current();
+
+    // Convert PyValue to PyObject* for builtin functions
+    static pyc::runtime::PyObject* pyvalue_to_pyobject(const PyValue& v);
+
+    // Friend declarations for builtin functions
+    friend PyValue builtin_globals_impl(std::vector<PyValue> args);
+    friend PyValue builtin_locals_impl(std::vector<PyValue> args);
 
 private:
     std::shared_ptr<IRModule> module_;
@@ -171,7 +187,12 @@ inline bool is_numeric(const PyValue& v) {
     return std::holds_alternative<int64_t>(v) || std::holds_alternative<double>(v);
 }
 
-inline PyValue wrap_numeric(PyValue a, PyValue b, auto op) {
+// Builtin functions for globals() and locals()
+PyValue builtin_globals_impl(std::vector<PyValue> args);
+PyValue builtin_locals_impl(std::vector<PyValue> args);
+
+template<typename Op>
+inline PyValue wrap_numeric(PyValue a, PyValue b, Op op) {
     if (std::holds_alternative<int64_t>(a) && std::holds_alternative<int64_t>(b)) {
         return PyValue(int64_t(op(std::get<int64_t>(a), std::get<int64_t>(b))));
     }

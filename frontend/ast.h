@@ -306,6 +306,7 @@ class ImportFrom {
 public:
     std::string module_name_;
     int level = 0;
+    std::vector<std::string> names_;  // For "from X import a, b, c"
     ImportFrom(std::string m, int l) : module_name_(std::move(m)), level(l) {}
 };
 

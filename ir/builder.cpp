@@ -409,8 +409,33 @@ void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
   void IRBuilder::build_import_stmt(const ast::ImportStmt& imp) {
     auto* from_imp = imp.from_import_ptr();
     if (!from_imp) {
-        // Simple import: import module1, module2, ...
-        // For now, we just create a placeholder
+        return;
+    }
+    
+    // Handle simple import: import module1, module2, ...
+    // names_ contains the module names for simple imports
+    if (!from_imp->names_.empty()) {
+        for (auto& module_name : from_imp->names_) {
+            if (module_name.empty()) {
+                continue;
+            }
+            
+            // Call pyc_import_module(module_name)
+            auto* import_call = current_func_->new_inst(IRInstKind::CALL, "pyc_import_module");
+            
+            // Create string constant for module name
+            auto* str_const = current_func_->new_inst(IRInstKind::LOADCONST_STR, "module_name");
+            str_const->is_const = true;
+            str_const->const_val = module_name;
+            import_call->operands.push_back(str_const->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(str_const));
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(import_call));
+            
+            // Store result in global variable with module name
+            auto* store = current_func_->new_inst(IRInstKind::STOREGLOBAL, module_name);
+            store->operands.push_back(import_call->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
+        }
         return;
     }
     
