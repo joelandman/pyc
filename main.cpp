@@ -211,8 +211,7 @@ void run_test_suite(const std::string& suite_name) {
 void run_test_compile(const std::string& test_dir) {
     std::cout << "Running compile tests from: " << test_dir << "\n";
     std::cout << "=========================================\n";
-    std::cout << "Note: Parser expects JSON input from lark_bridge.py\n";
-    std::cout << "Running lexer tests only...\n";
+    std::cout << "Running lexer and parser tests only...\n";
     
     std::vector<std::string> test_cases = {
         "x = 1 + 2",
@@ -228,9 +227,12 @@ void run_test_compile(const std::string& test_dir) {
         try {
             auto tokens = pyc::lexer::tokenize(test_cases[i]);
             std::cout << "  Lexer passed: " << tokens.size() << " tokens\n";
+            pyc::parser::Parser parser(tokens);
+            auto mod = parser.parse();
+            std::cout << "  Parser passed: " << mod->body().size() << " statements\n";
             passed++;
         } catch (const std::exception& e) {
-            std::cout << "  Lexer failed: " << e.what() << "\n";
+            std::cout << "  Failed: " << e.what() << "\n";
             failed++;
         }
     }

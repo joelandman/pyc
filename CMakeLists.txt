@@ -26,7 +26,6 @@ link_directories(${LLVM_LIBRARY_DIRS})
 set(SOURCES
     frontend/lexer.cpp
     frontend/ast.cpp
-    frontend/lark_parser.cpp
     frontend/parser.cpp
     ir/ir.cpp
     ir/builder.cpp
@@ -38,6 +37,7 @@ set(SOURCES
     runtime/libpyc_runtime.cpp
     runtime/builtins.cpp
     runtime/gc.cpp
+    runtime/import_system.cpp
     main.cpp
 )
 
@@ -46,13 +46,13 @@ set(HEADERS
     frontend/ast.h
     frontend/lexer.h
     frontend/parser.h
-    frontend/lark_parser.h
     ir/ir.h
     ir/builder.h
     ir/interpreter.h
     codegen/ir2ll.h
     codegen/llir_gen.h
     runtime/object.h
+    runtime/import_system.h
 )
 
 # Create executable

@@ -6,20 +6,17 @@ A standalone Python 3 compiler that generates native binary executables with min
 ## Architecture
 
 ```
-Source (.py) → Lark PEG Parser → AST → IR → LLVM IR → Native Binary
+Source (.py) → Recursive Descent Parser → AST → IR → LLVM IR → Native Binary
 ```
 
 ## Project Structure
 
 ```
 pyc/
-├── frontend/                    # Lexing, parsing, AST
-│   ├── python.lark              # Lark grammar (complete Python 3 PEG grammar)
-│   ├── lark_bridge.py           # Python script to generate JSON AST via Lark
-│   ├── lark_parser.h/cpp        # C++ Lark parser bridge → pyc AST
+  ├── frontend/                    # Lexing, parsing, AST
 │   ├── ast.h/cpp                # AST node definitions (60+ node types)
 │   ├── lexer.h/cpp              # Lexical analyzer
-│   └── parser.h                 # Legacy recursive descent parser
+│   └── parser.h/cpp             # Recursive descent parser
 ├── ir/                          # Intermediate representation
 │   ├── ir.h/cpp                 # IR types, instructions, blocks, functions
 │   ├── builder.h/cpp            # AST → IR code generation
@@ -43,8 +40,7 @@ pyc/
 ## Current Status
 
 ### ✅ COMPLETED
-1. **Grammar**: Complete Python 3 grammar (`python.lark`) covering all language features
-2. **Parser**: Lark PEG parser with full visitor pattern implementation (~700 lines of C++)
+1. **Parser**: Self-developed recursive descent parser with full visitor pattern (~700 lines of C++)
 3. **AST**: Extended AST nodes for all Python 3 constructs (60+ node types)
 4. **IR**: Intermediate representation with types, instructions, control flow
 5. **Runtime**: PyObject model with proper string/list/dict/function storage, 40+ builtins
@@ -68,7 +64,6 @@ pyc/
 
 ## Dependencies
 - **LLVM 17+**: Code generation (only major external dependency)
-- **Lark**: PEG parser (Python library for grammar processing)
 - **C++17**: Modern C++ features
 - **CMake 3.20+**: Build system
 
@@ -76,7 +71,7 @@ pyc/
 
 ```bash
 # Install dependencies
-sudo apt install llvm-dev lark-parser cmake
+sudo apt install llvm-dev cmake
 
 # Build
 cmake -B build
@@ -92,8 +87,8 @@ cmake --build build
 ```
 
 ## Key Design Decisions
-- **PEG parser via Lark**: Python's grammar is too ambiguous for LL(1), PEG is the right choice
-- **Python → C++ bridge**: Grammar processing happens in Python (via Lark), output feeds C++ compiler
+- **Self-developed recursive descent parser**: Hand-written parser with proper operator precedence handling
+- **TokenType enum**: Lexer uses enum class for type-safe token identification
 - **PyObject model**: Mirrors CPython's object model with proper memory management
 - **LLVM IR**: Direct emission to LLVM IR for optimization and native codegen
 - **Minimal runtime**: Only critical stdlib shipped; rest compiled at runtime

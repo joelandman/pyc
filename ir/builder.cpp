@@ -408,9 +408,17 @@ void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
 
   void IRBuilder::build_import_stmt(const ast::ImportStmt& imp) {
     auto* from_imp = imp.from_import_ptr();
-    if (!from_imp) return;
+    if (!from_imp) {
+        // Simple import: import module1, module2, ...
+        // For now, we just create a placeholder
+        return;
+    }
     
     std::string module_name = from_imp->module_name_;
+    if (module_name.empty()) {
+        // Empty module name, skip
+        return;
+    }
     
     // Call pyc_import_module(module_name)
     auto* import_call = current_func_->new_inst(IRInstKind::CALL, "pyc_import_module");
@@ -809,8 +817,11 @@ uint32_t IRBuilder::build_lambda_expr(const ast::LambdaExpr& expr) {
     auto* lambda_fn = new IRFunction();
     lambda_fn->name = lambda_name;
     
+    // Collect lambda parameter names
+    std::vector<std::string> lambda_param_names;
     for (auto& arg : expr.args()) {
         lambda_fn->param_names.push_back(arg.name);
+        lambda_param_names.push_back(arg.name);
         alloc_local(arg.name);
     }
     
@@ -823,6 +834,7 @@ uint32_t IRBuilder::build_lambda_expr(const ast::LambdaExpr& expr) {
     current_func_ = lambda_fn;
     current_block_ = entry_block;
     
+    // Build the lambda body
     auto body_val = build_expr(*expr.body());
     
     auto* ret_inst = lambda_fn->new_inst(IRInstKind::RETURN, "lambda_return");
@@ -835,7 +847,10 @@ uint32_t IRBuilder::build_lambda_expr(const ast::LambdaExpr& expr) {
     current_func_ = saved_func;
     current_block_ = saved_block;
     
+    // Create CALL instruction for the lambda
     auto* call_inst = current_func_->new_inst(IRInstKind::CALL, lambda_name);
+    
+    // Load lambda arguments from enclosing scope's locals
     for (auto& arg : expr.args()) {
         auto it = locals_.find(arg.name);
         if (it != locals_.end()) {
@@ -845,6 +860,7 @@ uint32_t IRBuilder::build_lambda_expr(const ast::LambdaExpr& expr) {
             call_inst->operands.push_back(load->id);
         }
     }
+    
     current_block_->instrs.push_back(std::unique_ptr<IRInst>(call_inst));
     
     return call_inst->id;

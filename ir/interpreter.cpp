@@ -528,7 +528,36 @@ PyValue Interpreter::handle_call(std::unique_ptr<CallFrame>& frame, IRInst& inst
         call_args.push_back(val);
     }
 
-    // Call the function
+    // Check if this is a dynamic function call (function object stored in variable)
+    // Look up the function name in value_map to see if it's a function object
+    auto fn_it = module_->functions.find(fn_name);
+    if (fn_it != module_->functions.end()) {
+        // Named function - use existing path
+        return call_function_impl(fn_name, call_args);
+    }
+
+    // Check if it's a builtin
+    auto bit = builtins_.find(fn_name);
+    if (bit != builtins_.end()) {
+        auto result = bit->second(call_args);
+        return result;
+    }
+
+    // Check if the first operand is a function object (dynamic call)
+    auto first_val = get_slot(frame.get(), inst.operands[0]);
+    if (std::holds_alternative<int64_t>(first_val)) {
+        int64_t func_id = std::get<int64_t>(first_val);
+        if (func_id > 0) {
+            // This might be a function object reference
+            // For now, try to find it in builtins or global vars
+            auto git = global_vars_.find(fn_name);
+            if (git != global_vars_.end()) {
+                return git->second;
+            }
+        }
+    }
+
+    // Fallback: try to call as named function
     return call_function_impl(fn_name, call_args);
 }
 

@@ -405,10 +405,28 @@ private:
             }
 
             case pyc::ir::IRInstKind::INTRINSIC_RANGE: {
-                auto* list_fn = mod_->getFunction("pyc_new_list");
-                if (list_fn) {
-                    std::vector<llvm::Value*> empty_args;
-                    record(builder_.CreateCall(list_fn, empty_args, "range_list"));
+                auto* range_fn = mod_->getFunction("pyc_range_list");
+                if (range_fn && inst->operands.size() >= 3) {
+                    int64_t start = 0, stop = 0, step = 1;
+                    
+                    auto* start_val = val(inst->operands[0]);
+                    if (start_val) start = static_cast<int64_t>(llvm::cast<llvm::ConstantInt>(start_val)->getSExtValue());
+                    
+                    auto* stop_val = val(inst->operands[1]);
+                    if (stop_val) stop = static_cast<int64_t>(llvm::cast<llvm::ConstantInt>(stop_val)->getSExtValue());
+                    
+                    auto* step_val = val(inst->operands[2]);
+                    if (step_val) step = static_cast<int64_t>(llvm::cast<llvm::ConstantInt>(step_val)->getSExtValue());
+                    
+                    auto* i64_type = llvm::Type::getInt64Ty(ctx_);
+                    auto* start_c = llvm::ConstantInt::get(i64_type, static_cast<int64_t>(start));
+                    auto* stop_c = llvm::ConstantInt::get(i64_type, static_cast<int64_t>(stop));
+                    auto* step_c = llvm::ConstantInt::get(i64_type, static_cast<int64_t>(step));
+                    llvm::SmallVector<llvm::Value*, 3> range_args;
+                    range_args.push_back(start_c);
+                    range_args.push_back(stop_c);
+                    range_args.push_back(step_c);
+                    record(builder_.CreateCall(range_fn, range_args, "range_call"));
                 } else {
                     record(i64());
                 }
@@ -459,8 +477,17 @@ private:
                 if (inst->operands.size() >= 1) {
                     auto* getattr_fn = mod_->getFunction("pyc_getattr");
                     if (getattr_fn) {
+                        // Create a GlobalVariable for the attribute name string
+                        std::string attr_name = inst->name.empty() ? "" : inst->name;
+                        auto* attr_gv = new llvm::GlobalVariable(
+                            *mod_, llvm::ArrayType::get(get_i8(ctx_), attr_name.size() + 1),
+                            true, llvm::GlobalValue::PrivateLinkage,
+                            llvm::ConstantDataArray::getString(builder_.getContext(), attr_name),
+                            "getattr_attr_name");
+                        
                         std::vector<llvm::Value*> args = {
-                            val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_))
+                            val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                            attr_gv
                         };
                         record(builder_.CreateCall(getattr_fn, args, "getattr"));
                     } else {

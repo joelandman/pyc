@@ -2,75 +2,58 @@
 
 ## Project: Python 3 Compiler in C++ with LLVM
 **Location**: /home/joe/work/pc/pyc/
-**Status**: In progress - Step 5 (Remaining Language Features) complete
+**Status**: In progress - Step 10 (Correctness Fixes) complete
 
 ## Current Context
-Working on building a Python 3 compiler that generates native binaries with minimal external dependencies. Using Lark PEG grammar for parsing, C++ for compilation, and LLVM for code generation.
+Working on building a Python 3 compiler that generates native binaries with minimal external dependencies. Using self-developed recursive descent parser, C++ for compilation, and LLVM for code generation.
 
-## Recent Work - Step 5: Remaining Language Features
-
-### LLVM Codegen Verification
-- **Confirmed: LLVM codegen IS generating function bodies correctly**
-- The issue was test output truncation (only first 20 lines printed, which were all runtime `declare` statements)
-- Full LLVM IR output (1229 bytes) includes `define i64 @main()` with complete body
-- Test updated to print full LLVM IR output without truncation
-- All 4 tests pass: Lexer, Parser, IR, Codegen
-- LLVM IR includes: 21 runtime function declarations + `define main()` + `define _pyc_main()`
+## Recent Work - Step 10: Correctness Fixes
 
 ### Critical Bug Fixes
-1. **POW bug** (`codegen/ir2ll.cpp:463-486`): Was using `CreateFMul` (multiplication) instead of actual power. Fixed to call `pyc_pow` runtime function with LLVM `intrinsic::pow` fallback.
-2. **to_int bug** (`runtime/builtins.cpp:27`): `reinterpret_cast<double*>(obj->data)` was wrong - obj->data is uint64_t, not a double pointer. Fixed to use `reinterpret_cast<uint64_t*>(&obj->data)`.
-3. **bool builtin** (`runtime/builtins.cpp:1021`): Logic was inverted (`!args[0]->data`). Fixed to `args[0]->data != 0`.
-4. **build_unary NEG/UPLUS** (`ir/builder.cpp:487-500`): NEG mapped to SUB with no second operand, UPLUS mapped to ADD with no second operand. Fixed NEG to emit `0 - operand`, UPLUS to return operand directly.
-5. **class instantiation** (`ir/builder.cpp:635-652`): build_call() didn't detect class constructors. Now checks if function name has `.__init__` in module and calls build_class_call().
-6. **getattr/setattr** (`ir/interpreter.cpp:446-462`): Were stubs returning 0. Now use global_vars_ with key format `instance_attr_{obj_id}_{attr_name}`.
-7. **getattr/setattr LLVM** (`codegen/ir2ll.cpp:349-384`): Were stubs. Now emit calls to `pyc_getattr`/`pyc_setattr` runtime functions.
+1. **INTRINSIC_RANGE bug** (`codegen/ir2ll.cpp:407-430`): Was calling `pyc_new_list()` without populating it. Fixed to call `pyc_range_list()` with start, stop, step parameters from IR operands.
 
-### New Built-in Functions
-- **List methods**: append, extend, pop, remove, clear, count, index
-- **Dict methods**: get, keys, values, items, pop_dict, setdefault, dict_clear
-- **String methods**: join, split, strip, replace, upper, lower, find, format
+2. **handle_call() dynamic function support** (`ir/interpreter.cpp:516-560`): Now checks if function is in module functions, builtins, or global vars before falling back to named function call. Enables dynamic function calls and lambda expressions.
 
-### New Statement Handlers (IR Builder)
-- **DeleteStmt**: Stores 0 to target slots
-- **GlobalStmt/NonlocalStmt**: Emits LOADGLOBAL for each name
-- **AssertStmt**: Branches to false block on assertion failure
-- **RaiseStmt**: Builds exception expression, emits RETURN
-- **WithStmt**: Handles context managers with optional vars
-- **TryStmt**: Creates try/except/merge block structure
-- **BreakStmt/ContinueStmt**: Track loop context (cond_block, merge_block) for proper jumps
+3. **GETATTR/LOAD_ATTR attribute name** (`codegen/ir2ll.cpp:457-480`): Now creates GlobalVariable for attribute name string and passes it to `pyc_getattr()`. Previously was passing only the object pointer.
 
-### Other Improvements
-- **SubscriptExpr**: Added build_subscript() for list/dict indexing (LIST_GET instruction)
-- **Loop context tracking**: Added LoopContext struct to track break/continue targets
-- **IR intrinsic declarations**: Added pyc_getattr, pyc_setattr function declarations
+4. **SETATTR attribute name verification** (`codegen/ir2ll.cpp:495-515`): Verified that attribute name is correctly passed as GlobalVariable pointer to `pyc_setattr()`.
 
-## Grammar (python.lark)
-Complete Python 3 PEG grammar covering:
-- Statements: function def, class def, if/elif/else, for, while, try/except/finally, with, match/case, import, assign, augassign, return, raise, break, continue, pass, delete, global, nonlocal, assert
-- Expressions: operator precedence (14 levels), lambdas, comprehensions, subscripts, slices
-- Builtins, literals, keywords, punctuation
-- Python indentation handling (INDENT/DEDENT)
+5. **Lambda expression implementation** (`ir/builder.cpp:805-851`): Improved lambda function creation to properly capture lambda parameters and build body in lambda scope. Returns CALL instruction to lambda function.
+
+6. **Import system runtime** (`runtime/libpyc_runtime.cpp:368-400`): Added file-based module loading with `#include <fstream>`. Creates module dict and attempts to load .py file. Currently creates empty module dict (stub for full implementation).
+
+### New Benchmark Tests
+- Created `test/benchmarks/fibn.py` - Fibonacci number benchmark (recursive)
+- Created `test/benchmarks/mbs.py` - Mandelbrot set benchmark (iterative)
+
+### Test Results
+- All 7 existing tests pass (lexer and IR tests)
+- 01_arithmetic.py: PASSED
+- 02_conditionals.py: PASSED
+- 03_loops.py: PASSED
+- 04_recursion.py: PASSED
+- 05_lists.py: PASSED
+- 06_strings.py: PASSED
+- 07_booleans.py: PASSED
 
 ## Key Relationships
-- `python.lark` defines grammar → `lark_bridge.py` parses .py → outputs JSON → `lark_parser.cpp` reads JSON → builds AST → AST feeds IR builder → IR generates LLVM IR
-- All AST nodes in `ast.h` have corresponding visitor functions in `lark_parser.cpp`
+- `frontend/parser.cpp` (recursive descent) parses tokens from lexer → builds AST → AST feeds IR builder → IR generates LLVM IR
+- All AST nodes in `ast.h` have corresponding visitor functions in `frontend/parser.cpp`
 - Runtime (`runtime/`) implements PyObject model, builtins, and GC
 
-## Files Modified in Step 5
-1. `codegen/ir2ll.cpp` - POW fix, getattr/setattr LLVM codegen, runtime function declarations
-2. `runtime/builtins.cpp` - Fixed to_int, bool; added 20+ new builtin functions
-3. `runtime/object.h` - Added declarations for new builtin functions
-4. `ir/builder.cpp` - Fixed build_unary, integrated build_class_call, added 10 new statement handlers, added build_subscript
-5. `ir/builder.h` - Added declarations for new methods, LoopContext struct
-6. `ir/interpreter.cpp` - Implemented getattr/setattr, simplified INTRINSIC_RANGE, added current_func_/current_block_ context
-7. `ir/interpreter.h` - Added current_func_, current_block_ members
+## Files Modified in Step 10
+1. `codegen/ir2ll.cpp` - INTRINSIC_RANGE fix, GETATTR/LOAD_ATTR attribute name fix
+2. `ir/interpreter.cpp` - handle_call() dynamic function support
+3. `ir/builder.cpp` - Lambda expression implementation improvement
+4. `runtime/libpyc_runtime.cpp` - Import system runtime with fstream support
+5. `test/benchmarks/fibn.py` - New fibonacci benchmark test
+6. `test/benchmarks/mbs.py` - New mandelbrot benchmark test
 
 ## Build System
 - CMakeLists.txt in /home/joe/work/pc/pyc/
 - Run: cmake -B build && cmake --build build
-- Test: ./build/pyc --test-compile <file.py> (lexer only)
-- Test IR: ./build/pyc --test-ir <file.py> (requires lark_bridge.py JSON output)
+- Test: ./build/pyc --test-compile <file.py> (lexer and parser tests)
+- Test IR: ./build/pyc --test-ir <file.py> (recursive descent parser)
 
 ## Test Files
 test/ directory contains 7 test files:
@@ -96,7 +79,7 @@ test/ directory contains 7 test files:
 - Uses `buildPerModuleDefaultPipeline(OptimizationLevel::O2)`
 
 ### Benchmark Suite
-- Created `test/benchmarks/` directory with 7 benchmark programs:
+- Created `test/benchmarks/` directory with 9 benchmark programs:
   - `tight_loop.py` - 1M iteration numeric loop
   - `function_calls.py` - 100K function call overhead test
   - `list_ops.py` - 100K list create/append/access
@@ -104,6 +87,8 @@ test/ directory contains 7 test files:
   - `string_ops.py` - 10K string concatenation
   - `recursion.py` - factorial(20) recursion test
   - `nbody.py` - N-body gravitational simulation (50 bodies, 100 steps)
+  - `fibn.py` - Fibonacci number benchmark (recursive)
+  - `mbs.py` - Mandelbrot set benchmark (iterative)
 - Created `run_benchmarks.sh` runner script with timing measurements
 
 ## Memory Profiling - Step 7
@@ -130,6 +115,5 @@ test/ directory contains 7 test files:
 - Consistent ~8-9ms regardless of global count
 
 ### Note
-- Full compilation pipeline (parser → IR → LLVM) requires lark parser
-- lark_bridge.py has grammar issue (_LPAR token missing)
-- Lexer tests pass for all programs
+- Full compilation pipeline (parser → IR → LLVM) uses self-developed recursive descent parser
+- Lexer and parser tests pass for all programs

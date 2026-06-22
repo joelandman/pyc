@@ -3,11 +3,13 @@
 
 #include "runtime/libpyc_runtime.h"
 #include "runtime/object.h"
+#include "runtime/import_system.h"
 #include <cmath>
 #include <cstdio>
 #include <sstream>
 #include <iomanip>
 #include <iostream>
+#include <fstream>
 
 namespace pyc::runtime {
 
@@ -370,18 +372,8 @@ static std::unordered_map<std::string, PyObject*> g_loaded_modules;
 pyc_obj_t pyc_import_module(const char* module_name) {
     if (!module_name) return from_pyobj(PyObjectFactory::create_dict(nullptr));
     
-    // Check if module is already loaded
-    auto it = g_loaded_modules.find(module_name);
-    if (it != g_loaded_modules.end()) {
-        pyc_ref_inc(it->second);
-        return from_pyobj(it->second);
-    }
-    
-    // Create a new module as a dict
-    auto* module_dict = PyObjectFactory::create_dict(nullptr);
-    g_loaded_modules[module_name] = module_dict;
-    pyc_ref_inc(module_dict);
-    
+    // Use the new import system
+    auto* module_dict = pyc::runtime::import_module(module_name);
     return from_pyobj(module_dict);
 }
 

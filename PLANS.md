@@ -43,12 +43,13 @@
 - `handle_intrinsic_type()` returns type string (int/float/str/NoneType)
 - `handle_intrinsic_init()` returns the object unchanged
 - `handle_intrinsic_len()` handles strings
+- `handle_call()` now checks module functions, builtins, and global vars for dynamic calls
 
 ### 5. Fix LLVM Codegen for Python-Specific Operations
 **Location:** `codegen/ir2ll.cpp`
 **Status: FIXED**
 - `POW` calls `pyc_pow` runtime function with `llvm::intrinsic::pow` fallback
-- `GETATTR`/`LOAD_ATTR` emit calls to `pyc_getattr`
+- `GETATTR`/`LOAD_ATTR` emit calls to `pyc_getattr` with attribute name string
 - `SETATTR` emits call to `pyc_setattr` with proper attribute name string
 - `MAKE_LIST` calls `pyc_new_list()`
 - `LIST_GET` calls `pyc_list_get()`
@@ -61,6 +62,7 @@
 - `ISINSTANCE` calls `pyc_isinstance()`
 - `NEWTYPE` calls `pyc_new_type()`
 - `range()` calls `pyc_range_list()` via CALL instruction
+- `INTRINSIC_RANGE` now calls `pyc_range_list()` with start, stop, step parameters
 - LLVM O2 optimization pipeline disabled (InferFunctionAttrsPass crashes on LLVM 21)
 
 ---
@@ -87,17 +89,18 @@
 ### 3. Implement Lambda Expressions
 **Status: FIXED**
 - `build_lambda_expr()` creates new IR function with unique name
-- Lambda body built in new function scope
+- Lambda body built in new function scope with proper parameter handling
 - Returns CALL instruction to the lambda function
 - Arguments loaded from local variables and passed to call
 
 ### 4. Implement Import System
-**Status: FIXED**
+**Status: PARTIALLY FIXED**
 - `build_import_stmt()` calls `pyc_import_module(module_name)` runtime function
 - Creates string constant for module name, stores result in global variable
 - `pyc_import_module()` creates dict to represent module namespace
 - Caches loaded modules in `g_loaded_modules` map
-- Returns cached module if already loaded
+- Added file-based module loading with `#include <fstream>`
+- Currently creates empty module dict (stub for full implementation)
 
 ### 5. Implement Exception Handling Runtime
 **Status: PARTIAL**
@@ -280,7 +283,7 @@
 ### 3. Implement f-strings
 **Plan:**
 - Add `FormattedValue` and `JoinedStr` AST nodes
-- Parse f-string syntax in lark_bridge.py JSON output
+- Parse f-string syntax in recursive descent parser
 - Translate to string concatenation: `f"hello {x}"` → `"hello " + str(x)`
 - Handle format specifiers: `f"{x:.2f}"` → call `pyc_format(x, ".2f")`
 - Expected: 2-3x slower than CPython f-strings (no pre-computed format strings)
@@ -294,7 +297,7 @@
 
 ### 5. Implement Decorators
 **Plan:**
-- Parse `@decorator` syntax in lark_bridge.py
+- Parse `@decorator` syntax in recursive descent parser
 - Add `Decorator` AST node wrapping `FunctionDef` or `ClassDef`
 - In IR builder: after building function, emit CALL `decorator(func)` and STOREGLOBAL
 - Support simple decorators: `@staticmethod`, `@classmethod` (stub)
@@ -390,7 +393,7 @@
 
 **Verdict: Approximately 75-80% complete for a basic Python compiler MVP**
 
-The compiler has a solid foundation with working lexer, recursive descent parser, IR builder, LLVM codegen, and runtime. The Lark parser has been replaced with a custom recursive descent parser that handles all Python syntax. LLVM codegen now correctly generates function bodies in the LLVM IR output.
+The compiler has a solid foundation with working lexer, recursive descent parser, IR builder, LLVM codegen, and runtime. LLVM codegen now correctly generates function bodies in the LLVM IR output.
 
 ### What Works (MVP Core)
 - Arithmetic, comparison, boolean operators
@@ -407,7 +410,6 @@ The compiler has a solid foundation with working lexer, recursive descent parser
 - Class instantiation
 - Import system (basic, creates empty module dict)
 - 40+ builtin functions (list/dict/string methods)
-- **Recursive descent parser replaces Lark parser** - All Python syntax now parses correctly
 
 ### Significant Remaining Issues
 
