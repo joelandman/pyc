@@ -405,6 +405,17 @@ private:
                 break;
             }
 
+            case pyc::ir::IRInstKind::MAKE_TUPLE: {
+                auto* tuple_fn = mod_->getFunction("pyc_new_tuple");
+                if (tuple_fn) {
+                    std::vector<llvm::Value*> empty_args;
+                    record(builder_.CreateCall(tuple_fn, empty_args, "new_tuple"));
+                } else {
+                    record(builder_.getInt64(0));
+                }
+                break;
+            }
+
             case pyc::ir::IRInstKind::DICT_GET: {
                 if (inst->operands.size() >= 2) {
                     auto* dict_get_fn = mod_->getFunction("pyc_dict_get");

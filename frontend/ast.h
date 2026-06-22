@@ -119,6 +119,13 @@ public:
     const auto& pairs() const { return pairs_; }
 };
 
+class TupleExpr final : public Expr {
+    std::vector<std::shared_ptr<Expr>> elems_;
+public:
+    explicit TupleExpr(std::vector<std::shared_ptr<Expr>> e) : elems_(std::move(e)) {}
+    const auto& elems() const { return elems_; }
+};
+
 // ===== Statements =====
 
 class AssignStmt final : public Stmt {

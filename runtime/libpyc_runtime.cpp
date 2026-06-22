@@ -102,6 +102,11 @@ pyc_obj_t pyc_new_dict() {
     return from_pyobj(obj);
 }
 
+pyc_obj_t pyc_new_tuple() {
+    auto* obj = PyObjectFactory::create_tuple(nullptr);
+    return from_pyobj(obj);
+}
+
 pyc_obj_t pyc_dict_set(pyc_obj_t dict_obj, pyc_obj_t key_obj, pyc_obj_t val_obj) {
     auto* dct = to_pyobj(dict_obj);
     if (!dct || !dct->dict_entries) {

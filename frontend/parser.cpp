@@ -665,11 +665,23 @@ std::shared_ptr<ast::Expr> Parser::parse_primary_expr() {
         return std::make_shared<ast::DictLiteral>(std::move(pairs));
     }
 
-    // Parenthesized expression
+   // Parenthesized expression
     if (tok.kind == pyc::lexer::TokenType::LPAREN) {
         advance();
         auto e = parse_expr();
         if (has_more() && current().kind == pyc::lexer::TokenType::RPAREN) advance();
+        // Check if this is a tuple (comma after expression)
+        if (has_more() && current().kind == pyc::lexer::TokenType::COMMA) {
+            std::vector<std::shared_ptr<ast::Expr>> elems;
+            elems.push_back(e);
+            while (has_more() && current().kind == pyc::lexer::TokenType::COMMA) {
+                advance();
+                if (has_more() && current().kind == pyc::lexer::TokenType::RPAREN) break;
+                elems.push_back(parse_expr());
+            }
+            if (has_more() && current().kind == pyc::lexer::TokenType::RPAREN) advance();
+            return std::make_shared<ast::TupleExpr>(std::move(elems));
+        }
         return e;
     }
 

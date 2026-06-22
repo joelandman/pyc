@@ -34,8 +34,9 @@ namespace pyc::runtime {
 // Object creation
 pyc_obj_t pyc_codegen_new_object(pyc_type_kind_t type_kind);
 pyc_obj_t pyc_new_list();
-pyc_obj_t pyc_new_dict();
-pyc_obj_t pyc_new_type(pyc_type_kind_t type_kind);
+ pyc_obj_t pyc_new_dict();
+ pyc_obj_t pyc_new_tuple();
+ pyc_obj_t pyc_new_type(pyc_type_kind_t type_kind);
 
 // List operations
 pyc_obj_t pyc_list_get(pyc_obj_t list_obj, int64_t index);
