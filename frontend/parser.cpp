@@ -140,6 +140,16 @@ std::shared_ptr<ast::Stmt> Parser::parse_stmt() {
             advance();
         }
         auto imp = std::make_shared<ast::ImportFrom>(module, 0);
+        // Capture imported names
+        while (has_more() && current().kind != pyc::lexer::TokenType::NEWLINE && current().kind != pyc::lexer::TokenType::DECREMENT) {
+            if (current().kind == pyc::lexer::TokenType::NAME) {
+                imp->names_.push_back(current().value);
+                advance();
+            } else {
+                advance();
+            }
+            if (has_more() && current().kind == pyc::lexer::TokenType::COMMA) advance();
+        }
         return std::make_shared<ast::ImportStmt>(imp);
     }
 

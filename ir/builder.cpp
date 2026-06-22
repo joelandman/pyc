@@ -445,7 +445,8 @@ void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
         return;
     }
     
-    // Call pyc_import_module(module_name)
+    // Handle from X import Y, Z, W
+    // Import the module first
     auto* import_call = current_func_->new_inst(IRInstKind::CALL, "pyc_import_module");
     
     // Create string constant for module name
@@ -456,10 +457,35 @@ void IRBuilder::build_augassign_stmt(const ast::AugAssignStmt& aug) {
     current_block_->instrs.push_back(std::unique_ptr<IRInst>(str_const));
     current_block_->instrs.push_back(std::unique_ptr<IRInst>(import_call));
     
-    // Store result in global variable with module name
-    auto* store = current_func_->new_inst(IRInstKind::STOREGLOBAL, module_name);
-    store->operands.push_back(import_call->id);
-    current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
+    // Store module in a temporary global
+    std::string module_var = "__imported_module__";
+    auto* module_store = current_func_->new_inst(IRInstKind::STOREGLOBAL, module_var);
+    module_store->operands.push_back(import_call->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(module_store));
+    
+    // For each imported name, get it from the module and store in global
+    for (auto& name : from_imp->names_) {
+        // Load the module
+        auto* module_load = current_func_->new_inst(IRInstKind::LOADGLOBAL, module_var);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(module_load));
+        
+        // Create string constant for attribute name
+        auto* attr_const = current_func_->new_inst(IRInstKind::LOADCONST_STR, "attr_name");
+        attr_const->is_const = true;
+        attr_const->const_val = name;
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(attr_const));
+        
+        // Call pyc_getattr(module, name)
+        auto* getattr_call = current_func_->new_inst(IRInstKind::CALL, "pyc_getattr");
+        getattr_call->operands.push_back(module_load->id);
+        getattr_call->operands.push_back(attr_const->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(getattr_call));
+        
+        // Store in global variable with the imported name
+        auto* store = current_func_->new_inst(IRInstKind::STOREGLOBAL, name);
+        store->operands.push_back(getattr_call->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
+    }
 }
 
 void IRBuilder::build_delete_stmt(const ast::DeleteStmt& del) {
