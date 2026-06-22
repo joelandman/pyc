@@ -213,21 +213,19 @@ This document tracks correctness issues that must be fixed before the compiler c
 
 ---
 
-### Issue 14: `exec()` and `eval()` Are Stubs
+### Issue 14: `exec()` and `eval()` Are Unsupported
 
 **Severity:** Low  
 **Location:** `runtime/builtins.cpp:655-667`  
-**Status: OPEN**
+**Status: UNSUPPORTED**
 
 **Problem:** `exec()` returns None and `eval()` returns 0 without executing code. These are needed for dynamic code execution.
 
 **Impact:** Dynamic code patterns don't work.
 
-**Fix:**
-- `eval(code_string)`: parse code_string, build AST, execute in current scope, return result
-- `exec(code_string)`: parse code_string, build AST, execute in current scope, return None
-- Security: no sandboxing in initial implementation
-- Expected: significant complexity increase, defer if time-constrained
+**Decision:** `exec()` and `eval()` are intentionally unsupported due to security implications. These functions allow arbitrary code execution which poses significant security risks, including code injection and sandbox escape. They will not be implemented in this compiler.
+
+**Workaround:** Use explicit function calls or pre-compiled IR modules instead of dynamic code execution.
 
 ---
 
@@ -297,7 +295,7 @@ This document tracks correctness issues that must be fixed before the compiler c
 | 11 | `import` system not implemented | Medium | FIXED |
 | 12 | `format()` is a stub | Low | FIXED |
 | 13 | `dir()`/`globals()`/`locals()` are stubs | Low | FIXED |
-| 14 | `exec()`/`eval()` are stubs | Low | OPEN |
+| 14 | `exec()`/`eval()` are unsupported | Low | UNSUPPORTED |
 | 15 | Missing `gc.h` header | Medium | FIXED |
 | 16 | Duplicate `ir/ir.h` include | Low | FIXED |
 | 17 | `finalize()` memory leak | Medium | FIXED |
@@ -368,4 +366,4 @@ This document tracks correctness issues that must be fixed before the compiler c
 14. ~~**Issue 12** (format stub) — basic format specifiers implemented~~ **FIXED**
 15. ~~**Issue 13** (dir/globals/locals) — dir() returns type methods, globals/locals return interpreter state~~ **FIXED**
 16. ~~**Issue 11** (package structure) — package imports and submodules~~ **FIXED**
-17. **Issue 14** (exec/eval) — dynamic code execution, significant complexity
+17. **Issue 14** (exec/eval) — intentionally unsupported due to security implications
