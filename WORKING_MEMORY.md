@@ -2,7 +2,7 @@
 
 ## Project: Python 3 Compiler in C++ with LLVM
 **Location**: /home/joe/work/pc/pyc/
-**Status**: Complete - All correctness fixes applied, import system fully implemented
+**Status**: Complete - All correctness fixes applied, import system fully implemented, 5 new priorities completed
 
 ## Current Context
 Working on building a Python 3 compiler that generates native binaries with minimal external dependencies. Using self-developed recursive descent parser, C++ for compilation, and LLVM for code generation.
@@ -36,6 +36,20 @@ Working on building a Python 3 compiler that generates native binaries with mini
 - `dir()`: Returns instance attributes, dict keys, and type methods for built-in types
 - `globals()`: Returns dict-like value with all global variables
 - `locals()`: Returns dict-like value with local variables from current call frame
+
+### Completed Priorities (Correctness & Completeness)
+1. **Dict literal support**: `{key: val}` parsing, MAKE_DICT/DICT_GET/DICT_SET IR, pyc_dict_* runtime functions
+2. **Tuple literal support**: `(1, 2, 3)` parsing, MAKE_TUPLE IR, pyc_new_tuple() runtime function
+3. **`in` and `is` operators**: IN token, IN/IS IR instructions, pyc_contains()/pyc_is() runtime functions
+4. **`and`/`or` short-circuit evaluation**: PHI nodes, conditional jumps, pyc_and()/pyc_or() runtime functions
+5. **`from ... import` name binding**: Parser captures names, build_import_stmt() binds imported names
+
+### Benchmark Tests Added
+- test/benchmarks/fannkuchredux.py: Permutation/flip counting
+- test/benchmarks/spectralnorm.py: Matrix operations
+- test/benchmarks/binarytrees.py: Tree construction
+- test/benchmarks/knucleotide.py: K-mer frequency analysis
+- test/benchmarks/fasta.py: Random sequence generation
 
 ### Test Results
 - All 4 unit tests pass (lexer, parser, IR, codegen)

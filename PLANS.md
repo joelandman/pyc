@@ -117,6 +117,49 @@
 - `pyc_get_exception()` call added before branching to except block
 - `finally` not yet implemented
 
+### 6. Add Dict Literal Support
+**Status: FIXED**
+- `LBRACE`/`RBRACE` tokens added to lexer
+- `DictLiteral` AST node added
+- Parse `{key: val, ...}` in parser
+- `MAKE_DICT`, `DICT_GET`, `DICT_SET` IR instructions added
+- `build_dict()` IR builder method implemented
+- LLVM codegen for dict operations implemented
+- `pyc_new_dict()`, `pyc_dict_set()`, `pyc_dict_get()` runtime functions added
+
+### 7. Add Tuple Literal Support
+**Status: FIXED**
+- `TupleExpr` AST node added
+- Parse `(1, 2, 3)` as tuples (parenthesized comma-separated expressions)
+- `MAKE_TUPLE` IR instruction added
+- `build_tuple()` IR builder method implemented
+- LLVM codegen for tuples implemented
+- `pyc_new_tuple()` runtime function added
+
+### 8. Add `in` and `is` Operators
+**Status: FIXED**
+- `IN` token added to lexer
+- `IN` and `IS` added to `BinOpExpr::Op` enum
+- Parse `in` operator in comparison expressions
+- `IN` and `IS` IR instructions added
+- LLVM codegen for `in` and `is` operators implemented
+- `pyc_contains()` and `pyc_is()` runtime functions added
+
+### 9. Add Proper `and`/`or` Short-Circuit Evaluation
+**Status: FIXED**
+- `build_binop()` modified to generate short-circuit IR for AND/OR
+- PHI nodes and conditional jumps for short-circuit semantics
+- `pyc_and()` and `pyc_or()` runtime functions added
+- AND: if left is 0, return 0; else return right
+- OR: if left is non-zero, return left; else return right
+
+### 10. Complete `from ... import` with Name Binding
+**Status: FIXED**
+- Parser modified to capture imported names in `ImportFrom.names_`
+- `build_import_stmt()` modified to handle `from X import Y, Z`
+- Import module, then for each name call `pyc_getattr(module, name)`
+- Store each imported name in a global variable
+
 ---
 
 ## Performance Plan
@@ -401,15 +444,18 @@ The compiler has a solid foundation with working lexer, recursive descent parser
 - `if/elif/else` conditionals
 - `while` loops
 - `for` loops with `range()`
-- Lists, dicts, strings
+- Lists, dicts, strings, tuples
 - Function calls (named functions and lambdas)
 - Lambda expressions
 - List/set/dict comprehensions
 - Basic exception handling (`raise`, `try/except`)
 - Class instantiation
-- Import system (file-based module loading, `from X import Y`, packages, submodules)
+- Import system (file-based module loading, `from X import Y`, packages, submodules, name binding)
 - `import module1, module2` (simple imports)
 - `sys.path` support for module search
+- `in` and `is` operators
+- Dict literals `{key: val}` and tuple literals `(1, 2, 3)`
+- Proper `and`/`or` short-circuit evaluation
 - 40+ builtin functions (list/dict/string methods, format, dir, globals, locals)
 
 ### Significant Remaining Issues
@@ -419,10 +465,10 @@ The compiler has a solid foundation with working lexer, recursive descent parser
 
 | Feature | Status | Impact |
 |---------|--------|--------|
-| `from module import name` | FIXED | Import system fully implemented |
+| `from module import name` | FIXED | Import system fully implemented with name binding |
 | `sys` module | STUB | `sys.argv`, `sys.exit()` don't work |
 | `with` statement context manager | PARTIAL | No `__enter__`/`__exit__` protocol |
-| Tuple unpacking | NOT IMPLEMENTED | `a, b = b, a` doesn't work |
+| Tuple unpacking | PARTIAL | Tuple literals supported, unpacking not yet |
 | Slice notation | NOT IMPLEMENTED | `a[1:3]` doesn't work |
 | Augmented assignment (all) | PARTIAL | Only `+=`, `-=`, `*=`, `/=` work |
 | Walrus operator `:=` | NOT IMPLEMENTED | `(x := f())` doesn't work |
@@ -431,6 +477,8 @@ The compiler has a solid foundation with working lexer, recursive descent parser
 | `match/case` | NOT IMPLEMENTED | Pattern matching doesn't work |
 | `async`/`await` | NOT IMPLEMENTED | Async programming doesn't work |
 | `yield`/generators | NOT IMPLEMENTED | Generator functions don't work |
+| `in` operator | FIXED | Membership testing in lists/dicts |
+| `is` operator | FIXED | Object identity comparison |
 
 **Impact:** Many common Python patterns are broken or unavailable.
 
@@ -469,11 +517,14 @@ The compiler has a solid foundation with working lexer, recursive descent parser
 | `locals()` | FIXED | Returns dict-like value with local variables |
 | `exec()` | UNSUPPORTED | Intentionally not implemented (security implications) |
 | `eval()` | UNSUPPORTED | Intentionally not implemented (security implications) |
-| `import` | FIXED | File-based module loading, packages, submodules |
+| `import` | FIXED | File-based module loading, packages, submodules, name binding |
 | `super()` | NOT DEFINED | |
 | `property` | NOT DEFINED | |
 | `staticmethod` | NOT DEFINED | |
 | `classmethod` | NOT DEFINED | |
+| `dict()` | FIXED | Dict literals and operations supported |
+| `tuple()` | FIXED | Tuple literals supported |
+| `and`/`or` | FIXED | Short-circuit evaluation implemented |
 
 **Impact:** Many common Python patterns fail silently or incorrectly.
 
@@ -519,15 +570,15 @@ To reach a usable MVP (80%+ complete), the following should be implemented in or
 
 | Category | Status | Notes |
 |----------|--------|-------|
-| **Lexer** | COMPLETE | Handles all Python tokens |
+| **Lexer** | COMPLETE | Handles all Python tokens including LBRACE, RBRACE, IN |
 | **Parser** | COMPLETE | Recursive descent parser, handles all Python syntax |
-| **AST** | COMPLETE | All node types defined |
-| **IR Builder** | 90% complete | Most features implemented, blocks fixed |
-| **LLVM Codegen** | 80% complete | Runtime functions + function bodies working, O2 optimization enabled |
+| **AST** | COMPLETE | All node types defined including DictLiteral, TupleExpr |
+| **IR Builder** | 95% complete | Most features implemented, short-circuit evaluation added |
+| **LLVM Codegen** | 85% complete | Runtime functions + function bodies working, O2 optimization enabled |
 | **Interpreter** | 75% complete | Many intrinsics implemented, globals/locals working |
-| **Runtime** | 70% complete | 40+ builtins implemented, format/dir/globals/locals working |
+| **Runtime** | 75% complete | 45+ builtins implemented, dict/tuple/and/or/in/is support |
 | **GC** | 80% complete | Core works, registry cleanup implemented |
-| **Testing** | 30% complete | Lexer, parser, IR, codegen tests pass |
+| **Testing** | 35% complete | Lexer, parser, IR, codegen tests pass, benchmarks added |
 | **Performance** | 25% complete | LLVM O2 optimization enabled, no type specialization yet |
 
-**Overall: 72-75% complete for MVP**
+**Overall: 75-78% complete for MVP**

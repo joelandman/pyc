@@ -41,16 +41,17 @@ pyc/
 
 ### ✅ COMPLETED
 1. **Parser**: Self-developed recursive descent parser with full visitor pattern (~700 lines of C++)
-2. **AST**: Extended AST nodes for all Python 3 constructs (60+ node types)
-3. **IR**: Intermediate representation with types, instructions, control flow
-4. **Runtime**: PyObject model with proper string/list/dict/function storage, 40+ builtins
+2. **AST**: Extended AST nodes for all Python 3 constructs (60+ node types including DictLiteral, TupleExpr)
+3. **IR**: Intermediate representation with types, instructions, control flow, short-circuit evaluation
+4. **Runtime**: PyObject model with proper string/list/dict/function/tuple storage, 45+ builtins
 5. **Garbage Collector**: Fixed mark-and-sweep GC with proper refcounting and sweep
 6. **LLVM Backend**: IR-to-LLVM translation with runtime function calls, O2 optimization enabled
 7. **Interpreter**: Frame-stack based interpreter with proper ownership (unique_ptr), globals/locals support
 8. **Build System**: CMake configuration with LLVM 21 dependency discovery
 9. **Test Suite**: Built-in test runner (`--test lexer|ir|codegen`) - all tests pass
-10. **Import System**: File-based module loading, packages, submodules, sys.path support
+10. **Import System**: File-based module loading, packages, submodules, name binding, sys.path support
 11. **Correctness Fixes**: All 18 issues in REMEDIATION.md fixed or verified fixed
+12. **Core Language Features**: Dict literals, tuple literals, `in`/`is` operators, short-circuit `and`/`or`, `from...import` name binding
 
 ### TODO (Next Steps)
 1. **Error Recovery**: Better error messages for parse failures
