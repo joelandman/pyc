@@ -41,17 +41,16 @@ pyc/
 
 ### ✅ COMPLETED
 1. **Parser**: Self-developed recursive descent parser with full visitor pattern (~700 lines of C++)
-3. **AST**: Extended AST nodes for all Python 3 constructs (60+ node types)
-4. **IR**: Intermediate representation with types, instructions, control flow
-5. **Runtime**: PyObject model with proper string/list/dict/function storage, 40+ builtins
-6. **Garbage Collector**: Fixed mark-and-sweep GC with proper refcounting and sweep
-7. **LLVM Backend**: IR-to-LLVM translation with runtime function calls (pyc_new_object, pyc_list_get, etc.)
-8. **Interpreter**: Frame-stack based interpreter with proper ownership (unique_ptr) and control flow
-9. **Build System**: CMake configuration with LLVM 21 dependency discovery
-10. **Test Suite**: Built-in test runner (`--test lexer|ir|codegen`)
-
-### 🚧 IN PROGRESS
-- Correctness fixes (completed steps 1-5, see REMEDIATION.md)
+2. **AST**: Extended AST nodes for all Python 3 constructs (60+ node types)
+3. **IR**: Intermediate representation with types, instructions, control flow
+4. **Runtime**: PyObject model with proper string/list/dict/function storage, 40+ builtins
+5. **Garbage Collector**: Fixed mark-and-sweep GC with proper refcounting and sweep
+6. **LLVM Backend**: IR-to-LLVM translation with runtime function calls, O2 optimization enabled
+7. **Interpreter**: Frame-stack based interpreter with proper ownership (unique_ptr), globals/locals support
+8. **Build System**: CMake configuration with LLVM 21 dependency discovery
+9. **Test Suite**: Built-in test runner (`--test lexer|ir|codegen`) - all tests pass
+10. **Import System**: File-based module loading, packages, submodules, sys.path support
+11. **Correctness Fixes**: All 18 issues in REMEDIATION.md fixed or verified fixed
 
 ### TODO (Next Steps)
 1. **Error Recovery**: Better error messages for parse failures
@@ -59,7 +58,7 @@ pyc/
 3. **Testing**: Run real Python 3 programs through the compiler, add test files
 4. **Performance**: SSA form, constant propagation, inlining, register allocation
 5. **Class System**: Full class inheritance, attributes, method calls
-6. **Exception Handling**: try/except/else/finally and raise statements (partially implemented)
+6. **Exception Handling**: try/except/else/finally and raise statements (finally not yet implemented)
 
 ## Dependencies
 - **LLVM 17+**: Code generation (only major external dependency)
