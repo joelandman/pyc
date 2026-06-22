@@ -785,14 +785,40 @@ private:
                     val(inst->operands[1]) ? val(inst->operands[1]) : i64(), "ne"));
                 break;
 
-            case pyc::ir::IRInstKind::AND:
-                record(builder_.CreateAnd(val(inst->operands[0]) ? val(inst->operands[0]) : i64(),
-                                           val(inst->operands[1]) ? val(inst->operands[1]) : i64(), "and"));
+    case pyc::ir::IRInstKind::AND: {
+                // Short-circuit: if lhs is 0, result is 0; else result is rhs
+                auto* lhs = val(inst->operands[0]);
+                auto* rhs = val(inst->operands[1]);
+                if (lhs && rhs) {
+                    auto* and_fn = mod_->getFunction("pyc_and");
+                    if (and_fn) {
+                        std::vector<llvm::Value*> args = {lhs, rhs};
+                        record(builder_.CreateCall(and_fn, args, "and"));
+                    } else {
+                        record(builder_.CreateAnd(lhs, rhs, "and"));
+                    }
+                } else {
+                    record(i64());
+                }
                 break;
-            case pyc::ir::IRInstKind::OR:
-                record(builder_.CreateOr(val(inst->operands[0]) ? val(inst->operands[0]) : i64(),
-                                          val(inst->operands[1]) ? val(inst->operands[1]) : i64(), "or"));
+            }
+            case pyc::ir::IRInstKind::OR: {
+                // Short-circuit: if lhs is non-zero, result is lhs; else result is rhs
+                auto* lhs = val(inst->operands[0]);
+                auto* rhs = val(inst->operands[1]);
+                if (lhs && rhs) {
+                    auto* or_fn = mod_->getFunction("pyc_or");
+                    if (or_fn) {
+                        std::vector<llvm::Value*> args = {lhs, rhs};
+                        record(builder_.CreateCall(or_fn, args, "or"));
+                    } else {
+                        record(builder_.CreateOr(lhs, rhs, "or"));
+                    }
+                } else {
+                    record(i64());
+                }
                 break;
+            }
               case pyc::ir::IRInstKind::NOT:
                 record(builder_.CreateNot(val(inst->operands[0]) ? val(inst->operands[0]) : i64(), "not"));
                 break;

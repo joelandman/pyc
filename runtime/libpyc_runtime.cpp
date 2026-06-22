@@ -163,6 +163,14 @@ int64_t pyc_is(pyc_obj_t obj, pyc_obj_t other) {
     return (to_pyobj(obj) == to_pyobj(other)) ? 1 : 0;
 }
 
+int64_t pyc_and(int64_t a, int64_t b) {
+    return (a != 0) ? b : 0;
+}
+
+int64_t pyc_or(int64_t a, int64_t b) {
+    return (a != 0) ? a : b;
+}
+
 pyc_obj_t pyc_new_type(pyc_type_kind_t type_kind) {
     PyObject* obj = new PyObject();
     obj->refcount = 1;

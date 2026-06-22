@@ -722,6 +722,97 @@ uint32_t IRBuilder::build_name(const ast::Name& name) {
 }
 
 uint32_t IRBuilder::build_binop(const ast::BinOpExpr& expr) {
+    // Handle short-circuit evaluation for AND and OR
+    if (expr.op() == ast::BinOpExpr::AND || expr.op() == ast::BinOpExpr::OR) {
+        auto* func_ir = current_func_;
+        auto* current_blk = current_block_;
+        
+        // Create blocks for short-circuit evaluation
+        auto* start_block = func_ir->new_block("and_start");
+        auto* short_circuit_block = func_ir->new_block("and_short");
+        auto* end_block = func_ir->new_block("and_end");
+        
+        // Switch to start block
+        current_block_ = start_block;
+        
+        // Evaluate left operand
+        auto lhs = build_expr(*expr.left());
+        
+        // Create PHI node for result
+        auto* phi = func_ir->new_inst(IRInstKind::PHI, "and_or_result");
+        phi->is_phi = true;
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(phi));
+        
+        if (expr.op() == ast::BinOpExpr::AND) {
+            // For AND: if lhs is 0, jump to short_circuit (result=0)
+            auto* cmp = func_ir->new_inst(IRInstKind::EQ, "and_cmp");
+            cmp->operands.push_back(lhs);
+            auto* zero = func_ir->new_inst(IRInstKind::LOADCONST_INT, "");
+            zero->is_const = true;
+            set_const_double(zero->const_val, 0.0);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(zero));
+            cmp->operands.push_back(zero->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(cmp));
+            
+            // Add PHI operands: start_block -> cmp result, short_block -> 0
+            phi->operands.push_back(cmp->id);
+            phi->operands.push_back(start_block->id);
+            
+            // Branch: if cmp is true (lhs==0), jump to short_circuit
+            auto* branch = func_ir->new_inst(IRInstKind::BRANCH, "and_branch");
+            branch->operands.push_back(cmp->id);
+            branch->operands.push_back(short_circuit_block->id);
+            branch->operands.push_back(end_block->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(branch));
+        } else {
+            // For OR: if lhs is non-zero, jump to end (result=lhs)
+            auto* cmp = func_ir->new_inst(IRInstKind::NE, "or_cmp");
+            cmp->operands.push_back(lhs);
+            auto* zero = func_ir->new_inst(IRInstKind::LOADCONST_INT, "");
+            zero->is_const = true;
+            set_const_double(zero->const_val, 0.0);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(zero));
+            cmp->operands.push_back(zero->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(cmp));
+            
+            // Add PHI operands: start_block -> lhs, short_block -> result
+            phi->operands.push_back(lhs);
+            phi->operands.push_back(start_block->id);
+            
+            // Branch: if cmp is true (lhs!=0), jump to end
+            auto* branch = func_ir->new_inst(IRInstKind::BRANCH, "or_branch");
+            branch->operands.push_back(cmp->id);
+            branch->operands.push_back(end_block->id);
+            branch->operands.push_back(short_circuit_block->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(branch));
+        }
+        
+        // Switch to short_circuit block
+        current_block_ = short_circuit_block;
+        
+        // Evaluate right operand
+        auto rhs = build_expr(*expr.right());
+        
+        // Add PHI operand for short_circuit block
+        phi->operands.push_back(rhs);
+        phi->operands.push_back(short_circuit_block->id);
+        
+        // Jump to end
+        auto* jump = func_ir->new_inst(IRInstKind::JUMP, "and_jump");
+        jump->operands.push_back(end_block->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump));
+        
+        // Switch to end block
+        current_block_ = end_block;
+        
+        // Load the PHI result
+        auto* load = func_ir->new_inst(IRInstKind::LOAD, "and_or_load");
+        load->operands.push_back(phi->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(load));
+        
+        return load->id;
+    }
+    
     auto lhs = build_expr(*expr.left());
     auto rhs = build_expr(*expr.right());
     

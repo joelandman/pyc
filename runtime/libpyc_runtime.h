@@ -51,6 +51,10 @@ pyc_obj_t pyc_dict_get(pyc_obj_t dict_obj, pyc_obj_t key_obj);
 int64_t pyc_contains(pyc_obj_t obj, pyc_obj_t item);
 int64_t pyc_is(pyc_obj_t obj, pyc_obj_t other);
 
+// Boolean short-circuit
+int64_t pyc_and(int64_t a, int64_t b);
+int64_t pyc_or(int64_t a, int64_t b);
+
 // String operations
 const char* pyc_str_value(pyc_obj_t str_obj);
 pyc_obj_t pyc_type_name(pyc_obj_t obj);
