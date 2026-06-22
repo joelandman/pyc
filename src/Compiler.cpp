@@ -1,0 +1,3199 @@
+#include "pyc/Compiler.h"
+#include "pyc/PythonParser.h"
+#include "pyc/IR.h"
+#include "pyc/Codegen.h"
+#include <llvm/IR/LLVMContext.h>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <cstdlib>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+
+#ifndef PYC_SOURCE_DIR
+#define PYC_SOURCE_DIR "."
+#endif
+
+namespace pyc {
+
+class LoweringVisitor {
+public:
+    LoweringVisitor(ModuleIR& moduleIR) : ir(moduleIR) {}
+
+    void lower(const ASTNode* node, const std::string& funcName = "") {
+        if (!node) return;
+        if (!funcName.empty()) currentFunc = funcName;
+
+        if (node->type == "Module") {
+            ir.addFunction("__module__", {});
+            currentFunc = "__module__";
+            tempCounter = 0;
+            valueTypes.clear();
+            // Pre-scan: collect module bindings and global-declared variable
+            // names so top-level assignments are visible from functions.
+            collectModuleBindings(node);
+            collectGlobalDecls(node);
+            ir.setFunctionGlobals("__module__", ir.moduleGlobals);
+            listLiteralElemASTs.clear();
+            callableTokenTemps.clear();
+            listsContainingCallableTokens.clear();
+            currentFnReturnsCallable = false;
+            funcNonlocals.clear();
+            funcCells.clear();
+            funcFreeCells.clear();
+            funcOwnedCells.clear();
+            // B4: pre-populate knownIRFunctions with all user FunctionDef ids
+            // (including nested) so that calls (even forward refs) see them as
+            // direct targets. Lambdas are added when their expr is lowered.
+            // This keeps ordinary calls direct while still allowing bare-name
+            // variables/parameters holding callable tokens to take the Pyc_Apply path.
+            std::function<void(const ASTNode*)> collectDefs = [&](const ASTNode* n) {
+                if (!n) return;
+                if (n->type == "FunctionDef" && !n->id.empty()) {
+                    knownIRFunctions.insert(n->id);
+                }
+                for (const auto& c : n->children) collectDefs(c.get());
+            };
+            collectDefs(node);
+            // Pre-populate our special builtin shims (print, len, range, sum, sorted, min/max,
+            // any/all, isinstance, int/float/abs/str, list, enumerate, zip, ...) so bare-name
+            // calls to them are recognized as "direct" and never routed through the B4 dynamic
+            // Pyc_Apply(token) path. This preserves all the fast/special lowering paths while
+            // still giving full lambda-as-value (B4) behavior for user callables.
+            for (const char* s : {"print","len","range","min","max","sum","sorted","any","all","isinstance",
+                                   "int","float","abs","str","list","enumerate","zip","bool","type","id",
+                                   "repr","hex","oct","bin","ord","chr","round"}) {
+                knownIRFunctions.insert(s);
+            }
+            for (const auto& c : node->children) {
+                lower(c.get());
+            }
+        } else if (node->type == "FunctionDef") {
+            std::string saved = currentFunc;
+
+            // Compute views:
+            // - funcParamNames gets the original (starred) view for call-site analysis
+            //   and callee-side *args collection.
+            // - The IRFunction gets bare names (no leading * or **) so that inside the
+            //   function body the parameter names used for allocas/valueMap are normal
+            //   identifiers.
+            funcParamNames[node->id] = node->args;
+            std::vector<std::string> bareParams;
+            for (auto& a : node->args) {
+                std::string b = a;
+                if (!b.empty() && b[0] == '*') {
+                    b = b.substr(1);
+                    if (!b.empty() && b[0] == '*') b = b.substr(1);
+                }
+                bareParams.push_back(b);
+            }
+            ir.addFunction(node->id, bareParams);
+            knownIRFunctions.insert(node->id);  // regular def is a direct callable target
+            for (auto& fnr : ir.functions) if (fnr.name == node->id) { fnr.paramNames = node->args; break; }
+
+            // B5: stash cell metadata on the IRFunction for later codegen (cellVars + freeCellVars).
+            // We will also synthesize hidden cell parameters for nested functions that need free cells.
+            // (Owned cells and free cells are finalized after the nonlocal/assigned scan below.)
+            {
+                // cellVars/freeCellVars will be (re)written after the owned/free computation below.
+            }
+
+            // Collect this function's global declarations (scan body before lowering).
+            std::vector<std::string> funcGlobals = scanFuncGlobals(node);
+            for (const auto& g : ir.moduleGlobals) {
+                if (std::find(funcGlobals.begin(), funcGlobals.end(), g) == funcGlobals.end())
+                    funcGlobals.push_back(g);
+            }
+            // Remove names that are also parameters (params shadow globals) using bare names.
+            for (const auto& bp : bareParams) {
+                if (!bp.empty())
+                    funcGlobals.erase(std::remove(funcGlobals.begin(), funcGlobals.end(), bp),
+                                      funcGlobals.end());
+            }
+            ir.setFunctionGlobals(node->id, funcGlobals);
+
+            // Count defaults and collect their values
+            std::vector<std::string> defaults;
+            size_t defaultIndex = 0;
+            for (const auto& c : node->children) {
+                if (c && c->type == "Default") {
+                    std::string defVal = lowerExpr(c.get());
+                    std::string slot = "__default_" + node->id + "_" + std::to_string(defaultIndex++);
+                    ir.addModuleGlobal(slot);
+                    ir.addInstruction(saved, "assign", {defVal}, slot);
+                    defaults.push_back(slot);
+                }
+            }
+            if (!defaults.empty()) {
+                funcDefaultCount[node->id] = defaults.size();
+                funcDefaultValues[node->id] = defaults;
+            }
+
+            // (The IRFunction was already inserted above with bare param names.
+            // We keep funcParamNames with the original starred view for call analysis.)
+            // No additional addFunction here; the early-return in IR would have ignored
+            // a second insert anyway. We just ensure the starred view is recorded.
+            funcParamNames[node->id] = node->args;
+
+            // B5: record this function's nonlocal declarations (declaration-only; cells later).
+            funcNonlocals[node->id] = scanFuncNonlocals(node);
+
+            // B5: determine which names in this function require cell storage.
+            // - Any name declared 'nonlocal' here needs a cell (cell lives in an outer scope).
+            // - Any name we assign here that is declared 'nonlocal' in some descendant nested
+            //   function must be cell-allocated here so the nested function can share it.
+            {
+                std::vector<std::string> cells;
+                auto nlit = funcNonlocals.find(node->id);
+                if (nlit != funcNonlocals.end()) {
+                    for (const auto& nm : nlit->second) cells.push_back(nm);
+                }
+                // Look for nested functions and their nonlocal sets; any name assigned here
+                // that appears in a nested nonlocal must be a cell.
+                std::function<void(const ASTNode*)> scanNestedNonlocals = [&](const ASTNode* n) {
+                    if (!n) return;
+                    if (n->type == "FunctionDef") {
+                        auto innerNL = scanFuncNonlocals(n);
+                        auto assigned = scanAssignedNames(node);
+                        for (const auto& nm : innerNL) {
+                            if (std::find(assigned.begin(), assigned.end(), nm) != assigned.end()) {
+                                if (std::find(cells.begin(), cells.end(), nm) == cells.end())
+                                    cells.push_back(nm);
+                            }
+                        }
+                    }
+                    for (const auto& c : n->children) scanNestedNonlocals(c.get());
+                };
+                for (const auto& c : node->children) scanNestedNonlocals(c.get());
+
+                // B5 enhancement: also promote to cell any name that is demanded (via nonlocal)
+                // anywhere in the nested subtree, *even if this scope does not assign it*.
+                // This is required for correct forwarding through intermediate scopes
+                // (e.g. outer owns; middle only declares nonlocal and calls inner; inner assigns).
+                // The intermediate scope must still treat the name as a cell so it can
+                // receive the cell object (hidden param) and pass it down.
+                {
+                    auto demanded = collectDemandedNonlocals(node);
+                    for (const auto& nm : demanded) {
+                        if (std::find(cells.begin(), cells.end(), nm) == cells.end())
+                            cells.push_back(nm);
+                    }
+                }
+
+                // Also, if a nested function declares a nonlocal that we (this scope) assign,
+                // we must cell it even if we did not list it in our own nonlocals.
+                funcCells[node->id] = cells;
+            }
+
+            // B5: compute freeCellVars for this function (cells we read/write that live in an
+            // enclosing function's cell set). This will become hidden leading parameters.
+            {
+                std::vector<std::string> frees;
+                auto nlit = funcNonlocals.find(node->id);
+                if (nlit != funcNonlocals.end()) {
+                    // For each name declared nonlocal here, the cell is provided by the nearest
+                    // enclosing scope that actually owns/allocates the cell (i.e. assigns it).
+                    // We record the Python name; lowering of the enclosing scope will allocate
+                    // the cell and pass it down when calling us.
+                    for (const auto& nm : nlit->second) {
+                        if (std::find(frees.begin(), frees.end(), nm) == frees.end())
+                            frees.push_back(nm);
+                    }
+                }
+                // B5 enhancement: also include any names that are demanded (nonlocal) by
+                // *descendant* scopes even if this scope does not declare them locally.
+                // This ensures an intermediate scope that only forwards will still receive
+                // the cell as a hidden parameter and can forward it to deeper callees.
+                {
+                    auto demanded = collectDemandedNonlocals(node);
+                    for (const auto& nm : demanded) {
+                        if (std::find(frees.begin(), frees.end(), nm) == frees.end())
+                            frees.push_back(nm);
+                    }
+                }
+                funcFreeCells[node->id] = frees;
+            }
+
+            // B5: if this nested function has free cells, synthesize hidden leading parameters
+            // so the enclosing scope can pass the cells down. We prefix them to avoid clashing
+            // with user parameter names and with the bare-param view used for local allocas.
+            {
+                auto fit = funcFreeCells.find(node->id);
+                if (fit != funcFreeCells.end() && !fit->second.empty()) {
+                    // Prepend synthesized cell parameters to the IRFunction's args.
+                    // Use "<pythonname>_cell" as the parameter name so that the uniform
+                    // "<name>_cell" slot convention works for both owned cells (locals)
+                    // and received free cells (hidden params) inside the nested function.
+                    for (auto& fnr : ir.functions) if (fnr.name == node->id) {
+                        std::vector<std::string> newArgs;
+                        for (const auto& fc : fit->second) {
+                            newArgs.push_back(fc + "_cell");
+                        }
+                        newArgs.insert(newArgs.end(), fnr.args.begin(), fnr.args.end());
+                        fnr.args = newArgs;
+                        break;
+                    }
+                    // Also update bareParams we already computed and re-insert function to keep
+                    // the moduleIR consistent (addFunction early-returns on duplicate, so we
+                    // directly mutate the existing entry). Keep funcParamNames as user view only.
+                }
+            }
+
+            // B5: decide ownership of cells for this function:
+            // - If a name is in *our* cellVars (we allocate it) *and* it is NOT in our nonlocal set,
+            //   then we own/allocate the cell here.
+            // - Names that are in our nonlocal set are received as hidden __cell_* params.
+            {
+                std::vector<std::string> owned;
+                auto cit = funcCells.find(node->id);
+                auto nlit = funcNonlocals.find(node->id);
+                std::unordered_set<std::string> nlset;
+                if (nlit != funcNonlocals.end()) {
+                    for (const auto& nm : nlit->second) nlset.insert(nm);
+                }
+                if (cit != funcCells.end()) {
+                    for (const auto& nm : cit->second) {
+                        if (nlset.count(nm) == 0) {
+                            // We assign it and descendants close over it => we allocate the cell.
+                            owned.push_back(nm);
+                        }
+                    }
+                }
+                funcOwnedCells[node->id] = owned;
+                // Also annotate the IRFunction for codegen convenience.
+                for (auto& fnr : ir.functions) if (fnr.name == node->id) {
+                    fnr.cellVars = cit != funcCells.end() ? cit->second : std::vector<std::string>{};
+                    break;
+                }
+            }
+
+            // B5: detect whether *this* function itself is a closure (captures any cells
+            // from an outer scope). If so, mark it so that its "value" (for a def name or
+            // a lambda expr) is produced as a descriptor bundle rather than a bare token.
+            {
+                auto fit = funcFreeCells.find(node->id);
+                if (fit != funcFreeCells.end() && !fit->second.empty()) {
+                    closureFunctions.insert(node->id);
+                }
+            }
+
+            currentFunc = node->id;
+            tempCounter = 0;
+            listLiteralElemASTs.clear();
+            callableTokenToSynthetic.clear();
+            callableTokenTemps.clear();
+            listsContainingCallableTokens.clear();
+            currentFnReturnsCallable = false;
+            lastLambdaSynthetic.clear();
+
+            // B5: allocate owned cells (for names we assign here that inner scopes close over via nonlocal).
+            // We allocate them (empty) at function entry under the uniform "<name>_cell" slot.
+            // If the name is a parameter of this function, capture the incoming param value into the cell
+            // so that nested functions see the original argument through the shared cell.
+            {
+                auto oit = funcOwnedCells.find(node->id);
+                if (oit != funcOwnedCells.end()) {
+                    for (const auto& nm : oit->second) {
+                        std::string cellSlot = nm + "_cell";
+                        std::string z = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(node->id, "const", {"0"}, z);
+                        std::string cellObj = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(node->id, "call", {"PyCell_New", z}, cellObj);
+                        ir.addInstruction(node->id, "assign", {cellObj}, cellSlot);
+                        // Capture param initial value if applicable.
+                        auto pit = funcParamNames.find(node->id);
+                        bool isParam = false;
+                        if (pit != funcParamNames.end()) {
+                            for (const auto& p : pit->second) {
+                                std::string bp = p;
+                                if (!bp.empty() && bp[0] == '*') bp = bp.substr(1);
+                                if (bp == nm) { isParam = true; break; }
+                            }
+                        }
+                        if (isParam) {
+                            std::string dummy = "t" + std::to_string(tempCounter++);
+                            ir.addInstruction(node->id, "call", {"PyCell_Set", cellSlot, nm}, dummy);
+                        }
+                    }
+                }
+            }
+
+            // B5 (lambda cells): for each *owned* cell in this scope, if the body of any
+            // nested lambda (or nested def) references that name, we must ensure the
+            // lambda's synthetic will receive the cell via a hidden param. We do this
+            // by walking nested Lambda nodes and adding their referenced owned names
+            // into the current function's freeCellVars (so later, when lowering the
+            // lambda as a nested FunctionDef, the demanded path will mark it and the
+            // lambda will get the hidden cell param from *this* scope).
+            {
+                std::function<void(const ASTNode*)> markLambdaDemands = [&](const ASTNode* n) {
+                    if (!n) return;
+                    if (n->type == "Lambda") {
+                        const ASTNode* body = nullptr;
+                        for (const auto& c : n->children) {
+                            if (c && c->type != "Default") { body = c.get(); break; }
+                        }
+                        if (body) {
+                            auto used = collectNames(body);
+                            auto oit2 = funcOwnedCells.find(node->id);
+                            if (oit2 != funcOwnedCells.end()) {
+                                for (const auto& nm : oit2->second) {
+                                    if (used.count(nm)) {
+                                        auto& frees = funcFreeCells[node->id];
+                                        if (std::find(frees.begin(), frees.end(), nm) == frees.end())
+                                            frees.push_back(nm);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for (const auto& c : n->children) markLambdaDemands(c.get());
+                };
+                for (const auto& c : node->children) markLambdaDemands(c.get());
+            }
+
+            // B5 (closure functions): if *this* function captures any cells (freeCellVars),
+            // mark it as a closure so that any "value" of it (def name mention or lambda expr)
+            // is lowered as a descriptor bundle [token, cell0, cell1, ...] instead of a bare token.
+            {
+                auto fit = funcFreeCells.find(node->id);
+                if (fit != funcFreeCells.end() && !fit->second.empty()) {
+                    closureFunctions.insert(node->id);
+                }
+            }
+
+            for (const auto& c : node->children) {
+                if (c && c->type == "Default") continue;
+                lower(c.get());
+            }
+            currentFunc = saved;   // restore context for siblings (important for top-level code after defs)
+            lastLambdaSynthetic.clear();  // do not leak "last lambda expr" from this function to later assigns/calls in outer scope
+            // B4: if the function body contained a return of a callable token, record it
+            // so that later call results can be treated as tokens (for assign/unpack/call).
+            if (currentFnReturnsCallable) {
+                functionsThatReturnCallables.insert(node->id);
+            }
+            currentFnReturnsCallable = false;
+            // B5 (closures): if the function body contained a return of a bundle, record it
+            // so callers can mark results as bundles and extract cells at use sites.
+            if (currentFnReturnsBundle) {
+                functionsThatReturnBundles.insert(node->id);
+                if (!currentReturnedBundleSynthetic.empty())
+                    functionReturnedBundleSynthetic[node->id] = currentReturnedBundleSynthetic;
+                if (!currentReturnedBundleCaps.empty())
+                    functionReturnedBundleCaps[node->id] = currentReturnedBundleCaps;
+            }
+            currentFnReturnsBundle = false;
+            currentReturnedBundleSynthetic.clear();
+            currentReturnedBundleCaps.clear();
+            // Do not fall through to the generic FunctionDef handling below.
+            return;
+      } else if (node->type == "ClassDef") {
+            lowerClass(node);
+            return;
+      } else if (node->type == "With") {
+            // with ctx as target: body
+            // Lowers to: target = ctx.__enter__(); body; ctx.__exit__(None, None, None)
+            if (node->children.empty()) return;
+            const ASTNode* withItem = node->children[0].get();
+            // withitem has context_expr in children[0], optional_vars in children[1]
+            if (withItem->children.empty()) return;
+            std::string ctxExpr = lowerExpr(withItem->children[0].get());
+            // Call __enter__
+            std::string enterConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"__enter__\""}, enterConst, "str");
+            std::string enterCall = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, enterConst}, enterCall);
+            // Build arg list for __enter__ (just self)
+            std::string enterArgList = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, "enter_arg_count");
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "enter_arg_count"}, enterArgList);
+            std::string zeroConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, zeroConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", enterArgList, zeroConst, ctxExpr}, "enter_set0");
+            std::string enterResult = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", enterCall, enterArgList}, enterResult);
+            // Bind result to target if present
+            if (withItem->children.size() > 1 && withItem->children[1]) {
+                const ASTNode* target = withItem->children[1].get();
+                if (target->type == "Name") {
+                    ir.addInstruction(currentFunc, "assign", {enterResult}, target->id);
+                }
+            }
+            // Lower body
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                if (node->children[i]) {
+                    lower(node->children[i].get());
+                }
+            }
+            // Call __exit__(None, None, None) in finally
+            std::string exitConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"__exit__\""}, exitConst, "str");
+            std::string exitCall = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, exitConst}, exitCall);
+            // Build arg list for __exit__ (self, None, None, None)
+            std::string exitArgList = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"4"}, "exit_arg_count");
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "exit_arg_count"}, exitArgList);
+            std::string oneConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, oneConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgList, oneConst, ctxExpr}, "exit_set1");
+            // Add three None values
+            for (int j = 0; j < 3; ++j) {
+                std::string jConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(j)}, jConst);
+                ir.addInstruction(currentFunc, "const", {"0"}, "none_val");
+                std::string noneKey = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(j + 2)}, noneKey);
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgList, noneKey, "none_val"}, "exit_set");
+            }
+            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", exitCall, exitArgList}, "exit_result");
+        } else if (node->type == "If") {
+            lowerIf(node);
+        } else if (node->type == "While") {
+            lowerWhile(node);
+        } else if (node->type == "For") {
+            lowerFor(node);
+        } else if (node->type == "Break") {
+            ir.addInstruction(currentFunc, "br", {}, loopBreakLabel);
+        } else if (node->type == "Continue") {
+            ir.addInstruction(currentFunc, "br", {}, loopContinueLabel);
+        } else if (node->type == "Global") {
+            // Declaration only — already collected in pre-scan, no IR emitted.
+            return;
+    } else if (node->type == "Nonlocal") {
+            // Declaration only — recorded by scanFuncNonlocals during FunctionDef lowering.
+            // No IR emitted here; cells + load/store rewrite happen in B5 phases.
+            return;
+        } else if (node->type == "Import") {
+            // import sys, import math as m
+            // Register imported module names as module-level globals
+            for (const auto& name : node->args) {
+                ir.addModuleGlobal(name);
+            }
+            return;
+        } else if (node->type == "ImportFrom") {
+            // from math import sqrt
+            // Register imported names as module-level globals
+            for (const auto& name : node->args) {
+                ir.addModuleGlobal(name);
+            }
+            return;
+        } else if (node->type == "AugAssign") {
+            lowerAugAssign(node);
+        } else if (node->type == "Assign") {
+            lowerAssign(node);
+        } else if (node->type == "Return") {
+            lowerReturn(node);
+        } else if (node->type == "Expr") {
+            if (!node->children.empty() && node->children[0]) {
+                lowerExpr(node->children[0].get());
+            }
+        } else if (node->type == "ListComp") {
+            lowerListComp(node);
+        } else if (node->type == "DictComp") {
+            lowerDictComp(node);
+        } else {
+            // expressions or fallthrough
+            lowerExpr(node);
+            for (const auto& c : node->children) {
+                if (c) lower(c.get());
+            }
+        }
+    }
+
+    std::string lowerExpr(const ASTNode* node) {
+        if (!node || currentFunc.empty()) return "";
+        if (node->type == "FunctionDef") return "";
+
+        if (node->type == "Constant") {
+            std::string res = "c" + std::to_string(tempCounter++);
+            std::string val = node->value;
+            if (node->is_bool) {
+                ir.addInstruction(currentFunc, "bconst", {val}, res, "bool");
+                noteType(res, "bool");
+            } else if (node->is_float) {
+                ir.addInstruction(currentFunc, "fconst", {val}, res, "float");
+                noteType(res, "float");
+            } else if (node->is_str) {
+                // Wrap in quotes so codegen detects it as a string.
+                // Embedded quotes are not escaped in this MVP.
+                ir.addInstruction(currentFunc, "const", {"\"" + val + "\""}, res, "str");
+                noteType(res, "str");
+            } else {
+                ir.addInstruction(currentFunc, "const", {val}, res, "int");
+                noteType(res, "int");
+            }
+            return res;
+        } else if (node->type == "Name") {
+            // B5: if this bare name is a cell-backed name in the current function, emit
+            // a PyCell_Get to obtain the value for expression use. The result is a fresh
+            // PyObject* (new reference) which is safe for the expression context.
+            // Only route through the cell if this function actually owns or receives the cell
+            // (i.e. it is in funcCells for this function). A bare name that is nonlocal in an
+            // inner scope but treated as a normal local here should continue to use direct
+            // local/global storage.
+            {
+                auto cit = funcCells.find(currentFunc);
+                bool isCellHere = false;
+                if (cit != funcCells.end()) {
+                    for (const auto& cv : cit->second) {
+                        if (cv == node->id) { isCellHere = true; break; }
+                    }
+                }
+                if (isCellHere) {
+                    // The cell itself is stored under a synthetic name "<name>_cell".
+                    std::string cellSlot = node->id + "_cell";
+                    std::string res = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyCell_Get", cellSlot}, res);
+                    noteType(res, "boxed");
+                    return res;
+                }
+            }
+            return node->id;
+        } else if (node->type == "Attribute") {
+            return lowerAttribute(node);
+        } else if (node->type == "BinOp") {
+            return lowerBinOp(node);
+        } else if (node->type == "Call") {
+            return lowerCall(node);
+        } else if (node->type == "Compare") {
+            return lowerCompare(node);
+        } else if (node->type == "List" || node->type == "Tuple") {
+            return lowerList(node);
+        } else if (node->type == "Dict") {
+            return lowerDict(node);
+        } else if (node->type == "Default") {
+            // Defaults are handled specially in FunctionDef lowering
+            return lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        } else if (node->type == "Return") {
+            return lowerReturnExpr(node);
+        } else if (node->type == "JoinedStr") {
+            return lowerJoinedStr(node);
+        } else if (node->type == "FormattedValue") {
+            return lowerFormattedValue(node);
+        } else if (node->type == "BoolOp") {
+            return lowerBoolOp(node);
+        } else if (node->type == "UnaryOp") {
+            return lowerUnaryOp(node);
+        } else if (node->type == "Lambda") {
+            std::string lamName = lowerLambda(node);
+            // B5 (lambda as closure): if this lambda closes over any cells from the definition
+            // scope, its *value* must be a descriptor bundle [token, cell0, cell1, ...] so that
+            // call sites can extract the cells and pass them as leading args to the synthetic.
+            {
+                const ASTNode* body = nullptr;
+                for (const auto& c : node->children) {
+                    if (c && c->type != "Default") { body = c.get(); break; }
+                }
+                std::vector<std::string> caps;
+                if (body) {
+                    auto used = collectNames(body);
+                    auto oit = funcOwnedCells.find(currentFunc);
+                    if (oit != funcOwnedCells.end()) {
+                        for (const auto& nm : oit->second) if (used.count(nm)) caps.push_back(nm);
+                    }
+                    auto fit = funcFreeCells.find(currentFunc);
+                    if (fit != funcFreeCells.end()) {
+                        for (const auto& nm : fit->second) if (used.count(nm)) {
+                            if (std::find(caps.begin(), caps.end(), nm) == caps.end()) caps.push_back(nm);
+                        }
+                    }
+                }
+                if (!caps.empty()) {
+                    // Build a list: [ tokenString, cell0, cell1, ... ]
+                    std::string zero = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, zero);
+                    std::string lst = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, lst);
+
+                    // token (synthetic name string)
+                    std::string tok = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + lamName + "\""}, tok, "str");
+                    std::string d1 = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, tok}, d1);
+
+                    // cells in definition scope order (use the uniform <nm>_cell slots)
+                    for (const auto& nm : caps) {
+                        std::string cellSlot = nm + "_cell";
+                        std::string d = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, cellSlot}, d);
+                    }
+
+                    // Remember mapping for call-site extraction and token propagation.
+                    descriptorCells[lst] = caps;
+                    bundleToSynthetic[lst] = lamName;
+                    bundleTemps.insert(lst);
+
+                    // Also keep the B4 token path working for direct resolution inside this scope.
+                    callableTokenToSynthetic[lst] = lamName;
+                    callableTokenTemps.insert(lamName);
+
+                    lastLambdaSynthetic = lamName;
+                    closureFunctions.insert(lamName);
+                    return lst;
+                }
+            }
+
+            // Non-capturing path (original B4): bare string token.
+            std::string res = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + lamName + "\""}, res, "str");
+            noteType(res, "str");
+            callableTokenToSynthetic[res] = lamName;
+            callableTokenTemps.insert(res);
+            lastLambdaSynthetic = lamName;
+            return res;
+        } else if (node->type == "Starred") {
+            // In expression context (e.g. inside a list or other), lower the
+            // starred value as-is (the iterable). Call-site collection is
+            // handled in lowerCall.
+            if (!node->children.empty()) return lowerExpr(node->children[0].get());
+            return "";
+        } else if (node->type == "ListComp") {
+            return lowerListComp(node);
+        } else if (node->type == "DictComp") {
+            return lowerDictComp(node);
+        } else if (node->type == "Subscript") {
+            return lowerSubscriptGet(node);
+        } else if (node->type == "IfExp") {
+            return lowerIfExpr(node);
+        }
+        return "";
+    }
+
+private:
+    ModuleIR& ir;
+    std::string currentFunc;
+    int tempCounter = 0;
+    // Current innermost loop labels — updated by lowerFor/lowerWhile so
+    // break/continue target the right blocks even with nested loops.
+    std::string loopContinueLabel;
+    std::string loopBreakLabel;
+    std::unordered_map<std::string, int> funcDefaultCount;
+    std::unordered_map<std::string, std::vector<std::string>> funcDefaultValues;
+    std::unordered_map<std::string, std::vector<std::string>> funcParamNames;
+    std::unordered_map<std::string, std::string> valueTypes;
+    // Map from user-level name to synthetic lambda function name for call resolution.
+    std::unordered_map<std::string, std::string> lambdaAliases;
+    // Track list/tuple literals assigned to names (intra-function) so that
+    // *args at call sites can statically expand to the right number of
+    // operands on the emitted 'call' IR when the length is known.
+    // We store the raw AST element nodes and re-lower at the use site to
+    // emit the element values (avoids temp lifetime issues across statements).
+    std::unordered_map<std::string, std::vector<ASTNode*>> listLiteralElemASTs;
+    // Names of IR functions we have registered (for deciding static vs dynamic
+    // call lowering in B4/B8 indirect callable support).
+    std::unordered_set<std::string> knownIRFunctions;
+    // Set of class names for class instantiation support.
+    std::unordered_set<std::string> knownClasses;
+    // Map from class name to __init__ parameter names (comma-separated).
+    std::unordered_map<std::string, std::string> classInitParams;
+    // Names that have been assigned (or unpacked into) values that may be
+    // callable tokens at runtime (lambdas, results of calls that return lambdas,
+    // elements of containers holding lambdas, copies of such names, etc.).
+    // Used to decide whether a bare-name callee should load its runtime value
+    // as the token for Pyc_Apply (B4 completeness for returned/aliased lambdas).
+    std::unordered_set<std::string> namesThatMayHoldCallableTokens;
+    // B5: bare names whose runtime value is a descriptor bundle for a capturing lambda/closure.
+    std::unordered_set<std::string> namesThatMayHoldBundles;
+    // Temps (consts or results) whose runtime value is a callable token string.
+    std::unordered_set<std::string> callableTokenTemps;
+    // User functions (defs or synthetic lambdas) that contain a return of a
+    // callable token value. Calls to them have their result temp marked so
+    // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
+    std::unordered_set<std::string> functionsThatReturnCallables;
+    // List (or tuple) temps from lowerList whose element(s) are callable token
+    // temps. Used to mark subscript results and unpack targets as potential tokens.
+    std::unordered_set<std::string> listsContainingCallableTokens;
+    // During lowering of a FunctionDef/lambda body, set true if any ret (or
+    // implicit lambda body) produces a tracked callable token. At end of the
+    // function we record the function name in functionsThatReturnCallables.
+    bool currentFnReturnsCallable = false;
+    // Map from IR result temp of a string constant (emitted as the "value" of
+    // a lambda expression) to the synthetic IR function name it refers to.
+    // This enables treating a lambda "value" (string token) as a callable target
+    // when it appears as a callee expression (B4 progress on lambda as value).
+    std::unordered_map<std::string, std::string> callableTokenToSynthetic; // temp -> synthetic name
+    // Last synthetic name produced by lowerLambda (used by assign of a lambda
+    // to capture the alias after we started emitting a boxed string value for
+    // the lambda expression).
+    std::string lastLambdaSynthetic;
+
+    // B5 (nonlocal/cells): per-function list of names declared 'nonlocal' inside that function.
+    // These names must be backed by cells (heap objects allocated in an enclosing scope)
+    // rather than ordinary locals or module globals. The map is populated during FunctionDef
+    // lowering via scanFuncNonlocals. Full cell allocation + hidden-param passing + load/store
+    // rewrite happens in subsequent B5 increments.
+    std::unordered_map<std::string, std::vector<std::string>> funcNonlocals;
+
+    // B5: names that actually use cell storage for this function (union of nonlocals here
+    // and names we assign here that descendants access via nonlocal).
+    std::unordered_map<std::string, std::vector<std::string>> funcCells;
+
+    // B5: for a nested function, the Python-level cell names it needs from an enclosing scope.
+    // These become synthesized hidden leading parameters (cells) when lowering the nested func.
+    std::unordered_map<std::string, std::vector<std::string>> funcFreeCells;
+
+    // B5: names for which *this* function allocates the cell (owns the binding for closed-over descendants).
+    // Distinct from funcFreeCells (which are received via hidden params because this function declared nonlocal).
+    std::unordered_map<std::string, std::vector<std::string>> funcOwnedCells;
+
+    // B5: set of synthetic names (defs or lambdas) whose lowered "value" must carry cells
+    // (a descriptor bundle) rather than a bare string token. When such a value flows to a
+    // call site we will extract the cells from the bundle and pass them as leading args.
+    std::unordered_set<std::string> closureFunctions;
+
+    // B5: for a descriptor bundle temp (value of a capturing lambda/closure), the ordered
+    // Python-level cell names it carries. Used at call sites to splice the right cells.
+    std::unordered_map<std::string, std::vector<std::string>> descriptorCells;
+
+    // B5: descriptor bundle temp -> synthetic IR name (so call sites can resolve the real target).
+    std::unordered_map<std::string, std::string> bundleToSynthetic;
+
+    // B5: temps that are known descriptor bundles (for propagation through assign/return/etc.).
+    std::unordered_set<std::string> bundleTemps;
+
+    // B5: functions that return descriptor bundles (capturing lambdas returned from makers etc.).
+    std::unordered_set<std::string> functionsThatReturnBundles;
+    std::unordered_map<std::string, std::string> functionReturnedBundleSynthetic;
+    std::unordered_map<std::string, std::vector<std::string>> functionReturnedBundleCaps;
+
+    // Per-FunctionDef state for returns of bundles (to record at end of the def).
+    bool currentFnReturnsBundle = false;
+    std::string currentReturnedBundleSynthetic;
+    std::vector<std::string> currentReturnedBundleCaps;
+
+    // B5 helper (member, callable during lowering of exprs/stmts in a FunctionDef body):
+    // Returns true if 'nm' must be treated as cell-backed while lowering the *current* function.
+    // We consult the three analysis maps so that:
+    //  - owners (present in funcOwnedCells for this scope) go through cells,
+    //  - direct nonlocals (present in funcNonlocals) go through cells,
+    //  - forwarders (present in funcFreeCells) go through cells.
+    // Using a single predicate here prevents the owner from doing a plain local assign for
+    // a name it owns as a cell, which was the root cause of "cell mutation visible inside
+    // callee but stale value read later in owner".
+    bool isCellBackedHere(const std::string& nm) const {
+        auto cit = funcCells.find(currentFunc);
+        if (cit != funcCells.end()) {
+            for (const auto& v : cit->second) if (v == nm) return true;
+        }
+        auto oit = funcOwnedCells.find(currentFunc);
+        if (oit != funcOwnedCells.end()) {
+            for (const auto& v : oit->second) if (v == nm) return true;
+        }
+        auto fit = funcFreeCells.find(currentFunc);
+        if (fit != funcFreeCells.end()) {
+            for (const auto& v : fit->second) if (v == nm) return true;
+        }
+        return false;
+    }
+
+    void noteType(const std::string& name, const std::string& type) {
+        if (!name.empty() && !type.empty()) valueTypes[name] = type;
+    }
+
+    std::string typeOf(const std::string& name) const {
+        auto it = valueTypes.find(name);
+        std::string t = it == valueTypes.end() ? "boxed" : it->second;
+        if (t == "i64") return "int";
+        return t;
+    }
+
+    std::string numericResultType(const std::string& op,
+                                   const std::string& left,
+                                   const std::string& right) const {
+        std::string lt = typeOf(left);
+        std::string rt = typeOf(right);
+        if (op == "truediv") return "float";
+        // treat i64 (native range counters) as int for numeric ops
+        auto isNum = [](const std::string& t){ return t=="int" || t=="bool" || t=="float" || t=="i64"; };
+        if (isNum(lt) && isNum(rt)) {
+            return (lt == "float" || rt == "float") ? "float" : "int";
+        }
+        return "boxed";
+    }
+
+    void mergeBranchTypes(const std::unordered_map<std::string, std::string>& before,
+                           const std::unordered_map<std::string, std::string>& thenTypes,
+                           const std::unordered_map<std::string, std::string>& elseTypes) {
+        std::unordered_set<std::string> names;
+        for (const auto& kv : before) names.insert(kv.first);
+        for (const auto& kv : thenTypes) names.insert(kv.first);
+        for (const auto& kv : elseTypes) names.insert(kv.first);
+
+        std::unordered_map<std::string, std::string> merged = before;
+        for (const auto& name : names) {
+            auto bit = before.find(name);
+            std::string incoming = bit == before.end() ? "boxed" : bit->second;
+
+            auto tit = thenTypes.find(name);
+            auto eit = elseTypes.find(name);
+            std::string thenType = tit == thenTypes.end() ? incoming : tit->second;
+            std::string elseType = eit == elseTypes.end() ? incoming : eit->second;
+
+            merged[name] = (thenType == elseType) ? thenType : "boxed";
+        }
+        valueTypes = std::move(merged);
+    }
+
+    // Conservative loop back-edge widening: if a variable's type at the end
+    // of the body differs from its type on entry to the loop head, widen to
+    // "boxed" so subsequent iterations (and code after the loop) do not
+    // assume a type that is not stable across all iterations.
+    void widenLoopTypes(const std::unordered_map<std::string, std::string>& entryTypes) {
+        for (auto& kv : valueTypes) {
+            auto eit = entryTypes.find(kv.first);
+            if (eit != entryTypes.end() && eit->second != kv.second) {
+                kv.second = "boxed";
+            }
+        }
+    }
+
+    // Recursively collect all names from `global` statements in the subtree.
+    void collectGlobalDecls(const ASTNode* node) {
+        if (!node) return;
+        if (node->type == "Global") {
+            for (const auto& name : node->args) ir.addModuleGlobal(name);
+        }
+        for (const auto& c : node->children) collectGlobalDecls(c.get());
+    }
+
+    void collectModuleBindings(const ASTNode* moduleNode) {
+        if (!moduleNode || moduleNode->type != "Module") return;
+        for (const auto& c : moduleNode->children) {
+            if (!c) continue;
+            if (c->type == "Assign") {
+                if (!c->args.empty()) {
+                    for (const auto& name : c->args) ir.addModuleGlobal(name);
+                } else if (!c->id.empty() && c->id != "__subscript__" && c->id != "__unpack__") {
+                    ir.addModuleGlobal(c->id);
+                }
+            } else if (c->type == "FunctionDef") {
+                ir.addModuleGlobal(c->id);
+            }
+        }
+    }
+
+    // Collect names from `global` statements that are direct descendants of a FunctionDef.
+    std::vector<std::string> scanFuncGlobals(const ASTNode* funcNode) {
+        std::vector<std::string> result;
+        for (const auto& c : funcNode->children) {
+            if (c && c->type == "Global") {
+                for (const auto& name : c->args) result.push_back(name);
+            }
+        }
+        return result;
+    }
+
+    // B5: Collect names from `nonlocal` statements that are direct descendants of a FunctionDef.
+    // These names must be resolved via cells (heap objects allocated in an enclosing scope),
+    // not as ordinary locals or module globals.
+    std::vector<std::string> scanFuncNonlocals(const ASTNode* funcNode) {
+        std::vector<std::string> result;
+        for (const auto& c : funcNode->children) {
+            if (c && c->type == "Nonlocal") {
+                for (const auto& name : c->args) result.push_back(name);
+            }
+        }
+        return result;
+    }
+
+    // B5: collect names assigned (simple targets) inside a FunctionDef subtree.
+    // Used to decide which assigned names must become cells because nested scopes
+    // declare them nonlocal.
+    std::vector<std::string> scanAssignedNames(const ASTNode* funcNode) {
+        std::vector<std::string> result;
+        std::function<void(const ASTNode*)> walk = [&](const ASTNode* n) {
+            if (!n) return;
+            if (n->type == "Assign") {
+                if (!n->args.empty()) {
+                    for (const auto& nm : n->args) {
+                        if (!nm.empty() && nm != "__subscript__" && nm != "__unpack__")
+                            result.push_back(nm);
+                    }
+                } else if (!n->id.empty() && n->id != "__subscript__" && n->id != "__unpack__") {
+                    result.push_back(n->id);
+                }
+            } else if (n->type == "AugAssign") {
+                if (!n->id.empty() && n->id != "__subscript__")
+                    result.push_back(n->id);
+            } else if (n->type == "For") {
+                if (!n->id.empty() && n->id != "__unpack__")
+                    result.push_back(n->id);
+            }
+            for (const auto& c : n->children) walk(c.get());
+        };
+        for (const auto& c : funcNode->children) walk(c.get());
+        std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+        return result;
+    }
+
+    // B5: recursively collect *all* names declared nonlocal anywhere in the subtree
+    // rooted at funcNode (including funcNode itself and all descendant FunctionDefs).
+    // This gives the full set of names that must be backed by cells for any scope
+    // that can reach those declarations via nesting. Used for correct forwarding
+    // through intermediate scopes that neither assign nor declare the name.
+    std::vector<std::string> collectDemandedNonlocals(const ASTNode* funcNode) {
+        std::vector<std::string> result;
+        std::function<void(const ASTNode*)> walk = [&](const ASTNode* n) {
+            if (!n) return;
+            if (n->type == "Nonlocal") {
+                for (const auto& nm : n->args) {
+                    if (!nm.empty()) result.push_back(nm);
+                }
+            }
+            for (const auto& c : n->children) walk(c.get());
+        };
+        walk(funcNode);
+        std::sort(result.begin(), result.end());
+        result.erase(std::unique(result.begin(), result.end()), result.end());
+        return result;
+    }
+
+    // B5: collect bare Name ids referenced anywhere in the subtree.
+    // Used for lambdas (and future nested scopes) to discover which names from
+    // the definition scope they close over so we can force those names to cells.
+    std::unordered_set<std::string> collectNames(const ASTNode* node) {
+        std::unordered_set<std::string> out;
+        std::function<void(const ASTNode*)> w = [&](const ASTNode* n) {
+            if (!n) return;
+            if (n->type == "Name" && !n->id.empty()) out.insert(n->id);
+            for (const auto& c : n->children) w(c.get());
+        };
+        w(node);
+        return out;
+    }
+
+    std::string lowerBinOp(const ASTNode* node) {
+        std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        std::string right = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
+        std::string res = "t" + std::to_string(tempCounter++);
+        std::string op = node->op.empty() ? "add" : node->op;
+        if (op == "Add") op = "add";
+        else if (op == "Sub") op = "sub";
+        else if (op == "Mult") op = "mul";
+        else if (op == "FloorDiv") op = "div";
+        else if (op == "Div") op = "truediv";
+        else if (op == "Mod") op = "mod";
+        else if (op == "Pow") op = "pow";
+        std::string resultType = numericResultType(op, left, right);
+        ir.addInstruction(currentFunc, op, {left, right}, res, resultType);
+        noteType(res, resultType);
+        return res;
+    }
+
+    // Emit IR (in current context) that, given a list value containing the
+    // full effective positional arguments for 'targetFunc', unpacks according
+    // to the target's parameter signature (fixed params before any *vararg,
+    // plus a collected tail list for the * slot if present) and emits a
+    // 'call' instruction to the target with the correct static number of
+    // operands. The result of the call is placed in 'resultTemp' (or a fresh
+    // temp if empty). This is used by __va wrappers for dynamic *args calls.
+    void emitForwardCallFromList(const std::string& targetFunc, const std::string& listVal, const std::string& resultTemp) {
+        auto pit = funcParamNames.find(targetFunc);
+        size_t fixed = 0;
+        bool hasVar = false;
+        if (pit != funcParamNames.end()) {
+            const auto& ps = pit->second;
+            for (size_t j = 0; j < ps.size(); ++j) {
+                if (!ps[j].empty() && ps[j][0] == '*') { hasVar = true; break; }
+                ++fixed;
+            }
+        }
+        std::vector<std::string> fwd;
+        for (size_t k = 0; k < fixed; ++k) {
+            std::string ck = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(k)}, ck);
+            std::string el = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, ck}, el);
+            fwd.push_back(el);
+        }
+        std::string rest;
+        if (hasVar) {
+            // Collect [fixed .. n) into a fresh list for the * slot.
+            std::string ln = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", listVal}, ln);
+            std::string startC = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(fixed)}, startC);
+            std::string zero = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, zero);
+            rest = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, rest);
+            std::string jv = "s" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {startC}, jv);
+            int sc = tempCounter++;
+            std::string slp = "vf_lp_" + std::to_string(sc);
+            std::string sbd = "vf_bd_" + std::to_string(sc);
+            std::string sex = "vf_ex_" + std::to_string(sc);
+            ir.addInstruction(currentFunc, "br", {}, slp);
+            ir.addInstruction(currentFunc, "label", {}, slp);
+            std::string cm = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "icmp", {"Lt", jv, ln}, cm);
+            ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
+            ir.addInstruction(currentFunc, "label", {}, sbd);
+            std::string el = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, jv}, el);
+            std::string d = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_Append", rest, el}, d);
+            std::string one = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, one);
+            std::string nj = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "add", {jv, one}, nj);
+            ir.addInstruction(currentFunc, "assign", {nj}, jv);
+            ir.addInstruction(currentFunc, "br", {}, slp);
+            ir.addInstruction(currentFunc, "label", {}, sex);
+        }
+        if (hasVar) fwd.push_back(rest);
+        std::string callRes = resultTemp.empty() ? ("t" + std::to_string(tempCounter++)) : resultTemp;
+        std::vector<std::string> cops = {targetFunc};
+        cops.insert(cops.end(), fwd.begin(), fwd.end());
+        ir.addInstruction(currentFunc, "call", cops, callRes);
+    }
+
+    void ensureVaWrapper(const std::string& target) {
+        std::string wrapper = "__va_" + target;
+        for (const auto& f : ir.functions) {
+            if (f.name == wrapper) return;
+        }
+        ir.addFunction(wrapper, {"va"});
+        funcParamNames[wrapper] = {"va"};
+        for (auto& fnr : ir.functions) if (fnr.name == wrapper) { fnr.paramNames = {"va"}; break; }
+
+        std::string savedFunc = currentFunc;
+        int savedTemp = tempCounter;
+        currentFunc = wrapper;
+        tempCounter = 0;
+
+        std::string vaParam = "va";
+        std::string callRes = "t" + std::to_string(tempCounter++);
+        emitForwardCallFromList(target, vaParam, callRes);
+        ir.addInstruction(wrapper, "ret", {callRes});
+
+        currentFunc = savedFunc;
+        tempCounter = savedTemp;
+    }
+
+    std::string lowerCall(const ASTNode* node) {
+        // Method call: obj.method(args) — func is an Attribute node
+         if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Attribute") {
+            return lowerMethodCall(node);
+        }
+    // Class instantiation: ClassName(args) — create instance dict and call __init__
+        std::string funcName;
+        if (!node->children.empty() && node->children[0] && node->children[0]->type == "Name") {
+            funcName = node->children[0]->id;
+            auto classIt = knownClasses.find(funcName);
+            if (classIt != knownClasses.end()) {
+                std::string instanceDict = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyDict_New"}, instanceDict);
+                // Store class reference on instance for method lookup
+                std::string classKeyConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"__class__\""}, classKeyConst, "str");
+                ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", instanceDict, classKeyConst, funcName}, "class_set");
+                // Build __init__ function with correct parameters
+                std::string initName = funcName + "__init__";
+                std::vector<std::string> initParams;
+                auto pit = classInitParams.find(funcName);
+                if (pit != classInitParams.end() && !pit->second.empty()) {
+                    std::string params = pit->second;
+                    std::stringstream ss(params);
+                    std::string param;
+                    while (std::getline(ss, param, ',')) {
+                        initParams.push_back(param);
+                    }
+                } else {
+                    initParams.push_back("self");
+                }
+                ir.addFunction(initName, initParams);
+                knownIRFunctions.insert(initName);
+                // Build args list: self + user args
+                std::vector<std::string> callArgs;
+                callArgs.push_back(initName);
+                callArgs.push_back(instanceDict);
+                for (size_t i = 1; i < node->children.size(); ++i) {
+                    if (node->children[i]) {
+                        callArgs.push_back(lowerExpr(node->children[i].get()));
+                    }
+                }
+                std::string initCallRes = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", callArgs, initCallRes);
+                return instanceDict;
+            }
+        }
+        if (!node->children.empty() && node->children[0] && node->children[0]->type == "Name") {
+            funcName = node->children[0]->id;
+        } else {
+            funcName = "";
+        }
+        // If the callee is a literal lambda expression, lower it first (this
+        // registers the synthetic nested function and any defaults). The
+        // returned name is the IR function to call. We bypass the "value" path
+        // for direct (lambda)(args) so we don't treat the token as an arg.
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Lambda") {
+            funcName = lowerLambda(node->children[0].get());
+        } else {
+            std::string rawName = (node->children.empty() || !node->children[0]) ? "" : node->children[0]->id;
+            funcName = rawName;
+            // Resolve lambda aliases for assigned lambdas: "f = lambda ...; f(...)"
+            auto ait = lambdaAliases.find(rawName);
+            if (ait != lambdaAliases.end()) funcName = ait->second;
+
+            // B4: if the callee expression lowers to a "callable token" (string const
+            // holding a synthetic name, e.g. from a previous lambda expr, assignment,
+            // or container element that was a lambda), use the synthetic as the target.
+            // This allows lambdas used as values to be called when they appear as the
+            // callee expression.
+            if (!node->children.empty() && node->children[0]) {
+                std::string calleeVal = lowerExpr(node->children[0].get());
+                auto tit = callableTokenToSynthetic.find(calleeVal);
+                if (tit != callableTokenToSynthetic.end()) {
+                    funcName = tit->second;
+                }
+            }
+        }
+
+        // Compute lowered callee value early (needed for indirect detection before processing *).
+        std::string calleeValEarly;
+        if (!node->children.empty() && node->children[0]) {
+            calleeValEarly = lowerExpr(node->children[0].get());
+        }
+        // Re-check token map (in case the early lower produced the const temp for a lambda value).
+        if (!calleeValEarly.empty()) {
+            auto tit = callableTokenToSynthetic.find(calleeValEarly);
+            if (tit != callableTokenToSynthetic.end()) {
+                funcName = tit->second;
+            }
+        }
+
+        bool isDirectNameEarly = (!node->children.empty() && node->children[0] && node->children[0]->type == "Name");
+        auto knownIt0 = knownIRFunctions.find(funcName);
+        bool knownDirect0 = (knownIt0 != knownIRFunctions.end());
+
+        bool useDynamicApply = false;
+        std::string tokenTempForApply;
+        // Names we have special lowering/rewrites for in lowerCall (print, len, range, min/max,
+        // sum, sorted, any/all, isinstance, int/float/abs/str, list, enumerate, zip, etc.).
+        // These must never be turned into dynamic Pyc_Apply(token) calls; they must go through
+        // their direct special paths (and have their args collected into argRes normally).
+        static const std::unordered_set<std::string> specialBuiltinNames = {
+            "print", "len", "range", "min", "max", "sum", "sorted", "any", "all", "isinstance",
+            "int", "float", "abs", "str", "list", "enumerate", "zip",
+            "bool", "type", "id", "repr", "hex", "oct", "bin", "ord", "chr", "round"
+        };
+
+        if (!knownDirect0) {
+            if (isDirectNameEarly) {
+                std::string theName = node->children[0] ? node->children[0]->id : "";
+                // Names that must never be turned into a dynamic Pyc_Apply(token) call.
+                // These have dedicated fast/special lowering paths in lowerCall and must
+                // collect args normally into argRes.
+                static const std::unordered_set<std::string> neverDynamic = {
+                    "print","len","range","min","max","sum","sorted","any","all","isinstance",
+                    "int","float","abs","str","list","enumerate","zip","bool","type","id",
+                    "repr","hex","oct","bin","ord","chr","round"
+                };
+                if (!theName.empty() && neverDynamic.count(theName) == 0) {
+                    // B4 complete: any bare name that is not a known direct IR function *and*
+                    // is not one of our special builtin shims is treated as a carrier of a
+                    // callable token at runtime. We route the call via Pyc_Apply, passing the
+                    // runtime value of that name as the token string. This makes "f = lambda ...; f()",
+                    // "add5 = make_adder(5); add5(7)", "fns[0](x)", "make_adder(10)(20)",
+                    // parameters holding lambdas, etc. all work uniformly.
+                    // Regular user "def" calls stay direct (their names are pre-populated in
+                    // knownIRFunctions). Special builtins keep their fast/special paths.
+                    useDynamicApply = true;
+                    tokenTempForApply = theName;
+                }
+            } else if (!calleeValEarly.empty()) {
+                // Non-plain-name callee expression (subscript, attribute, result of a call
+                // that returns a lambda, etc.) -- use its lowered value as the token for
+                // the dynamic Pyc_Apply path.
+                useDynamicApply = true;
+                tokenTempForApply = calleeValEarly;
+            }
+        }
+        bool isIndirectCallee = useDynamicApply;
+
+        // B4: if the *lowered value* of the callee expression is a tracked callable token temp
+        // (from a lambda expr, or a call result we marked because the callee function returns
+        // lambdas, or subscript from a list we marked, etc.), force the dynamic path and use
+        // that value as the token for Pyc_Apply. This covers direct expression cases like
+        // "make_adder(10)(20)" where the callee is the result temp of the inner call.
+        if (!isIndirectCallee && !calleeValEarly.empty() &&
+            (callableTokenTemps.count(calleeValEarly) || callableTokenToSynthetic.count(calleeValEarly))) {
+            useDynamicApply = true;
+            tokenTempForApply = calleeValEarly;
+            isIndirectCallee = true;
+        }
+
+        // For indirect callees (lambdas-as-values via tokens), we build the argument
+        // list for Pyc_Apply directly here so that Starred dynamic * can splice into it
+        // without routing through a __va wrapper (which requires a static target name).
+        std::string indirectArgListTemp; // if non-empty, this list is passed to Pyc_Apply
+        bool buildingIndirectArgs = false;
+        if (isIndirectCallee) {
+            std::string z = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, z);
+            indirectArgListTemp = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, indirectArgListTemp);
+            buildingIndirectArgs = true;
+        }
+
+        std::vector<std::string> argRes;
+        std::vector<std::pair<std::string, std::string>> kwArgs; // (name, value)
+        bool hadRuntimeStar = false; // true if this call used * with a non-literal (dynamic splice via __va wrapper)
+
+        for (size_t i = 1; i < node->children.size(); ++i) {
+            if (!node->children[i]) continue;
+            if (node->children[i]->type == "Keyword") {
+                if (!node->children[i]->children.empty()) {
+                    std::string val = lowerExpr(node->children[i]->children[0].get());
+                    kwArgs.emplace_back(node->children[i]->id, val);
+                }
+            } else if (node->children[i]->type == "Starred" &&
+                        !node->children[i]->children.empty()) {
+                // *args at call site:
+                // 1) If the starred source is a tracked list/tuple literal name
+                //    (from a prior Assign of List/Tuple in this scope), statically
+                //    expand its elements as separate operands. Exact arity, normal
+                //    default/keyword/callee-* handling applies afterward.
+                // 2) If the child of Starred is itself a direct List or Tuple
+                //    literal expression, also statically expand (very common for
+                //    func(*[1,2,3]) etc.). This avoids the runtime splice + wrapper
+                //    for the common literal case.
+                // 3) Otherwise (dynamic / name not tracked), do a runtime splice
+                //    into a collected list and route the call via a generated
+                //    __va_<target> wrapper (see ensureVaWrapper + emitForwardCallFromList).
+                std::string starSrc = node->children[i]->children[0] ? node->children[i]->children[0]->id : std::string();
+                auto litIt = listLiteralElemASTs.find(starSrc);
+                const ASTNode* starChild = node->children[i]->children[0].get();
+                if (litIt != listLiteralElemASTs.end()) {
+                    for (auto* elemAst : litIt->second) {
+                        argRes.push_back(lowerExpr(elemAst));
+                    }
+                } else if (starChild && (starChild->type == "List" || starChild->type == "Tuple")) {
+                    // Direct literal in * position: static expand.
+                    for (auto& ch : starChild->children) {
+                        argRes.push_back(lowerExpr(ch.get()));
+                    }
+                } else {
+                    // Dynamic case: runtime splice.
+                    hadRuntimeStar = true;
+                    std::string lst = lowerExpr(starChild);
+                    if (buildingIndirectArgs) {
+                        // Indirect callee (lambda-as-value via token, possibly passed as param or in a container).
+                        // Flush any fixed prefix collected before this * into the indirect list,
+                        // then splice the starred list's contents into the same indirect list.
+                        for (auto& p : argRes) {
+                            if (!p.empty()) {
+                                std::string d = "t" + std::to_string(tempCounter++);
+                                ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, p}, d);
+                            }
+                        }
+                        std::string ln = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", lst}, ln);
+                        std::string jv = "s" + std::to_string(tempCounter++);
+                        std::string j0 = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"0"}, j0);
+                        ir.addInstruction(currentFunc, "assign", {j0}, jv);
+                        int sc = tempCounter++;
+                        std::string slp = "istar_lp_" + std::to_string(sc);
+                        std::string sbd = "istar_bd_" + std::to_string(sc);
+                        std::string sex = "istar_ex_" + std::to_string(sc);
+                        ir.addInstruction(currentFunc, "br", {}, slp);
+                        ir.addInstruction(currentFunc, "label", {}, slp);
+                        std::string cm = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "icmp", {"Lt", jv, ln}, cm);
+                        ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
+                        ir.addInstruction(currentFunc, "label", {}, sbd);
+                        std::string el = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", lst, jv}, el);
+                        std::string dmy = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, el}, dmy);
+                        std::string one = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"1"}, one);
+                        std::string nj = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "add", {jv, one}, nj);
+                        ir.addInstruction(currentFunc, "assign", {nj}, jv);
+                        ir.addInstruction(currentFunc, "br", {}, slp);
+                        ir.addInstruction(currentFunc, "label", {}, sex);
+                        // Nothing is pushed to argRes; the indirect Pyc_Apply path will use indirectArgListTemp.
+                    } else {
+                        // Direct target: original dynamic * path using a __va_<target> wrapper.
+                        std::string ln = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", lst}, ln);
+                        std::string jv = "s" + std::to_string(tempCounter++);
+                        std::string j0 = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"0"}, j0);
+                        ir.addInstruction(currentFunc, "assign", {j0}, jv);
+                        int sc = tempCounter++;
+                        std::string slp = "star_lp_" + std::to_string(sc);
+                        std::string sbd = "star_bd_" + std::to_string(sc);
+                        std::string sex = "star_ex_" + std::to_string(sc);
+                        // Seed va list with fixed prefix so far (positionals before the *)
+                        std::string va = "t" + std::to_string(tempCounter++);
+                        std::string pn = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {std::to_string(argRes.size())}, pn);
+                        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", pn}, va);
+                        for (auto& p : argRes) {
+                            if (!p.empty()) {
+                                std::string d = "t" + std::to_string(tempCounter++);
+                                ir.addInstruction(currentFunc, "call", {"PyList_Append", va, p}, d);
+                            }
+                        }
+                        ir.addInstruction(currentFunc, "br", {}, slp);
+                        ir.addInstruction(currentFunc, "label", {}, slp);
+                        std::string cm = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "icmp", {"Lt", jv, ln}, cm);
+                        ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
+                        ir.addInstruction(currentFunc, "label", {}, sbd);
+                        std::string el = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", lst, jv}, el);
+                        std::string dmy = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", va, el}, dmy);
+                        std::string one = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"1"}, one);
+                        std::string nj = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "add", {jv, one}, nj);
+                        ir.addInstruction(currentFunc, "assign", {nj}, jv);
+                        ir.addInstruction(currentFunc, "br", {}, slp);
+                        ir.addInstruction(currentFunc, "label", {}, sex);
+                        // Route this call through the __va wrapper for the target.
+                        ensureVaWrapper(funcName);
+                        funcName = "__va_" + funcName;
+                        argRes.clear();
+                        argRes.push_back(va);
+                    }
+                }
+            } else {
+                if (buildingIndirectArgs) {
+                    std::string v = lowerExpr(node->children[i].get());
+                    std::string d = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, v}, d);
+                } else {
+                    argRes.push_back(lowerExpr(node->children[i].get()));
+                }
+            }
+        }
+
+        // Callee-side *args collection (skip for runtime * call sites; the __va wrapper
+        // already forwards the correct fixed+tail shape for the target).
+        if (!hadRuntimeStar) {
+            auto pit = funcParamNames.find(funcName);
+            if (pit != funcParamNames.end()) {
+                const auto& params = pit->second;
+                size_t vidx = (size_t)-1;
+                for (size_t j = 0; j < params.size(); ++j) {
+                    if (!params[j].empty() && params[j][0] == '*') { vidx = j; break; }
+                }
+                if (vidx != (size_t)-1) {
+                    size_t fixed = vidx;
+                    std::vector<std::string> tail;
+                    while (argRes.size() > fixed) {
+                        tail.push_back(argRes.back());
+                        argRes.pop_back();
+                    }
+                    std::reverse(tail.begin(), tail.end());
+                    std::string collected;
+                    // Always start empty and append; pre-sizing + append would leave
+                    // initial null slots (visible as None) and double the length.
+                    std::string z = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, z);
+                    collected = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, collected);
+                    for (auto& t : tail) {
+                        std::string d = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", collected, t}, d);
+                    }
+                    if (argRes.size() < fixed) argRes.resize(fixed, "");
+                    argRes.push_back(collected);
+                }
+            }
+        }
+
+        // Handle keyword arguments by mapping to parameter positions
+        if (!kwArgs.empty()) {
+            auto pit = funcParamNames.find(funcName);
+            if (pit != funcParamNames.end()) {
+                const auto& params = pit->second;
+                for (auto& kw : kwArgs) {
+                    for (size_t j = 0; j < params.size(); ++j) {
+                        if (params[j] == kw.first) {
+                            if (argRes.size() <= j) argRes.resize(j + 1);
+                            argRes[j] = kw.second;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                // Fallback: append keyword values
+                for (auto& kw : kwArgs) argRes.push_back(kw.second);
+            }
+        }
+
+        // *args collection at the call site: splice the iterable's elements
+        // as additional positional args. We lower the starred expression
+        // to a list value, then emit a tiny runtime-assisted unpack using
+        // the existing list machinery (size + loop of GetItem) right here
+        // so the callee receives true extra positional arguments.
+        // If a Starred node appears in the original children we rewrite
+        // argRes by expanding it inline before default injection.
+        // Simpler approach used below: detect Starred in the AST children
+        // of the Call and splice using list iteration at lowering time.
+        // Default-arg injection (skip for runtime * call sites routed via __va).
+        // Defaults in the AST correspond only to the regular (non-* / non-**)
+        // positional-or-keyword parameters, as the suffix of those regular params.
+        // We must compute slots relative to the regular prefix, not the full
+        // params list (which may contain *vararg / **kwarg markers).
+        if (!hadRuntimeStar) {
+            auto dit = funcDefaultValues.find(funcName);
+            auto pit = funcParamNames.find(funcName);
+            if (dit != funcDefaultValues.end() && pit != funcParamNames.end()) {
+                const auto& params = pit->second;
+                const auto& defaults = dit->second;
+                size_t ndefaults = defaults.size();
+                if (ndefaults > 0) {
+                    // Find first * marker (vararg); regular params are before it.
+                    size_t first_star = params.size();
+                    for (size_t j = 0; j < params.size(); ++j) {
+                        if (!params[j].empty() && params[j][0] == '*') {
+                            first_star = j; break;
+                        }
+                    }
+                    size_t nregular = first_star;
+                    // After call-site * handling and callee-side collection,
+                    // argRes may contain entries for regular params + a collected
+                    // list for a * slot (at logical position first_star).
+                    // Ensure we have slots for the regular params.
+                    if (argRes.size() < nregular) argRes.resize(nregular, "");
+                    // Fill defaults into the suffix of the regular section.
+                    for (size_t i = 0; i < ndefaults; ++i) {
+                        size_t reg_idx = nregular - ndefaults + i;
+                        if (reg_idx < argRes.size() && argRes[reg_idx].empty()) {
+                            argRes[reg_idx] = defaults[i];
+                        }
+                    }
+                }
+                // Strip any trailing empty slots (shouldn't happen but be safe).
+                while (!argRes.empty() && argRes.back().empty()) argRes.pop_back();
+            } else if (argRes.empty() && kwArgs.empty()) {
+                // No param info at all — fall back to using all defaults.
+                auto it = funcDefaultValues.find(funcName);
+                if (it != funcDefaultValues.end()) {
+                    argRes = it->second;
+                }
+            }
+        }
+
+        // print() with no args → bare newline
+        if (funcName == "print" && argRes.empty() && kwArgs.empty()) {
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_PrintNewline"}, res);
+            return res;
+        }
+
+        // print(a, b, c, ...) → build space-separated string, then single-arg print
+        if (funcName == "print" && argRes.size() > 1) {
+            // Convert first arg to its string representation
+            std::string acc = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", argRes[0]}, acc);
+            for (size_t i = 1; i < argRes.size(); ++i) {
+                std::string sp = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\" \""}, sp);
+                std::string withSep = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyString_Concat", acc, sp}, withSep);
+                std::string argStr = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", argRes[i]}, argStr);
+                acc = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyString_Concat", withSep, argStr}, acc);
+            }
+            // Route through the normal single-arg print path in codegen
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"print", acc}, res);
+            return res;
+        }
+
+        // len(obj) → PyBuiltin_Len(obj)
+        if (funcName == "len") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Len", arg}, res);
+            return res;
+        }
+
+        // min/max — fold pairwise; single list arg uses list variant
+        if (funcName == "min" || funcName == "max") {
+            std::string fn2  = (funcName == "min") ? "PyBuiltin_Min2"    : "PyBuiltin_Max2";
+            std::string fnLst = (funcName == "min") ? "PyBuiltin_MinList" : "PyBuiltin_MaxList";
+            if (argRes.size() == 1) {
+                std::string res = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {fnLst, argRes[0]}, res);
+                return res;
+            }
+            std::string acc = argRes[0];
+            for (size_t i = 1; i < argRes.size(); ++i) {
+                std::string res2 = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {fn2, acc, argRes[i]}, res2);
+                acc = res2;
+            }
+            return acc;
+        }
+        // list(x) → PyBuiltin_List(x)
+        if (funcName == "list") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            if (argRes.empty()) {
+                std::string sc = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, sc);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", arg}, res);
+            }
+            return res;
+        }
+        // enumerate(iterable) → PyBuiltin_Enumerate(iterable)
+        if (funcName == "enumerate") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Enumerate", arg}, res);
+            return res;
+        }
+        // zip(a, b) → PyBuiltin_Zip2(a, b)
+        if (funcName == "zip" && argRes.size() >= 2) {
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Zip2", argRes[0], argRes[1]}, res);
+            return res;
+        }
+
+        // sum(iterable) → PyBuiltin_Sum
+        if (funcName == "sum") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sum", arg}, res);
+            return res;
+        }
+        // sorted(iterable) → PyBuiltin_Sorted
+        if (funcName == "sorted") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sorted", arg}, res);
+            return res;
+        }
+        // any(iterable) → PyBuiltin_Any (bool result)
+        if (funcName == "any") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Any", arg}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+        // all(iterable) → PyBuiltin_All (bool result)
+        if (funcName == "all") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_All", arg}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+        // isinstance(obj, classinfo) → Pyc_IsInstance
+        if (funcName == "isinstance" && argRes.size() >= 2) {
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_IsInstance", argRes[0], argRes[1]}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+
+        // int(x) → PyBuiltin_Int(x)
+        if (funcName == "int") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Int", arg}, res, "int");
+            noteType(res, "int");
+            return res;
+        }
+        // float(x) → PyBuiltin_Float(x)
+        if (funcName == "float") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Float", arg}, res, "float");
+            noteType(res, "float");
+            return res;
+        }
+        // abs(x) → PyBuiltin_Abs(x)
+        if (funcName == "abs") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            std::string resultType = typeOf(arg);
+            if (resultType != "int" && resultType != "float" && resultType != "bool") {
+                resultType = "boxed";
+            }
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Abs", arg}, res, resultType);
+            noteType(res, resultType);
+            return res;
+        }
+
+        // str(obj) → PyStr_FromAny(obj)
+        if (funcName == "str") {
+            if (argRes.empty()) {
+                std::string res = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"\""}, res);
+                return res;
+            }
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", argRes[0]}, res);
+            return res;
+        }
+
+        // Normalize range(stop), range(start,stop), range(start,stop,step)
+        // → always call PyBuiltin_Range(start, stop, step) with 3 PyObject* args
+        if (funcName == "range") {
+            std::string startRes, stopRes, stepRes;
+            if (argRes.size() == 1) {
+                startRes = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, startRes);
+                stopRes  = argRes[0];
+                stepRes  = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"1"}, stepRes);
+            } else if (argRes.size() == 2) {
+                startRes = argRes[0];
+                stopRes  = argRes[1];
+                stepRes  = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"1"}, stepRes);
+            } else if (argRes.size() >= 3) {
+                startRes = argRes[0];
+                stopRes  = argRes[1];
+                stepRes  = argRes[2];
+            } else {
+                // range() with no args → empty list
+                startRes = stopRes = stepRes = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, startRes);
+            }
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call",
+                              {"PyBuiltin_Range", startRes, stopRes, stepRes}, res);
+            return res;
+        }
+
+        // For runtime *args (dynamic splice), we have already switched funcName
+        // to the __va_<target> wrapper and argRes contains exactly the collected
+        // list as a single operand. Emit the call to the wrapper directly.
+        // B4/B8: decide whether to use direct call or dynamic dispatch via Pyc_Apply
+        // (for lambdas-as-values, parameters holding tokens, subscripts producing tokens, etc.)
+        // (useDynamicApply / tokenTempForApply declared earlier for indirect-callee detection)
+
+        // Lower the callee expression to its value (important for Subscript, Name that holds a token, etc.)
+        std::string calleeVal;
+        if (!node->children.empty() && node->children[0]) {
+            calleeVal = lowerExpr(node->children[0].get());
+        }
+
+        if (!isIndirectCallee) {
+            // If the lowered callee value is a known callable token (string const from lambda expr), use it.
+            auto tit = callableTokenToSynthetic.find(calleeVal);
+            if (tit != callableTokenToSynthetic.end()) {
+                funcName = tit->second;
+                tokenTempForApply = calleeVal;
+                useDynamicApply = false;
+            }
+        }
+
+        bool isDirectName = (!node->children.empty() && node->children[0] && node->children[0]->type == "Name");
+        auto knownIt = knownIRFunctions.find(funcName);
+        bool knownDirect = (knownIt != knownIRFunctions.end());
+
+        if (!useDynamicApply) {
+            if (!isIndirectCallee) {
+                auto tit2 = callableTokenToSynthetic.find(calleeVal);
+                if (tit2 != callableTokenToSynthetic.end()) {
+                    funcName = tit2->second;
+                } else if (isDirectName && !knownDirect) {
+                    // B4 complete: a bare name that is not a known direct IR function is a dynamic
+                    // token carrier if we tracked it as holding a callable (via assign/unpack/return
+                    // from a function that returns a lambda, subscript from a token list, etc.),
+                    // *or* if it is a parameter of the current function (the token flows in via the arg).
+                    // All other bare names stay on the direct path (normal user defs, forward refs, etc.).
+                    bool isParamOfCurrent = false;
+                    auto pit = funcParamNames.find(currentFunc);
+                    if (pit != funcParamNames.end()) {
+                        for (const auto& p : pit->second) {
+                            std::string pn = p;
+                            if (!pn.empty() && pn[0] == '*') pn = pn.substr(1);
+                            if (pn == funcName) { isParamOfCurrent = true; break; }
+                        }
+                    }
+                    if (isParamOfCurrent || namesThatMayHoldCallableTokens.count(funcName)) {
+                        useDynamicApply = true;
+                        tokenTempForApply = funcName;
+                    }
+                } else if (!knownDirect && !calleeVal.empty() && !isDirectName) {
+                    // Non-plain-name callee expression (subscript, etc.) not known direct → dynamic with its value as token.
+                    useDynamicApply = true;
+                    tokenTempForApply = calleeVal;
+                }
+            }
+        }
+
+        // Seed the late decision from the early indirect detection (done before * processing
+        // so that dynamic * under an indirect callee splices into the indirect list instead of
+        // creating a __va for a param name).
+        if (isIndirectCallee) {
+            useDynamicApply = true;
+            if (tokenTempForApply.empty() && !calleeValEarly.empty()) {
+                tokenTempForApply = calleeValEarly;
+            }
+        }
+
+        if (useDynamicApply) {
+            // Build the argument list for Pyc_Apply. For indirect callees (including those with
+            // dynamic *), we may have built a flat user-arg list (with * contents spliced) into
+            // indirectArgListTemp during arg processing. Prefer that when present.
+            std::string argList;
+            if (!indirectArgListTemp.empty()) {
+                argList = indirectArgListTemp;
+            } else if (!argRes.empty()) {
+                // Always start empty + append only.
+                std::string z = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, z);
+                argList = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
+                for (auto& v : argRes) {
+                    std::string d = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, v}, d);
+                }
+            } else {
+                std::string z = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, z);
+                argList = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
+            }
+            std::string tok = tokenTempForApply;
+            if (tok.empty() && !funcName.empty()) {
+                tok = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + funcName + "\""}, tok, "str");
+            }
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", tok, argList}, res);
+            // B4: the result of an indirect call via Pyc_Apply may itself be a callable token
+            // (e.g. a function that returns another lambda). Conservatively mark the result
+            // temp; if it is later assigned or used as a callee we will treat it as a token.
+            // (We cannot know the dynamic callee here, so we mark the call result as "may hold token"
+            // for names and also insert it into callableTokenTemps so bare-name callees after
+            // "x = some_call_that_returns_lambda(); x(...)" work.)
+            callableTokenTemps.insert(res);
+            return res;
+        }
+
+        // Normal direct call path (B5: may need to pass hidden cell objects for free nonlocals).
+        // Also handle descriptor bundles at the callee expression (capturing lambdas-as-values).
+        {
+            std::vector<std::string> finalOps;
+            // If the callee value is a descriptor bundle, splice its cells first, then user args.
+            auto bit = bundleTemps.find(calleeVal);
+            if (bit != bundleTemps.end()) {
+                auto dit = descriptorCells.find(calleeVal);
+                if (dit != descriptorCells.end()) {
+                    int k = 0;
+                    for (const auto& nm : dit->second) {
+                        std::string ic = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {std::to_string(1 + k)}, ic);
+                        std::string cellObj = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", calleeVal, ic}, cellObj);
+                        finalOps.push_back(cellObj);
+                        ++k;
+                    }
+                }
+                // Resolve the real target synthetic for the call.
+                auto sit = bundleToSynthetic.find(calleeVal);
+                if (sit != bundleToSynthetic.end()) {
+                    funcName = sit->second;
+                }
+            } else {
+                // Existing free-cell path for direct named callees (defs that close over cells).
+                auto fit = funcFreeCells.find(funcName);
+                if (fit != funcFreeCells.end() && !fit->second.empty()) {
+                    for (const auto& fc : fit->second) {
+                        finalOps.push_back(fc + "_cell");
+                    }
+                }
+            }
+            finalOps.insert(finalOps.begin(), funcName);
+            finalOps.insert(finalOps.end(), argRes.begin(), argRes.end());
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", finalOps, res);
+            // B4: if the callee is a function we have recorded as returning a callable token
+            // (e.g. a Python function whose body does "return lambda ..."), mark the call result
+            // so subsequent assign/unpack/call through that result can propagate tokens.
+            if (functionsThatReturnCallables.count(funcName)) {
+                callableTokenTemps.insert(res);
+            }
+            // B5: if the callee is known to return a bundle, mark the result accordingly
+            // so later bare-name callees and assign targets can extract cells.
+            if (functionsThatReturnBundles.count(funcName)) {
+                bundleTemps.insert(res);
+                auto sit = functionReturnedBundleSynthetic.find(funcName);
+                if (sit != functionReturnedBundleSynthetic.end()) bundleToSynthetic[res] = sit->second;
+                auto cit = functionReturnedBundleCaps.find(funcName);
+                if (cit != functionReturnedBundleCaps.end()) descriptorCells[res] = cit->second;
+            }
+            return res;
+        }
+    }
+
+    std::string lowerLambda(const ASTNode* node) {
+        // Treat lambda as a nested function with a synthetic unique name.
+        // The C++ return value is the synthetic IR function name (used for
+        // direct call resolution via knownIRFunctions and lambdaAliases).
+        // The *expression value* produced for the Lambda node (in lowerExpr)
+        // is a string constant (the "callable token") holding the synthetic name.
+        // This token can be assigned to names, passed as an argument, stored in
+        // lists/dicts, returned from functions, and later used as a callee
+        // expression. Calls through such tokens are routed via Pyc_Apply + the
+        // generated __apply__<name> adapter (registered at module startup).
+        // This completes the B4 "lambdas as values" model (string-token based,
+        // with full support for *args in the lambda and dynamic * at the call site).
+        // Full first-class function objects (with identity, __call__, cells for
+        // closure over mutable variables, etc.) are out of scope for B4.
+        static int lamCount = 0;
+        std::string lamName = "__lambda_" + std::to_string(lamCount++);
+
+        // Clean * / ** markers for the actual IR parameter names.
+        std::vector<std::string> cleaned;
+        for (auto& a : node->args) {
+            if (!a.empty() && a[0]=='*') cleaned.push_back(a.substr(1));
+            else cleaned.push_back(a);
+        }
+        ir.addFunction(lamName, cleaned);
+        funcParamNames[lamName] = node->args;
+        for (auto& fnr : ir.functions) if (fnr.name == lamName) { fnr.paramNames = node->args; break; }
+        ir.setFunctionGlobals(lamName, ir.moduleGlobals);
+        knownIRFunctions.insert(lamName);
+        lastLambdaSynthetic = lamName;
+
+        std::string savedFunc = currentFunc;
+
+        // Handle default arguments for the lambda (mirror FunctionDef).
+        // Defaults are evaluated in the definition context (saved), and stored
+        // into module globals so the call-site default injection can find them.
+        std::vector<std::string> defaults;
+        size_t defaultIndex = 0;
+        for (const auto& c : node->children) {
+            if (c && c->type == "Default") {
+                std::string defVal = lowerExpr(c.get());
+                std::string slot = "__default_" + lamName + "_" + std::to_string(defaultIndex++);
+                ir.addModuleGlobal(slot);
+                ir.addInstruction(savedFunc, "assign", {defVal}, slot);
+                defaults.push_back(slot);
+            }
+        }
+        if (!defaults.empty()) {
+            funcDefaultCount[lamName] = defaults.size();
+            funcDefaultValues[lamName] = defaults;
+        }
+
+        // Capture the outer temp counter *after* any default exprs (which intentionally
+        // allocate in the definition context), but *before* we stomp it for the lambda body.
+        int savedTemp = tempCounter;
+
+        currentFunc = lamName;
+        tempCounter = 0;
+
+        // Body is the first (and only) non-Default child. Lower it as the
+        // implicit return expression for the lambda.
+        bool emittedRet = false;
+        for (const auto& c : node->children) {
+            if (c && c->type == "Default") continue;
+            if (c) {
+                std::string bodyVal = lowerExpr(c.get());
+                // B4: lambdas must return a PyObject* (ABI + callers expect it).
+                // If the body produced a native unboxed numeric (A2/A3), box it.
+                std::string rt = typeOf(bodyVal);
+                if (rt == "i64") {
+                    std::string bx = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(lamName, "call", {"PyInt_FromLong", bodyVal}, bx);
+                    bodyVal = bx;
+                } else if (rt == "float") {
+                    std::string bx = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(lamName, "call", {"PyFloat_FromDouble", bodyVal}, bx);
+                    bodyVal = bx;
+                }
+                ir.addInstruction(lamName, "ret", {bodyVal});
+                emittedRet = true;
+                break;  // lambda has exactly one body expression
+            }
+        }
+        if (!emittedRet) {
+            std::string z = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(lamName, "const", {"0"}, z);
+            ir.addInstruction(lamName, "ret", {z});
+        }
+
+        currentFunc = savedFunc;
+        tempCounter = savedTemp;
+
+            // For direct/alias paths we return the synthetic name (lowerAssign records
+            // it into lambdaAliases when the target is a Name). For value use (passing,
+            // storing, indirect call) the actual expression value produced by the
+            // Lambda node in lowerExpr is the string token const; that token is what
+            // gets boxed, returned from functions, put into lists, etc.
+            // The synthetic is also registered in knownIRFunctions so adapters and
+            // direct lowering know about it.
+            return lamName;
+        }
+
+    std::string lowerCompare(const ASTNode* node) {
+        if (node->children.empty()) return "";
+        // Evaluate all operands exactly once: children[0]=left, children[1..n]=comparators
+        std::vector<std::string> operands;
+        for (const auto& c : node->children)
+            operands.push_back(lowerExpr(c.get()));
+
+        const auto& ops = node->args;   // all op names, populated by parser
+        if (ops.empty()) return "";
+
+        // Helper: emit one pairwise comparison, return result name
+        auto emitPair = [&](const std::string& opName,
+                             const std::string& lhs, const std::string& rhs) {
+            std::string r = "t" + std::to_string(tempCounter++);
+            if (opName == "In") {
+                ir.addInstruction(currentFunc, "call", {"Pyc_Contains", rhs, lhs}, r);
+            } else if (opName == "NotIn") {
+                std::string c2 = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"Pyc_Contains", rhs, lhs}, c2);
+                ir.addInstruction(currentFunc, "call", {"PyObject_Not", c2}, r);
+            } else if (opName == "Is") {
+                // identity: PyObject_CompareBool with Eq (pointer eq handled there)
+                ir.addInstruction(currentFunc, "icmp", {"Eq", lhs, rhs}, r);
+            } else if (opName == "IsNot") {
+                ir.addInstruction(currentFunc, "icmp", {"NotEq", lhs, rhs}, r);
+            } else {
+                ir.addInstruction(currentFunc, "icmp", {opName, lhs, rhs}, r);
+            }
+            return r;
+        };
+
+        // Single comparison — common fast path
+        if (ops.size() == 1 && operands.size() >= 2)
+            return emitPair(ops[0], operands[0], operands[1]);
+
+        // Chained: (a op0 b) and (b op1 c) and ... — short-circuit like BoolOp
+        int bc = tempCounter++;
+        std::string resultVar = "chain_r_"   + std::to_string(bc);
+        std::string endLabel  = "chain_end_" + std::to_string(bc);
+
+        std::string first = emitPair(ops[0], operands[0], operands[1]);
+        ir.addInstruction(currentFunc, "assign", {first}, resultVar);
+
+        for (size_t i = 1; i < ops.size() && i + 1 < operands.size(); ++i) {
+            std::string rhsL = "chain_rhs_" + std::to_string(bc) + "_" + std::to_string(i);
+            std::string truth = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyObject_TruthBoxed", resultVar}, truth);
+            ir.addInstruction(currentFunc, "br", {truth, rhsL, endLabel});
+            ir.addInstruction(currentFunc, "label", {}, rhsL);
+            std::string pairRes = emitPair(ops[i], operands[i], operands[i + 1]);
+            ir.addInstruction(currentFunc, "assign", {pairRes}, resultVar);
+        }
+        ir.addInstruction(currentFunc, "label", {}, endLabel);
+        return resultVar;
+    }
+
+    void lowerIf(const ASTNode* node) {
+        int c = tempCounter++;
+        std::string thenL = "if_then_" + std::to_string(c);
+        std::string elseL = "if_else_" + std::to_string(c);
+        std::string endL  = "if_end_"  + std::to_string(c);
+
+        std::string cond = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        ir.addInstruction(currentFunc, "br", {cond, thenL, elseL});
+
+        auto beforeTypes = valueTypes;
+
+        ir.addInstruction(currentFunc, "label", {}, thenL);
+
+        // node->value = number of then-body statements (set in parser)
+        size_t bodyCount = node->value.empty() ? 0 : (size_t)std::stoi(node->value);
+        size_t n = node->children.size();
+        for (size_t i = 1; i <= bodyCount && i < n; ++i)
+            lower(node->children[i].get());
+        auto thenTypes = valueTypes;
+
+        ir.addInstruction(currentFunc, "br", {}, endL);
+        ir.addInstruction(currentFunc, "label", {}, elseL);
+
+        valueTypes = beforeTypes;
+        for (size_t i = 1 + bodyCount; i < n; ++i)
+            lower(node->children[i].get());
+        auto elseTypes = valueTypes;
+
+        ir.addInstruction(currentFunc, "label", {}, endL);
+        mergeBranchTypes(beforeTypes, thenTypes, elseTypes);
+    }
+
+    void lowerWhile(const ASTNode* node) {
+        int c = tempCounter++;
+        std::string loopL = "while_loop_" + std::to_string(c);
+        std::string bodyL = "while_body_" + std::to_string(c);
+        std::string exitL = "while_exit_" + std::to_string(c);
+
+        std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
+        loopContinueLabel = loopL;
+        loopBreakLabel    = exitL;
+
+        ir.addInstruction(currentFunc, "label", {}, loopL);
+        auto loopEntryTypes = valueTypes;
+        std::string cond = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        ir.addInstruction(currentFunc, "br", {cond, bodyL, exitL});
+        ir.addInstruction(currentFunc, "label", {}, bodyL);
+        for (size_t i = 1; i < node->children.size(); ++i)
+            lower(node->children[i].get());
+        widenLoopTypes(loopEntryTypes);
+        ir.addInstruction(currentFunc, "br", {}, loopL);
+        ir.addInstruction(currentFunc, "label", {}, exitL);
+
+        loopContinueLabel = savedCont;
+        loopBreakLabel    = savedBreak;
+    }
+
+    void lowerFor(const ASTNode* node) {
+        // For AST layout (from buildAST):
+        //   node->id        = target variable name  (e.g. "i")
+        //   children[0]     = iter expression, or tuple/list target pattern
+        //   children[1]     = iter expression when children[0] is a pattern
+        if (node->children.empty()) return;
+        size_t iterIndex = (node->id == "__unpack__" &&
+                            node->children[0] &&
+                            (node->children[0]->type == "Tuple" || node->children[0]->type == "List"))
+                               ? 1 : 0;
+        if (node->children.size() <= iterIndex) return;
+        if (node->id != "__unpack__" && isNativeRangeCandidate(node->children[iterIndex].get())) {
+            lowerRangeFor(node, iterIndex);
+            return;
+        }
+        std::string listVal = lowerExpr(node->children[iterIndex].get());  // iter
+
+        // Boxed length: PyList_SizeBoxed returns PyObject*(int)
+        std::string lenRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", listVal}, lenRes);
+
+        // Use a fresh temp for the initial 0 to avoid name collision with the alloca.
+        std::string idxVar  = node->id + "__idx";     // alloca variable name
+        std::string idxInit = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
+        ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
+
+        std::string loopLabel = "for_loop_" + std::to_string(tempCounter);
+        std::string bodyLabel = "for_body_" + std::to_string(tempCounter);
+        std::string exitLabel = "for_exit_" + std::to_string(tempCounter);
+        tempCounter++;
+
+        std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
+        loopContinueLabel = loopLabel;
+        loopBreakLabel    = exitLabel;
+
+        ir.addInstruction(currentFunc, "label", {}, loopLabel);
+        auto loopEntryTypes = valueTypes;
+        std::string cmpRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpRes);
+        ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
+
+        ir.addInstruction(currentFunc, "label", {}, bodyLabel);
+        std::string itemRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, idxVar}, itemRes);
+        if (node->id == "__unpack__") {
+            if (iterIndex == 1) {
+                lowerUnpackTarget(node->children[0].get(), itemRes);
+            } else {
+                for (size_t j = 0; j < node->args.size(); ++j) {
+                    std::string ic = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {std::to_string(j)}, ic);
+                    std::string elem = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", itemRes, ic}, elem);
+                    ir.addInstruction(currentFunc, "assign", {elem}, node->args[j]);
+                }
+            }
+        } else {
+            ir.addInstruction(currentFunc, "assign", {itemRes}, node->id);
+        }
+
+        // B5: if the iteration target is cell-backed in this scope, write through the cell
+        // instead of (or after) the plain assign above. For the simple "for v in ..." form,
+        // node->id holds the target name. We already did a plain assign; if it is cell-backed
+        // here, follow up with a PyCell_Set so the shared cell sees the iteration value.
+        if (node->id != "__unpack__") {
+            auto cit = funcCells.find(currentFunc);
+            bool isCell = false;
+            if (cit != funcCells.end()) {
+                for (const auto& cv : cit->second) { if (cv == node->id) { isCell = true; break; } }
+            }
+            if (isCell) {
+                std::string cellSlot = node->id + "_cell";
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, node->id}, dummy);
+            }
+        }
+
+        for (size_t i = iterIndex + 1; i < node->children.size(); ++i)
+            lower(node->children[i].get());
+
+        // idxVar = idxVar + 1
+        std::string oneRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"1"}, oneRes);
+        std::string nextIdx = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "add", {idxVar, oneRes}, nextIdx);
+        ir.addInstruction(currentFunc, "assign", {nextIdx}, idxVar);
+
+        widenLoopTypes(loopEntryTypes);
+        ir.addInstruction(currentFunc, "br", {}, loopLabel);
+        ir.addInstruction(currentFunc, "label", {}, exitLabel);
+
+        loopContinueLabel = savedCont;
+        loopBreakLabel    = savedBreak;
+    }
+
+    bool isRangeCall(const ASTNode* node) const {
+        return node && node->type == "Call" &&
+               !node->children.empty() && node->children[0] &&
+               node->children[0]->id == "range";
+    }
+
+    bool isNativeRangeCandidate(const ASTNode* node) const {
+        if (!isRangeCall(node)) return false;
+        size_t argc = node->children.size() > 0 ? node->children.size() - 1 : 0;
+        if (argc < 3) return true;
+        return constantStepSign(node->children[3].get()) != 0;
+    }
+
+    int constantStepSign(const ASTNode* node) const {
+        if (!node) return 1;
+        if (node->type == "Constant") {
+            try {
+                long v = std::stol(node->value);
+                if (v > 0) return 1;
+                if (v < 0) return -1;
+            } catch (...) {
+            }
+        }
+        if (node->type == "UnaryOp" && node->op == "USub" &&
+            !node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Constant") {
+            try {
+                long v = std::stol(node->children[0]->value);
+                if (v > 0) return -1;
+            } catch (...) {
+            }
+        }
+        return 0;
+    }
+
+    bool constantI64Value(const ASTNode* node, long& out) const {
+        if (!node) return false;
+        if (node->type == "Constant") {
+            try {
+                out = std::stol(node->value);
+                return true;
+            } catch (...) {
+                return false;
+            }
+        }
+        if (node->type == "UnaryOp" && node->op == "USub" &&
+            !node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Constant") {
+            try {
+                out = -std::stol(node->children[0]->value);
+                return true;
+            } catch (...) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    std::string lowerRangeI64Arg(const ASTNode* arg) {
+        long constVal = 0;
+        if (constantI64Value(arg, constVal)) {
+            std::string nativeConst = "i" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "i64const", {std::to_string(constVal)}, nativeConst, "i64");
+            noteType(nativeConst, "i64");
+            return nativeConst;
+        }
+        std::string boxed = lowerExpr(arg);
+        std::string native = "i" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "i64_from_box", {boxed}, native, "i64");
+        noteType(native, "i64");
+        return native;
+    }
+
+    void lowerRangeFor(const ASTNode* node, size_t iterIndex) {
+        const ASTNode* call = node->children[iterIndex].get();
+        size_t argc = call->children.size() > 0 ? call->children.size() - 1 : 0;
+
+        std::string startRes;
+        std::string stopRes;
+        std::string stepRes;
+        int stepSign = 1;
+
+        if (argc == 1) {
+            startRes = "i" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "i64const", {"0"}, startRes, "i64");
+            noteType(startRes, "i64");
+            stopRes = lowerRangeI64Arg(call->children[1].get());
+            stepRes = "i" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "i64const", {"1"}, stepRes, "i64");
+            noteType(stepRes, "i64");
+        } else if (argc >= 2) {
+            startRes = lowerRangeI64Arg(call->children[1].get());
+            stopRes = lowerRangeI64Arg(call->children[2].get());
+            if (argc >= 3) {
+                stepSign = constantStepSign(call->children[3].get());
+                stepRes = lowerRangeI64Arg(call->children[3].get());
+            } else {
+                stepRes = "i" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "i64const", {"1"}, stepRes, "i64");
+                noteType(stepRes, "i64");
+            }
+        } else {
+            startRes = "i" + std::to_string(tempCounter++);
+            stopRes = "i" + std::to_string(tempCounter++);
+            stepRes = "i" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "i64const", {"0"}, startRes, "i64");
+            ir.addInstruction(currentFunc, "i64const", {"0"}, stopRes, "i64");
+            ir.addInstruction(currentFunc, "i64const", {"1"}, stepRes, "i64");
+            noteType(startRes, "i64");
+            noteType(stopRes, "i64");
+            noteType(stepRes, "i64");
+        }
+
+        int c = tempCounter++;
+        std::string idxVar = node->id + "__range_idx_" + std::to_string(c);
+        std::string loopLabel = "range_loop_" + std::to_string(c);
+        std::string bodyLabel = "range_body_" + std::to_string(c);
+        std::string incrLabel = "range_incr_" + std::to_string(c);
+        std::string exitLabel = "range_exit_" + std::to_string(c);
+
+        ir.addInstruction(currentFunc, "i64assign", {startRes}, idxVar, "i64");
+        noteType(idxVar, "i64");
+
+        std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
+        loopContinueLabel = incrLabel;
+        loopBreakLabel = exitLabel;
+
+        auto loopEntryTypes = valueTypes;
+        ir.addInstruction(currentFunc, "label", {}, loopLabel);
+        std::string cmpRes = "i" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "i64icmp", {stepSign < 0 ? "Gt" : "Lt", idxVar, stopRes}, cmpRes, "bool");
+        ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
+
+        ir.addInstruction(currentFunc, "label", {}, bodyLabel);
+        // Unbox the visible loop variable as native i64 inside the range region.
+        // Uses of the name in numeric contexts will load the i64 directly.
+        // Contexts that need a PyObject* (calls, containers, print, return, etc.)
+        // will box on demand at the use site.
+        ir.addInstruction(currentFunc, "i64assign", {idxVar}, node->id, "i64");
+        noteType(node->id, "i64");
+        for (size_t i = iterIndex + 1; i < node->children.size(); ++i)
+            lower(node->children[i].get());
+
+        ir.addInstruction(currentFunc, "label", {}, incrLabel);
+        std::string nextIdx = "i" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "i64add", {idxVar, stepRes}, nextIdx, "i64");
+        noteType(nextIdx, "i64");
+        ir.addInstruction(currentFunc, "i64assign", {nextIdx}, idxVar, "i64");
+        noteType(idxVar, "i64");
+        widenLoopTypes(loopEntryTypes);
+        ir.addInstruction(currentFunc, "br", {}, loopLabel);
+        ir.addInstruction(currentFunc, "label", {}, exitLabel);
+
+        loopContinueLabel = savedCont;
+        loopBreakLabel = savedBreak;
+    }
+
+    std::vector<std::string> lowerElements(const ASTNode* node) {
+        std::vector<std::string> elems;
+        if (!node) return elems;
+        for (const auto& c : node->children) elems.push_back(lowerExpr(c.get()));
+        return elems;
+    }
+
+    std::string lowerList(const ASTNode* node) {
+        auto elems = lowerElements(node);
+        size_t n = elems.size();
+        // Box size as PyObject* so PyList_NewBoxed receives a proper int.
+        std::string sizeConst = "c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
+        std::string listRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, listRes);
+
+        bool containsTok = false;
+        for (size_t i = 0; i < n; ++i) {
+            std::string idxConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
+            if (!elems[i].empty() && (callableTokenTemps.count(elems[i]) || callableTokenToSynthetic.count(elems[i]))) {
+                containsTok = true;
+            }
+        }
+        if (containsTok) {
+            listsContainingCallableTokens.insert(listRes);
+        }
+        return listRes;
+    }
+
+    std::string lowerDict(const ASTNode* node) {
+        std::string dictRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
+
+        for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
+            std::string key = lowerExpr(node->children[i].get());
+            std::string val = lowerExpr(node->children[i+1].get());
+            ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, key, val}, "");
+        }
+        return dictRes;
+    }
+
+    std::string lowerAttribute(const ASTNode* node) {
+        std::string obj = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        std::string res = "t" + std::to_string(tempCounter++);
+        std::string attrNameConst = "c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"\"" + node->id + "\""}, attrNameConst, "str");
+        ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, attrNameConst}, res);
+        return res;
+    }
+
+    void lowerAssign(const ASTNode* node) {
+        // Multi-target: a = b = val — args holds all target names
+        if (!node->args.empty()) {
+            std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+            for (const auto& name : node->args) {
+                ir.addInstruction(currentFunc, "assign", {val}, name);
+                noteType(name, typeOf(val));
+                // B4: if the assigned value is (or carries) a callable token, mark the target name.
+                if (!val.empty() && (callableTokenTemps.count(val) || callableTokenToSynthetic.count(val))) {
+                    namesThatMayHoldCallableTokens.insert(name);
+                }
+            }
+            return;
+        }
+        // Track list/tuple literals for *args static expansion within the function.
+            if (node->id != "__subscript__" &&
+            !node->children.empty() && node->children[0] &&
+            (node->children[0]->type == "List" || node->children[0]->type == "Tuple")) {
+            listLiteralElemASTs[node->id] = {};
+            for (auto& ch : node->children[0]->children) listLiteralElemASTs[node->id].push_back(ch.get());
+            // B4: we conservatively mark the list name here too; lowerList will do the
+            // precise marking of listsContainingCallableTokens when it sees token elements.
+        }
+        if (node->id == "__attr_assign__") {
+            // Attribute assignment: self.x = value — store in instance dict
+            if (node->children.size() < 2) return;
+            const ASTNode* attrTarget = node->children[0].get();  // Attribute node
+            std::string obj = lowerExpr(attrTarget->children.size() > 0 ? attrTarget->children[0].get() : nullptr);
+            std::string attrName = attrTarget->id;  // attribute name (e.g., "x")
+            std::string val = lowerExpr(node->children[1].get());
+            std::string attrConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + attrName + "\""}, attrConst, "str");
+            std::string dummy = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, attrConst, val}, dummy);
+            return;
+        }
+        if (node->id == "__subscript__") {
+            if (node->children.size() < 2) return;
+            const ASTNode* sub = node->children[0].get();   // Subscript node
+            std::string obj = lowerExpr(sub->children.size() > 0 ? sub->children[0].get() : nullptr);
+            const ASTNode* idxnode = (sub->children.size() > 1 ? sub->children[1].get() : nullptr);
+            std::string val = lowerExpr(node->children[1].get());
+            if (idxnode && idxnode->type == "Slice") {
+                std::string start = lowerExpr(idxnode->children.size() > 0 ? idxnode->children[0].get() : nullptr);
+                std::string stop  = lowerExpr(idxnode->children.size() > 1 ? idxnode->children[1].get() : nullptr);
+                std::string step  = (idxnode->children.size() > 2 && idxnode->children[2])
+                                       ? lowerExpr(idxnode->children[2].get()) : "";
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"Pyc_SetSlice", obj, start, stop, step, val}, dummy);
+                return;
+            }
+            std::string idx = lowerExpr(idxnode);
+            std::string dummy = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, val}, dummy);
+            return;
+        }
+        if (node->id == "__unpack__") {
+            if (node->children.size() < 2) return;
+            const ASTNode* tupleTgt = node->children[0].get();  // Tuple/List of Name nodes
+            std::string rhs = lowerExpr(node->children[1].get());
+            lowerUnpackTarget(tupleTgt, rhs);
+            return;
+        }
+        if (!node->children.empty() && node->children[0]) {
+            std::string val = lowerExpr(node->children[0].get());
+            // B5: if the target is cell-backed *in this function* (we own or receive the cell here),
+            // emit PyCell_Set instead of a plain assign. A name that is only a nonlocal target in a
+            // nested scope should not be routed through a cell at this level.
+            if (isCellBackedHere(node->id)) {
+                std::string cellSlot = node->id + "_cell";
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, val}, dummy);
+                noteType(node->id, typeOf(val));
+                // B4 token propagation (cells are still names for B4 purposes).
+                if (!val.empty() && (callableTokenTemps.count(val) || callableTokenToSynthetic.count(val))) {
+                    namesThatMayHoldCallableTokens.insert(node->id);
+                }
+                return;
+            }
+            // B5 (closure propagation): if RHS is a descriptor bundle, mark the target as carrying
+            // a bundle so later bare-name callees and calls can extract cells from it.
+            if (!val.empty() && bundleTemps.count(val)) {
+                bundleTemps.insert(node->id);
+                auto bit = bundleToSynthetic.find(val);
+                if (bit != bundleToSynthetic.end()) bundleToSynthetic[node->id] = bit->second;
+                auto dit = descriptorCells.find(val);
+                if (dit != descriptorCells.end()) descriptorCells[node->id] = dit->second;
+                namesThatMayHoldBundles.insert(node->id);
+            }
+            // B5 (function-returned bundle propagation via assign): if RHS is a call result
+            // we previously marked as returning a bundle, mark the target name accordingly.
+            if (!val.empty() && bundleTemps.count(val)) {
+                // already handled above
+            }
+            ir.addInstruction(currentFunc, "assign", {val}, node->id);
+            noteType(node->id, typeOf(val));
+            // If the RHS value is a synthetic lambda name (or we just lowered a lambda
+            // expression and captured its synthetic), remember the alias so future
+            // calls through 'node->id' can resolve to the nested IR function.
+            if (!val.empty() && val.rfind("__lambda_", 0) == 0) {
+                lambdaAliases[node->id] = val;
+            } else if (!lastLambdaSynthetic.empty()) {
+                lambdaAliases[node->id] = lastLambdaSynthetic;
+                lastLambdaSynthetic.clear();
+            }
+            // B4 token propagation for bare names:
+            // - If the value is a tracked callable token temp (or the token const itself),
+            //   mark the target name so bare-name callees will load its runtime value as the token.
+            if (!val.empty() && (callableTokenTemps.count(val) || callableTokenToSynthetic.count(val))) {
+                namesThatMayHoldCallableTokens.insert(node->id);
+            }
+            // - If the RHS is a call to a function known to return a callable, mark the target.
+            //   (We also mark the result temp below in lowerCall when we detect such a call.)
+            //   Here we conservatively also check if the value temp came from such a call.
+            //   (The call-site marking below is the primary path; this is a belt-and-suspenders.)
+        }
+    }
+
+    void lowerUnpackTarget(const ASTNode* target, const std::string& value) {
+        if (!target) return;
+        if (target->type == "Name") {
+            if (!target->id.empty()) {
+                auto cit = funcCells.find(currentFunc);
+                bool isCell = false;
+                if (cit != funcCells.end()) {
+                    for (const auto& cv : cit->second) { if (cv == target->id) { isCell = true; break; } }
+                }
+                if (isCell) {
+                    std::string cellSlot = target->id + "_cell";
+                    std::string dummy = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, value}, dummy);
+                    noteType(target->id, typeOf(value));
+                    // B4 token propagation (rare but keep behavior consistent).
+                    if (!value.empty() && (callableTokenTemps.count(value) || callableTokenToSynthetic.count(value) ||
+                                           listsContainingCallableTokens.count(value))) {
+                        namesThatMayHoldCallableTokens.insert(target->id);
+                    }
+                    return;
+                }
+                ir.addInstruction(currentFunc, "assign", {value}, target->id);
+            }
+            noteType(target->id, typeOf(value));
+            // B4: if the unpacked value is a tracked callable token (or the container we
+            // are unpacking from is known to contain tokens), mark the target name so that
+            // later bare-name calls through it are routed via Pyc_Apply.
+            if (!value.empty() && (callableTokenTemps.count(value) || callableTokenToSynthetic.count(value) ||
+                                   listsContainingCallableTokens.count(value))) {
+                namesThatMayHoldCallableTokens.insert(target->id);
+            }
+            return;
+        }
+        if (target->type != "Tuple" && target->type != "List") return;
+        for (size_t i = 0; i < target->children.size(); ++i) {
+            std::string ic = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(i)}, ic);
+            std::string elem = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", value, ic}, elem);
+            // Propagate token nature into the element temps for nested unpack targets.
+            if (!value.empty() && (callableTokenTemps.count(value) || listsContainingCallableTokens.count(value))) {
+                callableTokenTemps.insert(elem);
+            }
+            lowerUnpackTarget(target->children[i].get(), elem);
+        }
+    }
+
+    void lowerAugAssign(const ASTNode* node) {
+        if (node->children.empty()) return;
+        std::string op = node->op;
+        if      (op == "Add")      op = "add";
+        else if (op == "Sub")      op = "sub";
+        else if (op == "Mult")     op = "mul";
+        else if (op == "FloorDiv") op = "div";
+        else if (op == "Div")      op = "truediv";
+        else if (op == "Mod")      op = "mod";
+        else if (op == "Pow")      op = "pow";
+        else                       op = "add";
+
+        if (node->id == "__subscript__") {
+            // a[i] op= val — children[0]=Subscript, children[1]=rhs
+            if (node->children.size() < 2) return;
+            const ASTNode* sub = node->children[0].get();
+            std::string obj = lowerExpr(sub->children.size() > 0 ? sub->children[0].get() : nullptr);
+            std::string idx = lowerExpr(sub->children.size() > 1 ? sub->children[1].get() : nullptr);
+            std::string rhs = lowerExpr(node->children[1].get());
+            std::string cur = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, idx}, cur);
+            noteType(cur, typeOf(rhs));
+            std::string res = "t" + std::to_string(tempCounter++);
+            std::string resultType = numericResultType(op, cur, rhs);
+            ir.addInstruction(currentFunc, op, {cur, rhs}, res, resultType);
+            noteType(res, resultType);
+            std::string dummy = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, res}, dummy);
+        } else {
+            // Normal name: children[0] = rhs
+            // B5: obtain the current LHS value via the cell (PyCell_Get) if the target is
+            // cell-backed here. We cannot just pass the bare name into the arithmetic op,
+            // because codegen for ops resolves bare names via getOrLoad (plain local/global),
+            // which would bypass the cell for a nonlocal. We must explicitly load through
+            // the cell so that augassign (x += k etc.) sees and updates the shared cell.
+            std::string lhsVal;
+            if (isCellBackedHere(node->id)) {
+                std::string cellSlot = node->id + "_cell";
+                lhsVal = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyCell_Get", cellSlot}, lhsVal);
+            } else {
+                lhsVal = node->id;
+            }
+            std::string rhs = lowerExpr(node->children[0].get());
+            std::string result = "t" + std::to_string(tempCounter++);
+            std::string resultType = numericResultType(op, lhsVal, rhs);
+            ir.addInstruction(currentFunc, op, {lhsVal, rhs}, result, resultType);
+            noteType(result, resultType);
+            if (isCellBackedHere(node->id)) {
+                std::string cellSlot = node->id + "_cell";
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, result}, dummy);
+                return;
+            }
+            ir.addInstruction(currentFunc, "assign", {result}, node->id);
+        }
+    }
+
+    std::string lowerSubscriptGet(const ASTNode* node) {
+        // Subscript node: children[0]=object, children[1]=slice/index
+        std::string obj = lowerExpr(node->children.size() > 0 ? node->children[0].get() : nullptr);
+        if (node->children.size() > 1 && node->children[1] &&
+            node->children[1]->type == "Slice") {
+            const ASTNode* slice = node->children[1].get();
+            std::string start = lowerExpr(slice->children.size() > 0 ? slice->children[0].get() : nullptr);
+            std::string stop = lowerExpr(slice->children.size() > 1 ? slice->children[1].get() : nullptr);
+            std::string step = (slice->children.size() > 2 && slice->children[2])
+                                   ? lowerExpr(slice->children[2].get()) : "";
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetSlice", obj, start, stop, step}, res);
+            return res;
+        }
+        std::string idx = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
+        std::string res = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, idx}, res);
+        // B4: if the container is a list we built that contained callable tokens, or the
+        // container name is marked as holding tokens, mark the subscript result as a token temp.
+        if (listsContainingCallableTokens.count(obj) || namesThatMayHoldCallableTokens.count(obj)) {
+            callableTokenTemps.insert(res);
+        }
+        return res;
+    }
+
+    std::string lowerReturnExpr(const ASTNode* node) {
+        std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        ir.addInstruction(currentFunc, "ret", {val}, val);
+        // B4: if this return carries a tracked callable token (or is the result of a function
+        // known to return callables), mark the current function so callers can propagate tokens.
+        if (!val.empty() && (callableTokenTemps.count(val) || callableTokenToSynthetic.count(val))) {
+            currentFnReturnsCallable = true;
+        }
+        // B5 (closures): if this return carries a descriptor bundle (capturing lambda/closure),
+        // mark the current function so callers can propagate bundles and extract cells.
+        if (!val.empty() && bundleTemps.count(val)) {
+            currentFnReturnsBundle = true;
+            auto sit = bundleToSynthetic.find(val);
+            if (sit != bundleToSynthetic.end()) currentReturnedBundleSynthetic = sit->second;
+            auto dit = descriptorCells.find(val);
+            if (dit != descriptorCells.end()) currentReturnedBundleCaps = dit->second;
+        }
+        return val;
+    }
+
+    void lowerReturn(const ASTNode* node) {
+        lowerReturnExpr(node);
+    }
+
+    // obj.method(args) dispatch
+    std::string lowerMethodCall(const ASTNode* node) {
+        // node->children[0] = Attribute(obj, method_name)
+        // node->children[1..] = positional args
+        const ASTNode* attr = node->children[0].get();
+        std::string methodName = attr->id;
+        std::string obj = lowerExpr(attr->children.empty() ? nullptr : attr->children[0].get());
+
+        std::vector<std::string> args;
+        for (size_t i = 1; i < node->children.size(); ++i) {
+            if (node->children[i] && node->children[i]->type != "Keyword")
+                args.push_back(lowerExpr(node->children[i].get()));
+        }
+
+        std::string res = "t" + std::to_string(tempCounter++);
+
+        // Known list methods
+        if (methodName == "append") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyList_Append", obj, arg}, res);
+        // Known string methods
+        } else if (methodName == "upper") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Upper", obj}, res);
+        } else if (methodName == "lower") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Lower", obj}, res);
+        } else if (methodName == "strip") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Strip", obj}, res);
+        } else if (methodName == "split") {
+            if (args.empty()) {
+                ir.addInstruction(currentFunc, "call", {"PyString_SplitWhitespace", obj}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyString_Split", obj, args[0]}, res);
+            }
+        } else if (methodName == "join") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_Join", obj, arg}, res);
+        } else if (methodName == "find") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_Find", obj, arg}, res, "int");
+            noteType(res, "int");
+        } else if (methodName == "count") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_Count", obj, arg}, res, "int");
+            noteType(res, "int");
+        } else if (methodName == "replace") {
+            std::string a = args.size() > 0 ? args[0] : "";
+            std::string b = args.size() > 1 ? args[1] : "";
+            ir.addInstruction(currentFunc, "call", {"PyString_Replace", obj, a, b}, res);
+            noteType(res, "str");
+        // Dict methods
+        } else if (methodName == "keys") {
+            ir.addInstruction(currentFunc, "call", {"PyDict_Keys", obj}, res);
+        } else if (methodName == "values") {
+            ir.addInstruction(currentFunc, "call", {"PyDict_Values", obj}, res);
+        } else if (methodName == "items") {
+            ir.addInstruction(currentFunc, "call", {"PyDict_Items", obj}, res);
+        // List methods
+        } else if (methodName == "sort") {
+            ir.addInstruction(currentFunc, "call", {"PyList_Sort", obj}, res);
+        } else if (methodName == "pop") {
+            ir.addInstruction(currentFunc, "call", {"PyList_Pop", obj}, res);
+     } else {
+            // Try to call as user-defined method
+            // For class instances: look up method on class dict
+            std::string methodLookup = "t" + std::to_string(tempCounter++);
+            std::string methodNameConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
+            // Get __class__ from instance, then look up method on class dict
+            std::string classKeyConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"__class__\""}, classKeyConst, "str");
+            std::string classRef = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, classKeyConst}, classRef);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", classRef, methodNameConst}, methodLookup);
+            // Build args list with self prepended
+            std::vector<std::string> methodArgs;
+            methodArgs.push_back(obj);
+            for (auto& a : args) {
+                methodArgs.push_back(a);
+            }
+            // Build flat arg list for Pyc_Apply
+            std::string argList = "t" + std::to_string(tempCounter++);
+            std::string argCount = std::to_string(methodArgs.size());
+            std::string argCountConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
+            for (size_t i = 0; i < methodArgs.size(); ++i) {
+                std::string idxConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+                std::string setRes = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
+            }
+            // Call method via Pyc_Apply
+            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
+        }
+        return res;
+    }
+
+    // Class definition lowering for minimal data-only classes.
+    // A class becomes:
+    // 1. A module-level global that is a callable token (string name)
+    // 2. When called, creates an instance dict and calls __init__ on it
+    // 3. Method calls on instances are attribute lookups on the instance dict
+    //    followed by a call with 'self' prepended
+    void lowerClass(const ASTNode* node) {
+        std::string className = node->id;
+        knownClasses.insert(className);
+        // Register class as module-level global
+        ir.addModuleGlobal(className);
+        // Create class dict to hold methods
+        std::string classDictTemp = "c" + std::to_string(tempCounter++);
+        ir.addInstruction("__module__", "call", {"PyDict_New"}, classDictTemp, "dict");
+        // Register class name as known IR function so it can be called directly
+        knownIRFunctions.insert(className);
+        // Process all methods
+        for (const auto& c : node->children) {
+            if (!c || c->type != "FunctionDef") continue;
+            std::string methodName = c->id;
+            knownIRFunctions.insert(methodName);
+            if (methodName == "__init__") {
+                // Store __init__ param names from the AST
+                std::string initParams;
+                for (size_t i = 0; i < c->args.size(); ++i) {
+                    if (i > 0) initParams += ",";
+                    std::string pname = c->args[i];
+                    if (!pname.empty() && pname[0] == '*') pname = pname.substr(1);
+                    initParams += pname;
+                }
+                classInitParams[className] = initParams;
+                // Generate __init__ function with correct params
+                std::string initFuncName = className + "__init__";
+                std::vector<std::string> initFuncParams;
+                std::stringstream ss(initParams);
+                std::string param;
+                while (std::getline(ss, param, ',')) {
+                    initFuncParams.push_back(param);
+                }
+                ir.addFunction(initFuncName, initFuncParams);
+                // Lower __init__ body into the init function
+                std::string savedFunc = currentFunc;
+                currentFunc = initFuncName;
+                for (size_t i = 0; i < c->children.size(); ++i) {
+                    if (c->children[i] && c->children[i]->type != "Default") {
+                        lower(c->children[i].get());
+                    }
+                }
+            // __init__ must return self (the first argument)
+                ir.addInstruction(initFuncName, "ret", {"self"});
+                // Store __init__ in class dict as a callable token (string name)
+                std::string methodConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"" + methodName + "\""}, methodConst, "str");
+                std::string methodToken = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"" + initFuncName + "\""}, methodToken, "str");
+                knownIRFunctions.insert(initFuncName);
+                // Store the function name string in the class dict
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
+                currentFunc = savedFunc;
+           } else {
+                // Lower regular method
+                std::string methodFuncName = className + "__" + methodName;
+                std::vector<std::string> methodParams;
+                for (size_t i = 0; i < c->args.size(); ++i) {
+                    std::string pname = c->args[i];
+                    if (!pname.empty() && pname[0] == '*') pname = pname.substr(1);
+                    methodParams.push_back(pname);
+                }
+                ir.addFunction(methodFuncName, methodParams);
+                knownIRFunctions.insert(methodFuncName);
+           // Lower method body
+                std::string savedFunc = currentFunc;
+                currentFunc = methodFuncName;
+                for (size_t i = 0; i < c->children.size(); ++i) {
+                    if (c->children[i] && c->children[i]->type != "Default") {
+                        lower(c->children[i].get());
+                    }
+                }
+                // Store method in class dict as a callable token
+                std::string methodConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"" + methodName + "\""}, methodConst, "str");
+                std::string methodToken = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"" + methodFuncName + "\""}, methodToken, "str");
+                knownIRFunctions.insert(methodFuncName);
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
+                currentFunc = savedFunc;
+            }
+        }
+        // Store class dict as the class value
+        ir.addInstruction("__module__", "assign", {classDictTemp}, className);
+        noteType(className, "dict");
+    }
+
+    // x if cond else y  — IfExp (ternary)
+    std::string lowerIfExpr(const ASTNode* node) {
+        if (node->children.size() < 3) return "";
+        int c = tempCounter++;
+        std::string resultVar = "ifexp_r_"    + std::to_string(c);
+        std::string thenL     = "ifexp_then_" + std::to_string(c);
+        std::string elseL     = "ifexp_else_" + std::to_string(c);
+        std::string endL      = "ifexp_end_"  + std::to_string(c);
+
+        // Pre-create the result alloca before the branch so both branches can store to it.
+        std::string initVal = "c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, initVal);
+        ir.addInstruction(currentFunc, "assign", {initVal}, resultVar);
+
+        std::string cond = lowerExpr(node->children[0].get());
+        ir.addInstruction(currentFunc, "br", {cond, thenL, elseL});
+
+        ir.addInstruction(currentFunc, "label", {}, thenL);
+        std::string tv = lowerExpr(node->children[1].get());
+        ir.addInstruction(currentFunc, "assign", {tv}, resultVar);
+        ir.addInstruction(currentFunc, "br", {}, endL);
+
+        ir.addInstruction(currentFunc, "label", {}, elseL);
+        std::string ev = lowerExpr(node->children[2].get());
+        ir.addInstruction(currentFunc, "assign", {ev}, resultVar);
+
+        ir.addInstruction(currentFunc, "label", {}, endL);
+        return resultVar;
+    }
+
+    // Short-circuit boolean operator (and / or) with N values.
+    // Produces a result alloca variable; codegen loads it for the caller.
+    std::string lowerBoolOp(const ASTNode* node) {
+        if (node->children.empty()) return "";
+        bool isAnd = (node->op == "And");
+
+        // Reserve a single counter for all labels of this boolop instance.
+        int bc = tempCounter++;
+        std::string resultVar = "boolop_r_"   + std::to_string(bc);
+        std::string endLabel  = "boolop_end_" + std::to_string(bc);
+
+        // Evaluate first value; store as initial result.
+        std::string firstVal = lowerExpr(node->children[0].get());
+        ir.addInstruction(currentFunc, "assign", {firstVal}, resultVar);
+
+        for (size_t i = 1; i < node->children.size(); ++i) {
+            std::string rhsLabel = "boolop_rhs_" + std::to_string(bc)
+                                   + "_" + std::to_string(i);
+
+            // Box truthiness so the br handler can unbox it.
+            std::string truthVal = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call",
+                              {"PyObject_TruthBoxed", resultVar}, truthVal);
+
+            // AND: truthy → keep evaluating; OR: truthy → done
+            if (isAnd)
+                ir.addInstruction(currentFunc, "br", {truthVal, rhsLabel, endLabel});
+            else
+                ir.addInstruction(currentFunc, "br", {truthVal, endLabel, rhsLabel});
+
+            ir.addInstruction(currentFunc, "label", {}, rhsLabel);
+            std::string nextVal = lowerExpr(node->children[i].get());
+            ir.addInstruction(currentFunc, "assign", {nextVal}, resultVar);
+            // Codegen inserts fallthrough br to endLabel at the next label instruction.
+        }
+
+        ir.addInstruction(currentFunc, "label", {}, endLabel);
+        return resultVar;
+    }
+
+    std::string lowerUnaryOp(const ASTNode* node) {
+        std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        if (node->op == "UAdd") return val;   // identity
+
+        std::string res = "t" + std::to_string(tempCounter++);
+        if (node->op == "Not") {
+            ir.addInstruction(currentFunc, "call", {"PyObject_Not",  val}, res, "bool");
+            noteType(res, "bool");
+        } else if (node->op == "USub") {
+            std::string resultType = typeOf(val);
+            if (resultType != "int" && resultType != "float" && resultType != "bool") {
+                resultType = "boxed";
+            }
+            if (resultType == "int" || resultType == "float") {
+                // Emit native neg; codegen will unbox operand if needed and
+                // keep the result as native i64/double when possible (A3).
+                ir.addInstruction(currentFunc, "neg", {val}, res, resultType);
+                noteType(res, resultType);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyNumber_Negate", val}, res, resultType);
+                noteType(res, resultType);
+            }
+        } else {
+            ir.addInstruction(currentFunc, "const", {"0"}, res, "int");   // unknown → 0
+            noteType(res, "int");
+        }
+        return res;
+    }
+
+    // Lower a single part of a JoinedStr: Constant (string literal) or FormattedValue
+    std::string lowerFStrPart(const ASTNode* node) {
+        if (node->type == "FormattedValue") return lowerFormattedValue(node);
+        return lowerExpr(node);  // Constant string part
+    }
+
+    std::string lowerFormattedValue(const ASTNode* node) {
+        std::string exprVal = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        std::string res = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", exprVal}, res);
+        return res;
+    }
+
+    std::string lowerJoinedStr(const ASTNode* node) {
+        if (node->children.empty()) {
+            std::string res = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"\""}, res);
+            return res;
+        }
+        std::string acc = lowerFStrPart(node->children[0].get());
+        for (size_t i = 1; i < node->children.size(); ++i) {
+            std::string part = lowerFStrPart(node->children[i].get());
+            std::string newAcc = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyString_Concat", acc, part}, newAcc);
+            acc = newAcc;
+        }
+        return acc;
+    }
+
+    std::string lowerListComp(const ASTNode* node) {
+        // [elt for target in iter if cond ...]
+        // children[0] = elt expression
+        // children[1] = comprehension generator node
+        if (node->children.size() < 2) return "";
+        const ASTNode* eltNode = node->children[0].get();
+        const ASTNode* genNode = node->children[1].get();
+        if (!genNode || genNode->type != "comprehension" || genNode->children.size() < 2)
+            return "";
+
+        // Create result list
+        std::string sc = "c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, sc);
+        std::string listVar = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, listVar);
+
+        // Evaluate iterator once
+        std::string iterVal = lowerExpr(genNode->children[1].get());
+        std::string lenRes  = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterVal}, lenRes);
+
+        // Index variable (unique name to avoid clashes)
+        std::string idxVar  = "lc_i_" + std::to_string(tempCounter++);
+        std::string idxInit = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
+        ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
+
+        int lc = tempCounter++;
+        std::string loopL = "lc_lp_" + std::to_string(lc);
+        std::string bodyL = "lc_bd_" + std::to_string(lc);
+        std::string contL = "lc_ct_" + std::to_string(lc);
+        std::string exitL = "lc_ex_" + std::to_string(lc);
+
+        ir.addInstruction(currentFunc, "label", {}, loopL);
+        std::string cmpR = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpR);
+        ir.addInstruction(currentFunc, "br", {cmpR, bodyL, exitL});
+
+        ir.addInstruction(currentFunc, "label", {}, bodyL);
+        std::string item = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", iterVal, idxVar}, item);
+        ir.addInstruction(currentFunc, "assign", {item}, genNode->children[0]->id);
+
+        // Conditions: if any is false, jump to contL (skip append)
+        for (size_t ci = 2; ci < genNode->children.size(); ++ci) {
+            std::string trueL = "lc_ci_" + std::to_string(tempCounter++);
+            std::string condV = lowerExpr(genNode->children[ci].get());
+            ir.addInstruction(currentFunc, "br", {condV, trueL, contL});
+            ir.addInstruction(currentFunc, "label", {}, trueL);
+        }
+
+        // Evaluate element in loop context and append
+        std::string eltVal = lowerExpr(eltNode);
+        ir.addInstruction(currentFunc, "call", {"PyList_Append", listVar, eltVal}, "");
+
+        // Fall through to contL
+        ir.addInstruction(currentFunc, "label", {}, contL);
+        std::string one = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"1"}, one);
+        std::string nxt = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "add", {idxVar, one}, nxt);
+        ir.addInstruction(currentFunc, "assign", {nxt}, idxVar);
+        ir.addInstruction(currentFunc, "br", {}, loopL);
+        ir.addInstruction(currentFunc, "label", {}, exitL);
+        return listVar;
+    }
+
+    std::string lowerDictComp(const ASTNode* node) {
+        // {key: val for target in iter if conds ...}  (supports multiple generators for product/nested)
+        if (node->children.size() < 2) {
+            std::string dictRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
+            return dictRes;
+        }
+        const ASTNode* keyNode = node->children[0].get();
+        const ASTNode* valNode = node->children[1].get();
+
+        // Collect generator nodes (comprehension children after key/value)
+        std::vector<const ASTNode*> gens;
+        for (size_t i = 2; i < node->children.size(); ++i) {
+            if (node->children[i] && node->children[i]->type == "comprehension")
+                gens.push_back(node->children[i].get());
+        }
+        if (gens.empty()) {
+            std::string dictRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
+            return dictRes;
+        }
+
+        // Create result dict
+        std::string dictRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
+
+        // Recursive emitter for nested generators.
+        // gi: current generator index; after last, emit the key:val insertion.
+        std::function<void(size_t)> emitLevel = [&](size_t gi) {
+            if (gi == gens.size()) {
+                // innermost: compute key/val and insert
+                std::string kVal = lowerExpr(keyNode);
+                std::string vVal = lowerExpr(valNode);
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, kVal, vVal}, dummy);
+                return;
+            }
+            const ASTNode* g = gens[gi];
+            // iter for this level
+            std::string iterVal = lowerExpr(g->children.size() > 1 ? g->children[1].get() : nullptr);
+            std::string lenRes  = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterVal}, lenRes);
+
+            // per-level index
+            std::string idxVar  = "dc_i" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            std::string idxInit = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
+            ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
+
+            int dc = tempCounter++;
+            std::string loopL = "dc_lp" + std::to_string(gi) + "_" + std::to_string(dc);
+            std::string bodyL = "dc_bd" + std::to_string(gi) + "_" + std::to_string(dc);
+            std::string contL = "dc_ct" + std::to_string(gi) + "_" + std::to_string(dc);
+            std::string exitL = "dc_ex" + std::to_string(gi) + "_" + std::to_string(dc);
+
+            ir.addInstruction(currentFunc, "label", {}, loopL);
+            std::string cmpR = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpR);
+            ir.addInstruction(currentFunc, "br", {cmpR, bodyL, exitL});
+
+            ir.addInstruction(currentFunc, "label", {}, bodyL);
+            std::string item = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", iterVal, idxVar}, item);
+            // target is the first child of the comprehension (Name or unpack pattern)
+            if (g->children.size() > 0 && g->children[0]) {
+                if (g->children[0]->type == "Name") {
+                    ir.addInstruction(currentFunc, "assign", {item}, g->children[0]->id);
+                } else {
+                    // tuple/list target unpack (reuse the unpack helper)
+                    lowerUnpackTarget(g->children[0].get(), item);
+                }
+            }
+
+            // per-generator if conditions
+            std::string afterCondsL = "dc_ac" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            std::string cur = afterCondsL;
+            for (size_t ci = 2; ci < g->children.size(); ++ci) {
+                if (!g->children[ci]) continue;
+                std::string trueL = "dc_ci" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+                std::string condV = lowerExpr(g->children[ci].get());
+                ir.addInstruction(currentFunc, "br", {condV, trueL, contL});
+                ir.addInstruction(currentFunc, "label", {}, trueL);
+            }
+            // now emit next level (or body insert)
+            emitLevel(gi + 1);
+
+            // increment and continue outer loop
+            ir.addInstruction(currentFunc, "label", {}, afterCondsL);  // fallthrough from body if no ifs
+            ir.addInstruction(currentFunc, "label", {}, contL);
+            std::string one = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, one);
+            std::string nxt = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "add", {idxVar, one}, nxt);
+            ir.addInstruction(currentFunc, "assign", {nxt}, idxVar);
+            ir.addInstruction(currentFunc, "br", {}, loopL);
+            ir.addInstruction(currentFunc, "label", {}, exitL);
+        };
+
+        emitLevel(0);
+        return dictRes;
+    }
+};
+
+// Legacy thin wrapper kept temporarily for any external callers (to be removed)
+
+void lowerAST(const ASTNode* node, ModuleIR& ir) {
+    if (!node) return;
+    LoweringVisitor visitor(ir);
+    visitor.lower(node);
+}
+
+bool Compiler::compile(const std::string& inputPath, const std::string& outputPath, bool useStatic, int optLevel, bool emitLLVM, bool emitASM, bool verbose) {
+    PythonParser parser;
+    auto ast = parser.parseFile(inputPath);
+    if (!ast) {
+        std::cerr << "Parse error for " << inputPath << std::endl;
+        return false;
+    }
+    if (verbose) std::cout << "Parsed AST root: " << ast->type << " (depth " << ast->children.size() << ")\n";
+
+    ModuleIR ir;
+    lowerAST(ast.get(), ir);
+    llvm::LLVMContext context;
+    Codegen codegen;
+    auto module = codegen.generate(ir, context, "pyc_module");
+    if (!module) return false;
+    codegen.optimize(module.get(), optLevel);
+    if (emitLLVM) {
+        if (codegen.emitLLVM(module.get(), outputPath + ".ll")) {
+            std::cout << "Emitted LLVM IR " << outputPath << ".ll (opt=" << optLevel << ")\n";
+            return true;
+        }
+        return false;
+    }
+    if (emitASM) {
+        if (codegen.emitAssembly(module.get(), outputPath + ".s")) {
+            std::cout << "Emitted assembly " << outputPath << ".s (opt=" << optLevel << ")\n";
+            return true;
+        }
+        return false;
+    }
+    if (codegen.emitObject(module.get(), outputPath + ".o")) {
+        std::cout << "Generated object " << outputPath << ".o (opt=" << optLevel << ")\n";
+        std::string linkCmd = "clang++ ";
+        if (useStatic) linkCmd += "-static -s -Wl,--gc-sections ";
+
+        // Prefer prebuilt static runtime lib if available (from build or install)
+        // Otherwise fall back to compiling the small runtime source (always works during development)
+        std::string sourceDir = PYC_SOURCE_DIR;
+        std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
+        // Try common locations for libpycrt.a
+        for (const auto& libdir : {"./build", "../build", ".", "/usr/local/lib", "/usr/lib"}) {
+            std::string libpath = std::string(libdir) + "/libpycrt.a";
+            if (std::ifstream(libpath).good()) {
+                runtimeLink = " -L" + std::string(libdir) + " -lpycrt";
+                break;
+            }
+        }
+        // The MainWrapper.cpp provides the C `main` that calls
+        // pyc_setup_sys(argc, argv) and then dispatches to the
+        // user code's `pyc_user_main`. We always compile it from
+        // source here for simplicity (it has no other dependencies
+        // beyond the runtime header).
+        linkCmd += outputPath + ".o -I" + sourceDir + "/include " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -o " + outputPath + " -O" + std::to_string(optLevel);
+        if (std::system(linkCmd.c_str()) == 0) {
+            std::cout << "Linked with runtime to " << outputPath << " (static=" << useStatic << ")\n";
+        } else {
+            std::cerr << "Link failed. Run manually: " << linkCmd << std::endl;
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+} // namespace pyc

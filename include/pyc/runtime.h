@@ -1,0 +1,123 @@
+#pragma once
+
+#include <stdio.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct PyObject PyObject;
+
+PyObject* PyInt_FromLong(long v);
+PyObject* PyList_New(size_t size);
+PyObject* PyList_GetItem(PyObject* list, size_t index);
+size_t    PyList_Size(PyObject* list);
+void      PyList_SetItem(PyObject* list, size_t index, PyObject* item);
+void      Py_DECREF(PyObject* obj);
+void      Py_INCREF(PyObject* obj);
+int       PyObject_Print(PyObject* obj, FILE* fp);
+PyObject* PyNumber_Add(PyObject* a, PyObject* b);
+PyObject* PyNumber_Multiply(PyObject* a, PyObject* b);
+PyObject* PyNumber_Subtract(PyObject* a, PyObject* b);
+PyObject* PyNumber_Divide(PyObject* a, PyObject* b);
+PyObject* PyNumber_Remainder(PyObject* a, PyObject* b);
+PyObject* PyUnicode_FromString(const char* s);
+PyObject* PyObject_GetAttr(PyObject* obj, const char* attr);
+PyObject* PyDict_New(void);
+void      PyDict_SetItem(PyObject* dict, PyObject* key, PyObject* value);
+PyObject* PyDict_GetItem(PyObject* dict, PyObject* key);
+PyObject* PyList_Append(PyObject* list, PyObject* item);
+PyObject* PyList_FromArray(PyObject** items, size_t size);
+PyObject* PyList_Range(int start, int end);
+PyObject* PyList_SizeBoxed(PyObject* list);
+PyObject* PyList_GetItemObj(PyObject* list, PyObject* idx);
+PyObject* PyList_NewBoxed(PyObject* n);
+void      PyList_SetItemBoxed(PyObject* list, PyObject* idx, PyObject* item);
+PyObject* PyList_Comprehension(int start, int end);
+PyObject* PyFloat_FromDouble(double v);
+PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b);
+PyObject* PyBuiltin_Range(PyObject* start, PyObject* stop, PyObject* step);
+int       PyObject_CompareBool(PyObject* a, PyObject* b, int op);
+PyObject* PyStr_FromAny(PyObject* obj);
+PyObject* PyString_Concat(PyObject* a, PyObject* b);
+PyObject* PyString_Repeat(PyObject* s, PyObject* n);
+PyObject* PyBuiltin_Len(PyObject* obj);
+void PyBuiltin_PrintNewline(void);
+PyObject* PyBool_New(int v);
+PyObject* PyBuiltin_Sum(PyObject* lst);
+PyObject* PyBuiltin_Sorted(PyObject* lst);
+PyObject* PyBuiltin_Any(PyObject* lst);
+PyObject* PyBuiltin_All(PyObject* lst);
+PyObject* Pyc_IsInstance(PyObject* obj, PyObject* typecode);
+PyObject* PyString_Find(PyObject* s, PyObject* sub);
+PyObject* PyString_Count(PyObject* s, PyObject* sub);
+PyObject* PyString_Replace(PyObject* s, PyObject* old_, PyObject* new_);
+PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step);
+PyObject* Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step, PyObject* value);
+PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b);
+PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b);
+PyObject* PyBuiltin_MinList(PyObject* lst);
+PyObject* PyBuiltin_MaxList(PyObject* lst);
+PyObject* PyBuiltin_List(PyObject* obj);
+PyObject* PyBuiltin_Enumerate(PyObject* iterable);
+PyObject* PyBuiltin_Zip2(PyObject* a, PyObject* b);
+PyObject* PyBuiltin_Int(PyObject* obj);
+PyObject* PyBuiltin_Float(PyObject* obj);
+PyObject* PyBuiltin_Abs(PyObject* obj);
+PyObject* PyString_Upper(PyObject* s);
+PyObject* PyString_Lower(PyObject* s);
+PyObject* PyString_Strip(PyObject* s);
+PyObject* PyString_Split(PyObject* s, PyObject* sep);
+PyObject* PyString_SplitWhitespace(PyObject* s);
+PyObject* PyString_Join(PyObject* sep, PyObject* iterable);
+PyObject* PyDict_Keys(PyObject* d);
+PyObject* PyDict_Values(PyObject* d);
+PyObject* PyDict_Items(PyObject* d);
+PyObject* PyList_Sort(PyObject* lst);
+PyObject* PyList_Pop(PyObject* lst);
+PyObject* PyObject_TruthBoxed(PyObject* obj);
+PyObject* Pyc_GetItem(PyObject* obj, PyObject* key);
+PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val);
+PyObject* Pyc_Contains(PyObject* container, PyObject* item);
+PyObject* Pyc_Pow(PyObject* a, PyObject* b);
+PyObject* PyObject_Not(PyObject* obj);
+PyObject* PyNumber_Negate(PyObject* obj);
+void      PyErr_Print(void);
+
+// Build a synthetic `sys` module from C argc/argv. The module has at
+// least `sys.argv` as a list of Python strings. The C entry point
+// (compiled binary's main) is expected to call this before user code
+// runs.
+void pyc_setup_sys(int argc, char** argv);
+
+// Look up a name on the global `sys` module (or NULL if `pyc_setup_sys`
+// has not been called or the attribute is missing). Returns a new
+// strong reference on success.
+PyObject* pyc_get_sys_attr(const char* name);
+
+// Return the global `sys` module object (a new strong reference, or
+// NULL if pyc_setup_sys has not been called).
+PyObject* pyc_get_sys_module(void);
+
+void* pyc_alloc(size_t size);
+void  pyc_free(void* obj);
+
+// B4/B8 support: apply a callable token (string naming a registered IR function)
+// to a Python list of arguments. Returns the result (boxed) or NULL on error.
+PyObject* Pyc_Apply(PyObject* token, PyObject* argList);
+
+// B5 (nonlocal/cells): minimal cell primitives.
+// A cell is a PyObject with type==6 whose cell_content holds the target PyObject*.
+// PyCell_New(initial) allocates a cell holding 'initial' (may be NULL); returns new cell (owned ref).
+// PyCell_Get(cell) returns a new reference to the cell's content (or NULL if empty).
+// PyCell_Set(cell, val) stores 'val' into the cell (INCREF new, DECREF old if present); returns cell.
+PyObject* PyCell_New(PyObject* initial);
+PyObject* PyCell_Get(PyObject* cell);
+PyObject* PyCell_Set(PyObject* cell, PyObject* val);
+
+// B5 helper: return 1 if obj is a cell (type==6), else 0.
+int PyCell_Check(PyObject* obj);
+
+#ifdef __cplusplus
+}
+#endif
