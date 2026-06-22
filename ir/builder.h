@@ -39,7 +39,9 @@ private:
     void build_for_stmt(const ast::ForStmt& fs);
     void build_while_stmt(const ast::WhileStmt& ws);
     void build_assign_stmt(const ast::AssignStmt& as);
+    void build_tuple_assign_stmt(const ast::TupleAssignStmt& tas);
     void build_return_stmt(const ast::ReturnStmt& ret);
+    void build_named_expr(const ast::NamedExpr& ne);
     void build_augassign_stmt(const ast::AugAssignStmt& aug);
     void build_import_stmt(const ast::ImportStmt& imp);
     void build_class_call(const ast::CallExpr& call, const std::string& class_name);
@@ -51,6 +53,7 @@ private:
     void build_raise_stmt(const ast::RaiseStmt& ra);
     void build_with_stmt(const ast::WithStmt& wt);
     void build_try_stmt(const ast::TryStmt& tr);
+    void build_match_stmt(const ast::MatchStmt& ms);
     void build_break_stmt();
     void build_continue_stmt();
     
@@ -74,6 +77,10 @@ private:
     uint32_t build_set_comp(const ast::SetComp& expr);
     uint32_t build_gen_expr(const ast::GenExpr& expr);
     uint32_t build_dict_comp(const ast::DictComp& expr);
+    uint32_t build_joined_str(const ast::JoinedStr& expr);
+    uint32_t build_formatted_value(const ast::FormattedValue& expr);
+    uint32_t build_yield(const ast::YieldExpr& expr);
+    uint32_t build_await(const ast::AwaitExpr& expr);
 
     IRInstKind augment_to_binop(ast::AugAssignStmt::Op op);
 

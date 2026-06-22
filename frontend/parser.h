@@ -27,6 +27,7 @@ private:
     std::shared_ptr<ast::Stmt> parse_function_def();
     std::shared_ptr<ast::Stmt> parse_class_def();
     std::shared_ptr<ast::Stmt> parse_try_stmt();
+    std::shared_ptr<ast::Stmt> parse_match_stmt();
     std::vector<std::shared_ptr<ast::Stmt>> parse_block();
 
     std::shared_ptr<ast::Expr> parse_or_expr();

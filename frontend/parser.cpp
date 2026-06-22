@@ -253,6 +253,11 @@ std::shared_ptr<ast::Stmt> Parser::parse_stmt() {
         return parse_try_stmt();
     }
 
+    // match/case
+    if (tok.kind == pyc::lexer::TokenType::NAME && tok.value == "match") {
+        return parse_match_stmt();
+    }
+
     // Assignment or expression statement
     if (tok.kind == pyc::lexer::TokenType::NAME && !is_keyword(tok.value) && !is_builtin(tok.value)) {
         return parse_assign_or_expr();
@@ -324,6 +329,20 @@ std::shared_ptr<ast::Stmt> Parser::parse_while_stmt() {
 }
 
 std::shared_ptr<ast::Stmt> Parser::parse_function_def() {
+    bool is_async = false;
+    if (has_more() && current().kind == pyc::lexer::TokenType::NAME && current().value == "async") {
+        is_async = true;
+        advance();
+    }
+    
+    // Check for decorators
+    std::vector<std::shared_ptr<ast::Expr>> decorators;
+    while (has_more() && current().kind == pyc::lexer::TokenType::AT) {
+        advance();
+        auto dec_expr = parse_expr();
+        decorators.push_back(dec_expr);
+    }
+    
     if (!has_more()) throw std::runtime_error("Expected function name");
     std::string name = current().value;
     advance();
@@ -353,10 +372,18 @@ std::shared_ptr<ast::Stmt> Parser::parse_function_def() {
     expect(pyc::lexer::TokenType::COLON);
     advance();
     auto body = parse_block();
-    return std::make_shared<ast::FunctionDef>(name, args, body);
+    return std::make_shared<ast::FunctionDef>(name, args, body, std::move(decorators));
 }
 
 std::shared_ptr<ast::Stmt> Parser::parse_class_def() {
+    // Check for decorators
+    std::vector<std::shared_ptr<ast::Expr>> decorators;
+    while (has_more() && current().kind == pyc::lexer::TokenType::AT) {
+        advance();
+        auto dec_expr = parse_expr();
+        decorators.push_back(dec_expr);
+    }
+    
     if (!has_more()) throw std::runtime_error("Expected class name");
     std::string name = current().value;
     advance();
@@ -379,7 +406,7 @@ std::shared_ptr<ast::Stmt> Parser::parse_class_def() {
     expect(pyc::lexer::TokenType::COLON);
     advance();
     auto body = parse_block();
-    return std::make_shared<ast::ClassDef>(name, bases, body);
+    return std::make_shared<ast::ClassDef>(name, bases, body, std::move(decorators));
 }
 
 std::shared_ptr<ast::Stmt> Parser::parse_try_stmt() {
@@ -420,11 +447,63 @@ std::shared_ptr<ast::Stmt> Parser::parse_try_stmt() {
     return std::make_shared<ast::TryStmt>(try_body, handlers, orelse, finalbody);
 }
 
+std::shared_ptr<ast::Stmt> Parser::parse_match_stmt() {
+    advance(); // skip 'match'
+    auto subject = parse_expr();
+    expect(pyc::lexer::TokenType::COLON);
+    advance();
+    
+    std::vector<ast::MatchStmt::Case> cases;
+    while (has_more() && current().kind == pyc::lexer::TokenType::NAME && current().value == "case") {
+        advance(); // skip 'case'
+        auto pattern = parse_expr();
+        
+        // Optional guard
+        std::shared_ptr<ast::Expr> guard;
+        if (has_more() && current().kind == pyc::lexer::TokenType::NAME && current().value == "if") {
+            advance();
+            guard = parse_expr();
+        }
+        
+        expect(pyc::lexer::TokenType::COLON);
+        advance();
+        auto body = parse_block();
+        
+        ast::MatchStmt::Case case_;
+        case_.patterns.push_back(pattern);
+        case_.guard = std::move(guard);
+        case_.body = std::move(body);
+        cases.push_back(std::move(case_));
+    }
+    
+    return std::make_shared<ast::MatchStmt>(subject, std::move(cases));
+}
+
 std::shared_ptr<ast::Stmt> Parser::parse_assign_or_expr() {
     std::string name = current().value;
     advance();
 
     if (!has_more()) return std::make_shared<ast::PassStmt>();
+
+    // Check for tuple unpacking: name, name2 = value
+    if (current().kind == pyc::lexer::TokenType::COMMA) {
+        std::vector<std::shared_ptr<ast::Expr>> targets;
+        targets.push_back(std::make_shared<ast::Name>(name));
+        while (has_more() && current().kind == pyc::lexer::TokenType::COMMA) {
+            advance();
+            if (has_more() && current().kind == pyc::lexer::TokenType::NAME) {
+                targets.push_back(std::make_shared<ast::Name>(current().value));
+                advance();
+            } else {
+                break;
+            }
+        }
+        if (has_more() && current().kind == pyc::lexer::TokenType::ASSIGN) {
+            advance();
+            auto value = parse_expr();
+            return std::make_shared<ast::TupleAssignStmt>(std::move(targets), value);
+        }
+    }
 
     // Assignment
     if (current().kind == pyc::lexer::TokenType::ASSIGN) {
@@ -592,6 +671,28 @@ std::shared_ptr<ast::Expr> Parser::parse_primary_expr() {
 
     const auto& tok = current();
 
+   // await
+    if (tok.kind == pyc::lexer::TokenType::NAME && tok.value == "await") {
+        advance();
+        auto expr = parse_primary_expr();
+        return std::make_shared<ast::AwaitExpr>(expr);
+    }
+    
+    // yield
+    if (tok.kind == pyc::lexer::TokenType::NAME && tok.value == "yield") {
+        advance();
+        std::shared_ptr<ast::Expr> val;
+        bool is_yield_from = false;
+        if (has_more() && current().kind == pyc::lexer::TokenType::NAME && current().value == "from") {
+            is_yield_from = true;
+            advance();
+        }
+        if (has_more() && current().kind != pyc::lexer::TokenType::NEWLINE && current().kind != pyc::lexer::TokenType::DECREMENT && current().kind != pyc::lexer::TokenType::EOF_) {
+            val = parse_expr();
+        }
+        return std::make_shared<ast::YieldExpr>(val, is_yield_from);
+    }
+    
     // Literals
     if (tok.kind == pyc::lexer::TokenType::INT_LITERAL) {
         advance();
@@ -602,6 +703,31 @@ std::shared_ptr<ast::Expr> Parser::parse_primary_expr() {
         double val = std::stod(tok.value);
         return std::make_shared<ast::FloatLiteral>(val);
     }
+  if (tok.kind == pyc::lexer::TokenType::FSTRING_START) {
+        advance();
+        std::vector<std::shared_ptr<ast::Expr>> parts;
+        while (has_more() && current().kind != pyc::lexer::TokenType::FSTRING_END) {
+            if (current().kind == pyc::lexer::TokenType::FSTRING_MIDDLE) {
+                std::string s = current().value;
+                advance();
+                parts.push_back(std::make_shared<ast::StrLiteral>(std::move(s)));
+            } else if (current().kind == pyc::lexer::TokenType::LBRACE) {
+                advance();
+                auto expr = parse_expr();
+                if (has_more() && current().kind == pyc::lexer::TokenType::RBRACE) {
+                    advance();
+                }
+                parts.push_back(std::make_shared<ast::FormattedValue>(expr));
+            } else {
+                advance();
+            }
+        }
+        if (has_more() && current().kind == pyc::lexer::TokenType::FSTRING_END) {
+            advance();
+        }
+        return std::make_shared<ast::JoinedStr>(std::move(parts));
+    }
+    
     if (tok.kind == pyc::lexer::TokenType::STR_LITERAL) {
         advance();
         std::string s = tok.value;
@@ -647,7 +773,34 @@ std::shared_ptr<ast::Expr> Parser::parse_primary_expr() {
         // Check for subscript
         while (has_more() && current().kind == pyc::lexer::TokenType::LBRACKET) {
             advance();
-            auto slice = parse_expr();
+            std::shared_ptr<ast::Expr> slice;
+            
+            // Check for slice notation (a[1:3] or a[1:3:2])
+            if (has_more() && current().kind == pyc::lexer::TokenType::COLON) {
+                advance();
+                std::shared_ptr<ast::Expr> start, stop, step;
+                if (has_more() && current().kind != pyc::lexer::TokenType::RBRACKET) {
+                    start = parse_expr();
+                }
+                if (has_more() && current().kind == pyc::lexer::TokenType::COLON) {
+                    advance();
+                    if (has_more() && current().kind != pyc::lexer::TokenType::RBRACKET) {
+                        stop = parse_expr();
+                    }
+                    if (has_more() && current().kind == pyc::lexer::TokenType::COLON) {
+                        advance();
+                        if (has_more() && current().kind != pyc::lexer::TokenType::RBRACKET) {
+                            step = parse_expr();
+                        }
+                    }
+                }
+                slice = std::make_shared<ast::SliceExpr>(start, stop, step);
+            } else {
+                // Regular index
+                if (has_more() && current().kind != pyc::lexer::TokenType::RBRACKET) {
+                    slice = parse_expr();
+                }
+            }
             if (has_more() && current().kind == pyc::lexer::TokenType::RBRACKET) advance();
             expr = std::make_shared<ast::SubscriptExpr>(expr, slice);
         }

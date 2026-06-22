@@ -104,6 +104,16 @@ public:
     Expr* slice() const { return slice_.get(); }
 };
 
+class SliceExpr final : public Expr {
+    std::shared_ptr<Expr> start_, stop_, step_;
+public:
+    SliceExpr(std::shared_ptr<Expr> s, std::shared_ptr<Expr> e, std::shared_ptr<Expr> t = nullptr)
+        : start_(std::move(s)), stop_(std::move(e)), step_(std::move(t)) {}
+    Expr* start() const { return start_.get(); }
+    Expr* stop() const { return stop_.get(); }
+    Expr* step() const { return step_.get(); }
+};
+
 class ListExpr final : public Expr {
     std::vector<std::shared_ptr<Expr>> elems_;
 public:
@@ -133,6 +143,16 @@ class AssignStmt final : public Stmt {
     std::shared_ptr<Expr> value_;
 public:
     AssignStmt(std::vector<std::string> t, std::shared_ptr<Expr> v)
+        : targets_(std::move(t)), value_(std::move(v)) {}
+    const auto& targets() const { return targets_; }
+    Expr* value() const { return value_.get(); }
+};
+
+class TupleAssignStmt final : public Stmt {
+    std::vector<std::shared_ptr<Expr>> targets_;
+    std::shared_ptr<Expr> value_;
+public:
+    TupleAssignStmt(std::vector<std::shared_ptr<Expr>> t, std::shared_ptr<Expr> v)
         : targets_(std::move(t)), value_(std::move(v)) {}
     const auto& targets() const { return targets_; }
     Expr* value() const { return value_.get(); }
@@ -198,23 +218,27 @@ public:
     struct Arg { std::string name; };
     std::vector<Arg> args_;
     std::vector<std::shared_ptr<Stmt>> body_;
-    FunctionDef(std::string n, std::vector<Arg> a, std::vector<std::shared_ptr<Stmt>> b)
-        : name_(std::move(n)), args_(std::move(a)), body_(std::move(b)) {}
+    std::vector<std::shared_ptr<Expr>> decorators_;
+    FunctionDef(std::string n, std::vector<Arg> a, std::vector<std::shared_ptr<Stmt>> b, std::vector<std::shared_ptr<Expr>> d = {})
+        : name_(std::move(n)), args_(std::move(a)), body_(std::move(b)), decorators_(std::move(d)) {}
     const std::string& name() const { return name_; }
     const auto& args() const { return args_; }
     const auto& body() const { return body_; }
+    const auto& decorators() const { return decorators_; }
 };
 
 class ClassDef final : public Stmt {
     std::string name_;
     std::vector<std::string> bases_;
     std::vector<std::shared_ptr<Stmt>> body_;
+    std::vector<std::shared_ptr<Expr>> decorators_;
 public:
-    ClassDef(std::string n, std::vector<std::string> b, std::vector<std::shared_ptr<Stmt>> bd)
-        : name_(std::move(n)), bases_(std::move(b)), body_(std::move(bd)) {}
+    ClassDef(std::string n, std::vector<std::string> b, std::vector<std::shared_ptr<Stmt>> bd, std::vector<std::shared_ptr<Expr>> d = {})
+        : name_(std::move(n)), bases_(std::move(b)), body_(std::move(bd)), decorators_(std::move(d)) {}
     const std::string& name() const { return name_; }
     const auto& bases() const { return bases_; }
     const auto& body() const { return body_; }
+    const auto& decorators() const { return decorators_; }
 };
 
 class PassStmt final : public Stmt {};
@@ -429,6 +453,34 @@ class AwaitExpr final : public Expr {
 public:
     explicit AwaitExpr(std::shared_ptr<Expr> v) : val_(std::move(v)) {}
     Expr* value() const { return val_.get(); }
+};
+
+class NamedExpr final : public Expr {
+    std::string name_;
+    std::shared_ptr<Expr> value_;
+public:
+    NamedExpr(std::string n, std::shared_ptr<Expr> v)
+        : name_(std::move(n)), value_(std::move(v)) {}
+    const std::string& name() const { return name_; }
+    Expr* value() const { return value_.get(); }
+};
+
+class FormattedValue final : public Expr {
+    std::shared_ptr<Expr> expr_;
+    std::string conversion_;
+public:
+    FormattedValue(std::shared_ptr<Expr> e, std::string c = "")
+        : expr_(std::move(e)), conversion_(std::move(c)) {}
+    Expr* expr() const { return expr_.get(); }
+    const std::string& conversion() const { return conversion_; }
+};
+
+class JoinedStr final : public Expr {
+    std::vector<std::shared_ptr<Expr>> parts_;
+public:
+    JoinedStr(std::vector<std::shared_ptr<Expr>> p)
+        : parts_(std::move(p)) {}
+    const auto& parts() const { return parts_; }
 };
 
 // ===== Module =====

@@ -46,6 +46,10 @@ void IRBuilder::build_stmt(const ast::Stmt& stmt) {
         build_while_stmt(*ws);
     } else if (auto* as = dynamic_cast<const ast::AssignStmt*>(&stmt)) {
         build_assign_stmt(*as);
+    } else if (auto* tas = dynamic_cast<const ast::TupleAssignStmt*>(&stmt)) {
+        build_tuple_assign_stmt(*tas);
+    } else if (auto* ne = dynamic_cast<const ast::NamedExpr*>(&stmt)) {
+        build_named_expr(*ne);
     } else if (auto* ret = dynamic_cast<const ast::ReturnStmt*>(&stmt)) {
         build_return_stmt(*ret);
     } else if (auto* aug = dynamic_cast<const ast::AugAssignStmt*>(&stmt)) {
@@ -66,6 +70,8 @@ void IRBuilder::build_stmt(const ast::Stmt& stmt) {
         build_with_stmt(*wt);
     } else if (auto* tr = dynamic_cast<const ast::TryStmt*>(&stmt)) {
         build_try_stmt(*tr);
+    } else if (auto* ms = dynamic_cast<const ast::MatchStmt*>(&stmt)) {
+        build_match_stmt(*ms);
     } else if (auto* br = dynamic_cast<const ast::BreakStmt*>(&stmt)) {
         build_break_stmt();
     } else if (auto* co = dynamic_cast<const ast::ContinueStmt*>(&stmt)) {
@@ -118,8 +124,27 @@ void IRBuilder::build_function(const ast::FunctionDef& func) {
         }
     }
     
-    module->functions[func.name()] = func_ir;
+     module->functions[func.name()] = func_ir;
     module->func_list.push_back(func_ir);
+    
+    // Apply decorators
+    for (auto& dec_expr : func.decorators()) {
+        auto dec_func_id = build_expr(*dec_expr);
+        auto* dec_call = current_func_->new_inst(IRInstKind::CALL, "decorator_apply");
+        
+        dec_call->operands.push_back(dec_func_id);
+        
+        // Load the function being decorated
+        auto* func_load = current_func_->new_inst(IRInstKind::LOADGLOBAL, func.name());
+        dec_call->operands.push_back(func_load->id);
+        
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(dec_call));
+        
+        // Store decorated function back
+        auto* store = current_func_->new_inst(IRInstKind::STOREGLOBAL, func.name());
+        store->operands.push_back(dec_call->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
+    }
 }
 
 void IRBuilder::build_class(const ast::ClassDef& cls) {
@@ -376,6 +401,51 @@ void IRBuilder::build_assign_stmt(const ast::AssignStmt& as) {
         store->operands.push_back(val);
         current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
     }
+}
+
+void IRBuilder::build_tuple_assign_stmt(const ast::TupleAssignStmt& tas) {
+    auto val = build_expr(*tas.value());
+    
+    // The value should be a tuple/list, extract elements by index
+    for (size_t i = 0; i < tas.targets().size(); i++) {
+        auto* target = tas.targets()[i].get();
+        if (auto* name = dynamic_cast<const ast::Name*>(target)) {
+            auto slot = alloc_local(name->id());
+            
+            // Emit LIST_GET to extract element i from the tuple
+            auto* list_get = current_func_->new_inst(IRInstKind::LIST_GET, "tuple_get");
+            list_get->operands.push_back(val);
+            
+            // Create index constant
+            auto* idx_const = current_func_->new_inst(IRInstKind::LOADCONST_INT, "idx");
+            idx_const->is_const = true;
+            idx_const->const_val = static_cast<double>(i);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(idx_const));
+            list_get->operands.push_back(idx_const->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(list_get));
+            
+            auto* store = current_func_->new_inst(IRInstKind::STORELOCAL, name->id());
+            store->operands.push_back(slot);
+            store->operands.push_back(list_get->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
+        }
+    }
+}
+
+void IRBuilder::build_named_expr(const ast::NamedExpr& ne) {
+    auto val = build_expr(*ne.value());
+    
+    // Store in local variable and return the value
+    auto slot = alloc_local(ne.name());
+    auto* store = current_func_->new_inst(IRInstKind::STORELOCAL, ne.name());
+    store->operands.push_back(slot);
+    store->operands.push_back(val);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(store));
+    
+    // Return the stored value
+    auto* load = current_func_->new_inst(IRInstKind::LOADLOCAL, ne.name());
+    load->operands.push_back(slot);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(load));
 }
 
 void IRBuilder::build_return_stmt(const ast::ReturnStmt& ret) {
@@ -651,11 +721,20 @@ void IRBuilder::build_with_stmt(const ast::WithStmt& wt) {
 void IRBuilder::build_try_stmt(const ast::TryStmt& tr) {
     auto try_blk = current_func_->new_block("try_body");
     auto except_blk = current_func_->new_block("except_body");
+    auto finally_blk = current_func_->new_block("finally_body");
     auto merge_blk = current_func_->new_block("try_merge");
     
+    bool has_finally = !tr.finalbody().empty();
+    
     try_blk->successors.push_back(except_blk->id);
-    try_blk->successors.push_back(merge_blk->id);
+    if (has_finally) {
+        try_blk->successors.push_back(finally_blk->id);
+    } else {
+        try_blk->successors.push_back(merge_blk->id);
+    }
+    except_blk->successors.push_back(finally_blk->id);
     except_blk->successors.push_back(merge_blk->id);
+    finally_blk->successors.push_back(merge_blk->id);
     
     current_block_ = try_blk;
     for (auto& s : tr.body()) {
@@ -668,12 +747,20 @@ void IRBuilder::build_try_stmt(const ast::TryStmt& tr) {
         auto* branch_inst = current_func_->new_inst(IRInstKind::BRANCH, "try_branch");
         branch_inst->operands.push_back(check_exc->id);
         branch_inst->operands.push_back(except_blk->id);
-        branch_inst->operands.push_back(merge_blk->id);
+        if (has_finally) {
+            branch_inst->operands.push_back(finally_blk->id);
+        } else {
+            branch_inst->operands.push_back(merge_blk->id);
+        }
         current_block_->successors.push_back(except_blk->id);
-        current_block_->successors.push_back(merge_blk->id);
+        if (has_finally) {
+            current_block_->successors.push_back(finally_blk->id);
+        } else {
+            current_block_->successors.push_back(merge_blk->id);
+        }
         
         auto* jump_inst = current_func_->new_inst(IRInstKind::JUMP, "try_continue");
-        jump_inst->operands.push_back(merge_blk->id);
+        jump_inst->operands.push_back(has_finally ? finally_blk->id : merge_blk->id);
         current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_inst));
     }
     
@@ -683,9 +770,99 @@ void IRBuilder::build_try_stmt(const ast::TryStmt& tr) {
             build_stmt(*s);
         }
     }
-    auto* jump_to_merge = current_func_->new_inst(IRInstKind::JUMP, "except_jump");
-    jump_to_merge->operands.push_back(merge_blk->id);
-    current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_to_merge));
+    auto* jump_to_finally_or_merge = current_func_->new_inst(IRInstKind::JUMP, "except_jump");
+    jump_to_finally_or_merge->operands.push_back(has_finally ? finally_blk->id : merge_blk->id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_to_finally_or_merge));
+    
+    if (has_finally) {
+        current_block_ = finally_blk;
+        for (auto& s : tr.finalbody()) {
+            build_stmt(*s);
+        }
+        auto* jump_to_merge = current_func_->new_inst(IRInstKind::JUMP, "finally_jump");
+        jump_to_merge->operands.push_back(merge_blk->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump_to_merge));
+    }
+    
+    current_block_ = merge_blk;
+}
+
+void IRBuilder::build_match_stmt(const ast::MatchStmt& ms) {
+    // Translate match/case to nested if/elif/else
+    auto subject_id = build_expr(*ms.subject());
+    
+    auto merge_blk = current_func_->new_block("match_merge");
+    
+    for (size_t i = 0; i < ms.cases().size(); i++) {
+        auto& case_ = ms.cases()[i];
+        auto case_blk = current_func_->new_block("case_" + std::to_string(i));
+        auto case_body_blk = current_func_->new_block("case_body_" + std::to_string(i));
+        
+        // For simple value patterns, check equality
+        uint32_t cmp_id = UINT32_MAX;
+        if (auto* pat = dynamic_cast<const ast::IntLiteral*>(case_.patterns[0].get())) {
+            auto* expected = current_func_->new_inst(IRInstKind::LOADCONST_INT, "expected");
+            expected->is_const = true;
+            expected->const_val = pat->value();
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(expected));
+            
+            auto* cmp = current_func_->new_inst(IRInstKind::EQ, "match_cmp");
+            cmp->operands.push_back(subject_id);
+            cmp->operands.push_back(expected->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(cmp));
+            cmp_id = cmp->id;
+        } else if (auto* pat = dynamic_cast<const ast::StrLiteral*>(case_.patterns[0].get())) {
+            auto* expected = current_func_->new_inst(IRInstKind::LOADCONST_STR, "expected");
+            expected->is_const = true;
+            expected->const_val = pat->value();
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(expected));
+            
+            auto* cmp = current_func_->new_inst(IRInstKind::EQ, "match_cmp");
+            cmp->operands.push_back(subject_id);
+            cmp->operands.push_back(expected->id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(cmp));
+            cmp_id = cmp->id;
+        } else {
+            // For other patterns, just fall through (treat as always true)
+            auto* true_const = current_func_->new_inst(IRInstKind::LOADCONST_INT, "true");
+            true_const->is_const = true;
+            true_const->const_val = 1.0;
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(true_const));
+            cmp_id = true_const->id;
+        }
+        
+        auto* branch = current_func_->new_inst(IRInstKind::BRANCH, "match_branch");
+        branch->operands.push_back(cmp_id);
+        branch->operands.push_back(case_body_blk->id);
+        branch->operands.push_back(i + 1 < ms.cases().size() ? case_blk->id : merge_blk->id);
+        current_block_->successors.push_back(case_body_blk->id);
+        current_block_->successors.push_back(i + 1 < ms.cases().size() ? case_blk->id : merge_blk->id);
+        
+        current_block_ = case_body_blk;
+        
+        // Evaluate guard if present
+        if (case_.guard) {
+            auto guard_id = build_expr(*case_.guard);
+            auto* guard_branch = current_func_->new_inst(IRInstKind::BRANCH, "guard_branch");
+            guard_branch->operands.push_back(guard_id);
+            guard_branch->operands.push_back(case_body_blk->id);
+            guard_branch->operands.push_back(merge_blk->id);
+            current_block_->successors.push_back(case_body_blk->id);
+            current_block_->successors.push_back(merge_blk->id);
+        }
+        
+        for (auto& s : case_.body) {
+            build_stmt(*s);
+        }
+        
+        auto* jump = current_func_->new_inst(IRInstKind::JUMP, "match_jump");
+        jump->operands.push_back(merge_blk->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(jump));
+        
+        if (i + 1 < ms.cases().size()) {
+            current_block_ = case_blk;
+        }
+    }
     
     current_block_ = merge_blk;
 }
@@ -752,6 +929,10 @@ uint32_t IRBuilder::build_expr(const ast::Expr& expr) {
     if (auto* comp = dynamic_cast<const ast::SetComp*>(&expr)) return build_set_comp(*comp);
     if (auto* comp = dynamic_cast<const ast::GenExpr*>(&expr)) return build_gen_expr(*comp);
     if (auto* comp = dynamic_cast<const ast::DictComp*>(&expr)) return build_dict_comp(*comp);
+   if (auto* j = dynamic_cast<const ast::JoinedStr*>(&expr)) return build_joined_str(*j);
+    if (auto* fv = dynamic_cast<const ast::FormattedValue*>(&expr)) return build_formatted_value(*fv);
+    if (auto* y = dynamic_cast<const ast::YieldExpr*>(&expr)) return build_yield(*y);
+    if (auto* a = dynamic_cast<const ast::AwaitExpr*>(&expr)) return build_await(*a);
     return UINT32_MAX;
 }
 
@@ -1035,6 +1216,48 @@ uint32_t IRBuilder::build_tuple(const ast::TupleExpr& expr) {
 
 uint32_t IRBuilder::build_subscript(const ast::SubscriptExpr& expr) {
     auto obj_id = build_expr(*expr.obj());
+    
+    auto* slice = expr.slice();
+    if (auto* slice_expr = dynamic_cast<const ast::SliceExpr*>(slice)) {
+        // Slice notation: a[start:stop:step]
+        auto* inst = current_func_->new_inst(IRInstKind::SLICE_GET, "slice");
+        inst->operands.push_back(obj_id);
+        
+        if (slice_expr->start()) {
+            inst->operands.push_back(build_expr(*slice_expr->start()));
+        } else {
+            auto* zero = current_func_->new_inst(IRInstKind::LOADCONST_INT, "slice_start");
+            zero->is_const = true;
+            zero->const_val = 0.0;
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(zero));
+            inst->operands.push_back(zero->id);
+        }
+        
+        if (slice_expr->stop()) {
+            inst->operands.push_back(build_expr(*slice_expr->stop()));
+        } else {
+            auto* none = current_func_->new_inst(IRInstKind::LOADCONST_INT, "slice_stop");
+            none->is_const = true;
+            none->const_val = -1.0;  // -1 means no limit
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(none));
+            inst->operands.push_back(none->id);
+        }
+        
+        if (slice_expr->step()) {
+            inst->operands.push_back(build_expr(*slice_expr->step()));
+        } else {
+            auto* one = current_func_->new_inst(IRInstKind::LOADCONST_INT, "slice_step");
+            one->is_const = true;
+            one->const_val = 1.0;
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(one));
+            inst->operands.push_back(one->id);
+        }
+        
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(inst));
+        return inst->id;
+    }
+    
+    // Regular index
     auto slice_id = build_expr(*expr.slice());
     
     auto* inst = current_func_->new_inst(IRInstKind::LIST_GET, "subscript");
@@ -1543,6 +1766,84 @@ uint32_t IRBuilder::build_dict_comp(const ast::DictComp& expr) {
     final_load->operands.push_back(result_slot);
     
     return final_load->id;
+}
+
+uint32_t IRBuilder::build_formatted_value(const ast::FormattedValue& expr) {
+    auto expr_id = build_expr(*expr.expr());
+    
+    // Convert value to string if needed
+    auto* str_call = current_func_->new_inst(IRInstKind::CALL, "str");
+    str_call->operands.push_back(expr_id);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(str_call));
+    
+    return str_call->id;
+}
+
+uint32_t IRBuilder::build_joined_str(const ast::JoinedStr& expr) {
+    // Build f-string by concatenating all parts
+    if (expr.parts().empty()) {
+        auto* empty_str = current_func_->new_inst(IRInstKind::LOADCONST_STR, "empty");
+        empty_str->is_const = true;
+        empty_str->const_val = "";
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(empty_str));
+        return empty_str->id;
+    }
+    
+    // Start with first part
+    uint32_t result_id = build_expr(*expr.parts()[0]);
+    
+     // Concatenate remaining parts
+    for (size_t i = 1; i < expr.parts().size(); i++) {
+        auto* concat = current_func_->new_inst(IRInstKind::CALL, "pyc_str_concat");
+        auto* left_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "concat_left");
+        auto left_slot = alloc_local("__concat_left__");
+        auto* left_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__concat_left__");
+        left_store->operands.push_back(left_slot);
+        left_store->operands.push_back(result_id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(left_store));
+        left_load->operands.push_back(left_slot);
+        concat->operands.push_back(left_load->id);
+        
+        auto right_id = build_expr(*expr.parts()[i]);
+        auto* right_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "concat_right");
+        auto right_slot = alloc_local("__concat_right__");
+        auto* right_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__concat_right__");
+        right_store->operands.push_back(right_slot);
+        right_store->operands.push_back(right_id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(right_store));
+        right_load->operands.push_back(right_slot);
+        concat->operands.push_back(right_load->id);
+        
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(concat));
+        result_id = concat->id;
+    }
+    
+    return result_id;
+}
+
+uint32_t IRBuilder::build_yield(const ast::YieldExpr& expr) {
+    uint32_t val = UINT32_MAX;
+    if (expr.value()) {
+        val = build_expr(*expr.value());
+    }
+    
+    auto* yield_inst = current_func_->new_inst(IRInstKind::CALL, "pyc_yield");
+    if (val != UINT32_MAX) {
+        yield_inst->operands.push_back(val);
+    }
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(yield_inst));
+    
+    return yield_inst->id;
+}
+
+uint32_t IRBuilder::build_await(const ast::AwaitExpr& expr) {
+    // Simplified: treat await as a regular call
+    auto* await_inst = current_func_->new_inst(IRInstKind::CALL, "pyc_await");
+    auto val = build_expr(*expr.value());
+    await_inst->operands.push_back(val);
+    current_block_->instrs.push_back(std::unique_ptr<IRInst>(await_inst));
+    
+    return await_inst->id;
 }
 
 // ===== Helper methods =====

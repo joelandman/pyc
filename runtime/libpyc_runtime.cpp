@@ -454,4 +454,39 @@ pyc_obj_t pyc_import_relative(const char* module_name, int level, const char* pa
     return from_pyobj(result);
 }
 
+pyc_obj_t pyc_slice(pyc_obj_t list_obj, int64_t start, int64_t stop, int64_t step) {
+    auto* lst = to_pyobj(list_obj);
+    if (!lst || !lst->list_elements) return nullptr;
+    
+    auto* result = PyObjectFactory::create_list(nullptr);
+    size_t n = lst->list_elements->size();
+    
+    // Handle negative indices and defaults
+    if (start < 0) start = n + start;
+    if (start < 0) start = 0;
+    if (stop < 0) stop = n + stop;
+    if (stop < 0) stop = 0;
+    if (stop == -1) stop = n;  // -1 means no limit
+    if (step == 0) step = 1;
+    
+    for (int64_t i = start; i < stop && i < (int64_t)n; i += step) {
+        auto* elem = (*lst->list_elements)[static_cast<size_t>(i)];
+        pyc_ref_inc(elem);
+        pyc_list_set(result, i - start, elem);
+    }
+    
+    return from_pyobj(result);
+}
+
+pyc_obj_t pyc_str_concat(pyc_obj_t left, pyc_obj_t right) {
+    auto* left_obj = to_pyobj(left);
+    auto* right_obj = to_pyobj(right);
+    if (!left_obj || !right_obj) return nullptr;
+    
+    std::string left_str = left_obj->str_value ? *left_obj->str_value : "";
+    std::string right_str = right_obj->str_value ? *right_obj->str_value : "";
+    
+    return from_pyobj(PyObjectFactory::create_str(nullptr, left_str + right_str));
+}
+
 } // namespace pyc::runtime

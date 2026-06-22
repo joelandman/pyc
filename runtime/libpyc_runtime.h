@@ -88,4 +88,10 @@ void pyc_clear_exception();
 pyc_obj_t pyc_import_module(const char* module_name);
 pyc_obj_t pyc_import_relative(const char* module_name, int level, const char* parent_module);
 
+// Slice support
+pyc_obj_t pyc_slice(pyc_obj_t list_obj, int64_t start, int64_t stop, int64_t step);
+
+// String concatenation
+pyc_obj_t pyc_str_concat(pyc_obj_t left, pyc_obj_t right);
+
 } // namespace pyc::runtime

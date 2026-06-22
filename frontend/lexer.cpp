@@ -24,8 +24,13 @@ const char* token_type_name(TokenType t) {
         case TokenType::GE: return "GE";
         case TokenType::EQ: return "EQ";
         case TokenType::NE: return "NE";
-        case TokenType::ASSIGN: return "ASSIGN";
-        case TokenType::COLON: return "COLON";
+   case TokenType::ASSIGN: return "ASSIGN";
+    case TokenType::WALRUS: return "WALRUS";
+    case TokenType::FSTRING_START: return "FSTRING_START";
+    case TokenType::FSTRING_MIDDLE: return "FSTRING_MIDDLE";
+   case TokenType::FSTRING_END: return "FSTRING_END";
+    case TokenType::AT: return "AT";
+    case TokenType::COLON: return "COLON";
         case TokenType::COMMA: return "COMMA";
         case TokenType::LPAREN: return "LPAREN";
         case TokenType::RPAREN: return "RPAREN";
@@ -126,6 +131,50 @@ std::vector<Token> tokenize(const std::string& source) {
         }
 
         // String literals
+        if (source[pos] == 'f' && pos + 1 < len && (source[pos + 1] == '"' || source[pos + 1] == '\'')) {
+            // f-string
+            char delim = source[pos + 1];
+            size_t start = pos;
+            pos += 2; // skip f"
+            tokens.push_back({TokenType::FSTRING_START, "f"});
+            
+            while (pos < len) {
+                if (source[pos] == delim) {
+                    pos++; // skip closing quote
+                    tokens.push_back({TokenType::FSTRING_END, ""});
+                    break;
+                }
+                if (source[pos] == '{' && pos + 1 < len && source[pos + 1] != '{') {
+                    // Expression start - emit collected text as FSTRING_MIDDLE
+                    std::string text = source.substr(start, pos - start);
+                    if (!text.empty()) {
+                        tokens.push_back({TokenType::FSTRING_MIDDLE, text});
+                    }
+                    start = pos + 1; // skip {
+                    tokens.push_back({TokenType::LBRACE, "{"});
+                    ++pos;
+                    continue;
+                }
+                if (source[pos] == '}' && pos + 1 < len && source[pos + 1] != '}') {
+                    // Expression end
+                    std::string text = source.substr(start, pos - start);
+                    if (!text.empty()) {
+                        tokens.push_back({TokenType::FSTRING_MIDDLE, text});
+                    }
+                    tokens.push_back({TokenType::RBRACE, "}"});
+                    start = pos + 1;
+                    ++pos;
+                    continue;
+                }
+                if (source[pos] == '\\' && pos + 1 < len) {
+                    pos += 2; // skip escaped char
+                    continue;
+                }
+                ++pos;
+            }
+            continue;
+        }
+        
         if (source[pos] == '"' || source[pos] == '\'') {
             char delim = source[pos];
             size_t start = pos;
@@ -196,6 +245,9 @@ std::vector<Token> tokenize(const std::string& source) {
         }
 
         // Operators
+        if (source[pos] == ':' && pos + 1 < len && source[pos + 1] == '=') {
+            tokens.push_back({TokenType::WALRUS, ":="}); pos += 2; continue;
+        }
         if (source[pos] == '=' && pos + 1 < len && source[pos + 1] != '=') {
             tokens.push_back({TokenType::ASSIGN, "="}); ++pos; continue;
         }
@@ -250,8 +302,9 @@ std::vector<Token> tokenize(const std::string& source) {
             tokens.push_back({TokenType::NE, "!="}); ++pos; ++pos; continue;
         }
 
-        // Punctuation
+       // Punctuation
         switch (source[pos]) {
+            case '@': tokens.push_back({TokenType::AT, "@"}); break;
             case ':': tokens.push_back({TokenType::COLON, ":"}); break;
             case ',': tokens.push_back({TokenType::COMMA, ","}); break;
             case '(': tokens.push_back({TokenType::LPAREN, "("}); break;

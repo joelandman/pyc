@@ -381,6 +381,26 @@ private:
                 break;
             }
 
+            case pyc::ir::IRInstKind::SLICE_GET: {
+                if (inst->operands.size() >= 4) {
+                    auto* slice_fn = mod_->getFunction("pyc_slice");
+                    if (slice_fn) {
+                        std::vector<llvm::Value*> args = {
+                            val(inst->operands[0]) ? val(inst->operands[0]) : llvm::ConstantPointerNull::get(get_i8_ptr(ctx_)),
+                            val(inst->operands[1]) ? val(inst->operands[1]) : i64(),
+                            val(inst->operands[2]) ? val(inst->operands[2]) : i64(),
+                            val(inst->operands[3]) ? val(inst->operands[3]) : i64()
+                        };
+                        record(builder_.CreateCall(slice_fn, args, "slice"));
+                    } else {
+                        record(i64());
+                    }
+                } else {
+                    record(i64());
+                }
+                break;
+            }
+
             case pyc::ir::IRInstKind::MAKE_DICT: {
                 auto* dict_fn = mod_->getFunction("pyc_new_dict");
                 if (dict_fn) {
