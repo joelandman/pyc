@@ -26,11 +26,15 @@ pyc/
 │   └── llir_gen.h/cpp           # Legacy IR → LLVM IR generator
 ├── runtime/                     # Runtime system
 │   ├── object.h/cpp             # PyObject model, PyTypeObject, factory
-│   ├── builtins.cpp             # 40+ Python built-in functions
-│   └── gc.cpp                   # Mark-and-sweep garbage collector
+│   ├── builtins.cpp             # 60+ Python built-in functions
+│   ├── gc.cpp                   # Mark-and-sweep garbage collector
+│   └── import_system.cpp/h      # File-based module loading
 ├── examples/
 │   └── example.py               # Comprehensive Python test program
 ├── test/
+│   ├── benchmarks/              # Benchmark Game slowest implementations
+│   ├── import_tests/            # Import system test suite
+│   └── packages/                # Package structure test fixtures
 ├── main.cpp                     # Compiler driver & test runner
 ├── CMakeLists.txt               # Build configuration
 ├── PLANS.md                     # Correctness, completeness, performance plans
@@ -39,27 +43,29 @@ pyc/
 
 ## Current Status
 
-### ✅ COMPLETED
+### COMPLETED
 1. **Parser**: Self-developed recursive descent parser with full visitor pattern (~700 lines of C++)
-2. **AST**: Extended AST nodes for all Python 3 constructs (60+ node types including DictLiteral, TupleExpr)
-3. **IR**: Intermediate representation with types, instructions, control flow, short-circuit evaluation
-4. **Runtime**: PyObject model with proper string/list/dict/function/tuple storage, 45+ builtins
+2. **AST**: Extended AST nodes for all Python 3 constructs (60+ node types)
+3. **IR**: Intermediate representation with 53 instruction types, types, instructions, control flow, short-circuit evaluation
+4. **Runtime**: PyObject model with proper string/list/dict/function/tuple storage, 60+ builtins
 5. **Garbage Collector**: Fixed mark-and-sweep GC with proper refcounting and sweep
 6. **LLVM Backend**: IR-to-LLVM translation with runtime function calls, O2 optimization enabled
 7. **Interpreter**: Frame-stack based interpreter with proper ownership (unique_ptr), globals/locals support
 8. **Build System**: CMake configuration with LLVM 21 dependency discovery
 9. **Test Suite**: Built-in test runner (`--test lexer|ir|codegen`) - all tests pass
-10. **Import System**: File-based module loading, packages, submodules, name binding, sys.path support
+10. **Import System**: File-based module loading, packages, submodules, name binding, relative imports, namespace packages, sys.path support
 11. **Correctness Fixes**: All 18 issues in REMEDIATION.md fixed or verified fixed
-12. **Core Language Features**: Dict literals, tuple literals, `in`/`is` operators, short-circuit `and`/`or`, `from...import` name binding
+12. **Core Language Features**: Dict/tuple literals, `in`/`is` operators, short-circuit `and`/`or`, tuple unpacking, slice notation, f-strings, decorators, match/case, async/await, yield
 
 ### TODO (Next Steps)
 1. **Error Recovery**: Better error messages for parse failures
-2. **Python 3 Completeness**: async/await, match/case, descriptors, walrus operator, f-strings, decorators
-3. **Testing**: Run real Python 3 programs through the compiler, add test files
-4. **Performance**: SSA form, constant propagation, inlining, register allocation
-5. **Class System**: Full class inheritance, attributes, method calls
-6. **Exception Handling**: try/except/else/finally and raise statements (finally not yet implemented)
+2. **Walrus Operator**: Parser handler for `:=` token (lexer + AST + IR builder done)
+3. **`sys` Module**: `sys.argv`, `sys.platform`, `sys.version`, `sys.exit()`
+4. **`repr()`**: Proper type-specific formatting (strings with quotes, lists, dicts)
+5. **`__main__` Detection**: Detect if module is run as main vs imported
+6. **OOP Features**: `super()`, `property`, `staticmethod`, `classmethod`
+7. **Performance**: Constant folding, type specialization, builtin inlining, arena allocator
+8. **Testing**: End-to-end test suite with 50+ test cases, CPython benchmark comparison
 
 ## Dependencies
 - **LLVM 17+**: Code generation (only major external dependency)
@@ -91,3 +97,4 @@ cmake --build build
 - **PyObject model**: Mirrors CPython's object model with proper memory management
 - **LLVM IR**: Direct emission to LLVM IR for optimization and native codegen
 - **Minimal runtime**: Only critical stdlib shipped; rest compiled at runtime
+- **exec()/eval() excluded**: Intentionally unsupported due to security implications
