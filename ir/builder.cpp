@@ -432,7 +432,7 @@ void IRBuilder::build_tuple_assign_stmt(const ast::TupleAssignStmt& tas) {
     }
 }
 
-void IRBuilder::build_named_expr(const ast::NamedExpr& ne) {
+uint32_t IRBuilder::build_named_expr(const ast::NamedExpr& ne) {
     auto val = build_expr(*ne.value());
     
     // Store in local variable and return the value
@@ -446,6 +446,7 @@ void IRBuilder::build_named_expr(const ast::NamedExpr& ne) {
     auto* load = current_func_->new_inst(IRInstKind::LOADLOCAL, ne.name());
     load->operands.push_back(slot);
     current_block_->instrs.push_back(std::unique_ptr<IRInst>(load));
+    return load->id;
 }
 
 void IRBuilder::build_return_stmt(const ast::ReturnStmt& ret) {
@@ -960,6 +961,7 @@ uint32_t IRBuilder::build_expr(const ast::Expr& expr) {
     if (auto* fv = dynamic_cast<const ast::FormattedValue*>(&expr)) return build_formatted_value(*fv);
     if (auto* y = dynamic_cast<const ast::YieldExpr*>(&expr)) return build_yield(*y);
     if (auto* a = dynamic_cast<const ast::AwaitExpr*>(&expr)) return build_await(*a);
+    if (auto* ne = dynamic_cast<const ast::NamedExpr*>(&expr)) return build_named_expr(*ne);
     return UINT32_MAX;
 }
 

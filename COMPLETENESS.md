@@ -124,11 +124,12 @@ Sorted by criticality (most critical at top).
 
 ### 13. Add Walrus Operator (`:=`)
 
-**Status: PARTIAL**
+**Status: FIXED**
 - `WALRUS` token added to lexer
 - `NamedExpr` AST node added
-- `build_named_expr()` in IR builder
-- **Parser does NOT yet handle the `WALRUS` token**
+- `build_named_expr()` in IR builder stores value in local and returns it
+- Parser handles `:=` in `parse_primary_expr()` for expression contexts
+- Note: Pre-existing parser bug causes errors when function call appears at module level after function containing if statement (unrelated to walrus)
 
 ### 14. Add f-strings
 

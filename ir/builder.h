@@ -41,7 +41,7 @@ private:
     void build_assign_stmt(const ast::AssignStmt& as);
     void build_tuple_assign_stmt(const ast::TupleAssignStmt& tas);
     void build_return_stmt(const ast::ReturnStmt& ret);
-    void build_named_expr(const ast::NamedExpr& ne);
+    uint32_t build_named_expr(const ast::NamedExpr& ne);
     void build_augassign_stmt(const ast::AugAssignStmt& aug);
     void build_import_stmt(const ast::ImportStmt& imp);
     void build_class_call(const ast::CallExpr& call, const std::string& class_name);

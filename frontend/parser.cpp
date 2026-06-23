@@ -747,6 +747,13 @@ std::shared_ptr<ast::Expr> Parser::parse_primary_expr() {
         if (name == "False") return std::make_shared<ast::BoolLiteral>(false);
         if (name == "None") return std::make_shared<ast::NoneLiteral>();
 
+        // Walrus operator: name := value
+        if (has_more() && current().kind == pyc::lexer::TokenType::WALRUS) {
+            advance();
+            auto value = parse_expr();
+            return std::make_shared<ast::NamedExpr>(name, std::move(value));
+        }
+
         // Name expression
         std::shared_ptr<ast::Expr> expr = std::make_shared<ast::Name>(name);
 
