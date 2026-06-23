@@ -720,18 +720,26 @@ PyValue Interpreter::handle_and(std::unique_ptr<CallFrame>& frame, IRInst& inst)
     if (inst.operands.size() < 2) return PyValue(int64_t(0));
     auto lhs = get_slot(frame.get(), inst.operands[0]);
     auto rhs = get_slot(frame.get(), inst.operands[1]);
+    
+    // Python semantics: return left if falsy, else return right
     bool lv = std::holds_alternative<int64_t>(lhs) ? std::get<int64_t>(lhs) : false;
-    bool rv = std::holds_alternative<int64_t>(rhs) ? std::get<int64_t>(rhs) : false;
-    return PyValue(int64_t(lv && rv ? 1 : 0));
+    if (!lv) {
+        return lhs;  // Return left operand (falsy value)
+    }
+    return rhs;  // Return right operand
 }
 
 PyValue Interpreter::handle_or(std::unique_ptr<CallFrame>& frame, IRInst& inst) {
     if (inst.operands.size() < 2) return PyValue(int64_t(0));
     auto lhs = get_slot(frame.get(), inst.operands[0]);
     auto rhs = get_slot(frame.get(), inst.operands[1]);
+    
+    // Python semantics: return left if truthy, else return right
     bool lv = std::holds_alternative<int64_t>(lhs) ? std::get<int64_t>(lhs) : false;
-    bool rv = std::holds_alternative<int64_t>(rhs) ? std::get<int64_t>(rhs) : false;
-    return PyValue(int64_t(lv || rv ? 1 : 0));
+    if (lv) {
+        return lhs;  // Return left operand (truthy value)
+    }
+    return rhs;  // Return right operand
 }
 
 PyValue Interpreter::handle_not(std::unique_ptr<CallFrame>& frame, IRInst& inst) {

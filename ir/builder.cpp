@@ -726,6 +726,12 @@ void IRBuilder::build_try_stmt(const ast::TryStmt& tr) {
     
     bool has_finally = !tr.finalbody().empty();
     
+    // Store exception in a local variable for propagation
+    auto exc_slot = alloc_local("__current_exception__");
+    auto* exc_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__current_exception__");
+    exc_store->operands.push_back(exc_slot);
+    exc_store->operands.push_back(UINT32_MAX);  // Will be updated when exception occurs
+    
     try_blk->successors.push_back(except_blk->id);
     if (has_finally) {
         try_blk->successors.push_back(finally_blk->id);
@@ -743,6 +749,12 @@ void IRBuilder::build_try_stmt(const ast::TryStmt& tr) {
         // Check for exception after each statement
         auto* check_exc = current_func_->new_inst(IRInstKind::CALL, "pyc_get_exception");
         current_block_->instrs.push_back(std::unique_ptr<IRInst>(check_exc));
+        
+        // Store exception in local variable
+        auto* exc_store_inst = current_func_->new_inst(IRInstKind::STORELOCAL, "__current_exception__");
+        exc_store_inst->operands.push_back(exc_slot);
+        exc_store_inst->operands.push_back(check_exc->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(exc_store_inst));
         
         auto* branch_inst = current_func_->new_inst(IRInstKind::BRANCH, "try_branch");
         branch_inst->operands.push_back(check_exc->id);
@@ -766,6 +778,21 @@ void IRBuilder::build_try_stmt(const ast::TryStmt& tr) {
     
     current_block_ = except_blk;
     for (auto& handler : tr.handlers()) {
+        // Store exception type if handler has a type
+        if (handler.type_) {
+            auto type_slot = alloc_local("__exception_type__");
+            auto* type_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__exception_type__");
+            type_store->operands.push_back(type_slot);
+            auto type_id = build_expr(*handler.type_);
+            type_store->operands.push_back(type_id);
+            current_block_->instrs.push_back(std::unique_ptr<IRInst>(type_store));
+        }
+        
+        // Store exception value in local variable
+        auto* exc_load = current_func_->new_inst(IRInstKind::LOADLOCAL, "__current_exception__");
+        exc_load->operands.push_back(exc_slot);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(exc_load));
+        
         for (auto& s : handler.body_) {
             build_stmt(*s);
         }

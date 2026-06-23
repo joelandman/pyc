@@ -722,6 +722,101 @@ PyObject* BuiltinFunctions::builtin_import(PyObject* /*self*/, std::vector<PyObj
     return PyObjectFactory::create_dict(nullptr);
 }
 
+PyObject* BuiltinFunctions::builtin_chr(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* arg = args[0];
+    uint64_t code = arg->data;
+    if (code > 0x10FFFF) {
+        return PyObjectFactory::create_str(nullptr, "");
+    }
+    std::string result;
+    if (code < 0x80) {
+        result += static_cast<char>(code);
+    } else if (code < 0x800) {
+        result += static_cast<char>(0xC0 | (code >> 6));
+        result += static_cast<char>(0x80 | (code & 0x3F));
+    } else if (code < 0x10000) {
+        result += static_cast<char>(0xE0 | (code >> 12));
+        result += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+        result += static_cast<char>(0x80 | (code & 0x3F));
+    } else {
+        result += static_cast<char>(0xF0 | (code >> 18));
+        result += static_cast<char>(0x80 | ((code >> 12) & 0x3F));
+        result += static_cast<char>(0x80 | ((code >> 6) & 0x3F));
+        result += static_cast<char>(0x80 | (code & 0x3F));
+    }
+    return PyObjectFactory::create_str(nullptr, result);
+}
+
+PyObject* BuiltinFunctions::builtin_ord(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* arg = args[0];
+    if (!arg->str_value) return PyObjectFactory::create_int(nullptr, 0);
+    std::string& s = *arg->str_value;
+    if (s.empty()) return PyObjectFactory::create_int(nullptr, 0);
+    
+    unsigned char c = static_cast<unsigned char>(s[0]);
+    return PyObjectFactory::create_int(nullptr, static_cast<int64_t>(c));
+}
+
+PyObject* BuiltinFunctions::builtin_hex(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* arg = args[0];
+    int64_t val = static_cast<int64_t>(arg->data);
+    std::string prefix = (val < 0) ? "-0x" : "0x";
+    std::string hex_str;
+    if (val == 0) hex_str = "0";
+    else {
+        hex_str = "";
+        int64_t n = std::abs(val);
+        while (n > 0) {
+            int digit = n % 16;
+            hex_str += (digit < 10) ? (char)('0' + digit) : (char)('a' + digit - 10);
+            n /= 16;
+        }
+        std::reverse(hex_str.begin(), hex_str.end());
+    }
+    return PyObjectFactory::create_str(nullptr, prefix + hex_str);
+}
+
+PyObject* BuiltinFunctions::builtin_oct(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* arg = args[0];
+    int64_t val = static_cast<int64_t>(arg->data);
+    std::string prefix = (val < 0) ? "-0o" : "0o";
+    std::string oct_str;
+    if (val == 0) oct_str = "0";
+    else {
+        oct_str = "";
+        int64_t n = std::abs(val);
+        while (n > 0) {
+            oct_str += char('0' + (n % 8));
+            n /= 8;
+        }
+        std::reverse(oct_str.begin(), oct_str.end());
+    }
+    return PyObjectFactory::create_str(nullptr, prefix + oct_str);
+}
+
+PyObject* BuiltinFunctions::builtin_bin(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty()) return nullptr;
+    auto* arg = args[0];
+    int64_t val = static_cast<int64_t>(arg->data);
+    std::string prefix = (val < 0) ? "-0b" : "0b";
+    std::string bin_str;
+    if (val == 0) bin_str = "0";
+    else {
+        bin_str = "";
+        int64_t n = std::abs(val);
+        while (n > 0) {
+            bin_str += char('0' + (n % 2));
+            n /= 2;
+        }
+        std::reverse(bin_str.begin(), bin_str.end());
+    }
+    return PyObjectFactory::create_str(nullptr, prefix + bin_str);
+}
+
 // ===== LIST METHODS =====
 
 PyObject* BuiltinFunctions::builtin_append(PyObject* /*self*/, std::vector<PyObject*> args) {
@@ -917,6 +1012,56 @@ PyObject* BuiltinFunctions::builtin_dict_clear(PyObject* /*self*/, std::vector<P
     return PyObjectFactory::get_singleton(TYPE_NONE);
 }
 
+PyObject* BuiltinFunctions::builtin_update(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2 || !args[0]->dict_entries) return PyObjectFactory::get_singleton(TYPE_NONE);
+    auto* dict = args[0];
+    auto* other = args[1];
+    
+    if (other->dict_entries) {
+        for (auto& [key, val] : *other->dict_entries) {
+            dict->dict_entries->insert_or_assign(key, val);
+            Py_INCREF(val);
+        }
+    }
+    return PyObjectFactory::get_singleton(TYPE_NONE);
+}
+
+PyObject* BuiltinFunctions::builtin_fromkeys(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty() || !args[0]->list_elements) {
+        return PyObjectFactory::create_dict(nullptr);
+    }
+    auto* keys_list = args[0];
+    PyObject* default_val = (args.size() > 1) ? args[1] : nullptr;
+    
+    auto* result = PyObjectFactory::create_dict(nullptr);
+    for (auto* key : *keys_list->list_elements) {
+        if (key->str_value) {
+            (*result->dict_entries)[*key->str_value] = default_val ? default_val : nullptr;
+            if (default_val) Py_INCREF(default_val);
+        }
+    }
+    return result;
+}
+
+PyObject* BuiltinFunctions::builtin_popitem(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.empty() || !args[0]->dict_entries || args[0]->dict_entries->empty()) {
+        return nullptr;
+    }
+    auto* dict = args[0];
+    auto it = dict->dict_entries->begin();
+    std::string key = it->first;
+    PyObject* val = it->second;
+    Py_INCREF(val);
+    dict->dict_entries->erase(it);
+    
+    auto* tuple = PyObjectFactory::create_tuple(nullptr);
+    auto* key_str = PyObjectFactory::create_str(nullptr, key);
+    Py_INCREF(key_str);
+    tuple->list_elements->push_back(key_str);
+    tuple->list_elements->push_back(val);
+    return tuple;
+}
+
 // ===== STRING METHODS =====
 
 PyObject* BuiltinFunctions::builtin_join(PyObject* /*self*/, std::vector<PyObject*> args) {
@@ -1034,6 +1179,22 @@ PyObject* BuiltinFunctions::builtin_find(PyObject* /*self*/, std::vector<PyObjec
     size_t pos = str_obj->str_value->find(sub);
     if (pos == std::string::npos) return PyObjectFactory::create_int(nullptr, -1);
     return PyObjectFactory::create_int(nullptr, static_cast<int64_t>(pos));
+}
+
+PyObject* BuiltinFunctions::builtin_startswith(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2 || !args[0]->str_value) return PyObjectFactory::create_bool(nullptr, false);
+    std::string& s = *args[0]->str_value;
+    std::string& prefix = *args[1]->str_value;
+    bool result = s.size() >= prefix.size() && s.substr(0, prefix.size()) == prefix;
+    return PyObjectFactory::create_bool(nullptr, result);
+}
+
+PyObject* BuiltinFunctions::builtin_endswith(PyObject* /*self*/, std::vector<PyObject*> args) {
+    if (args.size() < 2 || !args[0]->str_value) return PyObjectFactory::create_bool(nullptr, false);
+    std::string& s = *args[0]->str_value;
+    std::string& suffix = *args[1]->str_value;
+    bool result = s.size() >= suffix.size() && s.substr(s.size() - suffix.size()) == suffix;
+    return PyObjectFactory::create_bool(nullptr, result);
 }
 
 PyObject* BuiltinFunctions::builtin_format(PyObject* /*self*/, std::vector<PyObject*> args) {
@@ -1342,6 +1503,66 @@ void BuiltinFunctions::register_builtins(std::unordered_map<std::string, PyObjec
             return builtin_find(self, args);
         };
     add_builtin("find", &find_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> chr_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_chr(self, args);
+        };
+    add_builtin("chr", &chr_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> ord_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_ord(self, args);
+        };
+    add_builtin("ord", &ord_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> hex_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_hex(self, args);
+        };
+    add_builtin("hex", &hex_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> oct_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_oct(self, args);
+        };
+    add_builtin("oct", &oct_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> bin_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_bin(self, args);
+        };
+    add_builtin("bin", &bin_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> update_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_update(self, args);
+        };
+    add_builtin("update", &update_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> fromkeys_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_fromkeys(self, args);
+        };
+    add_builtin("fromkeys", &fromkeys_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> popitem_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_popitem(self, args);
+        };
+    add_builtin("popitem", &popitem_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> startswith_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_startswith(self, args);
+        };
+    add_builtin("startswith", &startswith_func);
+    
+    static std::function<PyObject*(PyObject*, std::vector<PyObject*>)> endswith_func = 
+        [](PyObject* self, std::vector<PyObject*> args) -> PyObject* {
+            return builtin_endswith(self, args);
+        };
+    add_builtin("endswith", &endswith_func);
 }
 
 } // namespace pyc::runtime

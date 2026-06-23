@@ -898,7 +898,58 @@ private:
                 break;
             }
 
+            case pyc::ir::IRInstKind::BINOP:
+            case pyc::ir::IRInstKind::CMP: {
+                // Generic binary op/comparison - dispatch based on instruction name
+                std::string op_name = inst->name;
+                if (inst->operands.size() >= 2) {
+                    auto* lhs = val(inst->operands[0]);
+                    auto* rhs = val(inst->operands[1]);
+                    if (!lhs || !rhs) {
+                        record(i64());
+                        break;
+                    }
+                    
+                    if (op_name == "ADD") {
+                        record(builder_.CreateAdd(lhs, rhs, "binop_add"));
+                    } else if (op_name == "SUB") {
+                        record(builder_.CreateSub(lhs, rhs, "binop_sub"));
+                    } else if (op_name == "MUL") {
+                        record(builder_.CreateMul(lhs, rhs, "binop_mul"));
+                    } else if (op_name == "DIV") {
+                        record(builder_.CreateSDiv(lhs, rhs, "binop_div"));
+                    } else if (op_name == "MOD") {
+                        record(builder_.CreateSRem(lhs, rhs, "binop_mod"));
+                    } else if (op_name == "LT") {
+                        auto* cmp = builder_.CreateICmpSLT(lhs, rhs, "binop_lt");
+                        record(builder_.CreateZExt(cmp, builder_.getInt64Ty(), "cmp_result"));
+                    } else if (op_name == "LE") {
+                        auto* cmp = builder_.CreateICmpSLE(lhs, rhs, "binop_le");
+                        record(builder_.CreateZExt(cmp, builder_.getInt64Ty(), "cmp_result"));
+                    } else if (op_name == "GT") {
+                        auto* cmp = builder_.CreateICmpSGT(lhs, rhs, "binop_gt");
+                        record(builder_.CreateZExt(cmp, builder_.getInt64Ty(), "cmp_result"));
+                    } else if (op_name == "GE") {
+                        auto* cmp = builder_.CreateICmpSGE(lhs, rhs, "binop_ge");
+                        record(builder_.CreateZExt(cmp, builder_.getInt64Ty(), "cmp_result"));
+                    } else if (op_name == "EQ") {
+                        auto* cmp = builder_.CreateICmpEQ(lhs, rhs, "binop_eq");
+                        record(builder_.CreateZExt(cmp, builder_.getInt64Ty(), "cmp_result"));
+                    } else if (op_name == "NE") {
+                        auto* cmp = builder_.CreateICmpNE(lhs, rhs, "binop_ne");
+                        record(builder_.CreateZExt(cmp, builder_.getInt64Ty(), "cmp_result"));
+                    } else {
+                        record(i64());
+                    }
+                } else {
+                    record(i64());
+                }
+                break;
+            }
+
             default:
+                // Unexpected instruction - return 0 as fallback
+                // In production, this should never be reached if the IR builder is correct
                 record(i64());
                 break;
             }

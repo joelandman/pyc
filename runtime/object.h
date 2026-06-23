@@ -209,6 +209,9 @@ public:
     static PyObject* builtin_setdefault(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_pop_dict(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_dict_clear(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_update(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_fromkeys(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_popitem(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_join(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_split(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_strip(PyObject* self, std::vector<PyObject*> args);
@@ -216,6 +219,8 @@ public:
     static PyObject* builtin_upper(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_lower(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_find(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_startswith(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_endswith(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_format(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_contains(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_repr(PyObject* self, std::vector<PyObject*> args);
@@ -236,6 +241,11 @@ public:
     static PyObject* builtin_exec(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_eval(PyObject* self, std::vector<PyObject*> args);
     static PyObject* builtin_import(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_chr(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_ord(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_hex(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_oct(PyObject* self, std::vector<PyObject*> args);
+    static PyObject* builtin_bin(PyObject* self, std::vector<PyObject*> args);
     // ... etc
     
     static void register_builtins(std::unordered_map<std::string, PyObject*>& builtins);
