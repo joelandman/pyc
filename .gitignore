@@ -1,6 +1,3 @@
 build/
-*.o
-*.ll
-test
-__pycache__/
-*.pyc
+pyc
+build_asan/
