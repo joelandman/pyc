@@ -593,9 +593,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 --it->second;
                 if (it->second > 0) return; // still more uses pending — don't DECREF yet
             }
+            // Resolve the LLVM value BEFORE erasing from ownedTemps.
+            // getOrLoad("__name__") re-checks ownedTemps for its cache; erasing
+            // first causes it to allocate a fresh PyUnicode instead of returning
+            // the original, leaking the original forever.
+            llvm::Value* toDecref = getAsPyObject(name);
             ownedTemps.erase(name);
             llvm::Function* decref = module->getFunction("Py_DECREF");
-            if (decref) builder.CreateCall(decref, {getAsPyObject(name)});
+            if (decref) builder.CreateCall(decref, {toDecref});
         };
 
         // Like emitDecRefIfOwned but only fires when the temp was defined in the SAME basic
