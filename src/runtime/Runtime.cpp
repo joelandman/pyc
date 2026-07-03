@@ -137,7 +137,9 @@ PyObject* PyList_GetItemObj(PyObject* list, PyObject* idx) {
     long i = (long)idx->value;
     if (i < 0) i += n;
     if (i < 0 || i >= n) return nullptr;
-    return PyList_GetItem(list, (size_t)i);
+    PyObject* item = PyList_GetItem(list, (size_t)i);
+    if (item) Py_INCREF(item); // return new ref so callers can DECREF the list independently
+    return item;
 }
 
 PyObject* PyList_NewBoxed(PyObject* n) {
@@ -187,6 +189,7 @@ PyObject* PyDict_New() {
 void PyDict_SetItem(PyObject* dict, PyObject* key, PyObject* value) {
     if (dict && dict->type == 2) {
         dict->dict[key] = value;
+        if (key) Py_INCREF(key);     // dict owns the key pointer
         if (value) Py_INCREF(value);
     }
 }
@@ -520,9 +523,8 @@ PyObject* PyList_Pop(PyObject* lst) {
     return item;
 }
 
-PyObject* PyBuiltin_PrintNewline(void) {
+void PyBuiltin_PrintNewline(void) {
     printf("\n");
-    return PyInt_FromLong(0);
 }
 
 PyObject* PyBuiltin_Len(PyObject* obj) {
@@ -552,10 +554,14 @@ static int both_integral(PyObject* a, PyObject* b) {
 
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
     if (!obj || !key) return nullptr;
-    if (obj->type == 1) return PyList_GetItemObj(obj, key);
+    if (obj->type == 1) return PyList_GetItemObj(obj, key); // returns new ref (INCREF inside)
     if (obj->type == 2) {
-        for (auto& pair : obj->dict)
-            if (PyObject_CompareBool(pair.first, key, 0)) return pair.second;
+        for (auto& pair : obj->dict) {
+            if (PyObject_CompareBool(pair.first, key, 0)) {
+                if (pair.second) Py_INCREF(pair.second); // return new ref
+                return pair.second;
+            }
+        }
         return nullptr;
     }
     if (obj->type == 3 && (key->type == 0 || key->type == 5)) {

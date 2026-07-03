@@ -1015,6 +1015,8 @@ private:
             // Collect [fixed .. n) into a fresh list for the * slot.
             std::string ln = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", listVal}, ln);
+            std::string lnSlot = "__sl_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {ln}, lnSlot);
             std::string startC = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(fixed)}, startC);
             std::string zero = "c" + std::to_string(tempCounter++);
@@ -1030,7 +1032,7 @@ private:
             ir.addInstruction(currentFunc, "br", {}, slp);
             ir.addInstruction(currentFunc, "label", {}, slp);
             std::string cm = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "icmp", {"Lt", jv, ln}, cm);
+            ir.addInstruction(currentFunc, "icmp", {"Lt", jv, lnSlot}, cm);
             ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
             ir.addInstruction(currentFunc, "label", {}, sbd);
             std::string el = "t" + std::to_string(tempCounter++);
@@ -1296,6 +1298,8 @@ private:
                         }
                         std::string ln = "t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", lst}, ln);
+                        std::string lnSlotI = "__sl_" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "assign", {ln}, lnSlotI);
                         std::string jv = "s" + std::to_string(tempCounter++);
                         std::string j0 = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"0"}, j0);
@@ -1307,7 +1311,7 @@ private:
                         ir.addInstruction(currentFunc, "br", {}, slp);
                         ir.addInstruction(currentFunc, "label", {}, slp);
                         std::string cm = "t" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "icmp", {"Lt", jv, ln}, cm);
+                        ir.addInstruction(currentFunc, "icmp", {"Lt", jv, lnSlotI}, cm);
                         ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
                         ir.addInstruction(currentFunc, "label", {}, sbd);
                         std::string el = "t" + std::to_string(tempCounter++);
@@ -1326,6 +1330,8 @@ private:
                         // Direct target: original dynamic * path using a __va_<target> wrapper.
                         std::string ln = "t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", lst}, ln);
+                        std::string lnSlotD = "__sl_" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "assign", {ln}, lnSlotD);
                         std::string jv = "s" + std::to_string(tempCounter++);
                         std::string j0 = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"0"}, j0);
@@ -1348,7 +1354,7 @@ private:
                         ir.addInstruction(currentFunc, "br", {}, slp);
                         ir.addInstruction(currentFunc, "label", {}, slp);
                         std::string cm = "t" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "icmp", {"Lt", jv, ln}, cm);
+                        ir.addInstruction(currentFunc, "icmp", {"Lt", jv, lnSlotD}, cm);
                         ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
                         ir.addInstruction(currentFunc, "label", {}, sbd);
                         std::string el = "t" + std::to_string(tempCounter++);
@@ -2077,6 +2083,10 @@ private:
         // Boxed length: PyList_SizeBoxed returns PyObject*(int)
         std::string lenRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", listVal}, lenRes);
+        // Store sentinel in a slot so null-init + DECREF-on-reassign + slot-exit-cleanup
+        // handle it automatically (avoids leak when this code is inside an outer loop).
+        std::string lenSlot = "__sl_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
 
         // Use a fresh temp for the initial 0 to avoid name collision with the alloca.
         std::string idxVar  = node->id + "__idx";     // alloca variable name
@@ -2096,7 +2106,7 @@ private:
         ir.addInstruction(currentFunc, "label", {}, loopLabel);
         auto loopEntryTypes = valueTypes;
         std::string cmpRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpRes);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenSlot}, cmpRes);
         ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
 
         ir.addInstruction(currentFunc, "label", {}, bodyLabel);
@@ -2974,6 +2984,8 @@ private:
         std::string iterVal = lowerExpr(genNode->children[1].get());
         std::string lenRes  = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterVal}, lenRes);
+        std::string lenSlotLC = "__sl_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlotLC);
 
         // Index variable (unique name to avoid clashes)
         std::string idxVar  = "lc_i_" + std::to_string(tempCounter++);
@@ -2989,7 +3001,7 @@ private:
 
         ir.addInstruction(currentFunc, "label", {}, loopL);
         std::string cmpR = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpR);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenSlotLC}, cmpR);
         ir.addInstruction(currentFunc, "br", {cmpR, bodyL, exitL});
 
         ir.addInstruction(currentFunc, "label", {}, bodyL);
@@ -3063,6 +3075,8 @@ private:
             std::string iterVal = lowerExpr(g->children.size() > 1 ? g->children[1].get() : nullptr);
             std::string lenRes  = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterVal}, lenRes);
+            std::string lenSlotDC = "__sl_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlotDC);
 
             // per-level index
             std::string idxVar  = "dc_i" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
@@ -3078,7 +3092,7 @@ private:
 
             ir.addInstruction(currentFunc, "label", {}, loopL);
             std::string cmpR = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpR);
+            ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenSlotDC}, cmpR);
             ir.addInstruction(currentFunc, "br", {cmpR, bodyL, exitL});
 
             ir.addInstruction(currentFunc, "label", {}, bodyL);
