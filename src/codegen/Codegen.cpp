@@ -375,6 +375,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     if (!regFn) regFn = llvm::Function::Create(regTy, llvm::Function::ExternalLinkage, "pyc_register_callable", module.get());
     llvm::Function* regCallable = regFn; // local alias used in the per-function registration below
 
+    // Build set of user-defined function names (both IR name and LLVM mangled name).
+    // Used by Fix 2 to identify discarded call results that are safe to free immediately.
+    // Forward-declared user functions have isDeclaration()=true at codegen time (body not
+    // yet generated), so we cannot rely on !callee->isDeclaration() for this check.
+    std::unordered_set<std::string> userFunctionNames;
+    for (const auto& f : ir.functions) {
+        if (!f.name.empty()) {
+            userFunctionNames.insert(f.name);
+            userFunctionNames.insert(llvmFunctionName(f.name));
+        }
+    }
+
     for (const auto& f : ir.functions) {
         std::string irName = llvmFunctionName(f.name);
         llvm::Function* func = module->getFunction(irName);
@@ -479,9 +491,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             // runtime provides a `pyc_get_sys_module()` accessor that
             // returns the same global `sys` object every call.
             if (name == "__name__") {
+                // Return cached value if still owned; otherwise create fresh and track it.
+                if (ownedTemps.count("__name__") && valueMap.count("__name__"))
+                    return valueMap.at("__name__");
                 llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
                 llvm::Value* strConst = builder.CreateGlobalStringPtr("__main__", "str");
-                return builder.CreateCall(fromStr, {strConst}, name + ".name");
+                llvm::Value* val = builder.CreateCall(fromStr, {strConst}, name + ".name");
+                valueMap["__name__"] = val;
+                ownedTemps.insert("__name__");
+                tempDefBlock["__name__"] = builder.GetInsertBlock();
+                return val;
             }
             if (name == "sys") {
                 llvm::Function* getSys = module->getFunction("pyc_get_sys_module");
@@ -703,8 +722,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 else if (opstr == "LtE")                    opcode = 4;
                 else if (opstr == "GtE")                    opcode = 5;
 
-                llvm::Value* lhsBox = getAsPyObject(inst.operands.size() > 1 ? inst.operands[1].name : "");
-                llvm::Value* rhsBox = getAsPyObject(inst.operands.size() > 2 ? inst.operands[2].name : "");
+                std::string icmpLhsName = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                std::string icmpRhsName = inst.operands.size() > 2 ? inst.operands[2].name : "";
+                llvm::Value* icmpLhsRaw = icmpLhsName.empty() ? nullptr : getOrLoad(icmpLhsName);
+                llvm::Value* icmpRhsRaw = icmpRhsName.empty() ? nullptr : getOrLoad(icmpRhsName);
+                bool icmpLhsNative = icmpLhsRaw && (icmpLhsRaw->getType() == llvm::Type::getInt64Ty(context) || icmpLhsRaw->getType()->isDoubleTy());
+                bool icmpRhsNative = icmpRhsRaw && (icmpRhsRaw->getType() == llvm::Type::getInt64Ty(context) || icmpRhsRaw->getType()->isDoubleTy());
+                llvm::Value* lhsBox = getAsPyObject(icmpLhsName);
+                llvm::Value* rhsBox = getAsPyObject(icmpRhsName);
 
                 llvm::Function* cmpFn  = module->getFunction("PyObject_CompareBool");
                 llvm::Function* boolNew = module->getFunction("PyBool_New");
@@ -720,16 +745,25 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 markOwned(inst.result);
                 // Only DECREF comparison operands if they were defined in THIS block.
                 // Operands from a different (outer) block may be loop-persistent.
-                if (inst.operands.size() > 1) emitDecRefIfOwnedSameBlock(inst.operands[1].name);
-                if (inst.operands.size() > 2) emitDecRefIfOwnedSameBlock(inst.operands[2].name);
+                if (!icmpLhsName.empty()) emitDecRefIfOwnedSameBlock(icmpLhsName);
+                if (!icmpRhsName.empty()) emitDecRefIfOwnedSameBlock(icmpRhsName);
+                {
+                    llvm::Function* decrefN = module->getFunction("Py_DECREF");
+                    if (decrefN) {
+                        if (icmpLhsNative) builder.CreateCall(decrefN, {lhsBox});
+                        if (icmpRhsNative) builder.CreateCall(decrefN, {rhsBox});
+                    }
+                }
                 continue;
             }
             if (inst.op == "i64const") {
                 long v = std::stol(inst.operands.empty() ? "0" : inst.operands[0].name);
                 valueMap[inst.result] = llvm::ConstantInt::get(context, llvm::APInt(64, v));
             } else if (inst.op == "i64_from_box") {
-                llvm::Value* boxed = getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name);
+                const std::string& boxName = inst.operands.empty() ? "" : inst.operands[0].name;
+                llvm::Value* boxed = getOrLoad(boxName);
                 valueMap[inst.result] = unboxToI64(boxed);
+                emitDecRefIfOwned(boxName);  // free the PyObject now that i64 is extracted
             } else if (inst.op == "box_i64") {
                 llvm::Value* val = getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name);
                 valueMap[inst.result] = boxI64(val, inst.result);
@@ -806,8 +840,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             } else if (inst.op == "add") {
                 if (emitNativeNumericBinary(inst, "add")) continue;
                 llvm::Function* numberAdd = module->getFunction("PyNumber_Add");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::string lhsNameA = inst.operands.size() > 0 ? inst.operands[0].name : "";
+                std::string rhsNameA = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                llvm::Value* lhsRawA = lhsNameA.empty() ? nullptr : getOrLoad(lhsNameA);
+                llvm::Value* rhsRawA = rhsNameA.empty() ? nullptr : getOrLoad(rhsNameA);
+                bool lhsNativeA = lhsRawA && (lhsRawA->getType() == llvm::Type::getInt64Ty(context) || lhsRawA->getType()->isDoubleTy());
+                bool rhsNativeA = rhsRawA && (rhsRawA->getType() == llvm::Type::getInt64Ty(context) || rhsRawA->getType()->isDoubleTy());
+                llvm::Value* lhs = getAsPyObject(lhsNameA);
+                llvm::Value* rhs = getAsPyObject(rhsNameA);
                 if (numberAdd) {
                     llvm::Value* sum = builder.CreateCall(numberAdd, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = sum;
@@ -815,13 +855,26 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
-                emitDecRefIfOwned(inst.operands[0].name);
-                emitDecRefIfOwned(inst.operands[1].name);
+                emitDecRefIfOwned(lhsNameA);
+                emitDecRefIfOwned(rhsNameA);
+                {
+                    llvm::Function* decrefN = module->getFunction("Py_DECREF");
+                    if (decrefN) {
+                        if (lhsNativeA) builder.CreateCall(decrefN, {lhs});
+                        if (rhsNativeA) builder.CreateCall(decrefN, {rhs});
+                    }
+                }
             } else if (inst.op == "sub") {
                 if (emitNativeNumericBinary(inst, "sub")) continue;
                 llvm::Function* numberSub = module->getFunction("PyNumber_Subtract");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::string lhsNameS = inst.operands.size() > 0 ? inst.operands[0].name : "";
+                std::string rhsNameS = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                llvm::Value* lhsRawS = lhsNameS.empty() ? nullptr : getOrLoad(lhsNameS);
+                llvm::Value* rhsRawS = rhsNameS.empty() ? nullptr : getOrLoad(rhsNameS);
+                bool lhsNativeS = lhsRawS && (lhsRawS->getType() == llvm::Type::getInt64Ty(context) || lhsRawS->getType()->isDoubleTy());
+                bool rhsNativeS = rhsRawS && (rhsRawS->getType() == llvm::Type::getInt64Ty(context) || rhsRawS->getType()->isDoubleTy());
+                llvm::Value* lhs = getAsPyObject(lhsNameS);
+                llvm::Value* rhs = getAsPyObject(rhsNameS);
                 if (numberSub) {
                     llvm::Value* diff = builder.CreateCall(numberSub, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = diff;
@@ -829,8 +882,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
-                emitDecRefIfOwned(inst.operands[0].name);
-                emitDecRefIfOwned(inst.operands[1].name);
+                emitDecRefIfOwned(lhsNameS);
+                emitDecRefIfOwned(rhsNameS);
+                {
+                    llvm::Function* decrefN = module->getFunction("Py_DECREF");
+                    if (decrefN) {
+                        if (lhsNativeS) builder.CreateCall(decrefN, {lhs});
+                        if (rhsNativeS) builder.CreateCall(decrefN, {rhs});
+                    }
+                }
             } else if (inst.op == "div") {
                 if (inst.resultType == "int") {
                     llvm::Value* lhs = unboxToI64(getOrLoad(inst.operands[0].name));
@@ -862,8 +922,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
                 // float or unknown -> boxed
                 llvm::Function* numberDiv = module->getFunction("PyNumber_Divide");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::string lhsNameD = inst.operands.size() > 0 ? inst.operands[0].name : "";
+                std::string rhsNameD = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                llvm::Value* lhsRawD = lhsNameD.empty() ? nullptr : getOrLoad(lhsNameD);
+                llvm::Value* rhsRawD = rhsNameD.empty() ? nullptr : getOrLoad(rhsNameD);
+                bool lhsNativeD = lhsRawD && (lhsRawD->getType() == llvm::Type::getInt64Ty(context) || lhsRawD->getType()->isDoubleTy());
+                bool rhsNativeD = rhsRawD && (rhsRawD->getType() == llvm::Type::getInt64Ty(context) || rhsRawD->getType()->isDoubleTy());
+                llvm::Value* lhs = getAsPyObject(lhsNameD);
+                llvm::Value* rhs = getAsPyObject(rhsNameD);
                 if (numberDiv) {
                     llvm::Value* quot = builder.CreateCall(numberDiv, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = quot;
@@ -871,8 +937,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
-                emitDecRefIfOwned(inst.operands[0].name);
-                emitDecRefIfOwned(inst.operands[1].name);
+                emitDecRefIfOwned(lhsNameD);
+                emitDecRefIfOwned(rhsNameD);
+                {
+                    llvm::Function* decrefN = module->getFunction("Py_DECREF");
+                    if (decrefN) {
+                        if (lhsNativeD) builder.CreateCall(decrefN, {lhs});
+                        if (rhsNativeD) builder.CreateCall(decrefN, {rhs});
+                    }
+                }
             } else if (inst.op == "pow") {
                 llvm::Function* fn = module->getFunction("Pyc_Pow");
                 std::string lhsName = inst.operands.size() > 0 ? inst.operands[0].name : "";
@@ -905,8 +978,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
             } else if (inst.op == "truediv") {
                 llvm::Function* numberTrueDiv = module->getFunction("PyNumber_TrueDivide");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::string lhsNameT = inst.operands.size() > 0 ? inst.operands[0].name : "";
+                std::string rhsNameT = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                llvm::Value* lhsRawT = lhsNameT.empty() ? nullptr : getOrLoad(lhsNameT);
+                llvm::Value* rhsRawT = rhsNameT.empty() ? nullptr : getOrLoad(rhsNameT);
+                bool lhsNativeT = lhsRawT && (lhsRawT->getType() == llvm::Type::getInt64Ty(context) || lhsRawT->getType()->isDoubleTy());
+                bool rhsNativeT = rhsRawT && (rhsRawT->getType() == llvm::Type::getInt64Ty(context) || rhsRawT->getType()->isDoubleTy());
+                llvm::Value* lhs = getAsPyObject(lhsNameT);
+                llvm::Value* rhs = getAsPyObject(rhsNameT);
                 if (numberTrueDiv) {
                     llvm::Value* quot = builder.CreateCall(numberTrueDiv, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = quot;
@@ -914,12 +993,25 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
-                emitDecRefIfOwned(inst.operands[0].name);
-                emitDecRefIfOwned(inst.operands[1].name);
+                emitDecRefIfOwned(lhsNameT);
+                emitDecRefIfOwned(rhsNameT);
+                {
+                    llvm::Function* decrefN = module->getFunction("Py_DECREF");
+                    if (decrefN) {
+                        if (lhsNativeT) builder.CreateCall(decrefN, {lhs});
+                        if (rhsNativeT) builder.CreateCall(decrefN, {rhs});
+                    }
+                }
             } else if (inst.op == "mod") {
                 llvm::Function* numberRem = module->getFunction("PyNumber_Remainder");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::string lhsNameM = inst.operands.size() > 0 ? inst.operands[0].name : "";
+                std::string rhsNameM = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                llvm::Value* lhsRawM = lhsNameM.empty() ? nullptr : getOrLoad(lhsNameM);
+                llvm::Value* rhsRawM = rhsNameM.empty() ? nullptr : getOrLoad(rhsNameM);
+                bool lhsNativeM = lhsRawM && (lhsRawM->getType() == llvm::Type::getInt64Ty(context) || lhsRawM->getType()->isDoubleTy());
+                bool rhsNativeM = rhsRawM && (rhsRawM->getType() == llvm::Type::getInt64Ty(context) || rhsRawM->getType()->isDoubleTy());
+                llvm::Value* lhs = getAsPyObject(lhsNameM);
+                llvm::Value* rhs = getAsPyObject(rhsNameM);
                 if (numberRem) {
                     llvm::Value* rem = builder.CreateCall(numberRem, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = rem;
@@ -927,13 +1019,26 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
-                emitDecRefIfOwned(inst.operands[0].name);
-                emitDecRefIfOwned(inst.operands[1].name);
+                emitDecRefIfOwned(lhsNameM);
+                emitDecRefIfOwned(rhsNameM);
+                {
+                    llvm::Function* decrefN = module->getFunction("Py_DECREF");
+                    if (decrefN) {
+                        if (lhsNativeM) builder.CreateCall(decrefN, {lhs});
+                        if (rhsNativeM) builder.CreateCall(decrefN, {rhs});
+                    }
+                }
             } else if (inst.op == "mul") {
                 if (emitNativeNumericBinary(inst, "mul")) continue;
                 llvm::Function* numberMult = module->getFunction("PyNumber_Multiply");
-                llvm::Value* lhs = getAsPyObject(inst.operands[0].name);
-                llvm::Value* rhs = getAsPyObject(inst.operands[1].name);
+                std::string lhsNameMu = inst.operands.size() > 0 ? inst.operands[0].name : "";
+                std::string rhsNameMu = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                llvm::Value* lhsRawMu = lhsNameMu.empty() ? nullptr : getOrLoad(lhsNameMu);
+                llvm::Value* rhsRawMu = rhsNameMu.empty() ? nullptr : getOrLoad(rhsNameMu);
+                bool lhsNativeMu = lhsRawMu && (lhsRawMu->getType() == llvm::Type::getInt64Ty(context) || lhsRawMu->getType()->isDoubleTy());
+                bool rhsNativeMu = rhsRawMu && (rhsRawMu->getType() == llvm::Type::getInt64Ty(context) || rhsRawMu->getType()->isDoubleTy());
+                llvm::Value* lhs = getAsPyObject(lhsNameMu);
+                llvm::Value* rhs = getAsPyObject(rhsNameMu);
                 if (numberMult) {
                     llvm::Value* prod = builder.CreateCall(numberMult, {lhs, rhs}, inst.result);
                     valueMap[inst.result] = prod;
@@ -941,8 +1046,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
-                emitDecRefIfOwned(inst.operands[0].name);
-                emitDecRefIfOwned(inst.operands[1].name);
+                emitDecRefIfOwned(lhsNameMu);
+                emitDecRefIfOwned(rhsNameMu);
+                {
+                    llvm::Function* decrefN = module->getFunction("Py_DECREF");
+                    if (decrefN) {
+                        if (lhsNativeMu) builder.CreateCall(decrefN, {lhs});
+                        if (rhsNativeMu) builder.CreateCall(decrefN, {rhs});
+                    }
+                }
             } else if (inst.op == "neg") {
                 // Unary minus. For proven numeric resultType, keep native result (i64/double)
                 // so it can participate in further unboxed arithmetic (A3 widening).
@@ -966,6 +1078,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 // Fallback: boxed runtime path
                 llvm::Function* fn = module->getFunction("PyNumber_Negate");
                 std::string negArg = inst.operands.empty() ? "" : inst.operands[0].name;
+                llvm::Value* negArgRaw = negArg.empty() ? nullptr : getOrLoad(negArg);
+                bool negArgNative = negArgRaw && (negArgRaw->getType() == llvm::Type::getInt64Ty(context) || negArgRaw->getType()->isDoubleTy());
                 llvm::Value* arg = getAsPyObject(negArg);
                 if (fn) {
                     valueMap[inst.result] = builder.CreateCall(fn, {arg}, inst.result);
@@ -974,6 +1088,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
                 emitDecRefIfOwned(negArg);
+                if (negArgNative) {
+                    llvm::Function* decrefN = module->getFunction("Py_DECREF");
+                    if (decrefN) builder.CreateCall(decrefN, {arg});
+                }
             } else if (inst.op == "getattr") {
                 llvm::Function* getAttr = module->getFunction("PyObject_GetAttr");
                 llvm::Value* obj = getOrLoad(inst.operands[0].name);
@@ -1070,8 +1188,46 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         if (decref) builder.CreateCall(decref, {oldVal});
                         if (!srcIsOwned && incref) builder.CreateCall(incref, {newVal});
                         builder.CreateStore(newVal, tit->second);
+                    } else if (auto* paramAlloca = llvm::dyn_cast<llvm::AllocaInst>(tit->second)) {
+                        // Borrowed slot (param): INCREF the initial value right after the
+                        // parameter setup store so the slot owns a ref from function entry.
+                        // This makes every subsequent reassignment (including loop iterations)
+                        // safe to use the owned-slot pattern (DECREF old, store new).
+                        if (incref) {
+                            // Find the store that initializes this alloca (the param setup store
+                            // emitted in the entry block during parameter setup) and insert the
+                            // INCREF immediately after it.
+                            llvm::Instruction* setupStore = nullptr;
+                            for (auto& I : func->getEntryBlock()) {
+                                if (auto* SI = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+                                    if (SI->getPointerOperand() == paramAlloca) {
+                                        setupStore = SI;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (setupStore) {
+                                llvm::IRBuilder<> initBuilder(setupStore->getNextNode()
+                                    ? setupStore->getNextNode()
+                                    : &func->getEntryBlock().back());
+                                if (!setupStore->getNextNode())
+                                    initBuilder.SetInsertPoint(
+                                        &func->getEntryBlock(), func->getEntryBlock().end());
+                                else
+                                    initBuilder.SetInsertPoint(setupStore->getNextNode());
+                                llvm::Value* initVal = initBuilder.CreateLoad(
+                                    pyObjectPtrTy, paramAlloca, inst.result + ".init");
+                                initBuilder.CreateCall(incref, {initVal});
+                            }
+                        }
+                        llvm::Value* oldVal = builder.CreateLoad(
+                            pyObjectPtrTy, paramAlloca, inst.result + ".old");
+                        if (decref) builder.CreateCall(decref, {oldVal});
+                        if (!srcIsOwned && incref) builder.CreateCall(incref, {newVal});
+                        builder.CreateStore(newVal, paramAlloca);
+                        ownedSlots.insert(inst.result);
                     } else {
-                        // Borrowed slot (param, cell, etc.): first reassignment, take ownership.
+                        // Borrowed slot (cell or other non-alloca): simple take-ownership.
                         if (!srcIsOwned && incref) builder.CreateCall(incref, {newVal});
                         builder.CreateStore(newVal, tit->second);
                         ownedSlots.insert(inst.result);
@@ -1127,7 +1283,20 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         } else {
                             llvm::Value* callRes = builder.CreateCall(callee, callArgs, inst.result);
                             valueMap[inst.result] = callRes;
-                            markOwned(inst.result);
+                            bool isUserFunc = !callee->isDeclaration()
+                                             || userFunctionNames.count(funcName) > 0;
+                            if (!inst.result.empty() && tempUseCounts.count(inst.result) == 0
+                                && isUserFunc) {
+                                // Result of a user-defined function is never used — free immediately.
+                                // User functions always return new refs.
+                                // Runtime library functions may return borrowed refs, so we only
+                                // do this for user-defined functions (identified by userFunctionNames
+                                // set, which handles forward-declared functions not yet having bodies).
+                                llvm::Function* decref2 = module->getFunction("Py_DECREF");
+                                if (decref2) builder.CreateCall(decref2, {callRes});
+                            } else {
+                                markOwned(inst.result);
+                            }
                         }
                         // Only DECREF call arguments that were defined in THIS block.
                         // Arguments from a different (outer) block may be loop-persistent
@@ -1233,7 +1402,7 @@ bool Codegen::emitObject(llvm::Module* module, const std::string& outputPath) {
     LLVMInitializeX86AsmParser();
     LLVMInitializeX86AsmPrinter();
 
-    std::string targetTriple = "x86_64-unknown-linux-gnu";
+    llvm::Triple targetTriple("x86_64-unknown-linux-gnu");
     std::string error;
     const llvm::Target* target = llvm::TargetRegistry::lookupTarget(targetTriple, error);
     if (!target) {
@@ -1305,7 +1474,7 @@ bool Codegen::emitAssembly(llvm::Module* module, const std::string& outputPath) 
     LLVMInitializeX86AsmParser();
     LLVMInitializeX86AsmPrinter();
 
-    std::string targetTriple = "x86_64-unknown-linux-gnu";
+    llvm::Triple targetTriple("x86_64-unknown-linux-gnu");
     std::string error;
     const llvm::Target* target = llvm::TargetRegistry::lookupTarget(targetTriple, error);
     if (!target) {

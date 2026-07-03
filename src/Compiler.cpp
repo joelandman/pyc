@@ -279,6 +279,7 @@ public:
             }
 
             currentFunc = node->id;
+            int savedTempCounter = tempCounter;
             tempCounter = 0;
             listLiteralElemASTs.clear();
             callableTokenToSynthetic.clear();
@@ -368,6 +369,7 @@ public:
                 lower(c.get());
             }
             currentFunc = saved;   // restore context for siblings (important for top-level code after defs)
+            tempCounter = savedTempCounter;  // restore counter to prevent collisions with module-level temps
             lastLambdaSynthetic.clear();  // do not leak "last lambda expr" from this function to later assigns/calls in outer scope
             // B4: if the function body contained a return of a callable token, record it
             // so that later call results can be treated as tokens (for assign/unpack/call).
