@@ -1112,7 +1112,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     if (!callee) callee = module->getFunction(llvmFunctionName(funcName));
                     if (callee) {
                         std::vector<llvm::Value*> callArgs;
+                        // Track which args were native (i64/double) so that getAsPyObject's
+                        // anonymous box can be DECREFed after the call.
+                        std::vector<bool> argWasNative;
                         for (size_t i = 1; i < inst.operands.size(); ++i) {
+                            llvm::Value* raw = getOrLoad(inst.operands[i].name);
+                            bool isNative = raw && (raw->getType() == llvm::Type::getInt64Ty(context)
+                                                    || raw->getType()->isDoubleTy());
+                            argWasNative.push_back(isNative);
                             callArgs.push_back(getAsPyObject(inst.operands[i].name));
                         }
                         if (callee->getReturnType()->isVoidTy()) {
@@ -1125,8 +1132,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         // Only DECREF call arguments that were defined in THIS block.
                         // Arguments from a different (outer) block may be loop-persistent
                         // (e.g., a range/list passed to GetItem on every loop iteration).
+                        llvm::Function* argDecref = module->getFunction("Py_DECREF");
                         for (size_t i = 1; i < inst.operands.size(); ++i) {
-                            emitDecRefIfOwnedSameBlock(inst.operands[i].name);
+                            if (argWasNative[i - 1]) {
+                                // Anonymous box created by getAsPyObject — DECREF unconditionally.
+                                if (argDecref) builder.CreateCall(argDecref, {callArgs[i - 1]});
+                            } else {
+                                emitDecRefIfOwnedSameBlock(inst.operands[i].name);
+                            }
                         }
                     }
                 }
