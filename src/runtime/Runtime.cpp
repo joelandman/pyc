@@ -745,13 +745,13 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
     return PyList_New(0);
 }
 
-PyObject* Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step, PyObject* value) {
-    if (!obj || obj->type != 1) return nullptr;
+void Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step, PyObject* value) {
+    if (!obj || obj->type != 1) return;
     bool explicit_step = (step != nullptr);
     long n = (long)obj->list.size();
     long stp = 1;
     if (explicit_step && (step->type==0||step->type==5)) stp = step->value;
-    if (stp == 0) return nullptr;
+    if (stp == 0) return;
 
     long s = (start && (start->type==0||start->type==5)) ? start->value : (stp > 0 ? 0 : n-1);
     long e = (stop  && (stop->type==0||stop->type==5)) ? stop->value : (stp > 0 ? n : -1);
@@ -777,7 +777,7 @@ PyObject* Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
         }
         obj->list.erase(obj->list.begin() + s, obj->list.begin() + e);
         obj->list.insert(obj->list.begin() + s, repl.begin(), repl.end());
-        return PyInt_FromLong(0);
+        return;
     }
 
     // extended slice: positions visited, length preserving, exact count preferred
@@ -811,7 +811,6 @@ PyObject* Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
     for (; k < m; ++k) {
         if (repl[k]) Py_DECREF(repl[k]);
     }
-    return PyInt_FromLong(0);
 }
 
 PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b) {

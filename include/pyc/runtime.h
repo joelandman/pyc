@@ -53,7 +53,7 @@ PyObject* PyString_Find(PyObject* s, PyObject* sub);
 PyObject* PyString_Count(PyObject* s, PyObject* sub);
 PyObject* PyString_Replace(PyObject* s, PyObject* old_, PyObject* new_);
 PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step);
-PyObject* Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step, PyObject* value);
+void      Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step, PyObject* value);
 PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b);
 PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b);
 PyObject* PyBuiltin_MinList(PyObject* lst);

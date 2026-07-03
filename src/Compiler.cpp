@@ -2081,6 +2081,12 @@ private:
             return;
         }
         std::string listVal = lowerExpr(node->children[iterIndex].get());  // iter
+        // Store iterator in a slot so owned refs (e.g. sorted() result) are freed
+        // at scope exit instead of leaking when emitDecRefIfOwnedSameBlock is blocked
+        // inside the loop body (different block from the iterator definition).
+        std::string iterSlot = "__iter_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {listVal}, iterSlot);
+        listVal = iterSlot;
 
         // Boxed length: PyList_SizeBoxed returns PyObject*(int)
         std::string lenRes = "t" + std::to_string(tempCounter++);
@@ -2982,8 +2988,13 @@ private:
         std::string listVar = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, listVar);
 
-        // Evaluate iterator once
+        // Evaluate iterator once; store in slot so owned refs (e.g. sorted()) are freed
+        // at scope exit rather than leaking when the same-block DECREF check fires inside
+        // the loop body (a different block from the iterator definition).
         std::string iterVal = lowerExpr(genNode->children[1].get());
+        std::string lcIterSlot = "__lci_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {iterVal}, lcIterSlot);
+        iterVal = lcIterSlot;
         std::string lenRes  = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterVal}, lenRes);
         std::string lenSlotLC = "__sl_" + std::to_string(tempCounter++);
@@ -3032,7 +3043,11 @@ private:
         ir.addInstruction(currentFunc, "assign", {nxt}, idxVar);
         ir.addInstruction(currentFunc, "br", {}, loopL);
         ir.addInstruction(currentFunc, "label", {}, exitL);
-        return listVar;
+        // Transfer result list ownership to a slot so it's freed at scope exit even
+        // when used inline (e.g. as arg to join) in a different basic block.
+        std::string lcResSlot = "__lcr_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {listVar}, lcResSlot);
+        return lcResSlot;
     }
 
     std::string lowerDictComp(const ASTNode* node) {
@@ -3073,8 +3088,12 @@ private:
                 return;
             }
             const ASTNode* g = gens[gi];
-            // iter for this level
+            // iter for this level; stored in a slot so owned refs (e.g. sorted()) are
+            // freed at scope exit instead of leaking past the loop body same-block check.
             std::string iterVal = lowerExpr(g->children.size() > 1 ? g->children[1].get() : nullptr);
+            std::string dcIterSlot = "__dci_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {iterVal}, dcIterSlot);
+            iterVal = dcIterSlot;
             std::string lenRes  = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterVal}, lenRes);
             std::string lenSlotDC = "__sl_" + std::to_string(tempCounter++);
