@@ -403,6 +403,28 @@ PyObject* PyBuiltin_Int(PyObject* obj) {
     return PyInt_FromLong(0);
 }
 
+PyObject* PyBuiltin_IntBase(PyObject* obj, PyObject* base) {
+    int b = base ? (int)base->value : 10;
+    if (!obj) return PyInt_FromLong(0);
+    if (obj->type == 3) {
+        try { return PyInt_FromLong(std::stol(obj->str, nullptr, b)); } catch (...) {}
+    }
+    if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(obj->value);
+    return PyInt_FromLong(0);
+}
+
+PyObject* PyBuiltin_Ord(PyObject* obj) {
+    if (!obj || obj->type != 3 || obj->str.empty()) return PyInt_FromLong(0);
+    return PyInt_FromLong((unsigned char)obj->str[0]);
+}
+
+PyObject* PyBuiltin_Chr(PyObject* obj) {
+    if (!obj) return PyUnicode_FromString("");
+    long v = (obj->type == 0 || obj->type == 5) ? obj->value : (long)obj->dvalue;
+    char buf[2] = {(char)(v & 0xFF), '\0'};
+    return PyUnicode_FromString(buf);
+}
+
 PyObject* PyBuiltin_Float(PyObject* obj) {
     if (!obj) return PyFloat_FromDouble(0.0);
     if (obj->type == 0 || obj->type == 5) return PyFloat_FromDouble((double)obj->value);
@@ -668,6 +690,47 @@ PyObject* PyString_Find(PyObject* s, PyObject* sub) {
         return PyInt_FromLong(-1);
     size_t pos = s->str.find(sub->str);
     return PyInt_FromLong(pos == std::string::npos ? -1L : (long)pos);
+}
+
+PyObject* PyString_Find3(PyObject* s, PyObject* sub, PyObject* start) {
+    if (!s || s->type != 3 || !sub || sub->type != 3)
+        return PyInt_FromLong(-1);
+    long st = start ? start->value : 0;
+    if (st < 0) st = 0;
+    size_t pos = s->str.find(sub->str, (size_t)st);
+    return PyInt_FromLong(pos == std::string::npos ? -1L : (long)pos);
+}
+
+PyObject* PyString_RFind(PyObject* s, PyObject* sub) {
+    if (!s || s->type != 3 || !sub || sub->type != 3)
+        return PyInt_FromLong(-1);
+    size_t pos = s->str.rfind(sub->str);
+    return PyInt_FromLong(pos == std::string::npos ? -1L : (long)pos);
+}
+
+PyObject* PyString_RFind3(PyObject* s, PyObject* sub, PyObject* start) {
+    if (!s || s->type != 3 || !sub || sub->type != 3)
+        return PyInt_FromLong(-1);
+    long st = start ? start->value : 0;
+    if (st < 0) st = 0;
+    size_t endpos = s->str.size();
+    size_t pos = s->str.rfind(sub->str, endpos);
+    if (pos == std::string::npos || (long)pos < st) return PyInt_FromLong(-1L);
+    return PyInt_FromLong((long)pos);
+}
+
+PyObject* PyString_RFind4(PyObject* s, PyObject* sub, PyObject* start, PyObject* end) {
+    if (!s || s->type != 3 || !sub || sub->type != 3)
+        return PyInt_FromLong(-1);
+    long st = start ? start->value : 0;
+    long en = end ? end->value : (long)s->str.size();
+    if (st < 0) st = 0;
+    if (en > (long)s->str.size()) en = (long)s->str.size();
+    if (en <= st) return PyInt_FromLong(-1L);
+    std::string haystack = s->str.substr((size_t)st, (size_t)(en - st));
+    size_t pos = haystack.rfind(sub->str);
+    if (pos == std::string::npos) return PyInt_FromLong(-1L);
+    return PyInt_FromLong((long)pos + st);
 }
 
 PyObject* PyString_Count(PyObject* s, PyObject* sub) {

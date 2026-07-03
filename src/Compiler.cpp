@@ -1615,11 +1615,15 @@ private:
             return res;
         }
 
-        // int(x) → PyBuiltin_Int(x)
+        // int(x) or int(x, base) → PyBuiltin_Int / PyBuiltin_IntBase
         if (funcName == "int") {
-            std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Int", arg}, res, "int");
+            if (argRes.size() >= 2) {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_IntBase", argRes[0], argRes[1]}, res, "int");
+            } else {
+                std::string arg = argRes.empty() ? "" : argRes[0];
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Int", arg}, res, "int");
+            }
             noteType(res, "int");
             return res;
         }
@@ -1641,6 +1645,23 @@ private:
             }
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Abs", arg}, res, resultType);
             noteType(res, resultType);
+            return res;
+        }
+
+        // ord(c) → PyBuiltin_Ord(c)
+        if (funcName == "ord") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Ord", arg}, res, "int");
+            noteType(res, "int");
+            return res;
+        }
+        // chr(i) → PyBuiltin_Chr(i)
+        if (funcName == "chr") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Chr", arg}, res, "str");
+            noteType(res, "str");
             return res;
         }
 
@@ -2689,8 +2710,22 @@ private:
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyString_Join", obj, arg}, res);
         } else if (methodName == "find") {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyString_Find", obj, arg}, res, "int");
+            if (args.size() >= 2) {
+                ir.addInstruction(currentFunc, "call", {"PyString_Find3", obj, args[0], args[1]}, res, "int");
+            } else {
+                std::string arg = args.empty() ? "" : args[0];
+                ir.addInstruction(currentFunc, "call", {"PyString_Find", obj, arg}, res, "int");
+            }
+            noteType(res, "int");
+        } else if (methodName == "rfind") {
+            if (args.size() >= 3) {
+                ir.addInstruction(currentFunc, "call", {"PyString_RFind4", obj, args[0], args[1], args[2]}, res, "int");
+            } else if (args.size() == 2) {
+                ir.addInstruction(currentFunc, "call", {"PyString_RFind3", obj, args[0], args[1]}, res, "int");
+            } else {
+                std::string arg = args.empty() ? "" : args[0];
+                ir.addInstruction(currentFunc, "call", {"PyString_RFind", obj, arg}, res, "int");
+            }
             noteType(res, "int");
         } else if (methodName == "count") {
             std::string arg = args.empty() ? "" : args[0];
