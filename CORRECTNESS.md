@@ -328,12 +328,66 @@ Sorted by criticality (most critical at top).
 
 ---
 
+## High
+
+### 30. `dict.get(key, default)` returns `None`
+
+**Severity:** High  
+**Location:** `src/Compiler.cpp:2745-2755`, `src/runtime/Runtime.cpp:284-303`, `src/codegen/Codegen.cpp:202-211`, `include/pyc/runtime.h`  
+**Status: FIXED**
+
+- No `dict.get` method handler in `lowerMethodCall`. `d.get(k, 99)` fell through to the generic class-instance method path which returned None.
+- Added a runtime helper `PyDict_GetItemWithDefault(dict, key, default)` that returns the value if present, otherwise INCREFs and returns the default (or null if no default).
+- Added a method-call lowering case in `lowerMethodCall` for `get`: routes to `PyDict_GetItem` for the 1-arg form and `PyDict_GetItemWithDefault` for the 2-arg form.
+- Pre-declared `PyDict_GetItemWithDefault` in the codegen function table so calls to it are not silently dropped (the codegen path silently dropped calls to undeclared functions, which would have hidden this bug entirely).
+- Discovered the silent-drop bug while implementing this fix; it is the reason other runtime helpers added over time have appeared to "work" in the codegen but actually emitted no call. Future runtime helper additions must be paired with a codegen declaration.
+
+### 31. `del` statement is a no-op
+
+**Severity:** High  
+**Location:** `src/frontend/PythonParser.cpp:224-238`, `src/Compiler.cpp:467-476, 2581-2616`  
+**Status: FIXED**
+
+- Parser had no `"Delete"` handler, so `del x` was dropped silently at parse time. `del d["k"]` was also a no-op (the dict was unchanged).
+- Added `"Delete"` handler in the parser: extracts `targets` list, each target becomes a child ASTNode (Name, Subscript, or Attribute).
+- Added `"Delete"` handler in `lower()` and a `lowerDelTarget()` helper:
+  - `del name` emits `Py_DECREF(name)` then a `nconst` and assigns it to the slot so subsequent reads see None.
+  - `del d[k]` emits a call to a new `PyDict_DelItem` runtime helper.
+  - `del obj.attr` is a documented no-op for now (CPython would remove the key from the instance/class dict; a real fix needs a runtime attr-delete helper).
+- Added `PyDict_DelItem` runtime helper (`runtime/Runtime.cpp:303-313`) and codegen declaration (`Codegen.cpp:206-208`).
+
+### 32. `print(end=..., sep=...)` keyword arguments are ignored
+
+**Severity:** High  
+**Location:** `src/Compiler.cpp:1500-1566`, `src/runtime/Runtime.cpp:666-694`, `src/codegen/Codegen.cpp:130-135, 1343-1352`  
+**Status: FIXED**
+
+- The lowering collected `kwArgs` (via the parser) but the print fast-path used only positional args and hard-coded `" \n"` as the separator/end. `print("a", end="")` produced `"a \n"`.
+- The codegen also had a `print` shim that called `PyObject_Print` on the first arg, bypassing any kwargs entirely.
+- Fix:
+  - Added a new runtime function `pyc_print(argList, sep, end)` that joins `argList` elements with `sep`, appends `end`, and writes to stdout. Defaults `sep=" "` and `end="\n"` when called with null for those args.
+  - Replaced the print fast-path in `lowerCall` with a single path that builds a Python list of args and calls `pyc_print(list, sep, end)`. Resolves `sep=` and `end=` from `kwArgs`; emits a real `nconst` (null) when not given so the runtime uses the defaults.
+  - Saved the count of pure-positional args (`posArgCount`) before the kwarg-mapping code possibly appends kwarg values to `argRes`. The print fast-path uses this to build the correct list size.
+  - Removed the `pyc_print` name from the codegen "print shim" so the new call goes through the generic call path (the old shim caught `pyc_print` and treated it as `print`).
+  - Pre-declared `pyc_print` in the codegen function table.
+
+### 33. Test runner masks real FILE_CASE regressions as PASS
+
+**Severity:** High  
+**Location:** `tests/runner.py:550-585`  
+**Status: FIXED**
+
+- The runner printed "PASS (optimizer-sensitive; see UNBOXING_AND_COMPLETENESS_PLAN.md)" when a FILE_CASE differed, then continued to report 200/200 — masking every real regression in the FILE_CASES as success.
+- Fix: the runner now prints "DIFF" with the expected and actual output, counts file failures separately, and exits non-zero when any FILE_CASE differs. `make check` (custom target) keeps its `|| true` so it still completes locally; `ctest` will now fail on real FILE_CASE regressions. The note in the build config (`CMakeLists.txt:80`) is preserved for the same reason.
+
+---
+
 ## Summary
 
 | Severity | Count | Status |
 |----------|-------|--------|
 | Critical | 3 | All FIXED |
-| High | 19 | All FIXED |
+| High | 23 | All FIXED |
 | Medium | 3 | All FIXED |
 | Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **30** | **29 FIXED, 1 UNSUPPORTED** |
+| **Total** | **34** | **33 FIXED, 1 UNSUPPORTED** |

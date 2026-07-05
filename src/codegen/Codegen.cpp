@@ -130,6 +130,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* printNewlineTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
     llvm::Function::Create(printNewlineTy, llvm::Function::ExternalLinkage, "PyBuiltin_PrintNewline", module.get());
 
+    llvm::FunctionType* pycPrintTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+        {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(pycPrintTy, llvm::Function::ExternalLinkage, "pyc_print", module.get());
+
     // Builtins: min/max, list, enumerate, zip
     for (const char* name : {"PyBuiltin_MinList","PyBuiltin_MaxList",
                               "PyBuiltin_List","PyBuiltin_Enumerate"}) {
@@ -201,6 +205,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     llvm::FunctionType* dictGetItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(dictGetItemTy, llvm::Function::ExternalLinkage, "PyDict_GetItem", module.get());
+
+    llvm::FunctionType* dictGetWithDefaultTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(dictGetWithDefaultTy, llvm::Function::ExternalLinkage, "PyDict_GetItemWithDefault", module.get());
+
+    llvm::FunctionType* dictDelItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(dictDelItemTy, llvm::Function::ExternalLinkage, "PyDict_DelItem", module.get());
 
     // Subscript / membership / power
     llvm::FunctionType* getItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
@@ -1332,7 +1342,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
             } else if (inst.op == "call") {
                 std::string funcName = inst.operands.empty() ? "" : inst.operands[0].name;
-                if (funcName == "print" || funcName == "pyc_print") {
+                if (funcName == "print") {
+                    // Legacy single-arg print fast-path: pyc_print covers the
+                    // general case (multi-arg + kwargs) at the lowering level.
                     llvm::Function* pyPrint = module->getFunction("PyObject_Print");
                     if (pyPrint) {
                         std::string argName = inst.operands.size() > 1 ? inst.operands[1].name : "";

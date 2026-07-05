@@ -293,6 +293,36 @@ PyObject* PyDict_GetItem(PyObject* dict, PyObject* key) {
     return nullptr;
 }
 
+// dict.get(key, default) — returns the value for `key` in `dict` if present,
+// otherwise returns `default`. The default is INCREF'd so the caller owns its
+// reference. If `default` is null, returns null (matches CPython).
+PyObject* PyDict_GetItemWithDefault(PyObject* dict, PyObject* key, PyObject* defaultVal) {
+    PyObject* v = PyDict_GetItem(dict, key);
+    if (v) return v;  // already INCREF'd by PyDict_GetItem
+    if (defaultVal) {
+        Py_INCREF(defaultVal);
+        return defaultVal;
+    }
+    return nullptr;
+}
+
+// dict.__delitem__(key) — remove `key` from `dict`. Silently no-op on missing
+// keys (matches `del d[k]` for a missing key in CPython, which raises
+// KeyError; we are conservative and follow the no-op path).
+PyObject* PyDict_DelItem(PyObject* dict, PyObject* key) {
+    if (dict && dict->type == 2 && key) {
+        for (auto it = dict->dict.begin(); it != dict->dict.end(); ++it) {
+            if (PyObject_CompareBool(it->first, key, 0)) {
+                if (it->first) Py_DECREF(it->first);
+                if (it->second) Py_DECREF(it->second);
+                dict->dict.erase(it);
+                return PyBool_New(1);
+            }
+        }
+    }
+    return PyBool_New(0);
+}
+
 void Py_DECREF(PyObject* obj) {
     if (obj && obj->refcount != IMMORTAL_REFCOUNT && --obj->refcount == 0) {
         if (obj->type == 1) {
@@ -635,6 +665,33 @@ PyObject* PyList_Pop(PyObject* lst) {
 
 void PyBuiltin_PrintNewline(void) {
     printf("\n");
+}
+
+// print(*args, sep=' ', end='\n', file=None) — builds the output string
+// from the elements of `argList` joined by `sep`, appends `end`, and
+// writes it to stdout. `argList` may be a Python list or nullptr (in
+// which case just `end` is printed). `sep` and `end` may be null
+// (treated as '' and '\n' respectively). Each PyObject* in argList is
+// converted via PyStr_FromAny; the result is freed after printing.
+// Returns None. Any PyObject* argument that is not a string/int/float/
+// bool/list/dict falls back to PyStr_FromAny which prints "<object>".
+void pyc_print(PyObject* argList, PyObject* sep, PyObject* end) {
+    if (!sep)  sep  = PyUnicode_FromString(" ");
+    if (!end)  end  = PyUnicode_FromString("\n");
+    // Convert each arg to its string form, joining with `sep`.
+    std::string out;
+    if (argList && argList->type == 1) {
+        for (size_t i = 0; i < argList->list.size(); ++i) {
+            if (i > 0) {
+                out += sep->str;
+            }
+            PyObject* s = PyStr_FromAny(argList->list[i]);
+            if (s) { out += s->str; Py_DECREF(s); }
+        }
+    }
+    out += end->str;
+    fwrite(out.data(), 1, out.size(), stdout);
+    fflush(stdout);
 }
 
 PyObject* PyBuiltin_Len(PyObject* obj) {

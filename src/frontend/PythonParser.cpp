@@ -231,6 +231,18 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(names);
+    } else if (node->type == "Delete") {
+        // del x, y, z — each target becomes a child ASTNode (Name, Subscript, or Attribute).
+        PyObject* targets = PyObject_GetAttrString(pyNode, "targets");
+        if (targets && PyList_Check(targets)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(targets); ++i) {
+                PyObject* tgt = PyList_GetItem(targets, i);
+                auto child = std::make_unique<ASTNode>();
+                buildAST(tgt, child.get());
+                node->children.push_back(std::move(child));
+            }
+        }
+        Py_XDECREF(targets);
     } else if (node->type == "Lambda") {
         // Lambda(args, body) — args stored in node->args, body in children[0]
         PyObject* a = PyObject_GetAttrString(pyNode, "args");

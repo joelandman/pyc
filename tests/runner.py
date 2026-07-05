@@ -329,6 +329,24 @@ print(a[0],a[1],a[2])
     ("a=2*[3,4]\nprint(len(a), a[0], a[1], a[2], a[3])", "4 3 4 3 4\n"),
     ("a=[]*5\nb=[1]*0\nprint(len(a), len(b))", "0 0\n"),
 
+    # Tier-1-batch regression: dict.get(key) and dict.get(key, default)
+    ("d={'a':1,'b':2}\nprint(d.get('a'))", "1\n"),
+    ("d={'a':1,'b':2}\nprint(d.get('c'))", "None\n"),
+    ("d={'a':1,'b':2}\nprint(d.get('c', 99))", "99\n"),
+    ("d={'a':1,'b':2}\nprint(d.get('a', 99))", "1\n"),
+    # Tier-1-batch regression: del d[k]
+    ("d={'a':1,'b':2,'c':3}\ndel d['b']\nprint('a' in d, 'b' in d, 'c' in d, len(d))", "True False True 2\n"),
+    # Tier-1-batch regression: del d[k1], d[k2]  (multi-target)
+    ("d={'a':1,'b':2,'c':3}\ndel d['a'], d['b']\nprint(len(d), 'c' in d)", "1 True\n"),
+    # Tier-1-batch regression: del name
+    ("x=5\ndel x\nprint('ok')", "ok\n"),
+    # Tier-1-batch regression: print(end="") — no trailing space or newline
+    ("print('a',end='')\nprint('b')", "ab\n"),
+    # Tier-1-batch regression: print(sep="-", end="!\\n")
+    ("print('x','y','z',sep='-',end='!\\n')", "x-y-z!\n"),
+    # Tier-1-batch regression: print() with no args → bare newline
+    ("print()", "\n"),
+
     # B4/B8 indirect lambda-as-value (callable tokens via param and subscript)
     ("""
 def call_it(fn, v):
@@ -548,6 +566,7 @@ def main():
             os.unlink(name)
 
     tests_dir = os.path.dirname(os.path.abspath(__file__))
+    file_failures = 0
     for rel_path, args in FILE_CASES:
         total += 1
         src_path = os.path.join(tests_dir, rel_path)
@@ -555,60 +574,28 @@ def main():
         quoted_args = " ".join(shlex.quote(a) for a in args)
         out, _ = run(f"python3 {quoted_src} {quoted_args}")
         exp = out.strip()
-    # B4 (lambdas as values via callable tokens + indirect dispatch via Pyc_Apply + generated
-    # __apply__ adapters, dynamic * under indirect callees, *args in lambda signatures,
-    # adapters supporting *vararg targets, propagation through assign/return/unpack/subscript,
-    # etc.) and the related B8 pieces are complete. The curated B4/B8 cases live in CASES
-    # and are always exercised at --opt=0 (strict match against CPython).
-    # The FILE_CASES (nbody, opt_*) are optimizer-sensitive and are run at --opt=0 here
-    # to keep `make check` green while separate A-side unboxing/native optimizer work
-    # proceeds. The --opt=3 behavior for those files can be restored later; no B4/B8-specific
-    # hacks are used. The runner tolerates shortfalls only in FILE_CASES and exits 0 in
-    # that case (with a note); CMake's check target tolerates the runner exit for the build
-    # while still surfacing diffs. See UNBOXING_AND_COMPLETENESS_PLAN.md.
         o, rc = run(f"{pyc} {quoted_src} -o /tmp/t.bin --opt=0 >/dev/null 2>&1 && /tmp/t.bin {quoted_args}")
         actual = o.strip()
         if actual == exp:
             print("PASS")
             ok += 1
         else:
-            # Optimizer-sensitive files (nbody, opt_*) are run at --opt=0 here
-            # to keep `make check` green while A-side unboxing/native work
-            # (separate from B4/B8) is completed. They are tolerated for the
-            # build check; the small curated CASES (including all B4/B8 cases)
-            # are strictly validated at --opt=0.
-            print("PASS (optimizer-sensitive; see UNBOXING_AND_COMPLETENESS_PLAN.md)")
-            ok += 1
-            # Show the diff for visibility but do not fail the suite
+            # FILE_CASES are real programs. A mismatch is a real correctness
+            # regression — print the diff so the developer sees it, count it
+            # as a failure, and let the script exit non-zero so CI catches it.
+            file_failures += 1
+            print("DIFF")
             print("SRCFILE:", rel_path)
             print("EXP:", repr(exp))
             print("ACT:", repr(actual))
 
-    print(f"{ok}/{total}")
-
-    # B4/B8 (lambdas-as-values via callable tokens, indirect dispatch via Pyc_Apply + __apply__
-    # adapters, dynamic * under indirect callees, *args in lambda signatures, etc.) is complete.
-    # The curated B4/B8 cases live in CASES and are always validated at --opt=0.
-    #
-    # FILE_CASES (nbody, opt_*) are optimizer-sensitive and are run at --opt=0 here to keep
-    # `make check` / ctest green while A-side unboxing/native work (separate from B4/B8)
-    # proceeds. We tolerate failures only from these files for the build check exit code.
-    # The --opt=3 behavior for them can be restored once that work lands; no B4/B8-specific
-    # hacks are used.
-    file_case_start = total - len(FILE_CASES) if FILE_CASES else total
-    any_real_fail = False
-    # We don't track per-case pass/fail arrays, but if the printed count is less than total,
-    # and the only shortfalls are in the FILE_CASES tail, we still exit 0.
-    # The simplest robust rule: if ok == total, exit 0. Otherwise, if the only things that
-    # could have failed are FILE_CASES (i.e. all CASES passed), exit 0 with a note.
-    # We approximate by checking whether ok >= (total - len(FILE_CASES)).
+    print(f"{ok}/{total} (file_case_failures={file_failures})")
     if ok == total:
         sys.exit(0)
-    if ok >= (total - len(FILE_CASES)):
-        # All non-optimizer-sensitive cases passed; tolerate the rest for the build target.
-        print("Note: some FILE_CASES (optimizer-sensitive) differed at --opt=0; tolerated for make check while A-side work completes.")
-        sys.exit(0)
-    sys.exit(1)
+    if file_failures > 0:
+        # FILE_CASES are real programs; a mismatch is a real failure.
+        sys.exit(1)
+    sys.exit(0)
 
 if __name__=="__main__":
     main()
