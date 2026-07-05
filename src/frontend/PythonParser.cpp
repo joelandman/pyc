@@ -55,7 +55,7 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 node->is_str = true;
             } else if (v == Py_None) {
                 node->value = "None";
-                node->is_str = true;
+                node->is_none = true;
             } else {
                 node->value = "";
                 node->is_str = true;

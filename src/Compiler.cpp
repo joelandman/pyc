@@ -523,6 +523,12 @@ public:
                 // Embedded quotes are not escaped in this MVP.
                 ir.addInstruction(currentFunc, "const", {"\"" + val + "\""}, res, "str");
                 noteType(res, "str");
+            } else if (node->is_none) {
+                // CPython's None is a singleton represented in the runtime as a
+                // null pointer. Emit a dedicated nconst op so codegen produces a
+                // real PyObject* null constant (and not a PyUnicode "None").
+                ir.addInstruction(currentFunc, "nconst", {}, res, "none");
+                noteType(res, "none");
             } else {
                 ir.addInstruction(currentFunc, "const", {val}, res, "int");
                 noteType(res, "int");
@@ -1994,10 +2000,10 @@ private:
                 ir.addInstruction(currentFunc, "call", {"Pyc_Contains", rhs, lhs}, c2);
                 ir.addInstruction(currentFunc, "call", {"PyObject_Not", c2}, r);
             } else if (opName == "Is") {
-                // identity: PyObject_CompareBool with Eq (pointer eq handled there)
-                ir.addInstruction(currentFunc, "icmp", {"Eq", lhs, rhs}, r);
+                // identity: compare PyObject* pointers directly, not values
+                ir.addInstruction(currentFunc, "ptricmp", {"Eq", lhs, rhs}, r);
             } else if (opName == "IsNot") {
-                ir.addInstruction(currentFunc, "icmp", {"NotEq", lhs, rhs}, r);
+                ir.addInstruction(currentFunc, "ptricmp", {"NotEq", lhs, rhs}, r);
             } else {
                 ir.addInstruction(currentFunc, "icmp", {opName, lhs, rhs}, r);
             }

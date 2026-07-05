@@ -777,13 +777,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 // actual pointers so that `a = [1,2]; b = a; a is b` returns True.
                 // Result is boxed as a bool PyObject* (same as regular icmp).
                 std::string opstr = inst.operands.empty() ? "" : inst.operands[0].name;
-                llvm::Value* lhs = getOrLoad(inst.operands.size() > 1 ? inst.operands[1].name : "");
-                llvm::Value* rhs = getOrLoad(inst.operands.size() > 2 ? inst.operands[2].name : "");
-                // Ensure both are PyObject* (i8*). Load from allocas if needed.
-                if (lhs && lhs->getType() != pyObjectPtrTy)
-                    lhs = builder.CreateLoad(pyObjectPtrTy, lhs, "ptrlhs");
-                if (rhs && rhs->getType() != pyObjectPtrTy)
-                    rhs = builder.CreateLoad(pyObjectPtrTy, rhs, "prrhs");
+                // Use getAsPyObject (not getOrLoad) so operands stored as native
+                // i64/double (from unboxed numerics) are boxed on demand into
+                // PyObject* before the pointer compare.
+                std::string lhsName = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                std::string rhsName = inst.operands.size() > 2 ? inst.operands[2].name : "";
+                llvm::Value* lhs = lhsName.empty() ? llvm::ConstantPointerNull::get(pyObjectPtrTy) : getAsPyObject(lhsName);
+                llvm::Value* rhs = rhsName.empty() ? llvm::ConstantPointerNull::get(pyObjectPtrTy) : getAsPyObject(rhsName);
                 llvm::Value* cmp = nullptr;
                 if      (opstr == "Eq"    || opstr == "eq")     cmp = builder.CreateICmpEQ(lhs, rhs, inst.result);
                 else if (opstr == "NotEq" || opstr == "ne")     cmp = builder.CreateICmpNE(lhs, rhs, inst.result);
@@ -871,6 +871,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = boxed;
                     markOwned(inst.result);
                 }
+            } else if (inst.op == "nconst") {
+                // CPython None is the singleton null PyObject*. Emit a real
+                // null pointer so `None is None` and `x is None` work via
+                // pointer identity (ptricmp) and so type(None)/PyStr_FromAny
+                // return the proper "None" via the runtime's null path.
+                valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                // Do NOT markOwned: the null constant is not a heap allocation,
+                // so it must not be Py_DECREF'd at the end of its scope.
             } else if (inst.op == "fconst") {
                 double v = std::stod(inst.operands.empty() ? "0" : inst.operands[0].name);
                 llvm::Function* fromDouble = module->getFunction("PyFloat_FromDouble");

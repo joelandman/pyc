@@ -10,6 +10,11 @@
 
 #include "pyc/runtime.h"
 
+// Immortal PyObject* refcount sentinel (True, False, and small ints in
+// [-5, 256] are interned; Py_INCREF / Py_DECREF skip them so they are
+// never freed or duplicated by ownership paths).
+static constexpr int IMMORTAL_REFCOUNT = 0x3fffffff;
+
 // Flat struct (no union) so we can add dvalue alongside value cleanly.
 // LLVM codegen in Codegen.cpp mirrors fields 0-3: {i32, i32, i64, double}.
 struct PyObject {
@@ -24,7 +29,7 @@ struct PyObject {
 };
 
 void Py_INCREF(PyObject* obj) {
-    if (obj) ++obj->refcount;
+    if (obj && obj->refcount != IMMORTAL_REFCOUNT) ++obj->refcount;
 }
 
 // Shortest round-trip decimal representation, always with a decimal point.
@@ -47,8 +52,62 @@ static void format_double(char* buf, size_t bufsize, double v) {
 
 extern "C" {
 
+// === Singletons and small-int cache ===
+// CPython interns None (represented here as the null pointer in valueMap
+// slots), True/False, and small ints in [-5, 256] so identity comparisons
+// (`x is y`, `x is None`, `True is True`) work as Python users expect, and
+// to avoid a malloc per literal in tight loops.
+//
+// Immortal objects use refcount = IMMORTAL_REFCOUNT (see top of file);
+// Py_DECREF / Py_INCREF skip them so they are never freed or duplicated
+// by ownership paths.
+static bool isImmortal(PyObject* obj) { return obj && obj->refcount == IMMORTAL_REFCOUNT; }
+
+static PyObject* g_pyTrue  = nullptr;
+static PyObject* g_pyFalse = nullptr;
+
+// Small int cache: indices [-5..256] map to a fixed array of 262 slots.
+// Slot 0 represents -5, slot 261 represents 256. 0 is stored at slot 5.
+// Pre-allocate all slots at static-init time so getSmallInt is a simple
+// (and provably correct) array lookup with no nullptr check on the hot path.
+static constexpr int SMALL_INT_LO = -5;
+static constexpr int SMALL_INT_HI = 256;
+static constexpr int SMALL_INT_COUNT = SMALL_INT_HI - SMALL_INT_LO + 1;
+static PyObject* g_smallInts[SMALL_INT_COUNT] = {nullptr};
+
+static void initSmallInts() {
+    for (int i = 0; i < SMALL_INT_COUNT; ++i) {
+        if (!g_smallInts[i]) {
+            g_smallInts[i] = new PyObject();
+            g_smallInts[i]->refcount = IMMORTAL_REFCOUNT;
+            g_smallInts[i]->type = 0;
+            g_smallInts[i]->value = (long)(i + SMALL_INT_LO);
+        }
+    }
+}
+
+static PyObject* getSmallInt(long v) {
+    int idx = (int)v - SMALL_INT_LO;
+    if (idx < 0 || idx >= SMALL_INT_COUNT) return nullptr;
+    return g_smallInts[idx];
+}
+
+static PyObject* getBoolObj(int v) {
+    PyObject*& slot = v ? g_pyTrue : g_pyFalse;
+    if (!slot) {
+        slot = new PyObject();
+        slot->refcount = IMMORTAL_REFCOUNT;
+        slot->type = 5;
+        slot->value = v ? 1 : 0;
+    }
+    return slot;
+}
+
 PyObject* PyInt_FromLong(long v) {
-    PyObject* obj = new PyObject();   // calls ctors for vector/map/string
+    if (PyObject* cached = getSmallInt(v)) {
+        return cached;                          // immortal: caller "owns" but cannot free
+    }
+    PyObject* obj = new PyObject();
     obj->refcount = 1;
     obj->type = 0;
     obj->value = v;
@@ -67,11 +126,7 @@ static int PyObject_TruthValue(PyObject* obj) {
 }
 
 PyObject* PyBool_New(int v) {
-    PyObject* obj = new PyObject();
-    obj->refcount = 1;
-    obj->type = 5;
-    obj->value = v ? 1 : 0;
-    return obj;
+    return getBoolObj(v);
 }
 
 PyObject* PyFloat_FromDouble(double v) {
@@ -159,6 +214,25 @@ PyObject* PyList_Range(int start, int end) {
     return list;
 }
 
+// Repeat a list `n` times (positive int only — matches CPython which raises
+// TypeError on negative int * list, since it's a sequence repetition).
+// Each element is INCREF'd so the result owns its references; the source
+// list is unchanged.
+static PyObject* PyList_Repeat(PyObject* list, long n) {
+    if (n < 0) n = 0;     // conservative: matches "empty" rather than error
+    PyObject* srcSizeBox = PyInt_FromLong((long)list->list.size());
+    PyObject* result = PyList_NewBoxed(PyInt_FromLong((long)list->list.size() * n));
+    (void)srcSizeBox;
+    for (long i = 0; i < n; ++i) {
+        for (size_t j = 0; j < list->list.size(); ++j) {
+            PyObject* elem = list->list[j];
+            if (elem) Py_INCREF(elem);
+            PyList_SetItem(result, i * list->list.size() + j, elem);
+        }
+    }
+    return result;
+}
+
 PyObject* PyList_Comprehension(int start, int end) {
     return PyList_Range(start, end);
 }
@@ -187,11 +261,24 @@ PyObject* PyDict_New() {
 }
 
 void PyDict_SetItem(PyObject* dict, PyObject* key, PyObject* value) {
-    if (dict && dict->type == 2) {
-        dict->dict[key] = value;
-        if (key) Py_INCREF(key);     // dict owns the key pointer
-        if (value) Py_INCREF(value);
+    if (!dict || dict->type != 2) return;
+    // Check for an existing key that compares equal to the new key.
+    // unordered_map uses pointer equality, so two different PyObject* with
+    // the same Python value would create duplicate entries and leak the old key.
+    if (key) {
+        for (auto it = dict->dict.begin(); it != dict->dict.end(); ++it) {
+            if (PyObject_CompareBool(it->first, key, 0)) {
+                // Found equivalent key — DECREF old key, erase, then insert new.
+                if (it->first) Py_DECREF(it->first);
+                dict->dict.erase(it);
+                break;
+            }
+        }
     }
+    // Insert (or re-insert) the new key-value pair.
+    dict->dict[key] = value;
+    if (key) Py_INCREF(key);
+    if (value) Py_INCREF(value);
 }
 
 PyObject* PyDict_GetItem(PyObject* dict, PyObject* key) {
@@ -207,7 +294,7 @@ PyObject* PyDict_GetItem(PyObject* dict, PyObject* key) {
 }
 
 void Py_DECREF(PyObject* obj) {
-    if (obj && --obj->refcount == 0) {
+    if (obj && obj->refcount != IMMORTAL_REFCOUNT && --obj->refcount == 0) {
         if (obj->type == 1) {
             for (PyObject* item : obj->list) if (item) Py_DECREF(item);
         } else if (obj->type == 2) {
@@ -542,6 +629,7 @@ PyObject* PyList_Pop(PyObject* lst) {
     if (!lst || lst->type != 1 || lst->list.empty()) return nullptr;
     PyObject* item = lst->list.back();
     lst->list.pop_back();
+    Py_INCREF(item);  // return new reference (caller owns it)
     return item;
 }
 
@@ -1008,6 +1096,10 @@ static PyObject* g_sys_argv = nullptr;
 void pyc_setup_sys(int argc, char** argv) {
     if (g_sys_module != nullptr) return;
 
+    // Lazily initialise immortal singletons (True, False, small ints).
+    // These are used by code paths called below (PyInt_FromLong, PyBool_New).
+    initSmallInts();
+
     // sys = a dict with key "argv" (and a few other keys for compatibility).
     g_sys_module = PyDict_New();
 
@@ -1052,6 +1144,8 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
     if (!a || !b) return NULL;
     if (a->type == 3 && b->type == 0) return PyString_Repeat(a, b);
     if (a->type == 0 && b->type == 3) return PyString_Repeat(b, a);
+    if (a->type == 1 && b->type == 0) return PyList_Repeat(a, b->value);
+    if (a->type == 0 && b->type == 1) return PyList_Repeat(b, a->value);
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) return PyInt_FromLong(a->value * b->value);
     return PyFloat_FromDouble(numeric_val(a) * numeric_val(b));
@@ -1098,7 +1192,22 @@ PyObject* PyNumber_Remainder(PyObject* a, PyObject* b) {
 // PyObject_CompareBool: op codes match Codegen.cpp icmp dispatch
 // 0=Eq, 1=NotEq, 2=Lt, 3=Gt, 4=LtE, 5=GtE
 int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
-    if (!a || !b) return 0;
+    // None equality: CPython's `None == None` is True; `None == <other>` is False;
+    // `None < <other>` is a TypeError (we conservatively return 0).
+    if (!a && !b) {
+        switch (op) {
+            case 0: return 1;   // ==
+            case 1: return 0;   // !=
+            default: return 0;  // ordering
+        }
+    }
+    if (!a || !b) {
+        // None vs non-None: only `!=` is True.
+        switch (op) {
+            case 1: return 1;
+            default: return 0;
+        }
+    }
     // Numeric comparison (int or float)
     if (is_numeric(a) && is_numeric(b)) {
         double av = numeric_val(a);

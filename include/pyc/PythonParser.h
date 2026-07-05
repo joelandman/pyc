@@ -14,6 +14,7 @@ struct ASTNode {
     bool is_float = false;
     bool is_str   = false;
     bool is_bool  = false;
+    bool is_none  = false;
     std::vector<std::string> args;
     std::vector<std::unique_ptr<ASTNode>> children;
 };

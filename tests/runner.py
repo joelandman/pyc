@@ -310,6 +310,25 @@ print(a[0],a[1],a[2])
     # Tier-1 regression: // with subscript target on RHS
     ("xs=[10,11,12]\nprint(xs[1]//xs[0])", "1\n"),
 
+    # Tier-2 regression: None is a real null PyObject*, not the string "None"
+    ("x=None\ny=None\nprint(x is y, x is None, x == None, x == 0, x == \"\")", "True True True False False\n"),
+    # Tier-2 regression: True/False are singletons
+    ("x=True\ny=True\nprint(x is y, x is True, False is False)", "True True True\n"),
+    # Tier-2 regression: small int cache (-5..256) makes `is` work
+    ("x=100\ny=100\nprint(x is y, x is 100)", "True True\n"),
+    # Tier-2 regression: small int cache lower bound and upper bound
+    ("print(-5 is -5, 256 is 256)", "True True\n"),
+    # Tier-2 regression: outside the cached range, ints are not interned
+    ("print(257 == 257, 1000 == 1000)", "True True\n"),  # still equal by value
+    # Tier-2 regression: True/False equality with int (0/1)
+    ("print(True == 1, False == 0, True + False)", "True True 1\n"),
+    # Tier-2 regression: list*int and int*list sequence repetition.
+    # Use element access to avoid the list-printing bug (separate Tier-2 issue).
+    ("a=[0]*3\nprint(len(a), a[0], a[1], a[2])", "3 0 0 0\n"),
+    ("a=[1,2]*2\nprint(len(a), a[0], a[1], a[2], a[3])", "4 1 2 1 2\n"),
+    ("a=2*[3,4]\nprint(len(a), a[0], a[1], a[2], a[3])", "4 3 4 3 4\n"),
+    ("a=[]*5\nb=[1]*0\nprint(len(a), len(b))", "0 0\n"),
+
     # B4/B8 indirect lambda-as-value (callable tokens via param and subscript)
     ("""
 def call_it(fn, v):

@@ -282,12 +282,58 @@ Sorted by criticality (most critical at top).
 
 ---
 
+## High
+
+### 26. `None` is lowered as the string `"None"`, not a real null PyObject*
+
+**Severity:** High  
+**Location:** `src/frontend/PythonParser.cpp:56-58`, `include/pyc/PythonParser.h`, `src/Compiler.cpp:512-531`, `src/codegen/Codegen.cpp`  
+**Status: FIXED**
+
+- Parser tagged `None` literals with `is_str=true` and `value="None"`, which made codegen call `PyUnicode_FromString("None")` and emit a *string* for `None`.
+- Effects: `x=None; y=None; x is y` → False, `x is None` → False, `x==0` worked by accident, `x==None` was False, `type(None)` returned the string `"None"`.
+- Fix: added `is_none` flag on `ASTNode`, lowered `None` to a new `nconst` IR instruction with `resultType="none"`, and handled `nconst` in codegen by emitting a real `ConstantPointerNull::get(pyObjectPtrTy)` (the runtime's representation of `None`).
+- Added a `PyObject_CompareBool` rule so `None == None` is True and `None == <other>` is False (was unconditionally False because the function early-returned 0 on null).
+- `x = None` is now safe — no allocation, no string box, pointer identity matches CPython.
+
+### 27. `True` and `False` are not singletons
+
+**Severity:** High  
+**Location:** `src/runtime/Runtime.cpp:69-75` (now), `src/codegen/Codegen.cpp:781-801`  
+**Status: FIXED**
+
+- `PyBool_New` always `new PyObject()`. `True is True`, `False is False` returned False.
+- Added a `g_pyTrue` / `g_pyFalse` cache. Both are marked *immortal* (refcount = `IMMORTAL_REFCOUNT = 0x3fffffff`); `Py_INCREF`/`Py_DECREF` skip them so they are never freed.
+- Codegen fix: the `is`/`is not` operator (`ptricmp`) used `getOrLoad` which returns the *raw* slot (could be i64 for unboxed ints). It tried `CreateLoad(ptr, i64, ...)` on the slot and got a verification error. Switched to `getAsPyObject` which boxes on demand into a PyObject* before the pointer compare.
+
+### 28. `PyInt_FromLong` does not cache small ints
+
+**Severity:** High  
+**Location:** `src/runtime/Runtime.cpp:50-56`  
+**Status: FIXED**
+
+- `PyInt_FromLong` always allocated, so `x=100; y=100; x is y` returned False. CPython interns `[-5, 256]`.
+- Added a 262-slot cache `g_smallInts[]` pre-allocated at startup (`initSmallInts` called from `pyc_setup_sys`). All entries are immortal; `PyInt_FromLong(v)` returns the cached slot for any `v` in range without allocation.
+- Outside the range, ints are still allocated normally (matching CPython).
+
+### 29. `[list] * int` returns `None`
+
+**Severity:** High  
+**Location:** `src/runtime/Runtime.cpp:1124-1131`  
+**Status: FIXED**
+
+- `PyNumber_Multiply` handled `(str,int)`, `(int,str)`, `(int,int)`, `(num,num)`, but not `(list,int)` or `(int,list)`. `print([0]*5)` → `None`.
+- Added a `PyList_Repeat(list, n)` helper and the two missing cases in `PyNumber_Multiply`. Each element is `Py_INCREF`'d so the result owns its references; the source list is unchanged. Negative `n` is treated as 0 (CPython would raise; we match the empty result to keep the compiler simple).
+- Regression cases use element access (e.g., `a[0]`, `a[1]`) to avoid the list-printing bug (separate Tier-2 issue).
+
+---
+
 ## Summary
 
 | Severity | Count | Status |
 |----------|-------|--------|
 | Critical | 3 | All FIXED |
-| High | 15 | All FIXED |
+| High | 19 | All FIXED |
 | Medium | 3 | All FIXED |
 | Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **26** | **25 FIXED, 1 UNSUPPORTED** |
+| **Total** | **30** | **29 FIXED, 1 UNSUPPORTED** |
