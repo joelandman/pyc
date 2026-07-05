@@ -137,9 +137,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* pycImportFailedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(pycImportFailedTy, llvm::Function::ExternalLinkage, "pyc_import_failed", module.get());
 
-    // Builtins: min/max, list, enumerate, zip
+    // Builtins: min/max, list, reversed, enumerate, zip
     for (const char* name : {"PyBuiltin_MinList","PyBuiltin_MaxList",
-                              "PyBuiltin_List","PyBuiltin_Enumerate"}) {
+                              "PyBuiltin_List","PyBuiltin_Reversed",
+                              "PyBuiltin_Enumerate"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
@@ -174,10 +175,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     }
 
     // Builtins: sum, sorted, any, all; isinstance (2-arg)
-    for (const char* name : {"PyBuiltin_Sum","PyBuiltin_Sorted","PyBuiltin_Any","PyBuiltin_All"}) {
+    for (const char* name : {"PyBuiltin_Sum","PyBuiltin_Any","PyBuiltin_All"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
+    // sorted(lst, key) and sorted_with_cmp(lst, cmp) take 2 args.
+    llvm::FunctionType* sortedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(sortedTy, llvm::Function::ExternalLinkage, "PyBuiltin_Sorted", module.get());
+    llvm::Function::Create(sortedTy, llvm::Function::ExternalLinkage, "PyBuiltin_SortedWithCmp", module.get());
     {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_IsInstance", module.get());

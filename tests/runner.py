@@ -388,6 +388,34 @@ print(a[0],a[1],a[2])
     ("print(list(x*2 for x in [1, 2, 3]))", "[2, 4, 6]\n"),
     ("for x in (x+10 for x in [1, 2, 3]):\n    print(x)", "11\n12\n13\n"),
 
+    # Tier-2-batch regression: reversed() — returns a new list with
+    # elements in reverse order. CPython returns a reverse_iterator;
+    # we return a list which works for list(reversed(x)) and for-loops.
+    ("print(list(reversed([1, 2, 3])))", "[3, 2, 1]\n"),
+    ("print(list(reversed('hello')))", "['o', 'l', 'l', 'e', 'h']\n"),
+    ("for x in reversed([10, 20, 30]):\n    print(x)", "30\n20\n10\n"),
+
+    # Tier-2-batch regression: sorted() with key argument (e.g. len)
+    ("print(sorted([3, 1, 2], key=len))", "[1, 2, 3]\n"),  # all len=1, stable
+    ("print(sorted(['bb', 'a', 'ccc'], key=len))", "['a', 'bb', 'ccc']\n"),
+
+    # Tier-2-batch regression: cmp_to_key — sorted with comparator
+    # This relies on a special-case detection in the lowering: when
+    # the key is `cmp_to_key(cmp)`, we call PyBuiltin_SortedWithCmp
+    # directly with the comparator instead of going through the
+    # standard K-pair machinery.
+    ("def spaceship(a, b): return (a > b) - (a < b)\n"
+     "print(sorted([3, 1, 4, 1, 5], key=cmp_to_key(spaceship)))",
+     "[1, 1, 3, 4, 5]\n"),
+    ("def spaceship(a, b): return (a > b) - (a < b)\n"
+     "words = ['banana', 'apple', 'cherry']\n"
+     "print(sorted(words, key=cmp_to_key(spaceship)))",
+     "['apple', 'banana', 'cherry']\n"),
+    ("def spaceship(a, b): return (a > b) - (a < b)\n"
+     "words = ['banana', 'apple', 'cherry']\n"
+     "print(sorted(words, key=cmp_to_key(lambda a, b: spaceship(b, a))))",
+     "['cherry', 'banana', 'apple']\n"),
+
     # Tier-2-batch regression: unsupported imports print ImportError to
     # stderr and return None (rather than silently producing wrong output).
     # The runner only checks stdout, so the program's stdout is empty.

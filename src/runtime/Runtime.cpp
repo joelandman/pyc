@@ -19,13 +19,14 @@ static constexpr int IMMORTAL_REFCOUNT = 0x3fffffff;
 // LLVM codegen in Codegen.cpp mirrors fields 0-3: {i32, i32, i64, double}.
 struct PyObject {
     int refcount;
-    int type;   // 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool, 6=cell (B5 nonlocal/closure)
+    int type;   // 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool,
+                // 6=cell (B5 nonlocal/closure)
     long value;    // type 0
     double dvalue; // type 4
     std::vector<PyObject*> list;
     std::unordered_map<PyObject*, PyObject*> dict;
     std::string str;
-    PyObject* cell_content; // type 6: the PyObject* held by this cell (for nonlocal)
+    PyObject* cell_content; // type 6
 };
 
 void Py_INCREF(PyObject* obj) {
@@ -966,32 +967,109 @@ PyObject* PyBuiltin_Sum(PyObject* lst) {
     return total;
 }
 
-PyObject* PyBuiltin_Sorted(PyObject* lst) {
+// PyBuiltin_Sorted(iterable, key) — sort the iterable's elements. If
+// `key` is non-null it is a 1-arg callable applied to each element
+// before comparison (standard sort key behaviour).
+PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key) {
     if (!lst) return PyList_New(0);
-    // Build the list of items to sort. For lists, sort the elements
-    // (matching CPython: sorted([3,1,2]) → [1,2,3]). For dicts, sort
-    // the keys (matching CPython: sorted({"b":1,"a":2}) → ['a','b']).
-    PyObject* r = nullptr;
+    std::vector<PyObject*> items;
     if (lst->type == 1) {
-        r = PyList_New(lst->list.size());
-        for (size_t i = 0; i < lst->list.size(); ++i) {
-            if (lst->list[i]) Py_INCREF(lst->list[i]);
-            PyList_SetItem(r, i, lst->list[i]);
+        for (auto* item : lst->list) {
+            if (item) Py_INCREF(item);
+            items.push_back(item);
         }
     } else if (lst->type == 2) {
-        r = PyList_New(lst->dict.size());
-        size_t i = 0;
         for (auto& pair : lst->dict) {
             if (pair.first) Py_INCREF(pair.first);
-            PyList_SetItem(r, i++, pair.first);
+            items.push_back(pair.first);
         }
     } else {
         return PyList_New(0);
+    }
+
+    if (key) {
+        // Apply the key to each item, then sort the keys.
+        std::vector<PyObject*> keys;
+        keys.reserve(items.size());
+        for (auto* item : items) {
+            PyObject* argList = PyList_New(1);
+            if (item) { Py_INCREF(item); PyList_SetItem(argList, 0, item); }
+            PyObject* k = Pyc_Apply(key, argList);
+            if (argList) Py_DECREF(argList);
+            keys.push_back(k);  // may be null
+        }
+        std::vector<size_t> idx(items.size());
+        for (size_t i = 0; i < idx.size(); ++i) idx[i] = i;
+        std::sort(idx.begin(), idx.end(), [&](size_t i, size_t j) {
+            if (!keys[i] || !keys[j]) return false;
+            return PyObject_CompareBool(keys[i], keys[j], 2) != 0;
+        });
+        PyObject* r = PyList_New(items.size());
+        for (size_t i = 0; i < idx.size(); ++i) {
+            if (items[idx[i]]) Py_INCREF(items[idx[i]]);
+            PyList_SetItem(r, i, items[idx[i]]);
+        }
+        for (auto* k : keys) if (k) Py_DECREF(k);
+        for (auto* it : items) if (it) Py_DECREF(it);
+        return r;
+    }
+
+    PyObject* r = PyList_New(items.size());
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (items[i]) Py_INCREF(items[i]);
+        PyList_SetItem(r, i, items[i]);
     }
     std::sort(r->list.begin(), r->list.end(), [](PyObject* a, PyObject* b) -> bool {
         if (!a || !b) return false;
         return PyObject_CompareBool(a, b, 2) != 0;
     });
+    for (auto* it : items) if (it) Py_DECREF(it);
+    return r;
+}
+
+// PyBuiltin_SortedWithCmp(iterable, cmp) — like sorted but takes a
+// 2-arg comparator function instead of a key function. The comparator
+// is invoked as cmp(a, b) for each pair; a negative return means
+// a < b, zero means a == b, positive means a > b. This is the
+// internal fast-path for sorted(..., key=cmp_to_key(cmp)).
+PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp) {
+    if (!lst || !cmp) return PyBuiltin_Sorted(lst, nullptr);
+    std::vector<PyObject*> items;
+    if (lst->type == 1) {
+        for (auto* item : lst->list) {
+            if (item) Py_INCREF(item);
+            items.push_back(item);
+        }
+    } else if (lst->type == 2) {
+        for (auto& pair : lst->dict) {
+            if (pair.first) Py_INCREF(pair.first);
+            items.push_back(pair.first);
+        }
+    } else {
+        return PyList_New(0);
+    }
+    std::sort(items.begin(), items.end(), [&](PyObject* a, PyObject* b) {
+        if (!a || !b) return false;
+        // Build a 2-arg arg list: [a, b].
+        PyObject* args = PyList_New(2);
+        if (a) { Py_INCREF(a); PyList_SetItem(args, 0, a); }
+        if (b) { Py_INCREF(b); PyList_SetItem(args, 1, b); }
+        PyObject* res = Pyc_Apply(cmp, args);
+        if (args) Py_DECREF(args);
+        long v = 0;
+        if (res) {
+            if (res->type == 0 || res->type == 5) v = res->value;
+            else if (res->type == 4) v = (long)res->dvalue;
+            Py_DECREF(res);
+        }
+        return v < 0;
+    });
+    PyObject* r = PyList_New(items.size());
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (items[i]) Py_INCREF(items[i]);
+        PyList_SetItem(r, i, items[i]);
+    }
+    for (auto* it : items) if (it) Py_DECREF(it);
     return r;
 }
 
@@ -1247,6 +1325,35 @@ PyObject* PyBuiltin_List(PyObject* obj) {
         return r;
     }
     return PyList_New(0);
+}
+
+// reversed(seq) — returns a new list with the elements of seq in
+// reverse order. CPython returns a reverse_iterator; for the patterns
+// pyc supports (list(reversed(x)), for x in reversed(x)) the result
+// is the same. Accepts lists, tuples (also stored as list in our
+// runtime), strings, and ranges.
+PyObject* PyBuiltin_Reversed(PyObject* obj) {
+    if (!obj) return PyList_New(0);
+    PyObject* r = nullptr;
+    if (obj->type == 1) {
+        // List or tuple: reverse the elements.
+        r = PyList_New(obj->list.size());
+        for (size_t i = 0; i < obj->list.size(); ++i) {
+            size_t ri = obj->list.size() - 1 - i;
+            if (obj->list[ri]) Py_INCREF(obj->list[ri]);
+            PyList_SetItem(r, i, obj->list[ri]);
+        }
+    } else if (obj->type == 3) {
+        // String: reverse the characters.
+        r = PyList_New(obj->str.size());
+        for (size_t i = 0; i < obj->str.size(); ++i) {
+            char buf[2] = {obj->str[obj->str.size() - 1 - i], '\0'};
+            PyList_SetItem(r, i, PyUnicode_FromString(buf));
+        }
+    } else {
+        return PyList_New(0);
+    }
+    return r;
 }
 PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
     if (!iterable || iterable->type != 1) return PyList_New(0);

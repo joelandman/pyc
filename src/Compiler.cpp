@@ -10,6 +10,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <functional>
 
 #ifndef PYC_SOURCE_DIR
 #define PYC_SOURCE_DIR "."
@@ -62,8 +63,8 @@ public:
             // Pyc_Apply(token) path. This preserves all the fast/special lowering paths while
             // still giving full lambda-as-value (B4) behavior for user callables.
             for (const char* s : {"print","len","range","min","max","sum","sorted","any","all","isinstance",
-                                   "int","float","abs","str","list","enumerate","zip","bool","type","id",
-                                   "repr","hex","oct","bin","ord","chr","round"}) {
+                                   "int","float","abs","str","list","reversed","enumerate","zip","bool","type","id",
+                                   "repr","hex","oct","bin","ord","chr","round","cmp_to_key"}) {
                 knownIRFunctions.insert(s);
             }
             for (const auto& c : node->children) {
@@ -1647,6 +1648,13 @@ private:
             }
             return res;
         }
+        // reversed(seq) → PyBuiltin_Reversed(seq)
+        if (funcName == "reversed") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Reversed", arg}, res);
+            return res;
+        }
         // enumerate(iterable) → PyBuiltin_Enumerate(iterable)
         if (funcName == "enumerate") {
             std::string arg = argRes.empty() ? "" : argRes[0];
@@ -1668,11 +1676,51 @@ private:
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sum", arg}, res);
             return res;
         }
-        // sorted(iterable) → PyBuiltin_Sorted
+        // sorted(iterable) → PyBuiltin_Sorted(iterable, null)
+        // sorted(iterable, key=fn) → PyBuiltin_Sorted(iterable, fn)
+        // sorted(iterable, key=cmp_to_key(cmp)) → PyBuiltin_SortedWithCmp(iterable, cmp)
+        //   The last form is a special case: instead of producing a key
+        //   function that returns K pairs, we pass the comparator directly
+        //   to a separate runtime entry point that sorts the items via
+        //   the comparator.
         if (funcName == "sorted") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sorted", arg}, res);
+            // Find the key argument (positional or keyword).
+            std::string keyName;
+            for (const auto& kv : kwArgs) {
+                if (kv.first == "key") { keyName = kv.second; break; }
+            }
+            if (keyName.empty() && argRes.size() >= 2) keyName = argRes[1];
+            // Detect the cmp_to_key(cmp) pattern: a Call to cmp_to_key
+            // (direct, not via an alias) with one positional arg. The
+            // call may be a positional arg or a keyword arg's value.
+            std::string cmpArg;
+            std::function<void(const ASTNode*)> findCmpToKey = [&](const ASTNode* c) {
+                if (!c) return;
+                if (c->type == "Keyword" && c->children.size() == 1) {
+                    findCmpToKey(c->children[0].get());
+                    return;
+                }
+                if (c->type == "Call" && !c->children.empty() && c->children[0] &&
+                    c->children[0]->type == "Name" && c->children[0]->id == "cmp_to_key" &&
+                    c->children.size() >= 2) {
+                    // The comparator is the (lowered) value of the
+                    // first positional arg of cmp_to_key(...).
+                    cmpArg = lowerExpr(c->children[1].get());
+                    return;
+                }
+            };
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                findCmpToKey(node->children[i].get());
+                if (!cmpArg.empty()) break;
+            }
+            if (!cmpArg.empty()) {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_SortedWithCmp", arg, cmpArg}, res);
+            } else {
+                std::string keyArg = keyName.empty() ? "" : keyName;
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sorted", arg, keyArg}, res);
+            }
             return res;
         }
         // any(iterable) → PyBuiltin_Any (bool result)

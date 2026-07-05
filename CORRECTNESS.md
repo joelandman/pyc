@@ -459,12 +459,40 @@ Sorted by criticality (most critical at top).
 
 ---
 
+## High
+
+### 40. `reversed()` returns empty list
+
+**Severity:** High (Tier 4)  
+**Location:** `src/runtime/Runtime.cpp:1238-1273` (new `PyBuiltin_Reversed`), `include/pyc/runtime.h`, `src/codegen/Codegen.cpp:152-153` (declaration), `src/Compiler.cpp:1651-1656` (lowering), `:64-66` (knownIRFunctions)  
+**Status: FIXED**
+
+- `reversed(seq)` was not implemented. `PyBuiltin_Reversed` did not exist, and there was no lowering for it. `list(reversed(x))`, `for x in reversed(x)`, and `reversed(x)[i]` all returned empty results.
+- Added `PyBuiltin_Reversed` runtime helper that returns a new list with the elements of the input sequence in reverse order. Supports lists (type 1) and strings (type 3). CPython returns a `reverse_iterator`; we return a list which works for the patterns pyc supports (the user typically writes `list(reversed(x))` or `for x in reversed(x)`).
+- Added a lowering case in `lowerCall` and the codegen function-table declaration.
+- Fixes the `rev` line in `tests/builtins2.py`.
+
+### 41. `cmp_to_key` is silently a no-op; `sorted(key=fn)` ignores key
+
+**Severity:** High (Tier 4)  
+**Location:** `src/runtime/Runtime.cpp:988-1050` (`PyBuiltin_Sorted` with key), `:1052-1090` (new `PyBuiltin_SortedWithCmp`), `include/pyc/runtime.h`, `src/codegen/Codegen.cpp:177-184` (declarations), `src/Compiler.cpp:1678-1732` (rewritten `sorted` lowering)  
+**Status: FIXED**
+
+- `sorted` accepted only 1 arg (`lst`); the `key=` kwarg was dropped. `cmp_to_key(cmp)` returned None (the function name isn't registered, so `Pyc_Apply` returned null); the resulting `key=None` made `sorted` fall back to identity sort. For the tests in `builtins2.py` the natural comparator happens to be alphabetical order, so the output was accidentally correct.
+- Two-part fix:
+  - **General `key=` support**: `PyBuiltin_Sorted` now takes 2 args `(iterable, key)`. When `key` is non-null, it's applied to each item via `Pyc_Apply(key, [item])` and the resulting keys are sorted.
+  - **Special-case `cmp_to_key(cmp)`**: A new `PyBuiltin_SortedWithCmp(iterable, cmp)` entry point accepts the comparator directly and invokes it via `Pyc_Apply(cmp, [a, b])` for each comparison. This avoids the standard K-pair wrapper machinery (which is hard to fit into our flat runtime).
+  - The lowering detects the `sorted(..., key=cmp_to_key(cmp))` pattern (including when `key` is a keyword arg) and emits a call to `PyBuiltin_SortedWithCmp` instead of `PyBuiltin_Sorted`.
+- Fixes the `sn` / `sr` / `sw` / `swr` lines in `tests/builtins2.py` (the program now matches CPython's output exactly, modulo the `from functools import cmp_to_key` ImportError which is intentional and goes to stderr).
+
+---
+
 ## Summary
 
 | Severity | Count | Status |
 |----------|-------|--------|
 | Critical | 3 | All FIXED |
-| High | 27 | All FIXED |
+| High | 31 | All FIXED |
 | Medium | 3 | All FIXED |
 | Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **40** | **39 FIXED, 1 UNSUPPORTED** |
+| **Total** | **42** | **41 FIXED, 1 UNSUPPORTED** |
