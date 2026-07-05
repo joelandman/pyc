@@ -574,8 +574,12 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             node->children.push_back(std::move(child));
             Py_DECREF(value);
         }
-    } else if (node->type == "ListComp") {
-        // Handle list comprehension: [elt for target in iter if ifs]
+    } else if (node->type == "ListComp" || node->type == "GeneratorExp") {
+        // List comprehensions: [elt for target in iter if ifs]
+        // Generator expressions: (elt for target in iter if ifs) — same AST
+        // shape as ListComp. We lower both to an eager list (CPython's
+        // generator is lazy but for the patterns pyc supports — str.join,
+        // list(), for-loops — the semantics are the same).
         PyObject* elt = PyObject_GetAttrString(pyNode, "elt");
         if (elt) {
             auto child = std::make_unique<ASTNode>();
@@ -705,12 +709,16 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         // format_spec (e.g. :.2f) — skip for MVP
     } else if (node->type == "Import") {
         // Import(names=[alias(name='sys', asname='s')])
+        // Store original module names in node->id (space-separated for the
+        // case of `import a, b, c as cc`) and asname-or-name in args.
         PyObject* names = PyObject_GetAttrString(pyNode, "names");
         if (names && PyList_Check(names)) {
             for (Py_ssize_t i = 0; i < PyList_Size(names); ++i) {
                 PyObject* alias = PyList_GetItem(names, i);
                 std::string name = getPyString(alias, "name");
                 std::string asname = getPyString(alias, "asname");
+                if (i > 0) node->id += " ";
+                node->id += name;
                 if (!asname.empty()) {
                     node->args.push_back(asname);
                 } else {

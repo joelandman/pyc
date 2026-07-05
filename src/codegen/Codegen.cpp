@@ -134,6 +134,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(pycPrintTy, llvm::Function::ExternalLinkage, "pyc_print", module.get());
 
+    llvm::FunctionType* pycImportFailedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(pycImportFailedTy, llvm::Function::ExternalLinkage, "pyc_import_failed", module.get());
+
     // Builtins: min/max, list, enumerate, zip
     for (const char* name : {"PyBuiltin_MinList","PyBuiltin_MaxList",
                               "PyBuiltin_List","PyBuiltin_Enumerate"}) {

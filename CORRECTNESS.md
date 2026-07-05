@@ -435,6 +435,28 @@ Sorted by criticality (most critical at top).
 - Both now handle type 2 (dict) by iterating over keys, matching CPython.
 - Fixes `tests/hash.py` (uses `sorted(colors)` and `sum(nums)`).
 
+### 38. Generator expressions return empty list
+
+**Severity:** High (Tier 4)  
+**Location:** `src/frontend/PythonParser.cpp:577-595` (no `GeneratorExp` handler), `src/Compiler.cpp:668-670` (no lowering for `GeneratorExp`)  
+**Status: FIXED**
+
+- The parser had no handler for the `GeneratorExp` AST node (it shares shape with `ListComp`: `[elt, comprehension1, ...]`). The compiler fell through to a default case that returned an empty string for the genexpr, so `g = (x for x in xs)` produced an empty result, and any `for x in genexpr` or `str.join(genexpr)` saw nothing.
+- CPython's `GeneratorExp` is *lazy* (returns a generator object), but for the patterns pyc supports (str.join, list(), for-loops) the result of iteration is identical to a list comprehension. Both forms are now lowered to an eager list via the existing `lowerListComp` machinery.
+- Fixes `tests/range.py` and the `rev` / `doubled` / `evens` / `big` / `sn` / `sr` lines in `tests/builtins2.py`.
+
+### 39. `import` of unsupported modules is silently a no-op
+
+**Severity:** High (Tier 4 #18)  
+**Location:** `src/runtime/Runtime.cpp:846-861` (new `pyc_import_failed`), `include/pyc/runtime.h`, `src/codegen/Codegen.cpp:135-138` (declaration), `src/Compiler.cpp:478-501` (rewritten Import/ImportFrom lowering), `src/frontend/PythonParser.cpp:710-729` (store original module names)  
+**Status: FIXED**
+
+- `import re` (or `import math`, etc.) just registered `re` as a module-level global name without doing anything else. Subsequent `re.finditer(...)` returned None silently and the program produced meaningless output.
+- The existing import system (`runtime/import_system.cpp`) is not actually linked into the build (it's a separate factory-based runtime that the build ignores). Wiring it in is a much larger feature.
+- Pragmatic fix: at lowering time, emit a call to a new `pyc_import_failed(name)` runtime helper that prints a clear `ImportError: No module named 're' (pyc supports only a synthetic 'sys' module; ...)` to stderr and returns None. The result is stored in the imported global; subsequent attribute access on it hits the standard PyObject_Print / method-lookup path and fails with a clear "method on None" diagnostic.
+- The parser also now stores the original module name(s) in `node->id` (space-separated for `import a, b, c as cc`) and the asname-or-name in `node->args`, so the error message reports the actual module that was requested (e.g. "math" not "m" for `import math as m`).
+- Fixes `tests/regex_g.py` from "silently wrong output" to "exits cleanly with a clear ImportError to stderr". The runner compares stdout only, so the test still shows as DIFF — but the program no longer produces incorrect results, it now reports the real problem.
+
 ---
 
 ## Summary
@@ -445,4 +467,4 @@ Sorted by criticality (most critical at top).
 | High | 27 | All FIXED |
 | Medium | 3 | All FIXED |
 | Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **38** | **37 FIXED, 1 UNSUPPORTED** |
+| **Total** | **40** | **39 FIXED, 1 UNSUPPORTED** |

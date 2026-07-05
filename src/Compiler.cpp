@@ -476,17 +476,52 @@ public:
             }
             return;
         } else if (node->type == "Import") {
-            // import sys, import math as m
-            // Register imported module names as module-level globals
-            for (const auto& name : node->args) {
+            // import sys, import math as m, import a, b, c as cc
+            // For every import, call pyc_import_failed (the only supported
+            // module is a synthetic 'sys' which is handled at runtime init
+            // time and never appears here). The result is stored in the
+            // imported global name; subsequent attribute access on it
+            // will produce a clear runtime diagnostic.
+            //
+            // The original module names are stored in node->id (space-
+            // separated for the comma-list case); node->args holds the
+            // asname-or-name (the binding target).
+            std::vector<std::string> origNames;
+            {
+                std::stringstream ss(node->id);
+                std::string tok;
+                while (ss >> tok) origNames.push_back(tok);
+            }
+            for (size_t i = 0; i < node->args.size(); ++i) {
+                const std::string& name = node->args[i];
+                const std::string& orig = (i < origNames.size()) ? origNames[i] : name;
                 ir.addModuleGlobal(name);
+                std::string modConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, modConst, "str");
+                std::string res = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modConst}, res);
+                ir.addInstruction(currentFunc, "assign", {res}, name);
             }
             return;
         } else if (node->type == "ImportFrom") {
             // from math import sqrt
-            // Register imported names as module-level globals
-            for (const auto& name : node->args) {
-                ir.addModuleGlobal(name);
+            // Same handling: import the parent module (which fails for
+            // any non-sys module), then attempt to look up the names on
+            // the result. Since the result is null, the name bindings
+            // stay null and any use will produce a clear diagnostic.
+            const std::string& mod = node->id;
+            if (!mod.empty()) {
+                std::string modConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modConst, "str");
+                std::string res = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modConst}, res);
+                for (const auto& name : node->args) {
+                    ir.addModuleGlobal(name);
+                    // Bind each name to the (null) module value so the
+                    // binding exists in the global namespace; access on
+                    // it will fail with a clear diagnostic.
+                    ir.addInstruction(currentFunc, "assign", {res}, name);
+                }
             }
             return;
         } else if (node->type == "AugAssign") {
@@ -665,7 +700,11 @@ public:
             // handled in lowerCall.
             if (!node->children.empty()) return lowerExpr(node->children[0].get());
             return "";
-        } else if (node->type == "ListComp") {
+        } else if (node->type == "ListComp" || node->type == "GeneratorExp") {
+            // Both list comprehensions and generator expressions are
+            // lowered to an eager list. CPython's genexpr is lazy, but
+            // for the patterns pyc supports (str.join, list(), for-loops)
+            // the result is the same — callers iterate the result once.
             return lowerListComp(node);
         } else if (node->type == "DictComp") {
             return lowerDictComp(node);

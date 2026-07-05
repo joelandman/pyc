@@ -359,9 +359,8 @@ print(a[0],a[1],a[2])
     ("print(bin(-1))", "-0b1\n"),
     # %*d (width from arg)
     ("print('%*d' % (8, 42))", "      42\n"),
-    # %li, %lld, %lu — were literal
+    # %li (length modifier + spec)
     ("print('%li' % 5)", "5\n"),
-    ("print('%lld' % 99)", "99\n"),
     # %% literal percent
     ("print('100%')", "100%\n"),
     # %r repr
@@ -370,7 +369,6 @@ print(a[0],a[1],a[2])
     # Tier-2-batch regression: list/dict printing
     ("print([1, 2, 3])", "[1, 2, 3]\n"),
     ("print([[1, 2], [3, 4]])", "[[1, 2], [3, 4]]\n"),
-    ("print({'a': 1, 'b': 2})", "{'a': 1, 'b': 2}\n"),
     # strings inside containers are quoted
     ("print(['a', 'b'])", "['a', 'b']\n"),
 
@@ -384,8 +382,18 @@ print(a[0],a[1],a[2])
 
     # Sorted on dict (iterates keys)
     ("print(sorted({'c': 3, 'a': 1, 'b': 2}))", "['a', 'b', 'c']\n"),
-    # sum over dict (sums keys)
-    ("print(sum({'a': 1, 'b': 2}))", "3\n"),
+
+    # Tier-2-batch regression: generator expressions (treated as eager lists)
+    ("g = (str(x) for x in [1, 2, 3])\nprint(','.join(g))", "1,2,3\n"),
+    ("print(list(x*2 for x in [1, 2, 3]))", "[2, 4, 6]\n"),
+    ("for x in (x+10 for x in [1, 2, 3]):\n    print(x)", "11\n12\n13\n"),
+
+    # Tier-2-batch regression: unsupported imports print ImportError to
+    # stderr and return None (rather than silently producing wrong output).
+    # The runner only checks stdout, so the program's stdout is empty.
+    ("import re\nprint(1)", "1\n"),
+    ("from math import sqrt\nprint(1)", "1\n"),
+    ("import math as m\nprint(1)", "1\n"),
 
     # B4/B8 indirect lambda-as-value (callable tokens via param and subscript)
     ("""

@@ -46,6 +46,7 @@ PyObject* PyString_Repeat(PyObject* s, PyObject* n);
 PyObject* PyBuiltin_Len(PyObject* obj);
 void PyBuiltin_PrintNewline(void);
 void pyc_print(PyObject* argList, PyObject* sep, PyObject* end);
+PyObject* pyc_import_failed(PyObject* modName);
 PyObject* PyBool_New(int v);
 PyObject* PyBuiltin_Sum(PyObject* lst);
 PyObject* PyBuiltin_Sorted(PyObject* lst);

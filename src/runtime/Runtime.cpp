@@ -843,6 +843,26 @@ void pyc_print(PyObject* argList, PyObject* sep, PyObject* end) {
     fflush(stdout);
 }
 
+// pyc_import_failed(module_name) — emits a clear ImportError-style
+// diagnostic to stderr for an `import` of a module pyc does not support.
+// The compiler treats all `import` statements as best-effort: this is
+// the only error path for `import re`, `import os`, etc. (the `sys`
+// module is faked by pyc_setup_sys and bypasses this path.)
+//
+// Returns None so the imported name in the calling code is set to a
+// None value. Subsequent attribute access on it (e.g. `re.finditer`)
+// will hit the standard PyObject_Print / method-lookup path and fail
+// with a clear "method on None" diagnostic rather than silently
+// returning wrong values.
+PyObject* pyc_import_failed(PyObject* modName) {
+    const char* name = (modName && modName->type == 3) ? modName->str.c_str() : "?";
+    fprintf(stderr, "ImportError: No module named '%s' "
+                    "(pyc supports only a synthetic 'sys' module; "
+                    "real module loading is not yet implemented)\n", name);
+    fflush(stderr);
+    return nullptr;
+}
+
 PyObject* PyBuiltin_Len(PyObject* obj) {
     if (!obj) return PyInt_FromLong(0);
     if (obj->type == 1) return PyInt_FromLong((long)obj->list.size());
