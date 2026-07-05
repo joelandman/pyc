@@ -148,6 +148,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     // Builtins: int, float, abs; string methods; dict/list methods
     for (const char* name : {"PyBuiltin_Int","PyBuiltin_Float","PyBuiltin_Abs",
                               "PyBuiltin_Ord","PyBuiltin_Chr",
+                              "PyBuiltin_Bool","PyBuiltin_Type",
+                              "PyBuiltin_Hex","PyBuiltin_Oct","PyBuiltin_Bin",
                               "PyString_Upper","PyString_Lower","PyString_Strip",
                               "PyString_SplitWhitespace","PyDict_Keys","PyDict_Values",
                               "PyDict_Items","PyList_Sort","PyList_Pop"}) {

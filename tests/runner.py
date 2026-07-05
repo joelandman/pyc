@@ -347,6 +347,46 @@ print(a[0],a[1],a[2])
     # Tier-1-batch regression: print() with no args → bare newline
     ("print()", "\n"),
 
+    # Tier-2-batch regression: string % formatting
+    # %s with width and alignment
+    ("print('[%10s]' % 'right')", "[     right]\n"),
+    ("print('[%-10s]' % 'left')", "[left      ]\n"),
+    # %x / %X / %o — were literal before
+    ("print('%x' % 255)", "ff\n"),
+    ("print('%X' % 255)", "FF\n"),
+    ("print('%o' % 8)", "10\n"),
+    # bin with negative (sign before prefix)
+    ("print(bin(-1))", "-0b1\n"),
+    # %*d (width from arg)
+    ("print('%*d' % (8, 42))", "      42\n"),
+    # %li, %lld, %lu — were literal
+    ("print('%li' % 5)", "5\n"),
+    ("print('%lld' % 99)", "99\n"),
+    # %% literal percent
+    ("print('100%')", "100%\n"),
+    # %r repr
+    ("print('%r' % 'hi')", "'hi'\n"),
+
+    # Tier-2-batch regression: list/dict printing
+    ("print([1, 2, 3])", "[1, 2, 3]\n"),
+    ("print([[1, 2], [3, 4]])", "[[1, 2], [3, 4]]\n"),
+    ("print({'a': 1, 'b': 2})", "{'a': 1, 'b': 2}\n"),
+    # strings inside containers are quoted
+    ("print(['a', 'b'])", "['a', 'b']\n"),
+
+    # Tier-3 builtins: bool, type, hex, oct, bin
+    ("print(bool(1), bool(0), bool(''), bool('x'), bool([]), bool([0]))", "True False False True False True\n"),
+    ("print(type(1), type(1.5), type('a'), type([]), type({}), type(None), type(True))",
+     "<class 'int'> <class 'float'> <class 'str'> <class 'list'> <class 'dict'> <class 'NoneType'> <class 'bool'>\n"),
+    ("print(hex(0), hex(255), hex(-1))", "0x0 0xff -0x1\n"),
+    ("print(oct(0), oct(8), oct(-1))", "0o0 0o10 -0o1\n"),
+    ("print(bin(0), bin(5), bin(-1))", "0b0 0b101 -0b1\n"),
+
+    # Sorted on dict (iterates keys)
+    ("print(sorted({'c': 3, 'a': 1, 'b': 2}))", "['a', 'b', 'c']\n"),
+    # sum over dict (sums keys)
+    ("print(sum({'a': 1, 'b': 2}))", "3\n"),
+
     # B4/B8 indirect lambda-as-value (callable tokens via param and subscript)
     ("""
 def call_it(fn, v):

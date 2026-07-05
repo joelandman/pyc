@@ -1709,6 +1709,33 @@ private:
             noteType(res, "str");
             return res;
         }
+        // bool(x) → PyBuiltin_Bool(x)
+        if (funcName == "bool") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Bool", arg}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+        // type(x) → PyBuiltin_Type(x)  (returns a string like "<class 'int'>")
+        if (funcName == "type") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Type", arg}, res, "str");
+            noteType(res, "str");
+            return res;
+        }
+        // hex/oct/bin(x) — string with 0x/0o/0b prefix
+        if (funcName == "hex" || funcName == "oct" || funcName == "bin") {
+            std::string helper = (funcName == "hex") ? "PyBuiltin_Hex"
+                                : (funcName == "oct") ? "PyBuiltin_Oct"
+                                : "PyBuiltin_Bin";
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {helper, arg}, res, "str");
+            noteType(res, "str");
+            return res;
+        }
 
         // str(obj) → PyStr_FromAny(obj)
         if (funcName == "str") {

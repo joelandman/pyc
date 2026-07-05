@@ -337,6 +337,49 @@ void Py_DECREF(PyObject* obj) {
     }
 }
 
+static int PyObject_PrintBase(PyObject* obj, FILE* fp);
+static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
+    // Like PyObject_PrintBase but writes NO trailing newline. Used by
+    // container printers (list/dict) so we get "[1, 2, 3]" instead of
+    // "[1\n, 2\n, 3\n]".
+    if (!obj) { return fprintf(fp, "None"); }
+    if (obj->type == 5) return fprintf(fp, "%s", obj->value ? "True" : "False");
+    if (obj->type == 0) return fprintf(fp, "%ld", obj->value);
+    if (obj->type == 4) {
+        char buf[64];
+        format_double(buf, sizeof(buf), obj->dvalue);
+        return fprintf(fp, "%s", buf);
+    }
+    if (obj->type == 1) {
+        // Nested list — open bracket, recurse, close.
+        fprintf(fp, "[");
+        for (size_t i = 0; i < obj->list.size(); ++i) {
+            if (i > 0) fprintf(fp, ", ");
+            PyObject_PrintElement(obj->list[i], fp);
+        }
+        return fprintf(fp, "]");
+    }
+    if (obj->type == 2) {
+        // Nested dict — open brace, recurse, close.
+        fprintf(fp, "{");
+        bool first = true;
+        for (auto& pair : obj->dict) {
+            if (!first) fprintf(fp, ", ");
+            PyObject_PrintElement(pair.first, fp);
+            fprintf(fp, ": ");
+            PyObject_PrintElement(pair.second, fp);
+            first = false;
+        }
+        return fprintf(fp, "}");
+    }
+    if (obj->type == 3) {
+        // String element inside a container: use repr-style quotes.
+        return fprintf(fp, "'%s'", obj->str.c_str());
+    }
+    if (obj->type == 6) return fprintf(fp, "<cell>");
+    return fprintf(fp, "<object>");
+}
+
 static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
     // Base printing without __str__/__repr__ checks (to avoid recursion)
     if (!obj) { int r = fprintf(fp, "None\n"); fflush(fp); return r; }
@@ -354,7 +397,7 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
             if (obj->list[i] && obj->list[i]->type == 3)
                 fprintf(fp, "'%s'", obj->list[i]->str.c_str());
             else
-                PyObject_PrintBase(obj->list[i], fp);
+                PyObject_PrintElement(obj->list[i], fp);
         }
         fprintf(fp, "]\n");
         fflush(fp);
@@ -365,9 +408,9 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         bool first = true;
         for (auto& pair : obj->dict) {
             if (!first) fprintf(fp, ", ");
-            PyObject_PrintBase(pair.first, fp);
+            PyObject_PrintElement(pair.first, fp);
             fprintf(fp, ": ");
-            PyObject_PrintBase(pair.second, fp);
+            PyObject_PrintElement(pair.second, fp);
             first = false;
         }
         fprintf(fp, "}\n");
@@ -480,6 +523,29 @@ PyObject* PyStr_FromAny(PyObject* obj) {
         r += "]";
         return PyUnicode_FromString(r.c_str());
     }
+    if (obj->type == 2) {
+        std::string r = "{";
+        bool first = true;
+        for (auto& pair : obj->dict) {
+            if (!first) r += ", ";
+            if (pair.first && pair.first->type == 3) {
+                r += "'" + pair.first->str + "'";
+            } else {
+                PyObject* ks = PyStr_FromAny(pair.first);
+                if (ks) { r += ks->str; Py_DECREF(ks); }
+            }
+            r += ": ";
+            if (pair.second && pair.second->type == 3) {
+                r += "'" + pair.second->str + "'";
+            } else {
+                PyObject* vs = PyStr_FromAny(pair.second);
+                if (vs) { r += vs->str; Py_DECREF(vs); }
+            }
+            first = false;
+        }
+        r += "}";
+        return PyUnicode_FromString(r.c_str());
+    }
     return PyUnicode_FromString("<object>");
 }
 
@@ -550,6 +616,89 @@ PyObject* PyBuiltin_Float(PyObject* obj) {
         try { return PyFloat_FromDouble(std::stod(obj->str)); } catch (...) {}
     }
     return PyFloat_FromDouble(0.0);
+}
+
+// bool(x) — returns PyBool_New of the truthiness of x. CPython's bool()
+// always returns a real bool (True/False). Our PyBool_New now returns
+// the cached immortal singletons, so identity comparisons work.
+PyObject* PyBuiltin_Bool(PyObject* obj) {
+    if (!obj) return PyBool_New(0);
+    if (obj->type == 0 || obj->type == 5) return PyBool_New(obj->value != 0);
+    if (obj->type == 4) return PyBool_New(obj->dvalue != 0.0);
+    if (obj->type == 3) return PyBool_New(!obj->str.empty());
+    if (obj->type == 1) return PyBool_New(!obj->list.empty());
+    if (obj->type == 2) return PyBool_New(!obj->dict.empty());
+    return PyBool_New(1);
+}
+
+// type(x) — returns a string naming the runtime type of x. We use the
+// same names CPython uses so user code that compares to type names works.
+PyObject* PyBuiltin_Type(PyObject* obj) {
+    if (!obj) return PyUnicode_FromString("<class 'NoneType'>");
+    switch (obj->type) {
+        case 0: return PyUnicode_FromString("<class 'int'>");
+        case 1: return PyUnicode_FromString("<class 'list'>");
+        case 2: return PyUnicode_FromString("<class 'dict'>");
+        case 3: return PyUnicode_FromString("<class 'str'>");
+        case 4: return PyUnicode_FromString("<class 'float'>");
+        case 5: return PyUnicode_FromString("<class 'bool'>");
+        case 6: return PyUnicode_FromString("<class 'cell'>");
+        default: return PyUnicode_FromString("<class 'object'>");
+    }
+}
+
+static PyObject* intToBaseString(long v, int base, bool upper) {
+    if (base < 2 || base > 36) base = 10;
+    if (v == 0) return PyUnicode_FromString("0");
+    bool neg = v < 0;
+    unsigned long u = neg ? -(unsigned long)v : (unsigned long)v;
+    std::string out;
+    const char* digits = upper ? "0123456789ABCDEF" : "0123456789abcdef";
+    while (u > 0) {
+        out += digits[u % (unsigned)base];
+        u /= (unsigned)base;
+    }
+    if (neg) out += "-";
+    std::string rev(out.rbegin(), out.rend());
+    return PyUnicode_FromString(rev.c_str());
+}
+
+// hex(x) — string with "0x" prefix. CPython adds the prefix; we match.
+// CPython puts the negative sign before the prefix (-0x1) and uses
+// lower-case x.
+PyObject* PyBuiltin_Hex(PyObject* obj) {
+    long v = 0;
+    if (obj && (obj->type == 0 || obj->type == 5)) v = obj->value;
+    PyObject* s = intToBaseString(v, 16, false);
+    std::string body = s ? s->str : std::string("0");
+    if (s) Py_DECREF(s);
+    std::string out = "0x" + body;
+    if (v < 0 && body.size() > 0 && body[0] == '-') out = "-0x" + body.substr(1);
+    return PyUnicode_FromString(out.c_str());
+}
+
+// oct(x) — string with "0o" prefix.
+PyObject* PyBuiltin_Oct(PyObject* obj) {
+    long v = 0;
+    if (obj && (obj->type == 0 || obj->type == 5)) v = obj->value;
+    PyObject* s = intToBaseString(v, 8, false);
+    std::string body = s ? s->str : std::string("0");
+    if (s) Py_DECREF(s);
+    std::string out = "0o" + body;
+    if (v < 0 && body.size() > 0 && body[0] == '-') out = "-0o" + body.substr(1);
+    return PyUnicode_FromString(out.c_str());
+}
+
+// bin(x) — string with "0b" prefix.
+PyObject* PyBuiltin_Bin(PyObject* obj) {
+    long v = 0;
+    if (obj && (obj->type == 0 || obj->type == 5)) v = obj->value;
+    PyObject* s = intToBaseString(v, 2, false);
+    std::string body = s ? s->str : std::string("0");
+    if (s) Py_DECREF(s);
+    std::string out = "0b" + body;
+    if (v < 0 && body.size() > 0 && body[0] == '-') out = "-0b" + body.substr(1);
+    return PyUnicode_FromString(out.c_str());
 }
 
 PyObject* PyBuiltin_Abs(PyObject* obj) {
@@ -780,23 +929,44 @@ PyObject* Pyc_Pow(PyObject* a, PyObject* b) {
 }
 
 PyObject* PyBuiltin_Sum(PyObject* lst) {
-    if (!lst || lst->type != 1) return PyInt_FromLong(0);
+    if (!lst) return PyInt_FromLong(0);
     PyObject* total = PyInt_FromLong(0);
-    for (auto* item : lst->list) {
-        if (!item) continue;
+    auto addOne = [&](PyObject* item) {
+        if (!item) return;
         PyObject* next = PyNumber_Add(total, item);
         Py_DECREF(total);
         total = next ? next : PyInt_FromLong(0);
+    };
+    if (lst->type == 1) {
+        for (auto* item : lst->list) addOne(item);
+    } else if (lst->type == 2) {
+        // CPython: sum of dict iterates over keys.
+        for (auto& pair : lst->dict) addOne(pair.first);
     }
     return total;
 }
 
 PyObject* PyBuiltin_Sorted(PyObject* lst) {
-    if (!lst || lst->type != 1) return PyList_New(0);
-    PyObject* r = PyList_New(lst->list.size());
-    for (size_t i = 0; i < lst->list.size(); ++i) {
-        if (lst->list[i]) Py_INCREF(lst->list[i]);
-        PyList_SetItem(r, i, lst->list[i]);
+    if (!lst) return PyList_New(0);
+    // Build the list of items to sort. For lists, sort the elements
+    // (matching CPython: sorted([3,1,2]) → [1,2,3]). For dicts, sort
+    // the keys (matching CPython: sorted({"b":1,"a":2}) → ['a','b']).
+    PyObject* r = nullptr;
+    if (lst->type == 1) {
+        r = PyList_New(lst->list.size());
+        for (size_t i = 0; i < lst->list.size(); ++i) {
+            if (lst->list[i]) Py_INCREF(lst->list[i]);
+            PyList_SetItem(r, i, lst->list[i]);
+        }
+    } else if (lst->type == 2) {
+        r = PyList_New(lst->dict.size());
+        size_t i = 0;
+        for (auto& pair : lst->dict) {
+            if (pair.first) Py_INCREF(pair.first);
+            PyList_SetItem(r, i++, pair.first);
+        }
+    } else {
+        return PyList_New(0);
     }
     std::sort(r->list.begin(), r->list.end(), [](PyObject* a, PyObject* b) -> bool {
         if (!a || !b) return false;
@@ -1087,6 +1257,18 @@ PyObject* PyBuiltin_Zip2(PyObject* a, PyObject* b) {
 }
 
 // str % val formatting (used via PyNumber_Remainder for string left operand)
+// Supports the common CPython format-spec subset:
+//   %[-+ 0#]<width>(.<precision>)?(<len>)?<spec>
+// where len is one of "", "l", "h", "L" (ignored for int formatting in our
+// runtime since long is the only int type) and spec is one of:
+//   d, i  signed decimal int
+//   u      unsigned decimal int (treated as d; our ints are signed)
+//   o, x, X  octal / lowercase hex / uppercase hex
+//   e, E, f, g, G  float with various precisions
+//   s, r   string / repr
+//   c      single character (codepoint)
+//   %      literal percent
+// Width/precision can be `*` to take the next positional arg.
 static PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
     if (!fmt || fmt->type != 3) return nullptr;
     auto getArg = [&](size_t idx) -> PyObject* {
@@ -1099,30 +1281,142 @@ static PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
     size_t argIdx = 0;
     for (size_t i = 0; i < f.size(); ) {
         if (f[i] != '%') { result += f[i++]; continue; }
-        if (i + 1 >= f.size() || f[i+1] == '%') { result += '%'; i += (f[i+1]=='%' ? 2 : 1); continue; }
-        // Find end of format spec
+        if (i + 1 >= f.size()) { result += '%'; break; }
+        if (f[i+1] == '%') { result += '%'; i += 2; continue; }
+        // Parse the format spec: [flags][width][.precision][length]spec
         size_t j = i + 1;
-        while (j < f.size() && (f[j]=='-'||f[j]=='+'||f[j]==' '||f[j]=='0'||f[j]=='#'||f[j]=='.'||isdigit((unsigned char)f[j]))) ++j;
+        // Flags: - + space 0 #
+        std::string flags;
+        while (j < f.size() && (f[j]=='-' || f[j]=='+' || f[j]==' ' || f[j]=='0' || f[j]=='#')) {
+            flags += f[j++];
+        }
+        // Width: either digits or '*' (next arg)
+        std::string widthStr;
+        bool widthFromArg = false;
+        if (j < f.size() && f[j] == '*') {
+            widthFromArg = true; ++j;
+        } else {
+            while (j < f.size() && isdigit((unsigned char)f[j])) widthStr += f[j++];
+        }
+        // Precision: .<digits> or .*
+        std::string precStr;
+        bool precFromArg = false;
+        bool hasPrec = false;
+        if (j < f.size() && f[j] == '.') {
+            hasPrec = true; ++j;
+            if (j < f.size() && f[j] == '*') { precFromArg = true; ++j; }
+            else while (j < f.size() && isdigit((unsigned char)f[j])) precStr += f[j++];
+        }
+        // Length modifier: h, l, ll, L (we just skip — our int is always long)
+        // CPython accepts: h, hh, l, ll, L, q, j, z, t. We match a subset
+        // (h, hh, l, ll, L); the rest are accepted to avoid spurious errors.
+        if (j < f.size() && f[j]=='h') { ++j; if (j < f.size() && f[j]=='h') ++j; }
+        else if (j < f.size() && f[j]=='l') { ++j; if (j < f.size() && f[j]=='l') ++j; }
+        else if (j < f.size() && f[j]=='L') { ++j; }
         if (j >= f.size()) { result += f[i++]; continue; }
         char spec = f[j];
-        PyObject* arg = getArg(argIdx++);
-        char buf[256] = {};
-        std::string fs = f.substr(i, j - i + 1);  // full %...spec
-        if (spec == 'd' || spec == 'i') {
-            long v = arg ? ((arg->type==0||arg->type==5) ? arg->value : (arg->type==4 ? (long)arg->dvalue : 0)) : 0;
-            std::string lfs = f.substr(i, j-i) + "ld";
-            snprintf(buf, sizeof(buf), lfs.c_str(), v);
-        } else if (spec == 'f' || spec == 'e' || spec == 'g') {
-            double v = arg ? numeric_val(arg) : 0.0;
-            snprintf(buf, sizeof(buf), fs.c_str(), v);
-        } else if (spec == 's' || spec == 'r') {
-            PyObject* s = arg ? PyStr_FromAny(arg) : PyUnicode_FromString("");
-            snprintf(buf, sizeof(buf), "%s", s ? s->str.c_str() : "");
-            if (s) Py_DECREF(s);
-        } else {
-            result += fs; i = j + 1; continue;
+
+        // Resolve width and precision (consume extra args if from-arg)
+        int width = 0;
+        int prec = -1;
+        if (widthFromArg) {
+            PyObject* w = getArg(argIdx++);
+            if (w && (w->type==0 || w->type==5)) width = (int)w->value;
+        } else if (!widthStr.empty()) {
+            width = std::atoi(widthStr.c_str());
         }
-        result += buf;
+        if (precFromArg) {
+            PyObject* p = getArg(argIdx++);
+            if (p && (p->type==0 || p->type==5)) prec = (int)p->value;
+            if (prec < 0) prec = 0;
+        } else if (hasPrec) {
+            prec = precStr.empty() ? 0 : std::atoi(precStr.c_str());
+        }
+
+        // Build the snprintf format string for this spec
+        std::string sub = "%" + flags + (widthFromArg ? std::to_string(width) : widthStr);
+        if (hasPrec) sub += "." + (precFromArg ? std::to_string(prec) : precStr);
+        sub += spec;
+        const char* fsp = sub.c_str();
+        char buf[512] = {};
+        PyObject* arg = getArg(argIdx++);
+        bool consumed = true;
+
+        switch (spec) {
+            case 'd': case 'i': case 'u': {
+                long v = arg ? ((arg->type==0||arg->type==5) ? arg->value : (arg->type==4 ? (long)arg->dvalue : 0)) : 0;
+                snprintf(buf, sizeof(buf), fsp, v);
+                break;
+            }
+            case 'o': case 'x': case 'X': {
+                // CPython treats %o, %x, %X as unsigned. We just print
+                // the long in unsigned form via a temp.
+                long v = arg ? ((arg->type==0||arg->type==5) ? arg->value : (arg->type==4 ? (long)arg->dvalue : 0)) : 0;
+                // # flag with o/x/X adds 0/0x/0X prefix
+                if (flags.find('#') != std::string::npos) {
+                    std::string prefix;
+                    if (spec == 'o') prefix = "0";
+                    else if (spec == 'x') prefix = "0x";
+                    else if (spec == 'X') prefix = "0X";
+                    snprintf(buf, sizeof(buf), fsp, (unsigned long)v);
+                    std::string out = buf;
+                    if (out.find(prefix) != 0) out = prefix + out;
+                    snprintf(buf, sizeof(buf), "%s", out.c_str());
+                } else {
+                    snprintf(buf, sizeof(buf), fsp, (unsigned long)v);
+                }
+                break;
+            }
+            case 'e': case 'E': case 'f': case 'g': case 'G': {
+                double v = arg ? numeric_val(arg) : 0.0;
+                snprintf(buf, sizeof(buf), fsp, v);
+                break;
+            }
+            case 's': {
+                // %s honours width and flags (- left-align, others right-align).
+                // We build a custom right-padding here because snprintf %s
+                // with a * width DOES work, but the runtime's snprintf
+                // may not always be available — so we always do it manually.
+                PyObject* s = arg ? PyStr_FromAny(arg) : PyUnicode_FromString("");
+                std::string body = s ? s->str : std::string();
+                if (s) Py_DECREF(s);
+                int w = width;
+                if (w > 0 && (int)body.size() < w) {
+                    bool leftAlign = flags.find('-') != std::string::npos;
+                    int pad = w - (int)body.size();
+                    if (leftAlign) {
+                        body.append((size_t)pad, ' ');
+                    } else {
+                        body.insert(0, (size_t)pad, ' ');
+                    }
+                }
+                snprintf(buf, sizeof(buf), "%s", body.c_str());
+                break;
+            }
+            case 'r': {
+                PyObject* s = arg ? PyStr_FromAny(arg) : PyUnicode_FromString("");
+                std::string body = s ? s->str : std::string();
+                if (s) Py_DECREF(s);
+                // repr: add quotes for strings (limited — we don't escape)
+                if (arg && arg->type == 3) {
+                    body = "'" + body + "'";
+                }
+                snprintf(buf, sizeof(buf), "%s", body.c_str());
+                break;
+            }
+            case 'c': {
+                long v = arg ? ((arg->type==0||arg->type==5) ? arg->value : (arg->type==4 ? (long)arg->dvalue : 0)) : 0;
+                buf[0] = (char)(v & 0x7f);
+                buf[1] = '\0';
+                break;
+            }
+            default:
+                // Unknown spec — keep the literal text and move on.
+                result += f.substr(i, j - i + 1);
+                consumed = false;
+                break;
+        }
+        if (consumed) result += buf;
         i = j + 1;
     }
     return PyUnicode_FromString(result.c_str());

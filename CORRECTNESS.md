@@ -382,12 +382,67 @@ Sorted by criticality (most critical at top).
 
 ---
 
+## High
+
+### 34. String `%` formatting — `%s` ignores width, `%li`/`%x`/`%X`/`%o` are literal, `%*d` is literal
+
+**Severity:** High  
+**Location:** `src/runtime/Runtime.cpp:1090-1128` (old `PyString_Format`)  
+**Status: FIXED**
+
+- The original formatter only handled `%d`/`%i`, `%f`/`%e`/`%g`, and `%s`/`%r`. Every other spec character (`%x`, `%X`, `%o`, `%c`, etc.) and every length modifier (`%l`, `%ll`, `%h`, `%hh`) fell through the `else` branch and was emitted as literal text. `%s` ignored width/alignment entirely.
+- Rewrote `PyString_Format` to parse a proper CPython-style format spec: `[flags][width][.precision][length]spec`. Handles:
+  - flags: `-`, `+`, ` `, `0`, `#`
+  - width: `*` (consumes next arg) or digits
+  - precision: `.*` or `.<digits>`
+  - length: `h`, `hh`, `l`, `ll`, `L`
+  - spec: `d`/`i`/`u`, `o`/`x`/`X`, `e`/`E`/`f`/`g`/`G`, `s`, `r`, `c`, `%%`
+- `%s` now honours width and `-` left-align (manual padding since `snprintf`'s `%*s` works but is fiddly).
+- `%x`/`%X`/`%o` use unsigned formatting with the `#` flag for the `0x`/`0o` prefix.
+- `%*d` and `%.*f` consume extra args as width/precision.
+- Fixed a related CPython compat bug: `bin(-1)` puts the negative sign before the prefix (`-0b1`), not after (`0b-1`).
+
+### 35. List/dict printing inserts stray newlines
+
+**Severity:** High  
+**Location:** `src/runtime/Runtime.cpp:340-380` (new `PyObject_PrintElement` and refactored `PyObject_PrintBase`)  
+**Status: FIXED**
+
+- The list and dict printers called `PyObject_PrintBase` on each element, which always emitted a trailing newline. So `print([1, 2, 3])` produced `"[1\n, 2\n, 3\n]"` rather than `"[1, 2, 3]"`.
+- Added a new `PyObject_PrintElement(obj, fp)` that writes the same content as `PyObject_PrintBase` but WITHOUT the trailing newline. The list/dict printers now use this for their elements.
+- Also fixed `PyStr_FromAny` (used by the new `pyc_print` runtime) — added a dict case (it previously returned `"<object>"` for dicts) and added proper quoting for string dict keys/values.
+- Affects 3 file cases (range, builtins2, hash) and is the right behaviour for normal list/dict printing.
+
+### 36. `bool()`, `type()`, `hex()`, `oct()`, `bin()` return None
+
+**Severity:** High (Tier 3 in the original report)  
+**Location:** `src/runtime/Runtime.cpp` (new `PyBuiltin_Bool/Type/Hex/Oct/Bin`), `src/Compiler.cpp:1710-1740` (lowering cases), `src/codegen/Codegen.cpp:149-155` (declarations), `include/pyc/runtime.h`  
+**Status: FIXED**
+
+- All five builtins were listed in `knownIRFunctions` (to keep them off the dynamic `Pyc_Apply` path) but had no runtime implementation and no lowering case — so calls to them were silently dropped (the codegen "unknown call" bug from #30).
+- Added runtime helpers: `PyBuiltin_Bool` (returns immortal True/False singletons), `PyBuiltin_Type` (returns `"<class 'int'>"` etc.), `PyBuiltin_Hex`/`Oct`/`Bin` (return `"0x..."`, `"0o..."`, `"0b..."` with negative sign before the prefix).
+- Added lowering cases in `Compiler.cpp:1710-1740` and codegen declarations in `Codegen.cpp:149-155`.
+- `type(None)` returns `"<class 'NoneType'>"` matching CPython.
+
+### 37. `PyBuiltin_Sorted` only accepts lists; `sum` only accepts lists
+
+**Severity:** High (Tier 3)  
+**Location:** `src/runtime/Runtime.cpp:798-810` (Sorted), `:931-941` (Sum)  
+**Status: FIXED**
+
+- `PyBuiltin_Sorted(lst)` early-returned `PyList_New(0)` if `lst->type != 1`. `sorted({"a": 1, "b": 2})` returned `[]`.
+- `PyBuiltin_Sum(lst)` did the same.
+- Both now handle type 2 (dict) by iterating over keys, matching CPython.
+- Fixes `tests/hash.py` (uses `sorted(colors)` and `sum(nums)`).
+
+---
+
 ## Summary
 
 | Severity | Count | Status |
 |----------|-------|--------|
 | Critical | 3 | All FIXED |
-| High | 23 | All FIXED |
+| High | 27 | All FIXED |
 | Medium | 3 | All FIXED |
 | Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **34** | **33 FIXED, 1 UNSUPPORTED** |
+| **Total** | **38** | **37 FIXED, 1 UNSUPPORTED** |
