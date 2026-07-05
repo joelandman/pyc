@@ -297,6 +297,18 @@ print(a[0],a[1],a[2])
     # safe floor div (//) with negatives and zero-guard (must match CPython)
     ("print(7//2, (-7)//2, 7//(-2), (-7)//(-2))", "3 -4 -4 3\n"),
     ("print(5//0 if False else 99)", "99\n"),  # avoid actual div0 in this tiny suite
+    # Tier-1 regression: // between two variables (was: compiler segfault)
+    ("a=10\nb=3\nprint(a//b)", "3\n"),
+    # Tier-1 regression: //= aug-assign on a name
+    ("x=20\nx//=3\nprint(x)", "6\n"),
+    # Tier-1 regression: // in an expression with further uses
+    ("a=17\nb=5\nc=a//b + 1\nprint(c, a//b, a%b)", "4 3 2\n"),
+    # Tier-1 regression: // inside a loop body
+    ("for i in range(1, 6):\n    print(i, i//2, i//3)", "1 0 0\n2 1 0\n3 1 1\n4 2 1\n5 2 1\n"),
+    # Tier-1 regression: // result consumed by a function call
+    ("def f(x): return x*10\nprint(f(9//4))", "20\n"),
+    # Tier-1 regression: // with subscript target on RHS
+    ("xs=[10,11,12]\nprint(xs[1]//xs[0])", "1\n"),
 
     # B4/B8 indirect lambda-as-value (callable tokens via param and subscript)
     ("""

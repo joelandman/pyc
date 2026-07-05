@@ -265,12 +265,29 @@ Sorted by criticality (most critical at top).
 
 ---
 
+## Critical
+
+### 25. `//` (FloorDiv) Compiler Crash / Invalid LLVM IR
+
+**Severity:** Critical  
+**Location:** `src/codegen/Codegen.cpp:937-994`  
+**Status: FIXED**
+
+- The int path of `div` op emitted `builder.CreateCondBr` followed by `CreateBr` while still inside a non-terminated basic block, leaving the IRBuilder's insert point invalid and producing "Terminator found in the middle of a basic block!" LLVM verification failures (or a compiler segfault inside `CreateAlignedLoad`).
+- Triggered by any `//` or `//=` where operands are not both compile-time constants (e.g., `a=10; b=3; print(a//b)` or `x=7; x//=2; print(x)`).
+- Replaced the broken branch-based DECREF cleanup with a single `select` between the two candidate PyObject* pointers (`boxedI64` and `quot`) and a `Py_DECREF` call. `Py_DECREF(NULL)` is a safe no-op in the runtime (`runtime/Runtime.cpp:222-234`), so the freed value safely covers both paths without introducing a terminator in the middle of a basic block.
+- Added a `safeRhs = select(isZero, 1, rhs)` guard before the native `CreateSDiv`/`CreateSRem` so the host's division-by-zero trap never fires; the native result is discarded on the zero path anyway.
+- Fixed the ownership logic so the *result* (`select(isZero, quot, boxedI64)`) is never the same value passed to `Py_DECREF`.
+- Regression cases added to `tests/runner.py`: `//` between two variables, `//=`, `//` in expressions, in loops, with function-call consumers, and with subscript-source operands. 206/206 tests now pass (was 195/200 with 5 strict failures).
+
+---
+
 ## Summary
 
 | Severity | Count | Status |
 |----------|-------|--------|
-| Critical | 2 | All FIXED |
+| Critical | 3 | All FIXED |
 | High | 15 | All FIXED |
 | Medium | 3 | All FIXED |
 | Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **25** | **24 FIXED, 1 UNSUPPORTED** |
+| **Total** | **26** | **25 FIXED, 1 UNSUPPORTED** |

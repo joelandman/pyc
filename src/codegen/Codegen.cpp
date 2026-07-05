@@ -771,6 +771,34 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
                 continue;
             }
+            if (inst.op == "ptricmp") {
+                // Pointer identity comparison: compare PyObject* addresses directly.
+                // Used for `is` / `is not` operators. No unboxing — compare the
+                // actual pointers so that `a = [1,2]; b = a; a is b` returns True.
+                // Result is boxed as a bool PyObject* (same as regular icmp).
+                std::string opstr = inst.operands.empty() ? "" : inst.operands[0].name;
+                llvm::Value* lhs = getOrLoad(inst.operands.size() > 1 ? inst.operands[1].name : "");
+                llvm::Value* rhs = getOrLoad(inst.operands.size() > 2 ? inst.operands[2].name : "");
+                // Ensure both are PyObject* (i8*). Load from allocas if needed.
+                if (lhs && lhs->getType() != pyObjectPtrTy)
+                    lhs = builder.CreateLoad(pyObjectPtrTy, lhs, "ptrlhs");
+                if (rhs && rhs->getType() != pyObjectPtrTy)
+                    rhs = builder.CreateLoad(pyObjectPtrTy, rhs, "prrhs");
+                llvm::Value* cmp = nullptr;
+                if      (opstr == "Eq"    || opstr == "eq")     cmp = builder.CreateICmpEQ(lhs, rhs, inst.result);
+                else if (opstr == "NotEq" || opstr == "ne")     cmp = builder.CreateICmpNE(lhs, rhs, inst.result);
+                else                                             cmp = builder.CreateICmpNE(lhs, rhs, inst.result);
+                // Box the i1 result as a PyObject* bool via PyBool_New
+                llvm::Function* boolNew = module->getFunction("PyBool_New");
+                if (boolNew) {
+                    llvm::Value* i32cmp = builder.CreateZExt(cmp, llvm::Type::getInt32Ty(context), inst.result + ".i32");
+                    llvm::Value* boxed = builder.CreateCall(boolNew, {i32cmp}, inst.result);
+                    valueMap[inst.result] = boxed;
+                    markOwned(inst.result);
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+            }
             if (inst.op == "i64const") {
                 long v = std::stol(inst.operands.empty() ? "0" : inst.operands[0].name);
                 valueMap[inst.result] = llvm::ConstantInt::get(context, llvm::APInt(64, v));
@@ -920,19 +948,44 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     } else {
                         quot = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                     }
-                    llvm::Value* q = builder.CreateSDiv(lhs, rhs);
-                    llvm::Value* r = builder.CreateSRem(lhs, rhs);
-                    llvm::Value* signsDiffer = builder.CreateICmpSLT(builder.CreateXor(lhs, rhs), llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
+                    // Guard the native sdiv/srem against div-by-zero: those instructions
+                    // trap on the host, so we only run them when rhs is non-zero and
+                    // substitute 0 (an arbitrary value) on the zero path that the result
+                    // select discards.
+                    llvm::Value* safeRhs = builder.CreateSelect(isZero,
+                        llvm::ConstantInt::get(context, llvm::APInt(64, 1)),
+                        rhs);
+                    llvm::Value* q = builder.CreateSDiv(lhs, safeRhs);
+                    llvm::Value* r = builder.CreateSRem(lhs, safeRhs);
+                    llvm::Value* signsDiffer = builder.CreateICmpSLT(builder.CreateXor(lhs, safeRhs), llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
                     llvm::Value* hasRem = builder.CreateICmpNE(r, llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
                     llvm::Value* needAdjust = builder.CreateAnd(signsDiffer, hasRem);
                     llvm::Value* one = llvm::ConstantInt::get(context, llvm::APInt(64, 1));
                     llvm::Value* qAdj = builder.CreateSub(q, one);
                     q = builder.CreateSelect(needAdjust, qAdj, q);
-                    llvm::Value* nativeRes = builder.CreateSelect(isZero, quot, boxI64(q, inst.result + ".i64"), inst.result);
+                    // The native result owns the selected PyObject*. When isZero is
+                    // false the result is the boxed i64; when true the result is
+                    // quot (carries the div-by-zero NULL from PyNumber_Divide) and
+                    // the boxed i64 is dead. We need to free the branch NOT taken
+                    // by the result, and never free the branch that becomes the
+                    // result. Py_DECREF is a safe no-op on null, so the freed
+                    // value is a select between quot (dead when non-zero) and the
+                    // boxed i64 (dead when zero).
+                    llvm::Value* boxedI64 = boxI64(q, inst.result + ".i64");
+                    llvm::Value* nativeRes = builder.CreateSelect(isZero, quot, boxedI64, inst.result);
                     valueMap[inst.result] = nativeRes;
                     markOwned(inst.result);
                     emitDecRefIfOwned(inst.operands[0].name);
                     emitDecRefIfOwned(inst.operands[1].name);
+                    // Free the unused path. Py_DECREF(NULL) is a safe no-op, so
+                    // calling it on (boxedI64, quot) when isZero and (quot, boxedI64)
+                    // when not isZero correctly frees the dead branch in both
+                    // cases. (boxedI64 is dead when isZero; quot is dead otherwise.)
+                    llvm::Value* deadBranch = builder.CreateSelect(isZero,
+                        boxedI64,
+                        quot);
+                    llvm::Function* decref = module->getFunction("Py_DECREF");
+                    if (decref) builder.CreateCall(decref, {deadBranch});
                     continue;
                 }
                 // float or unknown -> boxed
@@ -1120,16 +1173,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
             } else if (inst.op == "subscript") {
                 // Handle list indexing: list[index]
-                llvm::Function* listGetItem = module->getFunction("PyList_GetItem");
-                if (listGetItem) {
+                // Use PyList_GetItemObj (not PyList_GetItem) because it:
+                // 1) Accepts a PyObject* index (handles negative indices correctly)
+                // 2) Returns a new reference (caller owns it, needs DECREF)
+                llvm::Function* listGetItemObj = module->getFunction("PyList_GetItemObj");
+                if (listGetItemObj) {
                     llvm::Value* list = getOrLoad(inst.operands[0].name);
-                    llvm::Value* index = getOrLoad(inst.operands[1].name);
-                    // Convert index to i64 if needed
-                    if (index->getType() != llvm::Type::getInt64Ty(context)) {
-                        index = builder.CreateZExtOrTrunc(index, llvm::Type::getInt64Ty(context));
-                    }
-                    llvm::Value* item = builder.CreateCall(listGetItem, {list, index}, inst.result);
+                    // Box the index as PyObject* so PyList_GetItemObj can handle
+                    // negative indices (index < 0 => index += len(list)).
+                    llvm::Value* index = getAsPyObject(inst.operands[1].name);
+                    llvm::Value* item = builder.CreateCall(listGetItemObj, {list, index}, inst.result);
                     valueMap[inst.result] = item;
+                    markOwned(inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
