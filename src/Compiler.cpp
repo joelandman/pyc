@@ -1440,6 +1440,8 @@ private:
                 }
             }
         }
+        std::fprintf(stderr, "DEBUG post-loop: funcName=%s argRes.size()=%zu\n", funcName.c_str(), argRes.size());
+        for (size_t i = 0; i < argRes.size(); ++i) std::fprintf(stderr, "  argRes[%zu]=%s\n", i, argRes[i].c_str());
 
         // Callee-side *args collection (skip for runtime * call sites; the __va wrapper
         // already forwards the correct fixed+tail shape for the target).
@@ -1821,6 +1823,48 @@ private:
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {helper, arg}, res, "str");
             noteType(res, "str");
+            return res;
+        }
+        // id(obj) → PyBuiltin_Id(obj)
+        if (funcName == "id") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Id", arg}, res, "int");
+            noteType(res, "int");
+            return res;
+        }
+        // divmod(a, b) → PyBuiltin_Divmod(a, b) — returns a 2-element list
+        if (funcName == "divmod") {
+            std::string a = argRes.size() > 0 ? argRes[0] : "";
+            std::string b = argRes.size() > 1 ? argRes[1] : "";
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Divmod", a, b}, res, "list");
+            noteType(res, "list");
+            return res;
+        }
+        // repr(obj) → PyBuiltin_Repr(obj) (returns a string)
+        if (funcName == "repr") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Repr", arg}, res, "str");
+            noteType(res, "str");
+            return res;
+        }
+        // round(x [, n]) → PyBuiltin_Round(x, n_or_null)
+        if (funcName == "round") {
+            std::string x = argRes.empty() ? "" : argRes[0];
+            std::string n = argRes.size() > 1 ? argRes[1] : "";
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Round", x, n}, res);
+            return res;
+        }
+        // pow(base, exp) → PyBuiltin_Pow(base, exp)
+        if (funcName == "pow") {
+            std::fprintf(stderr, "DEBUG pow: argRes.size()=%zu\n", argRes.size());
+            std::string a = argRes.size() > 0 ? argRes[0] : "";
+            std::string b = argRes.size() > 1 ? argRes[1] : "";
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Pow", a, b}, res);
             return res;
         }
 

@@ -154,12 +154,19 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                               "PyBuiltin_Ord","PyBuiltin_Chr",
                               "PyBuiltin_Bool","PyBuiltin_Type",
                               "PyBuiltin_Hex","PyBuiltin_Oct","PyBuiltin_Bin",
+                              "PyBuiltin_Id","PyBuiltin_Repr",
                               "PyString_Upper","PyString_Lower","PyString_Strip",
                               "PyString_SplitWhitespace","PyDict_Keys","PyDict_Values",
                               "PyDict_Items","PyList_Sort","PyList_Pop"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
+    // 2-arg builtins: divmod, round, pow
+    llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Divmod", module.get());
+    llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Round", module.get());
+    llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Pow", module.get());
+
     for (const char* name : {"PyString_Split","PyString_Join","PyBuiltin_IntBase",
                               "PyString_RFind"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);

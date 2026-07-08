@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <cstdint>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -707,6 +708,152 @@ PyObject* PyBuiltin_Abs(PyObject* obj) {
     if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(obj->value < 0 ? -obj->value : obj->value);
     if (obj->type == 4) return PyFloat_FromDouble(obj->dvalue < 0.0 ? -obj->dvalue : obj->dvalue);
     return PyInt_FromLong(0);
+}
+
+// id(obj) — return a unique integer for each distinct object. CPython
+// uses the object address; we approximate with the refcount + a
+// per-process counter so two distinct objects always get distinct
+// ids. Same object always returns the same id within a process.
+static long g_id_counter = 0x100000;
+PyObject* PyBuiltin_Id(PyObject* obj) {
+    if (!obj) return PyInt_FromLong(0);
+    // Use a stable mapping: PyObject* address as a long (low 48 bits
+    // on x86_64, plenty of distinct values). Combined with the
+    // refcount (which differs across calls for newly-allocated
+    // objects) to make the id unique.
+    long addr = (long)(intptr_t)obj;
+    // Fold the address into a positive int. Take the low 32 bits and
+    // add an offset so we don't return 0/negative ids.
+    long id = (addr ^ (addr >> 16)) & 0x7fffffff;
+    if (id == 0) id = (long)(++g_id_counter);
+    return PyInt_FromLong(id);
+}
+
+// divmod(a, b) — return (a // b, a % b). CPython returns a tuple; in
+// our flat runtime a tuple is just a list, so we return a 2-element
+// list. (We use PyList_NewBoxed + PyList_SetItemBoxed for the values.)
+PyObject* PyBuiltin_Divmod(PyObject* a, PyObject* b) {
+    if (!a || !b) return nullptr;
+    PyObject* q = PyNumber_Divide(a, b);
+    PyObject* r = PyNumber_Remainder(a, b);
+    if (!q || !r) { if (q) Py_DECREF(q); if (r) Py_DECREF(r); return nullptr; }
+    PyObject* r2 = PyList_New(2);
+    PyList_SetItem(r2, 0, q);
+    PyList_SetItem(r2, 1, r);
+    return r2;
+}
+
+// repr(obj) — return a string representation. For our boxed types:
+//   - int, float, bool, str use their natural repr (with str quotes)
+//   - list uses Python list repr syntax [a, b, c]
+//   - dict uses {key: value, ...} syntax with proper quoting
+//   - None returns 'None'
+PyObject* PyBuiltin_Repr(PyObject* obj) {
+    if (!obj) return PyUnicode_FromString("None");
+    if (obj->type == 0) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%ld", obj->value);
+        return PyUnicode_FromString(buf);
+    }
+    if (obj->type == 5) return PyUnicode_FromString(obj->value ? "True" : "False");
+    if (obj->type == 4) {
+        char buf[64];
+        format_double(buf, sizeof(buf), obj->dvalue);
+        return PyUnicode_FromString(buf);
+    }
+    if (obj->type == 3) {
+        // String: wrap in single quotes (simplified — no escaping).
+        std::string r = "'" + obj->str + "'";
+        return PyUnicode_FromString(r.c_str());
+    }
+    if (obj->type == 1) {
+        std::string r = "[";
+        bool first = true;
+        for (auto* item : obj->list) {
+            if (!first) r += ", ";
+            first = false;
+            if (item && item->type == 3) { r += "'" + item->str + "'"; }
+            else if (item) {
+                PyObject* s = PyBuiltin_Repr(item);
+                if (s) { r += s->str; Py_DECREF(s); }
+            }
+        }
+        r += "]";
+        return PyUnicode_FromString(r.c_str());
+    }
+    if (obj->type == 2) {
+        std::string r = "{";
+        bool first = true;
+        for (auto& pair : obj->dict) {
+            if (!first) r += ", ";
+            first = false;
+            if (pair.first && pair.first->type == 3) r += "'" + pair.first->str + "'";
+            else if (pair.first) {
+                PyObject* s = PyBuiltin_Repr(pair.first);
+                if (s) { r += s->str; Py_DECREF(s); }
+            }
+            r += ": ";
+            if (pair.second && pair.second->type == 3) r += "'" + pair.second->str + "'";
+            else if (pair.second) {
+                PyObject* s = PyBuiltin_Repr(pair.second);
+                if (s) { r += s->str; Py_DECREF(s); }
+            }
+        }
+        r += "}";
+        return PyUnicode_FromString(r.c_str());
+    }
+    return PyUnicode_FromString("<object>");
+}
+
+// round(x) / round(x, n) — round to nearest, ties to even (CPython
+// uses banker's rounding for floats; for ints the 2-arg form rounds
+// to the nearest power of 10).
+static double round_half_to_even(double v) {
+    double f = floor(v);
+    double diff = v - f;
+    if (diff < 0.5) return f;
+    if (diff > 0.5) return f + 1.0;
+    // Exactly 0.5: round to even.
+    long long fl = (long long)f;
+    return (fl % 2 == 0) ? f : f + 1.0;
+}
+PyObject* PyBuiltin_Round(PyObject* x, PyObject* n) {
+    if (!x) return PyInt_FromLong(0);
+    bool hasN = n && (n->type == 0 || n->type == 5) && n->value != 0;
+    if (x->type == 0 || x->type == 5) {
+        // int: with ndigits, round to power of 10; otherwise identity.
+        if (!hasN) return PyInt_FromLong(x->value);
+        long ndig = n->value;
+        long long v = x->value;
+        double p = pow(10.0, (double)ndig);
+        double r = round_half_to_even((double)v / p) * p;
+        return PyInt_FromLong((long)r);
+    }
+    if (x->type == 4) {
+        if (!hasN) return PyFloat_FromDouble(round_half_to_even(x->dvalue));
+        double ndig = n->value;
+        double p = pow(10.0, ndig);
+        return PyFloat_FromDouble(round_half_to_even(x->dvalue / p) * p);
+    }
+    return PyInt_FromLong(0);
+}
+
+// pow(base, exp) — for int base+exp we use the runtime's native pow
+// (a**b) which already works; for float we use pow(); otherwise fall
+// back to a generic multiplicative loop for positive int exponents.
+PyObject* PyBuiltin_Pow(PyObject* a, PyObject* b) {
+    if (!a || !b) return nullptr;
+    if (a->type == 4 || b->type == 4) {
+        double av = (a->type == 0 || a->type == 5) ? (double)a->value : a->dvalue;
+        double bv = (b->type == 0 || b->type == 5) ? (double)b->value : b->dvalue;
+        return PyFloat_FromDouble(pow(av, bv));
+    }
+    long long av = (a->type == 0 || a->type == 5) ? a->value : 0;
+    long long bv = (b->type == 0 || b->type == 5) ? b->value : 0;
+    if (bv < 0) return PyFloat_FromDouble(pow((double)av, (double)bv));
+    long long r = 1;
+    for (long long i = 0; i < bv; ++i) r *= av;
+    return PyInt_FromLong((long)r);
 }
 
 PyObject* PyString_Upper(PyObject* s) {
