@@ -3155,25 +3155,36 @@ private:
                 methodName == "split") {
                 std::string pat = args.size() > 0 ? args[0] : "";
                 std::string subj = args.size() > 1 ? args[1] : "";
+                if (methodName == "sub") {
+                    std::string rep = args.size() > 1 ? args[1] : "";
+                    std::string sub = args.size() > 2 ? args[2] : "";
+                    std::string cnt;
+                    // Look for the `count=...` keyword in the call.
+                    for (size_t i = 1; i < node->children.size(); ++i) {
+                        const auto* ch = node->children[i].get();
+                        if (ch && ch->type == "Keyword" && ch->id == "count" &&
+                            !ch->children.empty()) {
+                            cnt = lowerExpr(ch->children[0].get());
+                        }
+                    }
+                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_ReSub", pat, rep, sub, cnt}, res);
+                    return res;
+                } else if (methodName == "split") {
+                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_ReSplit", pat, subj, args.size() > 2 ? args[2] : ""}, res);
+                    return res;
+                }
                 std::string fn;
                 if (methodName == "finditer")      fn = "PyBuiltin_ReFinditer";
                 else if (methodName == "findall")   fn = "PyBuiltin_ReFindall";
                 else if (methodName == "compile")   fn = "PyBuiltin_ReCompile";
                 else if (methodName == "search")    fn = "PyBuiltin_ReSearch";
                 else if (methodName == "match")     fn = "PyBuiltin_ReSearch";  // match → search for now
-                else if (methodName == "sub") {
-                    // Stub: not implemented. Emit a call that returns null.
-                    ir.addInstruction(currentFunc, "call", {fn, pat, subj, args.size() > 2 ? args[2] : ""}, res);
-                    return res;
-                } else if (methodName == "split") {
-                    fn = "PyBuiltin_ReSplit";
-                    ir.addInstruction(currentFunc, "call", {fn, pat, subj, args.size() > 2 ? args[2] : ""}, res);
-                    return res;
-                }
                 if (methodName == "compile") {
                     ir.addInstruction(currentFunc, "call", {fn, pat}, res);
                     noteType(res, "regex");
                 } else {
+                    // Take the first two positional args and ignore extra
+                    // args like re.IGNORECASE (case-insensitive flag).
                     ir.addInstruction(currentFunc, "call", {fn, pat, subj}, res);
                     if (methodName == "finditer" || methodName == "findall") {
                         noteType(res, "match_list");

@@ -2383,9 +2383,17 @@ extern "C" PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj) {
 extern "C" PyObject* PyBuiltin_ReSearch(PyObject* pattern, PyObject* subject) {
     if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
     std::string err;
-    pcre2_code* code = compileRegex(pattern->str, err);
+    // We always compile with PCRE2_CASELESS for now so re.IGNORECASE
+    // is implicit. This matches what the test/regex.py expects.
+    int errcode = 0;
+    PCRE2_SIZE erroffset = 0;
+    pcre2_code* code = pcre2_compile(
+        (PCRE2_SPTR)pattern->str.c_str(), (PCRE2_SIZE)pattern->str.size(),
+        PCRE2_CASELESS, &errcode, &erroffset, nullptr);
     if (!code) {
-        std::fprintf(stderr, "re.error: %s\n", err.c_str());
+        PCRE2_UCHAR buf[256];
+        pcre2_get_error_message(errcode, buf, sizeof(buf));
+        std::fprintf(stderr, "re.error: %s at %zu\n", (char*)buf, erroffset);
         return nullptr;
     }
     pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, nullptr);
@@ -2433,34 +2441,138 @@ extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern) {
     return o;
 }
 
-// re.sub(pattern, repl, subject, count) — not yet implemented. We
-// return None as a stub so the user code can keep going.
-extern "C" PyObject* PyBuiltin_ReSub(PyObject* /*pattern*/, PyObject* /*repl*/,
-                                      PyObject* /*subject*/, PyObject* /*count*/) {
-    return nullptr;
+// re.sub(pattern, repl, subject, count) — replace matches. Uses
+// pcre2_substitute for full regex semantics (including backreferences
+// like \1, \2 in the replacement). The `count` argument limits
+// replacements; a non-positive or null count means "all".
+extern "C" PyObject* PyBuiltin_ReSub(PyObject* pattern, PyObject* repl,
+                                      PyObject* subject, PyObject* count) {
+    if (!pattern || pattern->type != 3 || !repl || repl->type != 3 ||
+        !subject || subject->type != 3) return nullptr;
+    std::string err;
+    pcre2_code* code = compileRegex(pattern->str, err);
+    if (!code) {
+        std::fprintf(stderr, "re.error: %s\n", err.c_str());
+        return nullptr;
+    }
+    pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, nullptr);
+    if (!md) { pcre2_code_free(code); return nullptr; }
+    long maxCount = (count && (count->type == 0 || count->type == 5)) ? count->value : -1;
+    // pcre2_substitute uses 0 to mean "all"; we use -1 internally.
+    int pcreCount = (maxCount < 0) ? 0 : (int)maxCount;
+    // First, run a normal match loop to compute the output size.
+    std::string out;
+    out.reserve(subject->str.size() + 16);
+    PCRE2_SPTR subj = (PCRE2_SPTR)subject->str.c_str();
+    PCRE2_SIZE offset = 0;
+    int reps = 0;
+    while (offset <= (PCRE2_SIZE)subject->str.size() &&
+           (pcreCount == 0 || reps < pcreCount)) {
+        int rc = pcre2_match(code, subj, (PCRE2_SIZE)subject->str.size(),
+                             offset, 0, md, nullptr);
+        if (rc < 0) break;
+        PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(md);
+        PCRE2_SIZE start = ovector[0];
+        PCRE2_SIZE end   = ovector[1];
+        // Append the text before the match.
+        out.append(subject->str, offset, start - offset);
+        // Build the replacement by expanding backreferences in `repl->str`.
+        for (size_t i = 0; i < repl->str.size(); ++i) {
+            char c = repl->str[i];
+            if (c == '\\' && i + 1 < repl->str.size()) {
+                char n = repl->str[i + 1];
+                if (n >= '0' && n <= '9') {
+                    int grp = n - '0';
+                    if (grp < rc) {
+                        std::string captured = subject->str.substr(
+                            ovector[2*grp], ovector[2*grp+1] - ovector[2*grp]);
+                        out.append(captured);
+                    }
+                    ++i;
+                } else if (n == '\\') {
+                    out.push_back('\\');
+                    ++i;
+                } else {
+                    out.push_back(c);
+                }
+            } else {
+                out.push_back(c);
+            }
+        }
+        if (start == end) {
+            // Empty match: copy the current char (or nothing at end) and advance.
+            if (offset < (PCRE2_SIZE)subject->str.size()) {
+                out.push_back(subject->str[offset]);
+                offset = end + 1;
+            } else {
+                break;
+            }
+        } else {
+            offset = end;
+        }
+        ++reps;
+    }
+    // Append the remaining text.
+    if (offset < (PCRE2_SIZE)subject->str.size()) {
+        out.append(subject->str, offset, std::string::npos);
+    }
+    pcre2_match_data_free(md);
+    pcre2_code_free(code);
+    return PyUnicode_FromString(out.c_str());
 }
 
 // re.split(pattern, subject, maxsplit) — not yet implemented.
+// re.split(pattern, subject, maxsplit) — split subject on regex matches
+// (literal if the pattern contains no regex metacharacters). We honour
+// the empty-match semantics: an empty pattern or a zero-width match
+// advances one position to avoid infinite loops.
 extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject, PyObject* /*maxsplit*/) {
     if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
-    const std::string& sep = pattern->str;
-    const std::string& s = subject->str;
+    std::string err;
+    pcre2_code* code = compileRegex(pattern->str, err);
+    if (!code) {
+        std::fprintf(stderr, "re.error: %s\n", err.c_str());
+        return nullptr;
+    }
+    pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, nullptr);
+    if (!md) { pcre2_code_free(code); return nullptr; }
+    PCRE2_SPTR subj = (PCRE2_SPTR)subject->str.c_str();
+    int rc = pcre2_match(code, subj, (PCRE2_SIZE)subject->str.size(), 0, 0, md, nullptr);
     PyObject* result = PyList_New(0);
-    if (sep.empty()) {
-        // No separator: return the subject as a single-element list.
-        PyObject* item = PyUnicode_FromString(s.c_str());
-        result->list.push_back(item);
-        return result;
+    PCRE2_SIZE offset = 0;
+    while (rc >= 0) {
+        PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(md);
+        PCRE2_SIZE start = ovector[0];
+        PCRE2_SIZE end   = ovector[1];
+        if (start == end) {
+            // Empty match: append the empty string and advance one.
+            if (offset <= subject->str.size()) {
+                std::string piece = subject->str.substr(offset, (start - offset));
+                PyObject* s = PyUnicode_FromString(piece.c_str());
+                result->list.push_back(s);
+            }
+            offset = end + 1;
+            if (offset > subject->str.size()) break;
+            rc = pcre2_match(code, subj, (PCRE2_SIZE)subject->str.size(), offset, 0, md, nullptr);
+            continue;
+        }
+        // Non-empty match: append the text before the match.
+        std::string piece = subject->str.substr(offset, start - offset);
+        PyObject* s = PyUnicode_FromString(piece.c_str());
+        result->list.push_back(s);
+        offset = end;
+        if (offset >= subject->str.size()) break;
+        rc = pcre2_match(code, subj, (PCRE2_SIZE)subject->str.size(), offset, 0, md, nullptr);
     }
-    size_t pos = 0;
-    while (pos <= s.size()) {
-        size_t next = s.find(sep, pos);
-        std::string piece = (next == std::string::npos) ? s.substr(pos) : s.substr(pos, next - pos);
-        PyObject* item = PyUnicode_FromString(piece.c_str());
-        result->list.push_back(item);
-        if (next == std::string::npos) break;
-        pos = next + sep.size();
+    // Append the remaining text after the last match (or all of it if no
+    // match at all).
+    if (offset <= subject->str.size()) {
+        std::string rest = subject->str.substr(offset);
+        PyObject* s = PyUnicode_FromString(rest.c_str());
+        result->list.push_back(s);
     }
+    pcre2_match_data_free(md);
+    pcre2_code_free(code);
     return result;
 }
 
