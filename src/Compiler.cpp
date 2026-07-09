@@ -2685,6 +2685,10 @@ private:
         std::string attrNameConst = "c" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "const", {"\"" + node->id + "\""}, attrNameConst, "str");
         ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, attrNameConst}, res);
+        // Annotate the result as "dict" (we can't distinguish dict vs other
+        // container, but for method dispatch on sys.module-style lookups
+        // this is a useful hint — see lowerMethodCall's dict-method path).
+        noteType(res, "dict");
         return res;
     }
 
@@ -3391,6 +3395,34 @@ private:
         // "replace", "split" are common to both list and string; the
         // list-specific cases above win for lists).
         } else {
+            // Module attribute call: `mod.method(args)` where mod is a
+            // module (dict). Look up the method token on the dict and
+            // dispatch via Pyc_Apply. The dict's value should be a
+            // registered adapter (e.g. "pyc_stderr_write" for
+            // sys.stderr.write).
+            if (typeOf(obj) == "dict") {
+                std::string methodNameConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
+                std::string methodLookup = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, methodNameConst}, methodLookup);
+                std::vector<std::string> methodArgs;
+                for (auto& a : args) {
+                    methodArgs.push_back(a);
+                }
+                std::string argList = "t" + std::to_string(tempCounter++);
+                std::string argCount = std::to_string(methodArgs.size());
+                std::string argCountConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
+                for (size_t i = 0; i < methodArgs.size(); ++i) {
+                    std::string idxConst = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+                    std::string setRes = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
+                }
+                ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
+                return res;
+            }
             // Try to call as user-defined method
             // For class instances: look up method on class dict
             std::string methodLookup = "t" + std::to_string(tempCounter++);

@@ -2608,6 +2608,31 @@ extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject, PyO
     return result;
 }
 
+// Stream write adapters for `sys.stderr.write` and `sys.stdout.write`.
+// We use a dict for the stream object (with a "write" key); the call
+// path goes through Pyc_Apply(token, args), where the token is a string
+// naming the registered adapter. Each adapter pulls the strings out of
+// the args list and writes them to the corresponding FILE*.
+extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObject*));
+static PyObject* stderr_write_adapter(PyObject* args) {
+    if (!args || args->type != 1) return nullptr;
+    for (size_t i = 0; i < args->list.size(); ++i) {
+        PyObject* s = args->list[i];
+        if (s && s->type == 3) std::fprintf(stderr, "%s", s->str.c_str());
+    }
+    std::fflush(stderr);
+    return PyInt_FromLong(0);
+}
+static PyObject* stdout_write_adapter(PyObject* args) {
+    if (!args || args->type != 1) return nullptr;
+    for (size_t i = 0; i < args->list.size(); ++i) {
+        PyObject* s = args->list[i];
+        if (s && s->type == 3) std::fprintf(stdout, "%s", s->str.c_str());
+    }
+    std::fflush(stdout);
+    return PyInt_FromLong(0);
+}
+
 // Build the synthetic `sys` module and `sys.argv` list from the
 // process's argc/argv. Called once at program startup. Idempotent.
 void pyc_setup_sys(int argc, char** argv) {
@@ -2636,6 +2661,48 @@ void pyc_setup_sys(int argc, char** argv) {
     PyObject* argv_key = PyUnicode_FromString("argv");
     PyDict_SetItem(g_sys_module, argv_key, g_sys_argv);
     // argv_key and g_sys_argv are owned by g_sys_module now.
+
+    // sys.stderr and sys.stdout: stub file objects whose `.write(str)`
+    // method writes to stderr/stdout. We use a dict with a "write"
+    // entry whose value is a string token. The compiler's call dispatch
+    // doesn't recognise "write" as a builtin, so it falls through to
+    // Pyc_Apply. We register a small C++ adapter for the token
+    // "pyc_stderr_write" / "pyc_stdout_write" that does the actual write.
+    auto makeStream = [](FILE* fp) {
+        PyObject* d = PyDict_New();
+        PyObject* k = PyUnicode_FromString("write");
+        // The token names the adapter; we use a stable, non-pointer name
+        // that won't collide with anything. The adapter itself knows
+        // which FILE* to write to.
+        PyObject* v = nullptr;
+        if (fp == stderr) v = PyUnicode_FromString("pyc_stderr_write");
+        else if (fp == stdout) v = PyUnicode_FromString("pyc_stdout_write");
+        else v = PyUnicode_FromString("pyc_unknown_write");
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k);
+        Py_DECREF(v);
+        // Register the adapter with the callable registry.
+        if (fp == stderr) {
+            pyc_register_callable("pyc_stderr_write", stderr_write_adapter);
+        } else if (fp == stdout) {
+            pyc_register_callable("pyc_stdout_write", stdout_write_adapter);
+        }
+        return d;
+    };
+    {
+        PyObject* stderr_key = PyUnicode_FromString("stderr");
+        PyObject* stderr_obj = makeStream(stderr);
+        PyDict_SetItem(g_sys_module, stderr_key, stderr_obj);
+        Py_DECREF(stderr_key);
+        Py_DECREF(stderr_obj);
+    }
+    {
+        PyObject* stdout_key = PyUnicode_FromString("stdout");
+        PyObject* stdout_obj = makeStream(stdout);
+        PyDict_SetItem(g_sys_module, stdout_key, stdout_obj);
+        Py_DECREF(stdout_key);
+        Py_DECREF(stdout_obj);
+    }
 }
 
 // Look up an attribute on the global `sys` module. Returns a strong
