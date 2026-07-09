@@ -582,12 +582,14 @@ FILE_CASES = [
     ("hash.py", []),
     ("sprintf.py", []),
     ("range.py", []),
-    # modifiers.py has a loop bug - temporarily excluded
+    # modifiers.py has a loop bug at --opt=0 (the runner's default);
+    # works fine at --opt=2 but times out otherwise
     # ("modifiers.py", []),
     # mbs.py is too slow for the 5s runner timeout
     # ("mbs.py", []),
     ("builtins2.py", []),
     ("regex_g.py", []),
+    ("regex.py", []),
     # The following crash or don't compile - excluded
     # ("builtins.py", []),   # uses re module + sys.argv - works now (re is PCRE2-backed)
     # ("closures.py", []),   # uses functools - excluded (functools not yet supported)
