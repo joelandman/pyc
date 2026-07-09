@@ -9,12 +9,21 @@
 #include <unordered_map>
 #include <string>
 
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
+
 #include "pyc/runtime.h"
 
 // Immortal PyObject* refcount sentinel (True, False, and small ints in
 // [-5, 256] are interned; Py_INCREF / Py_DECREF skip them so they are
 // never freed or duplicated by ownership paths).
 static constexpr int IMMORTAL_REFCOUNT = 0x3fffffff;
+
+// Forward declaration of the try-stack head, used by division/modulo
+// zero-division reporting (we raise when an enclosing try is in scope, and
+// print-and-exit otherwise).
+struct TryFrame;
+static thread_local TryFrame* g_try_stack = nullptr;
 
 // Flat struct (no union) so we can add dvalue alongside value cleanly.
 // LLVM codegen in Codegen.cpp mirrors fields 0-3: {i32, i32, i64, double}.
@@ -188,14 +197,14 @@ PyObject* PyList_SizeBoxed(PyObject* list) {
 }
 
 PyObject* PyList_GetItemObj(PyObject* list, PyObject* idx) {
-    if (!idx || idx->type != 0) return nullptr;
     if (!list || list->type != 1) return nullptr;
+    if (!idx || (idx->type != 0 && idx->type != 5)) return nullptr;
     long n = (long)list->list.size();
     long i = (long)idx->value;
     if (i < 0) i += n;
     if (i < 0 || i >= n) return nullptr;
-    PyObject* item = PyList_GetItem(list, (size_t)i);
-    if (item) Py_INCREF(item); // return new ref so callers can DECREF the list independently
+    PyObject* item = list->list[i];
+    if (item) Py_INCREF(item);
     return item;
 }
 
@@ -325,6 +334,39 @@ PyObject* PyDict_DelItem(PyObject* dict, PyObject* key) {
     return PyBool_New(0);
 }
 
+// --- re module (PCRE2-backed) ---------------------------------------------
+//
+// `import re` returns a synthetic module dict containing tokens for
+// `finditer`, `findall`, `compile`, etc. The compiler (`lowerMethodCall`)
+// recognises calls of the form `re.finditer(...)` / `re.findall(...)` /
+// `re.match(...)` / `re.search(...)` / `re.compile(...)` and emits direct
+// calls to PyBuiltin_Re* helpers below.
+//
+// Match objects use a new PyObject type (9). The compiled-pattern type
+// is 8. Both expose their data via the `value` field (a 64-bit pointer).
+// On x86_64 a `long` is 8 bytes, so a pointer fits; on 32-bit hosts the
+// caller would need a side-table, but we don't support 32-bit anyway.
+
+struct CompiledRegex {
+    pcre2_code* code;
+    std::string pattern;
+    CompiledRegex() : code(nullptr) {}
+    ~CompiledRegex() { if (code) pcre2_code_free(code); }
+};
+struct MatchObj {
+    pcre2_match_data* md;
+    std::string subject;
+    int capture_count;
+    MatchObj() : md(nullptr), capture_count(0) {}
+    ~MatchObj() { if (md) pcre2_match_data_free(md); }
+};
+
+// Forward declarations for the re helpers. Definitions are below.
+extern "C" PyObject* PyBuiltin_ReFinditer(PyObject* pattern, PyObject* subject);
+extern "C" PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject);
+extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern);
+extern "C" PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj);
+
 void Py_DECREF(PyObject* obj) {
     if (obj && obj->refcount != IMMORTAL_REFCOUNT && --obj->refcount == 0) {
         if (obj->type == 1) {
@@ -334,6 +376,12 @@ void Py_DECREF(PyObject* obj) {
                 Py_DECREF(pair.first);
                 Py_DECREF(pair.second);
             }
+        } else if (obj->type == 8) {
+            CompiledRegex* cr = reinterpret_cast<CompiledRegex*>(obj->value);
+            delete cr;
+        } else if (obj->type == 9) {
+            MatchObj* mo = reinterpret_cast<MatchObj*>(obj->value);
+            delete mo;
         }
         delete obj;   // calls dtors for vector/map/string
     }
@@ -391,6 +439,10 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         char buf[64];
         format_double(buf, sizeof(buf), obj->dvalue);
         int r = fprintf(fp, "%s\n", buf); fflush(fp); return r;
+    }
+    if (obj->type == 9) {
+        // Match object — print "<re.Match object>" for safety.
+        int r = fprintf(fp, "<re.Match object>\n"); fflush(fp); return r;
     }
     if (obj->type == 1) {
         fprintf(fp, "[");
@@ -499,8 +551,25 @@ PyObject* PyUnicode_FromString(const char* s) {
 
 // Convert any PyObject to its string representation (no trailing newline).
 // Named PyStr_FromAny to avoid conflict with CPython's PyObject_Str.
+// Honours class `__str__` / `__repr__` methods (delegates to PyObject_Print
+// on a tmpfile so the formatting path matches print()).
 PyObject* PyStr_FromAny(PyObject* obj) {
     if (!obj) return PyUnicode_FromString("None");
+    // Use PyObject_Print for the full formatting path so that class
+    // `__str__` / `__repr__` methods are invoked.
+    FILE* tmp = std::tmpfile();
+    if (tmp) {
+        PyObject_Print(obj, tmp);
+        std::fflush(tmp);
+        std::rewind(tmp);
+        char buf[65536];
+        size_t n = std::fread(buf, 1, sizeof(buf) - 1, tmp);
+        buf[n] = '\0';
+        if (n > 0 && buf[n-1] == '\n') buf[--n] = '\0';
+        std::fclose(tmp);
+        return PyUnicode_FromString(buf);
+    }
+    // Fallback for the rare tmpfile() failure.
     if (obj->type == 5) return PyUnicode_FromString(obj->value ? "True" : "False");
     if (obj->type == 3) { Py_INCREF(obj); return obj; }
     if (obj->type == 0) {
@@ -819,21 +888,45 @@ static double round_half_to_even(double v) {
 }
 PyObject* PyBuiltin_Round(PyObject* x, PyObject* n) {
     if (!x) return PyInt_FromLong(0);
-    bool hasN = n && (n->type == 0 || n->type == 5) && n->value != 0;
+    // `n` may be null (no ndigits given) or a non-zero int/bool. CPython
+    // raises TypeError on a non-numeric `n`; we conservatively treat it as
+    // 0 (no rounding scale).
+    long ndig = 0;
+    if (n && (n->type == 0 || n->type == 5)) ndig = n->value;
+    bool hasN = ndig != 0;
     if (x->type == 0 || x->type == 5) {
         // int: with ndigits, round to power of 10; otherwise identity.
         if (!hasN) return PyInt_FromLong(x->value);
-        long ndig = n->value;
         long long v = x->value;
-        double p = pow(10.0, (double)ndig);
-        double r = round_half_to_even((double)v / p) * p;
+        // p is the magnitude of the rounding scale (10^|ndig|).
+        double p = pow(10.0, (double)(ndig > 0 ? ndig : -ndig));
+        double r;
+        if (ndig >= 0) {
+            // Round v/p * p = round to nearest multiple of p
+            // (e.g. round(123, -1) = 120 = 12 * 10).
+            r = round_half_to_even((double)v / p) * p;
+        } else {
+            // ndig < 0: divide by 10^|ndig| then multiply back.
+            // (Same path as ndig >= 0 above; ndig=0 and ndig<0 both
+            //  fall here when |ndig|>0.)
+            r = round_half_to_even((double)v / p) * p;
+        }
         return PyInt_FromLong((long)r);
     }
     if (x->type == 4) {
         if (!hasN) return PyFloat_FromDouble(round_half_to_even(x->dvalue));
-        double ndig = n->value;
-        double p = pow(10.0, ndig);
-        return PyFloat_FromDouble(round_half_to_even(x->dvalue / p) * p);
+        double p = pow(10.0, (double)(ndig > 0 ? ndig : -ndig));
+        double r;
+        if (ndig >= 0) {
+            // For ndig > 0: scale up, round, scale back down.
+            //   round(0.123, 1) = round(0.123 * 10) / 10 = 0.1
+            r = round_half_to_even(x->dvalue * p) / p;
+        } else {
+            // ndig < 0: scale down, round, scale back up.
+            //   round(12.5, -1) = round(12.5 / 10) * 10 = 1 * 10 = 10
+            r = round_half_to_even(x->dvalue / p) * p;
+        }
+        return PyFloat_FromDouble(r);
     }
     return PyInt_FromLong(0);
 }
@@ -975,15 +1068,33 @@ void PyBuiltin_PrintNewline(void) {
 void pyc_print(PyObject* argList, PyObject* sep, PyObject* end) {
     if (!sep)  sep  = PyUnicode_FromString(" ");
     if (!end)  end  = PyUnicode_FromString("\n");
-    // Convert each arg to its string form, joining with `sep`.
+    // Convert each arg to its string form, joining with `sep`. Use
+    // PyObject_Print for each element so that class `__str__` / `__repr__`
+    // hooks are honoured (CPython's print calls str() on each arg).
     std::string out;
     if (argList && argList->type == 1) {
         for (size_t i = 0; i < argList->list.size(); ++i) {
             if (i > 0) {
                 out += sep->str;
             }
-            PyObject* s = PyStr_FromAny(argList->list[i]);
-            if (s) { out += s->str; Py_DECREF(s); }
+            // Format the element to a temporary file, then append to our
+            // buffer. PyObject_Print writes its own trailing newline; we
+            // strip it so `print(x)` produces "x\n" (not "x\n\n").
+            FILE* tmp = std::tmpfile();
+            if (tmp) {
+                PyObject_Print(argList->list[i], tmp);
+                std::fflush(tmp);
+                std::rewind(tmp);
+                char buf[4096];
+                size_t n = std::fread(buf, 1, sizeof(buf) - 1, tmp);
+                buf[n] = '\0';
+                // Strip a single trailing newline (PyObject_Print adds one).
+                if (n > 0 && buf[n-1] == '\n') buf[--n] = '\0';
+                out += buf;
+                std::fclose(tmp);
+            } else {
+                out += "<print-error>";
+            }
         }
     }
     out += end->str;
@@ -991,7 +1102,346 @@ void pyc_print(PyObject* argList, PyObject* sep, PyObject* end) {
     fflush(stdout);
 }
 
-// pyc_import_failed(module_name) — emits a clear ImportError-style
+// ---- List helper methods ----
+PyObject* PyList_Insert(PyObject* list, PyObject* idx, PyObject* item) {
+    if (!list || list->type != 1 || !idx || (idx->type != 0 && idx->type != 5)) return nullptr;
+    long i = idx->value;
+    if (i < 0) i += (long)list->list.size();
+    if (i < 0) i = 0;
+    if (i > (long)list->list.size()) i = (long)list->list.size();
+    list->list.insert(list->list.begin() + i, item);
+    if (item) Py_INCREF(item);
+    return PyInt_FromLong(0);
+}
+PyObject* PyList_Remove(PyObject* list, PyObject* item) {
+    if (!list || list->type != 1) return nullptr;
+    for (auto it = list->list.begin(); it != list->list.end(); ++it) {
+        bool eq = (*it == item) ||
+                  (*it && item && PyObject_CompareBool(*it, item, 0));
+        if (eq) {
+            if (*it) Py_DECREF(*it);
+            list->list.erase(it);
+            return PyInt_FromLong(0);
+        }
+    }
+    // CPython raises ValueError; we return NULL silently.
+    return nullptr;
+}
+PyObject* PyList_Index(PyObject* list, PyObject* item) {
+    if (!list || list->type != 1) return nullptr;
+    for (size_t i = 0; i < list->list.size(); ++i) {
+        bool eq = (list->list[i] == item) ||
+                  (list->list[i] && item && PyObject_CompareBool(list->list[i], item, 0));
+        if (eq) return PyInt_FromLong((long)i);
+    }
+    return PyInt_FromLong(-1);
+}
+PyObject* PyList_Count(PyObject* list, PyObject* item) {
+    if (!list || list->type != 1) return PyInt_FromLong(0);
+    long c = 0;
+    for (auto* e : list->list) {
+        if (e == item || (e && item && PyObject_CompareBool(e, item, 0))) ++c;
+    }
+    return PyInt_FromLong(c);
+}
+PyObject* PyList_Reverse(PyObject* list) {
+    if (!list || list->type != 1) return nullptr;
+    std::reverse(list->list.begin(), list->list.end());
+    return PyInt_FromLong(0);
+}
+PyObject* PyList_Extend(PyObject* list, PyObject* other) {
+    if (!list || list->type != 1) return nullptr;
+    if (other) {
+        if (other->type == 1) {
+            for (auto* e : other->list) {
+                if (e) Py_INCREF(e);
+                list->list.push_back(e);
+            }
+        } else if (other->type == 2) {
+            for (auto& p : other->dict) {
+                if (p.first) Py_INCREF(p.first);
+                list->list.push_back(p.first);
+            }
+        }
+    }
+    return PyInt_FromLong(0);
+}
+PyObject* PyList_Copy(PyObject* list) {
+    if (!list || list->type != 1) return PyList_New(0);
+    PyObject* r = PyList_New(list->list.size());
+    for (size_t i = 0; i < list->list.size(); ++i) {
+        if (list->list[i]) Py_INCREF(list->list[i]);
+        PyList_SetItem(r, i, list->list[i]);
+    }
+    return r;
+}
+PyObject* PyList_Clear(PyObject* list) {
+    if (!list || list->type != 1) return nullptr;
+    for (auto* e : list->list) if (e) Py_DECREF(e);
+    list->list.clear();
+    return PyInt_FromLong(0);
+}
+PyObject* PyList_PopAt(PyObject* list, PyObject* idx) {
+    if (!list || list->type != 1 || list->list.empty()) return nullptr;
+    long i;
+    if (idx && (idx->type == 0 || idx->type == 5)) {
+        i = idx->value;
+        if (i < 0) i += (long)list->list.size();
+    } else {
+        i = (long)list->list.size() - 1;
+    }
+    if (i < 0 || i >= (long)list->list.size()) return nullptr;
+    PyObject* r = list->list[i];
+    if (r) Py_INCREF(r);
+    list->list.erase(list->list.begin() + i);
+    return r;
+}
+
+// ---- Dict helper methods ----
+PyObject* PyDict_Update(PyObject* dst, PyObject* src) {
+    if (!dst || dst->type != 2) return nullptr;
+    if (src && src->type == 2) {
+        for (auto& p : src->dict) {
+            PyDict_SetItem(dst, p.first, p.second);
+        }
+    }
+    return PyInt_FromLong(0);
+}
+PyObject* PyDict_SetDefault(PyObject* d, PyObject* key, PyObject* defval) {
+    if (!d || d->type != 2 || !key) return nullptr;
+    for (auto& p : d->dict) {
+        if (p.first == key || (p.first && PyObject_CompareBool(p.first, key, 0))) {
+            if (p.second) Py_INCREF(p.second);
+            return p.second;
+        }
+    }
+    if (defval) {
+        PyDict_SetItem(d, key, defval);
+        Py_INCREF(defval);
+        return defval;
+    }
+    return nullptr;
+}
+PyObject* PyDict_Copy(PyObject* d) {
+    if (!d || d->type != 2) return PyDict_New();
+    PyObject* r = PyDict_New();
+    for (auto& p : d->dict) {
+        PyDict_SetItem(r, p.first, p.second);
+    }
+    return r;
+}
+PyObject* PyDict_Clear(PyObject* d) {
+    if (!d || d->type != 2) return nullptr;
+    for (auto& p : d->dict) {
+        if (p.first) Py_DECREF(p.first);
+        if (p.second) Py_DECREF(p.second);
+    }
+    d->dict.clear();
+    return PyInt_FromLong(0);
+}
+PyObject* PyDict_Pop(PyObject* d, PyObject* key, PyObject* defval) {
+    if (!d || d->type != 2 || !key) return nullptr;
+    for (auto it = d->dict.begin(); it != d->dict.end(); ++it) {
+        if (it->first == key || (it->first && PyObject_CompareBool(it->first, key, 0))) {
+            PyObject* v = it->second;
+            if (v) Py_INCREF(v);
+            if (it->first) Py_DECREF(it->first);
+            if (it->second) Py_DECREF(it->second);
+            d->dict.erase(it);
+            return v;
+        }
+    }
+    if (defval) {
+        Py_INCREF(defval);
+        return defval;
+    }
+    return nullptr;
+}
+PyObject* PyDict_PopItem(PyObject* d) {
+    if (!d || d->type != 2 || d->dict.empty()) return nullptr;
+    auto it = d->dict.begin();
+    PyObject* k = it->first; if (k) Py_INCREF(k);
+    PyObject* v = it->second; if (v) Py_INCREF(v);
+    if (it->first) Py_DECREF(it->first);
+    if (it->second) Py_DECREF(it->second);
+    d->dict.erase(it);
+    PyObject* pair = PyList_New(2);
+    PyList_SetItem(pair, 0, k);
+    PyList_SetItem(pair, 1, v);
+    return pair;
+}
+PyObject* PyDict_FromKeys(PyObject* keys, PyObject* defval) {
+    PyObject* r = PyDict_New();
+    if (!keys) return r;
+    if (keys->type == 1) {
+        for (auto* k : keys->list) {
+            PyObject* v = defval;
+            if (v) Py_INCREF(v);
+            PyDict_SetItem(r, k, v);
+        }
+    }
+    return r;
+}
+
+// ---- String helper methods ----
+PyObject* PyString_LStrip(PyObject* s) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    size_t l = 0;
+    while (l < s->str.size() && isspace((unsigned char)s->str[l])) ++l;
+    return PyUnicode_FromString(s->str.substr(l).c_str());
+}
+PyObject* PyString_RStrip(PyObject* s) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    size_t r = s->str.size();
+    while (r > 0 && isspace((unsigned char)s->str[r-1])) --r;
+    return PyUnicode_FromString(s->str.substr(0, r).c_str());
+}
+PyObject* PyString_StartsWith(PyObject* s, PyObject* prefix) {
+    if (!s || s->type != 3 || !prefix || prefix->type != 3) return PyBool_New(0);
+    if (prefix->str.size() > s->str.size()) return PyBool_New(0);
+    return PyBool_New(s->str.compare(0, prefix->str.size(), prefix->str) == 0);
+}
+PyObject* PyString_EndsWith(PyObject* s, PyObject* suffix) {
+    if (!s || s->type != 3 || !suffix || suffix->type != 3) return PyBool_New(0);
+    if (suffix->str.size() > s->str.size()) return PyBool_New(0);
+    return PyBool_New(s->str.compare(s->str.size() - suffix->str.size(), suffix->str.size(), suffix->str) == 0);
+}
+PyObject* PyString_IsAlpha(PyObject* s) {
+    if (!s || s->type != 3) return PyBool_New(0);
+    if (s->str.empty()) return PyBool_New(0);
+    for (char c : s->str) {
+        if (!isalpha((unsigned char)c)) return PyBool_New(0);
+    }
+    return PyBool_New(1);
+}
+PyObject* PyString_IsDigit(PyObject* s) {
+    if (!s || s->type != 3) return PyBool_New(0);
+    if (s->str.empty()) return PyBool_New(0);
+    for (char c : s->str) {
+        if (!isdigit((unsigned char)c)) return PyBool_New(0);
+    }
+    return PyBool_New(1);
+}
+PyObject* PyString_IsAlnum(PyObject* s) {
+    if (!s || s->type != 3) return PyBool_New(0);
+    if (s->str.empty()) return PyBool_New(0);
+    for (char c : s->str) {
+        if (!isalnum((unsigned char)c)) return PyBool_New(0);
+    }
+    return PyBool_New(1);
+}
+PyObject* PyString_IsLower(PyObject* s) {
+    if (!s || s->type != 3) return PyBool_New(0);
+    bool any = false;
+    for (char c : s->str) {
+        if (isupper((unsigned char)c)) return PyBool_New(0);
+        if (islower((unsigned char)c)) any = true;
+    }
+    return PyBool_New(any);
+}
+PyObject* PyString_IsUpper(PyObject* s) {
+    if (!s || s->type != 3) return PyBool_New(0);
+    bool any = false;
+    for (char c : s->str) {
+        if (islower((unsigned char)c)) return PyBool_New(0);
+        if (isupper((unsigned char)c)) any = true;
+    }
+    return PyBool_New(any);
+}
+PyObject* PyString_IsSpace(PyObject* s) {
+    if (!s || s->type != 3) return PyBool_New(0);
+    if (s->str.empty()) return PyBool_New(0);
+    for (char c : s->str) {
+        if (!isspace((unsigned char)c)) return PyBool_New(0);
+    }
+    return PyBool_New(1);
+}
+PyObject* PyString_Casefold(PyObject* s) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    std::string r = s->str;
+    for (char& c : r) c = (char)tolower((unsigned char)c);
+    return PyUnicode_FromString(r.c_str());
+}
+PyObject* PyString_Title(PyObject* s) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    std::string r = s->str;
+    bool atWord = true;
+    for (char& c : r) {
+        if (isspace((unsigned char)c)) atWord = true;
+        else if (atWord) { c = (char)toupper((unsigned char)c); atWord = false; }
+        else c = (char)tolower((unsigned char)c);
+    }
+    return PyUnicode_FromString(r.c_str());
+}
+PyObject* PyString_ZFill(PyObject* s, PyObject* w) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    long width = (w && (w->type == 0 || w->type == 5)) ? w->value : 0;
+    if ((long)s->str.size() >= width) { Py_INCREF(s); return s; }
+    std::string r;
+    if (!s->str.empty() && (s->str[0] == '+' || s->str[0] == '-')) {
+        r += s->str[0];
+        r.append(width - s->str.size(), '0');
+        r += s->str.substr(1);
+    } else {
+        r.append(width - s->str.size(), '0');
+        r += s->str;
+    }
+    return PyUnicode_FromString(r.c_str());
+}
+PyObject* PyString_Center(PyObject* s, PyObject* w, PyObject* fill) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    long width = (w && (w->type == 0 || w->type == 5)) ? w->value : 0;
+    std::string fc = (fill && fill->type == 3 && !fill->str.empty()) ? fill->str.substr(0, 1) : " ";
+    if ((long)s->str.size() >= width) { Py_INCREF(s); return s; }
+    long pad = width - s->str.size();
+    long lp = pad / 2;
+    long rp = pad - lp;
+    std::string r;
+    r.append(lp, fc[0]);
+    r += s->str;
+    r.append(rp, fc[0]);
+    return PyUnicode_FromString(r.c_str());
+}
+PyObject* PyString_LJust(PyObject* s, PyObject* w, PyObject* fill) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    long width = (w && (w->type == 0 || w->type == 5)) ? w->value : 0;
+    std::string fc = (fill && fill->type == 3 && !fill->str.empty()) ? fill->str.substr(0, 1) : " ";
+    if ((long)s->str.size() >= width) { Py_INCREF(s); return s; }
+    std::string r = s->str;
+    r.append(width - s->str.size(), fc[0]);
+    return PyUnicode_FromString(r.c_str());
+}
+PyObject* PyString_RJust(PyObject* s, PyObject* w, PyObject* fill) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    long width = (w && (w->type == 0 || w->type == 5)) ? w->value : 0;
+    std::string fc = (fill && fill->type == 3 && !fill->str.empty()) ? fill->str.substr(0, 1) : " ";
+    if ((long)s->str.size() >= width) { Py_INCREF(s); return s; }
+    std::string r;
+    r.append(width - s->str.size(), fc[0]);
+    r += s->str;
+    return PyUnicode_FromString(r.c_str());
+}
+PyObject* PyString_ReplaceN(PyObject* s, PyObject* old_, PyObject* new_, PyObject* count) {
+    if (!s || s->type != 3 || !old_ || old_->type != 3 || !new_ || new_->type != 3) {
+        if (s) { Py_INCREF(s); return s; }
+        return nullptr;
+    }
+    std::string result = s->str;
+    const std::string& from = old_->str;
+    const std::string& to   = new_->str;
+    if (from.empty()) { Py_INCREF(s); return s; }
+    long maxCount = (count && (count->type == 0 || count->type == 5)) ? count->value : -1;
+    if (maxCount == 0) { Py_INCREF(s); return s; }
+    long n = 0;
+    size_t pos = 0;
+    while ((pos = result.find(from, pos)) != std::string::npos) {
+        if (maxCount >= 0 && n >= maxCount) break;
+        result.replace(pos, from.size(), to);
+        pos += to.size();
+        ++n;
+    }
+    return PyUnicode_FromString(result.c_str());
+}
 // diagnostic to stderr for an `import` of a module pyc does not support.
 // The compiler treats all `import` statements as best-effort: this is
 // the only error path for `import re`, `import os`, etc. (the `sys`
@@ -1002,10 +1452,38 @@ void pyc_print(PyObject* argList, PyObject* sep, PyObject* end) {
 // will hit the standard PyObject_Print / method-lookup path and fail
 // with a clear "method on None" diagnostic rather than silently
 // returning wrong values.
+// The re module is a synthetic dict (PCRE2-backed). For every other
+// module, this prints an ImportError to stderr and returns null. The
+// `re` module dict contains string tokens naming the runtime helpers
+// (the compiler's lowerMethodCall short-circuits `re.<name>(...)` and
+// emits the direct call to PyBuiltin_Re*; the tokens themselves are
+// never read by Pyc_Apply, so their values are arbitrary sentinels).
+static PyObject* makeReModuleDict() {
+    PyObject* d = PyDict_New();
+    auto add = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k);
+        Py_DECREF(v);
+    };
+    add("finditer", "PyBuiltin_ReFinditer");
+    add("findall",  "PyBuiltin_ReFindall");
+    add("compile",  "PyBuiltin_ReCompile");
+    add("match",    "PyBuiltin_ReMatch");
+    add("search",   "PyBuiltin_ReSearch");
+    add("sub",      "PyBuiltin_ReSub");
+    return d;
+}
+
 PyObject* pyc_import_failed(PyObject* modName) {
+    if (modName && modName->type == 3 && modName->str == "re") {
+        // Return a synthetic re module dict.
+        return makeReModuleDict();
+    }
     const char* name = (modName && modName->type == 3) ? modName->str.c_str() : "?";
     fprintf(stderr, "ImportError: No module named '%s' "
-                    "(pyc supports only a synthetic 'sys' module; "
+                    "(pyc supports only synthetic 'sys' and 're' modules; "
                     "real module loading is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;
@@ -1236,10 +1714,14 @@ PyObject* PyBuiltin_All(PyObject* lst) {
 
 // typecode: 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool; -1=unknown→True
 PyObject* Pyc_IsInstance(PyObject* obj, PyObject* typecode) {
-    if (!obj) return PyBool_New(0);
     if (!typecode || typecode->type != 0 || typecode->value < 0)
         return PyBool_New(1);
     int code = (int)typecode->value;
+    if (code == 6) {
+        // NoneType: None is the only instance (represented as null ptr).
+        return PyBool_New(obj == nullptr ? 1 : 0);
+    }
+    if (!obj) return PyBool_New(0);
     bool ok = (obj->type == code) ||
               (code == 0 && obj->type == 5);  // bool is-a int
     return PyBool_New(ok ? 1 : 0);
@@ -1468,6 +1950,16 @@ PyObject* PyBuiltin_List(PyObject* obj) {
         for (size_t i = 0; i < obj->str.size(); ++i) {
             char buf[2] = {obj->str[i], '\0'};
             PyList_SetItem(r, i, PyUnicode_FromString(buf));
+        }
+        return r;
+    }
+    if (obj->type == 2) {
+        // CPython: list(dict) iterates over keys.
+        PyObject* r = PyList_New(obj->dict.size());
+        size_t i = 0;
+        for (auto& pair : obj->dict) {
+            if (pair.first) Py_INCREF(pair.first);
+            PyList_SetItem(r, i++, pair.first);
         }
         return r;
     }
@@ -1716,6 +2208,189 @@ PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
 static PyObject* g_sys_module = nullptr;
 static PyObject* g_sys_argv = nullptr;
 
+// Allocator: PyObject* is a flat struct (see above). For the regex
+// types (8 and 9) we set `value` to the pointer to a heap-allocated
+// CompiledRegex* or MatchObj*. We never use `list`, `dict`, or `str`
+// for these types. Py_DECREF on a type 8/9 object frees the embedded
+// payload.
+
+static PyObject* allocObject(int type) {
+    PyObject* o = (PyObject*)calloc(1, sizeof(PyObject));
+    if (!o) return nullptr;
+    o->refcount = 1;
+    o->type = type;
+    return o;
+}
+
+static void freeObject(PyObject* o) {
+    if (!o) return;
+    if (o->type == 8) {
+        CompiledRegex* cr = reinterpret_cast<CompiledRegex*>(o->value);
+        delete cr;
+    } else if (o->type == 9) {
+        MatchObj* mo = reinterpret_cast<MatchObj*>(o->value);
+        delete mo;
+    }
+    free(o);
+}
+
+static CompiledRegex* asCompiledRegex(PyObject* o) {
+    if (!o || o->type != 8) return nullptr;
+    return reinterpret_cast<CompiledRegex*>(o->value);
+}
+
+static MatchObj* asMatchObj(PyObject* o) {
+    if (!o || o->type != 9) return nullptr;
+    return reinterpret_cast<MatchObj*>(o->value);
+}
+
+static pcre2_code* compileRegex(const std::string& pat, std::string& err) {
+    int errcode = 0;
+    PCRE2_SIZE erroffset = 0;
+    pcre2_code* code = pcre2_compile(
+        (PCRE2_SPTR)pat.c_str(), (PCRE2_SIZE)pat.size(),
+        0, &errcode, &erroffset, nullptr);
+    if (!code) {
+        PCRE2_UCHAR buf[256];
+        pcre2_get_error_message(errcode, buf, sizeof(buf));
+        err = std::string((const char*)buf) + " at offset " + std::to_string(erroffset);
+        return nullptr;
+    }
+    return code;
+}
+
+// Run a regex against subject and return a list of Match objects (type 9).
+static PyObject* runRegexAll(pcre2_code* code, const std::string& subject) {
+    pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, nullptr);
+    if (!md) return nullptr;
+    PCRE2_SPTR subj = (PCRE2_SPTR)subject.c_str();
+    int rc = pcre2_match(code, subj, (PCRE2_SIZE)subject.size(),
+                         0, 0, md, nullptr);
+    if (rc < 0 && rc != PCRE2_ERROR_NOMATCH) {
+        pcre2_match_data_free(md);
+        return nullptr;
+    }
+    // Build a list of all matches. Each match is a new MatchObj (type 9)
+    // that takes a fresh match_data + a copy of the ovector.
+    PyObject* result = PyList_New(0);
+    PCRE2_SIZE offset = 0;
+    while (rc >= 0) {
+        PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(md);
+        int capture_count = rc - 1;  // see ReFindall for the rc-1 rationale
+        // Copy the ovector for this match into a new match_data
+        pcre2_match_data* mdcopy = pcre2_match_data_create(capture_count + 1, nullptr);
+        if (!mdcopy) break;
+        PCRE2_SIZE* dst_ov = pcre2_get_ovector_pointer(mdcopy);
+        for (int k = 0; k < 2 * (capture_count + 1); ++k) dst_ov[k] = ovector[k];
+        PyObject* m = allocObject(9);
+        if (!m) { pcre2_match_data_free(mdcopy); break; }
+        MatchObj* mo = new MatchObj();
+        mo->md = mdcopy;
+        mo->subject = subject;
+        mo->capture_count = capture_count;
+        m->value = (long)(intptr_t)mo;
+        // Append (bypass the size-bounded PyList_SetItem)
+        result->list.push_back(m);
+        // Move past this match
+        offset = ovector[1];
+        if (offset == ovector[0]) offset++;
+        if (offset > subject.size()) break;
+        rc = pcre2_match(code, subj, (PCRE2_SIZE)subject.size(),
+                         offset, 0, md, nullptr);
+    }
+    pcre2_match_data_free(md);
+    return result;
+}
+
+extern "C" PyObject* PyBuiltin_ReFinditer(PyObject* pattern, PyObject* subject) {
+    if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
+    std::string err;
+    pcre2_code* code = compileRegex(pattern->str, err);
+    if (!code) {
+        std::fprintf(stderr, "re.error: %s\n", err.c_str());
+        return nullptr;
+    }
+    PyObject* result = runRegexAll(code, subject->str);
+    pcre2_code_free(code);
+    return result;
+}
+
+extern "C" PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject) {
+    if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
+    std::string err;
+    pcre2_code* code = compileRegex(pattern->str, err);
+    if (!code) {
+        std::fprintf(stderr, "re.error: %s\n", err.c_str());
+        return nullptr;
+    }
+    pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, nullptr);
+    if (!md) { pcre2_code_free(code); return nullptr; }
+    PCRE2_SPTR subj = (PCRE2_SPTR)subject->str.c_str();
+    int rc = pcre2_match(code, subj, (PCRE2_SIZE)subject->str.size(), 0, 0, md, nullptr);
+    PyObject* result = PyList_New(0);
+    PCRE2_SIZE offset = 0;
+    while (rc >= 0) {
+        PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(md);
+        // rc is "one more than the highest-numbered pair that was set".
+        // So #capture_groups = rc - 1 (pair 0 is the full match, which is
+        // not counted in rc's "highest pair" sense).
+        int num_capture_groups = rc - 1;
+        if (num_capture_groups <= 0) {
+            std::string m = subject->str.substr(ovector[0], ovector[1] - ovector[0]);
+            PyObject* s = PyUnicode_FromString(m.c_str());
+            result->list.push_back(s);
+        } else if (num_capture_groups == 1) {
+            std::string g = subject->str.substr(ovector[2], ovector[3] - ovector[2]);
+            PyObject* s = PyUnicode_FromString(g.c_str());
+            result->list.push_back(s);
+        } else {
+            PyObject* tup = PyList_New(num_capture_groups);
+            for (int g = 1; g <= num_capture_groups; ++g) {
+                std::string gs = subject->str.substr(ovector[2*g], ovector[2*g+1] - ovector[2*g]);
+                PyObject* s = PyUnicode_FromString(gs.c_str());
+                tup->list[g-1] = s;
+            }
+            result->list.push_back(tup);
+        }
+        offset = ovector[1];
+        if (offset == ovector[0]) offset++;
+        if (offset > subject->str.size()) break;
+        rc = pcre2_match(code, subj, (PCRE2_SIZE)subject->str.size(), offset, 0, md, nullptr);
+    }
+    pcre2_match_data_free(md);
+    pcre2_code_free(code);
+    return result;
+}
+
+// m.group(i) — return the i-th capture group as a string. m.group() or
+// m.group(0) returns the full match.
+extern "C" PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj) {
+    MatchObj* mo = asMatchObj(m);
+    if (!mo || !mo->md) return nullptr;
+    long i = 0;
+    if (idxObj && (idxObj->type == 0 || idxObj->type == 5)) i = idxObj->value;
+    if (i < 0 || i > mo->capture_count) return nullptr;
+    PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(mo->md);
+    PCRE2_SIZE start = ovector[2*i];
+    PCRE2_SIZE end   = ovector[2*i+1];
+    if (start == PCRE2_UNSET || end == PCRE2_UNSET) return nullptr;
+    return PyUnicode_FromString(mo->subject.substr(start, end - start).c_str());
+}
+
+extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern) {
+    if (!pattern || pattern->type != 3) return nullptr;
+    std::string err;
+    pcre2_code* code = compileRegex(pattern->str, err);
+    if (!code) { std::fprintf(stderr, "re.error: %s\n", err.c_str()); return nullptr; }
+    PyObject* o = allocObject(8);
+    if (!o) { pcre2_code_free(code); return nullptr; }
+    CompiledRegex* cr = new CompiledRegex();
+    cr->code = code;
+    cr->pattern = pattern->str;
+    o->value = (long)(intptr_t)cr;
+    return o;
+}
+
 // Build the synthetic `sys` module and `sys.argv` list from the
 // process's argc/argv. Called once at program startup. Idempotent.
 void pyc_setup_sys(int argc, char** argv) {
@@ -1780,13 +2455,23 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
 PyObject* PyNumber_Divide(PyObject* a, PyObject* b) {
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) {
-        if (b->value == 0) return NULL;
+        if (b->value == 0) {
+            if (g_try_stack) { pyc_raise(PyUnicode_FromString("ZeroDivisionError: integer division or modulo by zero")); return NULL; }
+            std::fprintf(stderr, "ZeroDivisionError: integer division or modulo by zero\n");
+            std::fflush(stderr);
+            std::exit(1);
+        }
         long q = a->value / b->value;
         if ((a->value ^ b->value) < 0 && q * b->value != a->value) q--;
         return PyInt_FromLong(q);
     }
     double bv = numeric_val(b);
-    if (bv == 0.0) return NULL;
+    if (bv == 0.0) {
+        if (g_try_stack) { pyc_raise(PyUnicode_FromString("ZeroDivisionError: float divmod()")); return NULL; }
+        std::fprintf(stderr, "ZeroDivisionError: float divmod()\n");
+        std::fflush(stderr);
+        std::exit(1);
+    }
     return PyFloat_FromDouble(floor(numeric_val(a) / bv));
 }
 
@@ -1794,7 +2479,12 @@ PyObject* PyNumber_Divide(PyObject* a, PyObject* b) {
 PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b) {
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     double bv = numeric_val(b);
-    if (bv == 0.0) return NULL;
+    if (bv == 0.0) {
+        if (g_try_stack) { pyc_raise(PyUnicode_FromString("ZeroDivisionError: float division by zero")); return NULL; }
+        std::fprintf(stderr, "ZeroDivisionError: float division by zero\n");
+        std::fflush(stderr);
+        std::exit(1);
+    }
     return PyFloat_FromDouble(numeric_val(a) / bv);
 }
 
@@ -1802,13 +2492,23 @@ PyObject* PyNumber_Remainder(PyObject* a, PyObject* b) {
     if (a && a->type == 3) return PyString_Format(a, b);   // "fmt" % val
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) {
-        if (b->value == 0) return NULL;
+        if (b->value == 0) {
+            if (g_try_stack) { pyc_raise(PyUnicode_FromString("ZeroDivisionError: integer division or modulo by zero")); return NULL; }
+            std::fprintf(stderr, "ZeroDivisionError: integer division or modulo by zero\n");
+            std::fflush(stderr);
+            std::exit(1);
+        }
         long r = a->value % b->value;
         if (r != 0 && (r ^ b->value) < 0) r += b->value;
         return PyInt_FromLong(r);
     }
     double bv = numeric_val(b);
-    if (bv == 0.0) return NULL;
+    if (bv == 0.0) {
+        if (g_try_stack) { pyc_raise(PyUnicode_FromString("ZeroDivisionError: float modulo")); return NULL; }
+        std::fprintf(stderr, "ZeroDivisionError: float modulo\n");
+        std::fflush(stderr);
+        std::exit(1);
+    }
     double r = fmod(numeric_val(a), bv);
     if (r != 0.0 && ((r < 0) != (bv < 0))) r += bv;
     return PyFloat_FromDouble(r);
@@ -1832,6 +2532,94 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
             case 1: return 1;
             default: return 0;
         }
+    }
+    // List equality and ordering. CPython compares element-wise; the
+    // first unequal pair decides, with shorter < longer when all
+    // shared elements are equal. We do the same here.
+    if (a->type == 1 && b->type == 1) {
+        const auto& al = a->list;
+        const auto& bl = b->list;
+        size_t n = al.size() < bl.size() ? al.size() : bl.size();
+        for (size_t i = 0; i < n; ++i) {
+            int eq = (al[i] == b->list[i]) ||
+                     (al[i] && b->list[i] && PyObject_CompareBool(al[i], b->list[i], 0));
+            if (!eq) {
+                // Elements differ at i: use the element comparison to decide.
+                if (al[i] && b->list[i]) {
+                    return PyObject_CompareBool(al[i], b->list[i], op);
+                }
+                // One side has null (deleted); treat as unequal.
+                switch (op) {
+                    case 0: return 0;
+                    case 1: return 1;
+                    case 2: return al[i] == nullptr ? 1 : 0;
+                    case 3: return al[i] == nullptr ? 0 : 1;
+                    case 4: return al[i] == nullptr ? 1 : 0;
+                    case 5: return al[i] == nullptr ? 0 : 1;
+                }
+            }
+        }
+        // All shared elements equal — compare by length.
+        if (al.size() == bl.size()) {
+            switch (op) {
+                case 0: return 1;
+                case 1: return 0;
+                case 2: return 0;
+                case 3: return 0;
+                case 4: return 1;
+                case 5: return 1;
+            }
+        }
+        switch (op) {
+            case 0: return 0;
+            case 1: return 1;
+            case 2: return al.size() < bl.size() ? 1 : 0;
+            case 3: return al.size() < bl.size() ? 0 : 1;
+            case 4: return al.size() < bl.size() ? 1 : 0;
+            case 5: return al.size() < bl.size() ? 0 : 1;
+        }
+    }
+    // Dict equality. CPython compares keys and values (order-independent).
+    // We do the same: equal iff same keys and equal values. For ordering
+    // (`<`, etc.), raise TypeError — we conservatively return 0.
+    if (a->type == 2 && b->type == 2) {
+        if (a->dict.size() != b->dict.size()) {
+            switch (op) {
+                case 0: return 0;
+                case 1: return 1;
+                default: return 0;
+            }
+        }
+        for (auto& ap : a->dict) {
+            bool found = false;
+            for (auto& bp : b->dict) {
+                if ((ap.first == bp.first) ||
+                    (ap.first && bp.first && PyObject_CompareBool(ap.first, bp.first, 0))) {
+                    if ((ap.second == bp.second) ||
+                        (ap.second && bp.second && PyObject_CompareBool(ap.second, bp.second, 0))) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) {
+                switch (op) {
+                    case 0: return 0;
+                    case 1: return 1;
+                    default: return 0;
+                }
+            }
+        }
+        switch (op) {
+            case 0: return 1;
+            case 1: return 0;
+            default: return 0;
+        }
+    }
+    // Mixed list/dict — TypeError in CPython; we return 0 for all.
+    if ((a->type == 1 || a->type == 2) && (b->type == 1 || b->type == 2) &&
+        a->type != b->type) {
+        return 0;
     }
     // Numeric comparison (int or float)
     if (is_numeric(a) && is_numeric(b)) {
@@ -1875,29 +2663,66 @@ PyObject* PyObject_GetAttr(PyObject* obj, const char* attr) {
     if (obj == g_sys_module) {
         return pyc_get_sys_attr(attr);
     }
-    // Lists: support .append / .sort / .pop (used by compiled code).
+    // Lists: support .append / .sort / .pop / .insert / .remove / .index /
+    // .count / .reverse / .extend / .copy / .clear. We return a dummy
+    // callable token; codegen emits the explicit list_* call.
     if (obj->type == 1) {
-        if (strcmp(attr, "append") == 0) {
-            // Return a dummy callable that no-ops (we only need the
-            // lookup to succeed; codegen emits explicit list_* calls).
-            return PyInt_FromLong(0);
-        }
-        if (strcmp(attr, "sort") == 0) return PyInt_FromLong(0);
-        if (strcmp(attr, "pop") == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "append")  == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "sort")    == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "pop")     == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "insert")  == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "remove")  == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "index")   == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "count")   == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "reverse") == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "extend")  == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "copy")    == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "clear")   == 0) return PyInt_FromLong(0);
     }
-    // Dicts: support .keys / .values / .items.
+    // Dicts: support .keys / .values / .items / .update / .setdefault /
+    // .copy / .clear / .pop / .popitem / .fromkeys / .get.
     if (obj->type == 2) {
-        if (strcmp(attr, "keys")   == 0) return PyBuiltin_List(obj);
-        if (strcmp(attr, "values") == 0) return PyBuiltin_List(obj);
-        if (strcmp(attr, "items")  == 0) return PyBuiltin_List(obj);
+        if (strcmp(attr, "keys")       == 0) return PyBuiltin_List(obj);
+        if (strcmp(attr, "values")     == 0) return PyBuiltin_List(obj);
+        if (strcmp(attr, "items")      == 0) return PyBuiltin_List(obj);
+        if (strcmp(attr, "update")     == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "setdefault") == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "copy")       == 0) return PyDict_New();
+        if (strcmp(attr, "clear")      == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "pop")        == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "popitem")    == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "fromkeys")   == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "get")        == 0) return PyInt_FromLong(0);
     }
-    // Strings: support .upper / .lower / .strip / .split / .join / etc.
+    // Strings: support .upper / .lower / .strip / .lstrip / .rstrip /
+    // .split / .join / .startswith / .endswith / .casefold / .title /
+    // .isalpha / .isdigit / .isalnum / .islower / .isupper / .isspace /
+    // .zfill / .center / .ljust / .rjust / .find / .count / .replace.
     if (obj->type == 3) {
-        if (strcmp(attr, "upper") == 0) return PyString_Upper(obj);
-        if (strcmp(attr, "lower") == 0) return PyString_Lower(obj);
-        if (strcmp(attr, "strip") == 0) return PyString_Strip(obj);
-        if (strcmp(attr, "split") == 0) return PyString_Split(obj, nullptr);
-        if (strcmp(attr, "join")  == 0) return PyString_Join(obj, nullptr);
+        if (strcmp(attr, "upper")      == 0) return PyString_Upper(obj);
+        if (strcmp(attr, "lower")      == 0) return PyString_Lower(obj);
+        if (strcmp(attr, "strip")      == 0) return PyString_Strip(obj);
+        if (strcmp(attr, "lstrip")     == 0) return PyString_Strip(obj);   // placeholder
+        if (strcmp(attr, "rstrip")     == 0) return PyString_Strip(obj);
+        if (strcmp(attr, "split")      == 0) return PyString_Split(obj, nullptr);
+        if (strcmp(attr, "join")       == 0) return PyString_Join(obj, nullptr);
+        if (strcmp(attr, "startswith") == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "endswith")   == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "casefold")   == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "title")      == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "isalpha")    == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "isdigit")    == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "isalnum")    == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "islower")    == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "isupper")    == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "isspace")    == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "zfill")      == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "center")     == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "ljust")      == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "rjust")      == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "find")       == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "count")      == 0) return PyInt_FromLong(0);
+        if (strcmp(attr, "replace")    == 0) return PyInt_FromLong(0);
     }
     // Fallback: return the object itself (matches the previous stub
     // behaviour for unsupported lookups; doesn't crash).
@@ -1906,6 +2731,76 @@ PyObject* PyObject_GetAttr(PyObject* obj, const char* attr) {
 }
 
 void PyErr_Print(void) { fprintf(stderr, "Python error occurred\n"); }
+
+// ---- Exception support ----
+// Use a small thread-local stack of (jmp_buf, filter-type) entries.
+// pyc_try_push registers a buffer; pyc_raise longjmps to the innermost
+// matching buffer (or stores the exception if no match). This lets
+// `raise` inside a try block transfer control to the matching except
+// handler in linear IR without per-instruction exception checks.
+#include <csetjmp>
+static thread_local PyObject* g_current_exception = nullptr;
+struct TryFrame {
+    jmp_buf jmp;
+    PyObject* filterType;   // not used for dispatch in the simple model
+    PyObject* exc;          // the exception that triggered this frame
+    TryFrame* next;
+};
+// g_try_stack is forward-declared at the top of the file.
+
+void pyc_try_push(void* jmpBuf, PyObject* filterType) {
+    TryFrame* f = new TryFrame();
+    f->filterType = filterType;          // not used currently
+    f->exc = nullptr;
+    f->next = g_try_stack;
+    g_try_stack = f;
+    if (jmpBuf) memcpy(f->jmp, jmpBuf, sizeof(jmp_buf));
+}
+void pyc_try_pop(void) {
+    if (!g_try_stack) return;
+    TryFrame* f = g_try_stack;
+    g_try_stack = f->next;
+    if (f->exc) Py_DECREF(f->exc);
+    delete f;
+}
+void pyc_raise(PyObject* exc) {
+    if (!exc) return;
+    if (g_try_stack) {
+        // Transfer to the innermost try frame. We do NOT pop the frame
+        // here — the catch block will clear the exception via
+        // pyc_clear_exception / pyc_try_pop, and leaving the frame on
+        // the stack ensures longjmp re-entry (e.g. inside an except
+        // handler) targets the next outer try. The frame's `exc` field
+        // holds the exception so the catch can retrieve it.
+        TryFrame* f = g_try_stack;
+        if (f->exc) Py_DECREF(f->exc);
+        f->exc = exc;
+        Py_INCREF(exc);
+        std::longjmp(f->jmp, 1);
+    }
+    if (g_current_exception) Py_DECREF(g_current_exception);
+    g_current_exception = exc;
+    Py_INCREF(exc);
+}
+PyObject* pyc_current_exception(void) {
+    if (g_try_stack && g_try_stack->exc) {
+        Py_INCREF(g_try_stack->exc);
+        return g_try_stack->exc;
+    }
+    if (!g_current_exception) return nullptr;
+    Py_INCREF(g_current_exception);
+    return g_current_exception;
+}
+void pyc_clear_exception(void) {
+    if (g_try_stack && g_try_stack->exc) {
+        Py_DECREF(g_try_stack->exc);
+        g_try_stack->exc = nullptr;
+    }
+    if (g_current_exception) {
+        Py_DECREF(g_current_exception);
+        g_current_exception = nullptr;
+    }
+}
 
 // Comprehension helpers (kept for backward compat)
 PyObject* list_create() { return PyList_New(0); }

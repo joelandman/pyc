@@ -37,6 +37,7 @@ target_compile_definitions(pyc PRIVATE PYC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 install(TARGETS pyc DESTINATION bin)
 
 add_library(pyc_runtime STATIC src/runtime/Runtime.cpp)
+target_link_libraries(pyc_runtime PUBLIC pcre2-8)
 set_target_properties(pyc_runtime PROPERTIES OUTPUT_NAME "pycrt")
 install(TARGETS pyc_runtime DESTINATION lib)
 install(FILES include/pyc/runtime.h DESTINATION include/pyc)
@@ -64,11 +65,10 @@ set(PYC_CORRECTNESS_TEST_FILES
   # tests/mbs.py
   tests/builtins2.py
   tests/regex_g.py
-  # The following crash or don't compile - excluded
-  # tests/builtins.py     # uses re module - segfault
-  # tests/closures.py     # doesn't compile (nonlocal/closure bug)
-  # tests/features.py     # uses os.environ/subprocess - segfault
-  # tests/regex.py        # uses re module - segfault
+  tests/builtins.py     # uses re module (now PCRE2-backed)
+  tests/regex.py        # uses re module (now PCRE2-backed)
+  tests/closures.py     # nonlocal/closure support (B5)
+  tests/features.py     # uses os.environ/subprocess - segfault
 )
 
 # Convenience target: make check (or make pyc-check)

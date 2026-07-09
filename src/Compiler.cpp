@@ -531,6 +531,11 @@ public:
             lowerAssign(node);
         } else if (node->type == "Return") {
             lowerReturn(node);
+        } else if (node->type == "Raise") {
+            std::string exc = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+            ir.addInstruction(currentFunc, "call", {"pyc_raise", exc}, "");
+        } else if (node->type == "Try") {
+            lowerTry(node);
         } else if (node->type == "Expr") {
             if (!node->children.empty() && node->children[0]) {
                 lowerExpr(node->children[0].get());
@@ -1166,14 +1171,37 @@ private:
                 }
                 ir.addFunction(initName, initParams);
                 knownIRFunctions.insert(initName);
-                // Build args list: self + user args
+                // Collect user-provided positional args (skip the class name child[0]).
+                std::vector<std::string> userArgs;
+                for (size_t i = 1; i < node->children.size(); ++i) {
+                    if (node->children[i] && node->children[i]->type != "Keyword") {
+                        userArgs.push_back(lowerExpr(node->children[i].get()));
+                    }
+                }
+                // Pad with defaults for trailing params that lack user args.
+                // Defaults for the class's __init__ were registered (in the
+                // FunctionDef lowering of `__init__`) as module globals named
+                // __default___init__<i> in the order they appear. The total
+                // number of params (incl. self) minus userArgs minus 1 (self)
+                // gives the number of trailing defaults to inject.
+                size_t totalParams = initParams.size();
+                size_t provided = userArgs.size();
+                size_t trailing = (totalParams > provided + 1) ? (totalParams - provided - 1) : 0;
+                // Look up the defaults registered for the underlying __init__.
+                // funcDefaultValues stores them in order; the *last* N are the
+                // trailing defaults (consistent with Python: defaults apply to
+                // the last N parameters).
+                auto dit = funcDefaultValues.find("__init__");
+                std::vector<std::string> defaults;
+                if (dit != funcDefaultValues.end()) defaults = dit->second;
+                // Build args list: self + user args + injected defaults.
                 std::vector<std::string> callArgs;
                 callArgs.push_back(initName);
                 callArgs.push_back(instanceDict);
-                for (size_t i = 1; i < node->children.size(); ++i) {
-                    if (node->children[i]) {
-                        callArgs.push_back(lowerExpr(node->children[i].get()));
-                    }
+                for (const auto& a : userArgs) callArgs.push_back(a);
+                for (size_t i = 0; i < trailing && i < defaults.size(); ++i) {
+                    size_t di = defaults.size() - trailing + i;
+                    if (di < defaults.size()) callArgs.push_back(defaults[di]);
                 }
                 std::string initCallRes = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", callArgs, initCallRes);
@@ -1440,9 +1468,6 @@ private:
                 }
             }
         }
-        std::fprintf(stderr, "DEBUG post-loop: funcName=%s argRes.size()=%zu\n", funcName.c_str(), argRes.size());
-        for (size_t i = 0; i < argRes.size(); ++i) std::fprintf(stderr, "  argRes[%zu]=%s\n", i, argRes[i].c_str());
-
         // Callee-side *args collection (skip for runtime * call sites; the __va wrapper
         // already forwards the correct fixed+tail shape for the target).
         if (!hadRuntimeStar) {
@@ -1743,8 +1768,43 @@ private:
         }
         // isinstance(obj, classinfo) → Pyc_IsInstance
         if (funcName == "isinstance" && argRes.size() >= 2) {
+            // If classinfo is a known type name, pass a numeric typecode
+            // (0=int, 4=float, 3=str, 1=list, 2=dict, 5=bool, 6=NoneType)
+            // so the runtime can dispatch without a real type system.
+            int typecode = -1;
+            // children[0] = func (isinstance), children[1] = obj,
+            // children[2] = classinfo
+            if (node->children.size() >= 3 && node->children[2]) {
+                std::string childType = node->children[2]->type;
+                std::string childVal = node->children[2]->value;
+                std::string childId  = node->children[2]->id;
+                if (childType == "Name" || childType == "Constant") {
+                    const std::string& n = childType == "Name" ? childId : childVal;
+                    if      (n == "int")  typecode = 0;
+                    else if (n == "float") typecode = 4;
+                    else if (n == "str")  typecode = 3;
+                    else if (n == "list") typecode = 1;
+                    else if (n == "dict") typecode = 2;
+                    else if (n == "bool") typecode = 5;
+                    else if (n == "NoneType" || n == "type") typecode = 6;
+                } else if (childType == "Call" && node->children[2]->children.size() >= 2) {
+                    // type(None) → typecode 6
+                    const auto* func = node->children[2]->children[0].get();
+                    const auto* arg0 = node->children[2]->children[1].get();
+                    if (func && func->type == "Name" && func->id == "type" &&
+                        arg0 && arg0->type == "Constant" && arg0->value == "None") {
+                        typecode = 6;
+                    }
+                }
+            }
             std::string res = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_IsInstance", argRes[0], argRes[1]}, res, "bool");
+            if (typecode >= 0) {
+                std::string tc = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(typecode)}, tc, "int");
+                ir.addInstruction(currentFunc, "call", {"Pyc_IsInstance", argRes[0], tc}, res, "bool");
+            } else {
+                ir.addInstruction(currentFunc, "call", {"Pyc_IsInstance", argRes[0], argRes[1]}, res, "bool");
+            }
             noteType(res, "bool");
             return res;
         }
@@ -1860,7 +1920,6 @@ private:
         }
         // pow(base, exp) → PyBuiltin_Pow(base, exp)
         if (funcName == "pow") {
-            std::fprintf(stderr, "DEBUG pow: argRes.size()=%zu\n", argRes.size());
             std::string a = argRes.size() > 0 ? argRes[0] : "";
             std::string b = argRes.size() > 1 ? argRes[1] : "";
             std::string res = "t" + std::to_string(tempCounter++);
@@ -2305,6 +2364,21 @@ private:
             return;
         }
         std::string listVal = lowerExpr(node->children[iterIndex].get());  // iter
+        // Propagate element type from the iter to the loop variable. For
+        // instance, a list of Match objects (from re.finditer) makes the
+        // loop var of type "match", so the .group() method dispatches
+        // correctly.
+        std::string iterElemType = "boxed";
+        if (typeOf(listVal) == "match_list") iterElemType = "match";
+        // Materialise the iterator as a list. For list iterables this is
+        // a no-op; for dicts (iterate keys), strings (iterate characters),
+        // and other sequences it converts to a list of elements. We can't
+        // know the static type at lowering time, so always go through
+        // PyBuiltin_List which is cheap for lists and correct otherwise.
+        std::string listRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", listVal}, listRes);
+        if (iterElemType != "boxed") noteType(listRes, "match_list");
+        listVal = listRes;
         // Store iterator in a slot so owned refs (e.g. sorted() result) are freed
         // at scope exit instead of leaking when emitDecRefIfOwnedSameBlock is blocked
         // inside the loop body (different block from the iterator definition).
@@ -2358,6 +2432,7 @@ private:
             }
         } else {
             ir.addInstruction(currentFunc, "assign", {itemRes}, node->id);
+            if (iterElemType != "boxed") noteType(node->id, iterElemType);
         }
 
         // B5: if the iteration target is cell-backed in this scope, write through the cell
@@ -2916,6 +2991,139 @@ private:
         lowerReturnExpr(node);
     }
 
+    // try/except/else/finally lowering.
+    //   node->children[0..nBody-1] = body statements
+    //   node->children[nBody..]    = ExceptHandler nodes (each with handler body as children)
+    //   plus an optional "finalbody" synthetic child with the final-body statements.
+    //
+    // The runtime uses setjmp/longjmp: try body entry calls setjmp on a
+    // fresh alloca; if it returns 0, fall through to the body; if it returns
+    // non-zero (i.e. pyc_raise longjmp'd), branch to the first except handler.
+    // After the try (and after each handler) we branch to a finally block (if
+    // present) and then to the end label. The finally block runs in both the
+    // normal and the exception path.
+    void lowerTry(const ASTNode* node) {
+        if (node->children.empty()) return;
+        // Split children into body / handlers / optional finally.
+        std::vector<const ASTNode*> bodyStmts;
+        std::vector<const ASTNode*> handlers;
+        const ASTNode* finallyBody = nullptr;
+        for (const auto& c : node->children) {
+            if (!c) continue;
+            if (c->type == "finalbody") {
+                finallyBody = c.get();
+            } else if (c->type == "ExceptHandler") {
+                handlers.push_back(c.get());
+            } else {
+                bodyStmts.push_back(c.get());
+            }
+        }
+        int c = tempCounter++;
+        std::string jmpVar      = "__tryjmp_" + std::to_string(c);
+        std::string tryL        = "try_body_" + std::to_string(c);
+        std::string endL        = "try_end_"  + std::to_string(c);
+        std::string finallyL    = "try_finally_" + std::to_string(c);
+        // Each handler has an entry label; the FIRST one is the target of the
+        // exception path (the longjmp destination).
+        std::vector<std::string> handlerLabels;
+        for (size_t i = 0; i < handlers.size(); ++i)
+            handlerLabels.push_back("try_h_" + std::to_string(c) + "_" + std::to_string(i));
+
+        // Allocate the jmp buffer at function entry. We need an alloca, which
+        // is normally a value; the easiest path is to make `try_begin` allocate
+        // it lazily. But alloca is at the top of the function in LLVM, so we
+        // rely on `alloca` to insert at the function's entry block.
+        // We use the IR's "alloca" name as the storage; codegen handles it.
+        // The try_begin/try_end instructions take a jmpVar name to make this
+        // explicit.
+
+        // try_begin: stack-allocate jmpVar, then call setjmp. If result == 0,
+        // branch to tryL (normal entry). If result != 0, branch to first
+        // handler (or to finally if no handlers). We model this with a
+        // single instruction "try_begin" carrying:
+        //   operands[0] = jmpVar name
+        //   result     = tryL (normal entry)
+        // The codegen handles the setjmp + branch; the exception path's
+        // target is the first handler label (or finally if no handlers).
+        std::string excTarget = handlerLabels.empty() ? finallyL : handlerLabels[0];
+        // If there is no finally AND no handlers, we have no excTarget;
+        // we still need a label to longjmp to. The codegen treats the case
+        // "no handlers, no finally" as a no-op (raise just stores).
+        // The exception target is encoded in a hidden `try_excL` field —
+        // for simplicity we pass it as inst.op's result while the body
+        // branch target is the second operand.
+
+        // We model: try_begin(jmpVar, normalL, excL)
+        std::string tryNormalL = tryL;
+        std::string tryExcL = excTarget;
+        if (handlerLabels.empty() && finallyBody == nullptr) {
+            // No handler and no finally: emit a clear_exception + a "passthrough"
+            // — `raise` will just store the exception (handled by runtime when
+            // try stack is empty). Emit an unconditional branch to endL so the
+            // IR is well-formed.
+            ir.addInstruction(currentFunc, "call", {"pyc_clear_exception"}, "");
+            for (const auto* s : bodyStmts) lower(s);
+            ir.addInstruction(currentFunc, "br", {}, endL);
+            ir.addInstruction(currentFunc, "label", {}, endL);
+            return;
+        }
+        ir.addInstruction(currentFunc, "try_begin", {jmpVar, tryNormalL, tryExcL}, tryNormalL);
+
+        // Try body (entered when setjmp returns 0)
+        ir.addInstruction(currentFunc, "label", {}, tryL);
+        for (const auto* s : bodyStmts) lower(s);
+        // If the body didn't terminate, branch to finallyL (if any) or endL.
+        if (finallyBody) {
+            ir.addInstruction(currentFunc, "br", {}, finallyL);
+        }
+
+        // Handlers — each fetches the current exception, binds it, runs body.
+        for (size_t i = 0; i < handlers.size(); ++i) {
+            const ASTNode* h = handlers[i];
+            ir.addInstruction(currentFunc, "label", {}, handlerLabels[i]);
+            // The exception was already raised via longjmp; pop the try
+            // frame so any raise in the handler body targets the next
+            // outer try (not the same one again).
+            std::string popRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"pyc_try_pop"}, popRes);
+            std::string excVar = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"pyc_current_exception"}, excVar);
+            if (!h->id.empty()) {
+                ir.addInstruction(currentFunc, "assign", {excVar}, h->id);
+            }
+            ir.addInstruction(currentFunc, "call", {"pyc_clear_exception"}, "");
+            for (const auto& s : h->children) {
+                if (s) lower(s.get());
+            }
+            // After handler body, fall through to finallyL.
+            if (finallyBody) {
+                ir.addInstruction(currentFunc, "br", {}, finallyL);
+            }
+        }
+
+        // Finally block (if any): runs in both normal and exception paths.
+        // If no finally, exception with no handler goes to a synthetic
+        // "excep_L" label that just pops and branches to endL.
+        if (finallyBody) {
+            ir.addInstruction(currentFunc, "label", {}, finallyL);
+            for (const auto& s : finallyBody->children) {
+                if (s) lower(s.get());
+            }
+        } else {
+            // No finally: we need a place for the unhandled exception to
+            // land. Use a synthetic excepL that just pops and re-raises by
+            // re-calling pyc_raise. But since there's no enclosing try in
+            // our model, we just print and exit. (The runtime already prints
+            // ZeroDivisionError on division by zero if no try is in scope.)
+            // For now, we have a label that's simply unreachable; codegen
+            // will see no predecessor so it's pruned.
+            (void)0;
+        }
+        // try_end: pop the try frame, then branch to endL.
+        ir.addInstruction(currentFunc, "try_end", {jmpVar}, endL);
+        ir.addInstruction(currentFunc, "label", {}, endL);
+    }
+
     // obj.method(args) dispatch
     std::string lowerMethodCall(const ASTNode* node) {
         // node->children[0] = Attribute(obj, method_name)
@@ -2932,10 +3140,74 @@ private:
 
         std::string res = "t" + std::to_string(tempCounter++);
 
+        // re module dispatch: detect `re.<name>(...)` by looking at the
+        // AST node (Name "re" as the Attribute's base) rather than the
+        // inferred type (the module value is a dict, typeOf would say
+        // "boxed" / "dict"). This way the runtime helpers
+        // PyBuiltin_ReFinditer / ReFindall / ReCompile are called directly
+        // with the pattern and subject PyObject* values.
+        if (attr->children.size() >= 1 && attr->children[0] &&
+            attr->children[0]->type == "Name" && attr->children[0]->id == "re") {
+            if (methodName == "finditer" || methodName == "findall" || methodName == "compile") {
+                std::string pat = args.size() > 0 ? args[0] : "";
+                std::string fn = std::string("PyBuiltin_Re") +
+                    (methodName == "finditer" ? "Finditer" :
+                     methodName == "findall"  ? "Findall"  : "Compile");
+                if (methodName == "compile") {
+                    ir.addInstruction(currentFunc, "call", {fn, pat}, res);
+                    noteType(res, "regex");
+                } else {
+                    std::string subj = args.size() > 1 ? args[1] : "";
+                    ir.addInstruction(currentFunc, "call", {fn, pat, subj}, res);
+                    // Both finditer and findall return a list (typed "match_list"
+                    // so the for loop can propagate the element type to the
+                    // loop variable as "match").
+                    noteType(res, "match_list");
+                }
+                return res;
+            }
+            // For other re.* methods, fall through to the default class-lookup path.
+        }
+
+        // Match.group(i) — dispatch when the inferred type of obj is a
+        // Match (which we'll tag with "match" when we construct it).
+        if (methodName == "group" && typeOf(obj) == "match") {
+            std::string i = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_ReMatchGroup", obj, i}, res);
+            return res;
+        }
+
+        // List methods (count must come before the string `count` case so
+        // that `a.count(x)` for a list dispatches to PyList_Count).
+        if (methodName == "count") {
+            std::string arg = args.empty() ? "" : args[0];
+            std::string fn = (typeOf(obj) == "str") ? "PyString_Count" : "PyList_Count";
+            ir.addInstruction(currentFunc, "call", {fn, obj, arg}, res, "int");
+            noteType(res, "int");
         // Known list methods
-        if (methodName == "append") {
+        } else if (methodName == "append") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyList_Append", obj, arg}, res);
+        } else if (methodName == "insert") {
+            std::string idx = args.size() > 0 ? args[0] : "";
+            std::string item = args.size() > 1 ? args[1] : "";
+            ir.addInstruction(currentFunc, "call", {"PyList_Insert", obj, idx, item}, res);
+        } else if (methodName == "remove") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyList_Remove", obj, arg}, res);
+        } else if (methodName == "index") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyList_Index", obj, arg}, res, "int");
+            noteType(res, "int");
+        } else if (methodName == "reverse") {
+            ir.addInstruction(currentFunc, "call", {"PyList_Reverse", obj}, res);
+        } else if (methodName == "extend") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyList_Extend", obj, arg}, res);
+        } else if (methodName == "copy") {
+            ir.addInstruction(currentFunc, "call", {"PyList_Copy", obj}, res);
+        } else if (methodName == "clear") {
+            ir.addInstruction(currentFunc, "call", {"PyList_Clear", obj}, res);
         // Known string methods
         } else if (methodName == "upper") {
             ir.addInstruction(currentFunc, "call", {"PyString_Upper", obj}, res);
@@ -2943,6 +3215,55 @@ private:
             ir.addInstruction(currentFunc, "call", {"PyString_Lower", obj}, res);
         } else if (methodName == "strip") {
             ir.addInstruction(currentFunc, "call", {"PyString_Strip", obj}, res);
+        } else if (methodName == "lstrip") {
+            ir.addInstruction(currentFunc, "call", {"PyString_LStrip", obj}, res);
+        } else if (methodName == "rstrip") {
+            ir.addInstruction(currentFunc, "call", {"PyString_RStrip", obj}, res);
+        } else if (methodName == "startswith") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_StartsWith", obj, arg}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "endswith") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_EndsWith", obj, arg}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "casefold") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Casefold", obj}, res);
+        } else if (methodName == "title") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Title", obj}, res);
+        } else if (methodName == "zfill") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_ZFill", obj, arg}, res);
+        } else if (methodName == "center") {
+            std::string w = args.size() > 0 ? args[0] : "";
+            std::string fill = args.size() > 1 ? args[1] : "";
+            ir.addInstruction(currentFunc, "call", {"PyString_Center", obj, w, fill}, res);
+        } else if (methodName == "ljust") {
+            std::string w = args.size() > 0 ? args[0] : "";
+            std::string fill = args.size() > 1 ? args[1] : "";
+            ir.addInstruction(currentFunc, "call", {"PyString_LJust", obj, w, fill}, res);
+        } else if (methodName == "rjust") {
+            std::string w = args.size() > 0 ? args[0] : "";
+            std::string fill = args.size() > 1 ? args[1] : "";
+            ir.addInstruction(currentFunc, "call", {"PyString_RJust", obj, w, fill}, res);
+        } else if (methodName == "isalpha") {
+            ir.addInstruction(currentFunc, "call", {"PyString_IsAlpha", obj}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "isdigit") {
+            ir.addInstruction(currentFunc, "call", {"PyString_IsDigit", obj}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "isalnum") {
+            ir.addInstruction(currentFunc, "call", {"PyString_IsAlnum", obj}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "islower") {
+            ir.addInstruction(currentFunc, "call", {"PyString_IsLower", obj}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "isupper") {
+            ir.addInstruction(currentFunc, "call", {"PyString_IsUpper", obj}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "isspace") {
+            ir.addInstruction(currentFunc, "call", {"PyString_IsSpace", obj}, res, "bool");
+            noteType(res, "bool");
         } else if (methodName == "split") {
             if (args.empty()) {
                 ir.addInstruction(currentFunc, "call", {"PyString_SplitWhitespace", obj}, res);
@@ -2977,7 +3298,11 @@ private:
         } else if (methodName == "replace") {
             std::string a = args.size() > 0 ? args[0] : "";
             std::string b = args.size() > 1 ? args[1] : "";
-            ir.addInstruction(currentFunc, "call", {"PyString_Replace", obj, a, b}, res);
+            if (args.size() >= 3) {
+                ir.addInstruction(currentFunc, "call", {"PyString_ReplaceN", obj, a, b, args[2]}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyString_Replace", obj, a, b}, res);
+            }
             noteType(res, "str");
         // Dict methods
         } else if (methodName == "get") {
@@ -2996,12 +3321,41 @@ private:
             ir.addInstruction(currentFunc, "call", {"PyDict_Values", obj}, res);
         } else if (methodName == "items") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Items", obj}, res);
+        } else if (methodName == "update") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyDict_Update", obj, arg}, res);
+        } else if (methodName == "setdefault") {
+            std::string key = args.size() > 0 ? args[0] : "";
+            std::string defv = args.size() > 1 ? args[1] : "";
+            ir.addInstruction(currentFunc, "call", {"PyDict_SetDefault", obj, key, defv}, res);
+        } else if (methodName == "copy") {
+            ir.addInstruction(currentFunc, "call", {"PyDict_Copy", obj}, res);
+        } else if (methodName == "clear") {
+            ir.addInstruction(currentFunc, "call", {"PyDict_Clear", obj}, res);
+        } else if (methodName == "pop") {
+            std::string key = args.size() > 0 ? args[0] : "";
+            std::string defv = args.size() > 1 ? args[1] : "";
+            ir.addInstruction(currentFunc, "call", {"PyDict_Pop", obj, key, defv}, res);
+        } else if (methodName == "popitem") {
+            ir.addInstruction(currentFunc, "call", {"PyDict_PopItem", obj}, res);
+        } else if (methodName == "fromkeys") {
+            std::string keys = args.size() > 0 ? args[0] : "";
+            std::string defv = args.size() > 1 ? args[1] : "";
+            ir.addInstruction(currentFunc, "call", {"PyDict_FromKeys", keys, defv}, res);
         // List methods
         } else if (methodName == "sort") {
             ir.addInstruction(currentFunc, "call", {"PyList_Sort", obj}, res);
         } else if (methodName == "pop") {
-            ir.addInstruction(currentFunc, "call", {"PyList_Pop", obj}, res);
-     } else {
+            if (args.empty()) {
+                ir.addInstruction(currentFunc, "call", {"PyList_Pop", obj}, res);
+            } else {
+                std::string idx = args[0];
+                ir.addInstruction(currentFunc, "call", {"PyList_PopAt", obj, idx}, res);
+            }
+        // String method fallbacks (some keys like "find",
+        // "replace", "split" are common to both list and string; the
+        // list-specific cases above win for lists).
+        } else {
             // Try to call as user-defined method
             // For class instances: look up method on class dict
             std::string methodLookup = "t" + std::to_string(tempCounter++);
@@ -3068,6 +3422,27 @@ private:
                     initParams += pname;
                 }
                 classInitParams[className] = initParams;
+                // Register defaults for this __init__ so the call site (A() /
+                // A(x)) can inject trailing defaults when the user omits args.
+                // Mirrors the default-handling block in the FunctionDef
+                // lowering (see "Count defaults and collect their values").
+                {
+                    std::vector<std::string> defaults;
+                    size_t defaultIndex = 0;
+                    for (const auto& cc : c->children) {
+                        if (cc && cc->type == "Default") {
+                            std::string defVal = lowerExpr(cc.get());
+                            std::string slot = "__default___init__" + std::to_string(defaultIndex++);
+                            ir.addModuleGlobal(slot);
+                            ir.addInstruction("__module__", "assign", {defVal}, slot);
+                            defaults.push_back(slot);
+                        }
+                    }
+                    if (!defaults.empty()) {
+                        funcDefaultCount["__init__"] = defaults.size();
+                        funcDefaultValues["__init__"] = defaults;
+                    }
+                }
                 // Generate __init__ function with correct params
                 std::string initFuncName = className + "__init__";
                 std::vector<std::string> initFuncParams;
@@ -3261,81 +3636,193 @@ private:
     }
 
     std::string lowerListComp(const ASTNode* node) {
-        // [elt for target in iter if cond ...]
+        // [elt for x in a (if cond)* for y in b (if cond)* ...]
         // children[0] = elt expression
-        // children[1] = comprehension generator node
+        // children[1..] = comprehension nodes (one per for-clause). Each
+        // comprehension has children[0] = target, children[1] = iter,
+        // children[2..] = filter conditions.
         if (node->children.size() < 2) return "";
         const ASTNode* eltNode = node->children[0].get();
-        const ASTNode* genNode = node->children[1].get();
-        if (!genNode || genNode->type != "comprehension" || genNode->children.size() < 2)
-            return "";
 
-        // Create result list
+        // Create the result list and slot-store it.
         std::string sc = "c" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "const", {"0"}, sc);
         std::string listVar = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, listVar);
+        std::string listSlot = "__lc_lst_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {listVar}, listSlot);
 
-        // Evaluate iterator once; store in slot so owned refs (e.g. sorted()) are freed
-        // at scope exit rather than leaking when the same-block DECREF check fires inside
-        // the loop body (a different block from the iterator definition).
-        std::string iterVal = lowerExpr(genNode->children[1].get());
-        std::string lcIterSlot = "__lci_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "assign", {iterVal}, lcIterSlot);
-        iterVal = lcIterSlot;
-        std::string lenRes  = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterVal}, lenRes);
-        std::string lenSlotLC = "__sl_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlotLC);
-
-        // Index variable (unique name to avoid clashes)
-        std::string idxVar  = "lc_i_" + std::to_string(tempCounter++);
-        std::string idxInit = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
-        ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
-
-        int lc = tempCounter++;
-        std::string loopL = "lc_lp_" + std::to_string(lc);
-        std::string bodyL = "lc_bd_" + std::to_string(lc);
-        std::string contL = "lc_ct_" + std::to_string(lc);
-        std::string exitL = "lc_ex_" + std::to_string(lc);
-
-        ir.addInstruction(currentFunc, "label", {}, loopL);
-        std::string cmpR = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenSlotLC}, cmpR);
-        ir.addInstruction(currentFunc, "br", {cmpR, bodyL, exitL});
-
-        ir.addInstruction(currentFunc, "label", {}, bodyL);
-        std::string item = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", iterVal, idxVar}, item);
-        ir.addInstruction(currentFunc, "assign", {item}, genNode->children[0]->id);
-
-        // Conditions: if any is false, jump to contL (skip append)
-        for (size_t ci = 2; ci < genNode->children.size(); ++ci) {
-            std::string trueL = "lc_ci_" + std::to_string(tempCounter++);
-            std::string condV = lowerExpr(genNode->children[ci].get());
-            ir.addInstruction(currentFunc, "br", {condV, trueL, contL});
-            ir.addInstruction(currentFunc, "label", {}, trueL);
+        // For each generator, emit a loop that materialises the iterator,
+        // iterates with an index, applies the target+condition filters, and
+        // either recurses to the next generator or appends the elt to the
+        // result list. The nesting is encoded by a sequence of label
+        // triplets (loop, body, cont, exit) per generator; the inner
+        // generator's loopL is jumped to by the previous generator's body
+        // after the conditions pass.
+        struct GenCtx {
+            std::string loopL, bodyL, contL, exitL;
+            std::string target;
+            std::vector<const ASTNode*> conds;
+        };
+        std::vector<GenCtx> gens;
+        gens.reserve(node->children.size() - 1);
+        for (size_t gi = 1; gi < node->children.size(); ++gi) {
+            const ASTNode* genNode = node->children[gi].get();
+            if (!genNode || genNode->type != "comprehension" ||
+                genNode->children.size() < 2) {
+                // Malformed comprehension: bail out by appending nothing.
+                continue;
+            }
+            int c = tempCounter++;
+            GenCtx g;
+            g.loopL  = "lc_lp_" + std::to_string(c);
+            g.bodyL  = "lc_bd_" + std::to_string(c);
+            g.contL  = "lc_ct_" + std::to_string(c);
+            g.exitL  = "lc_ex_" + std::to_string(c);
+            g.target = genNode->children[0]->id;
+            for (size_t ci = 2; ci < genNode->children.size(); ++ci) {
+                g.conds.push_back(genNode->children[ci].get());
+            }
+            gens.push_back(g);
+        }
+        if (gens.empty()) {
+            // No usable generator: the comprehension is empty.
+            return listSlot;
         }
 
-        // Evaluate element in loop context and append
-        std::string eltVal = lowerExpr(eltNode);
-        ir.addInstruction(currentFunc, "call", {"PyList_Append", listVar, eltVal}, "");
+        // Pre-evaluate each generator's iterator (evaluated once, stored in
+        // a slot). This mirrors CPython's behaviour where the iter is
+        // computed once at comprehension start.
+        std::vector<std::string> iterSlots;
+        iterSlots.reserve(gens.size());
+        for (size_t gi = 0; gi < gens.size(); ++gi) {
+            const ASTNode* genNode = node->children[gi + 1].get();
+            std::string iterVal = lowerExpr(genNode->children[1].get());
+            std::string iterSlot = "__lci_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {iterVal}, iterSlot);
+            // Also materialise as a list (handles dict/string iterables).
+            std::string listified = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", iterSlot}, listified);
+            std::string listifiedSlot = "__lcmat_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {listified}, listifiedSlot);
+            iterSlots.push_back(listifiedSlot);
+        }
 
-        // Fall through to contL
-        ir.addInstruction(currentFunc, "label", {}, contL);
-        std::string one = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "const", {"1"}, one);
-        std::string nxt = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "add", {idxVar, one}, nxt);
-        ir.addInstruction(currentFunc, "assign", {nxt}, idxVar);
-        ir.addInstruction(currentFunc, "br", {}, loopL);
-        ir.addInstruction(currentFunc, "label", {}, exitL);
-        // Transfer result list ownership to a slot so it's freed at scope exit even
-        // when used inline (e.g. as arg to join) in a different basic block.
-        std::string lcResSlot = "__lcr_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "assign", {listVar}, lcResSlot);
-        return lcResSlot;
+        // Emit each generator's index / loop / body / cont / exit blocks.
+        // For nested generators, the last block of generator i (after all
+        // conditions pass) branches to generator (i+1)'s loopL, instead of
+        // appending the elt to the result. The innermost generator appends.
+        std::vector<std::string> idxVars;
+        std::vector<std::string> lenSlots;
+        idxVars.reserve(gens.size());
+        lenSlots.reserve(gens.size());
+        for (size_t gi = 0; gi < gens.size(); ++gi) {
+            std::string idxVar  = "lc_i_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            std::string idxInit = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
+            ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
+            idxVars.push_back(idxVar);
+
+            std::string lenRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterSlots[gi]}, lenRes);
+            std::string lenSlot = "__lcsl_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
+            lenSlots.push_back(lenSlot);
+        }
+
+        // Pre-allocate the post-comp label name so we can reference it
+        // from the outermost gen's exitL. The label is emitted after all
+        // gens are processed; the codegen's label handler will add the
+        // fall-through br from the immediately-preceding (unterminated)
+        // block.
+        std::string postL = "lc_post_" + std::to_string(tempCounter++);
+
+        // Wire the loops. For each generator, emit a label, the comparison
+        // and branch. The body assigns the iteration target, evaluates the
+        // conditions, and either branches to the next generator's loopL
+        // (after the contL of the current one) or appends the elt.
+        // To keep the IR well-formed, the body of generator i ends with
+        // either a branch to gens[i+1].loopL (if i+1 exists) or an
+        // append followed by a branch to contL.
+        for (size_t gi = 0; gi < gens.size(); ++gi) {
+            const auto& g = gens[gi];
+            ir.addInstruction(currentFunc, "label", {}, g.loopL);
+            std::string cmpR = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "icmp", {"Lt", idxVars[gi], lenSlots[gi]}, cmpR);
+            ir.addInstruction(currentFunc, "br", {cmpR, g.bodyL, g.exitL});
+
+            ir.addInstruction(currentFunc, "label", {}, g.bodyL);
+            std::string item = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", iterSlots[gi], idxVars[gi]}, item);
+            ir.addInstruction(currentFunc, "assign", {item}, g.target);
+
+            // Conditions: if any is false, jump to contL (skip append / recurse).
+            for (const auto* cond : g.conds) {
+                std::string trueL = "lc_ci_" + std::to_string(tempCounter++);
+                std::string condV = lowerExpr(cond);
+                ir.addInstruction(currentFunc, "br", {condV, trueL, g.contL});
+                ir.addInstruction(currentFunc, "label", {}, trueL);
+            }
+
+            if (gi + 1 < gens.size()) {
+                // Recurse into the next generator. The deeper gens' idx
+                // slots persist across this gen's iterations, so we must
+                // explicitly reset them to 0 here; otherwise the inner
+                // loop's `idx < len` check fails on subsequent outer
+                // iterations and the inner never re-runs.
+                for (size_t gj = gi + 1; gj < gens.size(); ++gj) {
+                    std::string zeroR = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, zeroR);
+                    ir.addInstruction(currentFunc, "assign", {zeroR}, idxVars[gj]);
+                }
+                ir.addInstruction(currentFunc, "br", {}, gens[gi + 1].loopL);
+            } else {
+                // Innermost: evaluate element and append.
+                std::string eltVal = lowerExpr(eltNode);
+                ir.addInstruction(currentFunc, "call", {"PyList_Append", listSlot, eltVal}, "");
+            }
+            // Fall through to contL.
+            ir.addInstruction(currentFunc, "label", {}, g.contL);
+            std::string one = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, one);
+            std::string nxt = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "add", {idxVars[gi], one}, nxt);
+            ir.addInstruction(currentFunc, "assign", {nxt}, idxVars[gi]);
+            ir.addInstruction(currentFunc, "br", {}, g.loopL);
+            ir.addInstruction(currentFunc, "label", {}, g.exitL);
+            if (gi + 1 == gens.size()) {
+                // Innermost: when this exits, the outer's idx must
+                // advance. Branch to the outer's contL. We emit this
+                // here so the codegen does NOT add a fall-through br
+                // from this exitL to the next label (which is the
+                // post-comp label below).
+                if (gi > 0) {
+                    ir.addInstruction(currentFunc, "br", {}, gens[gi - 1].contL);
+                }
+                // For gi == 0 (single-gen comp), the exitL naturally
+                // falls through to the post-comp label below.
+            } else if (gi == 0) {
+                // Outermost (with nested gens): this exitL should fall
+                // through to the post-comp code. We explicitly branch
+                // to the post-comp label to defeat the codegen's
+                // natural fall-through to the next generator's loopL
+                // (which would be the wrong target).
+                ir.addInstruction(currentFunc, "br", {}, postL);
+            } else {
+                // Middle gen (3+ gens): exit advances the previous gen's
+                // idx, so branch to the previous gen's contL.
+                ir.addInstruction(currentFunc, "br", {}, gens[gi - 1].contL);
+            }
+        }
+        // Post-comp label. The print / use-site of the comp result lands
+        // here. The codegen's label handler adds the fall-through br
+        // from the previous block (which is now the innermost gen's
+        // contL, after its iteration advances its idx and re-branches to
+        // its loopL — but wait, that's already terminated). The
+        // post-comp label is reached from the outermost gen's exitL via
+        // the explicit br we emitted above.
+        ir.addInstruction(currentFunc, "label", {}, postL);
+        return listSlot;
     }
 
     std::string lowerDictComp(const ASTNode* node) {
@@ -3507,7 +3994,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         // user code's `pyc_user_main`. We always compile it from
         // source here for simplicity (it has no other dependencies
         // beyond the runtime header).
-        linkCmd += outputPath + ".o -I" + sourceDir + "/include " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -o " + outputPath + " -O" + std::to_string(optLevel);
+        linkCmd += outputPath + ".o -I" + sourceDir + "/include " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
         if (std::system(linkCmd.c_str()) == 0) {
             std::cout << "Linked with runtime to " << outputPath << " (static=" << useStatic << ")\n";
         } else {

@@ -137,6 +137,25 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* pycImportFailedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(pycImportFailedTy, llvm::Function::ExternalLinkage, "pyc_import_failed", module.get());
 
+    // Exception support: pyc_raise(exc), pyc_current_exception(), pyc_clear_exception(),
+    // pyc_try_push(jmpBuf, filter), pyc_try_pop().
+    llvm::FunctionType* pycRaiseTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(pycRaiseTy, llvm::Function::ExternalLinkage, "pyc_raise", module.get());
+    llvm::FunctionType* pycCurExcTy = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
+    llvm::Function::Create(pycCurExcTy, llvm::Function::ExternalLinkage, "pyc_current_exception", module.get());
+    llvm::FunctionType* pycClearExcTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
+    llvm::Function::Create(pycClearExcTy, llvm::Function::ExternalLinkage, "pyc_clear_exception", module.get());
+    llvm::FunctionType* pycTryPushTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {int8PtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(pycTryPushTy, llvm::Function::ExternalLinkage, "pyc_try_push", module.get());
+    llvm::FunctionType* pycTryPopTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
+    llvm::Function::Create(pycTryPopTy, llvm::Function::ExternalLinkage, "pyc_try_pop", module.get());
+    // setjmp is special: declaration with the ReturnsTwice attribute.
+    {
+        llvm::FunctionType* setjmpTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {int8PtrTy}, false);
+        llvm::Function* sj = llvm::Function::Create(setjmpTy, llvm::Function::ExternalLinkage, "setjmp", module.get());
+        sj->addFnAttr(llvm::Attribute::ReturnsTwice);
+    }
+
     // Builtins: min/max, list, reversed, enumerate, zip
     for (const char* name : {"PyBuiltin_MinList","PyBuiltin_MaxList",
                               "PyBuiltin_List","PyBuiltin_Reversed",
@@ -180,6 +199,50 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_RFind4", module.get());
     }
+    // Additional list / dict / string methods added for completeness.
+    // 2-arg: insert(list, idx, item), extend(list, other), center/ljust/rjust(s, w, fill),
+    //         pop(key, defval), setdefault(key, defval), fromkeys(keys, defval), zfill(s, w).
+    // 3-arg: replace(s, old, new, count) — handled by lowerMethodCall directly.
+    auto twoArg = [&](const char* n) {
+        llvm::FunctionType* t = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(t, llvm::Function::ExternalLinkage, n, module.get());
+    };
+    auto threeArg = [&](const char* n) {
+        llvm::FunctionType* t = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(t, llvm::Function::ExternalLinkage, n, module.get());
+    };
+    for (const char* n : {"PyList_Extend","PyList_Remove","PyList_Index","PyList_Count",
+                          "PyDict_Update","PyDict_FromKeys",
+                          "PyString_ZFill",
+                          "PyString_StartsWith","PyString_EndsWith"}) twoArg(n);
+    for (const char* n : {"PyList_PopAt","PyList_Insert",
+                          "PyString_Center","PyString_LJust","PyString_RJust",
+                          "PyDict_Pop","PyDict_SetDefault"}) threeArg(n);
+    // 1-arg helpers (Is* predicates, casefold/title, lstrip/rstrip, count, copy,
+    // clear, popitem, reverse, remove, index, update, fromkeys, remove, etc.).
+    for (const char* n : {"PyString_IsAlpha","PyString_IsDigit","PyString_IsAlnum",
+                          "PyString_IsLower","PyString_IsUpper","PyString_IsSpace",
+                          "PyString_Casefold","PyString_Title",
+                          "PyString_LStrip","PyString_RStrip",
+                          "PyList_Reverse","PyList_Copy","PyList_Clear",
+                          "PyDict_Copy","PyDict_Clear","PyDict_PopItem"}) {
+        llvm::FunctionType* t = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(t, llvm::Function::ExternalLinkage, n, module.get());
+    }
+    for (const char* n : {"PyList_PopAt","PyList_Insert",
+                          "PyString_Center","PyString_LJust","PyString_RJust",
+                          "PyDict_Pop","PyDict_SetDefault"}) threeArg(n);
+    // PyString_ReplaceN(s, old, new, count)
+    {
+        llvm::FunctionType* t = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(t, llvm::Function::ExternalLinkage, "PyString_ReplaceN", module.get());
+    }
+
+    // re module: PyBuiltin_ReFinditer/ReFindall/ReCompile (2-arg),
+    // PyBuiltin_ReMatchGroup (2-arg).
+    for (const char* n : {"PyBuiltin_ReFinditer","PyBuiltin_ReFindall",
+                          "PyBuiltin_ReCompile","PyBuiltin_ReMatchGroup"}) twoArg(n);
 
     // Builtins: sum, sorted, any, all; isinstance (2-arg)
     for (const char* name : {"PyBuiltin_Sum","PyBuiltin_Any","PyBuiltin_All"}) {
@@ -456,6 +519,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // block it may be loop-persistent (referenced from multiple loop iterations), so we skip
         // the DECREF there. If it was defined in the SAME block it is definitely not loop-persistent.
         std::unordered_map<std::string, llvm::BasicBlock*> tempDefBlock;
+        // Builder for inserting allocas at the function's entry block.
+        // All allocas must dominate all uses, so they're always inserted here.
+        llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                       func->getEntryBlock().begin());
         for (size_t i = 0; i < f.args.size(); ++i) {
             llvm::Value* arg = func->getArg(i);
             if (!f.args[i].empty()) {
@@ -466,8 +533,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 // alloca (and can be observed by future loads), and
                 // initial reads return the parameter value. The alloca is
                 // initialised in the entry block so it dominates all uses.
-                llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
-                                              func->getEntryBlock().begin());
                 llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, f.args[i] + ".slot");
                 entryBuilder.CreateStore(arg, alloca);
                 valueMap[f.args[i]] = alloca;
@@ -514,11 +579,25 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
         std::unordered_map<std::string, llvm::BasicBlock*> blockMap;
         blockMap["entry"] = entry;
+        // Map from jmpVar name to a pre-allocated jmp_buf (created in the
+        // entry block so its address is stable across longjmps).
+        std::unordered_map<std::string, llvm::AllocaInst*> jmpBufAllocas;
         for (const auto& inst : f.body) {
             if (inst.op == "label") {
                 const std::string& ln = inst.result;
                 if (blockMap.find(ln) == blockMap.end()) {
                     blockMap[ln] = llvm::BasicBlock::Create(context, ln, func);
+                }
+            } else if (inst.op == "try_begin") {
+                if (!inst.operands.empty()) {
+                    const std::string& jn = inst.operands[0].name;
+                    if (jmpBufAllocas.find(jn) == jmpBufAllocas.end()) {
+                        // jmp_buf is typically 200 bytes; use 256 to be safe.
+                        llvm::AllocaInst* a = entryBuilder.CreateAlloca(
+                            llvm::ArrayType::get(llvm::Type::getInt8Ty(context), 256),
+                            nullptr, jn + ".buf");
+                        jmpBufAllocas[jn] = a;
+                    }
                 }
             }
         }
@@ -717,7 +796,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 auto it = blockMap.find(inst.result);
                 if (it != blockMap.end()) {
                     llvm::BasicBlock* target = it->second;
-                    if (!curBlock->getTerminator()) {
+                    if (target == curBlock) {
+                        // Label re-entered the same block — no-op.
+                    } else if (curBlock->getTerminator()) {
+                        // curBlock is already terminated; just switch.
+                    } else {
                         builder.CreateBr(target);
                     }
                     builder.SetInsertPoint(target);
@@ -749,6 +832,68 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     auto it = blockMap.find(inst.result);
                     if (it != blockMap.end() && !curBlock->getTerminator()) {
                         builder.CreateBr(it->second);
+                    }
+                }
+                continue;
+            } else if (inst.op == "try_begin") {
+                // operands[0] = jmpVar name
+                // operands[1] = normal target label (where setjmp==0)
+                // operands[2] = exception target label (where setjmp==1)
+                std::string jn = inst.operands.size() > 0 ? inst.operands[0].name : "";
+                std::string normalL = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                std::string excL    = inst.operands.size() > 2 ? inst.operands[2].name : "";
+                llvm::AllocaInst* jbuf = nullptr;
+                auto it = jmpBufAllocas.find(jn);
+                if (it != jmpBufAllocas.end()) jbuf = it->second;
+                llvm::Function* sj = module->getFunction("setjmp");
+                llvm::Function* pycTryPush = module->getFunction("pyc_try_push");
+                llvm::Value* zero = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                if (jbuf && sj && pycTryPush) {
+                    // The jmp_buf is an array of 256 bytes; the setjmp call
+                    // wants a pointer to the first byte. Cast the alloca
+                    // pointer to i8* (LLVM's setjmp takes i8*).
+                    llvm::Value* jbufPtr = builder.CreateBitCast(jbuf, int8PtrTy);
+                    // 1) Call setjmp FIRST. setjmp fills the buffer with the
+                    //    current register/stack state. The ReturnsTwice
+                    //    attribute tells LLVM that the call may return twice
+                    //    (once normally, once after longjmp).
+                    llvm::Value* rv = builder.CreateCall(sj, {jbufPtr}, "setjmp.rv");
+                    // 2) After setjmp has filled the buffer, push the try
+                    //    frame and copy the buffer into it. The matching
+                    //    pyc_raise will longjmp to the address setjmp recorded.
+                    builder.CreateCall(pycTryPush, {jbufPtr, zero});
+                    llvm::Value* isExc = builder.CreateICmpNE(rv,
+                        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0));
+                    auto nit = blockMap.find(normalL);
+                    auto eit = blockMap.find(excL);
+                    if (nit != blockMap.end() && eit != blockMap.end()) {
+                        builder.CreateCondBr(isExc, eit->second, nit->second);
+                    } else if (nit != blockMap.end()) {
+                        builder.CreateBr(nit->second);
+                    }
+                } else if (jbuf) {
+                    // No setjmp/push available: just branch to normalL.
+                    auto nit = blockMap.find(normalL);
+                    if (nit != blockMap.end()) builder.CreateBr(nit->second);
+                }
+                continue;
+            } else if (inst.op == "try_end") {
+                // operands[0] = jmpVar name.
+                // Pop the try frame and branch to the end label. If the
+                // current block is already terminated (e.g. by an explicit
+                // `return` in the body or handler), do nothing — the function
+                // is exiting and the runtime's thread-local cleanup will
+                // happen at process exit. In particular, when a longjmp
+                // reaches a handler, the handler itself emits a pop
+                // (because it always runs), so we must NOT also pop here
+                // (that would over-pop into the next outer try or into
+                // unrelated code).
+                if (!curBlock->getTerminator()) {
+                    llvm::Function* pycTryPop = module->getFunction("pyc_try_pop");
+                    if (pycTryPop) builder.CreateCall(pycTryPop, {});
+                    if (!inst.result.empty()) {
+                        auto eit = blockMap.find(inst.result);
+                        if (eit != blockMap.end()) builder.CreateBr(eit->second);
                     }
                 }
                 continue;
@@ -827,7 +972,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
             }
             if (inst.op == "i64const") {
-                long v = std::stol(inst.operands.empty() ? "0" : inst.operands[0].name);
+                std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
+                char* end = nullptr;
+                errno = 0;
+                long v = std::strtol(val.c_str(), &end, 10);
+                (void)end; (void)errno;
                 valueMap[inst.result] = llvm::ConstantInt::get(context, llvm::APInt(64, v));
             } else if (inst.op == "i64_from_box") {
                 const std::string& boxName = inst.operands.empty() ? "" : inst.operands[0].name;
@@ -858,15 +1007,28 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             } else if (inst.op == "i64assign") {
                 llvm::Value* newVal = getOrLoad(inst.operands.empty() ? "" : inst.operands[0].name);
                 auto it = valueMap.find(inst.result);
-                if (it == valueMap.end()) {
+                // Always use an i64 alloca for the i64 slot, even if the name
+                // was previously bound to a PyObject* global. The for-range
+                // loop uses i64assign to publish the visible loop variable as
+                // a native i64 inside the loop; storing that into the pointer
+                // global would corrupt it. The assign / use-after paths
+                // (line ~1338) detect the i64 alloca and handle the
+                // box-on-demand transition back to PyObject* storage.
+                llvm::AllocaInst* i64alloca = nullptr;
+                if (it != valueMap.end()) {
+                    if (auto* existing = llvm::dyn_cast<llvm::AllocaInst>(it->second)) {
+                        if (existing->getAllocatedType() == llvm::Type::getInt64Ty(context)) {
+                            i64alloca = existing;
+                        }
+                    }
+                }
+                if (!i64alloca) {
                     llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
                                                   func->getEntryBlock().begin());
-                    llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(llvm::Type::getInt64Ty(context), nullptr, inst.result);
-                    valueMap[inst.result] = alloca;
-                    builder.CreateStore(newVal, alloca);
-                } else {
-                    builder.CreateStore(newVal, it->second);
+                    i64alloca = entryBuilder.CreateAlloca(llvm::Type::getInt64Ty(context), nullptr, inst.result + ".i64");
                 }
+                valueMap[inst.result] = i64alloca;
+                builder.CreateStore(newVal, i64alloca);
             } else if (inst.op == "const") {
                 std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
                 if (!val.empty() && (val[0] == '"' || val[0] == '\'')) {
@@ -879,7 +1041,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         markOwned(inst.result);
                     }
                 } else {
-                    long v = std::stol(val);
+                    // Use strtol rather than std::stol: the latter throws
+                    // std::out_of_range on values outside the long range, and
+                    // we want to be lenient for tests like 2**64 that may be
+                    // // used as int literals before being passed to Python.
+                    std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
+                    char* end = nullptr;
+                    errno = 0;
+                    long v = std::strtol(val.c_str(), &end, 10);
+                    (void)end; (void)errno;
                     llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
                     if (fromLong) {
                         llvm::Value* boxed = builder.CreateCall(fromLong,
@@ -907,7 +1077,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 // Do NOT markOwned: the null constant is not a heap allocation,
                 // so it must not be Py_DECREF'd at the end of its scope.
             } else if (inst.op == "fconst") {
-                double v = std::stod(inst.operands.empty() ? "0" : inst.operands[0].name);
+                // Use strtod rather than std::stod: the latter throws
+                // std::out_of_range on denormal/subnormal float literals
+                // (e.g. 1e-308) that C strtod accepts by mapping to 0.
+                std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
+                char* end = nullptr;
+                errno = 0;
+                double v = std::strtod(val.c_str(), &end);
+                (void)end; (void)errno;
                 llvm::Function* fromDouble = module->getFunction("PyFloat_FromDouble");
                 if (fromDouble) {
                     llvm::Value* boxed = builder.CreateCall(fromDouble,
@@ -1497,6 +1674,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     }
     if (llvm::verifyModule(*module, &llvm::errs())) {
         std::cerr << "Module verification failed\n";
+        if (std::getenv("PYC_DUMP_BAD_IR")) {
+            std::string s;
+            llvm::raw_string_ostream os(s);
+            module->print(os, nullptr);
+            std::cerr << s << std::endl;
+        }
         return nullptr;
     }
     return module;

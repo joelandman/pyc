@@ -481,6 +481,16 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(body);
+    } else if (node->type == "Raise") {
+        // `raise X` — X is in `exc`. CPython's `raise` also has an optional
+        // `cause`; we ignore it.
+        PyObject* exc = PyObject_GetAttrString(pyNode, "exc");
+        if (exc && exc != Py_None) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(exc, child.get());
+            node->children.push_back(std::move(child));
+        }
+        Py_XDECREF(exc);
     } else if (node->type == "Try") {
         PyObject* body = PyObject_GetAttrString(pyNode, "body");
         if (body && PyList_Check(body)) {
@@ -502,7 +512,28 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(handlers);
+        // finalbody is a list (usually empty). When non-empty we synthesize a
+        // synthetic "finalbody" child whose children are the final-body
+        // statements, so the lowerer can detect it.
+        PyObject* finalbody = PyObject_GetAttrString(pyNode, "finalbody");
+        if (finalbody && PyList_Check(finalbody) && PyList_Size(finalbody) > 0) {
+            auto fbChild = std::make_unique<ASTNode>();
+            fbChild->type = "finalbody";
+            for (Py_ssize_t i = 0; i < PyList_Size(finalbody); ++i) {
+                PyObject* item = PyList_GetItem(finalbody, i);
+                auto st = std::make_unique<ASTNode>();
+                buildAST(item, st.get());
+                fbChild->children.push_back(std::move(st));
+            }
+            node->children.push_back(std::move(fbChild));
+        }
+        Py_XDECREF(finalbody);
     } else if (node->type == "ExceptHandler") {
+        // `name` is the optional `as e` binding.
+        node->id = getPyString(pyNode, "name");
+        // `type` is the optional exception class (we don't currently
+        // dispatch on it — every handler catches everything that reached it).
+        (void)getPyString(pyNode, "type");
         PyObject* body = PyObject_GetAttrString(pyNode, "body");
         if (body && PyList_Check(body)) {
             for (Py_ssize_t i = 0; i < PyList_Size(body); ++i) {

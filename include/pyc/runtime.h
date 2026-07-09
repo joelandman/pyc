@@ -90,14 +90,47 @@ PyObject* PyBuiltin_Bin(PyObject* obj);
 PyObject* PyString_Upper(PyObject* s);
 PyObject* PyString_Lower(PyObject* s);
 PyObject* PyString_Strip(PyObject* s);
+PyObject* PyString_LStrip(PyObject* s);
+PyObject* PyString_RStrip(PyObject* s);
 PyObject* PyString_Split(PyObject* s, PyObject* sep);
 PyObject* PyString_SplitWhitespace(PyObject* s);
 PyObject* PyString_Join(PyObject* sep, PyObject* iterable);
+PyObject* PyString_StartsWith(PyObject* s, PyObject* prefix);
+PyObject* PyString_EndsWith(PyObject* s, PyObject* suffix);
+PyObject* PyString_IsAlpha(PyObject* s);
+PyObject* PyString_IsDigit(PyObject* s);
+PyObject* PyString_IsAlnum(PyObject* s);
+PyObject* PyString_IsLower(PyObject* s);
+PyObject* PyString_IsUpper(PyObject* s);
+PyObject* PyString_IsSpace(PyObject* s);
+PyObject* PyString_Casefold(PyObject* s);
+PyObject* PyString_Title(PyObject* s);
+PyObject* PyString_ZFill(PyObject* s, PyObject* w);
+PyObject* PyString_Center(PyObject* s, PyObject* w, PyObject* fill);
+PyObject* PyString_LJust(PyObject* s, PyObject* w, PyObject* fill);
+PyObject* PyString_RJust(PyObject* s, PyObject* w, PyObject* fill);
+PyObject* PyString_ReplaceN(PyObject* s, PyObject* old_, PyObject* new_, PyObject* count);
 PyObject* PyDict_Keys(PyObject* d);
 PyObject* PyDict_Values(PyObject* d);
 PyObject* PyDict_Items(PyObject* d);
+PyObject* PyDict_Update(PyObject* dst, PyObject* src);
+PyObject* PyDict_SetDefault(PyObject* d, PyObject* key, PyObject* defval);
+PyObject* PyDict_Copy(PyObject* d);
+PyObject* PyDict_Clear(PyObject* d);
+PyObject* PyDict_Pop(PyObject* d, PyObject* key, PyObject* defval);
+PyObject* PyDict_PopItem(PyObject* d);
+PyObject* PyDict_FromKeys(PyObject* keys, PyObject* defval);
 PyObject* PyList_Sort(PyObject* lst);
 PyObject* PyList_Pop(PyObject* lst);
+PyObject* PyList_Insert(PyObject* list, PyObject* idx, PyObject* item);
+PyObject* PyList_Remove(PyObject* list, PyObject* item);
+PyObject* PyList_Index(PyObject* list, PyObject* item);
+PyObject* PyList_Count(PyObject* list, PyObject* item);
+PyObject* PyList_Reverse(PyObject* list);
+PyObject* PyList_Extend(PyObject* list, PyObject* other);
+PyObject* PyList_Copy(PyObject* list);
+PyObject* PyList_Clear(PyObject* list);
+PyObject* PyList_PopAt(PyObject* list, PyObject* idx);
 PyObject* PyObject_TruthBoxed(PyObject* obj);
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key);
 PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val);
@@ -105,7 +138,19 @@ PyObject* Pyc_Contains(PyObject* container, PyObject* item);
 PyObject* Pyc_Pow(PyObject* a, PyObject* b);
 PyObject* PyObject_Not(PyObject* obj);
 PyObject* PyNumber_Negate(PyObject* obj);
-void      PyErr_Print(void);
+void PyErr_Print(void);
+
+// Exception handling using setjmp/longjmp.
+// `pyc_try_push` records a jump buffer + a single exception type filter on
+// the thread-local try stack; returns 0 for "first entry", non-zero when
+// a raise has longjmp'd back to this buffer. The matching `pyc_try_pop`
+// removes the buffer. `pyc_raise` walks the try stack and longjmps to the
+// innermost matching buffer (or stores the exception if no match).
+void      pyc_try_push(void* jmpBuf, PyObject* filterType);
+void      pyc_try_pop(void);
+void      pyc_raise(PyObject* exc);
+PyObject* pyc_current_exception(void);
+void      pyc_clear_exception(void);
 
 // Build a synthetic `sys` module from C argc/argv. The module has at
 // least `sys.argv` as a list of Python strings. The C entry point
@@ -140,6 +185,15 @@ PyObject* PyCell_Set(PyObject* cell, PyObject* val);
 
 // B5 helper: return 1 if obj is a cell (type==6), else 0.
 int PyCell_Check(PyObject* obj);
+
+// --- re module (PCRE2-backed) ---------------------------------------------
+// re.finditer / re.findall / re.match / re.search / re.sub / re.compile
+// return rich objects (lists of Match or compiled regexes).
+PyObject* PyBuiltin_ReFinditer(PyObject* pattern, PyObject* subject);
+PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject);
+PyObject* PyBuiltin_ReCompile(PyObject* pattern);
+// m.group(i) — return the i-th capture group as a string.
+PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj);
 
 #ifdef __cplusplus
 }

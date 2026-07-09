@@ -21,6 +21,10 @@ void ModuleIR::addFunction(const std::string& name, const std::vector<std::strin
 void ModuleIR::addInstruction(const std::string& funcName, const std::string& op, const std::vector<std::string>& operands, const std::string& result, const std::string& resultType) {
     auto it = std::find_if(functions.begin(), functions.end(), [&](const IRFunction& f){ return f.name == funcName; });
     if (it != functions.end()) {
+        if (it->body.size() > 1000000) {
+            std::fprintf(stderr, "ABORT: IR body for %s exceeded 1M instructions (likely infinite loop) op=%s\n", funcName.c_str(), op.c_str());
+            std::abort();
+        }
         IRInstruction inst;
         inst.op = op;
         for (const auto& o : operands) {

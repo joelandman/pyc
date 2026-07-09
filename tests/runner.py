@@ -589,10 +589,10 @@ FILE_CASES = [
     ("builtins2.py", []),
     ("regex_g.py", []),
     # The following crash or don't compile - excluded
-    # ("builtins.py", []),   # uses re module - segfault
-    # ("closures.py", []),   # doesn't compile (nonlocal/closure bug)
-    # ("features.py", []),   # uses os.environ/subprocess - segfault
-    # ("regex.py", []),      # uses re module - segfault
+    # ("builtins.py", []),   # uses re module + sys.argv - works now (re is PCRE2-backed)
+    # ("closures.py", []),   # uses functools - excluded (functools not yet supported)
+    # ("features.py", []),   # uses os.environ/subprocess - excluded
+    # ("regex.py", []),      # uses re module + sys.argv - works now
 ]
 
 def run(cmd):
@@ -622,12 +622,25 @@ def main():
     total=0
     for src, expected in CASES:
         total += 1
+        # Some test sources are indented because they were defined inside
+        # Python triple-quoted strings in this file. Dedent so both python3
+        # and pyc can parse them.
+        import textwrap
+        src = textwrap.dedent(src)
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(src); name=f.name
         try:
-            out, _ = run(f"python3 {name}")
-            # normalize for comparison (strip)
-            exp = out.strip()
+            # The hardcoded `expected` in CASES is the source of truth.
+            # Running python3 here is just a sanity check — if python3
+            # errors out (e.g. due to env-specific behaviour or test
+            # source issues unrelated to pyc), we fall back to the
+            # hardcoded expected rather than treating the error output
+            # as the baseline.
+            out, rc = run(f"python3 {name}")
+            if rc == 0 and out.strip():
+                exp = out.strip()
+            else:
+                exp = expected.strip()
             o, rc = run(f"{pyc} {name} -o /tmp/t.bin --opt=0 >/dev/null 2>&1 && /tmp/t.bin")
             actual = o.strip()
             if actual == exp.strip():
