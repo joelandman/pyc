@@ -587,6 +587,7 @@ FILE_CASES = [
     # ("modifiers.py", []),
     # mbs.py is too slow for the 5s runner timeout
     # ("mbs.py", []),
+    ("builtins.py", []),
     ("builtins2.py", []),
     ("regex_g.py", []),
     ("regex.py", []),

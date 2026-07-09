@@ -1477,13 +1477,27 @@ static PyObject* makeReModuleDict() {
 }
 
 PyObject* pyc_import_failed(PyObject* modName) {
-    if (modName && modName->type == 3 && modName->str == "re") {
-        // Return a synthetic re module dict.
-        return makeReModuleDict();
+    if (modName && modName->type == 3) {
+        if (modName->str == "re") {
+            // Return a synthetic re module dict.
+            return makeReModuleDict();
+        }
+        if (modName->str == "functools") {
+            // functools isn't fully supported, but cmp_to_key is needed
+            // by the sorted-with-comparator idiom (handled at the AST
+            // level). Return a dict with a cmp_to_key token so attribute
+            // access doesn't crash.
+            PyObject* d = PyDict_New();
+            PyObject* k = PyUnicode_FromString("cmp_to_key");
+            PyObject* v = PyUnicode_FromString("cmp_to_key");
+            PyDict_SetItem(d, k, v);
+            Py_DECREF(k); Py_DECREF(v);
+            return d;
+        }
     }
     const char* name = (modName && modName->type == 3) ? modName->str.c_str() : "?";
     fprintf(stderr, "ImportError: No module named '%s' "
-                    "(pyc supports only synthetic 'sys' and 're' modules; "
+                    "(pyc supports only synthetic 'sys', 're', and 'functools' modules; "
                     "real module loading is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;

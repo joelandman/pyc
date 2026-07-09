@@ -516,12 +516,19 @@ public:
                 ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modConst, "str");
                 std::string res = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modConst}, res);
+                // For each imported name, look it up on the (synthetic)
+                // module dict and bind the result. If the module dict
+                // has the name, the user code gets a usable value (e.g.
+                // functools.cmp_to_key). If not, the name binds to the
+                // module itself, so subsequent attribute access on it
+                // produces a clear diagnostic.
                 for (const auto& name : node->args) {
                     ir.addModuleGlobal(name);
-                    // Bind each name to the (null) module value so the
-                    // binding exists in the global namespace; access on
-                    // it will fail with a clear diagnostic.
-                    ir.addInstruction(currentFunc, "assign", {res}, name);
+                    std::string attrKey = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + name + "\""}, attrKey, "str");
+                    std::string attrVal = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", res, attrKey}, attrVal);
+                    ir.addInstruction(currentFunc, "assign", {attrVal}, name);
                 }
             }
             return;
