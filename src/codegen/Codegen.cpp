@@ -212,11 +212,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Function::Create(t, llvm::Function::ExternalLinkage, n, module.get());
     };
     for (const char* n : {"PyList_Extend","PyList_Remove","PyList_Index","PyList_Count",
+                          "PyList_PopAt","PyList_Insert",
                           "PyDict_Update","PyDict_FromKeys",
                           "PyString_ZFill",
                           "PyString_StartsWith","PyString_EndsWith"}) twoArg(n);
-    for (const char* n : {"PyList_PopAt","PyList_Insert",
-                          "PyString_Center","PyString_LJust","PyString_RJust",
+    for (const char* n : {"PyString_Center","PyString_LJust","PyString_RJust",
                           "PyDict_Pop","PyDict_SetDefault"}) threeArg(n);
     // 1-arg helpers (Is* predicates, casefold/title, lstrip/rstrip, count, copy,
     // clear, popitem, reverse, remove, index, update, fromkeys, remove, etc.).
@@ -229,8 +229,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* t = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(t, llvm::Function::ExternalLinkage, n, module.get());
     }
-    for (const char* n : {"PyList_PopAt","PyList_Insert",
-                          "PyString_Center","PyString_LJust","PyString_RJust",
+    // 3-arg helpers (center/ljust/rjust with width+fillchar, etc.)
+    for (const char* n : {"PyString_Center","PyString_LJust","PyString_RJust",
                           "PyDict_Pop","PyDict_SetDefault"}) threeArg(n);
     // PyString_ReplaceN(s, old, new, count)
     {
@@ -239,10 +239,19 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Function::Create(t, llvm::Function::ExternalLinkage, "PyString_ReplaceN", module.get());
     }
 
-    // re module: PyBuiltin_ReFinditer/ReFindall/ReCompile (2-arg),
-    // PyBuiltin_ReMatchGroup (2-arg).
+    // re module: PyBuiltin_ReFinditer/ReFindall/ReCompile/ReSearch (2-arg),
+    // PyBuiltin_ReMatchGroup (2-arg), PyBuiltin_ReSub (4-arg for count).
     for (const char* n : {"PyBuiltin_ReFinditer","PyBuiltin_ReFindall",
-                          "PyBuiltin_ReCompile","PyBuiltin_ReMatchGroup"}) twoArg(n);
+                          "PyBuiltin_ReCompile","PyBuiltin_ReSearch",
+                          "PyBuiltin_ReMatchGroup"}) twoArg(n);
+    {
+        llvm::FunctionType* t4 = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(t4, llvm::Function::ExternalLinkage, "PyBuiltin_ReSub", module.get());
+        llvm::FunctionType* t3 = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(t3, llvm::Function::ExternalLinkage, "PyBuiltin_ReSplit", module.get());
+    }
 
     // Builtins: sum, sorted, any, all; isinstance (2-arg)
     for (const char* name : {"PyBuiltin_Sum","PyBuiltin_Any","PyBuiltin_All"}) {
@@ -643,11 +652,31 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             return it->second;
         };
 
-        // Helper: unbox a PyObject* (assumed to be int) to i64
+        // Helper: unbox a PyObject* (assumed to be int) to i64.
+        // A null boxed pointer (e.g. from a function that returned None
+        // or failed) is treated as 0 to avoid a null-pointer deref when
+        // the result is used as a branch condition or in arithmetic.
+        // We use a static dummy PyObject whose .value field is 0, so the
+        // load through it is well-defined even when the original boxed
+        // pointer is null.
+        static llvm::GlobalVariable* g_zeroPyObj = nullptr;
         auto unboxToI64 = [&](llvm::Value* boxed) -> llvm::Value* {
             if (!boxed || boxed->getType() == llvm::Type::getInt64Ty(context)) return boxed;
-            return builder.CreateLoad(llvm::Type::getInt64Ty(context),
-                builder.CreateStructGEP(pyObjectTy, boxed, 2), "unboxed");
+            if (!g_zeroPyObj) {
+                // Allocate a zero-initialised PyObject in the global
+                // address space; we use it as a safe stand-in for null
+                // when unboxing.
+                llvm::Type* pyObjPtrTy = llvm::PointerType::get(pyObjectTy, 0);
+                g_zeroPyObj = new llvm::GlobalVariable(*module, pyObjectTy, false,
+                    llvm::GlobalValue::PrivateLinkage,
+                    llvm::Constant::getNullValue(pyObjectTy), "__pyc_zero_obj");
+            }
+            llvm::Value* zeroObjPtr = builder.CreateBitCast(g_zeroPyObj,
+                boxed->getType(), "zero.obj");
+            llvm::Value* safeBoxed = builder.CreateSelect(builder.CreateIsNull(boxed, "isnull"),
+                zeroObjPtr, boxed, "safe.boxed");
+            llvm::Value* fieldPtr = builder.CreateStructGEP(pyObjectTy, safeBoxed, 2);
+            return builder.CreateLoad(llvm::Type::getInt64Ty(context), fieldPtr, "unboxed");
         };
 
         auto boxI64 = [&](llvm::Value* val, const std::string& name = "") -> llvm::Value* {

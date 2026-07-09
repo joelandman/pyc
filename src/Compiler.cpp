@@ -2642,6 +2642,7 @@ private:
         ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
         std::string listRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, listRes);
+        noteType(listRes, "list");
 
         bool containsTok = false;
         for (size_t i = 0; i < n; ++i) {
@@ -2661,6 +2662,7 @@ private:
     std::string lowerDict(const ASTNode* node) {
         std::string dictRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
+        noteType(dictRes, "dict");
 
         for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
             std::string key = lowerExpr(node->children[i].get());
@@ -3148,25 +3150,40 @@ private:
         // with the pattern and subject PyObject* values.
         if (attr->children.size() >= 1 && attr->children[0] &&
             attr->children[0]->type == "Name" && attr->children[0]->id == "re") {
-            if (methodName == "finditer" || methodName == "findall" || methodName == "compile") {
+            if (methodName == "finditer" || methodName == "findall" || methodName == "compile" ||
+                methodName == "search" || methodName == "match" || methodName == "sub" ||
+                methodName == "split") {
                 std::string pat = args.size() > 0 ? args[0] : "";
-                std::string fn = std::string("PyBuiltin_Re") +
-                    (methodName == "finditer" ? "Finditer" :
-                     methodName == "findall"  ? "Findall"  : "Compile");
+                std::string subj = args.size() > 1 ? args[1] : "";
+                std::string fn;
+                if (methodName == "finditer")      fn = "PyBuiltin_ReFinditer";
+                else if (methodName == "findall")   fn = "PyBuiltin_ReFindall";
+                else if (methodName == "compile")   fn = "PyBuiltin_ReCompile";
+                else if (methodName == "search")    fn = "PyBuiltin_ReSearch";
+                else if (methodName == "match")     fn = "PyBuiltin_ReSearch";  // match → search for now
+                else if (methodName == "sub") {
+                    // Stub: not implemented. Emit a call that returns null.
+                    ir.addInstruction(currentFunc, "call", {fn, pat, subj, args.size() > 2 ? args[2] : ""}, res);
+                    return res;
+                } else if (methodName == "split") {
+                    fn = "PyBuiltin_ReSplit";
+                    ir.addInstruction(currentFunc, "call", {fn, pat, subj, args.size() > 2 ? args[2] : ""}, res);
+                    return res;
+                }
                 if (methodName == "compile") {
                     ir.addInstruction(currentFunc, "call", {fn, pat}, res);
                     noteType(res, "regex");
                 } else {
-                    std::string subj = args.size() > 1 ? args[1] : "";
                     ir.addInstruction(currentFunc, "call", {fn, pat, subj}, res);
-                    // Both finditer and findall return a list (typed "match_list"
-                    // so the for loop can propagate the element type to the
-                    // loop variable as "match").
-                    noteType(res, "match_list");
+                    if (methodName == "finditer" || methodName == "findall") {
+                        noteType(res, "match_list");
+                    } else if (methodName == "search" || methodName == "match") {
+                        noteType(res, "match");
+                    }
                 }
                 return res;
             }
-            // For other re.* methods, fall through to the default class-lookup path.
+            // Other re.* methods fall through to default lookup.
         }
 
         // Match.group(i) — dispatch when the inferred type of obj is a
@@ -3204,9 +3221,9 @@ private:
         } else if (methodName == "extend") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyList_Extend", obj, arg}, res);
-        } else if (methodName == "copy") {
+        } else if (methodName == "copy" && typeOf(obj) == "list") {
             ir.addInstruction(currentFunc, "call", {"PyList_Copy", obj}, res);
-        } else if (methodName == "clear") {
+        } else if (methodName == "clear" && typeOf(obj) == "list") {
             ir.addInstruction(currentFunc, "call", {"PyList_Clear", obj}, res);
         // Known string methods
         } else if (methodName == "upper") {
@@ -3332,7 +3349,7 @@ private:
             ir.addInstruction(currentFunc, "call", {"PyDict_Copy", obj}, res);
         } else if (methodName == "clear") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Clear", obj}, res);
-        } else if (methodName == "pop") {
+        } else if (methodName == "pop" && typeOf(obj) == "dict") {
             std::string key = args.size() > 0 ? args[0] : "";
             std::string defv = args.size() > 1 ? args[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyDict_Pop", obj, key, defv}, res);
@@ -3345,7 +3362,7 @@ private:
         // List methods
         } else if (methodName == "sort") {
             ir.addInstruction(currentFunc, "call", {"PyList_Sort", obj}, res);
-        } else if (methodName == "pop") {
+        } else if (methodName == "pop" && typeOf(obj) == "list") {
             if (args.empty()) {
                 ir.addInstruction(currentFunc, "call", {"PyList_Pop", obj}, res);
             } else {

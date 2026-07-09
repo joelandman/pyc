@@ -2377,6 +2377,48 @@ extern "C" PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj) {
     return PyUnicode_FromString(mo->subject.substr(start, end - start).c_str());
 }
 
+// re.search(pattern, subject) — return a Match object (type 9) for the
+// first match, or None if no match. We treat re.search as a 2-arg
+// helper (ignore re.IGNORECASE etc. for now).
+extern "C" PyObject* PyBuiltin_ReSearch(PyObject* pattern, PyObject* subject) {
+    if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
+    std::string err;
+    pcre2_code* code = compileRegex(pattern->str, err);
+    if (!code) {
+        std::fprintf(stderr, "re.error: %s\n", err.c_str());
+        return nullptr;
+    }
+    pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, nullptr);
+    if (!md) { pcre2_code_free(code); return nullptr; }
+    int rc = pcre2_match(code, (PCRE2_SPTR)subject->str.c_str(),
+                         (PCRE2_SIZE)subject->str.size(), 0, 0, md, nullptr);
+    if (rc < 0) {
+        pcre2_match_data_free(md);
+        pcre2_code_free(code);
+        return nullptr;  // no match
+    }
+    int capture_count = rc - 1;
+    pcre2_match_data* mdcopy = pcre2_match_data_create(capture_count + 1, nullptr);
+    if (!mdcopy) {
+        pcre2_match_data_free(md);
+        pcre2_code_free(code);
+        return nullptr;
+    }
+    PCRE2_SIZE* src_ov = pcre2_get_ovector_pointer(md);
+    PCRE2_SIZE* dst_ov = pcre2_get_ovector_pointer(mdcopy);
+    for (int k = 0; k < 2 * (capture_count + 1); ++k) dst_ov[k] = src_ov[k];
+    pcre2_match_data_free(md);
+    pcre2_code_free(code);
+    PyObject* m = allocObject(9);
+    if (!m) { pcre2_match_data_free(mdcopy); return nullptr; }
+    MatchObj* mo = new MatchObj();
+    mo->md = mdcopy;
+    mo->subject = subject->str;
+    mo->capture_count = capture_count;
+    m->value = (long)(intptr_t)mo;
+    return m;
+}
+
 extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern) {
     if (!pattern || pattern->type != 3) return nullptr;
     std::string err;
@@ -2389,6 +2431,37 @@ extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern) {
     cr->pattern = pattern->str;
     o->value = (long)(intptr_t)cr;
     return o;
+}
+
+// re.sub(pattern, repl, subject, count) — not yet implemented. We
+// return None as a stub so the user code can keep going.
+extern "C" PyObject* PyBuiltin_ReSub(PyObject* /*pattern*/, PyObject* /*repl*/,
+                                      PyObject* /*subject*/, PyObject* /*count*/) {
+    return nullptr;
+}
+
+// re.split(pattern, subject, maxsplit) — not yet implemented.
+extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject, PyObject* /*maxsplit*/) {
+    if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
+    const std::string& sep = pattern->str;
+    const std::string& s = subject->str;
+    PyObject* result = PyList_New(0);
+    if (sep.empty()) {
+        // No separator: return the subject as a single-element list.
+        PyObject* item = PyUnicode_FromString(s.c_str());
+        result->list.push_back(item);
+        return result;
+    }
+    size_t pos = 0;
+    while (pos <= s.size()) {
+        size_t next = s.find(sep, pos);
+        std::string piece = (next == std::string::npos) ? s.substr(pos) : s.substr(pos, next - pos);
+        PyObject* item = PyUnicode_FromString(piece.c_str());
+        result->list.push_back(item);
+        if (next == std::string::npos) break;
+        pos = next + sep.size();
+    }
+    return result;
 }
 
 // Build the synthetic `sys` module and `sys.argv` list from the

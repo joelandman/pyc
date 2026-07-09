@@ -191,7 +191,10 @@ int PyCell_Check(PyObject* obj);
 // return rich objects (lists of Match or compiled regexes).
 PyObject* PyBuiltin_ReFinditer(PyObject* pattern, PyObject* subject);
 PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject);
+PyObject* PyBuiltin_ReSearch(PyObject* pattern, PyObject* subject);
 PyObject* PyBuiltin_ReCompile(PyObject* pattern);
+PyObject* PyBuiltin_ReSub(PyObject* pattern, PyObject* repl, PyObject* subject, PyObject* count);
+PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject, PyObject* maxsplit);
 // m.group(i) — return the i-th capture group as a string.
 PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj);
 
