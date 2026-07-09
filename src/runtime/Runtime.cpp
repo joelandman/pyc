@@ -1476,11 +1476,24 @@ static PyObject* makeReModuleDict() {
     return d;
 }
 
+// Forward declaration: the `sys` module is set up at startup by
+// pyc_setup_sys. Defined further down in this file.
+static PyObject* g_sys_module = nullptr;
+
 PyObject* pyc_import_failed(PyObject* modName) {
     if (modName && modName->type == 3) {
         if (modName->str == "re") {
             // Return a synthetic re module dict.
             return makeReModuleDict();
+        }
+        if (modName->str == "sys") {
+            // `sys` is built at startup (pyc_setup_sys). Return it as a
+            // module so attribute access works.
+            if (g_sys_module) {
+                Py_INCREF(g_sys_module);
+                return g_sys_module;
+            }
+            return PyDict_New();
         }
         if (modName->str == "functools") {
             // functools isn't fully supported, but cmp_to_key is needed
@@ -1494,10 +1507,15 @@ PyObject* pyc_import_failed(PyObject* modName) {
             Py_DECREF(k); Py_DECREF(v);
             return d;
         }
+        if (modName->str == "os" || modName->str == "subprocess") {
+            // Stub: return an empty dict so attribute access doesn't crash.
+            return PyDict_New();
+        }
     }
     const char* name = (modName && modName->type == 3) ? modName->str.c_str() : "?";
     fprintf(stderr, "ImportError: No module named '%s' "
-                    "(pyc supports only synthetic 'sys', 're', and 'functools' modules; "
+                    "(pyc supports only synthetic 'sys', 're', 'functools', 'os', "
+                    "and 'subprocess' modules; "
                     "real module loading is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;
@@ -2219,7 +2237,7 @@ PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
 // The single, well-known `sys` object. Allocated lazily on first
 // pyc_setup_sys() call. Stored in a global so PyObject_GetAttr("sys")
 // can return it. Held alive for program lifetime (immortal in spirit).
-static PyObject* g_sys_module = nullptr;
+// (Forward-declared near pyc_import_failed above.)
 static PyObject* g_sys_argv = nullptr;
 
 // Allocator: PyObject* is a flat struct (see above). For the regex
