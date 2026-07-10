@@ -849,19 +849,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 auto it = blockMap.find(inst.result);
                 if (it != blockMap.end()) {
                     llvm::BasicBlock* target = it->second;
-                    if (curBlock->getTerminator() == nullptr) {
-                        std::fprintf(stderr, "DBG-NOTERM label=%s curBlock=%s\n", inst.result.c_str(), curBlock->getName().str().c_str());
-                        // Print next 10 IR instructions for context
-                        int pi = 0;
-                        for (auto it2 = f.body.begin(); it2 != f.body.end(); ++it2) {
-                            if (&*it2 == &inst) break;
-                            ++pi;
-                        }
-                        for (int j = std::max(0, pi - 3); j < (int)f.body.size() && j < pi + 5; ++j) {
-                            std::fprintf(stderr, "  IR[%d]: op=%s result=%s\n", j, f.body[j].op.c_str(), f.body[j].result.c_str());
-                        }
-                        std::fflush(stderr);
-                    }
                     if (target == curBlock) {
                         // Label re-entered the same block — no-op.
                     } else if (curBlock->getTerminator()) {

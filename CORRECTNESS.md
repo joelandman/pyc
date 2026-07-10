@@ -485,6 +485,18 @@ Sorted by criticality (most critical at top).
   - The lowering detects the `sorted(..., key=cmp_to_key(cmp))` pattern (including when `key` is a keyword arg) and emits a call to `PyBuiltin_SortedWithCmp` instead of `PyBuiltin_Sorted`.
 - Fixes the `sn` / `sr` / `sw` / `swr` lines in `tests/builtins2.py` (the program now matches CPython's output exactly, modulo the `from functools import cmp_to_key` ImportError which is intentional and goes to stderr).
 
+### 42. Closures (`nonlocal` + nested functions) Produce No Output
+
+**Severity:** High  
+**Location:** `src/Compiler.cpp` (cell allocation, nonlocal lowering), `src/codegen/Codegen.cpp` (cell get/set codegen), `src/runtime/` (cell runtime primitives)  
+**Status: OPEN**
+
+- `tests/closures.py` compiles successfully but produces empty output instead of expected closure results.
+- The test exercises: basic closures (`make_counter`), closures capturing multiple variables (`make_adder`), closures over loop variables, and `nonlocal` variable access.
+- The compiler generates IR with `PyCell_New`, `PyCell_Get`, `PyCell_Set` calls, but the runtime execution produces no output (empty stdout).
+- Root cause investigation: The IR generation for nested functions with `nonlocal` variables appears correct, but the runtime binding of cells between enclosing and nested functions may be incomplete.
+- Related: The `inner` function name collision issue was fixed by ensuring nested functions get unique IR names when multiple nested functions share the same name.
+
 ---
 
 ## Summary
@@ -492,7 +504,7 @@ Sorted by criticality (most critical at top).
 | Severity | Count | Status |
 |----------|-------|--------|
 | Critical | 3 | All FIXED |
-| High | 31 | All FIXED |
+| High | 32 | 31 FIXED, 1 OPEN |
 | Medium | 3 | All FIXED |
 | Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **42** | **41 FIXED, 1 UNSUPPORTED** |
+| **Total** | **43** | **41 FIXED, 1 OPEN, 1 UNSUPPORTED** |
