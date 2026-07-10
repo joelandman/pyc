@@ -64,7 +64,7 @@ public:
             // still giving full lambda-as-value (B4) behavior for user callables.
             for (const char* s : {"print","len","range","min","max","sum","sorted","any","all","isinstance",
                                    "int","float","abs","str","list","reversed","enumerate","zip","bool","type","id",
-                                   "repr","hex","oct","bin","ord","chr","round","cmp_to_key"}) {
+                                   "repr","hex","oct","bin","ord","chr","round","cmp_to_key","open"}) {
                 knownIRFunctions.insert(s);
             }
             for (const auto& c : node->children) {
@@ -502,6 +502,11 @@ public:
                 std::string res = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modConst}, res);
                 ir.addInstruction(currentFunc, "assign", {res}, name);
+                // Synthetic module dicts (os, sys, re, subprocess, etc.) are
+                // dicts. Mark the binding so module-attribute method calls
+                // (`os.path.exists(...)`, `sys.stderr.write(...)`) take the
+                // dict-method dispatch path in lowerMethodCall.
+                noteType(name, "dict");
             }
             return;
         } else if (node->type == "ImportFrom") {
@@ -1045,6 +1050,11 @@ private:
         else if (op == "Div") op = "truediv";
         else if (op == "Mod") op = "mod";
         else if (op == "Pow") op = "pow";
+        else if (op == "LShift") op = "lshift";
+        else if (op == "RShift") op = "rshift";
+        else if (op == "BitOr") op = "bitor";
+        else if (op == "BitAnd") op = "bitand";
+        else if (op == "BitXor") op = "bitxor";
         std::string resultType = numericResultType(op, left, right);
         ir.addInstruction(currentFunc, op, {left, right}, res, resultType);
         noteType(res, resultType);
@@ -1286,7 +1296,7 @@ private:
                 static const std::unordered_set<std::string> neverDynamic = {
                     "print","len","range","min","max","sum","sorted","any","all","isinstance",
                     "int","float","abs","str","list","enumerate","zip","bool","type","id",
-                    "repr","hex","oct","bin","ord","chr","round"
+                    "repr","hex","oct","bin","ord","chr","round","open"
                 };
                 if (!theName.empty() && neverDynamic.count(theName) == 0) {
                     // B4 complete: any bare name that is not a known direct IR function *and*
@@ -1649,6 +1659,21 @@ private:
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Len", arg}, res);
+            return res;
+        }
+
+        // open(path, mode) — returns a fake "file" dict with __enter__,
+        // __exit__, and write methods. The actual file is opened by
+        // PyBuiltin_Open (which stores the FILE* in a synthetic file
+        // struct accessible via the PyObject pointer). The returned
+        // dict is annotated as "dict" so the with-statement and
+        // method-call dispatch find the entries.
+        if (funcName == "open") {
+            std::string path = argRes.size() > 0 ? argRes[0] : "";
+            std::string mode = argRes.size() > 1 ? argRes[1] : "";
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Open", path, mode}, res);
+            noteType(res, "dict");
             return res;
         }
 
@@ -3395,12 +3420,15 @@ private:
         // "replace", "split" are common to both list and string; the
         // list-specific cases above win for lists).
         } else {
-            // Module attribute call: `mod.method(args)` where mod is a
-            // module (dict). Look up the method token on the dict and
-            // dispatch via Pyc_Apply. The dict's value should be a
-            // registered adapter (e.g. "pyc_stderr_write" for
-            // sys.stderr.write).
-            if (typeOf(obj) == "dict") {
+            // Chained module attribute call: `mod.path.func(args)`. The
+            // dict-path branch handles the simple case (obj is a dict,
+            // e.g. sys.stderr = {"write": "pyc_stderr_write"}). The
+            // str-path branch handles the case where chained attribute
+            // access already resolved to a string token (e.g.
+            // os.path.exists resolves to "PyBuiltin_OsPathExists" via
+            // two Pyc_GetItem calls; here the obj's typeOf is "dict"
+            // from lowerAttribute, but at runtime the value is a str).
+            if (typeOf(obj) == "dict" || typeOf(obj) == "str") {
                 std::string methodNameConst = "c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
                 std::string methodLookup = "t" + std::to_string(tempCounter++);

@@ -157,6 +157,7 @@ void      pyc_clear_exception(void);
 // (compiled binary's main) is expected to call this before user code
 // runs.
 void pyc_setup_sys(int argc, char** argv);
+void pyc_setup_callables(void);
 
 // Look up a name on the global `sys` module (or NULL if `pyc_setup_sys`
 // has not been called or the attribute is missing). Returns a new

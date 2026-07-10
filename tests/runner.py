@@ -591,11 +591,10 @@ FILE_CASES = [
     ("builtins2.py", []),
     ("regex_g.py", []),
     ("regex.py", []),
+    ("features.py", []),
     # The following crash or don't compile - excluded
     # ("builtins.py", []),   # uses re module + sys.argv - works now (re is PCRE2-backed)
     # ("closures.py", []),   # uses functools - excluded (functools not yet supported)
-    # ("features.py", []),   # uses os.environ/subprocess - excluded
-    # ("regex.py", []),      # uses re module + sys.argv - works now
 ]
 
 def run(cmd):

@@ -1,4 +1,7 @@
 #include <cstdio>
+#include <cstdlib>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <cstdint>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1480,6 +1483,10 @@ static PyObject* makeReModuleDict() {
 // pyc_setup_sys. Defined further down in this file.
 static PyObject* g_sys_module = nullptr;
 
+// Forward declarations for the os / subprocess module dict builders.
+static PyObject* makeOsModuleDict();
+static PyObject* makeSubprocessModuleDict();
+
 PyObject* pyc_import_failed(PyObject* modName) {
     if (modName && modName->type == 3) {
         if (modName->str == "re") {
@@ -1507,9 +1514,11 @@ PyObject* pyc_import_failed(PyObject* modName) {
             Py_DECREF(k); Py_DECREF(v);
             return d;
         }
-        if (modName->str == "os" || modName->str == "subprocess") {
-            // Stub: return an empty dict so attribute access doesn't crash.
-            return PyDict_New();
+        if (modName->str == "os") {
+            return makeOsModuleDict();
+        }
+        if (modName->str == "subprocess") {
+            return makeSubprocessModuleDict();
         }
     }
     const char* name = (modName && modName->type == 3) ? modName->str.c_str() : "?";
@@ -2473,6 +2482,284 @@ extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern) {
     return o;
 }
 
+// Integer left shift. Unboxes a, applies a<<b (assumes b is int), and
+// re-boxes the result. Returns nullptr on error.
+extern "C" PyObject* PyNumber_Lshift(PyObject* a, PyObject* b) {
+    long av = 0, bv = 0;
+    if (a && a->type == 0) av = (long)a->value;
+    else if (a && a->type == 5) av = (long)a->value;
+    if (b && b->type == 0) bv = (long)b->value;
+    else if (b && b->type == 5) bv = (long)b->value;
+    return PyInt_FromLong(av << bv);
+}
+
+extern "C" PyObject* PyNumber_Rshift(PyObject* a, PyObject* b) {
+    long av = 0, bv = 0;
+    if (a && a->type == 0) av = (long)a->value;
+    else if (a && a->type == 5) av = (long)a->value;
+    if (b && b->type == 0) bv = (long)b->value;
+    else if (b && b->type == 5) bv = (long)b->value;
+    return PyInt_FromLong(av >> bv);
+}
+
+extern "C" PyObject* PyNumber_BitOr(PyObject* a, PyObject* b) {
+    long av = 0, bv = 0;
+    if (a && a->type == 0) av = (long)a->value;
+    else if (a && a->type == 5) av = (long)a->value;
+    if (b && b->type == 0) bv = (long)b->value;
+    else if (b && b->type == 5) bv = (long)b->value;
+    return PyInt_FromLong(av | bv);
+}
+
+extern "C" PyObject* PyNumber_BitAnd(PyObject* a, PyObject* b) {
+    long av = 0, bv = 0;
+    if (a && a->type == 0) av = (long)a->value;
+    else if (a && a->type == 5) av = (long)a->value;
+    if (b && b->type == 0) bv = (long)b->value;
+    else if (b && b->type == 5) bv = (long)b->value;
+    return PyInt_FromLong(av & bv);
+}
+
+extern "C" PyObject* PyNumber_BitXor(PyObject* a, PyObject* b) {
+    long av = 0, bv = 0;
+    if (a && a->type == 0) av = (long)a->value;
+    else if (a && a->type == 5) av = (long)a->value;
+    if (b && b->type == 0) bv = (long)b->value;
+    else if (b && b->type == 5) bv = (long)b->value;
+    return PyInt_FromLong(av ^ bv);
+}
+
+// os.path.exists(path) -> bool : True if the file or directory exists
+extern "C" PyObject* PyBuiltin_OsPathExists(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyBool_New(0);
+    PyObject* path = args->list[0];
+    if (!path || path->type != 3) return PyBool_New(0);
+    struct stat st;
+    int r = ::stat(path->str.c_str(), &st);
+    return PyBool_New(r == 0 ? 1 : 0);
+}
+
+// os.path.isfile(path) -> bool : True if the path is a regular file
+extern "C" PyObject* PyBuiltin_OsPathIsfile(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyBool_New(0);
+    PyObject* path = args->list[0];
+    if (!path || path->type != 3) return PyBool_New(0);
+    struct stat st;
+    if (::stat(path->str.c_str(), &st) != 0) return PyBool_New(0);
+    return PyBool_New(S_ISREG(st.st_mode) ? 1 : 0);
+}
+
+// os.path.isdir(path) -> bool : True if the path is a directory
+extern "C" PyObject* PyBuiltin_OsPathIsdir(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyBool_New(0);
+    PyObject* path = args->list[0];
+    if (!path || path->type != 3) return PyBool_New(0);
+    struct stat st;
+    if (::stat(path->str.c_str(), &st) != 0) return PyBool_New(0);
+    return PyBool_New(S_ISDIR(st.st_mode) ? 1 : 0);
+}
+
+// os.unlink(path) -> None : remove a file
+extern "C" PyObject* PyBuiltin_OsUnlink(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* path = args->list[0];
+    if (!path || path->type != 3) return nullptr;
+    ::unlink(path->str.c_str());
+    return nullptr;
+}
+
+// os.environ dict (empty stub; user code can set/get but values are lost)
+extern "C" PyObject* PyBuiltin_GetEnviron() {
+    return PyDict_New();
+}
+
+// open(path, mode) — open a file. The path/mode are extracted from the
+// args list. Returns a synthetic "file" dict with __enter__ / __exit__
+// / write / close keys (all string tokens naming runtime adapters that
+// are registered in pyc_setup_callables). The runtime adapters hold
+// onto the FILE* in a static map keyed by the dict's identity. This
+// is good enough for `with open(path, "w") as fh: fh.write(s)` and
+// similar basic patterns. Concurrent or recursive opens of the same
+// file are not supported.
+struct PycFile {
+    std::string path;
+    std::string mode;
+    FILE* fp;
+};
+static std::unordered_map<PyObject*, PycFile> g_pycFiles;
+
+static PyObject* pyc_file_write_adapter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* self = args->list[0];
+    auto it = g_pycFiles.find(self);
+    if (it == g_pycFiles.end() || !it->second.fp) return nullptr;
+    PyObject* data = args->list[1];
+    if (data && data->type == 3) {
+        std::fwrite(data->str.data(), 1, data->str.size(), it->second.fp);
+        std::fflush(it->second.fp);
+    }
+    return nullptr;
+}
+
+static PyObject* pyc_file_enter_adapter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    return args->list[0];
+}
+
+static PyObject* pyc_file_exit_adapter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* self = args->list[0];
+    auto it = g_pycFiles.find(self);
+    if (it != g_pycFiles.end() && it->second.fp) {
+        std::fclose(it->second.fp);
+        g_pycFiles.erase(it);
+    }
+    return nullptr;
+}
+
+extern "C" PyObject* PyBuiltin_Open(PyObject* path, PyObject* mode) {
+    if (!path || path->type != 3) return nullptr;
+    std::string pathStr = path->str;
+    std::string modeStr = (mode && mode->type == 3) ? mode->str : std::string("r");
+    FILE* fp = std::fopen(pathStr.c_str(), modeStr.c_str());
+    if (!fp) {
+        std::fprintf(stderr, "FileNotFoundError: [Errno 2] No such file or directory: '%s'\n", pathStr.c_str());
+        return nullptr;
+    }
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("__enter__", "pyc_file_enter");
+    addTok("__exit__",  "pyc_file_exit");
+    addTok("write",     "pyc_file_write");
+    g_pycFiles[d] = {pathStr, modeStr, fp};
+    return d;
+}
+
+// subprocess.call(args) -> int : spawn a subprocess, return its exit status
+extern "C" PyObject* PyBuiltin_SubprocessCall(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyInt_FromLong(-1);
+    if (!args->list[0] || args->list[0]->type != 1) return PyInt_FromLong(-1);
+    PyObject* argv = args->list[0];
+    std::vector<std::string> strs;
+    for (size_t i = 0; i < argv->list.size(); ++i) {
+        PyObject* s = argv->list[i];
+        if (!s || s->type != 3) return PyInt_FromLong(-1);
+        strs.push_back(s->str);
+    }
+    if (strs.empty()) return PyInt_FromLong(-1);
+    // Quote each arg to handle newlines/spaces safely. `system` runs
+    // through /bin/sh -c, so we need shell quoting.
+    std::string cmd;
+    auto quote = [](const std::string& s) {
+        std::string out = "'";
+        for (char c : s) {
+            if (c == '\'') out += "'\\''";
+            else out += c;
+        }
+        out += "'";
+        return out;
+    };
+    for (size_t i = 0; i < strs.size(); ++i) {
+        if (i > 0) cmd += " ";
+        cmd += quote(strs[i]);
+    }
+    int status = std::system(cmd.c_str());
+    if (status != -1 && WIFEXITED(status)) status = WEXITSTATUS(status);
+    return PyInt_FromLong(status);
+}
+
+// subprocess.check_output(args) -> str : run a subprocess, return its stdout
+extern "C" PyObject* PyBuiltin_SubprocessCheckOutput(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    if (!args->list[0] || args->list[0]->type != 1) return PyUnicode_FromString("");
+    PyObject* argv = args->list[0];
+    std::vector<std::string> strs;
+    for (size_t i = 0; i < argv->list.size(); ++i) {
+        PyObject* s = argv->list[i];
+        if (!s || s->type != 3) return PyUnicode_FromString("");
+        strs.push_back(s->str);
+    }
+    if (strs.empty()) return PyUnicode_FromString("");
+    // Build a null-terminated C array, then exec via popen with the
+    // exec-form (single string) so the shell doesn't interpret embedded
+    // newlines. We use "/bin/sh -c <args...>" with each arg quoted.
+    std::string cmd;
+    auto quote = [](const std::string& s) {
+        std::string out = "'";
+        for (char c : s) {
+            if (c == '\'') out += "'\\''";
+            else out += c;
+        }
+        out += "'";
+        return out;
+    };
+    for (size_t i = 0; i < strs.size(); ++i) {
+        if (i > 0) cmd += " ";
+        cmd += quote(strs[i]);
+    }
+    FILE* fp = ::popen(cmd.c_str(), "r");
+    if (!fp) return PyUnicode_FromString("");
+    char buf[4096];
+    std::string out;
+    while (char* r = ::fgets(buf, sizeof(buf), fp)) out += r;
+    ::pclose(fp);
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    return PyUnicode_FromString(out.c_str());
+}
+
+// makeOsModuleDict: builds a dict that emulates the os module. The
+// `os.environ` entry is itself a dict; `os.path` is a dict whose
+// `exists` / `isfile` / `isdir` entries are string tokens naming
+// runtime helpers; `os.unlink` is also a token.
+static PyObject* makeOsModuleDict() {
+    PyObject* d = PyDict_New();
+    // os.environ -> dict (empty)
+    PyObject* env_key = PyUnicode_FromString("environ");
+    PyObject* env_val = PyDict_New();
+    PyDict_SetItem(d, env_key, env_val);
+    Py_DECREF(env_key); Py_DECREF(env_val);
+    // os.path -> dict with exists/isfile/isdir/unlink tokens
+    PyObject* path_key = PyUnicode_FromString("path");
+    PyObject* path_val = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(path_val, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("exists", "PyBuiltin_OsPathExists");
+    addTok("isfile", "PyBuiltin_OsPathIsfile");
+    addTok("isdir",  "PyBuiltin_OsPathIsdir");
+    addTok("unlink", "PyBuiltin_OsUnlink");
+    PyDict_SetItem(d, path_key, path_val);
+    Py_DECREF(path_key); Py_DECREF(path_val);
+    // os.unlink (top-level, not on os.path) -> token
+    PyObject* unlink_key = PyUnicode_FromString("unlink");
+    PyObject* unlink_val = PyUnicode_FromString("PyBuiltin_OsUnlink");
+    PyDict_SetItem(d, unlink_key, unlink_val);
+    Py_DECREF(unlink_key); Py_DECREF(unlink_val);
+    return d;
+}
+
+// makeSubprocessModuleDict: builds the subprocess module dict.
+static PyObject* makeSubprocessModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("call",         "PyBuiltin_SubprocessCall");
+    addTok("check_output", "PyBuiltin_SubprocessCheckOutput");
+    return d;
+}
+
 // re.sub(pattern, repl, subject, count) — replace matches. Uses
 // pcre2_substitute for full regex semantics (including backreferences
 // like \1, \2 in the replacement). The `count` argument limits
@@ -2700,9 +2987,32 @@ void pyc_setup_sys(int argc, char** argv) {
         PyObject* stdout_key = PyUnicode_FromString("stdout");
         PyObject* stdout_obj = makeStream(stdout);
         PyDict_SetItem(g_sys_module, stdout_key, stdout_obj);
-        Py_DECREF(stdout_key);
-        Py_DECREF(stdout_obj);
+        Py_DECREF(stdout_key); Py_DECREF(stdout_obj);
     }
+}
+
+// Register all the os/subprocess/etc. runtime helpers so they can be
+// dispatched via Pyc_Apply using their PyBuiltin_* names. The synthetic
+// module dicts (`makeOsModuleDict`, `makeSubprocessModuleDict`) embed
+// these names as string tokens, and the compiler emits
+// `Pyc_Apply(token, args)` for module-attribute calls like
+// `os.path.exists(p)`. Without this registration, Pyc_Apply returns
+// null for the token. Idempotent (safe to call multiple times).
+extern "C" void pyc_setup_callables(void) {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    pyc_register_callable("PyBuiltin_OsPathExists",        PyBuiltin_OsPathExists);
+    pyc_register_callable("PyBuiltin_OsPathIsfile",        PyBuiltin_OsPathIsfile);
+    pyc_register_callable("PyBuiltin_OsPathIsdir",         PyBuiltin_OsPathIsdir);
+    pyc_register_callable("PyBuiltin_OsUnlink",            PyBuiltin_OsUnlink);
+    pyc_register_callable("PyBuiltin_SubprocessCall",      PyBuiltin_SubprocessCall);
+    pyc_register_callable("PyBuiltin_SubprocessCheckOutput", PyBuiltin_SubprocessCheckOutput);
+    pyc_register_callable("pyc_stderr_write",              stderr_write_adapter);
+    pyc_register_callable("pyc_stdout_write",              stdout_write_adapter);
+    pyc_register_callable("pyc_file_write",                pyc_file_write_adapter);
+    pyc_register_callable("pyc_file_enter",                pyc_file_enter_adapter);
+    pyc_register_callable("pyc_file_exit",                 pyc_file_exit_adapter);
 }
 
 // Look up an attribute on the global `sys` module. Returns a strong

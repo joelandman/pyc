@@ -817,6 +817,39 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         Py_XDECREF(body);
     }
     if (node->children.empty()) {
+        // Some AST node types (With, withitem, etc.) need special handling for
+        // their non-`body` attributes. With stores its context expressions
+        // in `items` (a list of withitem); withitem has `context_expr` and
+        // `optional_vars`. Both must be added to children before falling
+        // through to the generic body/value fallback.
+        if (node->type == "With") {
+            // With(items, body) — process items (withitems) explicitly. The
+            // body handling below also covers the body of the with block.
+            PyObject* itemsObj = PyObject_GetAttrString(pyNode, "items");
+            if (itemsObj && PyList_Check(itemsObj)) {
+                for (Py_ssize_t i = 0; i < PyList_Size(itemsObj); ++i) {
+                    PyObject* item = PyList_GetItem(itemsObj, i);
+                    auto child = std::make_unique<ASTNode>();
+                    buildAST(item, child.get());
+                    node->children.push_back(std::move(child));
+                }
+            }
+            Py_XDECREF(itemsObj);
+        } else if (node->type == "withitem") {
+            // withitem: context_expr and optional_vars. Push them as children
+            // so the With-lowering in the compiler can find them. The
+            // context_expr is children[0]; optional_vars (if any) is children[1].
+            for (const char* attr : {"context_expr", "optional_vars"}) {
+                PyObject* val = nullptr;
+                int r = PyObject_GetOptionalAttrString(pyNode, attr, &val);
+                if (r == 1 && val) {
+                    auto child = std::make_unique<ASTNode>();
+                    buildAST(val, child.get());
+                    node->children.push_back(std::move(child));
+                    Py_DECREF(val);
+                }
+            }
+        }
         PyObject* body = nullptr;
         int bodyRes = PyObject_GetOptionalAttrString(pyNode, "body", &body);
         if (bodyRes == 1 && body && PyList_Check(body)) {
@@ -845,20 +878,6 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
      Py_XDECREF(body);
-    } else if (node->type == "With") {
-        // With(items, body) — each withitem has context_expr and optional_vars
-        for (const char* attr : {"items", "body"}) {
-            PyObject* listObj = PyObject_GetAttrString(pyNode, attr);
-            if (listObj && PyList_Check(listObj)) {
-                for (Py_ssize_t i = 0; i < PyList_Size(listObj); ++i) {
-                    PyObject* item = PyList_GetItem(listObj, i);
-                    auto child = std::make_unique<ASTNode>();
-                    buildAST(item, child.get());
-                    node->children.push_back(std::move(child));
-                }
-            }
-            Py_XDECREF(listObj);
-        }
     }
 }
 

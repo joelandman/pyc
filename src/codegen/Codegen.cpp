@@ -127,6 +127,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* builtinLenTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(builtinLenTy, llvm::Function::ExternalLinkage, "PyBuiltin_Len", module.get());
 
+    // PyBuiltin_Open(path, mode) -> file dict (2 args).
+    llvm::FunctionType* builtinOpenTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(builtinOpenTy, llvm::Function::ExternalLinkage, "PyBuiltin_Open", module.get());
+
     llvm::FunctionType* printNewlineTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
     llvm::Function::Create(printNewlineTy, llvm::Function::ExternalLinkage, "PyBuiltin_PrintNewline", module.get());
 
@@ -212,12 +216,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Function::Create(t, llvm::Function::ExternalLinkage, n, module.get());
     };
     for (const char* n : {"PyList_Extend","PyList_Remove","PyList_Index","PyList_Count",
-                          "PyList_PopAt","PyList_Insert",
+                          "PyList_PopAt",
                           "PyDict_Update","PyDict_FromKeys",
                           "PyString_ZFill",
-                          "PyString_StartsWith","PyString_EndsWith"}) twoArg(n);
+                          "PyString_StartsWith","PyString_EndsWith",
+                          "PyNumber_Lshift","PyNumber_Rshift",
+                          "PyNumber_BitOr","PyNumber_BitAnd","PyNumber_BitXor"}) twoArg(n);
     for (const char* n : {"PyString_Center","PyString_LJust","PyString_RJust",
-                          "PyDict_Pop","PyDict_SetDefault"}) threeArg(n);
+                          "PyDict_Pop","PyDict_SetDefault",
+                          "PyList_Insert"}) threeArg(n);
     // 1-arg helpers (Is* predicates, casefold/title, lstrip/rstrip, count, copy,
     // clear, popitem, reverse, remove, index, update, fromkeys, remove, etc.).
     for (const char* n : {"PyString_IsAlpha","PyString_IsDigit","PyString_IsAlnum",
@@ -780,6 +787,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     native = builder.CreateSub(lhs, rhs, inst.result + ".i64");
                 } else if (op == "mul") {
                     native = builder.CreateMul(lhs, rhs, inst.result + ".i64");
+                } else if (op == "lshift") {
+                    native = builder.CreateShl(lhs, rhs, inst.result + ".i64");
+                } else if (op == "rshift") {
+                    native = builder.CreateLShr(lhs, rhs, inst.result + ".i64");
+                } else if (op == "bitor") {
+                    native = builder.CreateOr(lhs, rhs, inst.result + ".i64");
+                } else if (op == "bitand") {
+                    native = builder.CreateAnd(lhs, rhs, inst.result + ".i64");
+                } else if (op == "bitxor") {
+                    native = builder.CreateXor(lhs, rhs, inst.result + ".i64");
                 } else {
                     return false;
                 }
@@ -1363,6 +1380,41 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         if (lhsNativeMu) builder.CreateCall(decrefN, {lhs});
                         if (rhsNativeMu) builder.CreateCall(decrefN, {rhs});
                     }
+                }
+            } else if (inst.op == "lshift" || inst.op == "rshift" ||
+                       inst.op == "bitor"  || inst.op == "bitand" ||
+                       inst.op == "bitxor") {
+                // Bitwise operations: try native i64 path first, then
+                // fall back to a runtime helper that unboxes + shifts.
+                if (emitNativeNumericBinary(inst, inst.op)) continue;
+                const char* fnName = nullptr;
+                if      (inst.op == "lshift") fnName = "PyNumber_Lshift";
+                else if (inst.op == "rshift") fnName = "PyNumber_Rshift";
+                else if (inst.op == "bitor")  fnName = "PyNumber_BitOr";
+                else if (inst.op == "bitand") fnName = "PyNumber_BitAnd";
+                else if (inst.op == "bitxor") fnName = "PyNumber_BitXor";
+                llvm::Function* fn = module->getFunction(fnName);
+                std::string lhsNameB = inst.operands.size() > 0 ? inst.operands[0].name : "";
+                std::string rhsNameB = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                llvm::Value* lhsRawB = lhsNameB.empty() ? nullptr : getOrLoad(lhsNameB);
+                llvm::Value* rhsRawB = rhsNameB.empty() ? nullptr : getOrLoad(rhsNameB);
+                bool lhsNativeB = lhsRawB && (lhsRawB->getType() == llvm::Type::getInt64Ty(context) || lhsRawB->getType()->isDoubleTy());
+                bool rhsNativeB = rhsRawB && (rhsRawB->getType() == llvm::Type::getInt64Ty(context) || rhsRawB->getType()->isDoubleTy());
+                llvm::Value* lhs = getAsPyObject(lhsNameB);
+                llvm::Value* rhs = getAsPyObject(rhsNameB);
+                if (fn) {
+                    llvm::Value* resB = builder.CreateCall(fn, {lhs, rhs}, inst.result);
+                    valueMap[inst.result] = resB;
+                    markOwned(inst.result);
+                } else {
+                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                }
+                emitDecRefIfOwned(lhsNameB);
+                emitDecRefIfOwned(rhsNameB);
+                llvm::Function* decrefB = module->getFunction("Py_DECREF");
+                if (decrefB) {
+                    if (lhsNativeB) builder.CreateCall(decrefB, {lhs});
+                    if (rhsNativeB) builder.CreateCall(decrefB, {rhs});
                 }
             } else if (inst.op == "neg") {
                 // Unary minus. For proven numeric resultType, keep native result (i64/double)

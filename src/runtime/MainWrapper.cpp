@@ -28,6 +28,9 @@ int main(int argc, char** argv) {
     // Build the synthetic sys module so `import sys` and
     // `sys.argv[i]` work from user code.
     pyc_setup_sys(argc, argv);
+    // Register os/subprocess/etc. runtime helpers in the callable
+    // registry so Pyc_Apply can dispatch module-attribute calls.
+    pyc_setup_callables();
     // Run the user code. The returned PyObject* is ignored.
     PyObject* result = pyc_user_main();
     if (result) {
