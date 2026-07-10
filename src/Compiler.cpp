@@ -144,6 +144,8 @@ public:
             // - Any name declared 'nonlocal' here needs a cell (cell lives in an outer scope).
             // - Any name we assign here that is declared 'nonlocal' in some descendant nested
             //   function must be cell-allocated here so the nested function can share it.
+            // - Any name that a nested function reads from this scope (implicit closure capture)
+            //   must also be a cell, so the inner can access it via the cell.
             {
                 std::vector<std::string> cells;
                 auto nlit = funcNonlocals.find(node->id);
@@ -182,6 +184,55 @@ public:
                     }
                 }
 
+                // B5 (closure capture): any name that a nested function reads from
+                // this scope (i.e. the inner body references the name and the
+                // name is visible in this scope as a local/param) must be a cell
+                // so the inner can capture it. Without this, a `step` local
+                // read by the inner via implicit closure capture would not be
+                // passed as a hidden cell arg and would resolve to null at the
+                // call site.
+                {
+                    std::function<void(const ASTNode*, std::unordered_set<std::string>&)> walkNames =
+                        [&](const ASTNode* n, std::unordered_set<std::string>& out) {
+                            if (!n) return;
+                            if (n->type == "Name" && !n->id.empty()) out.insert(n->id);
+                            for (const auto& c : n->children) walkNames(c.get(), out);
+                        };
+                    // Collect the names defined in this scope (params + locals).
+                    std::unordered_set<std::string> localsHere;
+                    for (const auto& p : node->args) {
+                        if (!p.empty()) localsHere.insert(p);
+                    }
+                    std::function<void(const ASTNode*)> collectLocals =
+                        [&](const ASTNode* n) {
+                            if (!n) return;
+                            if (n->type == "Assign" && !n->id.empty()) localsHere.insert(n->id);
+                            for (const auto& c : n->children) collectLocals(c.get());
+                        };
+                    for (const auto& c : node->children) collectLocals(c.get());
+                    // Walk nested function bodies; any name they read that is
+                    // also a local/param here must be a cell in this scope.
+                    std::function<void(const ASTNode*)> walkNested =
+                        [&](const ASTNode* n) {
+                            if (!n) return;
+                            if (n->type == "FunctionDef") {
+                                std::unordered_set<std::string> used;
+                                walkNames(n, used);
+                                for (const auto& nm : used) {
+                                    if (localsHere.count(nm)) {
+                                        if (std::find(cells.begin(), cells.end(), nm) == cells.end())
+                                            cells.push_back(nm);
+                                    }
+                                }
+                                // Don't recurse into the inner function — its
+                                // body references its own scope, not ours.
+                                return;
+                            }
+                            for (const auto& c : n->children) walkNested(c.get());
+                        };
+                    for (const auto& c : node->children) walkNested(c.get());
+                }
+
                 // Also, if a nested function declares a nonlocal that we (this scope) assign,
                 // we must cell it even if we did not list it in our own nonlocals.
                 funcCells[node->id] = cells;
@@ -202,15 +253,39 @@ public:
                             frees.push_back(nm);
                     }
                 }
-                // B5 enhancement: also include any names that are demanded (nonlocal) by
-                // *descendant* scopes even if this scope does not declare them locally.
-                // This ensures an intermediate scope that only forwards will still receive
-                // the cell as a hidden parameter and can forward it to deeper callees.
+                // B5 (intermediate-scope forwarding): if this scope forwards a
+                // cell to a nested closure (e.g. `def middle(): nonlocal x; def
+                // inner(): ...` — middle itself doesn't assign x but inner
+                // does, and middle needs to forward x's cell down to inner),
+                // treat the demanded name as a free cell here too. This adds
+                // a hidden cell parameter to the intermediate scope so the
+                // outer (which owns the cell) can pass it down. The closure-
+                // detection logic for the BUNDLE then sees the cell in the
+                // bundle and forwards it at the call site.
+                //
+                // However, do NOT add the cell if this scope does not actually
+                // read the name (i.e. it only forwards). In that case the
+                // cell is sourced from this scope's own cells (or from the
+                // outer scope) and the BUNDLE build for the inner function
+                // will pick it up directly. Adding it here would incorrectly
+                // mark the function as a closure that needs a cell passed in.
                 {
                     auto demanded = collectDemandedNonlocals(node);
+                    // Determine which of the demanded names this scope
+                    // itself references (reads or writes via assignment).
+                    std::function<void(const ASTNode*, std::unordered_set<std::string>&)> walkUsed =
+                        [&](const ASTNode* n, std::unordered_set<std::string>& out) {
+                            if (!n) return;
+                            if (n->type == "Name" && !n->id.empty()) out.insert(n->id);
+                            for (const auto& c : n->children) walkUsed(c.get(), out);
+                        };
+                    std::unordered_set<std::string> usedHere;
+                    for (const auto& c : node->children) walkUsed(c.get(), usedHere);
                     for (const auto& nm : demanded) {
-                        if (std::find(frees.begin(), frees.end(), nm) == frees.end())
+                        if (usedHere.count(nm) &&
+                            std::find(frees.begin(), frees.end(), nm) == frees.end()) {
                             frees.push_back(nm);
+                        }
                     }
                 }
                 funcFreeCells[node->id] = frees;
@@ -278,7 +353,6 @@ public:
                     closureFunctions.insert(node->id);
                 }
             }
-
             currentFunc = node->id;
             int savedTempCounter = tempCounter;
             tempCounter = 0;
@@ -617,6 +691,47 @@ public:
                     ir.addInstruction(currentFunc, "call", {"PyCell_Get", cellSlot}, res);
                     noteType(res, "boxed");
                     return res;
+                }
+            }
+            // B5: if this name is a closure function (one that captures free
+            // cells from this scope), build a descriptor bundle so callers
+            // can extract the cells and pass them down. The bundle is a
+            // PyList: [token, cell0, cell1, ...] where cells are this
+            // scope's owned cells that the closure reads/writes via
+            // nonlocal. The synthetic name is the function's IR name.
+            if (closureFunctions.count(node->id)) {
+                std::vector<std::string> caps;
+                auto fit = funcFreeCells.find(node->id);
+                if (fit != funcFreeCells.end()) {
+                    // The free cells of the closure function are the names
+                    // declared nonlocal inside it; each such name has a
+                    // matching owned cell in this scope (under <nm>_cell).
+                    for (const auto& nm : fit->second) {
+                        caps.push_back(nm);
+                    }
+                }
+                if (!caps.empty()) {
+                    // Build [token, cell0, cell1, ...]
+                    std::string zero = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, zero);
+                    std::string lst = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, lst);
+
+                    std::string tok = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + node->id + "\""}, tok, "str");
+                    std::string d0 = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, tok}, d0);
+
+                    for (const auto& nm : caps) {
+                        std::string cellSlot = nm + "_cell";
+                        std::string d = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, cellSlot}, d);
+                    }
+
+                    descriptorCells[lst] = caps;
+                    bundleToSynthetic[lst] = node->id;
+                    bundleTemps.insert(lst);
+                    return lst;
                 }
             }
             return node->id;
@@ -2024,6 +2139,18 @@ private:
             }
         }
 
+        // B5: if the callee value is a closure descriptor bundle, switch to
+        // dynamic apply so we can extract the cells from the bundle and
+        // prepend them to user args. The bundle is [token, cell0, cell1, ...].
+        if (!calleeVal.empty() && bundleTemps.count(calleeVal)) {
+            useDynamicApply = true;
+            // The token is bundle[0]; we'll Pyc_GetItem it at the call site.
+            tokenTempForApply.clear();
+            auto bit = bundleToSynthetic.find(calleeVal);
+            if (bit != bundleToSynthetic.end()) funcName = bit->second;
+            isIndirectCallee = true;
+        }
+
         bool isDirectName = (!node->children.empty() && node->children[0] && node->children[0]->type == "Name");
         auto knownIt = knownIRFunctions.find(funcName);
         bool knownDirect = (knownIt != knownIRFunctions.end());
@@ -2071,35 +2198,116 @@ private:
         }
 
         if (useDynamicApply) {
+            // B5: detect closure-bundle callees — the callee value is a
+            // descriptor list [token, cell0, cell1, ...]. Extract the
+            // token (calleeVal[0]) and prepend the cells to argRes.
+            std::string bundleCallee;
+            if (!calleeVal.empty() && bundleTemps.count(calleeVal)) {
+                // Use a fresh temp to hold the callee (avoids clashes with
+                // existing slot names like "c1" or "c2" that the user code
+                // may have assigned earlier — otherwise getOrLoad may pick
+                // up the wrong value for the same name).
+                std::string bc = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "assign", {calleeVal}, bc);
+                bundleCallee = bc;
+                bundleTemps.insert(bc);
+                // Copy the metadata.
+                auto sit = bundleToSynthetic.find(calleeVal);
+                if (sit != bundleToSynthetic.end()) bundleToSynthetic[bc] = sit->second;
+                auto dit = descriptorCells.find(calleeVal);
+                if (dit != descriptorCells.end()) descriptorCells[bc] = dit->second;
+            }
             // Build the argument list for Pyc_Apply. For indirect callees (including those with
             // dynamic *), we may have built a flat user-arg list (with * contents spliced) into
             // indirectArgListTemp during arg processing. Prefer that when present.
             std::string argList;
-            if (!indirectArgListTemp.empty()) {
+            // For a bundle callee, prepend the cells (indices 1..n) to the user-arg list.
+            // For a non-bundle indirect callee, just build the user-arg list.
+            if (!indirectArgListTemp.empty() && bundleCallee.empty()) {
                 argList = indirectArgListTemp;
-            } else if (!argRes.empty()) {
-                // Always start empty + append only.
-                std::string z = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"0"}, z);
-                argList = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
-                for (auto& v : argRes) {
-                    std::string d = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, v}, d);
-                }
             } else {
+                // Build a fresh arg list, prepending bundle cells (if any) followed by user args.
                 std::string z = "c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"0"}, z);
                 argList = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
+                if (!bundleCallee.empty()) {
+                    auto dit = descriptorCells.find(bundleCallee);
+                    if (dit != descriptorCells.end()) {
+                        int k = 0;
+                        for (const auto& nm : dit->second) {
+                            // bundle[1+k] is the k-th cell (a PyCell* PyObject).
+                            std::string ic = "c" + std::to_string(tempCounter++);
+                            ir.addInstruction(currentFunc, "const", {std::to_string(1 + k)}, ic);
+                            std::string cellObj = "t" + std::to_string(tempCounter++);
+                            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", bundleCallee, ic}, cellObj);
+                            std::string d = "t" + std::to_string(tempCounter++);
+                            ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, cellObj}, d);
+                            ++k;
+                        }
+                    }
+                }
+                if (!indirectArgListTemp.empty()) {
+                    // Splice the indirect user-arg list contents into our argList.
+                    // (For dynamic * under a non-bundle indirect callee, the
+                    // indirectArgListTemp holds the user args; we appended bundle
+                    // cells above, so just iterate the list and append each item.)
+                    std::string sz = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", indirectArgListTemp}, sz);
+                    std::string idx = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, idx);
+                    std::string szc = "__ipc_sz_" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "assign", {sz}, szc);
+                    std::string jc = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, jc);
+                    std::string jslot = "__ipc_j_" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "assign", {jc}, jslot);
+                    int sc = tempCounter++;
+                    std::string lp = "__ipc_lp_" + std::to_string(sc);
+                    std::string bd = "__ipc_bd_" + std::to_string(sc);
+                    std::string ex = "__ipc_ex_" + std::to_string(sc);
+                    ir.addInstruction(currentFunc, "br", {}, lp);
+                    ir.addInstruction(currentFunc, "label", {}, lp);
+                    std::string cm = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "icmp", {"Lt", jslot, szc}, cm);
+                    ir.addInstruction(currentFunc, "br", {cm, bd, ex});
+                    ir.addInstruction(currentFunc, "label", {}, bd);
+                    std::string el = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", indirectArgListTemp, jslot}, el);
+                    std::string d = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, el}, d);
+                    std::string oneC = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"1"}, oneC);
+                    std::string newJ = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "add", {jslot, oneC}, newJ, "int");
+                    ir.addInstruction(currentFunc, "assign", {newJ}, jslot);
+                    ir.addInstruction(currentFunc, "br", {}, lp);
+                    ir.addInstruction(currentFunc, "label", {}, ex);
+                } else {
+                    for (auto& v : argRes) {
+                        std::string d = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, v}, d);
+                    }
+                }
             }
             std::string tok = tokenTempForApply;
-            if (tok.empty() && !funcName.empty()) {
+            // Bundle callee: extract the token from bundle[0] (a string).
+            if (!bundleCallee.empty()) {
+                std::string zc = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, zc);
+                tok = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", bundleCallee, zc}, tok);
+            } else if (tok.empty() && !funcName.empty()) {
                 tok = "c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + funcName + "\""}, tok, "str");
             }
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_Apply", tok, argList}, res);
+            // The Pyc_GetItem on the bundle returns a borrowed ref to a
+            // string token (the function name). Pyc_Apply does not
+            // INCREF/DECREF the token, but it does keep a reference via
+            // its g_callableRegistry. We can safely DECREF the borrowed
+            // ref after the call.
             // B4: the result of an indirect call via Pyc_Apply may itself be a callable token
             // (e.g. a function that returns another lambda). Conservatively mark the result
             // temp; if it is later assigned or used as a callee we will treat it as a token.

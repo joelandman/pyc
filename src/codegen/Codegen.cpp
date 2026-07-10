@@ -415,15 +415,22 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         bool hasVar = (vidx != (size_t)-1);
         size_t fixed = hasVar ? vidx : real->arg_size();
 
+        // B5: freeCellVars are the hidden leading parameters. They occupy
+        // the first N slots of the args list. User args start at index N.
+        // The real function expects (free_cell_0, ..., free_cell_{N-1}, user_args...).
+        size_t cellSkip = 0;
+        for (const auto& fc : f.freeCellVars) { (void)fc; ++cellSkip; }
+
         std::vector<llvm::Value*> cargs;
         llvm::Function* listGet = module->getFunction("PyList_GetItem");
         llvm::Function* listSize = module->getFunction("PyList_Size");
         llvm::Function* listNew  = module->getFunction("PyList_New");
         llvm::Function* listAppend = module->getFunction("PyList_Append");
 
-        // Leading fixed prefix (before any *vararg in the target).
+        // Leading fixed prefix (before any *vararg in the target). The
+        // user args start after the hidden cell args.
         for (size_t i = 0; i < fixed; ++i) {
-            llvm::Value* idx = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i);
+            llvm::Value* idx = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i + cellSkip);
             llvm::Value* el = nullptr;
             if (listGet) {
                 el = abuilder.CreateCall(listGet, {argListVal, idx}, "a" + std::to_string(i));
@@ -441,7 +448,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             } else {
                 ln = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
             }
-            llvm::Value* startC = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), fixed);
+            llvm::Value* startC = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), fixed + cellSkip);
             llvm::Value* zero = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
             llvm::Value* rest = nullptr;
             if (listNew) {
@@ -842,6 +849,19 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 auto it = blockMap.find(inst.result);
                 if (it != blockMap.end()) {
                     llvm::BasicBlock* target = it->second;
+                    if (curBlock->getTerminator() == nullptr) {
+                        std::fprintf(stderr, "DBG-NOTERM label=%s curBlock=%s\n", inst.result.c_str(), curBlock->getName().str().c_str());
+                        // Print next 10 IR instructions for context
+                        int pi = 0;
+                        for (auto it2 = f.body.begin(); it2 != f.body.end(); ++it2) {
+                            if (&*it2 == &inst) break;
+                            ++pi;
+                        }
+                        for (int j = std::max(0, pi - 3); j < (int)f.body.size() && j < pi + 5; ++j) {
+                            std::fprintf(stderr, "  IR[%d]: op=%s result=%s\n", j, f.body[j].op.c_str(), f.body[j].result.c_str());
+                        }
+                        std::fflush(stderr);
+                    }
                     if (target == curBlock) {
                         // Label re-entered the same block — no-op.
                     } else if (curBlock->getTerminator()) {
@@ -1494,9 +1514,19 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
             } else if (inst.op == "assign") {
-                llvm::Value* src = getOrLoad(inst.operands[0].name);
+                // If the source is a Python name AND it's a module global, load
+                // the global directly (don't go through valueMap, which may have
+                // been polluted by a later 'const' instruction with the same name).
+                std::string srcNameAssign = inst.operands.empty() ? "" : inst.operands[0].name;
+                llvm::Value* src = nullptr;
+                if (!srcNameAssign.empty() && module->getNamedGlobal("pyc_global_" + srcNameAssign)) {
+                    llvm::GlobalVariable* gvsrc = module->getNamedGlobal("pyc_global_" + srcNameAssign);
+                    src = builder.CreateLoad(pyObjectPtrTy, gvsrc, srcNameAssign + ".gload");
+                } else {
+                    src = getOrLoad(srcNameAssign);
+                }
                 llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
-                std::string srcName = inst.operands[0].name;
+                std::string srcName = srcNameAssign;
 
                 // If target currently has an i64 slot (range loop var), handle separately.
                 auto tit0 = valueMap.find(inst.result);
