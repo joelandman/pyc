@@ -3429,13 +3429,52 @@ extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObje
     if (name && func) g_callableRegistry[std::string(name)] = func;
 }
 
-// Pyc_Apply(tokenStr, argList) -> boxed result
+// Pyc_Apply(tokenStr or bundleList, argList) -> boxed result
+// If first arg is a bundle list [tokenStr, extra0, ...] (cells or prebound defaults),
+// extract the token and prepend the extras to the provided argList before dispatch.
 extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
-    if (!token || token->type != 3) return nullptr;
-    std::string name = token->str;
-    auto it = g_callableRegistry.find(name);
+    if (!token) return nullptr;
+    PyObject* realTok = nullptr;
+    if (token->type == 3) {
+        realTok = token;
+    } else if (token->type == 1 && !token->list.empty()) {
+        PyObject* first = token->list[0];
+        if (first && first->type == 3) realTok = first;
+    }
+    if (!realTok || realTok->type != 3) return nullptr;
+    auto it = g_callableRegistry.find(realTok->str);
     if (it == g_callableRegistry.end()) return nullptr;
-    return it->second ? it->second(argList) : nullptr;
+
+    PyObject* prepend = nullptr;
+    if (token->type == 1 && !token->list.empty()) {
+        prepend = PyList_New(0);
+        for (size_t i = 1; i < token->list.size(); ++i) {
+            PyObject* v = token->list[i];
+            if (v) Py_INCREF(v);
+            PyList_Append(prepend, v);
+        }
+    }
+
+    PyObject* finalList = argList;
+    if (prepend) {
+        PyObject* comb = PyList_New(0);
+        for (auto* v : prepend->list) {
+            if (v) Py_INCREF(v);
+            PyList_Append(comb, v);
+        }
+        if (argList && argList->type == 1) {
+            for (auto* v : argList->list) {
+                if (v) Py_INCREF(v);
+                PyList_Append(comb, v);
+            }
+        }
+        finalList = comb;
+        PyObject* r = it->second ? it->second(finalList) : nullptr;
+        Py_DECREF(comb);
+        Py_DECREF(prepend);
+        return r;
+    }
+    return it->second ? it->second(finalList) : nullptr;
 }
 
 // ---- B5 (nonlocal / cells) minimal primitives ----

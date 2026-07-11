@@ -37,6 +37,9 @@ struct IRFunction {
     // of those cells. Lowering will synthesize hidden parameters for them; codegen
     // will receive them as leading PyObject* cell parameters.
     std::vector<std::string> freeCellVars;
+    // Trailing default values for this function/lambda (module global slot names).
+    // Used by __apply__ adapters for indirect calls when fewer args are supplied.
+    std::vector<std::string> defaultGlobals;
 };
 
 class ModuleIR {

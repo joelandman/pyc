@@ -89,9 +89,46 @@ public:
                 }
                 bareParams.push_back(b);
             }
-            ir.addFunction(node->id, bareParams);
-            knownIRFunctions.insert(node->id);  // regular def is a direct callable target
-            for (auto& fnr : ir.functions) if (fnr.name == node->id) { fnr.paramNames = node->args; break; }
+            // Use a unique IR name for nested defs to avoid collisions on source name
+            // (e.g. two 'def inner()' in different enclosing functions). Top-level defs
+            // keep their Python id. This is required for correct per-function cell metadata,
+            // separate bodies, signatures, and token registration.
+            std::string defIRName = node->id;
+            bool isNestedDef = !currentFunc.empty() && currentFunc != "__module__";
+            if (isNestedDef) {
+                defIRName = "__nesteddef_" + std::to_string(nestedFuncCounter++);
+                // Make bare-name references to this python id inside the enclosing resolve
+                // to the unique synthetic (for direct calls and value/bundle construction).
+                lambdaAliases[node->id] = defIRName;
+            }
+
+            ir.addFunction(defIRName, bareParams);
+            knownIRFunctions.insert(defIRName);
+            for (auto& fnr : ir.functions) if (fnr.name == defIRName) { fnr.paramNames = node->args; break; }
+            for (auto& fnr : ir.functions) if (fnr.name == defIRName) { /* freeCellVars set later */ break; }
+
+            // Switch currentFunc to the (possibly unique) IR name so that all cell analysis,
+            // instruction emission (addInstruction), and map keys use the name we registered.
+            std::string savedForIR = currentFunc;
+            currentFunc = defIRName;
+
+            // Record the python -> IR name mapping for this nested def so that
+            // later name lookups and bundle tokens can resolve to the registered name.
+            enclosingToNestedDef[saved].emplace(node->id, defIRName);
+
+            // Collect python-level names of nested FunctionDefs defined directly in this scope.
+            // These names are *bindings* in this scope (like locals), not variables closed over
+            // from an enclosing scope. When computing free cells for this scope we must never
+            // treat a nested def's name as something we need to receive via a hidden cell param.
+            std::unordered_set<std::string> nestedDefNamesInThisScope;
+            std::function<void(const ASTNode*)> collectNestedDefs = [&](const ASTNode* n) {
+                if (!n) return;
+                if (n->type == "FunctionDef" && !n->id.empty()) {
+                    nestedDefNamesInThisScope.insert(n->id);
+                }
+                for (const auto& c : n->children) collectNestedDefs(c.get());
+            };
+            for (const auto& c : node->children) collectNestedDefs(c.get());
 
             // B5: stash cell metadata on the IRFunction for later codegen (cellVars + freeCellVars).
             // We will also synthesize hidden cell parameters for nested functions that need free cells.
@@ -112,7 +149,7 @@ public:
                     funcGlobals.erase(std::remove(funcGlobals.begin(), funcGlobals.end(), bp),
                                       funcGlobals.end());
             }
-            ir.setFunctionGlobals(node->id, funcGlobals);
+            ir.setFunctionGlobals(defIRName, funcGlobals);
 
             // Count defaults and collect their values
             std::vector<std::string> defaults;
@@ -138,7 +175,7 @@ public:
             funcParamNames[node->id] = node->args;
 
             // B5: record this function's nonlocal declarations (declaration-only; cells later).
-            funcNonlocals[node->id] = scanFuncNonlocals(node);
+            funcNonlocals[defIRName] = scanFuncNonlocals(node);
 
             // B5: determine which names in this function require cell storage.
             // - Any name declared 'nonlocal' here needs a cell (cell lives in an outer scope).
@@ -148,7 +185,7 @@ public:
             //   must also be a cell, so the inner can access it via the cell.
             {
                 std::vector<std::string> cells;
-                auto nlit = funcNonlocals.find(node->id);
+                auto nlit = funcNonlocals.find(defIRName);
                 if (nlit != funcNonlocals.end()) {
                     for (const auto& nm : nlit->second) cells.push_back(nm);
                 }
@@ -235,14 +272,14 @@ public:
 
                 // Also, if a nested function declares a nonlocal that we (this scope) assign,
                 // we must cell it even if we did not list it in our own nonlocals.
-                funcCells[node->id] = cells;
+                funcCells[defIRName] = cells;
             }
 
             // B5: compute freeCellVars for this function (cells we read/write that live in an
             // enclosing function's cell set). This will become hidden leading parameters.
             {
                 std::vector<std::string> frees;
-                auto nlit = funcNonlocals.find(node->id);
+                auto nlit = funcNonlocals.find(defIRName);
                 if (nlit != funcNonlocals.end()) {
                     // For each name declared nonlocal here, the cell is provided by the nearest
                     // enclosing scope that actually owns/allocates the cell (i.e. assigns it).
@@ -273,9 +310,14 @@ public:
                     auto demanded = collectDemandedNonlocals(node);
                     // Determine which of the demanded names this scope
                     // itself references (reads or writes via assignment).
+                    // A: do not descend into nested FunctionDef/Lambda; their names
+                    // are not 'used here' for deciding whether we need a free cell param.
                     std::function<void(const ASTNode*, std::unordered_set<std::string>&)> walkUsed =
                         [&](const ASTNode* n, std::unordered_set<std::string>& out) {
                             if (!n) return;
+                            if (n->type == "FunctionDef" || n->type == "Lambda") {
+                                return;  // do not collect names from nested scopes
+                            }
                             if (n->type == "Name" && !n->id.empty()) out.insert(n->id);
                             for (const auto& c : n->children) walkUsed(c.get(), out);
                         };
@@ -288,20 +330,80 @@ public:
                         }
                     }
                 }
-                funcFreeCells[node->id] = frees;
+                funcFreeCells[defIRName] = frees;
+                // A: never treat a name we own/allocate as a free (incoming) cell for ourselves.
+                // Ownership: present in funcCells here but not declared nonlocal in this scope.
+                {
+                    auto nlitOwn = funcNonlocals.find(defIRName);
+                    std::unordered_set<std::string> nlHere;
+                    if (nlitOwn != funcNonlocals.end()) {
+                        for (const auto& nm : nlitOwn->second) nlHere.insert(nm);
+                    }
+                    auto citOwn = funcCells.find(defIRName);
+                    if (citOwn != funcCells.end()) {
+                        for (const auto& nm : citOwn->second) {
+                            if (nlHere.count(nm) == 0) {
+                                frees.erase(std::remove(frees.begin(), frees.end(), nm), frees.end());
+                            }
+                        }
+                    }
+                    funcFreeCells[defIRName] = frees;
+                }
+                // B5: capture *implicit* enclosing reads (no 'nonlocal' decl).
+                // A nested may read a name from an enclosing scope without declaring nonlocal
+                // (only writes require the declaration). Add any such used name that is not
+                // local/param here to frees so the nested receives the cell as a hidden param.
+                {
+                    std::unordered_set<std::string> used;
+                    std::function<void(const ASTNode*)> walk = [&](const ASTNode* n) {
+                        if (!n) return;
+                        if (n->type == "FunctionDef" || n->type == "Lambda") return;
+                        if (n->type == "Name" && !n->id.empty()) used.insert(n->id);
+                        for (const auto& c : n->children) walk(c.get());
+                    };
+                    for (const auto& c : node->children) walk(c.get());
+
+                    std::unordered_set<std::string> localsHere;
+                    for (auto& a : node->args) {
+                        std::string b = a;
+                        if (!b.empty() && b[0] == '*') b = b.substr(1);
+                        if (!b.empty() && b[0] == '*') b = b.substr(1);
+                        if (!b.empty()) localsHere.insert(b);
+                    }
+                    std::function<void(const ASTNode*)> scanAsg = [&](const ASTNode* n) {
+                        if (!n) return;
+                        if (n->type == "FunctionDef" || n->type == "Lambda") return;
+                        if (n->type == "Assign" && !n->id.empty()) localsHere.insert(n->id);
+                        for (const auto& c : n->children) scanAsg(c.get());
+                    };
+                    for (const auto& c : node->children) scanAsg(c.get());
+
+                    for (const auto& nm : used) {
+                        if (localsHere.count(nm) == 0) {
+                            // Never treat a nested def defined in *this* scope as a free cell
+                            // from an enclosing scope. Those are bindings created here, not
+                            // variables captured from above.
+                            if (nestedDefNamesInThisScope.count(nm)) continue;
+                            if (std::find(frees.begin(), frees.end(), nm) == frees.end())
+                                frees.push_back(nm);
+                        }
+                    }
+                    funcFreeCells[defIRName] = frees;
+                }
             }
 
             // B5: if this nested function has free cells, synthesize hidden leading parameters
             // so the enclosing scope can pass the cells down. We prefix them to avoid clashing
             // with user parameter names and with the bare-param view used for local allocas.
             {
-                auto fit = funcFreeCells.find(node->id);
+                auto fit = funcFreeCells.find(defIRName);
                 if (fit != funcFreeCells.end() && !fit->second.empty()) {
                     // Prepend synthesized cell parameters to the IRFunction's args.
                     // Use "<pythonname>_cell" as the parameter name so that the uniform
                     // "<name>_cell" slot convention works for both owned cells (locals)
                     // and received free cells (hidden params) inside the nested function.
-                    for (auto& fnr : ir.functions) if (fnr.name == node->id) {
+                    for (auto& fnr : ir.functions) if (fnr.name == defIRName) {
+                        fnr.freeCellVars = fit->second;  // Python names of incoming cells (order matters)
                         std::vector<std::string> newArgs;
                         for (const auto& fc : fit->second) {
                             newArgs.push_back(fc + "_cell");
@@ -322,8 +424,8 @@ public:
             // - Names that are in our nonlocal set are received as hidden __cell_* params.
             {
                 std::vector<std::string> owned;
-                auto cit = funcCells.find(node->id);
-                auto nlit = funcNonlocals.find(node->id);
+                auto cit = funcCells.find(defIRName);
+                auto nlit = funcNonlocals.find(defIRName);
                 std::unordered_set<std::string> nlset;
                 if (nlit != funcNonlocals.end()) {
                     for (const auto& nm : nlit->second) nlset.insert(nm);
@@ -336,9 +438,9 @@ public:
                         }
                     }
                 }
-                funcOwnedCells[node->id] = owned;
+                funcOwnedCells[defIRName] = owned;
                 // Also annotate the IRFunction for codegen convenience.
-                for (auto& fnr : ir.functions) if (fnr.name == node->id) {
+                for (auto& fnr : ir.functions) if (fnr.name == defIRName) {
                     fnr.cellVars = cit != funcCells.end() ? cit->second : std::vector<std::string>{};
                     break;
                 }
@@ -348,12 +450,15 @@ public:
             // from an outer scope). If so, mark it so that its "value" (for a def name or
             // a lambda expr) is produced as a descriptor bundle rather than a bare token.
             {
-                auto fit = funcFreeCells.find(node->id);
+                auto fit = funcFreeCells.find(defIRName);
                 if (fit != funcFreeCells.end() && !fit->second.empty()) {
-                    closureFunctions.insert(node->id);
+                    closureFunctions.insert(defIRName);
+                    closureFunctions.insert(node->id);  // so bare-name mention of python id produces bundle
                 }
             }
-            currentFunc = node->id;
+            // Do not stomp currentFunc back to python name; keep the unique defIRName
+            // for the rest of this FunctionDef (cell alloc, body lowering, return recording).
+            // currentFunc is already defIRName here.
             int savedTempCounter = tempCounter;
             tempCounter = 0;
             listLiteralElemASTs.clear();
@@ -364,20 +469,15 @@ public:
             lastLambdaSynthetic.clear();
 
             // B5: allocate owned cells (for names we assign here that inner scopes close over via nonlocal).
-            // We allocate them (empty) at function entry under the uniform "<name>_cell" slot.
-            // If the name is a parameter of this function, capture the incoming param value into the cell
-            // so that nested functions see the original argument through the shared cell.
+            // Initialize at creation time:
+            // - for a parameter closed over: PyCell_New(<the param value>)  -- New INCREFs the content
+            // - for a plain local: PyCell_New(0)
+            // This avoids a separate PyCell_Set whose result/operand can interact badly with DECREF temps.
             {
-                auto oit = funcOwnedCells.find(node->id);
+                auto oit = funcOwnedCells.find(defIRName);
                 if (oit != funcOwnedCells.end()) {
                     for (const auto& nm : oit->second) {
                         std::string cellSlot = nm + "_cell";
-                        std::string z = "c" + std::to_string(tempCounter++);
-                        ir.addInstruction(node->id, "const", {"0"}, z);
-                        std::string cellObj = "t" + std::to_string(tempCounter++);
-                        ir.addInstruction(node->id, "call", {"PyCell_New", z}, cellObj);
-                        ir.addInstruction(node->id, "assign", {cellObj}, cellSlot);
-                        // Capture param initial value if applicable.
                         auto pit = funcParamNames.find(node->id);
                         bool isParam = false;
                         if (pit != funcParamNames.end()) {
@@ -387,10 +487,15 @@ public:
                                 if (bp == nm) { isParam = true; break; }
                             }
                         }
-                        if (isParam) {
-                            std::string dummy = "t" + std::to_string(tempCounter++);
-                            ir.addInstruction(node->id, "call", {"PyCell_Set", cellSlot, nm}, dummy);
+                        std::string initial = isParam ? nm : "0";
+                        if (!isParam) {
+                            std::string z = "c" + std::to_string(tempCounter++);
+                            ir.addInstruction(defIRName, "const", {"0"}, z);
+                            initial = z;
                         }
+                        std::string cellObj = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(defIRName, "call", {"PyCell_New", initial}, cellObj);
+                        ir.addInstruction(defIRName, "assign", {cellObj}, cellSlot);
                     }
                 }
             }
@@ -412,11 +517,11 @@ public:
                         }
                         if (body) {
                             auto used = collectNames(body);
-                            auto oit2 = funcOwnedCells.find(node->id);
+                            auto oit2 = funcOwnedCells.find(defIRName);
                             if (oit2 != funcOwnedCells.end()) {
                                 for (const auto& nm : oit2->second) {
                                     if (used.count(nm)) {
-                                        auto& frees = funcFreeCells[node->id];
+                                        auto& frees = funcFreeCells[defIRName];
                                         if (std::find(frees.begin(), frees.end(), nm) == frees.end())
                                             frees.push_back(nm);
                                     }
@@ -449,17 +554,23 @@ public:
             // B4: if the function body contained a return of a callable token, record it
             // so that later call results can be treated as tokens (for assign/unpack/call).
             if (currentFnReturnsCallable) {
-                functionsThatReturnCallables.insert(node->id);
+                functionsThatReturnCallables.insert(defIRName);
+                functionsThatReturnCallables.insert(node->id); // for any python-name lookups
             }
             currentFnReturnsCallable = false;
             // B5 (closures): if the function body contained a return of a bundle, record it
             // so callers can mark results as bundles and extract cells at use sites.
             if (currentFnReturnsBundle) {
+                functionsThatReturnBundles.insert(defIRName);
                 functionsThatReturnBundles.insert(node->id);
-                if (!currentReturnedBundleSynthetic.empty())
+                if (!currentReturnedBundleSynthetic.empty()) {
+                    functionReturnedBundleSynthetic[defIRName] = currentReturnedBundleSynthetic;
                     functionReturnedBundleSynthetic[node->id] = currentReturnedBundleSynthetic;
-                if (!currentReturnedBundleCaps.empty())
+                }
+                if (!currentReturnedBundleCaps.empty()) {
+                    functionReturnedBundleCaps[defIRName] = currentReturnedBundleCaps;
                     functionReturnedBundleCaps[node->id] = currentReturnedBundleCaps;
+                }
             }
             currentFnReturnsBundle = false;
             currentReturnedBundleSynthetic.clear();
@@ -672,26 +783,15 @@ public:
             // B5: if this bare name is a cell-backed name in the current function, emit
             // a PyCell_Get to obtain the value for expression use. The result is a fresh
             // PyObject* (new reference) which is safe for the expression context.
-            // Only route through the cell if this function actually owns or receives the cell
-            // (i.e. it is in funcCells for this function). A bare name that is nonlocal in an
-            // inner scope but treated as a normal local here should continue to use direct
-            // local/global storage.
-            {
-                auto cit = funcCells.find(currentFunc);
-                bool isCellHere = false;
-                if (cit != funcCells.end()) {
-                    for (const auto& cv : cit->second) {
-                        if (cv == node->id) { isCellHere = true; break; }
-                    }
-                }
-                if (isCellHere) {
-                    // The cell itself is stored under a synthetic name "<name>_cell".
-                    std::string cellSlot = node->id + "_cell";
-                    std::string res = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"PyCell_Get", cellSlot}, res);
-                    noteType(res, "boxed");
-                    return res;
-                }
+            // Use the full isCellBackedHere (checks cells/owned/free) so that pure
+            // received free cells (from enclosing via implicit or nonlocal) route through
+            // the cell slot instead of resolving as a bare local (which would be null).
+            if (isCellBackedHere(node->id)) {
+                std::string cellSlot = node->id + "_cell";
+                std::string res = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyCell_Get", cellSlot}, res);
+                noteType(res, "boxed");
+                return res;
             }
             // B5: if this name is a closure function (one that captures free
             // cells from this scope), build a descriptor bundle so callers
@@ -699,39 +799,44 @@ public:
             // PyList: [token, cell0, cell1, ...] where cells are this
             // scope's owned cells that the closure reads/writes via
             // nonlocal. The synthetic name is the function's IR name.
-            if (closureFunctions.count(node->id)) {
-                std::vector<std::string> caps;
-                auto fit = funcFreeCells.find(node->id);
-                if (fit != funcFreeCells.end()) {
-                    // The free cells of the closure function are the names
-                    // declared nonlocal inside it; each such name has a
-                    // matching owned cell in this scope (under <nm>_cell).
-                    for (const auto& nm : fit->second) {
-                        caps.push_back(nm);
+            // Resolve via lambdaAliases so that nested defs (which are
+            // registered under a unique __nesteddef_N) are looked up by
+            // their IR name for cells, token, and bundle metadata.
+            {
+                std::string eff = node->id;
+                auto ait = lambdaAliases.find(node->id);
+                if (ait != lambdaAliases.end()) eff = ait->second;
+                if (closureFunctions.count(eff)) {
+                    std::vector<std::string> caps;
+                    auto fit = funcFreeCells.find(eff);
+                    if (fit != funcFreeCells.end()) {
+                        for (const auto& nm : fit->second) {
+                            caps.push_back(nm);
+                        }
                     }
-                }
-                if (!caps.empty()) {
-                    // Build [token, cell0, cell1, ...]
-                    std::string zero = "c" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "const", {"0"}, zero);
-                    std::string lst = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, lst);
+                    if (!caps.empty()) {
+                        std::string zero = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"0"}, zero);
+                        std::string lst = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, lst);
 
                     std::string tok = "c" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "const", {"\"" + node->id + "\""}, tok, "str");
-                    std::string d0 = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, tok}, d0);
+                    ir.addInstruction(currentFunc, "const", {"\"" + eff + "\""}, tok, "str");
+                    // Do not capture the Append result. Append returns the receiver (borrowed).
+                    // Capturing it creates a temp we would markOwned, leading to over-DECREF of
+                    // the bundle list on function exit. The item (token/cell) is INCREFed inside Append.
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, tok}, "");
 
                     for (const auto& nm : caps) {
                         std::string cellSlot = nm + "_cell";
-                        std::string d = "t" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, cellSlot}, d);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, cellSlot}, "");
                     }
 
-                    descriptorCells[lst] = caps;
-                    bundleToSynthetic[lst] = node->id;
-                    bundleTemps.insert(lst);
-                    return lst;
+                        descriptorCells[lst] = caps;
+                        bundleToSynthetic[lst] = eff;
+                        bundleTemps.insert(lst);
+                        return lst;
+                    }
                 }
             }
             return node->id;
@@ -784,8 +889,9 @@ public:
                         }
                     }
                 }
-                if (!caps.empty()) {
-                    // Build a list: [ tokenString, cell0, cell1, ... ]
+                bool hasDefaultsForLam = funcDefaultValues.count(lamName) && !funcDefaultValues[lamName].empty();
+                if (!caps.empty() || hasDefaultsForLam) {
+                    // Build a list: [ tokenString, cell0, cell1, ..., preboundDefault0, ... ]
                     std::string zero = "c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"0"}, zero);
                     std::string lst = "t" + std::to_string(tempCounter++);
@@ -794,15 +900,26 @@ public:
                     // token (synthetic name string)
                     std::string tok = "c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + lamName + "\""}, tok, "str");
-                    std::string d1 = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, tok}, d1);
+                    // Do not capture Append result. It returns the receiver (borrowed).
+                    // Capturing would mark an alias owned and cause over-DECREF of the bundle list.
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, tok}, "");
 
                     // cells in definition scope order (use the uniform <nm>_cell slots)
                     for (const auto& nm : caps) {
                         std::string cellSlot = nm + "_cell";
-                        std::string d = "t" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, cellSlot}, d);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, cellSlot}, "");
                     }
+
+                    // Prebound default values (evaluated in definition scope) for trailing defaults.
+                    size_t prebound = 0;
+                    auto dit = funcDefaultValues.find(lamName);
+                    if (dit != funcDefaultValues.end()) {
+                        for (const auto& slot : dit->second) {
+                            ir.addInstruction(currentFunc, "call", {"PyList_Append", lst, slot}, "");
+                            ++prebound;
+                        }
+                    }
+                    if (prebound) bundlePreboundArgCount[lst] = prebound;
 
                     // Remember mapping for call-site extraction and token propagation.
                     descriptorCells[lst] = caps;
@@ -893,6 +1010,8 @@ private:
     // List (or tuple) temps from lowerList whose element(s) are callable token
     // temps. Used to mark subscript results and unpack targets as potential tokens.
     std::unordered_set<std::string> listsContainingCallableTokens;
+    std::unordered_set<std::string> listsContainingBundles;
+    std::unordered_set<std::string> namesThatMayHoldListsWithBundles;
     // During lowering of a FunctionDef/lambda body, set true if any ret (or
     // implicit lambda body) produces a tracked callable token. At end of the
     // function we record the function name in functionsThatReturnCallables.
@@ -940,11 +1059,20 @@ private:
 
     // B5: temps that are known descriptor bundles (for propagation through assign/return/etc.).
     std::unordered_set<std::string> bundleTemps;
+    // B5/B4: for a bundle temp, how many trailing default values (prebound args) follow the cells.
+    std::unordered_map<std::string, size_t> bundlePreboundArgCount;
 
     // B5: functions that return descriptor bundles (capturing lambdas returned from makers etc.).
     std::unordered_set<std::string> functionsThatReturnBundles;
     std::unordered_map<std::string, std::string> functionReturnedBundleSynthetic;
     std::unordered_map<std::string, std::vector<std::string>> functionReturnedBundleCaps;
+    std::unordered_map<std::string, std::vector<std::string>> lambdaDefaultTemps;
+
+    // Unique IR names for nested FunctionDefs to avoid collisions on source names
+    // (e.g. two 'def inner()' in different makers). Top-level defs keep their source id.
+    int nestedFuncCounter = 0;
+    // enclosingIRName -> (python def name -> unique IR name)
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> enclosingToNestedDef;
 
     // Per-FunctionDef state for returns of bundles (to record at end of the def).
     bool currentFnReturnsBundle = false;
@@ -2202,6 +2330,26 @@ private:
             // descriptor list [token, cell0, cell1, ...]. Extract the
             // token (calleeVal[0]) and prepend the cells to argRes.
             std::string bundleCallee;
+            // A+B fix: if the callee is a bare name (or value) that carries a bundle
+            // (e.g. c1 = make_counter(); ... c1()), force bundle treatment here so that
+            // we extract the real token and prepend the cells. Without this, we would
+            // pass the bundle list (or the bare name) as the Pyc_Apply token.
+            if (bundleCallee.empty()) {
+                std::string bsrc;
+                if (!calleeVal.empty() && (bundleTemps.count(calleeVal) || namesThatMayHoldBundles.count(calleeVal))) bsrc = calleeVal;
+                else if (!funcName.empty() && (bundleTemps.count(funcName) || namesThatMayHoldBundles.count(funcName))) bsrc = funcName;
+                if (!bsrc.empty()) {
+                    std::string bc = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "assign", {bsrc}, bc);
+                    bundleCallee = bc;
+                    bundleTemps.insert(bc);
+                    auto sit = bundleToSynthetic.find(bsrc);
+                    if (sit != bundleToSynthetic.end()) bundleToSynthetic[bc] = sit->second;
+                    auto dit = descriptorCells.find(bsrc);
+                    if (dit != descriptorCells.end()) descriptorCells[bc] = dit->second;
+                    tokenTempForApply.clear();
+                }
+            }
             if (!calleeVal.empty() && bundleTemps.count(calleeVal)) {
                 // Use a fresh temp to hold the callee (avoids clashes with
                 // existing slot names like "c1" or "c2" that the user code
@@ -2424,6 +2572,9 @@ private:
             funcDefaultCount[lamName] = defaults.size();
             funcDefaultValues[lamName] = defaults;
         }
+        for (auto& fnr : ir.functions) if (fnr.name == lamName) { fnr.defaultGlobals = defaults; break; }
+        // Also record the temp names (in the definition scope) for later propagation to lists.
+        if (!defaults.empty()) lambdaDefaultTemps[lamName] = defaults;
 
         // Capture the outer temp counter *after* any default exprs (which intentionally
         // allocate in the definition context), but *before* we stomp it for the lambda body.
@@ -2896,6 +3047,13 @@ private:
         if (containsTok) {
             listsContainingCallableTokens.insert(listRes);
         }
+        bool containsBundle = false;
+        for (size_t i = 0; i < n; ++i) {
+            if (!elems[i].empty() && (bundleTemps.count(elems[i]) || bundleToSynthetic.count(elems[i]))) {
+                containsBundle = true; break;
+            }
+        }
+        if (containsBundle) listsContainingBundles.insert(listRes);
         return listRes;
     }
 
@@ -3209,6 +3367,9 @@ private:
         // container name is marked as holding tokens, mark the subscript result as a token temp.
         if (listsContainingCallableTokens.count(obj) || namesThatMayHoldCallableTokens.count(obj)) {
             callableTokenTemps.insert(res);
+        }
+        if (listsContainingBundles.count(obj) || namesThatMayHoldBundles.count(obj) || namesThatMayHoldListsWithBundles.count(obj)) {
+            bundleTemps.insert(res);
         }
         return res;
     }

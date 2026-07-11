@@ -406,20 +406,33 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             continue;
         }
 
-        // Use original param names (with * markers) to find a *vararg slot, if any.
-        const auto& pnames = f.paramNames.empty() ? f.args : f.paramNames;
+        // Use *original user* param names (with * markers) for user signature.
+        // paramNames is always the user-level signature (we never mutate it with cells).
+        // It may legitimately be empty (e.g. a nested def with no user parameters).
+        const auto& pnames = f.paramNames;  // authoritative user params (may be empty)
         size_t vidx = (size_t)-1;
         for (size_t j = 0; j < pnames.size(); ++j) {
             if (!pnames[j].empty() && pnames[j][0] == '*') { vidx = j; break; }
         }
         bool hasVar = (vidx != (size_t)-1);
-        size_t fixed = hasVar ? vidx : real->arg_size();
+        // Number of *user* fixed params in the original signature (cells are not user params).
+        size_t userFixedCount = hasVar ? vidx : pnames.size();
+        // For the *vararg start in the Pyc list we still need the pre-vararg user count.
+        size_t fixed = userFixedCount;  // in Pyc list terms (after cells), this is the user fixed count before *
 
-        // B5: freeCellVars are the hidden leading parameters. They occupy
-        // the first N slots of the args list. User args start at index N.
-        // The real function expects (free_cell_0, ..., free_cell_{N-1}, user_args...).
-        size_t cellSkip = 0;
-        for (const auto& fc : f.freeCellVars) { (void)fc; ++cellSkip; }
+        // B5: For indirect calls via Pyc_Apply + adapter:
+        // - When the caller used a descriptor bundle (closure value), the incoming
+        //   flat list already has cells prepended: [cell0, cell1, ..., userarg0, ...]
+        // - For plain token calls (non-closure), there are no leading cells.
+        // The adapter must pass the cells as leading LLVM args to the real target,
+        // then unpack the remaining list elements as the user's arguments.
+        size_t ncells = f.freeCellVars.size();
+
+        // Compute original user (non-cell) param count from the final args list
+        // (we only ever prepend cell slots to args; paramNames holds original user view).
+        size_t origUserParams = (f.args.size() >= ncells) ? (f.args.size() - ncells) : 0;
+        // Number of leading *user* fixed params in the post-cell Pyc arg list.
+        size_t userFixed = hasVar ? vidx : origUserParams;
 
         std::vector<llvm::Value*> cargs;
         llvm::Function* listGet = module->getFunction("PyList_GetItem");
@@ -427,28 +440,78 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Function* listNew  = module->getFunction("PyList_New");
         llvm::Function* listAppend = module->getFunction("PyList_Append");
 
-        // Leading fixed prefix (before any *vararg in the target). The
-        // user args start after the hidden cell args.
-        for (size_t i = 0; i < fixed; ++i) {
-            llvm::Value* idx = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i + cellSkip);
+        // Extract leading cells (if any) from the Pyc list; these become the
+        // hidden leading arguments for the real function.
+        for (size_t k = 0; k < ncells; ++k) {
+            llvm::Value* idx = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), k);
             llvm::Value* el = nullptr;
             if (listGet) {
-                el = abuilder.CreateCall(listGet, {argListVal, idx}, "a" + std::to_string(i));
+                el = abuilder.CreateCall(listGet, {argListVal, idx}, "c" + std::to_string(k));
             } else {
                 el = llvm::ConstantPointerNull::get(pyObjectPtrTy);
             }
             cargs.push_back(el);
         }
 
+        // User-fixed prefix starts after the hidden cells in the list.
+        // B5/B4 defaults: if fewer user args supplied than fixed params, load
+        // from the function's __default_<name>_<k> globals for the trailing positions.
+        llvm::Value* ln = nullptr;
+        if (listSize) {
+            ln = abuilder.CreateCall(listSize, {argListVal}, "ln");
+        } else {
+            ln = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
+        }
+        llvm::Value* ncellsV = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), ncells);
+        llvm::Value* userLen = abuilder.CreateSub(ln, ncellsV);
+        llvm::Value* zero64 = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
+        llvm::Value* isNeg = abuilder.CreateICmpSLT(userLen, zero64);
+        userLen = abuilder.CreateSelect(isNeg, zero64, userLen, "ulen");
+        size_t ndef = f.defaultGlobals.size();
+        size_t firstDef = (userFixed > ndef) ? (userFixed - ndef) : 0;
+        for (size_t i = 0; i < userFixed; ++i) {
+            llvm::Value* iV = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i);
+            llvm::Value* have = abuilder.CreateICmpSGT(userLen, iV);
+            llvm::BasicBlock* haveB = llvm::BasicBlock::Create(context, "have" + std::to_string(i), adapter);
+            llvm::BasicBlock* missB = llvm::BasicBlock::Create(context, "miss" + std::to_string(i), adapter);
+            llvm::BasicBlock* after = llvm::BasicBlock::Create(context, "arg" + std::to_string(i), adapter);
+            abuilder.CreateCondBr(have, haveB, missB);
+            abuilder.SetInsertPoint(haveB);
+            llvm::Value* idxHave = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), ncells + i);
+            llvm::Value* elHave = nullptr;
+            if (listGet) elHave = abuilder.CreateCall(listGet, {argListVal, idxHave}, "a" + std::to_string(i));
+            abuilder.CreateBr(after);
+            abuilder.SetInsertPoint(missB);
+            llvm::Value* elMiss = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            if (ndef > 0 && i >= firstDef) {
+                size_t dk = i - firstDef;
+                if (dk < ndef) {
+                    std::string gname = "pyc_global_" + f.defaultGlobals[dk];
+                    if (auto* gv = module->getNamedGlobal(gname)) {
+                        elMiss = abuilder.CreateLoad(pyObjectPtrTy, gv, "d" + std::to_string(dk));
+                        if (llvm::Function* inc = module->getFunction("Py_INCREF")) {
+                            abuilder.CreateCall(inc, {elMiss});
+                        }
+                    }
+                }
+            }
+            abuilder.CreateBr(after);
+            abuilder.SetInsertPoint(after);
+            llvm::PHINode* phi = abuilder.CreatePHI(pyObjectPtrTy, 2);
+            phi->addIncoming(elHave ? elHave : llvm::ConstantPointerNull::get(pyObjectPtrTy), haveB);
+            phi->addIncoming(elMiss, missB);
+            cargs.push_back(phi);
+        }
+
         if (hasVar) {
-            // Collect [fixed .. len) from the incoming flat list into a fresh list for the * slot.
+            // Collect [ncells + userFixed .. len) into a fresh list for the * slot.
             llvm::Value* ln = nullptr;
             if (listSize) {
                 ln = abuilder.CreateCall(listSize, {argListVal}, "ln");
             } else {
                 ln = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
             }
-            llvm::Value* startC = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), fixed + cellSkip);
+            llvm::Value* startC = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), ncells + userFixed);
             llvm::Value* zero = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
             llvm::Value* rest = nullptr;
             if (listNew) {
@@ -559,6 +622,17 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, f.args[i] + ".slot");
                 entryBuilder.CreateStore(arg, alloca);
                 valueMap[f.args[i]] = alloca;
+                // B5: if this is a hidden cell parameter (suffixed _cell from freeCellVars),
+                // INCREF the received cell so the local slot owns a reference. The provider
+                // (bundle list or Pyc arg list) may drop its ref after the call returns.
+                if (!f.args[i].empty()) {
+                    const std::string& an = f.args[i];
+                    if (an.size() > 5 && an.rfind("_cell") == an.size() - 5) {
+                        if (llvm::Function* increfFn = module->getFunction("Py_INCREF")) {
+                            entryBuilder.CreateCall(increfFn, {arg});
+                        }
+                    }
+                }
             } else {
                 // Use a synthetic name if args are empty
                 std::string synthName = "arg" + std::to_string(i);
@@ -577,27 +651,44 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // named "<pythonname>_cell"). Treat them as normal PyObject* cell objects.
         // Also create local cell slots for any owned cell names declared in f.cellVars
         // so that loads/stores via PyCell_Get/PyCell_Set can find them in valueMap.
-        for (const auto& cname : f.freeCellVars) {
-            // freeCellVars holds Python names; the actual parameter names are "<python>_cell"
-            std::string slot = cname + "_cell";
-            if (valueMap.count(slot)) continue;
-            // The parameter itself is a PyObject* (the cell). Create an entry alloca for it.
-            llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
-                                           func->getEntryBlock().begin());
-            llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, slot + ".slot");
-            // The real argument will be wired by the caller; here we just reserve the slot name.
-            // The actual incoming cell arg will be matched by LLVM arg position; for safety,
-            // if a parameter with this exact name exists, store it into the alloca.
-            // (Codegen arg loop above already handled named args by the same name.)
-            valueMap[slot] = alloca;
-        }
-        for (const auto& cname : f.cellVars) {
-            std::string slot = cname + "_cell";
-            if (valueMap.count(slot)) continue;
-            llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
-                                           func->getEntryBlock().begin());
-            llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, slot + ".slot");
-            valueMap[slot] = alloca;
+        {
+            llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(), func->getEntryBlock().begin());
+            // Free cells (received as hidden leading args)
+            for (size_t ci = 0; ci < f.freeCellVars.size(); ++ci) {
+                const auto& cname = f.freeCellVars[ci];
+                std::string slot = cname + "_cell";
+                if (valueMap.count(slot)) continue;
+                llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, slot + ".slot");
+                // B: explicitly wire the incoming cell arg (hidden leading params) into the slot.
+                // Hidden cells are the first N args in the order of freeCellVars.
+                if (ci < func->arg_size()) {
+                    llvm::Value* cellArg = func->getArg(ci);
+                    // Most likely fix: the activation must own a ref to the cell while it runs.
+                    // The provider (bundle list or caller) may release its list/arg after the call.
+                    // INCREF here; the owned-slot exit cleanup will DECREF.
+                    if (llvm::Function* inc = module->getFunction("Py_INCREF")) {
+                        entryBuilder.CreateCall(inc, {cellArg});
+                    }
+                    entryBuilder.CreateStore(cellArg, alloca);
+                    // Most likely fix: the closure body must own a ref to the received cell
+                    // for the duration of its activation (the bundle list or Pyc arg list may
+                    // be released after the call). We INCREFed above; mark the slot owned so
+                    // the normal exit cleanup will DECREF it, balancing the INCREF.
+                    ownedSlots.insert(slot);
+                } else {
+                    entryBuilder.CreateStore(llvm::ConstantPointerNull::get(pyObjectPtrTy), alloca);
+                }
+                valueMap[slot] = alloca;
+            }
+            // Owned cells (allocated locally via PyCell_New in IR; slot holds the cell object)
+            for (const auto& cname : f.cellVars) {
+                std::string slot = cname + "_cell";
+                if (valueMap.count(slot)) continue;
+                llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, slot + ".slot");
+                // B: null-init so first assign (PyCell_New) can safely DECREF old (null is safe).
+                entryBuilder.CreateStore(llvm::ConstantPointerNull::get(pyObjectPtrTy), alloca);
+                valueMap[slot] = alloca;
+            }
         }
 
         std::unordered_map<std::string, llvm::BasicBlock*> blockMap;
@@ -845,6 +936,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
         llvm::BasicBlock* curBlock = entry;
         for (const auto& inst : f.body) {
+            // C: skip any non-label instruction if current block already terminated
+            // (can happen if IR list has ops after a 'ret' due to control-flow lowering).
+            // Labels are allowed because they may switch to a live block.
+            if (curBlock->getTerminator() && inst.op != "label") {
+                continue;
+            }
             if (inst.op == "label") {
                 auto it = blockMap.find(inst.result);
                 if (it != blockMap.end()) {

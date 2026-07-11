@@ -1,6 +1,6 @@
 # pyc — Implemented Features
 
-Current test count: **254 strict-pass / 259 total** (251 curated + 8 FILE_CASES; FILE_CASES are now strictly validated by the runner and 1 currently fails — see `CORRECTNESS.md` and `tests/runner.py`).
+Current test count: **258 strict-pass / 263 total** (runner shows 258/263; 3 pre-existing unrelated DIFFs in nbody/hash/features; see `CORRECTNESS.md` and `tests/runner.py`).
 
 **Bug fixes:** `PyObject_Print` now flushes stdout after every print call (ensures output is visible when stdout is fully buffered). `pyc_setup_sys` now properly DECREFs all allocated index and string objects (fixes memory leaks). Subscript AugAssign (`a[i] += 1`) now carries result type metadata for native arithmetic optimization. Corrected `llvm::cast` → `llvm::dyn_cast` in class codegen. Fixed `PyDict_GetItem` to always return new references (caller responsible for DECREF). Added `ownedSlots` tracking in codegen assign path to DECREF old values on reassignment. LLVM verification failures are now fatal.
 
@@ -77,8 +77,9 @@ the token is the runtime string value and the list is the flat argument list
 (with dynamic * contents spliced in for indirect callees). Generated
 `__apply__<name>` adapters (registered at module startup) perform the actual
 dispatch and are shape-aware for targets that declare `*vararg`. Direct targets
-use fast paths or `__va_*` wrappers. **kwargs and full first-class objects with
-cells/closures remain future work.
+use fast paths or `__va_*` wrappers. Full first-class objects (identity/equality) and
+`**kwargs` remain future; cells/closures (B5) are now implemented for `nonlocal`,
+nested defs, and capturing lambdas (descriptor bundles + hidden cell params + adapters).
 
 ## Assignment forms
 
@@ -196,8 +197,8 @@ with Dummy():
 
 ## Not yet implemented (or partial)
 
-- `lambda` expressions (B4 complete for the common model): write `lambda`, assign/pass/store/return/unpack/subscript it, call directly or indirectly via string "callable tokens" + `Pyc_Apply(token, list)` + generated `__apply__<name>` adapters (registered at startup). Dynamic `*args` works at indirect call sites (spliced into the flat list for `Pyc_Apply`). Lambdas may declare `*args` in their signature; callee-side collection works. Adapters are shape-aware for targets that declare `*vararg`. Limitations still pending: full first-class function objects (identity/equality), cells/`nonlocal`/true closures, `**kwargs`.
-- `nonlocal` statement (B5): single- and multi-level nesting (owner, assigning intermediates, forward-only scopes that only declare `nonlocal` to forward the cell); AugAssign to cell-backed names (`x += k`, etc. — explicit `PyCell_Get` of LHS + `PyCell_Set` of result); multi-target unpack into nonlocals (`a,b = b,a`). Cells allocated in the owning scope (with param capture), hidden leading `<name>_cell` parameters synthesized and passed on direct calls, uniform `<name>_cell` slot convention, `isCellBackedHere` predicate, and `PyCell_New/Get/Set/Check` (type=6). 4+ curated B5 cases (incl. augassign + unpack + multi-level) are green at --opt=0. Deeper aliasing, lambdas capturing cells, and class interactions remain future work.
+- `lambda` expressions (B4 complete for the token model): write `lambda`, assign/pass/store/return/unpack/subscript it, call directly or indirectly via string "callable tokens" + `Pyc_Apply(token, list)` + generated `__apply__<name>` adapters (registered at startup). Dynamic `*args` works at indirect call sites (spliced into the flat list for `Pyc_Apply`). Lambdas may declare `*args` in their signature; callee-side collection works. Adapters are shape-aware for targets that declare `*vararg`. Full first-class objects (identity/equality) and `**kwargs` remain future.
+- `nonlocal` / cells (B5): single- and multi-level nesting (owner, assigning intermediates, forward-only forwarders); AugAssign to cell-backed names (`x += k`); multi-target unpack into nonlocals (`a,b = b,a`). Cells allocated in the owning scope (with param capture), hidden leading `<name>_cell` parameters, uniform `<name>_cell` slots, `isCellBackedHere`, and `PyCell_New/Get/Set/Check` (type=6). Capturing lambdas use descriptor bundles `[token, cell0, ...]` (plus prebound defaults for `lambda` defaults); adapters inject trailing defaults when fewer args are supplied. `tests/closures.py` (counters, adder, loop-var `lambda val=val`) matches CPython at --opt=0. Deeper aliasing and class interactions remain future work.
 - `import` / module system (partial): `import sys` registers `sys` as a module-level global, but `sys.version` and other attributes are not available. User module imports not yet supported.
 - `*args` / `**kwargs` (call-site * works for literals (static) and dynamic cases (via __va wrappers for direct targets or flat-list splice for indirect `Pyc_Apply`); declared * collection on callee side works; adapters support *vararg targets; **kwargs pending)
 - Walrus operator `:=`

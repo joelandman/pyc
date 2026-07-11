@@ -488,14 +488,15 @@ Sorted by criticality (most critical at top).
 ### 42. Closures (`nonlocal` + nested functions) Produce No Output
 
 **Severity:** High  
-**Location:** `src/Compiler.cpp` (cell allocation, nonlocal lowering), `src/codegen/Codegen.cpp` (cell get/set codegen), `src/runtime/` (cell runtime primitives)  
-**Status: OPEN**
+**Location:** `src/Compiler.cpp` (cell allocation, nonlocal lowering, bundle/defaults), `src/codegen/Codegen.cpp` (cell wiring, adapter defaults), `src/runtime/Runtime.cpp` (PyCell_*, Pyc_Apply bundle handling)  
+**Status: FIXED**
 
-- `tests/closures.py` compiles successfully but produces empty output instead of expected closure results.
-- The test exercises: basic closures (`make_counter`), closures capturing multiple variables (`make_adder`), closures over loop variables, and `nonlocal` variable access.
-- The compiler generates IR with `PyCell_New`, `PyCell_Get`, `PyCell_Set` calls, but the runtime execution produces no output (empty stdout).
-- Root cause investigation: The IR generation for nested functions with `nonlocal` variables appears correct, but the runtime binding of cells between enclosing and nested functions may be incomplete.
-- Related: The `inner` function name collision issue was fixed by ensuring nested functions get unique IR names when multiple nested functions share the same name.
+- `tests/closures.py` now matches CPython exactly (basic `make_counter`, `make_adder`, loop-var capture via `lambda val=val`, and `nonlocal`).
+- B5 model: cells are PyObject* with type=6; primitives `PyCell_New/Get/Set/Check`. Owning scopes allocate via `PyCell_New(param_or_null)` into `<name>_cell` slots. Nested functions receive cells via hidden leading `<name>_cell` params (recorded in `IRFunction::freeCellVars`).
+- Capturing callables (defs/lambdas) lower to descriptor bundles `[token, cell0, ...]` (and prebound defaults for trailing `lambda` defaults). Call sites extract cells and pass as leading args. `Pyc_Apply` accepts bundles and splices extras.
+- Indirect adapters (`__apply__<name>`) now handle fewer user args by injecting `__default_<name>_<k>` globals (recorded per `IRFunction::defaultGlobals`).
+- Lists holding bundles and subscripts from them are marked so token/bundle propagation continues through containers.
+- Related prior fixes: unique `__nesteddef_N` / `__lambda_N` IR names; `lambdaAliases`; owned vs free cell separation; INCREF of received cells; no result capture on `PyList_Append` for bundles.
 
 ---
 
@@ -504,7 +505,7 @@ Sorted by criticality (most critical at top).
 | Severity | Count | Status |
 |----------|-------|--------|
 | Critical | 3 | All FIXED |
-| High | 32 | 31 FIXED, 1 OPEN |
+| High | 32 | 32 FIXED |
 | Medium | 3 | All FIXED |
 | Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **43** | **41 FIXED, 1 OPEN, 1 UNSUPPORTED** |
+| **Total** | **43** | **42 FIXED, 1 UNSUPPORTED** |
