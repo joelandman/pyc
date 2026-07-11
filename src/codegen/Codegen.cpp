@@ -434,6 +434,26 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // Number of leading *user* fixed params in the post-cell Pyc arg list.
         size_t userFixed = hasVar ? vidx : origUserParams;
 
+        // Adapter must supply defaults for trailing defaulted params when the
+        // incoming Pyc arg list (after cells) has fewer user args than the
+        // function's userFixed params. We discover defaults either from the
+        // IRFunction annotation or by probing module globals by the
+        // conventional __default_<name>_<k> names (defensive for top-level
+        // defaulted functions).
+        std::vector<std::string> defSlots = f.defaultGlobals;
+        size_t ndef = defSlots.size();
+        if (ndef == 0) {
+            for (int k = 0; ; ++k) {
+                std::string s = "__default_" + f.name + "_" + std::to_string(k);
+                if (module->getNamedGlobal("pyc_global_" + s)) {
+                    defSlots.push_back(s);
+                } else {
+                    break;
+                }
+            }
+            ndef = defSlots.size();
+        }
+
         std::vector<llvm::Value*> cargs;
         llvm::Function* listGet = module->getFunction("PyList_GetItem");
         llvm::Function* listSize = module->getFunction("PyList_Size");
@@ -467,7 +487,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Value* zero64 = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
         llvm::Value* isNeg = abuilder.CreateICmpSLT(userLen, zero64);
         userLen = abuilder.CreateSelect(isNeg, zero64, userLen, "ulen");
-        size_t ndef = f.defaultGlobals.size();
+        // Recompute ndef/firstDef from the (possibly probed) defSlots for this adapter.
+        ndef = defSlots.size();
         size_t firstDef = (userFixed > ndef) ? (userFixed - ndef) : 0;
         for (size_t i = 0; i < userFixed; ++i) {
             llvm::Value* iV = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i);
@@ -483,14 +504,29 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             abuilder.CreateBr(after);
             abuilder.SetInsertPoint(missB);
             llvm::Value* elMiss = llvm::ConstantPointerNull::get(pyObjectPtrTy);
-            if (ndef > 0 && i >= firstDef) {
-                size_t dk = i - firstDef;
-                if (dk < ndef) {
-                    std::string gname = "pyc_global_" + f.defaultGlobals[dk];
-                    if (auto* gv = module->getNamedGlobal(gname)) {
-                        elMiss = abuilder.CreateLoad(pyObjectPtrTy, gv, "d" + std::to_string(dk));
-                        if (llvm::Function* inc = module->getFunction("Py_INCREF")) {
-                            abuilder.CreateCall(inc, {elMiss});
+            // Always try to load a default for this user position on miss.
+            // For top-level defaulted funcs the convention is __default_<name>_<i>
+            // for the i-th declared (regular) param when it has a default.
+            // We also try the mapped dk and any recorded defSlots.
+            {
+                std::vector<size_t> cands;
+                cands.push_back(i);
+                if (ndef > 0 && i >= firstDef) cands.push_back(i - firstDef);
+                for (size_t candk : cands) {
+                    // conventional using the IR/python name
+                    std::string conv = "__default_" + f.name + "_" + std::to_string(candk);
+                    if (auto* gv = module->getNamedGlobal("pyc_global_" + conv)) {
+                        elMiss = abuilder.CreateLoad(pyObjectPtrTy, gv, "d" + std::to_string(candk));
+                        if (auto* inc = module->getFunction("Py_INCREF")) abuilder.CreateCall(inc, {elMiss});
+                        break;
+                    }
+                    // using any probed/recorded slot name
+                    if (candk < defSlots.size()) {
+                        std::string gname = "pyc_global_" + defSlots[candk];
+                        if (auto* gv = module->getNamedGlobal(gname)) {
+                            elMiss = abuilder.CreateLoad(pyObjectPtrTy, gv, "d" + std::to_string(candk));
+                            if (auto* inc = module->getFunction("Py_INCREF")) abuilder.CreateCall(inc, {elMiss});
+                            break;
                         }
                     }
                 }

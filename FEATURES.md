@@ -1,6 +1,6 @@
 # pyc — Implemented Features
 
-Current test count: **258 strict-pass / 263 total** (runner shows 258/263; 3 pre-existing unrelated DIFFs in nbody/hash/features; see `CORRECTNESS.md` and `tests/runner.py`).
+Current test count: **263/263** (runner shows 263/263, file_case_failures=0; see `CORRECTNESS.md` and `tests/runner.py`).
 
 **Bug fixes:** `PyObject_Print` now flushes stdout after every print call (ensures output is visible when stdout is fully buffered). `pyc_setup_sys` now properly DECREFs all allocated index and string objects (fixes memory leaks). Subscript AugAssign (`a[i] += 1`) now carries result type metadata for native arithmetic optimization. Corrected `llvm::cast` → `llvm::dyn_cast` in class codegen. Fixed `PyDict_GetItem` to always return new references (caller responsible for DECREF). Added `ownedSlots` tracking in codegen assign path to DECREF old values on reassignment. LLVM verification failures are now fatal.
 

@@ -151,21 +151,37 @@ public:
             }
             ir.setFunctionGlobals(defIRName, funcGlobals);
 
-            // Count defaults and collect their values
+            // Count defaults and collect their values.
+            // IMPORTANT: lower the default *expressions* in the definition context (the
+            // outer 'saved' scope) so that any temps they allocate (e.g. fconst for 0.0)
+            // and the values they produce are valid in the scope where we emit the
+            // "assign" into 'saved'. Previously we lowered while currentFunc was the
+            // inner function, so Constant defaults (floats especially) produced temps
+            // that didn't exist in the outer, resulting in nulls stored to the default
+            // globals.
             std::vector<std::string> defaults;
             size_t defaultIndex = 0;
-            for (const auto& c : node->children) {
-                if (c && c->type == "Default") {
-                    std::string defVal = lowerExpr(c.get());
-                    std::string slot = "__default_" + node->id + "_" + std::to_string(defaultIndex++);
-                    ir.addModuleGlobal(slot);
-                    ir.addInstruction(saved, "assign", {defVal}, slot);
-                    defaults.push_back(slot);
+            {
+                std::string savedCF = currentFunc;
+                currentFunc = saved;
+                for (const auto& c : node->children) {
+                    if (c && c->type == "Default") {
+                        std::string defVal = lowerExpr(c.get());
+                        std::string slot = "__default_" + node->id + "_" + std::to_string(defaultIndex++);
+                        ir.addModuleGlobal(slot);
+                        ir.addInstruction(saved, "assign", {defVal}, slot);
+                        defaults.push_back(slot);
+                    }
                 }
+                currentFunc = savedCF;
             }
             if (!defaults.empty()) {
                 funcDefaultCount[node->id] = defaults.size();
                 funcDefaultValues[node->id] = defaults;
+                funcDefaultValues[defIRName] = defaults;
+                funcDefaultCount[defIRName] = defaults.size();
+                for (auto& fnr : ir.functions) if (fnr.name == defIRName) { fnr.defaultGlobals = defaults; break; }
+                for (auto& fnr : ir.functions) if (fnr.name == node->id) { fnr.defaultGlobals = defaults; break; }
             }
 
             // (The IRFunction was already inserted above with bare param names.
@@ -349,47 +365,67 @@ public:
                     }
                     funcFreeCells[defIRName] = frees;
                 }
-                // B5: capture *implicit* enclosing reads (no 'nonlocal' decl).
-                // A nested may read a name from an enclosing scope without declaring nonlocal
-                // (only writes require the declaration). Add any such used name that is not
-                // local/param here to frees so the nested receives the cell as a hidden param.
-                {
-                    std::unordered_set<std::string> used;
-                    std::function<void(const ASTNode*)> walk = [&](const ASTNode* n) {
-                        if (!n) return;
-                        if (n->type == "FunctionDef" || n->type == "Lambda") return;
-                        if (n->type == "Name" && !n->id.empty()) used.insert(n->id);
-                        for (const auto& c : n->children) walk(c.get());
-                    };
-                    for (const auto& c : node->children) walk(c.get());
+            // B5: capture *implicit* enclosing reads (no 'nonlocal' decl).
+            // Only for nested functions (top-level defs have no enclosing cell scope).
+            // A nested may read a name from an enclosing scope without declaring nonlocal
+            // (only writes require the declaration). Add any such used name that is not
+            // local/param here to frees so the nested receives the cell as a hidden param.
+            bool isNestedDefForCells = !saved.empty() && saved != "__module__";
+            if (isNestedDefForCells) {
+                std::unordered_set<std::string> used;
+                std::function<void(const ASTNode*)> walk = [&](const ASTNode* n) {
+                    if (!n) return;
+                    if (n->type == "FunctionDef" || n->type == "Lambda") return;
+                    if (n->type == "Name" && !n->id.empty()) used.insert(n->id);
+                    for (const auto& c : n->children) walk(c.get());
+                };
+                for (const auto& c : node->children) walk(c.get());
 
-                    std::unordered_set<std::string> localsHere;
-                    for (auto& a : node->args) {
-                        std::string b = a;
-                        if (!b.empty() && b[0] == '*') b = b.substr(1);
-                        if (!b.empty() && b[0] == '*') b = b.substr(1);
-                        if (!b.empty()) localsHere.insert(b);
-                    }
-                    std::function<void(const ASTNode*)> scanAsg = [&](const ASTNode* n) {
-                        if (!n) return;
-                        if (n->type == "FunctionDef" || n->type == "Lambda") return;
-                        if (n->type == "Assign" && !n->id.empty()) localsHere.insert(n->id);
-                        for (const auto& c : n->children) scanAsg(c.get());
-                    };
-                    for (const auto& c : node->children) scanAsg(c.get());
-
-                    for (const auto& nm : used) {
-                        if (localsHere.count(nm) == 0) {
-                            // Never treat a nested def defined in *this* scope as a free cell
-                            // from an enclosing scope. Those are bindings created here, not
-                            // variables captured from above.
-                            if (nestedDefNamesInThisScope.count(nm)) continue;
-                            if (std::find(frees.begin(), frees.end(), nm) == frees.end())
-                                frees.push_back(nm);
+                std::unordered_set<std::string> localsHere;
+                for (auto& a : node->args) {
+                    std::string b = a;
+                    if (!b.empty() && b[0] == '*') b = b.substr(1);
+                    if (!b.empty() && b[0] == '*') b = b.substr(1);
+                    if (!b.empty()) localsHere.insert(b);
+                }
+                std::function<void(const ASTNode*)> scanAsg = [&](const ASTNode* n) {
+                    if (!n) return;
+                    if (n->type == "FunctionDef" || n->type == "Lambda") return;
+                    if (n->type == "Assign" && !n->id.empty()) localsHere.insert(n->id);
+                    if (n->type == "For") {
+                        // for-loop targets are locals in this scope
+                        if (!n->id.empty() && n->id != "__unpack__") {
+                            localsHere.insert(n->id);
+                        } else if (!n->children.empty() && n->children[0]) {
+                            std::function<void(const ASTNode*)> pat = [&](const ASTNode* p) {
+                                if (!p) return;
+                                if (p->type == "Name" && !p->id.empty()) localsHere.insert(p->id);
+                                if (p->type == "Tuple" || p->type == "List") {
+                                    for (auto& ch : p->children) pat(ch.get());
+                                }
+                            };
+                            pat(n->children[0].get());
                         }
                     }
-                    funcFreeCells[defIRName] = frees;
+                    for (const auto& c : n->children) scanAsg(c.get());
+                };
+                for (const auto& c : node->children) scanAsg(c.get());
+
+                for (const auto& nm : used) {
+                    if (localsHere.count(nm) == 0) {
+                        // Never treat a nested def defined in *this* scope as a free cell
+                        // from an enclosing scope. Those are bindings created here, not
+                        // variables captured from above.
+                        if (nestedDefNamesInThisScope.count(nm)) continue;
+                        if (std::find(frees.begin(), frees.end(), nm) == frees.end())
+                            frees.push_back(nm);
+                    }
                 }
+                funcFreeCells[defIRName] = frees;
+            } else {
+                // Top-level defs never receive incoming cell params.
+                funcFreeCells[defIRName] = {};
+            }
             }
 
             // B5: if this nested function has free cells, synthesize hidden leading parameters
@@ -1838,6 +1874,32 @@ private:
                 auto it = funcDefaultValues.find(funcName);
                 if (it != funcDefaultValues.end()) {
                     argRes = it->second;
+                }
+            }
+            // 0-supplied direct call to a known function that has defaults:
+            // pad trailing defaults so the callee receives them even with 0 user args.
+            if (!hadRuntimeStar) {
+                auto dit = funcDefaultValues.find(funcName);
+                auto pit = funcParamNames.find(funcName);
+                if (dit != funcDefaultValues.end() && pit != funcParamNames.end()) {
+                    const auto& params = pit->second;
+                    const auto& defaults = dit->second;
+                    size_t ndefaults = defaults.size();
+                    if (ndefaults > 0) {
+                        size_t first_star = params.size();
+                        for (size_t j = 0; j < params.size(); ++j) {
+                            if (!params[j].empty() && params[j][0] == '*') { first_star = j; break; }
+                        }
+                        size_t nregular = first_star;
+                        if (argRes.size() < nregular) argRes.resize(nregular, "");
+                        for (size_t i = 0; i < ndefaults; ++i) {
+                            size_t reg_idx = nregular - ndefaults + i;
+                            if (reg_idx < argRes.size() && argRes[reg_idx].empty()) {
+                                argRes[reg_idx] = defaults[i];
+                            }
+                        }
+                        while (!argRes.empty() && argRes.back().empty()) argRes.pop_back();
+                    }
                 }
             }
         }
