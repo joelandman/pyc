@@ -126,11 +126,14 @@ Milestone (updated): Visible `range` loop variables are unboxed; the getAsPyObje
 - Adapters: skipped for specialized variants (they're only called directly from original functions which box args).
 - Test: 219/263 passing (same as before); specialized variants visible in LLVM IR for direct calls; nbody.py correct.
 
-### A7. Measurement and Guardrails
-- Add microbenchmarks (extend BENCHMARKS.md) for pure numeric loops, list[int] mutation, and mixed code.
-- Ensure every optimization has an opt-out or a conservative "assume boxed" path.
-- Run the full test suite (`make check`) after every change; the nbody regression case must continue to match CPython output.
-- Use `perf` / allocation counters to quantify wins (target remains the general compiler path, not benchmark-specific hacks).
+### A7. Measurement and Guardrails — **DONE (2026-07)**
+- Updated BENCHMARKS.md with current optimization status (A1-A6 documented)
+- Added microbenchmark test files: `opt_numeric_loop.py`, `opt_homogeneous_list.py`, `opt_function_call.py`, `opt_mixed_code.py`
+- All 4 new microbenchmarks pass in runner (223/267 total)
+- Guardrails: every optimization preserves boxed fallback path; `getAsPyObject` handles escape boxing; `numericLocals` kill on non-numeric assign
+- nbody.py continues to match CPython output (-0.169075164)
+
+### A8. ... (future work)
 
 ---
 

@@ -574,6 +574,11 @@ FILE_CASES = [
     ("opt_numeric_lists.py", []),
     ("opt_args_defaults.py", ["1"]),
     ("opt_nested_destructuring.py", []),
+    # A7: microbenchmarks for optimization measurement
+    ("opt_numeric_loop.py", []),
+    ("opt_homogeneous_list.py", []),
+    ("opt_function_call.py", []),
+    ("opt_mixed_code.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

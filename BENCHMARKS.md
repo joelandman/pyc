@@ -31,49 +31,60 @@ The compiler should achieve **50x speedup** over CPython for this benchmark.
 That target is for the general compiler path, not benchmark-specific codegen.
 Special-casing `tests/nbody.py` is intentionally avoided.
 
-### Known Limitations
+## Current Optimizations (2026-07)
+
+### A1-A2: Type Tracking and Unboxed Numeric Locals
+- `valueTypes` tracking with loop widening for type stability
+- Visible range loop variables use native i64 storage (no boxing per iteration)
+- Escape points (calls, returns, containers) box on demand via `getAsPyObject`
+
+### A3: Widen Native Arithmetic
+- `+ - *` with proven `resultType=int|float` use native LLVM arithmetic
+- `// %` have native i64 paths with Python floor semantics and zero-division fallback
+- `**` for small constant exponents (0-8) peeled into repeated `mul`
+- Unary minus uses native `neg` when operand is numeric
+- Codegen intercepts boxed runtime calls when operands are native
+
+### A4: Homogeneous Numeric Lists
+- List comprehensions/literals create `list_int`/`list_float` when element type is proven numeric
+- Native `PyList_GetItemInt64`/`PyList_GetItemDouble`/`PyList_SetItemInt64`/`PyList_SetItemDouble`
+- Runtime printing fixed for homogeneous lists
+
+### A5: Allocation Sinking
+- `numericLocals` tracking for variables that stay numeric
+- Native i64 alloca for numeric locals (no boxing cycle)
+- Escape always boxes via `getAsPyObject`
+
+### A6: Specialized Function Variants
+- Call-site type tracking: `callSiteTypes` records argument types at each call site
+- `generateSpecializedVariants()` creates native-param variants when all call sites use consistent numeric types
+- Codegen registers variants with native LLVM types (i64/double)
+- Call sites dispatch to specialized variants with native args (no boxing)
+- Adapters skipped for specialized variants
+
+## Known Limitations
 
 Current known issues that impact performance:
 
 - The runtime provides only a synthetic `sys` module for `sys.argv`, not a full
   import/module system
-- Excessive heap allocations due to PyObject* boxing
-- High sys time due to memory allocation overhead
-- Numeric list elements are still represented as boxed objects
-- Numeric arithmetic in hot loops still allocates boxed result objects
+- Function parameters are still boxed (type tracking doesn't know parameter types at lowering)
+- Mixed-type code falls back to boxed runtime path
+- Division by zero handling requires runtime call (native would produce inf/nan)
+- ** (power) for non-constant exponents uses boxed `Pyc_Pow`
 
-## Current General Optimization Work
+## Profiling
 
-The compiler now lowers `for ... in range(...)` directly to loop control-flow
-blocks instead of allocating a boxed range list. Hidden `range` loop counters
-use native i64 compare/increment operations, while the Python-visible loop
-variable remains boxed for correctness.
+Use `perf` or `strace` to identify bottlenecks:
 
-Proven numeric `+`, `-`, and `*` operations now lower to native LLVM arithmetic
-and box the result afterward. Division remains on the boxed runtime path because
-the runtime currently handles divide-by-zero by returning `NULL`; native floating
-division would silently produce `inf`/`nan` and change behavior.
+```bash
+perf record /tmp/nbody_compiled 5000000
+perf report
 
-The next planned optimizations are:
+strace -c /tmp/nbody_compiled 5000000
+```
 
-1. Longer-lived unboxed numeric locals inside proven numeric regions.
-2. Homogeneous numeric-vector list representations for `list[int]` and
-   `list[float]`.
-3. Specialized function variants selected from proven call-site argument types.
-4. Allocation sinking for temporary boxed numbers that do not escape.
-
-Every optimization should preserve the boxed fallback path for uncertain or
-mixed-type code.
-
-### Notes
-
-- The benchmark uses 5,000,000 iterations for meaningful timing
-- Python 3.14+ required (uses modern AST structure)
-- Compiler flags: `--opt=2` or `--opt=3` for optimization
-- `tests/runner.py` includes `tests/nbody.py 100` as a correctness regression
-  for the general compiler path
-
-## Additional Benchmarks
+## Microbenchmarks
 
 ### Simple Loop Test
 
@@ -97,13 +108,30 @@ python3 /tmp/arithmetic_test.py
 /tmp/arithmetic_test
 ```
 
-## Profiling
-
-Use `perf` or `strace` to identify bottlenecks:
+### Homogeneous List Test
 
 ```bash
-perf record /tmp/nbody_compiled 5000000
-perf report
+echo 'lst = [i for i in range(1000000)]
+s = 0
+for x in lst:
+    s += x
+print(s)' > /tmp/list_test.py
+python3 /tmp/list_test.py
+./build/pyc /tmp/list_test.py -o /tmp/list_test --opt=2
+/tmp/list_test
+```
 
-strace -c /tmp/nbody_compiled 5000000
+### Function Call Test
+
+```bash
+echo 'def add(a, b):
+    return a + b
+
+s = 0
+for i in range(100000):
+    s = add(s, i)
+print(s)' > /tmp/call_test.py
+python3 /tmp/call_test.py
+./build/pyc /tmp/call_test.py -o /tmp/call_test --opt=2
+/tmp/call_test
 ```
