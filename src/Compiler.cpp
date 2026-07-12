@@ -1693,7 +1693,24 @@ class LoweringVisitor {
                         initParams.push_back(param);
                     }
                 } else {
-                    initParams.push_back("self");
+                    // B6: Check base classes for __init__ parameters
+                    // Find the first base class that has __init__ defined
+                    for (const auto& base : node->args) {
+                        if (base.empty() || base == "(complex base)") continue;
+                        auto basePit = classInitParams.find(base);
+                        if (basePit != classInitParams.end() && !basePit->second.empty()) {
+                            std::string params = basePit->second;
+                            std::stringstream ss(params);
+                            std::string param;
+                            while (std::getline(ss, param, ',')) {
+                                initParams.push_back(param);
+                            }
+                            break;
+                        }
+                    }
+                    if (initParams.empty()) {
+                        initParams.push_back("self");
+                    }
                 }
                 ir.addFunction(initName, initParams);
                 knownIRFunctions.insert(initName);
@@ -4246,12 +4263,30 @@ class LoweringVisitor {
         ir.addInstruction("__module__", "call", {"PyDict_New"}, classDictTemp, "dict");
         // Register class name as known IR function so it can be called directly
         knownIRFunctions.insert(className);
+        
+        // B6: Track whether this class defines its own __init__
+        bool hasOwnInitDefined = false;
+        
+        // B6: Handle inheritance - copy methods from base classes
+        // Bases are stored in node->args by the parser
+        for (const auto& baseName : node->args) {
+            if (baseName.empty() || baseName == "(complex base)") continue;
+            // Copy methods from base class to derived class
+            // The base class dict is stored in a module global with the same name
+            std::string baseDictLoad = "t" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "call", {"PyObject_GetAttr", baseName, "__dict__"}, baseDictLoad);
+            // Update classDictTemp to include base methods
+            std::string dummy = "t" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "call", {"PyDict_Update", classDictTemp, baseDictLoad}, dummy);
+        }
+        
         // Process all methods
         for (const auto& c : node->children) {
             if (!c || c->type != "FunctionDef") continue;
             std::string methodName = c->id;
             knownIRFunctions.insert(methodName);
             if (methodName == "__init__") {
+                hasOwnInitDefined = true;
                 // Store __init__ param names from the AST
                 std::string initParams;
                 for (size_t i = 0; i < c->args.size(); ++i) {
@@ -4344,6 +4379,47 @@ class LoweringVisitor {
         // Store class dict as the class value
         ir.addInstruction("__module__", "assign", {classDictTemp}, className);
         noteType(className, "dict");
+        
+        // B6: If this class doesn't define __init__, create a wrapper that calls base __init__
+        if (!hasOwnInitDefined) {
+            std::string initName = className + "__init__";
+            std::string baseInitName = "";
+            for (const auto& base : node->args) {
+                if (base.empty() || base == "(complex base)") continue;
+                auto basePit = classInitParams.find(base);
+                if (basePit != classInitParams.end() && !basePit->second.empty()) {
+                    baseInitName = base + "__init__";
+                    break;
+                }
+            }
+            if (!baseInitName.empty()) {
+                // Determine params from base __init__ (includes "self")
+                std::vector<std::string> initParams;
+                auto basePit = classInitParams.find(baseInitName.substr(0, baseInitName.find("__init__")));
+                if (basePit != classInitParams.end()) {
+                    std::string params = basePit->second;
+                    std::stringstream ss(params);
+                    std::string param;
+                    while (std::getline(ss, param, ',')) {
+                        initParams.push_back(param);
+                    }
+                }
+                ir.addFunction(initName, initParams);
+                knownIRFunctions.insert(initName);
+                std::string savedFunc = currentFunc;
+                currentFunc = initName;
+                std::vector<std::string> callArgs;
+                callArgs.push_back(baseInitName);
+                // Pass all params (including self)
+                for (size_t i = 0; i < initParams.size(); ++i) {
+                    callArgs.push_back(initParams[i]);
+                }
+                std::string dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(initName, "call", callArgs, dummy);
+                ir.addInstruction(initName, "ret", {"self"});
+                currentFunc = savedFunc;
+            }
+        }
     }
 
     // x if cond else y  — IfExp (ternary)
