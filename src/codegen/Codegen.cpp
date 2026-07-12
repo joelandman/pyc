@@ -389,7 +389,39 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // The C runtime's `main` is provided by src/runtime/MainWrapper.cpp.
         // The module entry and a Python `def main` are distinct symbols.
         std::string irName = llvmFunctionName(f.name);
-        std::vector<llvm::Type*> argTypes(f.args.size(), pyObjectPtrTy);
+        
+        // A6: Detect specialized variants (name starts with "__specialized_").
+        // Format: __specialized_<funcName>_<sig> where sig = "i"/"f" per param.
+        // Params: [cell params...] + [original param names].
+        // The sig length = number of user params (f.args.size() - f.freeCellVars.size()).
+        bool isSpecialized = (f.name.find("__specialized_") == 0);
+        std::vector<llvm::Type*> argTypes;
+        if (isSpecialized) {
+            size_t ncells = f.freeCellVars.size();
+            size_t nuserParams = (f.args.size() >= ncells) ? (f.args.size() - ncells) : 0;
+            // Parse sig from variant name: everything after "__specialized_<funcName>_"
+            // The sig is the last nuserParams chars of the name.
+            std::string sig;
+            if (nuserParams > 0 && f.name.size() > nuserParams) {
+                sig = f.name.substr(f.name.size() - nuserParams);
+            }
+            for (size_t i = 0; i < f.args.size(); ++i) {
+                if (i < ncells) {
+                    // Cell params are always PyObject*
+                    argTypes.push_back(pyObjectPtrTy);
+                } else {
+                    // User params: native type based on sig position
+                    size_t sigIdx = i - ncells;
+                    if (sigIdx < sig.size() && sig[sigIdx] == 'f') {
+                        argTypes.push_back(llvm::Type::getDoubleTy(context));
+                    } else {
+                        argTypes.push_back(llvm::Type::getInt64Ty(context));
+                    }
+                }
+            }
+        } else {
+            argTypes.assign(f.args.size(), pyObjectPtrTy);
+        }
         llvm::FunctionType* funcType = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
         llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, irName, module.get());
     }
@@ -403,6 +435,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     // Also register each adapter with the runtime so Pyc_Apply(token, list) works.
     for (const auto& f : ir.functions) {
         if (f.name.empty() || f.name == "__module__") continue;
+        // A6: Skip adapter generation for specialized variants.
+        // Specialized variants are only called directly from the original function
+        // (which boxes arguments), so they don't need indirect dispatch adapters.
+        if (f.name.find("__specialized_") == 0) continue;
         std::string adapterName = "__apply__" + f.name;
         llvm::FunctionType* aty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function* adapter = llvm::Function::Create(aty, llvm::Function::ExternalLinkage, adapterName, module.get());
@@ -659,17 +695,37 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // All allocas must dominate all uses, so they're always inserted here.
         llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
                                        func->getEntryBlock().begin());
+        // A6: Detect specialized variants for native param allocation.
+        bool funcIsSpecialized = (f.name.find("__specialized_") == 0);
+        size_t nativeParamStart = 0;
+        std::string nativeSig;
+        if (funcIsSpecialized) {
+            nativeParamStart = f.freeCellVars.size();
+            if (nativeParamStart < f.args.size() && f.name.size() > nativeParamStart) {
+                nativeSig = f.name.substr(f.name.size() - (f.args.size() - nativeParamStart));
+            }
+        }
         for (size_t i = 0; i < f.args.size(); ++i) {
             llvm::Value* arg = func->getArg(i);
             if (!f.args[i].empty()) {
                 arg->setName(f.args[i]);
+                // A6: For specialized variants, user params get native-typed allocas.
+                llvm::Type* slotType = pyObjectPtrTy;
+                if (funcIsSpecialized && i >= nativeParamStart) {
+                    size_t sigIdx = i - nativeParamStart;
+                    if (sigIdx < nativeSig.size() && nativeSig[sigIdx] == 'f') {
+                        slotType = llvm::Type::getDoubleTy(context);
+                    } else {
+                        slotType = llvm::Type::getInt64Ty(context);
+                    }
+                }
                 // For parameters, create an entry-block alloca that shadows
                 // the parameter, and add the *alloca* to valueMap. This way
                 // subsequent assigns to the parameter name write to the
                 // alloca (and can be observed by future loads), and
                 // initial reads return the parameter value. The alloca is
                 // initialised in the entry block so it dominates all uses.
-                llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, f.args[i] + ".slot");
+                llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(slotType, nullptr, f.args[i] + ".slot");
                 entryBuilder.CreateStore(arg, alloca);
                 valueMap[f.args[i]] = alloca;
                 // B5: if this is a hidden cell parameter (suffixed _cell from freeCellVars),
@@ -1969,43 +2025,102 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         // Track which args were native (i64/double) so that getAsPyObject's
                         // anonymous box can be DECREFed after the call.
                         std::vector<bool> argWasNative;
-                        for (size_t i = 1; i < inst.operands.size(); ++i) {
-                            llvm::Value* raw = getOrLoad(inst.operands[i].name);
-                            bool isNative = raw && (raw->getType() == llvm::Type::getInt64Ty(context)
-                                                    || raw->getType()->isDoubleTy());
-                            argWasNative.push_back(isNative);
-                            callArgs.push_back(getAsPyObject(inst.operands[i].name));
-                        }
-                        if (callee->getReturnType()->isVoidTy()) {
-                            builder.CreateCall(callee, callArgs);
-                        } else {
-                            llvm::Value* callRes = builder.CreateCall(callee, callArgs, inst.result);
-                            valueMap[inst.result] = callRes;
-                            bool isUserFunc = !callee->isDeclaration()
-                                             || userFunctionNames.count(funcName) > 0;
-                            if (!inst.result.empty() && tempUseCounts.count(inst.result) == 0
-                                && isUserFunc) {
-                                // Result of a user-defined function is never used — free immediately.
-                                // User functions always return new refs.
-                                // Runtime library functions may return borrowed refs, so we only
-                                // do this for user-defined functions (identified by userFunctionNames
-                                // set, which handles forward-declared functions not yet having bodies).
-                                llvm::Function* decref2 = module->getFunction("Py_DECREF");
-                                if (decref2) builder.CreateCall(decref2, {callRes});
-                            } else {
-                                markOwned(inst.result);
+                        
+                        // A6: Check if there's a specialized variant for this call.
+                        // If the current function is NOT a specialized variant itself,
+                        // and all args are numeric, dispatch to the specialized variant.
+                        bool useSpecialized = false;
+                        std::string specializedName;
+                        if (f.name.find("__specialized_") == std::string::npos) {
+                            // Check each possible specialized variant signature
+                            size_t numArgs = inst.operands.size() - 1;
+                            if (numArgs > 0) {
+                                // Check if all args are numeric
+                                bool allNumeric = true;
+                                std::string sig;
+                                for (size_t i = 1; i < inst.operands.size(); ++i) {
+                                    llvm::Value* raw = getOrLoad(inst.operands[i].name);
+                                    if (raw && raw->getType() == llvm::Type::getInt64Ty(context)) {
+                                        sig += "i";
+                                    } else if (raw && raw->getType()->isDoubleTy()) {
+                                        sig += "f";
+                                    } else {
+                                        allNumeric = false;
+                                        break;
+                                    }
+                                }
+                                if (allNumeric && !sig.empty()) {
+                                    std::string candidate = "__specialized_" + funcName + "_" + sig;
+                                    llvm::Function* spec = module->getFunction(candidate);
+                                    if (spec) {
+                                        useSpecialized = true;
+                                        specializedName = candidate;
+                                        callee = spec;
+                                    }
+                                }
                             }
                         }
-                        // Only DECREF call arguments that were defined in THIS block.
-                        // Arguments from a different (outer) block may be loop-persistent
-                        // (e.g., a range/list passed to GetItem on every loop iteration).
-                        llvm::Function* argDecref = module->getFunction("Py_DECREF");
-                        for (size_t i = 1; i < inst.operands.size(); ++i) {
-                            if (argWasNative[i - 1]) {
-                                // Anonymous box created by getAsPyObject — DECREF unconditionally.
-                                if (argDecref) builder.CreateCall(argDecref, {callArgs[i - 1]});
+                        
+                        if (useSpecialized) {
+                            // Call specialized variant with native args (no boxing).
+                            for (size_t i = 1; i < inst.operands.size(); ++i) {
+                                callArgs.push_back(getOrLoad(inst.operands[i].name));
+                            }
+                            if (callee->getReturnType()->isVoidTy()) {
+                                builder.CreateCall(callee, callArgs);
                             } else {
-                                emitDecRefIfOwnedSameBlock(inst.operands[i].name);
+                                llvm::Value* callRes = builder.CreateCall(callee, callArgs, inst.result);
+                                valueMap[inst.result] = callRes;
+                                bool isUserFunc = !callee->isDeclaration()
+                                                 || userFunctionNames.count(specializedName) > 0;
+                                if (!inst.result.empty() && tempUseCounts.count(inst.result) == 0
+                                    && isUserFunc) {
+                                    llvm::Function* decref2 = module->getFunction("Py_DECREF");
+                                    if (decref2) builder.CreateCall(decref2, {callRes});
+                                } else {
+                                    markOwned(inst.result);
+                                }
+                            }
+                        } else {
+                            // Original boxed path.
+                            for (size_t i = 1; i < inst.operands.size(); ++i) {
+                                llvm::Value* raw = getOrLoad(inst.operands[i].name);
+                                bool isNative = raw && (raw->getType() == llvm::Type::getInt64Ty(context)
+                                                        || raw->getType()->isDoubleTy());
+                                argWasNative.push_back(isNative);
+                                callArgs.push_back(getAsPyObject(inst.operands[i].name));
+                            }
+                            if (callee->getReturnType()->isVoidTy()) {
+                                builder.CreateCall(callee, callArgs);
+                            } else {
+                                llvm::Value* callRes = builder.CreateCall(callee, callArgs, inst.result);
+                                valueMap[inst.result] = callRes;
+                                bool isUserFunc = !callee->isDeclaration()
+                                                 || userFunctionNames.count(funcName) > 0;
+                                if (!inst.result.empty() && tempUseCounts.count(inst.result) == 0
+                                    && isUserFunc) {
+                                    // Result of a user-defined function is never used — free immediately.
+                                    // User functions always return new refs.
+                                    // Runtime library functions may return borrowed refs, so we only
+                                    // do this for user-defined functions (identified by userFunctionNames
+                                    // set, which handles forward-declared functions not yet having bodies).
+                                    llvm::Function* decref2 = module->getFunction("Py_DECREF");
+                                    if (decref2) builder.CreateCall(decref2, {callRes});
+                                } else {
+                                    markOwned(inst.result);
+                                }
+                            }
+                            // Only DECREF call arguments that were defined in THIS block.
+                            // Arguments from a different (outer) block may be loop-persistent
+                            // (e.g., a range/list passed to GetItem on every loop iteration).
+                            llvm::Function* argDecref = module->getFunction("Py_DECREF");
+                            for (size_t i = 1; i < inst.operands.size(); ++i) {
+                                if (argWasNative[i - 1]) {
+                                    // Anonymous box created by getAsPyObject — DECREF unconditionally.
+                                    if (argDecref) builder.CreateCall(argDecref, {callArgs[i - 1]});
+                                } else {
+                                    emitDecRefIfOwnedSameBlock(inst.operands[i].name);
+                                }
                             }
                         }
                     }

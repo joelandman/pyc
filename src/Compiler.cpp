@@ -1010,38 +1010,49 @@ class LoweringVisitor {
     }
 
     // A6: Generate specialized function variants based on call-site type info.
-    // For each function that is called with all-proven-numeric arguments,
-    // create a variant that takes i64/double directly instead of PyObject*.
+    // For each function that is called with all-proven-numeric arguments at all
+    // call sites (with consistent arg count matching declared params), create
+    // a variant that takes i64/double directly instead of PyObject*.
     void generateSpecializedVariants() {
         for (auto& kv : callSiteTypes) {
             const std::string& funcName = kv.first;
-            const std::vector<std::string>& types = kv.second;
-            
+            const std::vector<std::vector<std::string>>& allSigs = kv.second;
+            if (allSigs.empty()) continue;
+
             // Find the original function
             IRFunction* origFunc = nullptr;
             for (auto& f : ir.functions) {
                 if (f.name == funcName) { origFunc = &f; break; }
             }
             if (!origFunc) continue;
-            
-            // Only specialize if this is the ONLY signature seen for this function
-            // (to avoid conflicts between different call patterns)
-            bool hasMultipleSigs = false;
-            for (auto& other : callSiteTypes) {
-                if (other.first == funcName && &other != &kv) {
-                    hasMultipleSigs = true;
-                    break;
+
+            size_t declaredArgCount = origFunc->args.size();
+            if (declaredArgCount == 0) continue;
+
+            // Check that all call sites have the same arg count as declared params.
+            // This ensures defaults are fully supplied at every call site.
+            size_t observedArgCount = allSigs[0].size();
+            if (observedArgCount != declaredArgCount) continue;
+            for (const auto& sig : allSigs) {
+                if (sig.size() != declaredArgCount) {
+                    // Mixed arg counts — can't generate a single consistent variant.
+                    continue;
                 }
             }
-            if (hasMultipleSigs) continue;
-            
-            // Check if all args are proven numeric (int or float)
+
+            // Check if all args across ALL call sites are proven numeric (int or float).
+            // For specialization, every call site must use numeric types at every position.
             bool allNumeric = true;
             std::string sig; // "i" for int, "f" for float
-            for (size_t i = 0; i < types.size(); ++i) {
-                if (types[i] == "int" || types[i] == "i64") {
+            for (size_t i = 0; i < declaredArgCount; ++i) {
+                // Collect all types seen at position i across all call sites.
+                std::unordered_set<std::string> typesAtPos;
+                for (const auto& s : allSigs) {
+                    if (i < s.size()) typesAtPos.insert(s[i]);
+                }
+                if (typesAtPos.count("int") > 0 || typesAtPos.count("i64") > 0) {
                     sig += "i";
-                } else if (types[i] == "float") {
+                } else if (typesAtPos.count("float") > 0) {
                     sig += "f";
                 } else {
                     allNumeric = false;
@@ -1049,22 +1060,21 @@ class LoweringVisitor {
                 }
             }
             if (!allNumeric || sig.empty()) continue;
-            
-            // Don't specialize if the number of args doesn't match the function signature
-            // (defaults may cause mismatches)
-            if (types.size() != origFunc->args.size()) continue;
-            
+
             // Check if we already have this variant
             std::string variantName = "__specialized_" + funcName + "_" + sig;
+            bool alreadyExists = false;
             for (const auto& f : ir.functions) {
-                if (f.name == variantName) continue; // already exists
+                if (f.name == variantName) { alreadyExists = true; break; }
             }
-            
+            if (alreadyExists) continue;
+
             // Create the variant
             IRFunction variant;
             variant.name = variantName;
-            
-            // Build parameter list: cells (if any) + numeric params
+
+            // Build parameter list: cells (if any) + original param names
+            // (codegen detects native types from variant name prefix)
             for (const auto& cell : origFunc->freeCellVars) {
                 variant.args.push_back(cell + "_cell");
             }
@@ -1075,11 +1085,11 @@ class LoweringVisitor {
             variant.defaultGlobals = origFunc->defaultGlobals;
             variant.cellVars = origFunc->cellVars;
             variant.freeCellVars = origFunc->freeCellVars;
-            
-            // Copy instructions - variants have the same body as original
-            // (codegen handles native param types via the variant name prefix)
+
+            // Copy instructions — variants have the same body as original.
+            // Codegen uses the variant name to allocate native param slots.
             variant.body = origFunc->body;
-            
+
             ir.functions.push_back(variant);
         }
     }
@@ -1144,9 +1154,10 @@ class LoweringVisitor {
     std::unordered_map<std::string, std::string> callableTokenToSynthetic; // temp -> synthetic name
 
     // A6: Call-site type tracking for monomorphization.
-    // Maps (funcName, paramIndex) -> type string ("int", "float", "boxed").
-    // Populated during lowering; used after lowering to generate specialized variants.
-    std::unordered_map<std::string, std::vector<std::string>> callSiteTypes;
+    // Maps funcName -> list of observed type signatures (each signature is a vector of arg types).
+    // Used after lowering to generate specialized variants for functions called with
+    // consistent numeric argument types.
+    std::unordered_map<std::string, std::vector<std::vector<std::string>>> callSiteTypes;
     // Last synthetic name produced by lowerLambda (used by assign of a lambda
     // to capture the alias after we started emitting a boxed string value for
     // the lambda expression).
@@ -2766,12 +2777,13 @@ class LoweringVisitor {
             // A6: track call-site argument types for monomorphization.
             // Only track for direct calls to known functions (not builtins with special paths).
             if (knownIRFunctions.count(funcName) && !argRes.empty()) {
-                auto& types = callSiteTypes[funcName];
+                std::vector<std::string> sig;
                 for (size_t i = 0; i < argRes.size(); ++i) {
                     std::string t = typeOf(argRes[i]);
                     if (t == "i64") t = "int";
-                    types.push_back(t);
+                    sig.push_back(t);
                 }
+                callSiteTypes[funcName].push_back(sig);
             }
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", finalOps, res);
@@ -4773,7 +4785,8 @@ void lowerAST(const ASTNode* node, ModuleIR& ir) {
     if (!node) return;
     LoweringVisitor visitor(ir);
     visitor.lower(node);
-    // A6: specialized variant generation deferred - call-site types tracked in callSiteTypes
+    // A6: Generate specialized variants after lowering completes.
+    visitor.generateSpecializedVariants();
 }
 
 bool Compiler::compile(const std::string& inputPath, const std::string& outputPath, bool useStatic, int optLevel, bool emitLLVM, bool emitASM, bool verbose) {
