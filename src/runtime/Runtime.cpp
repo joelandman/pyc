@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <string>
+#include <atomic>
 
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
@@ -121,10 +122,17 @@ static PyObject* getBoolObj(int v) {
     return slot;
 }
 
+static std::atomic<long> alloc_int_count{0};
+static std::atomic<long> alloc_float_count{0};
+static std::atomic<long> alloc_list_count{0};
+static std::atomic<long> alloc_dict_count{0};
+static std::atomic<long> alloc_str_count{0};
+
 PyObject* PyInt_FromLong(long v) {
     if (PyObject* cached = getSmallInt(v)) {
         return cached;                          // immortal: caller "owns" but cannot free
     }
+    alloc_int_count++;
     PyObject* obj = new PyObject();
     obj->refcount = 1;
     obj->type = 0;
@@ -148,6 +156,7 @@ PyObject* PyBool_New(int v) {
 }
 
 PyObject* PyFloat_FromDouble(double v) {
+    alloc_float_count++;
     PyObject* obj = new PyObject();
     obj->refcount = 1;
     obj->type = 4;
@@ -156,6 +165,7 @@ PyObject* PyFloat_FromDouble(double v) {
 }
 
 PyObject* PyList_New(size_t size) {
+    alloc_list_count++;
     PyObject* obj = new PyObject();
     obj->refcount = 1;
     obj->type = 1;
@@ -364,6 +374,7 @@ PyObject* PyBuiltin_Range(PyObject* start, PyObject* stop, PyObject* step) {
 }
 
 PyObject* PyDict_New() {
+    alloc_dict_count++;
     PyObject* obj = new PyObject();
     obj->refcount = 1;
     obj->type = 2;
@@ -663,6 +674,7 @@ int PyObject_Print(PyObject* obj, FILE* fp) {
 }
 
 PyObject* PyUnicode_FromString(const char* s) {
+    alloc_str_count++;
     PyObject* obj = new PyObject();
     obj->refcount = 1;
     obj->type = 3;
@@ -3648,6 +3660,16 @@ extern "C" PyObject* PyCell_Set(PyObject* cell, PyObject* val) {
 
 extern "C" int PyCell_Check(PyObject* obj) {
     return (obj && obj->type == 6) ? 1 : 0;
+}
+
+extern "C" long PyAlloc_GetIntCount() { return alloc_int_count.load(); }
+extern "C" long PyAlloc_GetFloatCount() { return alloc_float_count.load(); }
+extern "C" long PyAlloc_GetListCount() { return alloc_list_count.load(); }
+extern "C" long PyAlloc_GetDictCount() { return alloc_dict_count.load(); }
+extern "C" long PyAlloc_GetStrCount() { return alloc_str_count.load(); }
+extern "C" long PyAlloc_GetTotal() {
+    return alloc_int_count.load() + alloc_float_count.load() +
+           alloc_list_count.load() + alloc_dict_count.load() + alloc_str_count.load();
 }
 
 } // extern "C"

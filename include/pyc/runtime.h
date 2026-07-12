@@ -193,6 +193,15 @@ PyObject* PyCell_Set(PyObject* cell, PyObject* val);
 // B5 helper: return 1 if obj is a cell (type==6), else 0.
 int PyCell_Check(PyObject* obj);
 
+// A7: Allocation counters for measurement and guardrails.
+// Returns the current count of allocations for each type.
+long PyAlloc_GetIntCount();
+long PyAlloc_GetFloatCount();
+long PyAlloc_GetListCount();
+long PyAlloc_GetDictCount();
+long PyAlloc_GetStrCount();
+long PyAlloc_GetTotal();
+
 // --- re module (PCRE2-backed) ---------------------------------------------
 // re.finditer / re.findall / re.match / re.search / re.sub / re.compile
 // return rich objects (lists of Match or compiled regexes).

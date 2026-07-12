@@ -135,3 +135,27 @@ python3 /tmp/call_test.py
 ./build/pyc /tmp/call_test.py -o /tmp/call_test --opt=2
 /tmp/call_test
 ```
+
+## Allocation Counters (A7)
+
+The runtime tracks allocations per type via atomic counters:
+
+- `PyAlloc_GetIntCount()` — `PyInt_FromLong` allocations (excludes small int cache)
+- `PyAlloc_GetFloatCount()` — `PyFloat_FromDouble` allocations
+- `PyAlloc_GetListCount()` — `PyList_New` allocations
+- `PyAlloc_GetDictCount()` — `PyDict_New` allocations
+- `PyAlloc_GetStrCount()` — `PyUnicode_FromString` allocations
+- `PyAlloc_GetTotal()` — sum of all above
+
+These counters are exposed via `extern "C"` functions in `runtime.h` for external measurement.
+
+### Guardrails
+
+Every optimization preserves a boxed fallback path:
+
+- **A1-A2 (Type tracking)**: `widenLoopTypes()` conservatively widens to "boxed" on any type divergence; `getAsPyObject()` handles escape boxing for native slots
+- **A3 (Native arithmetic)**: Native paths only trigger when `resultType` is proven numeric; mixed types fall back to boxed `PyNumber_*` calls; division by zero uses runtime call with proper Python semantics
+- **A4 (Homogeneous lists)**: `detectCompElementType()` falls back to boxed when element type is mixed; subscript/get/set fall back to boxed paths for non-homogeneous lists
+- **A5 (Allocation sinking)**: `numericLocals` set is killed on non-numeric assignment; storage switches to PyObject* slot when a non-numeric value is assigned
+- **A6 (Specialized variants)**: Variants only generated when ALL call sites agree on numeric types; original boxed variants remain as fallback
+- **All optimizations**: `getAsPyObject()` ensures values are properly boxed when they escape native context (calls, containers, returns, print)
