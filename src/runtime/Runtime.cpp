@@ -2066,8 +2066,21 @@ PyObject* PyString_Replace(PyObject* s, PyObject* old_, PyObject* new_) {
 
 PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step) {
     if (!obj) return PyList_New(0);
-    long n = (obj->type == 1) ? (long)obj->list.size()
-           : (obj->type == 3) ? (long)obj->str.size() : 0;
+    long n;
+    if (obj->type == 1) {
+        // Handle homogeneous lists
+        if (obj->list_item_type == 1) {
+            n = (long)obj->ilist.size();
+        } else if (obj->list_item_type == 2) {
+            n = (long)obj->flist.size();
+        } else {
+            n = (long)obj->list.size();
+        }
+    } else if (obj->type == 3) {
+        n = (long)obj->str.size();
+    } else {
+        n = 0;
+    }
     long stp = (step && (step->type==0||step->type==5)) ? step->value : 1;
     if (stp == 0) {
         return (obj->type == 3) ? PyUnicode_FromString("") : PyList_New(0);
@@ -2094,6 +2107,27 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
     }
 
     if (obj->type == 1) {
+        // Handle homogeneous int lists
+        if (obj->list_item_type == 1) {
+            PyObject* r = PyList_NewIntBoxed(PyInt_FromLong((long)idxs.size()));
+            for (size_t k = 0; k < idxs.size(); ++k) {
+                long i = idxs[k];
+                long val = (i >= 0 && (size_t)i < obj->ilist.size()) ? obj->ilist[i] : 0;
+                PyList_SetItemInt64(r, k, val);
+            }
+            return r;
+        }
+        // Handle homogeneous float lists
+        if (obj->list_item_type == 2) {
+            PyObject* r = PyList_NewFloatBoxed(PyInt_FromLong((long)idxs.size()));
+            for (size_t k = 0; k < idxs.size(); ++k) {
+                long i = idxs[k];
+                double val = (i >= 0 && (size_t)i < obj->flist.size()) ? obj->flist[i] : 0.0;
+                PyList_SetItemDouble(r, k, val);
+            }
+            return r;
+        }
+        // Regular boxed list
         PyObject* r = PyList_New(idxs.size());
         for (size_t k = 0; k < idxs.size(); ++k) {
             long i = idxs[k];
@@ -2115,6 +2149,29 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
 
 void Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step, PyObject* value) {
     if (!obj || obj->type != 1) return;
+    
+    // Convert homogeneous lists to regular lists for slice operations
+    bool wasIntBoxed = (obj->list_item_type == 1);
+    bool wasFloatBoxed = (obj->list_item_type == 2);
+    
+    if (wasIntBoxed) {
+        // Convert ilist to list
+        obj->list.resize(obj->ilist.size());
+        for (size_t i = 0; i < obj->ilist.size(); ++i) {
+            obj->list[i] = PyInt_FromLong(obj->ilist[i]);
+        }
+        obj->ilist.clear();
+        obj->list_item_type = 0;
+    } else if (wasFloatBoxed) {
+        // Convert flist to list
+        obj->list.resize(obj->flist.size());
+        for (size_t i = 0; i < obj->flist.size(); ++i) {
+            obj->list[i] = PyFloat_FromDouble(obj->flist[i]);
+        }
+        obj->flist.clear();
+        obj->list_item_type = 0;
+    }
+    
     bool explicit_step = (step != nullptr);
     long n = (long)obj->list.size();
     long stp = 1;
@@ -2128,7 +2185,23 @@ void Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step
 
     std::vector<PyObject*> repl;
     if (value && value->type == 1) {
-        for (auto* v : value->list) { if (v) Py_INCREF(v); repl.push_back(v); }
+        // Handle homogeneous int lists
+        if (value->list_item_type == 1) {
+            for (size_t i = 0; i < value->ilist.size(); ++i) {
+                PyObject* v = PyInt_FromLong(value->ilist[i]);
+                repl.push_back(v);
+            }
+        }
+        // Handle homogeneous float lists
+        else if (value->list_item_type == 2) {
+            for (size_t i = 0; i < value->flist.size(); ++i) {
+                PyObject* v = PyFloat_FromDouble(value->flist[i]);
+                repl.push_back(v);
+            }
+        }
+        else {
+            for (auto* v : value->list) { if (v) Py_INCREF(v); repl.push_back(v); }
+        }
     } else if (value) {
         Py_INCREF(value);
         repl.push_back(value);
