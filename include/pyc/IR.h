@@ -40,6 +40,10 @@ struct IRFunction {
     // Trailing default values for this function/lambda (module global slot names).
     // Used by __apply__ adapters for indirect calls when fewer args are supplied.
     std::vector<std::string> defaultGlobals;
+    
+    // A5: names that should use native i64 storage (proven numeric locals).
+    // Codegen will allocate i64 alloca for these instead of PyObject* slots.
+    std::vector<std::string> numericLocals;
 };
 
 class ModuleIR {

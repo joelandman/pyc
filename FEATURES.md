@@ -1,8 +1,8 @@
 # pyc — Implemented Features
 
-Current test count: **263/263** (runner shows 263/263, file_case_failures=0; see `CORRECTNESS.md` and `tests/runner.py`).
+Current test count: **219/263** (runner shows 219/263, file_case_failures=6; see `CORRECTNESS.md` and `tests/runner.py`).
 
-**Bug fixes:** `PyObject_Print` now flushes stdout after every print call (ensures output is visible when stdout is fully buffered). `pyc_setup_sys` now properly DECREFs all allocated index and string objects (fixes memory leaks). Subscript AugAssign (`a[i] += 1`) now carries result type metadata for native arithmetic optimization. Corrected `llvm::cast` → `llvm::dyn_cast` in class codegen. Fixed `PyDict_GetItem` to always return new references (caller responsible for DECREF). Added `ownedSlots` tracking in codegen assign path to DECREF old values on reassignment. LLVM verification failures are now fatal.
+**Bug fixes:** `PyObject_Print` now flushes stdout after every print call (ensures output is visible when stdout is fully buffered). `pyc_setup_sys` now properly DECREFs all allocated index and string objects (fixes memory leaks). Subscript AugAssign (`a[i] += 1`) now carries result type metadata for native arithmetic optimization. Corrected `llvm::cast` → `llvm::dyn_cast` in class codegen. Fixed `PyDict_GetItem` to always return new references (caller responsible for DECREF). Added `ownedSlots` tracking in codegen assign path to DECREF old values on reassignment. LLVM verification failures are now fatal. List printing fixed for homogeneous lists (ilist/flist).
 
 **Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
 Full slicing (get/set, step, negatives, str + list) implemented (B2).
@@ -11,6 +11,8 @@ Type tracking foundation strengthened for unboxing (A1): i64 normalized to numer
 Valgrind test target added to CI.
 Class statements with `__init__`, instance attributes, method calls, and `__str__`/`__repr__` protocol implemented.
 With statement support added for context managers with `__enter__`/`__exit__`.
+Homogeneous numeric lists (A4): list comprehensions and literals create `list[int]`/`list[float]` with native ilist/flist storage; subscript get/set uses native `PyList_GetItemInt64`/`PyList_SetItemInt64` etc.
+Allocation sinking (A5): numeric locals use native i64 alloca, eliminating boxing cycle for accumulators.
 
 **Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
 Full slicing (get/set, step, negatives, str + list) implemented (B2).

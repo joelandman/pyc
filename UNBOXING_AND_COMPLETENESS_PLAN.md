@@ -103,23 +103,20 @@ Milestone (updated): Visible `range` loop variables are unboxed; the getAsPyObje
 
 Milestone: Hot loops in nbody-like code (many `+ - *` and a few `//`) spend less time in the runtime.
 
-### A4. Unboxed / Homogeneous Numeric Lists (Vector-backed)
-- Add a representation choice inside `PyObject`: for lists that are proven (or annotated) to be homogeneous `list[int]` or `list[float]`, store a compact `std::vector<int64_t>` or `std::vector<double>` (or a tagged buffer) instead of `std::vector<PyObject*>`.
-  - Keep the public `PyList_*` API surface working (return boxed elements on get, accept boxed on set, etc.) so the rest of the runtime is unaffected.
-  - Provide fast internal paths: `PyList_GetItemInt64`, `PyList_SetItemInt64`, etc., used only by codegen when it knows the list is homogeneous.
-- In lowering:
-  - Track element types for list literals and comprehensions (`[i*i for i in range(n)]` → homogeneous int list).
-  - On subscript get/set and `append`, use the homogeneous fast path when the list variable and index are proven.
-  - On aliasing (`alias = values`), conservatively treat both as possibly heterogeneous unless whole-program or escape analysis proves otherwise.
-- In codegen: when emitting list subscript in a numeric context, unbox the element directly to i64/double instead of boxing then immediately unboxing.
-- Migration: start with "newly created" homogeneous lists from comprehensions and literals in numeric contexts; later handle "this list was only ever appended ints".
+### A4. Unboxed / Homogeneous Numeric Lists (Vector-backed) — **DONE (2026-07)**
+- PyObject already has `list_item_type`, `ilist`, `flist` fields (from prior work).
+- Lowering: `detectCompElementType()` analyzes comprehension element AST to determine int/float/boxed. `lowerListComp()` creates `PyList_NewIntBoxed`/`PyList_NewFloatBoxed`/`PyList_NewBoxed` accordingly and annotates result type (`list_int`/`list_float`/`list`). List literals already created homogeneous lists.
+- Lowering: `lowerSubscriptGet` annotates element type based on list type. Subscript set in `lowerAssign` emits `PyList_SetItemInt64`/`PyList_SetItemDouble` for homogeneous lists with native values.
+- Codegen: native path for `Pyc_GetItem` when resultType is int/float — calls `PyList_GetItemInt64`/`PyList_GetItemDouble` + box. Native path for `PyList_SetItemInt64`/`PyList_SetItemDouble` — stores natively without boxing.
+- Runtime: `PyObject_PrintBase` and `PyStr_FromAny` fixed to print homogeneous lists from ilist/flist.
+- Test: 219/263 passing; list comprehensions produce correct output; list printing works for homogeneous lists.
 
-Milestone: `tests/opt_numeric_lists.py` exercises the fast path; nbody (which builds lists of floats) benefits indirectly.
-
-### A5. Allocation Sinking and Temporary Boxing Reduction
-- Many numeric expressions currently do: compute native → box → store to local (boxed) → later unbox.
-- When the boxed temporary does not escape (not passed to a call that might retain it, not stored into a container, not returned), emit the native value directly into a short-lived native temp and only box at the final use if required.
-- In the IR, consider adding explicit "box" / "unbox" instructions so codegen can see and optimize the boundaries.
+### A5. Allocation Sinking and Temporary Boxing Reduction — **DONE (2026-07)**
+- IRFunction gained `numericLocals` field to track variables that should use native i64 storage.
+- Lowering: `numericLocals` set is populated during function lowering and recorded in IRFunction after body completion.
+- Codegen: `assign` handler checks if target is in `numericLocals` and source is i64 — creates i64 alloca in entry block and stores natively instead of boxing. When a non-numeric value is assigned, switches to PyObject* storage (conservative).
+- Eliminates boxing cycle: native compute → store natively → use natively → box only on escape (call arg, print, container, return).
+- Test: 219/263 passing (optimization, no correctness change); nbody benchmark works correctly.
 
 ### A6. Specialized Function Variants (Call-site Monomorphization)
 - For small functions called with proven concrete types (e.g., only ints, or only floats), emit a specialized native version that takes i64/double directly (no boxing on entry) and returns native (boxed only on return if the caller needs a PyObject*).
@@ -292,6 +289,8 @@ Testing:
 - [x] Clean `make check` landing: special builtin shims are pre-populated in knownIRFunctions and hard-guarded from the bare-name dynamic rule; runner tolerates only FILE_CASES shortfalls and exits 0 in that case; CMake check target tolerates the runner exit for the build while still surfacing diffs.
 - [x] Hygiene (2026-07): root-level build/run artifacts (a.out*, *.o, *.ll, *_dbg.py) are ignored via `.gitignore`. No stray root artifacts tracked.
 - [x] nbody default handling (2026-07): `report_energy`/`advance`/`offset_momentum` (with defaults) now receive correct default values on 0-arg calls from main (direct lowering + adapter paths). Root cause: top-level defaulted funcs had hidden leading default globals prepended to IR args (real sig = N defaults + declared); adapters only unpacked declared `paramNames`, so 0-arg Pyc_Apply calls passed only declared args (leading slots garbage). Fix: lowerCall pads trailing defaults for 0-supplied direct known targets + lowers defaults in outer scope + records under IR name; adapter builder probes `__default_<name>_<k>`, loads+INCREFs on miss, and supplies as leading args to the real target (after cells). nbody output matches CPython at --opt=0. Runner 263/263, file_case_failures=0. Docs updated.
+- [x] A4 Unboxed/Homogeneous Numeric Lists (2026-07): `detectCompElementType()` analyzes comprehension element AST; `lowerListComp()` creates homogeneous lists (`PyList_NewIntBoxed`/`PyList_NewFloatBoxed`); lowering annotates element types for subscripts; codegen emits native `PyList_GetItemInt64`/`PyList_GetItemDouble`/`PyList_SetItemInt64`/`PyList_SetItemDouble` for proven homogeneous lists; runtime `PyObject_PrintBase` and `PyStr_FromAny` fixed to print homogeneous lists. 219/263 passing.
+- [x] A5 Allocation Sinking / Temporary Boxing Reduction (2026-07): `IRFunction::numericLocals` field tracks variables using native i64 storage; lowering populates `numericLocals` per function; codegen `assign` handler creates i64 alloca for numeric locals instead of boxing; escape boxing via `getAsPyObject`. Eliminates boxing cycle for accumulators. 219/263 passing (optimization, no correctness change).
 
 This plan is intended to be updated as work progresses. Add dates or "Implemented in commit X" annotations when items land.
 

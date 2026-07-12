@@ -67,6 +67,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* listSetItemBoxedTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(listSetItemBoxedTy, llvm::Function::ExternalLinkage, "PyList_SetItemBoxed", module.get());
 
+    llvm::FunctionType* listGetItemInt64Ty = llvm::FunctionType::get(llvm::Type::getInt64Ty(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(listGetItemInt64Ty, llvm::Function::ExternalLinkage, "PyList_GetItemInt64", module.get());
+
+    llvm::FunctionType* listGetItemDoubleTy = llvm::FunctionType::get(llvm::Type::getDoubleTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(listGetItemDoubleTy, llvm::Function::ExternalLinkage, "PyList_GetItemDouble", module.get());
+
+    llvm::FunctionType* listSetItemInt64Ty = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(listSetItemInt64Ty, llvm::Function::ExternalLinkage, "PyList_SetItemInt64", module.get());
+
+    llvm::FunctionType* listSetItemDoubleTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), llvm::Type::getDoubleTy(context)}, false);
+    llvm::Function::Create(listSetItemDoubleTy, llvm::Function::ExternalLinkage, "PyList_SetItemDouble", module.get());
+
     llvm::FunctionType* listSetItemTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), pyObjectPtrTy}, false);
     llvm::Function::Create(listSetItemTy, llvm::Function::ExternalLinkage, "PyList_SetItem", module.get());
 
@@ -1698,27 +1710,59 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
                 std::string srcName = srcNameAssign;
 
-                // If target currently has an i64 slot (A2.1 numeric local or range var), handle separately.
-                auto tit0 = valueMap.find(inst.result);
-                if (tit0 != valueMap.end()) {
-                    if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit0->second)) {
-                        if (alloca->getAllocatedType() == i64Ty) {
-                            if (src->getType() == i64Ty) {
-                                builder.CreateStore(src, alloca);
-                            } else {
-                                llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
-                                                              func->getEntryBlock().begin());
-                                llvm::AllocaInst* newAlloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result + ".slot");
-                                llvm::Value* toStore = src;
-                                if (toStore->getType() == i64Ty) toStore = boxI64(toStore);
-                                builder.CreateStore(toStore, newAlloca);
-                                valueMap[inst.result] = newAlloca;
-                                ownedSlots.insert(inst.result);
-                            }
-                            continue;
-                        }
-                    }
-                }
+                 // If target currently has an i64 slot (A2.1 numeric local or range var), handle separately.
+                 auto tit0 = valueMap.find(inst.result);
+                 if (tit0 != valueMap.end()) {
+                     if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit0->second)) {
+                         if (alloca->getAllocatedType() == i64Ty) {
+                             if (src->getType() == i64Ty) {
+                                 builder.CreateStore(src, alloca);
+                             } else {
+                                 llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                                               func->getEntryBlock().begin());
+                                 llvm::AllocaInst* newAlloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result + ".slot");
+                                 llvm::Value* toStore = src;
+                                 if (toStore->getType() == i64Ty) toStore = boxI64(toStore);
+                                 builder.CreateStore(toStore, newAlloca);
+                                 valueMap[inst.result] = newAlloca;
+                                 ownedSlots.insert(inst.result);
+                             }
+                             continue;
+                         }
+                     }
+                 }
+
+                 // A5: If target is a numeric local (proven to stay numeric), use native i64 storage.
+                 bool isNumericLocal = false;
+                 for (const auto& nl : f.numericLocals) {
+                     if (nl == inst.result) { isNumericLocal = true; break; }
+                 }
+                 if (isNumericLocal && src->getType() == i64Ty) {
+                     // Check if target already has an i64 alloca (from a prior i64assign or numeric local setup)
+                     bool hasI64Alloca = false;
+                     if (tit0 != valueMap.end()) {
+                         if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit0->second)) {
+                             if (alloca->getAllocatedType() == i64Ty) hasI64Alloca = true;
+                         }
+                     }
+                     if (!hasI64Alloca) {
+                         // Create a new i64 alloca in the entry block.
+                         llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                                        func->getEntryBlock().begin());
+                         llvm::AllocaInst* i64alloca = entryBuilder.CreateAlloca(i64Ty, nullptr, inst.result + ".i64");
+                         valueMap[inst.result] = i64alloca;
+                     }
+                     // Store the native i64 value.
+                     auto tit2 = valueMap.find(inst.result);
+                     if (tit2 != valueMap.end()) {
+                         if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit2->second)) {
+                             if (alloca->getAllocatedType() == i64Ty) {
+                                 builder.CreateStore(src, alloca);
+                                 continue;
+                             }
+                         }
+                     }
+                 }
 
                 // Determine ownership of source. Owned temps already have refcount=1.
                 bool srcIsOwned = ownedTemps.count(srcName) > 0;
@@ -1816,8 +1860,97 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     }
                 }
             } else if (inst.op == "call") {
-                std::string funcName = inst.operands.empty() ? "" : inst.operands[0].name;
-                if (funcName == "print") {
+                 std::string funcName = inst.operands.empty() ? "" : inst.operands[0].name;
+                 // A4: native list subscript get for proven homogeneous lists.
+                 if (funcName == "Pyc_GetItem" && inst.operands.size() >= 3) {
+                     std::string listName = inst.operands[1].name;
+                     std::string idxName = inst.operands[2].name;
+                     // Check if result type is known to be int or float (set by lowering).
+                     if (inst.resultType == "int" || inst.resultType == "float") {
+                         llvm::Value* listVal = getAsPyObject(listName);
+                         llvm::Value* idxVal = getOrLoad(idxName);
+                         // Ensure index is i64.
+                         if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
+                             idxVal = builder.CreateCast(llvm::Instruction::SExt, idxVal,
+                                 llvm::Type::getInt64Ty(context), "idx.i64");
+                         }
+                         llvm::Value* nativeVal = nullptr;
+                         if (inst.resultType == "int") {
+                             llvm::Function* getInt64 = module->getFunction("PyList_GetItemInt64");
+                             if (getInt64) {
+                                 nativeVal = builder.CreateCall(getInt64, {listVal, idxVal}, inst.result + ".i64");
+                             }
+                         } else {
+                             llvm::Function* getDouble = module->getFunction("PyList_GetItemDouble");
+                             if (getDouble) {
+                                 nativeVal = builder.CreateCall(getDouble, {listVal, idxVal}, inst.result + ".double");
+                             }
+                         }
+                         if (nativeVal) {
+                             // Box the native value.
+                             llvm::Value* boxed = nullptr;
+                             if (inst.resultType == "int") {
+                                 boxed = boxI64(nativeVal, inst.result + ".boxed");
+                             } else {
+                                 boxed = boxDouble(nativeVal, inst.result + ".boxed");
+                             }
+                             if (!inst.result.empty()) {
+                                 valueMap[inst.result] = boxed;
+                                 markOwned(inst.result);
+                             }
+                             emitDecRefIfOwnedSameBlock(listName);
+                             emitDecRefIfOwnedSameBlock(idxName);
+                             continue;
+                         }
+                          // Fall through to generic path if native functions not found.
+                      }
+                  }
+                 // A4: native list subscript set for proven homogeneous lists.
+                 if (funcName == "PyList_SetItemInt64" && inst.operands.size() >= 4) {
+                     std::string listName = inst.operands[1].name;
+                     std::string idxName = inst.operands[2].name;
+                     std::string valName = inst.operands[3].name;
+                     llvm::Value* listVal = getAsPyObject(listName);
+                     llvm::Value* idxVal = getOrLoad(idxName);
+                     if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
+                         idxVal = builder.CreateCast(llvm::Instruction::SExt, idxVal,
+                             llvm::Type::getInt64Ty(context), "setidx.i64");
+                     }
+                     llvm::Value* valVal = getOrLoad(valName);
+                     if (valVal->getType() != llvm::Type::getInt64Ty(context)) {
+                         valVal = builder.CreateCast(llvm::Instruction::SExt, valVal,
+                             llvm::Type::getInt64Ty(context), "setval.i64");
+                     }
+                     llvm::Function* setFn = module->getFunction("PyList_SetItemInt64");
+                     if (setFn) builder.CreateCall(setFn, {listVal, idxVal, valVal});
+                     emitDecRefIfOwnedSameBlock(listName);
+                     emitDecRefIfOwnedSameBlock(idxName);
+                     emitDecRefIfOwnedSameBlock(valName);
+                     continue;
+                 }
+                 if (funcName == "PyList_SetItemDouble" && inst.operands.size() >= 4) {
+                     std::string listName = inst.operands[1].name;
+                     std::string idxName = inst.operands[2].name;
+                     std::string valName = inst.operands[3].name;
+                     llvm::Value* listVal = getAsPyObject(listName);
+                     llvm::Value* idxVal = getOrLoad(idxName);
+                     if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
+                         idxVal = builder.CreateCast(llvm::Instruction::SExt, idxVal,
+                             llvm::Type::getInt64Ty(context), "setidx.i64");
+                     }
+                     llvm::Value* valVal = getOrLoad(valName);
+                     // Ensure double type.
+                     if (valVal->getType() != llvm::Type::getDoubleTy(context)) {
+                         valVal = builder.CreateSIToFP(valVal, llvm::Type::getDoubleTy(context), "setval.double");
+                     }
+                     llvm::Function* setFn = module->getFunction("PyList_SetItemDouble");
+                     if (setFn) builder.CreateCall(setFn, {listVal, idxVal, valVal});
+                     emitDecRefIfOwnedSameBlock(listName);
+                     emitDecRefIfOwnedSameBlock(idxName);
+                     emitDecRefIfOwnedSameBlock(valName);
+                     continue;
+                 }
+                 if (funcName == "print") {
                     // Legacy single-arg print fast-path: pyc_print covers the
                     // general case (multi-arg + kwargs) at the lowering level.
                     llvm::Function* pyPrint = module->getFunction("PyObject_Print");

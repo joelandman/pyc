@@ -586,6 +586,11 @@ public:
                 if (c && c->type == "Default") continue;
                 lower(c.get());
             }
+            // A5: record numericLocals in the IRFunction for codegen.
+            for (auto& fnr : ir.functions) if (fnr.name == defIRName) {
+                fnr.numericLocals = std::vector<std::string>(numericLocals.begin(), numericLocals.end());
+                break;
+            }
             currentFunc = saved;   // restore context for siblings (important for top-level code after defs)
             tempCounter = savedTempCounter;  // restore counter to prevent collisions with module-level temps
             lastLambdaSynthetic.clear();  // do not leak "last lambda expr" from this function to later assigns/calls in outer scope
@@ -1184,6 +1189,71 @@ private:
         auto isNum = [](const std::string& t){ return t=="int" || t=="bool" || t=="float" || t=="i64"; };
         if (isNum(lt) && isNum(rt)) {
             return (lt == "float" || rt == "float") ? "float" : "int";
+        }
+        return "boxed";
+    }
+
+    // A4: Detect the element type of a list comprehension expression from
+    // its AST node, without lowering.  Returns "int", "float", or "boxed".
+    // Handles the common cases: constants, names (via valueTypes), binary
+    // ops, unary ops, and calls to numeric-producing builtins.
+    std::string detectCompElementType(const ASTNode* node) const {
+        if (!node) return "boxed";
+        if (node->type == "Constant") {
+            if (node->is_bool || !node->is_float && !node->is_str && !node->is_none)
+                return "int";
+            if (node->is_float) return "float";
+            return "boxed";
+        }
+        if (node->type == "Name") {
+            // We can't look up valueTypes here because the loop variable
+            // hasn't been lowered yet.  Fall through to "boxed" for names.
+            return "boxed";
+        }
+        if (node->type == "BinOp") {
+            std::string op = node->id; // "+", "-", "*", etc.
+            std::string lt = detectCompElementType(node->children[0].get());
+            std::string rt = detectCompElementType(node->children.size() > 1 ? node->children[1].get() : nullptr);
+            auto isNum = [](const std::string& t){ return t=="int" || t=="bool" || t=="float"; };
+            if (!isNum(lt) || !isNum(rt)) return "boxed";
+            if (op == "truediv" || op == "/") return "float";
+            if (lt == "float" || rt == "float") return "float";
+            return "int";
+        }
+        if (node->type == "UnaryOp") {
+            // Unary minus/plus on a numeric operand produces the same type
+            std::string st = detectCompElementType(node->children[0].get());
+            if (st == "float") return "float";
+            if (st == "int" || st == "bool") return "int";
+            return "boxed";
+        }
+        if (node->type == "Call") {
+            // Calls to int(), float(), len(), abs(), sum(), etc. produce numeric
+            std::string fn = "";
+            if (!node->children.empty() && node->children[0]->type == "Name")
+                fn = node->children[0]->id;
+            if (fn == "int" || fn == "len" || fn == "abs" || fn == "sum" ||
+                fn == "min" || fn == "max" || fn == "any" || fn == "all")
+                return "int";
+            if (fn == "float") return "float";
+            // sorted() returns list → boxed
+            if (fn == "sorted" || fn == "list" || fn == "reversed" || fn == "enumerate" || fn == "zip")
+                return "boxed";
+            return "boxed";
+        }
+        if (node->type == "List" || node->type == "Tuple") return "boxed";
+        if (node->type == "Dict") return "boxed";
+        if (node->type == "Compare") return "boxed";  // bool, but not commonly used as list element
+        if (node->type == "JoinedStr" || node->type == "FormattedValue") return "boxed";
+        if (node->type == "BoolOp") return "boxed";  // returns actual value, could be anything
+        if (node->type == "Subscript") return "boxed";  // could be anything
+        if (node->type == "Attribute") return "boxed";
+        // Comprehension nested inside comprehension
+        if (node->type == "ListComp") {
+            // Check the inner element type
+            if (node->children.size() >= 2)
+                return detectCompElementType(node->children[0].get());
+            return "boxed";
         }
         return "boxed";
     }
@@ -3275,8 +3345,26 @@ private:
                 return;
             }
             std::string idx = lowerExpr(idxnode);
-            std::string dummy = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, val}, dummy);
+            // A4: use native set for proven homogeneous lists with native values.
+            std::string objType = typeOf(obj);
+            std::string valType = typeOf(val);
+            std::string idxType = typeOf(idx);
+            bool isIntList = (objType == "list_int");
+            bool isFloatList = (objType == "list_float");
+            bool valIsInt = (valType == "int" || valType == "i64" || valType == "bool");
+            bool valIsFloat = (valType == "float");
+            bool idxIsNative = (idxType == "int" || idxType == "i64");
+            std::string dummy;
+            if (isIntList && valIsInt && idxIsNative) {
+                dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64", obj, idx, val}, dummy);
+            } else if (isFloatList && valIsFloat && idxIsNative) {
+                dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemDouble", obj, idx, val}, dummy);
+            } else {
+                dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, val}, dummy);
+            }
             return;
         }
         if (node->id == "__unpack__") {
@@ -3525,6 +3613,10 @@ private:
         std::string idx = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
         std::string res = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, idx}, res);
+        // A4: annotate element type for homogeneous lists so codegen can use native path.
+        std::string objType = typeOf(obj);
+        if (objType == "list_int") noteType(res, "int");
+        else if (objType == "list_float") noteType(res, "float");
         // B4: if the container is a list we built that contained callable tokens, or the
         // container name is marked as holding tokens, mark the subscript result as a token temp.
         if (listsContainingCallableTokens.count(obj) || namesThatMayHoldCallableTokens.count(obj)) {
@@ -4270,13 +4362,38 @@ private:
         if (node->children.size() < 2) return "";
         const ASTNode* eltNode = node->children[0].get();
 
-        // Create the result list and slot-store it.
+        // A4: Detect element type from the AST to create homogeneous lists.
+        std::string elemType = detectCompElementType(eltNode);
+        // For names and subscripts, try to infer from the iterator type.
+        // If the iterator is a known list_int/list_float, assume the element
+        // inherits that type (conservative: widens to boxed on store if wrong).
+        if (elemType == "boxed" && node->children[1]) {
+            const ASTNode* iterNode = node->children[1].get();
+            if (iterNode && iterNode->type == "Name") {
+                std::string iterT = typeOf(iterNode->id);
+                if (iterT == "list_int") elemType = "int";
+                else if (iterT == "list_float") elemType = "float";
+            }
+        }
+
+        // Create the result list with the detected type.
         std::string sc = "c" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "const", {"0"}, sc);
         std::string listVar = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, listVar);
+        if (elemType == "int") {
+            ir.addInstruction(currentFunc, "call", {"PyList_NewIntBoxed", sc}, listVar);
+            noteType(listVar, "list_int");
+        } else if (elemType == "float") {
+            ir.addInstruction(currentFunc, "call", {"PyList_NewFloatBoxed", sc}, listVar);
+            noteType(listVar, "list_float");
+        } else {
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, listVar);
+            noteType(listVar, "list");
+        }
         std::string listSlot = "__lc_lst_" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "assign", {listVar}, listSlot);
+        // Propagate the list type to the slot so downstream assignments see it.
+        noteType(listSlot, elemType == "int" ? "list_int" : (elemType == "float" ? "list_float" : "list"));
 
         // For each generator, emit a loop that materialises the iterator,
         // iterates with an index, applies the target+condition filters, and

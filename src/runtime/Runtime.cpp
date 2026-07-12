@@ -547,12 +547,32 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
     }
     if (obj->type == 1) {
         fprintf(fp, "[");
-        for (size_t i = 0; i < obj->list.size(); ++i) {
-            if (i > 0) fprintf(fp, ", ");
-            if (obj->list[i] && obj->list[i]->type == 3)
-                fprintf(fp, "'%s'", obj->list[i]->str.c_str());
-            else
-                PyObject_PrintElement(obj->list[i], fp);
+        // A4: handle homogeneous lists (ilist/flist) vs boxed list.
+        if (obj->list_item_type == 1) {
+            // int-homogeneous list
+            for (size_t i = 0; i < obj->ilist.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                int r = fprintf(fp, "%ld", obj->ilist[i]);
+                (void)r;
+            }
+        } else if (obj->list_item_type == 2) {
+            // float-homogeneous list
+            for (size_t i = 0; i < obj->flist.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                char buf[64];
+                format_double(buf, sizeof(buf), obj->flist[i]);
+                int r = fprintf(fp, "%s", buf);
+                (void)r;
+            }
+        } else {
+            // boxed list
+            for (size_t i = 0; i < obj->list.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                if (obj->list[i] && obj->list[i]->type == 3)
+                    fprintf(fp, "'%s'", obj->list[i]->str.c_str());
+                else
+                    PyObject_PrintElement(obj->list[i], fp);
+            }
         }
         fprintf(fp, "]\n");
         fflush(fp);
@@ -685,12 +705,29 @@ PyObject* PyStr_FromAny(PyObject* obj) {
     }
     if (obj->type == 1) {
         std::string r = "[";
-        for (size_t i = 0; i < obj->list.size(); ++i) {
-            if (i > 0) r += ", ";
-            PyObject* s = PyStr_FromAny(obj->list[i]);
-            if (obj->list[i] && obj->list[i]->type == 3) { r += "'"; r += obj->list[i]->str; r += "'"; }
-            else if (s) r += s->str;
-            if (s) Py_DECREF(s);
+        // A4: handle homogeneous lists.
+        if (obj->list_item_type == 1) {
+            for (size_t i = 0; i < obj->ilist.size(); ++i) {
+                if (i > 0) r += ", ";
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%ld", obj->ilist[i]);
+                r += buf;
+            }
+        } else if (obj->list_item_type == 2) {
+            for (size_t i = 0; i < obj->flist.size(); ++i) {
+                if (i > 0) r += ", ";
+                char buf[64];
+                format_double(buf, sizeof(buf), obj->flist[i]);
+                r += buf;
+            }
+        } else {
+            for (size_t i = 0; i < obj->list.size(); ++i) {
+                if (i > 0) r += ", ";
+                PyObject* s = PyStr_FromAny(obj->list[i]);
+                if (obj->list[i] && obj->list[i]->type == 3) { r += "'"; r += obj->list[i]->str; r += "'"; }
+                else if (s) r += s->str;
+                if (s) Py_DECREF(s);
+            }
         }
         r += "]";
         return PyUnicode_FromString(r.c_str());
