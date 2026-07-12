@@ -1264,7 +1264,8 @@ class LoweringVisitor {
     // (e.g. assigned a string, list, or unknown value).
     void killNumericLocal(const std::string& name) {
         numericLocals.erase(name);
-        if (!name.empty()) valueTypes[name] = "boxed";
+        // Don't overwrite the type here - the type was already set correctly by noteType
+        // if (!name.empty()) valueTypes[name] = "boxed";
     }
 
     std::string numericResultType(const std::string& op,
@@ -4011,9 +4012,9 @@ class LoweringVisitor {
         } else if (methodName == "extend") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyList_Extend", obj, arg}, res);
-        } else if (methodName == "copy" && typeOf(obj) == "list") {
+        } else if (methodName == "copy" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float")) {
             ir.addInstruction(currentFunc, "call", {"PyList_Copy", obj}, res);
-        } else if (methodName == "clear" && typeOf(obj) == "list") {
+        } else if (methodName == "clear" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float")) {
             ir.addInstruction(currentFunc, "call", {"PyList_Clear", obj}, res);
         // Known string methods
         } else if (methodName == "upper") {
@@ -4152,7 +4153,7 @@ class LoweringVisitor {
         // List methods
         } else if (methodName == "sort") {
             ir.addInstruction(currentFunc, "call", {"PyList_Sort", obj}, res);
-        } else if (methodName == "pop" && typeOf(obj) == "list") {
+        } else if (methodName == "pop" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float")) {
             if (args.empty()) {
                 ir.addInstruction(currentFunc, "call", {"PyList_Pop", obj}, res);
             } else {

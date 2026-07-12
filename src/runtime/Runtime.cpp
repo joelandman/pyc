@@ -1196,7 +1196,21 @@ PyObject* PyList_Sort(PyObject* lst) {
 }
 
 PyObject* PyList_Pop(PyObject* lst) {
-    if (!lst || lst->type != 1 || lst->list.empty()) return nullptr;
+    if (!lst || lst->type != 1) return nullptr;
+    // Handle homogeneous int lists
+    if (lst->list_item_type == 1 && !lst->ilist.empty()) {
+        long val = lst->ilist.back();
+        lst->ilist.pop_back();
+        return PyInt_FromLong(val);
+    }
+    // Handle homogeneous float lists
+    if (lst->list_item_type == 2 && !lst->flist.empty()) {
+        double val = lst->flist.back();
+        lst->flist.pop_back();
+        return PyFloat_FromDouble(val);
+    }
+    // Handle regular boxed lists
+    if (lst->list.empty()) return nullptr;
     PyObject* item = lst->list.back();
     lst->list.pop_back();
     Py_INCREF(item);  // return new reference (caller owns it)
@@ -1337,8 +1351,36 @@ PyObject* PyList_Clear(PyObject* list) {
     return PyInt_FromLong(0);
 }
 PyObject* PyList_PopAt(PyObject* list, PyObject* idx) {
-    if (!list || list->type != 1 || list->list.empty()) return nullptr;
+    if (!list || list->type != 1) return nullptr;
     long i;
+    // Handle homogeneous int lists
+    if (list->list_item_type == 1) {
+        if (idx && (idx->type == 0 || idx->type == 5)) {
+            i = idx->value;
+            if (i < 0) i += (long)list->ilist.size();
+        } else {
+            i = (long)list->ilist.size() - 1;
+        }
+        if (i < 0 || i >= (long)list->ilist.size()) return nullptr;
+        long val = list->ilist[i];
+        list->ilist.erase(list->ilist.begin() + i);
+        return PyInt_FromLong(val);
+    }
+    // Handle homogeneous float lists
+    if (list->list_item_type == 2) {
+        if (idx && (idx->type == 0 || idx->type == 5)) {
+            i = idx->value;
+            if (i < 0) i += (long)list->flist.size();
+        } else {
+            i = (long)list->flist.size() - 1;
+        }
+        if (i < 0 || i >= (long)list->flist.size()) return nullptr;
+        double val = list->flist[i];
+        list->flist.erase(list->flist.begin() + i);
+        return PyFloat_FromDouble(val);
+    }
+    // Handle regular boxed lists
+    if (list->list.empty()) return nullptr;
     if (idx && (idx->type == 0 || idx->type == 5)) {
         i = idx->value;
         if (i < 0) i += (long)list->list.size();
