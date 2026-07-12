@@ -19,7 +19,7 @@
 namespace pyc {
 
 class LoweringVisitor {
-public:
+ public:
     LoweringVisitor(ModuleIR& moduleIR) : ir(moduleIR) {}
 
     void lower(const ASTNode* node, const std::string& funcName = "") {
@@ -1009,7 +1009,82 @@ public:
         return "";
     }
 
-private:
+    // A6: Generate specialized function variants based on call-site type info.
+    // For each function that is called with all-proven-numeric arguments,
+    // create a variant that takes i64/double directly instead of PyObject*.
+    void generateSpecializedVariants() {
+        for (auto& kv : callSiteTypes) {
+            const std::string& funcName = kv.first;
+            const std::vector<std::string>& types = kv.second;
+            
+            // Find the original function
+            IRFunction* origFunc = nullptr;
+            for (auto& f : ir.functions) {
+                if (f.name == funcName) { origFunc = &f; break; }
+            }
+            if (!origFunc) continue;
+            
+            // Only specialize if this is the ONLY signature seen for this function
+            // (to avoid conflicts between different call patterns)
+            bool hasMultipleSigs = false;
+            for (auto& other : callSiteTypes) {
+                if (other.first == funcName && &other != &kv) {
+                    hasMultipleSigs = true;
+                    break;
+                }
+            }
+            if (hasMultipleSigs) continue;
+            
+            // Check if all args are proven numeric (int or float)
+            bool allNumeric = true;
+            std::string sig; // "i" for int, "f" for float
+            for (size_t i = 0; i < types.size(); ++i) {
+                if (types[i] == "int" || types[i] == "i64") {
+                    sig += "i";
+                } else if (types[i] == "float") {
+                    sig += "f";
+                } else {
+                    allNumeric = false;
+                    break;
+                }
+            }
+            if (!allNumeric || sig.empty()) continue;
+            
+            // Don't specialize if the number of args doesn't match the function signature
+            // (defaults may cause mismatches)
+            if (types.size() != origFunc->args.size()) continue;
+            
+            // Check if we already have this variant
+            std::string variantName = "__specialized_" + funcName + "_" + sig;
+            for (const auto& f : ir.functions) {
+                if (f.name == variantName) continue; // already exists
+            }
+            
+            // Create the variant
+            IRFunction variant;
+            variant.name = variantName;
+            
+            // Build parameter list: cells (if any) + numeric params
+            for (const auto& cell : origFunc->freeCellVars) {
+                variant.args.push_back(cell + "_cell");
+            }
+            for (size_t i = 0; i < origFunc->args.size(); ++i) {
+                variant.args.push_back(origFunc->args[i]);
+            }
+            variant.paramNames = origFunc->paramNames;
+            variant.defaultGlobals = origFunc->defaultGlobals;
+            variant.cellVars = origFunc->cellVars;
+            variant.freeCellVars = origFunc->freeCellVars;
+            
+            // Copy instructions - variants have the same body as original
+            // (codegen handles native param types via the variant name prefix)
+            variant.body = origFunc->body;
+            
+            ir.functions.push_back(variant);
+        }
+    }
+
+ private:
     ModuleIR& ir;
     std::string currentFunc;
     int tempCounter = 0;
@@ -1067,6 +1142,11 @@ private:
     // This enables treating a lambda "value" (string token) as a callable target
     // when it appears as a callee expression (B4 progress on lambda as value).
     std::unordered_map<std::string, std::string> callableTokenToSynthetic; // temp -> synthetic name
+
+    // A6: Call-site type tracking for monomorphization.
+    // Maps (funcName, paramIndex) -> type string ("int", "float", "boxed").
+    // Populated during lowering; used after lowering to generate specialized variants.
+    std::unordered_map<std::string, std::vector<std::string>> callSiteTypes;
     // Last synthetic name produced by lowerLambda (used by assign of a lambda
     // to capture the alias after we started emitting a boxed string value for
     // the lambda expression).
@@ -2683,6 +2763,16 @@ private:
             }
             finalOps.insert(finalOps.begin(), funcName);
             finalOps.insert(finalOps.end(), argRes.begin(), argRes.end());
+            // A6: track call-site argument types for monomorphization.
+            // Only track for direct calls to known functions (not builtins with special paths).
+            if (knownIRFunctions.count(funcName) && !argRes.empty()) {
+                auto& types = callSiteTypes[funcName];
+                for (size_t i = 0; i < argRes.size(); ++i) {
+                    std::string t = typeOf(argRes[i]);
+                    if (t == "i64") t = "int";
+                    types.push_back(t);
+                }
+            }
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", finalOps, res);
             // B4: if the callee is a function we have recorded as returning a callable token
@@ -4683,6 +4773,7 @@ void lowerAST(const ASTNode* node, ModuleIR& ir) {
     if (!node) return;
     LoweringVisitor visitor(ir);
     visitor.lower(node);
+    // A6: specialized variant generation deferred - call-site types tracked in callSiteTypes
 }
 
 bool Compiler::compile(const std::string& inputPath, const std::string& outputPath, bool useStatic, int optLevel, bool emitLLVM, bool emitASM, bool verbose) {
