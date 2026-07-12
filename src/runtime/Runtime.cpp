@@ -1834,9 +1834,23 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key) {
     if (!lst) return PyList_New(0);
     std::vector<PyObject*> items;
     if (lst->type == 1) {
-        for (auto* item : lst->list) {
-            if (item) Py_INCREF(item);
-            items.push_back(item);
+        // Handle homogeneous int lists
+        if (lst->list_item_type == 1) {
+            for (size_t i = 0; i < lst->ilist.size(); ++i) {
+                items.push_back(PyInt_FromLong(lst->ilist[i]));
+            }
+        }
+        // Handle homogeneous float lists
+        else if (lst->list_item_type == 2) {
+            for (size_t i = 0; i < lst->flist.size(); ++i) {
+                items.push_back(PyFloat_FromDouble(lst->flist[i]));
+            }
+        }
+        else {
+            for (auto* item : lst->list) {
+                if (item) Py_INCREF(item);
+                items.push_back(item);
+            }
         }
     } else if (lst->type == 2) {
         for (auto& pair : lst->dict) {
@@ -1896,9 +1910,23 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp) {
     if (!lst || !cmp) return PyBuiltin_Sorted(lst, nullptr);
     std::vector<PyObject*> items;
     if (lst->type == 1) {
-        for (auto* item : lst->list) {
-            if (item) Py_INCREF(item);
-            items.push_back(item);
+        // Handle homogeneous int lists
+        if (lst->list_item_type == 1) {
+            for (size_t i = 0; i < lst->ilist.size(); ++i) {
+                items.push_back(PyInt_FromLong(lst->ilist[i]));
+            }
+        }
+        // Handle homogeneous float lists
+        else if (lst->list_item_type == 2) {
+            for (size_t i = 0; i < lst->flist.size(); ++i) {
+                items.push_back(PyFloat_FromDouble(lst->flist[i]));
+            }
+        }
+        else {
+            for (auto* item : lst->list) {
+                if (item) Py_INCREF(item);
+                items.push_back(item);
+            }
         }
     } else if (lst->type == 2) {
         for (auto& pair : lst->dict) {
@@ -2210,6 +2238,24 @@ PyObject* PyBuiltin_Reversed(PyObject* obj) {
     if (!obj) return PyList_New(0);
     PyObject* r = nullptr;
     if (obj->type == 1) {
+        // Handle homogeneous int lists
+        if (obj->list_item_type == 1) {
+            r = PyList_NewIntBoxed(PyInt_FromLong((long)obj->ilist.size()));
+            for (size_t i = 0; i < obj->ilist.size(); ++i) {
+                size_t ri = obj->ilist.size() - 1 - i;
+                PyList_SetItemInt64(r, i, obj->ilist[ri]);
+            }
+            return r;
+        }
+        // Handle homogeneous float lists
+        if (obj->list_item_type == 2) {
+            r = PyList_NewFloatBoxed(PyInt_FromLong((long)obj->flist.size()));
+            for (size_t i = 0; i < obj->flist.size(); ++i) {
+                size_t ri = obj->flist.size() - 1 - i;
+                PyList_SetItemDouble(r, i, obj->flist[ri]);
+            }
+            return r;
+        }
         // List or tuple: reverse the elements.
         r = PyList_New(obj->list.size());
         for (size_t i = 0; i < obj->list.size(); ++i) {
