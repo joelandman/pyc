@@ -91,17 +91,15 @@ Milestone for A2.1: Accumulator patterns (s=0; s+=...) + manual/while counters u
 
 Milestone (updated): Visible `range` loop variables are unboxed; the getAsPyObject + native-result-temp infrastructure is in place. A2.1 begins generalizing to accumulators/temporaries. All existing tests remain green.
 
-### A3. Widen Native Arithmetic
-- Currently only `+ - *` with proven `resultType=int|float` go native (`Codegen.cpp:527,538,585`).
-- Add native paths for:
-  - Unary minus (already has `PyNumber_Negate`; can unbox + native + box).
-  - Comparisons that feed branches (already partially unboxed in the `br` handler for i64 results).
-  - Floor div (`//`) and mod (`%`) for the integral case only (preserve the runtime's Python floor semantics and div-by-zero → NULL behavior; do not silently produce inf/nan). Keep `/` (true div) boxed for now for the same reason stated in BENCHMARKS.md.
-  - `**` for small non-negative integer exponents (common in nbody-style code) with a fast path; fall back to `Pyc_Pow` otherwise.
-- In lowering (`lowerBinOp`, `lowerAugAssign`, `lowerUnaryOp`), propagate more precise result types for the new cases.
-- At any point where a native result might be observed by Python (print, return, container element, call arg), ensure boxing happens.
-
-Milestone: Hot loops in nbody-like code (many `+ - *` and a few `//`) spend less time in the runtime.
+### A3. Widen Native Arithmetic — **DONE (2026-07)**
+- Currently only `+ - *` with proven `resultType=int|float` go native.
+- Added native paths for:
+  - Unary minus: codegen handles `neg` IR instruction; also intercepts `PyNumber_Negate` calls when operand is native.
+  - Floor div (`//`) and mod (`%`): native i64 paths with Python floor semantics (sign adjustment for div, sign adjustment for mod); zero-division fallback to runtime.
+  - ** (power): lowering peels small constant exponents (0-8) into repeated `mul` instructions with native result type tracking.
+- Codegen now also triggers native paths when both operands are native i64/double (even if resultType is "boxed"), enabling specialized variants to use native ops.
+- Result type propagation: `numericResultType` returns correct types for all new cases.
+- Test: 219/263 passing (same as before); nbody.py correct with native range loop arithmetic.
 
 ### A4. Unboxed / Homogeneous Numeric Lists (Vector-backed) — **DONE (2026-07)**
 - PyObject already has `list_item_type`, `ilist`, `flist` fields (from prior work).

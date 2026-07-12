@@ -981,7 +981,19 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         auto emitNativeNumericBinary = [&](const IRInstruction& inst,
                                            const std::string& op) -> bool {
             if (inst.operands.size() < 2) return false;
-            if (inst.resultType == "int") {
+            
+            // Check if both operands are native (i64 or double).
+            // This handles the case where resultType is "boxed" but operands
+            // are proven numeric (e.g., function parameters that are numeric).
+            llvm::Value* rawL = getOrLoad(inst.operands[0].name);
+            llvm::Value* rawR = getOrLoad(inst.operands[1].name);
+            bool lhsIsNative = rawL && (rawL->getType() == llvm::Type::getInt64Ty(context)
+                                        || rawL->getType()->isDoubleTy());
+            bool rhsIsNative = rawR && (rawR->getType() == llvm::Type::getInt64Ty(context)
+                                        || rawR->getType()->isDoubleTy());
+            bool bothNative = lhsIsNative && rhsIsNative;
+            
+            if (inst.resultType == "int" || (bothNative && rawL->getType() == llvm::Type::getInt64Ty(context) && rawR->getType() == llvm::Type::getInt64Ty(context))) {
                 llvm::Value* lhs = unboxToI64(getOrLoad(inst.operands[0].name));
                 llvm::Value* rhs = unboxToI64(getOrLoad(inst.operands[1].name));
                 llvm::Value* native = nullptr;
@@ -1005,11 +1017,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     return false;
                 }
                 valueMap[inst.result] = native;
-                emitDecRefIfOwned(inst.operands[0].name);
-                emitDecRefIfOwned(inst.operands[1].name);
+                if (!bothNative) {
+                    emitDecRefIfOwned(inst.operands[0].name);
+                    emitDecRefIfOwned(inst.operands[1].name);
+                }
                 return true;
             }
-            if (inst.resultType == "float") {
+            if (inst.resultType == "float" || (bothNative && rawL->getType()->isDoubleTy() && rawR->getType()->isDoubleTy())) {
                 llvm::Value* lhs = unboxToDouble(getOrLoad(inst.operands[0].name));
                 llvm::Value* rhs = unboxToDouble(getOrLoad(inst.operands[1].name));
                 llvm::Value* native = nullptr;
@@ -1023,8 +1037,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     return false;
                 }
                 valueMap[inst.result] = native;
-                emitDecRefIfOwned(inst.operands[0].name);
-                emitDecRefIfOwned(inst.operands[1].name);
+                if (!bothNative) {
+                    emitDecRefIfOwned(inst.operands[0].name);
+                    emitDecRefIfOwned(inst.operands[1].name);
+                }
                 return true;
             }
             return false;
@@ -1424,9 +1440,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     }
                 }
             } else if (inst.op == "div") {
-                if (inst.resultType == "int") {
-                    std::string lname = inst.operands.empty() ? "" : inst.operands[0].name;
-                    std::string rname = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                std::string lname = inst.operands.empty() ? "" : inst.operands[0].name;
+                std::string rname = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                llvm::Value* lhsRaw = lname.empty() ? nullptr : getOrLoad(lname);
+                llvm::Value* rhsRaw = rname.empty() ? nullptr : getOrLoad(rname);
+                bool bothNativeInt = (lhsRaw && lhsRaw->getType() == llvm::Type::getInt64Ty(context)) &&
+                                     (rhsRaw && rhsRaw->getType() == llvm::Type::getInt64Ty(context));
+                
+                if (inst.resultType == "int" || bothNativeInt) {
                     llvm::Value* lhs = unboxToI64(getOrLoad(lname));
                     llvm::Value* rhs = unboxToI64(getOrLoad(rname));
                     llvm::Value* isZero = builder.CreateICmpEQ(rhs, llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
@@ -1548,9 +1569,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     }
                 }
             } else if (inst.op == "mod") {
-                if (inst.resultType == "int") {
-                    std::string lname = inst.operands.empty() ? "" : inst.operands[0].name;
-                    std::string rname = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                std::string lname = inst.operands.empty() ? "" : inst.operands[0].name;
+                std::string rname = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                llvm::Value* lhsRawM = lname.empty() ? nullptr : getOrLoad(lname);
+                llvm::Value* rhsRawM = rname.empty() ? nullptr : getOrLoad(rname);
+                bool bothNativeIntM = (lhsRawM && lhsRawM->getType() == llvm::Type::getInt64Ty(context)) &&
+                                      (rhsRawM && rhsRawM->getType() == llvm::Type::getInt64Ty(context));
+                
+                if (inst.resultType == "int" || bothNativeIntM) {
                     llvm::Value* lhs = unboxToI64(getOrLoad(lname));
                     llvm::Value* rhs = unboxToI64(getOrLoad(rname));
                     llvm::Value* isZero = builder.CreateICmpEQ(rhs, llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
@@ -1587,29 +1613,26 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     emitDecRefIfOwned(rname);
                     continue;
                 }
+                // float or unknown -> boxed
                 llvm::Function* numberRem = module->getFunction("PyNumber_Remainder");
-                std::string lhsNameM = inst.operands.size() > 0 ? inst.operands[0].name : "";
-                std::string rhsNameM = inst.operands.size() > 1 ? inst.operands[1].name : "";
-                llvm::Value* lhsRawM = lhsNameM.empty() ? nullptr : getOrLoad(lhsNameM);
-                llvm::Value* rhsRawM = rhsNameM.empty() ? nullptr : getOrLoad(rhsNameM);
-                bool lhsNativeM = lhsRawM && (lhsRawM->getType() == llvm::Type::getInt64Ty(context) || lhsRawM->getType()->isDoubleTy());
-                bool rhsNativeM = rhsRawM && (rhsRawM->getType() == llvm::Type::getInt64Ty(context) || rhsRawM->getType()->isDoubleTy());
-                llvm::Value* lhs = getAsPyObject(lhsNameM);
-                llvm::Value* rhs = getAsPyObject(rhsNameM);
+                llvm::Value* lhsBoxed = getAsPyObject(lname);
+                llvm::Value* rhsBoxed = getAsPyObject(rname);
+                bool lhsNativeBoxed = lhsRawM && (lhsRawM->getType() == llvm::Type::getInt64Ty(context) || lhsRawM->getType()->isDoubleTy());
+                bool rhsNativeBoxed = rhsRawM && (rhsRawM->getType() == llvm::Type::getInt64Ty(context) || rhsRawM->getType()->isDoubleTy());
                 if (numberRem) {
-                    llvm::Value* rem = builder.CreateCall(numberRem, {lhs, rhs}, inst.result);
+                    llvm::Value* rem = builder.CreateCall(numberRem, {lhsBoxed, rhsBoxed}, inst.result);
                     valueMap[inst.result] = rem;
                     markOwned(inst.result);
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
-                emitDecRefIfOwned(lhsNameM);
-                emitDecRefIfOwned(rhsNameM);
+                emitDecRefIfOwned(lname);
+                emitDecRefIfOwned(rname);
                 {
                     llvm::Function* decrefN = module->getFunction("Py_DECREF");
                     if (decrefN) {
-                        if (lhsNativeM) builder.CreateCall(decrefN, {lhs});
-                        if (rhsNativeM) builder.CreateCall(decrefN, {rhs});
+                        if (lhsNativeBoxed) builder.CreateCall(decrefN, {lhsBoxed});
+                        if (rhsNativeBoxed) builder.CreateCall(decrefN, {rhsBoxed});
                     }
                 }
             } else if (inst.op == "mul") {
@@ -1678,28 +1701,47 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 // Unary minus. For proven numeric resultType, keep native result (i64/double)
                 // so it can participate in further unboxed arithmetic (A3 widening).
                 // Box only on escape via getAsPyObject.
-                if (inst.resultType == "int") {
-                    std::string opName = inst.operands.empty() ? "" : inst.operands[0].name;
+                std::string opName = inst.operands.empty() ? "" : inst.operands[0].name;
+                llvm::Value* rawOp = opName.empty() ? nullptr : getOrLoad(opName);
+                bool opIsNativeI64 = rawOp && rawOp->getType() == llvm::Type::getInt64Ty(context);
+                bool opIsNativeDouble = rawOp && rawOp->getType()->isDoubleTy();
+                
+                if (inst.resultType == "int" || opIsNativeI64) {
                     llvm::Value* v = unboxToI64(getOrLoad(opName));
                     llvm::Value* n = builder.CreateNeg(v, inst.result + ".i64");
                     valueMap[inst.result] = n;  // native i64 for longer unboxed life
-                    emitDecRefIfOwned(opName);
+                    if (!opIsNativeI64) emitDecRefIfOwned(opName);
                     continue;
                 }
-                if (inst.resultType == "float") {
-                    std::string opName = inst.operands.empty() ? "" : inst.operands[0].name;
+                if (inst.resultType == "float" || opIsNativeDouble) {
                     llvm::Value* v = unboxToDouble(getOrLoad(opName));
                     llvm::Value* n = builder.CreateFNeg(v, inst.result + ".double");
                     valueMap[inst.result] = n;
-                    emitDecRefIfOwned(opName);
+                    if (!opIsNativeDouble) emitDecRefIfOwned(opName);
                     continue;
                 }
-                // Fallback: boxed runtime path
-                llvm::Function* fn = module->getFunction("PyNumber_Negate");
+                // Fallback: boxed runtime path, but check if operand is native first.
                 std::string negArg = inst.operands.empty() ? "" : inst.operands[0].name;
                 llvm::Value* negArgRaw = negArg.empty() ? nullptr : getOrLoad(negArg);
-                bool negArgNative = negArgRaw && (negArgRaw->getType() == llvm::Type::getInt64Ty(context) || negArgRaw->getType()->isDoubleTy());
-                llvm::Value* arg = getAsPyObject(negArg);
+                bool negArgIsNativeI64 = negArgRaw && negArgRaw->getType() == llvm::Type::getInt64Ty(context);
+                bool negArgIsNativeDouble = negArgRaw && negArgRaw->getType()->isDoubleTy();
+                
+                if (negArgIsNativeI64) {
+                    // Native i64 path: negate directly without boxing.
+                    llvm::Value* v = builder.CreateNeg(negArgRaw, inst.result + ".i64");
+                    valueMap[inst.result] = v;
+                    continue;
+                }
+                if (negArgIsNativeDouble) {
+                    // Native double path: negate directly without boxing.
+                    llvm::Value* v = builder.CreateFNeg(negArgRaw, inst.result + ".double");
+                    valueMap[inst.result] = v;
+                    continue;
+                }
+                
+                // Truly boxed path: call runtime.
+                llvm::Function* fn = module->getFunction("PyNumber_Negate");
+                llvm::Value* arg = negArg.empty() ? llvm::ConstantPointerNull::get(pyObjectPtrTy) : getAsPyObject(negArg);
                 if (fn) {
                     valueMap[inst.result] = builder.CreateCall(fn, {arg}, inst.result);
                     markOwned(inst.result);
@@ -1707,10 +1749,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
                 emitDecRefIfOwned(negArg);
-                if (negArgNative) {
-                    llvm::Function* decrefN = module->getFunction("Py_DECREF");
-                    if (decrefN) builder.CreateCall(decrefN, {arg});
-                }
             } else if (inst.op == "getattr") {
                 llvm::Function* getAttr = module->getFunction("PyObject_GetAttr");
                 llvm::Value* obj = getOrLoad(inst.operands[0].name);
