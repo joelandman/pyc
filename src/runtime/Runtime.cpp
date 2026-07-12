@@ -40,6 +40,10 @@ struct PyObject {
     std::unordered_map<PyObject*, PyObject*> dict;
     std::string str;
     PyObject* cell_content; // type 6
+    // A4 homogeneous numeric lists
+    int list_item_type;      // 0=general PyObject*, 1=int64, 2=double
+    std::vector<long> ilist;
+    std::vector<double> flist;
 };
 
 void Py_INCREF(PyObject* obj) {
@@ -156,23 +160,46 @@ PyObject* PyList_New(size_t size) {
     obj->refcount = 1;
     obj->type = 1;
     obj->list.assign(size, nullptr);
+    obj->list_item_type = 0;
     return obj;
 }
 
 PyObject* PyList_GetItem(PyObject* list, size_t index) {
-    if (list && list->type == 1 && index < list->list.size())
-        return list->list[index];
+    if (list && list->type == 1) {
+        if (list->list_item_type == 1 && index < list->ilist.size())
+            return PyInt_FromLong(list->ilist[index]);
+        if (list->list_item_type == 2 && index < list->flist.size())
+            return PyFloat_FromDouble(list->flist[index]);
+        if (index < list->list.size())
+            return list->list[index];
+    }
     return nullptr;
 }
 
 size_t PyList_Size(PyObject* list) {
-    if (list && list->type == 1)
+    if (list && list->type == 1) {
+        if (list->list_item_type == 1) return list->ilist.size();
+        if (list->list_item_type == 2) return list->flist.size();
         return list->list.size();
+    }
     return 0;
 }
 
 void PyList_SetItem(PyObject* list, size_t index, PyObject* item) {
-    if (list && list->type == 1 && index < list->list.size()) {
+    if (!list || list->type != 1) return;
+    if (list->list_item_type == 1) {
+        if (index >= list->ilist.size()) list->ilist.resize(index + 1, 0);
+        if (item && item->type == 0) list->ilist[index] = item->value;
+        else if (item && item->type == 5) list->ilist[index] = item->value ? 1 : 0;
+        return;
+    }
+    if (list->list_item_type == 2) {
+        if (index >= list->flist.size()) list->flist.resize(index + 1, 0.0);
+        if (item && item->type == 4) list->flist[index] = item->dvalue;
+        else if (item && (item->type == 0 || item->type == 5)) list->flist[index] = (double)item->value;
+        return;
+    }
+    if (index < list->list.size()) {
         if (list->list[index]) Py_DECREF(list->list[index]);
         list->list[index] = item;
         if (item) Py_INCREF(item);
@@ -181,9 +208,21 @@ void PyList_SetItem(PyObject* list, size_t index, PyObject* item) {
 
 PyObject* PyList_Append(PyObject* list, PyObject* item) {
     if (list && list->type == 1) {
+        if (list->list_item_type == 1) {
+            if (item && (item->type == 0 || item->type == 5)) list->ilist.push_back(item->value);
+            else list->ilist.push_back(0);
+            if (item) Py_INCREF(item); // for the boxed item if caller expects
+            return nullptr;
+        }
+        if (list->list_item_type == 2) {
+            if (item && item->type == 4) list->flist.push_back(item->dvalue);
+            else if (item && (item->type == 0 || item->type == 5)) list->flist.push_back((double)item->value);
+            else list->flist.push_back(0.0);
+            if (item) Py_INCREF(item);
+            return nullptr;
+        }
         list->list.push_back(item);
         if (item) Py_INCREF(item);
-        return list;
     }
     return nullptr;
 }
@@ -202,10 +241,16 @@ PyObject* PyList_SizeBoxed(PyObject* list) {
 PyObject* PyList_GetItemObj(PyObject* list, PyObject* idx) {
     if (!list || list->type != 1) return nullptr;
     if (!idx || (idx->type != 0 && idx->type != 5)) return nullptr;
-    long n = (long)list->list.size();
+    size_t n = PyList_Size(list);
     long i = (long)idx->value;
-    if (i < 0) i += n;
-    if (i < 0 || i >= n) return nullptr;
+    if (i < 0) i += (long)n;
+    if (i < 0 || (size_t)i >= n) return nullptr;
+    if (list->list_item_type == 1) {
+        return PyInt_FromLong(list->ilist[i]);
+    }
+    if (list->list_item_type == 2) {
+        return PyFloat_FromDouble(list->flist[i]);
+    }
     PyObject* item = list->list[i];
     if (item) Py_INCREF(item);
     return item;
@@ -219,6 +264,57 @@ PyObject* PyList_NewBoxed(PyObject* n) {
 void PyList_SetItemBoxed(PyObject* list, PyObject* idx, PyObject* item) {
     if (!idx || idx->type != 0) return;
     PyList_SetItem(list, (size_t)idx->value, item);
+}
+
+// A4 fast paths for homogeneous numeric lists (internal use by codegen)
+PyObject* PyList_NewInt(size_t size) {
+    PyObject* obj = new PyObject();
+    obj->refcount = 1;
+    obj->type = 1;
+    obj->list_item_type = 1;
+    obj->ilist.assign(size, 0);
+    return obj;
+}
+
+PyObject* PyList_NewFloat(size_t size) {
+    PyObject* obj = new PyObject();
+    obj->refcount = 1;
+    obj->type = 1;
+    obj->list_item_type = 2;
+    obj->flist.assign(size, 0.0);
+    return obj;
+}
+
+PyObject* PyList_NewIntBoxed(PyObject* n) {
+    size_t size = (n && n->type == 0) ? (size_t)n->value : 0;
+    return PyList_NewInt(size);
+}
+
+PyObject* PyList_NewFloatBoxed(PyObject* n) {
+    size_t size = (n && n->type == 0) ? (size_t)n->value : 0;
+    return PyList_NewFloat(size);
+}
+
+long PyList_GetItemInt64(PyObject* list, size_t index) {
+    if (list && list->type == 1 && list->list_item_type == 1 && index < list->ilist.size())
+        return list->ilist[index];
+    return 0;
+}
+
+void PyList_SetItemInt64(PyObject* list, size_t index, long v) {
+    if (list && list->type == 1 && list->list_item_type == 1 && index < list->ilist.size())
+        list->ilist[index] = v;
+}
+
+double PyList_GetItemDouble(PyObject* list, size_t index) {
+    if (list && list->type == 1 && list->list_item_type == 2 && index < list->flist.size())
+        return list->flist[index];
+    return 0.0;
+}
+
+void PyList_SetItemDouble(PyObject* list, size_t index, double v) {
+    if (list && list->type == 1 && list->list_item_type == 2 && index < list->flist.size())
+        list->flist[index] = v;
 }
 
 PyObject* PyList_Range(int start, int end) {
@@ -373,7 +469,9 @@ extern "C" PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj);
 void Py_DECREF(PyObject* obj) {
     if (obj && obj->refcount != IMMORTAL_REFCOUNT && --obj->refcount == 0) {
         if (obj->type == 1) {
-            for (PyObject* item : obj->list) if (item) Py_DECREF(item);
+            if (obj->list_item_type == 0) {
+                for (PyObject* item : obj->list) if (item) Py_DECREF(item);
+            }
         } else if (obj->type == 2) {
             for (auto& pair : obj->dict) {
                 Py_DECREF(pair.first);
@@ -1180,8 +1278,13 @@ PyObject* PyList_Copy(PyObject* list) {
 }
 PyObject* PyList_Clear(PyObject* list) {
     if (!list || list->type != 1) return nullptr;
-    for (auto* e : list->list) if (e) Py_DECREF(e);
+    if (list->list_item_type == 0) {
+        for (auto* e : list->list) if (e) Py_DECREF(e);
+    }
     list->list.clear();
+    list->ilist.clear();
+    list->flist.clear();
+    list->list_item_type = 0;
     return PyInt_FromLong(0);
 }
 PyObject* PyList_PopAt(PyObject* list, PyObject* idx) {
@@ -1532,7 +1635,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
 
 PyObject* PyBuiltin_Len(PyObject* obj) {
     if (!obj) return PyInt_FromLong(0);
-    if (obj->type == 1) return PyInt_FromLong((long)obj->list.size());
+    if (obj->type == 1) return PyInt_FromLong((long)PyList_Size(obj));
     if (obj->type == 3) return PyInt_FromLong((long)obj->str.size());
     if (obj->type == 2) return PyInt_FromLong((long)obj->dict.size());
     return PyInt_FromLong(0);

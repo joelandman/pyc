@@ -68,7 +68,28 @@ Remaining for fuller A2:
 - Interaction with control flow merges inside loops (phi-like re-boxing or slot switching at certain points).
 - Measurement: show reduced allocations for hot numeric microbenchmarks.
 
-Milestone (updated): Visible `range` loop variables are unboxed; the getAsPyObject + native-result-temp infrastructure is in place. This is the first real step toward longer-lived unboxed numeric locals. Full general unboxed locals and allocation reduction will be expanded in follow-ups. All existing tests (174) remain green.
+### A2.1. General Unboxed Numeric Locals — **DONE (2026-07)**
+Concrete next slice after range-var foundation (A2 start).
+
+**Goal:** Extend native i64/double storage to simple accumulators (e.g. `s = 0; for ...: s += x*x`) and short-lived numeric temporaries. Box only on escape (calls, containers, returns, etc.) using existing `getAsPyObject`.
+
+**Design summary (from architect review):**
+- Detection in Compiler: `numericLocals` set + heuristics (numeric init + only numeric updates; kill on non-numeric assign). Reuse/enhance `valueTypes`, `numericResultType`, `widenLoopTypes`.
+- Lowering: prefer `i64assign` / native ops for targets in `numericLocals`.
+- Codegen: generalize i64alloca handling (already in assign + entry) beyond range-only names.
+- Invariants: widening on type divergence; cells take precedence; escape always boxes.
+- Phased: Step 1 = accumulators (0-init + += in loops). Step 2 = broader temps + doubles.
+
+**Immediate actions:**
+1. Add `numericLocals` tracking + simple accumulator detection.
+2. Update `lowerAssign`/`lowerAugAssign` to emit native assigns.
+3. Generalize Codegen i64 handling.
+4. Add tests in `runner.py`.
+5. Build + full run + nbody verification.
+
+Milestone for A2.1: Accumulator patterns (s=0; s+=...) + manual/while counters unboxed via numericLocals + i64assign; escape boxes via getAsPyObject; runner cases (incl. opt_numeric_locals.py) + nbody pass; plan + diffs updated.
+
+Milestone (updated): Visible `range` loop variables are unboxed; the getAsPyObject + native-result-temp infrastructure is in place. A2.1 begins generalizing to accumulators/temporaries. All existing tests remain green.
 
 ### A3. Widen Native Arithmetic
 - Currently only `+ - *` with proven `resultType=int|float` go native (`Codegen.cpp:527,538,585`).
@@ -260,7 +281,8 @@ Testing:
 - [x] Dict comprehensions produce correct dicts (incl. multi-generator) and pass tests. (B3, 2026-06)
 - [x] `valueTypes` / resultType tracking strengthened (A1 foundation, 2026-06).
 - [x] Unboxed numeric locals start: visible range vars native i64 + escape boxing + native numeric results (A2 start, 2026-06).
-- [x] Native unary minus + safe integral `//` (A3, 2026-06).
+- [x] A2.1 General Unboxed Numeric Locals: accumulators + temporaries (numericLocals set + kill on non-num, i64assign emission in assign/aug, generalized i64alloca+unbox-on-store in codegen, getAsPyObject escape boxing). Steps 1-5 done 2026-07. Existing opt_numeric_locals + manual acc/while/escape/mixed tests pass; nbody unchanged.
+- [x] A3 Widen Native Arithmetic complete: pure-native hot paths for // (div) and % (mod) via zero-path only runtime call + native arith+adjust+box; ** fastpath unrolls small nonneg int const exps to native muls in lowering; icmp uses native ICmp/FCmp+bool box when numeric operands; pow resultType more precise. All runner + nbody pass (2026-07).
 - [x] Lambda expression lowering + *args call-site support (B4/B8 complete for the token model, 2026-06). Parser handles Lambda (incl. *args/**kwargs) and Starred. lowerLambda creates synthetic nested IR functions (body-as-implicit-return + defaults + boxing to PyObject*). Call resolution covers direct literal/assigned lambdas and the full lambdas-as-values surface: assign, pass as argument, store in lists/dicts, return from functions, unpack, subscript, and call indirectly. Indirect dispatch uses string "callable tokens" (the synthetic name) + `Pyc_Apply(token, list)` + generated `__apply__<name>` adapters registered at `__module__` ctor startup via `pyc_register_callable`. Dynamic * under indirect callees splices contents into the flat arg list passed to `Pyc_Apply` (no stray __va wrapper for a parameter name). Adapters are shape-aware (consult `IRFunction::paramNames`) and correctly collect a tail list for targets that declare *vararg. Callee-side * collection for declared varargs works. Bare-name callees that are not known direct IR functions (and are not special builtin shims like print/len/range/...) are routed via the dynamic token path; special shims are pre-populated in knownIRFunctions and guarded so they keep their fast paths. **kwargs and full first-class callable objects (identity, equality) remain follow-ups. Cells/closures for lambdas (B5) implemented via descriptor bundles + hidden cell params + adapter default injection (2026-07).
 - [x] B5 start (2026-06): explicit `Nonlocal` handling in lowering (declaration-only, mirror of `Global`). Added `scanFuncNonlocals` + `funcNonlocals` map per FunctionDef (no semantics yet). Runtime cell sketch landed: `PyObject` gained type=6 + `cell_content`; `PyCell_New(initial)`, `PyCell_Get(cell)`, `PyCell_Set(cell,val)`, `PyCell_Check(obj)` implemented and declared. These are the minimal primitives for later cell allocation in enclosing scopes, hidden cell params for nested funcs, and load/store rewrite for nonlocal names. No IR/codegen changes or test enablement yet; curated count unchanged. Full B5 (cells + nonlocal mutation) is the next increment after this scaffolding.
 - [x] B5 first working increment (2026-06): IRFunction gained `cellVars`/`freeCellVars`. Lowering computes `funcCells`/`funcFreeCells`/`funcOwnedCells` from nonlocals + assigned names in nested scopes; synthesizes hidden leading cell parameters (`<name>_cell`) for nested functions; allocates owned cells at function entry (and captures incoming param values into cells when the closed-over name is a parameter). `lowerExpr(Name)` and `lowerAssign` route cell-backed names through `PyCell_Get`/`PyCell_Set` using the uniform `<name>_cell` slot. Direct call sites to functions with free cells prepend the cell objects as leading operands. Codegen pre-populates valueMap slots for free/owned cell parameters and cellVars. A minimal curated test (read + assign via nonlocal, single nesting level) now passes; `make check` reports 188/188. Deeper nesting, cross-function aliasing, and interactions with classes/lambdas-as-values remain future work within B5/B6.

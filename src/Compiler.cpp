@@ -31,6 +31,7 @@ public:
             currentFunc = "__module__";
             tempCounter = 0;
             valueTypes.clear();
+            numericLocals.clear();
             // Pre-scan: collect module bindings and global-declared variable
             // names so top-level assignments are visible from functions.
             collectModuleBindings(node);
@@ -503,6 +504,7 @@ public:
             listsContainingCallableTokens.clear();
             currentFnReturnsCallable = false;
             lastLambdaSynthetic.clear();
+            numericLocals.clear();
 
             // B5: allocate owned cells (for names we assign here that inner scopes close over via nonlocal).
             // Initialize at creation time:
@@ -811,8 +813,8 @@ public:
                 ir.addInstruction(currentFunc, "nconst", {}, res, "none");
                 noteType(res, "none");
             } else {
-                ir.addInstruction(currentFunc, "const", {val}, res, "int");
-                noteType(res, "int");
+                ir.addInstruction(currentFunc, "i64const", {val}, res, "i64");
+                noteType(res, "i64");
             }
             return res;
         } else if (node->type == "Name") {
@@ -1014,6 +1016,9 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> funcDefaultValues;
     std::unordered_map<std::string, std::vector<std::string>> funcParamNames;
     std::unordered_map<std::string, std::string> valueTypes;
+    // A2.1: names proven to stay numeric (int/i64/float) for their live range.
+    // These get native i64/double slots instead of boxed PyObject*.
+    std::unordered_set<std::string> numericLocals;
     // Map from user-level name to synthetic lambda function name for call resolution.
     std::unordered_map<std::string, std::string> lambdaAliases;
     // Track list/tuple literals assigned to names (intra-function) so that
@@ -1142,6 +1147,10 @@ private:
 
     void noteType(const std::string& name, const std::string& type) {
         if (!name.empty() && !type.empty()) valueTypes[name] = type;
+        // A2.1: promote to native numeric local if type is proven numeric (int/i64/bool first)
+        if (type == "int" || type == "i64" || type == "bool") {
+            numericLocals.insert(name);
+        }
     }
 
     std::string typeOf(const std::string& name) const {
@@ -1151,13 +1160,27 @@ private:
         return t;
     }
 
+    // A2.1: mark a name as no longer eligible for native numeric storage
+    // (e.g. assigned a string, list, or unknown value).
+    void killNumericLocal(const std::string& name) {
+        numericLocals.erase(name);
+        if (!name.empty()) valueTypes[name] = "boxed";
+    }
+
     std::string numericResultType(const std::string& op,
                                    const std::string& left,
                                    const std::string& right) const {
         std::string lt = typeOf(left);
         std::string rt = typeOf(right);
         if (op == "truediv") return "float";
-        // treat i64 (native range counters) as int for numeric ops
+        if (op == "pow") {
+            auto isNum = [](const std::string& t){ return t=="int" || t=="bool" || t=="float" || t=="i64"; };
+            if (isNum(lt) && isNum(rt)) {
+                if (lt == "float" || rt == "float") return "float";
+                return "boxed";
+            }
+            return "boxed";
+        }
         auto isNum = [](const std::string& t){ return t=="int" || t=="bool" || t=="float" || t=="i64"; };
         if (isNum(lt) && isNum(rt)) {
             return (lt == "float" || rt == "float") ? "float" : "int";
@@ -1318,9 +1341,6 @@ private:
     }
 
     std::string lowerBinOp(const ASTNode* node) {
-        std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
-        std::string right = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
-        std::string res = "t" + std::to_string(tempCounter++);
         std::string op = node->op.empty() ? "add" : node->op;
         if (op == "Add") op = "add";
         else if (op == "Sub") op = "sub";
@@ -1334,6 +1354,36 @@ private:
         else if (op == "BitOr") op = "bitor";
         else if (op == "BitAnd") op = "bitand";
         else if (op == "BitXor") op = "bitxor";
+        if (op == "pow" && node->children.size() > 1 && node->children[1]) {
+            const ASTNode* rc = node->children[1].get();
+            if (rc->type == "Constant" && !rc->is_float && !rc->is_str && !rc->is_none && !rc->is_bool) {
+                char* eend = nullptr;
+                errno = 0;
+                long expv = std::strtol(rc->value.c_str(), &eend, 10);
+                (void)eend; (void)errno;
+                if (expv >= 0 && expv <= 8) {
+                    std::string left = lowerExpr(node->children[0].get());
+                    if (expv == 0) {
+                        std::string one = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"1"}, one, "int");
+                        noteType(one, "int");
+                        return one;
+                    }
+                    std::string cur = left;
+                    for (long k = 1; k < expv; ++k) {
+                        std::string t = "t" + std::to_string(tempCounter++);
+                        std::string rt = numericResultType("mul", cur, left);
+                        ir.addInstruction(currentFunc, "mul", {cur, left}, t, rt);
+                        noteType(t, rt);
+                        cur = t;
+                    }
+                    return cur;
+                }
+            }
+        }
+        std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        std::string right = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
+        std::string res = "t" + std::to_string(tempCounter++);
         std::string resultType = numericResultType(op, left, right);
         ir.addInstruction(currentFunc, op, {left, right}, res, resultType);
         noteType(res, resultType);
@@ -2657,11 +2707,11 @@ private:
                 std::string rt = typeOf(bodyVal);
                 if (rt == "i64") {
                     std::string bx = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(lamName, "call", {"PyInt_FromLong", bodyVal}, bx);
+                    ir.addInstruction(lamName, "box_i64", {bodyVal}, bx, "int");
                     bodyVal = bx;
                 } else if (rt == "float") {
                     std::string bx = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(lamName, "call", {"PyFloat_FromDouble", bodyVal}, bx);
+                    ir.addInstruction(lamName, "box_f64", {bodyVal}, bx, "float");
                     bodyVal = bx;
                 }
                 ir.addInstruction(lamName, "ret", {bodyVal});
@@ -3090,12 +3140,30 @@ private:
     std::string lowerList(const ASTNode* node) {
         auto elems = lowerElements(node);
         size_t n = elems.size();
-        // Box size as PyObject* so PyList_NewBoxed receives a proper int.
-        std::string sizeConst = "c" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
+        bool allInt = n > 0;
+        bool allFloat = n > 0;
+        for (const auto& e : elems) {
+            std::string t = typeOf(e);
+            if (t != "int" && t != "i64" && t != "bool") allInt = false;
+            if (t != "float") allFloat = false;
+        }
         std::string listRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, listRes);
-        noteType(listRes, "list");
+        if (allInt) {
+            std::string sizeConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewIntBoxed", sizeConst}, listRes);
+            noteType(listRes, "list_int");
+        } else if (allFloat) {
+            std::string sizeConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewFloatBoxed", sizeConst}, listRes);
+            noteType(listRes, "list_float");
+        } else {
+            std::string sizeConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, listRes);
+            noteType(listRes, "list");
+        }
 
         bool containsTok = false;
         for (size_t i = 0; i < n; ++i) {
@@ -3149,9 +3217,19 @@ private:
         // Multi-target: a = b = val — args holds all target names
         if (!node->args.empty()) {
             std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+            std::string vt = typeOf(val);
             for (const auto& name : node->args) {
-                ir.addInstruction(currentFunc, "assign", {val}, name);
-                noteType(name, typeOf(val));
+                if (numericLocals.count(name) || (vt == "int" || vt == "i64" || vt == "bool")) {
+                    ir.addInstruction(currentFunc, "i64assign", {val}, name, "i64");
+                    numericLocals.insert(name);
+                    noteType(name, "i64");
+                } else {
+                    ir.addInstruction(currentFunc, "assign", {val}, name);
+                    noteType(name, vt);
+                }
+                if (vt != "int" && vt != "i64" && vt != "bool") {
+                    killNumericLocal(name);
+                }
                 // B4: if the assigned value is (or carries) a callable token, mark the target name.
                 if (!val.empty() && (callableTokenTemps.count(val) || callableTokenToSynthetic.count(val))) {
                     namesThatMayHoldCallableTokens.insert(name);
@@ -3218,6 +3296,7 @@ private:
                 std::string dummy = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, val}, dummy);
                 noteType(node->id, typeOf(val));
+                killNumericLocal(node->id);  // A2.1: unboxed numeric locals are not cell-backed yet
                 // B4 token propagation (cells are still names for B4 purposes).
                 if (!val.empty() && (callableTokenTemps.count(val) || callableTokenToSynthetic.count(val))) {
                     namesThatMayHoldCallableTokens.insert(node->id);
@@ -3239,8 +3318,19 @@ private:
             if (!val.empty() && bundleTemps.count(val)) {
                 // already handled above
             }
-            ir.addInstruction(currentFunc, "assign", {val}, node->id);
-            noteType(node->id, typeOf(val));
+            std::string vt = typeOf(val);
+            if (numericLocals.count(node->id) || (vt == "int" || vt == "i64" || vt == "bool")) {
+                // A2.1: use native i64assign for proven int/bool/i64 local
+                ir.addInstruction(currentFunc, "i64assign", {val}, node->id, "i64");
+                numericLocals.insert(node->id);
+                noteType(node->id, "i64");
+            } else {
+                ir.addInstruction(currentFunc, "assign", {val}, node->id);
+                noteType(node->id, vt);
+            }
+            if (vt != "int" && vt != "i64" && vt != "bool") {
+                killNumericLocal(node->id);
+            }
             // If the RHS value is a synthetic lambda name (or we just lowered a lambda
             // expression and captured its synthetic), remember the alias so future
             // calls through 'node->id' can resolve to the nested IR function.
@@ -3277,6 +3367,7 @@ private:
                     std::string dummy = "t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, value}, dummy);
                     noteType(target->id, typeOf(value));
+                    killNumericLocal(target->id);
                     // B4 token propagation (rare but keep behavior consistent).
                     if (!value.empty() && (callableTokenTemps.count(value) || callableTokenToSynthetic.count(value) ||
                                            listsContainingCallableTokens.count(value))) {
@@ -3287,6 +3378,7 @@ private:
                 ir.addInstruction(currentFunc, "assign", {value}, target->id);
             }
             noteType(target->id, typeOf(value));
+            killNumericLocal(target->id);  // A2.1: unpack sources are boxed for now
             // B4: if the unpacked value is a tracked callable token (or the container we
             // are unpacking from is known to contain tokens), mark the target name so that
             // later bare-name calls through it are routed via Pyc_Apply.
@@ -3331,6 +3423,7 @@ private:
             ir.addInstruction(currentFunc, "nconst", {}, noneRes, "none");
             ir.addInstruction(currentFunc, "assign", {noneRes}, name);
             noteType(name, "none");
+            killNumericLocal(name);
         } else if (target->type == "Subscript") {
             // del d[k]
             if (target->children.size() < 2) return;
@@ -3404,7 +3497,14 @@ private:
                 ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, result}, dummy);
                 return;
             }
-            ir.addInstruction(currentFunc, "assign", {result}, node->id);
+            if (numericLocals.count(node->id) || resultType == "int" || resultType == "i64" || resultType == "bool") {
+                ir.addInstruction(currentFunc, "i64assign", {result}, node->id, "i64");
+                numericLocals.insert(node->id);
+                noteType(node->id, "i64");
+            } else {
+                ir.addInstruction(currentFunc, "assign", {result}, node->id);
+                noteType(node->id, resultType);
+            }
         }
     }
 
