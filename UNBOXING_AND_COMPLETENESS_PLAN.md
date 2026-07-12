@@ -120,14 +120,8 @@ Milestone: Hot loops in nbody-like code (many `+ - *` and a few `//`) spend less
 
 ### A6. Specialized Function Variants (Call-site Monomorphization) — **DEFERRED (2026-07)**
 - Call-site type tracking infrastructure added: `callSiteTypes` map records argument types at each call site.
-- Full monomorphization deferred due to complexity (variant generation, signature matching, default argument handling).
+- Full monomorphization deferred due to complexity (variant generation, signature matching, default argument handling, parameter unboxing).
 - Future work: Generate specialized variants lazily when a call has all-proven-numeric arguments; codegen uses native parameter types for variants.
-
-### A6. Specialized Function Variants (Call-site Monomorphization)
-- For small functions called with proven concrete types (e.g., only ints, or only floats), emit a specialized native version that takes i64/double directly (no boxing on entry) and returns native (boxed only on return if the caller needs a PyObject*).
-- Selection at call sites: if all arguments at a call are proven, emit a direct call to the specialized variant; otherwise fall back to the general `PyObject*` version.
-- Start with intra-module calls; later consider a small monomorphic cache for external calls.
-- Keep the original boxed version for correctness (and for calls from Python that we don't analyze).
 
 ### A7. Measurement and Guardrails
 - Add microbenchmarks (extend BENCHMARKS.md) for pure numeric loops, list[int] mutation, and mixed code.
