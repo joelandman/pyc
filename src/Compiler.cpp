@@ -1519,6 +1519,20 @@ class LoweringVisitor {
         else if (op == "BitOr") op = "bitor";
         else if (op == "BitAnd") op = "bitand";
         else if (op == "BitXor") op = "bitxor";
+        // A8: String formatting with % operator
+        // When left operand is a string constant and op is Mod, emit a call
+        // to PyString_Format(fmt, args) instead of numeric mod.
+        if (op == "mod" && node->children.size() >= 2) {
+            const ASTNode* leftNode = node->children[0].get();
+            if (leftNode && leftNode->type == "Constant" && leftNode->is_str) {
+                std::string left = lowerExpr(leftNode);
+                std::string right = lowerExpr(node->children[1].get());
+                std::string res = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyString_Format", left, right}, res);
+                noteType(res, "str");
+                return res;
+            }
+        }
         if (op == "pow" && node->children.size() > 1 && node->children[1]) {
             const ASTNode* rc = node->children[1].get();
             if (rc->type == "Constant" && !rc->is_float && !rc->is_str && !rc->is_none && !rc->is_bool) {

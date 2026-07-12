@@ -116,6 +116,8 @@ PyObject* PyString_Center(PyObject* s, PyObject* w, PyObject* fill);
 PyObject* PyString_LJust(PyObject* s, PyObject* w, PyObject* fill);
 PyObject* PyString_RJust(PyObject* s, PyObject* w, PyObject* fill);
 PyObject* PyString_ReplaceN(PyObject* s, PyObject* old_, PyObject* new_, PyObject* count);
+// A8: String formatting with % operator
+PyObject* PyString_Format(PyObject* fmt, PyObject* args);
 PyObject* PyDict_Keys(PyObject* d);
 PyObject* PyDict_Values(PyObject* d);
 PyObject* PyDict_Items(PyObject* d);

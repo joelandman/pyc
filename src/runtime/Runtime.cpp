@@ -2228,10 +2228,19 @@ PyObject* PyBuiltin_Zip2(PyObject* a, PyObject* b) {
 //   c      single character (codepoint)
 //   %      literal percent
 // Width/precision can be `*` to take the next positional arg.
-static PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
+PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
     if (!fmt || fmt->type != 3) return nullptr;
     auto getArg = [&](size_t idx) -> PyObject* {
         if (!args) return nullptr;
+        // Handle homogeneous int lists
+        if (args->type == 1 && args->list_item_type == 1 && idx < args->ilist.size()) {
+            return PyInt_FromLong(args->ilist[idx]);
+        }
+        // Handle homogeneous float lists
+        if (args->type == 1 && args->list_item_type == 2 && idx < args->flist.size()) {
+            return PyFloat_FromDouble(args->flist[idx]);
+        }
+        // Handle regular boxed lists
         if (args->type == 1 && idx < args->list.size()) return args->list[idx];
         return (idx == 0) ? args : nullptr;
     };
