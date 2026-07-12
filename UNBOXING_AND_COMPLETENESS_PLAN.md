@@ -130,7 +130,8 @@ Milestone (updated): Visible `range` loop variables are unboxed; the getAsPyObje
 - Updated BENCHMARKS.md with current optimization status (A1-A6 documented)
 - Added microbenchmark test files: `opt_numeric_loop.py`, `opt_homogeneous_list.py`, `opt_function_call.py`, `opt_mixed_code.py`
 - All 4 new microbenchmarks pass in runner (223/267 total)
-- Guardrails: every optimization preserves boxed fallback path; `getAsPyObject` handles escape boxing; `numericLocals` kill on non-numeric assign
+- Runtime allocation counters: `PyAlloc_GetIntCount()`, `PyAlloc_GetFloatCount()`, `PyAlloc_GetListCount()`, `PyAlloc_GetDictCount()`, `PyAlloc_GetStrCount()`, `PyAlloc_GetTotal()`
+- Guardrails: every optimization preserves boxed fallback path; `getAsPyObject` handles escape boxing; `numericLocals` kill on non-numeric assign; loop widening conservative on type divergence
 - nbody.py continues to match CPython output (-0.169075164)
 
 ### A8. ... (future work)
@@ -297,6 +298,7 @@ Testing:
 - [x] A4 Unboxed/Homogeneous Numeric Lists (2026-07): `detectCompElementType()` analyzes comprehension element AST; `lowerListComp()` creates homogeneous lists (`PyList_NewIntBoxed`/`PyList_NewFloatBoxed`); lowering annotates element types for subscripts; codegen emits native `PyList_GetItemInt64`/`PyList_GetItemDouble`/`PyList_SetItemInt64`/`PyList_SetItemDouble` for proven homogeneous lists; runtime `PyObject_PrintBase` and `PyStr_FromAny` fixed to print homogeneous lists. 219/263 passing.
 - [x] A5 Allocation Sinking / Temporary Boxing Reduction (2026-07): `IRFunction::numericLocals` field tracks variables using native i64 storage; lowering populates `numericLocals` per function; codegen `assign` handler creates i64 alloca for numeric locals instead of boxing; escape boxing via `getAsPyObject`. Eliminates boxing cycle for accumulators. 219/263 passing (optimization, no correctness change).
 - [x] A6 Specialized Function Variants (Call-site Monomorphization) (2026-07): `callSiteTypes` now tracks all type lists per function; `generateSpecializedVariants()` generates native-param variants when all call sites use consistent numeric types; codegen registers variants with native LLVM types and dispatches calls to them with native args; adapters skipped for variants. 219/263 passing (same as before A6).
+- [x] A7 Measurement and Guardrails (2026-07): Runtime atomic allocation counters for int/float/list/dict/str; exposed via `PyAlloc_Get*Count()` in `runtime.h`; BENCHMARKS.md updated with API docs and guardrails for A1-A6; 4 microbenchmark test files added (223/267 total).
 
 This plan is intended to be updated as work progresses. Add dates or "Implemented in commit X" annotations when items land.
 
