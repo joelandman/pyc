@@ -504,6 +504,8 @@ class LoweringVisitor {
             listsContainingCallableTokens.clear();
             currentFnReturnsCallable = false;
             lastLambdaSynthetic.clear();
+            // Save and clear numericLocals for this function scope
+            std::unordered_set<std::string> savedNumericLocals = numericLocals;
             numericLocals.clear();
 
             // B5: allocate owned cells (for names we assign here that inner scopes close over via nonlocal).
@@ -591,6 +593,8 @@ class LoweringVisitor {
                 fnr.numericLocals = std::vector<std::string>(numericLocals.begin(), numericLocals.end());
                 break;
             }
+            // Restore numericLocals to outer scope
+            numericLocals = savedNumericLocals;
             currentFunc = saved;   // restore context for siblings (important for top-level code after defs)
             tempCounter = savedTempCounter;  // restore counter to prevent collisions with module-level temps
             lastLambdaSynthetic.clear();  // do not leak "last lambda expr" from this function to later assigns/calls in outer scope
