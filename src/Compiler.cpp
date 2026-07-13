@@ -4272,12 +4272,8 @@ class LoweringVisitor {
         for (const auto& baseName : node->args) {
             if (baseName.empty() || baseName == "(complex base)") continue;
             // Copy methods from base class to derived class
-            // The base class dict is stored in a module global with the same name
-            std::string baseDictLoad = "t" + std::to_string(tempCounter++);
-            ir.addInstruction("__module__", "call", {"PyObject_GetAttr", baseName, "__dict__"}, baseDictLoad);
-            // Update classDictTemp to include base methods
-            std::string dummy = "t" + std::to_string(tempCounter++);
-            ir.addInstruction("__module__", "call", {"PyDict_Update", classDictTemp, baseDictLoad}, dummy);
+            // The base class dict IS the class global (classes are represented as dicts)
+            ir.addInstruction("__module__", "call", {"PyDict_Update", classDictTemp, baseName}, "dummy");
         }
         
         // Process all methods
@@ -4418,6 +4414,13 @@ class LoweringVisitor {
                 ir.addInstruction(initName, "call", callArgs, dummy);
                 ir.addInstruction(initName, "ret", {"self"});
                 currentFunc = savedFunc;
+                // Store the __init__ wrapper name in the class dict (overrides base __init__)
+                std::string initKeyConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"__init__\""}, initKeyConst, "str");
+                std::string initValConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"" + initName + "\""}, initValConst, "str");
+                std::string initSet = "t" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, initKeyConst, initValConst}, initSet);
             }
         }
     }
