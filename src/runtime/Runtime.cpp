@@ -3895,9 +3895,7 @@ extern "C" PyObject* PyBuiltin_Super(void) {
     return super;
 }
 
-// ---- B6: Extended attribute lookup with class fallback ----
-// PyObject_GetAttrExtended looks up an attribute on an object, first checking
-// the instance dict, then the class dict (for class attributes).
+// Helper for string equality comparison
 static bool pyObjStrEqual(PyObject* a, PyObject* b) {
     if (!a || !b) return false;
     if (a->type == 3 && b->type == 3) return a->str == b->str;
@@ -3906,6 +3904,106 @@ static bool pyObjStrEqual(PyObject* a, PyObject* b) {
     return a == b;
 }
 
+// Helper to compare a PyObject* with a C string literal
+static bool pyObjStrEqualsLiteral(PyObject* obj, const char* literal) {
+    if (!obj || obj->type != 3) return false;
+    return obj->str == literal;
+}
+
+// Helper to get a list item by integer index
+static PyObject* PyList_GetItemInt(PyObject* list, size_t index) {
+    if (!list || list->type != 1) return nullptr;
+    if (index >= list->list.size()) return nullptr;
+    return list->list[index];
+}
+
+// ---- B6b: super() with MRO-based method resolution ----
+// PyBuiltin_SuperMethod(self, definingClass, methodName, [args...])
+// Implements Python's super() behavior:
+// 1. Gets self.__class__
+// 2. Looks up __mro__ from that class dict
+// 3. Finds definingClass in the MRO
+// 4. Calls methodName on the next class in the MRO
+extern "C" PyObject* PyBuiltin_SuperMethod(PyObject* args) {
+    if (!args || args->type != 1) return nullptr;  // args must be a list
+    if (PyList_Size(args) < 3) return nullptr;  // need at least self, definingClass, methodName
+    
+    PyObject* self = PyList_GetItemInt(args, 0);
+    PyObject* definingClass = PyList_GetItemInt(args, 1);
+    PyObject* methodName = PyList_GetItemInt(args, 2);
+    
+    if (!self || !definingClass || !methodName) return nullptr;
+    
+    // Get self's class
+    PyObject* selfClass = nullptr;
+    for (auto& kv : self->dict) {
+        if (pyObjStrEqualsLiteral(kv.first, "__class__")) {
+            selfClass = kv.second;
+            break;
+        }
+    }
+    if (!selfClass) return nullptr;
+    
+    // Get MRO from self's class
+    PyObject* mroList = nullptr;
+    for (auto& kv : selfClass->dict) {
+        if (pyObjStrEqualsLiteral(kv.first, "__mro__")) {
+            mroList = kv.second;
+            break;
+        }
+    }
+    if (!mroList || mroList->type != 1) return nullptr;  // MRO must be a list
+    
+    // Find definingClass in MRO and get the next class
+    size_t mroSize = PyList_Size(mroList);
+    size_t definingIndex = -1;
+    for (size_t i = 0; i < mroSize; ++i) {
+        PyObject* mroItem = PyList_GetItemInt(mroList, i);
+        if (pyObjStrEqual(mroItem, definingClass)) {
+            definingIndex = i;
+            break;
+        }
+    }
+    if (definingIndex == (size_t)-1 || definingIndex + 1 >= mroSize) return nullptr;
+    
+    PyObject* nextClass = PyList_GetItemInt(mroList, definingIndex + 1);
+    if (!nextClass) return nullptr;
+    
+    // Look up method on next class
+    PyObject* method = nullptr;
+    for (auto& kv : nextClass->dict) {
+        if (pyObjStrEqual(kv.first, methodName)) {
+            method = kv.second;
+            break;
+        }
+    }
+    if (!method) return nullptr;
+    
+    // Build args list with self prepended
+    size_t argSize = PyList_Size(args);
+    PyObject* callArgs = new PyObject();
+    callArgs->refcount = 1;
+    callArgs->type = 1;  // list
+    callArgs->str = "";
+    callArgs->list = {};
+    callArgs->dict = {};
+    callArgs->cell_content = nullptr;
+    callArgs->list_item_type = 0;
+    
+    // Add self at index 0
+    PyList_Append(callArgs, self);
+    // Add remaining args (skip self, definingClass, methodName)
+    for (size_t i = 3; i < argSize; ++i) {
+        PyList_Append(callArgs, PyList_GetItemInt(args, i));
+    }
+    
+    // Call the method
+    return Pyc_Apply(method, callArgs);
+}
+
+// ---- B6: Extended attribute lookup with class fallback ----
+// PyObject_GetAttrExtended looks up an attribute on an object, first checking
+// the instance dict, then the class dict (for class attributes).
 extern "C" PyObject* PyObject_GetAttrExtended(PyObject* obj, PyObject* attr) {
     if (!obj || !attr) return nullptr;
     // First try instance/class dict directly

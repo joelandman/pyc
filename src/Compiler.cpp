@@ -1243,6 +1243,7 @@ class LoweringVisitor {
                   break;
               }
           }
+          classMRO[className] = mro;
           return mro;
       }
       std::string getNextClassInMRO(const std::string& className, const std::string& currentClass) {
@@ -4066,46 +4067,52 @@ class LoweringVisitor {
 
         // B6: Handle super().method() — look up method on parent class
         if (isSuperCall && superProxyTemps.count(obj) && !currentClass.empty()) {
-            // Find the next class in MRO after currentClass
+            // Python's super() uses the MRO of the runtime instance's class.
+            // We delegate to a runtime helper that:
+            // 1. Gets self.__class__
+            // 2. Looks up __mro__ from that class dict
+            // 3. Finds currentClass in the MRO
+            // 4. Calls the method on the next class in the MRO
             std::string res = "t" + std::to_string(tempCounter++);
             std::string methodNameConst = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
-            std::string parentClass = getFirstBase(currentClass);
-            std::vector<std::string> methodArgs;
-            methodArgs.push_back("self");
-            for (auto& a : args) {
-                methodArgs.push_back(a);
+            std::string definingClassConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + currentClass + "\""}, definingClassConst, "str");
+            
+            // Build args list: self, definingClass, methodName, [remaining args]
+            std::string argList = "t" + std::to_string(tempCounter++);
+            std::string argCount = std::to_string(args.size() + 3); // self + definingClass + methodName + args
+            std::string argCountConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
+            
+            // Add self at index 0
+            std::string idxConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, idxConst);
+            std::string setRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, "self"}, setRes);
+            
+            // Add definingClass at index 1
+            idxConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, idxConst);
+            setRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, definingClassConst}, setRes);
+            
+            // Add methodName at index 2
+            idxConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"2"}, idxConst);
+            setRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodNameConst}, setRes);
+            
+            // Add remaining args at indices 3+
+            for (size_t i = 0; i < args.size(); ++i) {
+                idxConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(i + 3)}, idxConst);
+                setRes = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, args[i]}, setRes);
             }
-            if (!parentClass.empty()) {
-                std::string methodLookup = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", parentClass, methodNameConst}, methodLookup);
-                std::string argList = "t" + std::to_string(tempCounter++);
-                std::string argCount = std::to_string(methodArgs.size());
-                std::string argCountConst = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
-                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
-                for (size_t i = 0; i < methodArgs.size(); ++i) {
-                    std::string idxConst = "c" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
-                    std::string setRes = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
-                }
-                ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
-            } else {
-                // Fallback: just call Pyc_Apply with null
-                std::string argList = "t" + std::to_string(tempCounter++);
-                std::string argCount = std::to_string(methodArgs.size());
-                std::string argCountConst = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
-                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
-                for (size_t i = 0; i < methodArgs.size(); ++i) {
-                    std::string idxConst = "c" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
-                    std::string setRes = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
-                }
-                ir.addInstruction(currentFunc, "call", {"Pyc_Apply", obj, argList}, res);
-            }
+            
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_SuperMethod", argList}, res);
             return res;
         }
 
@@ -4564,6 +4571,24 @@ class LoweringVisitor {
              ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, attrKeyConst, attrValue}, dummy);
          }
          currentClass = savedClass;
+        // B6b: Store MRO in class dict for runtime super() support
+        const auto& mro = classMRO[className];
+        if (!mro.empty()) {
+            std::string mroKeyConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "const", {"\"__mro__\""}, mroKeyConst, "str");
+            std::string mroList = "c" + std::to_string(tempCounter++);
+            std::string zeroConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "const", {"0"}, zeroConst);
+            ir.addInstruction("__module__", "call", {"PyList_NewBoxed", zeroConst}, mroList);
+            for (const auto& classNameInMRO : mro) {
+                std::string classNameConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "const", {"\"" + classNameInMRO + "\""}, classNameConst, "str");
+                std::string appendRes = "t" + std::to_string(tempCounter++);
+                ir.addInstruction("__module__", "call", {"PyList_Append", mroList, classNameConst}, appendRes);
+            }
+            std::string mroDummy = "t" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, mroKeyConst, mroList}, mroDummy);
+        }
         // Store class dict as the class value
         ir.addInstruction("__module__", "assign", {classDictTemp}, className);
         noteType(className, "dict");
