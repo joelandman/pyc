@@ -1141,8 +1141,8 @@ class LoweringVisitor {
     std::unordered_set<std::string> callableTokenTemps;
     // B6: temps that hold super() proxy objects
     std::unordered_set<std::string> superProxyTemps;
-    // B6: map from class name to its first base class name (for super() support)
-    std::unordered_map<std::string, std::string> classBases;
+    // B6: map from class name to its list of base class names (for multiple inheritance)
+    std::unordered_map<std::string, std::vector<std::string>> classBases;
     // User functions (defs or synthetic lambdas) that contain a return of a
     // callable token value. Calls to them have their result temp marked so
     // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
@@ -1162,11 +1162,19 @@ class LoweringVisitor {
     // when it appears as a callee expression (B4 progress on lambda as value).
      std::unordered_map<std::string, std::string> callableTokenToSynthetic; // temp -> synthetic name
 
-     // B6: helper to get the first base class of a given class
-     std::string getFirstBase(const std::string& className) {
-         auto it = classBases.find(className);
-         return (it != classBases.end()) ? it->second : "";
-     }
+      // B6: helper to get the first base class of a given class
+      std::string getFirstBase(const std::string& className) {
+          auto it = classBases.find(className);
+          if (it != classBases.end() && !it->second.empty()) {
+              return it->second[0];
+          }
+          return "";
+      }
+      // B6: helper to get all base classes of a given class
+      std::vector<std::string> getAllBases(const std::string& className) {
+          auto it = classBases.find(className);
+          return (it != classBases.end()) ? it->second : std::vector<std::string>();
+      }
 
 
     // A6: Call-site type tracking for monomorphization.
@@ -4364,10 +4372,8 @@ class LoweringVisitor {
         // Bases are stored in node->args by the parser
         for (const auto& baseName : node->args) {
             if (baseName.empty() || baseName == "(complex base)") continue;
-            // Track base classes for super() support
-            if (classBases.find(className) == classBases.end()) {
-                classBases[className] = baseName;
-            }
+            // Track all base classes for super() and multiple inheritance support
+            classBases[className].push_back(baseName);
             // Copy methods from base class to derived class
             // The base class dict IS the class global (classes are represented as dicts)
             ir.addInstruction("__module__", "call", {"PyDict_Update", classDictTemp, baseName}, "dummy");
