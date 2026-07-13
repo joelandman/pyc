@@ -210,6 +210,30 @@ Also wire `list.count` if the runtime grows it; currently not present.
 - Remaining: multiple inheritance (only first base tracked for `super()`), `__class__` attribute access on instances
 - Tests: 245/267 passing, 0 file_case_failures
 
+### B6b. Multiple Inheritance (Plan)
+- Current state: single inheritance only; `classBases` map tracks first base per class; `super()` uses first base.
+- Plan in stages:
+  1. **Parser**: Already produces multiple bases in `node->args` (comma-separated list). No parser changes needed.
+  2. **Method copying**: In `lowerClass`, iterate all bases (not just first) and copy methods via `PyDict_Update`. Later bases override earlier bases for same method name.
+  3. **MRO (Method Resolution Order)**: Implement C3 linearization at compile time. Store MRO as a list of class names per class. For now, simple left-to-right depth-first is acceptable.
+  4. **`super()` support**: Track all base classes per class. `super().method()` should use MRO to find the next class after the current one. For simplicity, start with "first base that has the method" heuristic.
+  5. **`__init__` chaining**: Each base class's `__init__` should be called. For simplicity, call all base `__init__` methods in MRO order, passing `self` and any provided args.
+  6. **Diamond inheritance**: Handle the case where two bases share a common ancestor. MRO ensures each class is visited once.
+- Runtime changes:
+  - Add `classMRO` map: `std::unordered_map<std::string, std::vector<std::string>>` storing MRO per class.
+  - Implement `computeMRO(className)` function that performs C3 linearization on the base classes.
+  - Modify `super()` codegen to iterate MRO and find the next class with the requested method.
+- Edge cases:
+  - Base classes that are not pyc classes (e.g., built-in types) — skip or error.
+  - Cyclic inheritance — detect and error at compile time.
+  - `super()` with arguments (`super(Dog, self)`) — out of scope for initial implementation; start with no-arg `super()`.
+- Tests:
+  - Simple multiple inheritance: `class Dog(Animal, SoundMaker): pass`
+  - Method override: derived class overrides a method from one base
+  - `super()` in derived class calls next class in MRO
+  - Diamond inheritance: `class A; class B(A); class C(A); class D(B, C)`
+- Estimated effort: Medium (3-5 days)
+
 ### B7. General Import / Module System
 - Current state: only a synthetic `sys` module (populated by `pyc_setup_sys` in `MainWrapper.cpp`) with `sys.argv`. `import sys` is faked via `PyObject_GetAttr` on the module object.
 - Real work:
@@ -260,7 +284,7 @@ Recommended order (interleave correctness and unboxing where safe):
 7. nonlocal (B5).
 8. Homogeneous numeric lists (A4).
 9. Allocation sinking (A5) and specialized variants (A6).
-10. Classes (B6) — **COMPLETED**. General import (B7) — next large effort.
+10. Classes (B6) — **COMPLETED**. Multiple inheritance (B6b) — next OOP enhancement. General import (B7) — after B6b.
 
 Testing:
 - Every change must pass `cd build && make check` (or `ctest`) and the full `tests/runner.py`.
