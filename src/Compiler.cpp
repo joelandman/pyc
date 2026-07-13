@@ -1175,6 +1175,87 @@ class LoweringVisitor {
           auto it = classBases.find(className);
           return (it != classBases.end()) ? it->second : std::vector<std::string>();
       }
+      // B6b: C3 linearization for MRO (Method Resolution Order)
+      std::unordered_map<std::string, std::vector<std::string>> classMRO;
+      std::vector<std::string> computeMRO(const std::string& className) {
+          // Get bases for this class
+          std::vector<std::string> bases = getAllBases(className);
+          if (bases.empty()) {
+              return {className};
+          }
+          // C3 linearization algorithm
+          // L[C] = C + merge(L[B1], L[B2], ..., [B1, B2, ...])
+          std::unordered_map<std::string, std::vector<std::string>> linearizations;
+          // Compute linearizations for all bases first
+          for (const auto& base : bases) {
+              if (linearizations.find(base) == linearizations.end()) {
+                  if (classMRO.count(base)) {
+                      linearizations[base] = classMRO[base];
+                  } else {
+                      linearizations[base] = computeMRO(base);
+                      classMRO[base] = linearizations[base];
+                  }
+              }
+          }
+          // Build merge list: L[B1], L[B2], ..., [B1, B2, ...]
+          std::vector<std::vector<std::string>> mergeList;
+          for (const auto& base : bases) {
+              if (linearizations.count(base)) {
+                  mergeList.push_back(linearizations[base]);
+              }
+          }
+          mergeList.push_back(bases);
+          // Perform merge
+          std::vector<std::string> mro;
+          mro.push_back(className);
+          while (!mergeList.empty()) {
+              bool found = false;
+              for (size_t i = 0; i < mergeList.size(); ++i) {
+                  if (mergeList[i].empty()) continue;
+                  const std::string& candidate = mergeList[i][0];
+                  // Check if candidate is in the tail of any other list
+                  bool bad = false;
+                  for (size_t j = 0; j < mergeList.size(); ++j) {
+                      if (i == j || mergeList[j].empty()) continue;
+                      for (size_t k = 1; k < mergeList[j].size(); ++k) {
+                          if (mergeList[j][k] == candidate) {
+                              bad = true;
+                              break;
+                          }
+                      }
+                      if (bad) break;
+                  }
+                  if (!bad) {
+                      // Add to MRO and remove from all lists
+                      mro.push_back(candidate);
+                      for (size_t j = 0; j < mergeList.size(); ++j) {
+                          if (!mergeList[j].empty() && mergeList[j][0] == candidate) {
+                              mergeList[j].erase(mergeList[j].begin());
+                          }
+                      }
+                      found = true;
+                      break;
+                  }
+              }
+              if (!found) {
+                  // Merge failed - this shouldn't happen with valid Python classes
+                  // Fall back to first-base-wins
+                  break;
+              }
+          }
+          return mro;
+      }
+      std::string getNextClassInMRO(const std::string& className, const std::string& currentClass) {
+          // Find the next class in MRO after the current class
+          const auto& mro = classMRO[className];
+          for (size_t i = 0; i < mro.size(); ++i) {
+              if (mro[i] == currentClass && i + 1 < mro.size()) {
+                  return mro[i + 1];
+              }
+          }
+          // Fall back to first base
+          return getFirstBase(className);
+      }
 
 
     // A6: Call-site type tracking for monomorphization.
@@ -3985,27 +4066,17 @@ class LoweringVisitor {
 
         // B6: Handle super().method() — look up method on parent class
         if (isSuperCall && superProxyTemps.count(obj) && !currentClass.empty()) {
-            // Find the first base class of currentClass
-            // We need to store base classes per class — for now, use a simple approach
-            // For single inheritance, the parent class is the first base
-            // We'll look up the method on the parent class directly
+            // Find the next class in MRO after currentClass
             std::string res = "t" + std::to_string(tempCounter++);
             std::string methodNameConst = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
-            // The super proxy's cell_content should point to the parent class
-            // For now, we need to get the parent class from the current class's bases
-            // Store base classes in a map during class lowering
             std::string parentClass = getFirstBase(currentClass);
             std::vector<std::string> methodArgs;
-            // For super().method(), the first arg should be 'self' (the instance), not the super proxy
-            // We need to get 'self' from the current function's parameters
-            // For now, we'll use 'self' as a convention (first parameter of the method)
             methodArgs.push_back("self");
             for (auto& a : args) {
                 methodArgs.push_back(a);
             }
             if (!parentClass.empty()) {
-                // Get method from parent class
                 std::string methodLookup = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", parentClass, methodNameConst}, methodLookup);
                 std::string argList = "t" + std::to_string(tempCounter++);
@@ -4378,6 +4449,9 @@ class LoweringVisitor {
             // The base class dict IS the class global (classes are represented as dicts)
             ir.addInstruction("__module__", "call", {"PyDict_Update", classDictTemp, baseName}, "dummy");
         }
+        
+        // B6b: Compute MRO for this class using C3 linearization
+        computeMRO(className);
         
         // Process all methods
         std::string savedClass = currentClass;

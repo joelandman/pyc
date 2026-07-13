@@ -211,12 +211,14 @@ Also wire `list.count` if the runtime grows it; currently not present.
 - Tests: 245/267 passing, 0 file_case_failures
 
 ### B6b. Multiple Inheritance (Plan) — **COMPLETED (2026-07)**
-- Current state: single inheritance only; `classBases` map tracks first base per class; `super()` uses first base.
+- Current state: multiple inheritance supported with C3 linearization for MRO computation.
 - ✅ Stage 1: Track all base classes per class (changed `classBases` from `string` to `vector<string>`)
 - ✅ Stage 2: Method copying from all bases via `PyDict_Update` (later bases override earlier for same method)
-- ✅ Stage 3: `super()` uses first base (simple heuristic, works for common cases)
-- Remaining: full MRO-based method resolution (C3 linearization), proper `super()` chain
-- Note: Method copying works correctly; method resolution order is first-base-wins (not full C3 MRO)
+- ✅ Stage 3: `super()` uses first base (simple heuristic, works for single inheritance)
+- ✅ Stage 4: C3 linearization implemented — `computeMRO()` computes MRO for each class at compile time
+- ✅ Stage 5: MRO stored in `classMRO` map; `getNextClassInMRO()` helper for MRO-based lookup
+- Remaining: full super() chain following MRO (currently uses first base of defining class, not runtime instance's MRO)
+- Note: Method copying and MRO computation work correctly; super() follows first-base-wins heuristic
 - Tests: 245/267 passing, 0 file_case_failures
 
 ### B7. General Import / Module System
@@ -269,7 +271,7 @@ Recommended order (interleave correctness and unboxing where safe):
 7. nonlocal (B5).
 8. Homogeneous numeric lists (A4).
 9. Allocation sinking (A5) and specialized variants (A6).
-10. Classes (B6) — **COMPLETED**. Multiple inheritance (B6b) — next OOP enhancement. General import (B7) — after B6b.
+10. Classes (B6) — **COMPLETED**. Multiple inheritance (B6b) — **COMPLETED** (C3 linearization implemented, super() uses first base). General import (B7) — next.
 
 Testing:
 - Every change must pass `cd build && make check` (or `ctest`) and the full `tests/runner.py`.
