@@ -1001,6 +1001,39 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
         return PyUnicode_FromString(r.c_str());
     }
     if (obj->type == 2) {
+        // Check for __repr__ method (instance dict or class dict)
+        PyObject* reprMethod = nullptr;
+        for (auto& kv : obj->dict) {
+            if (kv.first->str == "__repr__") {
+                reprMethod = kv.second;
+                break;
+            }
+        }
+        if (!reprMethod) {
+            // Check class dict
+            for (auto& kv : obj->dict) {
+                if (kv.first->str == "__class__") {
+                    PyObject* classDict = kv.second;
+                    if (classDict && classDict->type == 2) {
+                        for (auto& ck : classDict->dict) {
+                            if (ck.first->str == "__repr__") {
+                                reprMethod = ck.second;
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+        if (reprMethod) {
+            // Call __repr__ method with self as argument
+            PyObject* args = PyList_New(0);
+            PyList_Append(args, obj);
+            PyObject* result = Pyc_Apply(reprMethod, args);
+            Py_DECREF(args);
+            if (result) return result;
+        }
         std::string r = "{";
         bool first = true;
         for (auto& pair : obj->dict) {
