@@ -14,6 +14,7 @@
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/raw_ostream.h>
+#include <llvm/Linker/Linker.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <fstream>
@@ -158,6 +159,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     llvm::FunctionType* pycImportFailedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(pycImportFailedTy, llvm::Function::ExternalLinkage, "pyc_import_failed", module.get());
+
+    // B7: Runtime import support functions
+    llvm::FunctionType* pycImportModuleTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(pycImportModuleTy, llvm::Function::ExternalLinkage, "pyc_import_module", module.get());
+    llvm::FunctionType* pycImportFromTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(pycImportFromTy, llvm::Function::ExternalLinkage, "pyc_import_from_module", module.get());
+    llvm::FunctionType* pycRunModuleTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(pycRunModuleTy, llvm::Function::ExternalLinkage, "pyc_run_module", module.get());
 
     // Exception support: pyc_raise(exc), pyc_current_exception(), pyc_clear_exception(),
     // pyc_try_push(jmpBuf, filter), pyc_try_pop().
@@ -391,7 +400,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     }
 
     auto llvmFunctionName = [](const std::string& name) {
-        if (name == "__module__") return std::string("pyc_user_main");
+        // Don't rename __module__ here - it will be renamed in the compile method
         if (name == "main") return std::string("pyc_py_main");
         return name;
     };
@@ -2375,6 +2384,37 @@ bool Codegen::emitAssembly(llvm::Module* module, const std::string& outputPath) 
     pass.run(*module);
     dest.flush();
     return true;
+}
+
+std::unique_ptr<llvm::Module> Codegen::mergeModules(
+    std::vector<std::unique_ptr<llvm::Module>>& modules,
+    llvm::LLVMContext& context,
+    const std::string& outputModuleName) {
+    
+    if (modules.empty()) {
+        return nullptr;
+    }
+    
+    // Start with the first module as the base
+    auto result = std::move(modules[0]);
+    
+    // Merge remaining modules into the result
+    for (size_t i = 1; i < modules.size(); ++i) {
+        if (!modules[i]) continue;
+        
+        // Use LLVM's Linker to link the next module into result
+        // This handles name conflicts by renaming as needed
+        llvm::Linker linker(*result);
+        if (linker.linkInModule(std::move(modules[i]))) {
+            std::cerr << "Error: Failed to link module " << i << std::endl;
+            return nullptr;
+        }
+    }
+    
+    // Rename the module
+    result->setModuleIdentifier(outputModuleName);
+    
+    return result;
 }
 
 } // namespace pyc

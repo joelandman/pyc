@@ -221,16 +221,24 @@ Also wire `list.count` if the runtime grows it; currently not present.
 - Note: Method copying and MRO computation work correctly; super() follows first-base-wins heuristic
 - Tests: 245/267 passing, 0 file_case_failures
 
-### B7. General Import / Module System
-- Current state: only a synthetic `sys` module (populated by `pyc_setup_sys` in `MainWrapper.cpp`) with `sys.argv`. `import sys` is faked via `PyObject_GetAttr` on the module object.
-- Real work:
-  - Parse `import foo`, `from foo import bar`, `import foo as x`.
-  - At compile time, locate `.py` files (search path, or a simple single-file model).
-  - Compile imported modules to separate object files or include their IR, and link them.
-  - At runtime, provide a module registry (dict of module name → module dict).
-  - Handle `sys.path`, `__name__`, packages at a basic level.
-- For the nbody benchmark, the only import is `import sys`; the current synthetic support is sufficient for correctness but not general.
-- Prioritize: make `import sys` and simple same-directory imports work first; defer packages, bytecode, C extensions, etc.
+### B7. General Import / Module System — IN PROGRESS (2026-07)
+- Current state: Compile-time module merging with runtime module execution support. Infrastructure complete; import lowering blocked by a TypeError during ast.parse().
+- ✅ Added LLVM module merging support (Codegen::mergeModules)
+- ✅ Modified Compiler::compile to scan for .py files and merge their IR
+- ✅ Updated main.cpp to use the Compiler class
+- ✅ Added sys.modules to synthetic sys module at runtime
+- ✅ Added pyc_import_module and pyc_import_from_module runtime functions
+- ✅ Added B7 test cases (b7_import.py, b7_importfrom.py)
+- ✅ Each module gets a unique entry point function (__module__<name>)
+- ✅ Generated C module registry for runtime module execution
+- ✅ Import handling calls pyc_run_module to execute module code
+- ✅ pyc_run_module declared as external LLVM function (void pyc_run_module(const char*))
+- ✅ Runtime stubs in runtime/b7_import.cpp (pyc_import_module, pyc_import_from_module)
+- 🔴 BLOCKED: "TypeError: bad argument type for built-in operation" during ast.parse() when source contains import statements
+- 🔴 Root cause: Error occurs at PythonParser.cpp:898 (PyObject_Call to ast.parse), only with import-containing files
+- 🔴 Files without imports compile successfully; the error is specific to import statement parsing
+- 🔴 Next: Add debug output in PythonParser::parse to isolate the failing ast.parse() call
+- Tests: 236/269 passing (9 file_case_failures, including existing failures + B7 tests)
 
 ### B8. `*args` Collection and Related — PROGRESS (2026-06, extended to indirect callees)
 - Parser produces Starred nodes for * unpacking in calls and vararg markers (`*name`) in FunctionDef/Lambda signatures (plus **kwargs markers).
@@ -271,7 +279,7 @@ Recommended order (interleave correctness and unboxing where safe):
 7. nonlocal (B5).
 8. Homogeneous numeric lists (A4).
 9. Allocation sinking (A5) and specialized variants (A6).
-10. Classes (B6) — **COMPLETED**. Multiple inheritance (B6b) — **COMPLETED** (C3 linearization implemented, super() uses first base). General import (B7) — next.
+10. Classes (B6) — **COMPLETED**. Multiple inheritance (B6b) — **COMPLETED** (C3 linearization implemented, super() uses first base). General import (B7) — **IN PROGRESS** (infrastructure complete, blocked by ast.parse() TypeError with import statements).
 
 Testing:
 - Every change must pass `cd build && make check` (or `ctest`) and the full `tests/runner.py`.

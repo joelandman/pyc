@@ -15,6 +15,7 @@
 #include "ir/ir.h"
 #include "ir/builder.h"
 #include "codegen/ir2ll.h"
+#include "pyc/Compiler.h"
 
 namespace fs = std::filesystem;
 
@@ -352,7 +353,11 @@ Args parse_args(int argc, char* argv[]) {
     }
 
     try {
-        compiler_pipeline(args.source_file, args.verbose, args.emit_llvm_ir);
+        pyc::Compiler compiler;
+        bool ok = compiler.compile(args.source_file, args.output_file.empty() ? "a.out" : args.output_file, false, 2, args.emit_llvm_ir, false, args.verbose);
+        if (!ok) {
+            return 2;
+        }
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "Compiler error: " << e.what() << "\n";

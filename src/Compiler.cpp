@@ -11,10 +11,14 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
+#include <filesystem>
+#include <algorithm>
 
 #ifndef PYC_SOURCE_DIR
 #define PYC_SOURCE_DIR "."
 #endif
+
+namespace fs = std::filesystem;
 
 namespace pyc {
 
@@ -710,11 +714,8 @@ class LoweringVisitor {
             return;
         } else if (node->type == "Import") {
             // import sys, import math as m, import a, b, c as cc
-            // For every import, call pyc_import_failed (the only supported
-            // module is a synthetic 'sys' which is handled at runtime init
-            // time and never appears here). The result is stored in the
-            // imported global name; subsequent attribute access on it
-            // will produce a clear runtime diagnostic.
+            // B7: Call pyc_run_module to execute the module's code,
+            // then create a module dict with the module's globals.
             //
             // The original module names are stored in node->id (space-
             // separated for the comma-list case); node->args holds the
@@ -729,11 +730,26 @@ class LoweringVisitor {
                 const std::string& name = node->args[i];
                 const std::string& orig = (i < origNames.size()) ? origNames[i] : name;
                 ir.addModuleGlobal(name);
+                
+                // Call pyc_run_module to execute the module's code
                 std::string modConst = "c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, modConst, "str");
-                std::string res = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modConst}, res);
-                ir.addInstruction(currentFunc, "assign", {res}, name);
+                ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, "");
+                
+                // Create a module dict
+                std::string moduleDict = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyDict_New"}, moduleDict);
+                
+                // Add __name__ to the module dict
+                std::string nameKey = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"__name__\""}, nameKey, "str");
+                std::string nameVal = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, nameVal, "str");
+                ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", moduleDict, nameKey, nameVal}, "set_name");
+                
+                // Store the module dict in the target name
+                ir.addInstruction(currentFunc, "assign", {moduleDict}, name);
+                
                 // Synthetic module dicts (os, sys, re, subprocess, etc.) are
                 // dicts. Mark the binding so module-attribute method calls
                 // (`os.path.exists(...)`, `sys.stderr.write(...)`) take the
@@ -743,28 +759,32 @@ class LoweringVisitor {
             return;
         } else if (node->type == "ImportFrom") {
             // from math import sqrt
-            // Same handling: import the parent module (which fails for
-            // any non-sys module), then attempt to look up the names on
-            // the result. Since the result is null, the name bindings
-            // stay null and any use will produce a clear diagnostic.
+            // B7: Call pyc_run_module to execute the module's code,
+            // then look up the imported names in the module dict.
             const std::string& mod = node->id;
             if (!mod.empty()) {
                 std::string modConst = "c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modConst, "str");
-                std::string res = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modConst}, res);
-                // For each imported name, look it up on the (synthetic)
-                // module dict and bind the result. If the module dict
-                // has the name, the user code gets a usable value (e.g.
-                // functools.cmp_to_key). If not, the name binds to the
-                // module itself, so subsequent attribute access on it
-                // produces a clear diagnostic.
+                ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, "");
+                
+                // Create a module dict
+                std::string moduleDict = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyDict_New"}, moduleDict);
+                
+                // Add __name__ to the module dict
+                std::string nameKey = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"__name__\""}, nameKey, "str");
+                std::string nameVal = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, nameVal, "str");
+                ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", moduleDict, nameKey, nameVal}, "set_name");
+                
+                // For each imported name, look it up in the module dict
                 for (const auto& name : node->args) {
                     ir.addModuleGlobal(name);
                     std::string attrKey = "c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + name + "\""}, attrKey, "str");
                     std::string attrVal = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", res, attrKey}, attrVal);
+                    ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", moduleDict, attrKey}, attrVal);
                     ir.addInstruction(currentFunc, "assign", {attrVal}, name);
                 }
             }
@@ -5105,20 +5125,173 @@ void lowerAST(const ASTNode* node, ModuleIR& ir) {
 }
 
 bool Compiler::compile(const std::string& inputPath, const std::string& outputPath, bool useStatic, int optLevel, bool emitLLVM, bool emitASM, bool verbose) {
-    PythonParser parser;
-    auto ast = parser.parseFile(inputPath);
-    if (!ast) {
+    // B7: First parse the main file to find imports, then scan for those modules
+    PythonParser mainParser;
+    auto mainAst = mainParser.parseFile(inputPath);
+    if (!mainAst) {
         std::cerr << "Parse error for " << inputPath << std::endl;
         return false;
     }
-    if (verbose) std::cout << "Parsed AST root: " << ast->type << " (depth " << ast->children.size() << ")\n";
-
-    ModuleIR ir;
-    lowerAST(ast.get(), ir);
+    if (verbose) std::cout << "Parsed AST root: " << mainAst->type << " (depth " << mainAst->children.size() << ")\n";
+    
+    // Collect import names from the main AST
+    std::unordered_set<std::string> importNames;
+    std::function<void(const ASTNode*)> collectImports = [&](const ASTNode* node) {
+        if (!node) return;
+        if (node->type == "Import") {
+            std::stringstream ss(node->id);
+            std::string tok;
+            while (ss >> tok) importNames.insert(tok);
+        } else if (node->type == "ImportFrom") {
+            if (!node->id.empty()) importNames.insert(node->id);
+        }
+        for (const auto& c : node->children) collectImports(c.get());
+    };
+    collectImports(mainAst.get());
+    
+    if (verbose && !importNames.empty()) {
+        std::cout << "B7: Found imports: ";
+        for (auto& name : importNames) {
+            std::cout << name << " ";
+        }
+        std::cout << "\n";
+    }
+    
+    // Build list of files to compile: main file + imported modules
+    std::string dir = fs::path(inputPath).parent_path().string();
+    if (dir.empty()) dir = ".";
+    
+    std::string mainBasename = fs::path(inputPath).stem().string();
+    std::vector<std::string> pyFiles;
+    pyFiles.push_back(inputPath); // Main file first
+    
+    // Add imported modules if they exist as .py files in the same directory
+    for (auto& moduleName : importNames) {
+        std::string modulePath = dir + "/" + moduleName + ".py";
+        if (fs::exists(modulePath) && fs::is_regular_file(modulePath)) {
+            pyFiles.push_back(modulePath);
+        }
+    }
+    std::sort(pyFiles.begin(), pyFiles.end());
+    
+    if (verbose) {
+        std::cout << "B7: Compiling " << pyFiles.size() << " module(s)\n";
+        for (auto& f : pyFiles) {
+            std::cout << "  - " << f << "\n";
+        }
+    }
+    
+    // Collect module names for B7 runtime support (exclude main module)
+    std::vector<std::string> moduleNames;
+    
+    // Compile each .py file to an LLVM module
+    std::vector<std::unique_ptr<llvm::Module>> modules;
     llvm::LLVMContext context;
+    
+    for (auto& pyFile : pyFiles) {
+        PythonParser parser;
+        auto ast = parser.parseFile(pyFile);
+        if (!ast) {
+            std::cerr << "Warning: Failed to parse " << pyFile << ", skipping\n";
+            continue;
+        }
+        
+        ModuleIR ir;
+        lowerAST(ast.get(), ir);
+        
+        Codegen codegen;
+        std::string moduleName = fs::path(pyFile).stem().string();
+        
+        // Only add non-main modules to the B7 module registry
+        if (pyFile != inputPath) {
+            moduleNames.push_back(moduleName);
+        }
+        
+        auto module = codegen.generate(ir, context, "pyc_" + moduleName);
+        if (!module) {
+            std::cerr << "Warning: Codegen failed for " << pyFile << ", skipping\n";
+            continue;
+        }
+        
+        // B7: Rename the module entry point function to include the module name
+        // The entry point is named "__module__" by the lowering visitor.
+        // For the main module, rename to "pyc_user_main" so the C runtime can call it.
+        // For other modules, rename to "__module__<moduleName>" so they can be called at runtime.
+        llvm::Function* entryFunc = module->getFunction("__module__");
+        if (entryFunc) {
+            std::string newEntryName;
+            if (pyFile == inputPath) {
+                // Main module: rename to pyc_user_main
+                newEntryName = "pyc_user_main";
+            } else {
+                // Other modules: rename to __module__<moduleName>
+                newEntryName = "__module__" + moduleName;
+            }
+            entryFunc->setName(newEntryName);
+        }
+        
+        if (verbose) {
+            std::cout << "  Generated LLVM module for " << moduleName << "\n";
+        }
+        
+        modules.push_back(std::move(module));
+    }
+    
+    if (modules.empty()) {
+        std::cerr << "Error: No modules generated\n";
+        return false;
+    }
+    
+    // B7: Generate C source file with module registry for runtime module execution
+    std::string b7CSource = "#include <string.h>\n";
+    b7CSource += "#include <stdio.h>\n\n";
+    
+    // Declare extern functions for each module entry point (wrapped in extern "C" to prevent name mangling)
+    b7CSource += "extern \"C\" {\n";
+    for (auto& name : moduleNames) {
+        b7CSource += "    void __module__" + name + "(void);\n";
+    }
+    b7CSource += "}\n\n";
+    
+    // Define the module registry
+    b7CSource += "typedef struct {\n";
+    b7CSource += "    const char* name;\n";
+    b7CSource += "    void (*entry)(void);\n";
+    b7CSource += "} pyc_module_entry;\n\n";
+    
+    b7CSource += "static pyc_module_entry pyc_modules[] = {\n";
+    for (auto& name : moduleNames) {
+        b7CSource += "    {\"" + name + "\", __module__" + name + "},\n";
+    }
+    b7CSource += "    {NULL, NULL}\n";
+    b7CSource += "};\n\n";
+    
+    // Generate the pyc_run_module function
+    b7CSource += "void pyc_run_module(const char* moduleName) {\n";
+    b7CSource += "    for (int i = 0; pyc_modules[i].name != NULL; i++) {\n";
+    b7CSource += "        if (strcmp(pyc_modules[i].name, moduleName) == 0) {\n";
+    b7CSource += "            pyc_modules[i].entry();\n";
+    b7CSource += "            return;\n";
+    b7CSource += "        }\n";
+    b7CSource += "    }\n";
+    b7CSource += "    fprintf(stderr, \"Module not found: %s\\n\", moduleName);\n";
+    b7CSource += "}\n";
+    
+    // Write the C source to a temporary file
+    std::string b7CFile = outputPath + "_b7_modules.c";
+    std::ofstream b7Out(b7CFile);
+    if (b7Out.is_open()) {
+        b7Out << b7CSource;
+        b7Out.close();
+    } else {
+        std::cerr << "Warning: Could not write B7 module registry to " << b7CFile << "\n";
+    }
+    
+    // Merge all modules into one
     Codegen codegen;
-    auto module = codegen.generate(ir, context, "pyc_module");
+    auto module = Codegen::mergeModules(modules, context, "pyc_module");
     if (!module) return false;
+    
     codegen.optimize(module.get(), optLevel);
     if (emitLLVM) {
         if (codegen.emitLLVM(module.get(), outputPath + ".ll")) {
@@ -5156,7 +5329,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         // user code's `pyc_user_main`. We always compile it from
         // source here for simplicity (it has no other dependencies
         // beyond the runtime header).
-        linkCmd += outputPath + ".o -I" + sourceDir + "/include " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
+        // B7: Include the generated module registry C source
+        linkCmd += outputPath + ".o " + b7CFile + " -I" + sourceDir + "/include " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
         if (std::system(linkCmd.c_str()) == 0) {
             std::cout << "Linked with runtime to " << outputPath << " (static=" << useStatic << ")\n";
         } else {

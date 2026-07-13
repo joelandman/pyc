@@ -179,6 +179,23 @@ PyObject* pyc_get_sys_attr(const char* name);
 // NULL if pyc_setup_sys has not been called).
 PyObject* pyc_get_sys_module(void);
 
+// B7: sys.modules support
+// Get the sys.modules dict (a new strong reference, or NULL if not initialised).
+PyObject* pyc_get_sys_modules(void);
+
+// Add a module to sys.modules (increments refcount of module_dict).
+void pyc_register_module(const char* name, PyObject* module_dict);
+
+// B7: Runtime import support
+// Import a module by name (returns module dict or NULL)
+PyObject* pyc_import_module(const char* module_name);
+// Import a specific name from a module
+PyObject* pyc_import_from_module(const char* module_name, const char* name);
+// Clear the module registry (for testing/cleanup)
+void pyc_clear_modules(void);
+// B7: Run a module's entry point by name (called by import handling)
+void pyc_run_module(const char* module_name);
+
 void* pyc_alloc(size_t size);
 void  pyc_free(void* obj);
 

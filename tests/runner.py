@@ -597,8 +597,12 @@ FILE_CASES = [
     ("regex_g.py", []),
     ("regex.py", []),
     ("features.py", []),
-    ("closures.py", []),
-    # The following crash or don't compile - excluded
+     ("closures.py", []),
+     # B7: Import / module system tests
+     # These require utils.py to be in the same directory
+     ("b7_import.py", []),
+     ("b7_importfrom.py", []),
+     # The following crash or don't compile - excluded
     # ("builtins.py", []),   # uses re module + sys.argv - works now (re is PCRE2-backed)
 ]
 

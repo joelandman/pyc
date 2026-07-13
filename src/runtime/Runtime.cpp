@@ -1709,6 +1709,8 @@ static PyObject* makeReModuleDict() {
 // Forward declaration: the `sys` module is set up at startup by
 // pyc_setup_sys. Defined further down in this file.
 static PyObject* g_sys_module = nullptr;
+// B7: Global reference to sys.modules dict
+static PyObject* g_sys_modules = nullptr;
 
 // Forward declarations for the os / subprocess module dict builders.
 static PyObject* makeOsModuleDict();
@@ -3344,6 +3346,23 @@ void pyc_setup_sys(int argc, char** argv) {
         PyDict_SetItem(g_sys_module, stdout_key, stdout_obj);
         Py_DECREF(stdout_key); Py_DECREF(stdout_obj);
     }
+    
+    // B7: sys.modules — a dict mapping module names to module dicts.
+    // Initially contains "sys" pointing to the sys module itself.
+    // Other modules are added at import time.
+    {
+        PyObject* modules_dict = PyDict_New();
+        PyObject* sys_key = PyUnicode_FromString("sys");
+        PyDict_SetItem(modules_dict, sys_key, g_sys_module);
+        Py_DECREF(sys_key);
+        // Store sys.modules as an attribute on the sys module
+        PyObject* sys_modules_key = PyUnicode_FromString("modules");
+        PyDict_SetItem(g_sys_module, sys_modules_key, modules_dict);
+        Py_DECREF(sys_modules_key);
+        // Store a reference to sys.modules in a global for easy access
+        g_sys_modules = modules_dict;
+        Py_DECREF(modules_dict);
+    }
 }
 
 // Register all the os/subprocess/etc. runtime helpers so they can be
@@ -3387,6 +3406,22 @@ PyObject* pyc_get_sys_module(void) {
     if (g_sys_module == nullptr) return nullptr;
     Py_INCREF(g_sys_module);
     return g_sys_module;
+}
+
+// B7: Get the sys.modules dict (a new strong reference, or NULL if not initialised).
+PyObject* pyc_get_sys_modules(void) {
+    if (g_sys_modules == nullptr) return nullptr;
+    Py_INCREF(g_sys_modules);
+    return g_sys_modules;
+}
+
+// B7: Add a module to sys.modules (increments refcount of module_dict).
+void pyc_register_module(const char* name, PyObject* module_dict) {
+    if (!g_sys_modules || !module_dict) return;
+    PyObject* nameKey = PyUnicode_FromString(name);
+    Py_INCREF(module_dict);
+    PyDict_SetItem(g_sys_modules, nameKey, module_dict);
+    Py_DECREF(nameKey);
 }
 
 PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {

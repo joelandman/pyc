@@ -36,7 +36,10 @@ target_compile_definitions(pyc PRIVATE PYC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 install(TARGETS pyc DESTINATION bin)
 
-add_library(pyc_runtime STATIC src/runtime/Runtime.cpp)
+add_library(pyc_runtime STATIC 
+    src/runtime/Runtime.cpp
+    runtime/b7_import.cpp
+)
 target_link_libraries(pyc_runtime PUBLIC pcre2-8)
 set_target_properties(pyc_runtime PROPERTIES OUTPUT_NAME "pycrt")
 install(TARGETS pyc_runtime DESTINATION lib)

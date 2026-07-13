@@ -4,6 +4,7 @@
 #include <llvm/IR/Module.h>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace pyc {
 
@@ -14,6 +15,12 @@ public:
     bool emitLLVM(llvm::Module* module, const std::string& outputPath);
     bool emitAssembly(llvm::Module* module, const std::string& outputPath);
     void optimize(llvm::Module* module, int optLevel = 2);
+    
+    // B7: Merge multiple LLVM modules into one (for import support)
+    static std::unique_ptr<llvm::Module> mergeModules(
+        std::vector<std::unique_ptr<llvm::Module>>& modules,
+        llvm::LLVMContext& context,
+        const std::string& outputModuleName);
 };
 
 } // namespace pyc
