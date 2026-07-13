@@ -94,6 +94,7 @@ PyObject* PyBuiltin_Hex(PyObject* obj);
 PyObject* PyBuiltin_Oct(PyObject* obj);
  PyObject* PyBuiltin_Bin(PyObject* obj);
  PyObject* PyBuiltin_Super(void);
+ PyObject* PyObject_GetAttrExtended(PyObject* obj, PyObject* attr);
  PyObject* PyString_Upper(PyObject* s);
 PyObject* PyString_Lower(PyObject* s);
 PyObject* PyString_Strip(PyObject* s);

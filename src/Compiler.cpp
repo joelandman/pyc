@@ -4468,10 +4468,22 @@ class LoweringVisitor {
                 knownIRFunctions.insert(methodFuncName);
                 std::string dummy = "t" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
-                currentFunc = savedFunc;
-            }
-        }
-        currentClass = savedClass;
+                 currentFunc = savedFunc;
+             }
+         }
+         // B6: Process class attributes (non-FunctionDef children)
+         for (const auto& c : node->children) {
+             if (!c || c->type != "Assign") continue;
+             // For simple assignments (Name target), the target id is stored in c->id
+             std::string attrName = c->id.empty() ? (c->args.empty() ? "" : c->args[0]) : c->id;
+             if (attrName.empty()) continue;
+             std::string attrValue = lowerExpr(c->children.empty() ? nullptr : c->children[0].get());
+             std::string attrKeyConst = "c" + std::to_string(tempCounter++);
+             ir.addInstruction("__module__", "const", {"\"" + attrName + "\""}, attrKeyConst, "str");
+             std::string dummy = "t" + std::to_string(tempCounter++);
+             ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, attrKeyConst, attrValue}, dummy);
+         }
+         currentClass = savedClass;
         // Store class dict as the class value
         ir.addInstruction("__module__", "assign", {classDictTemp}, className);
         noteType(className, "dict");

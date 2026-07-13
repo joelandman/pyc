@@ -3862,4 +3862,48 @@ extern "C" PyObject* PyBuiltin_Super(void) {
     return super;
 }
 
+// ---- B6: Extended attribute lookup with class fallback ----
+// PyObject_GetAttrExtended looks up an attribute on an object, first checking
+// the instance dict, then the class dict (for class attributes).
+static bool pyObjStrEqual(PyObject* a, PyObject* b) {
+    if (!a || !b) return false;
+    if (a->type == 3 && b->type == 3) return a->str == b->str;
+    if (a->type == 3 && b->type != 3) return false;
+    if (a->type != 3 && b->type == 3) return false;
+    return a == b;
+}
+
+extern "C" PyObject* PyObject_GetAttrExtended(PyObject* obj, PyObject* attr) {
+    if (!obj || !attr) return nullptr;
+    // First try instance/class dict directly
+    for (auto& kv : obj->dict) {
+        if (pyObjStrEqual(kv.first, attr)) {
+            Py_INCREF(kv.second);
+            return kv.second;
+        }
+    }
+    // For instances (objects with __class__ in their dict), fall back to class dict
+    PyObject* klass = nullptr;
+    for (auto& kv : obj->dict) {
+        if (kv.first->str == "__class__") {
+            klass = kv.second;
+            break;
+        }
+    }
+    if (klass) {
+        for (auto& kv : klass->dict) {
+            if (pyObjStrEqual(kv.first, attr)) {
+                Py_INCREF(kv.second);
+                return kv.second;
+            }
+        }
+    }
+    // Not found - return None
+    PyObject* none = new PyObject();
+    none->refcount = 1;
+    none->type = 5;  // None type
+    none->str = "None";
+    return none;
+}
+
 } // extern "C"
