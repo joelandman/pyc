@@ -1101,6 +1101,7 @@ class LoweringVisitor {
  private:
     ModuleIR& ir;
     std::string currentFunc;
+    std::string currentClass;
     int tempCounter = 0;
     // Current innermost loop labels — updated by lowerFor/lowerWhile so
     // break/continue target the right blocks even with nested loops.
@@ -1138,6 +1139,10 @@ class LoweringVisitor {
     std::unordered_set<std::string> namesThatMayHoldBundles;
     // Temps (consts or results) whose runtime value is a callable token string.
     std::unordered_set<std::string> callableTokenTemps;
+    // B6: temps that hold super() proxy objects
+    std::unordered_set<std::string> superProxyTemps;
+    // B6: map from class name to its first base class name (for super() support)
+    std::unordered_map<std::string, std::string> classBases;
     // User functions (defs or synthetic lambdas) that contain a return of a
     // callable token value. Calls to them have their result temp marked so
     // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
@@ -1155,7 +1160,14 @@ class LoweringVisitor {
     // a lambda expression) to the synthetic IR function name it refers to.
     // This enables treating a lambda "value" (string token) as a callable target
     // when it appears as a callee expression (B4 progress on lambda as value).
-    std::unordered_map<std::string, std::string> callableTokenToSynthetic; // temp -> synthetic name
+     std::unordered_map<std::string, std::string> callableTokenToSynthetic; // temp -> synthetic name
+
+     // B6: helper to get the first base class of a given class
+     std::string getFirstBase(const std::string& className) {
+         auto it = classBases.find(className);
+         return (it != classBases.end()) ? it->second : "";
+     }
+
 
     // A6: Call-site type tracking for monomorphization.
     // Maps funcName -> list of observed type signatures (each signature is a vector of arg types).
@@ -1668,6 +1680,14 @@ class LoweringVisitor {
          if (!node->children.empty() && node->children[0] &&
             node->children[0]->type == "Attribute") {
             return lowerMethodCall(node);
+        }
+        // super() call — returns a proxy that looks up methods on the parent class
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Name" && node->children[0]->id == "super") {
+            std::string superProxy = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Super"}, superProxy);
+            superProxyTemps.insert(superProxy);
+            return superProxy;
         }
     // Class instantiation: ClassName(args) — create instance dict and call __init__
         std::string funcName;
@@ -3929,12 +3949,85 @@ class LoweringVisitor {
         // node->children[1..] = positional args
         const ASTNode* attr = node->children[0].get();
         std::string methodName = attr->id;
-        std::string obj = lowerExpr(attr->children.empty() ? nullptr : attr->children[0].get());
+
+        // B6: Handle super().method() — detect super() before lowering the object
+        bool isSuperCall = false;
+        if (!attr->children.empty() && attr->children[0] &&
+            attr->children[0]->type == "Call" && !attr->children[0]->children.empty() &&
+            attr->children[0]->children[0]->type == "Name" &&
+            attr->children[0]->children[0]->id == "super") {
+            isSuperCall = true;
+        }
+
+        std::string obj;
+        if (isSuperCall && !currentClass.empty()) {
+            // Create a super proxy
+            obj = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Super"}, obj);
+            superProxyTemps.insert(obj);
+        } else {
+            obj = lowerExpr(attr->children.empty() ? nullptr : attr->children[0].get());
+        }
 
         std::vector<std::string> args;
         for (size_t i = 1; i < node->children.size(); ++i) {
             if (node->children[i] && node->children[i]->type != "Keyword")
                 args.push_back(lowerExpr(node->children[i].get()));
+        }
+
+        // B6: Handle super().method() — look up method on parent class
+        if (isSuperCall && superProxyTemps.count(obj) && !currentClass.empty()) {
+            // Find the first base class of currentClass
+            // We need to store base classes per class — for now, use a simple approach
+            // For single inheritance, the parent class is the first base
+            // We'll look up the method on the parent class directly
+            std::string res = "t" + std::to_string(tempCounter++);
+            std::string methodNameConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
+            // The super proxy's cell_content should point to the parent class
+            // For now, we need to get the parent class from the current class's bases
+            // Store base classes in a map during class lowering
+            std::string parentClass = getFirstBase(currentClass);
+            std::vector<std::string> methodArgs;
+            // For super().method(), the first arg should be 'self' (the instance), not the super proxy
+            // We need to get 'self' from the current function's parameters
+            // For now, we'll use 'self' as a convention (first parameter of the method)
+            methodArgs.push_back("self");
+            for (auto& a : args) {
+                methodArgs.push_back(a);
+            }
+            if (!parentClass.empty()) {
+                // Get method from parent class
+                std::string methodLookup = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", parentClass, methodNameConst}, methodLookup);
+                std::string argList = "t" + std::to_string(tempCounter++);
+                std::string argCount = std::to_string(methodArgs.size());
+                std::string argCountConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
+                for (size_t i = 0; i < methodArgs.size(); ++i) {
+                    std::string idxConst = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+                    std::string setRes = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
+                }
+                ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
+            } else {
+                // Fallback: just call Pyc_Apply with null
+                std::string argList = "t" + std::to_string(tempCounter++);
+                std::string argCount = std::to_string(methodArgs.size());
+                std::string argCountConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
+                for (size_t i = 0; i < methodArgs.size(); ++i) {
+                    std::string idxConst = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+                    std::string setRes = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
+                }
+                ir.addInstruction(currentFunc, "call", {"Pyc_Apply", obj, argList}, res);
+            }
+            return res;
         }
 
         std::string res = "t" + std::to_string(tempCounter++);
@@ -4271,12 +4364,18 @@ class LoweringVisitor {
         // Bases are stored in node->args by the parser
         for (const auto& baseName : node->args) {
             if (baseName.empty() || baseName == "(complex base)") continue;
+            // Track base classes for super() support
+            if (classBases.find(className) == classBases.end()) {
+                classBases[className] = baseName;
+            }
             // Copy methods from base class to derived class
             // The base class dict IS the class global (classes are represented as dicts)
             ir.addInstruction("__module__", "call", {"PyDict_Update", classDictTemp, baseName}, "dummy");
         }
         
         // Process all methods
+        std::string savedClass = currentClass;
+        currentClass = className;
         for (const auto& c : node->children) {
             if (!c || c->type != "FunctionDef") continue;
             std::string methodName = c->id;
@@ -4372,6 +4471,7 @@ class LoweringVisitor {
                 currentFunc = savedFunc;
             }
         }
+        currentClass = savedClass;
         // Store class dict as the class value
         ir.addInstruction("__module__", "assign", {classDictTemp}, className);
         noteType(className, "dict");

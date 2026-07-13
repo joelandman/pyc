@@ -191,6 +191,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     }
 
     // Builtins: int, float, abs; string methods; dict/list methods
+    // 0-arg builtins: super
+    llvm::FunctionType* zeroArgTy = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
+    llvm::Function::Create(zeroArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Super", module.get());
+
     for (const char* name : {"PyBuiltin_Int","PyBuiltin_Float","PyBuiltin_Abs",
                               "PyBuiltin_Ord","PyBuiltin_Chr",
                               "PyBuiltin_Bool","PyBuiltin_Type",

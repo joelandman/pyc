@@ -3842,4 +3842,24 @@ extern "C" long PyAlloc_GetTotal() {
            alloc_list_count.load() + alloc_dict_count.load() + alloc_str_count.load();
 }
 
+// ---- B6: super() proxy ----
+// super() returns a proxy object (type==7) that delegates attribute access
+// to the parent class. The proxy stores:
+// - refcount: 1
+// - type: 7 (super proxy)
+// - str: empty
+// - list: empty
+// - dict: empty (unused)
+// - cell_content: pointer to the parent class dict
+extern "C" PyObject* PyBuiltin_Super(void) {
+    PyObject* super = new PyObject();
+    super->refcount = 1;
+    super->type = 7;  // super proxy
+    super->str = "";
+    super->list = {};
+    super->dict = {};
+    super->cell_content = nullptr;  // will be set by compiler to parent class
+    return super;
+}
+
 } // extern "C"
