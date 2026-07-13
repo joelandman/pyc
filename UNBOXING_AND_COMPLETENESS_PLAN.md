@@ -197,14 +197,18 @@ Also wire `list.count` if the runtime grows it; currently not present.
   - Codegen needs to treat cell variables specially (load/store through the cell, INCREF/DECREF on the content).
 - This is correctness work; it will interact with closures and future class methods.
 
-### B6. Classes and Basic OOP
-- Large feature. Plan in stages:
-  1. Parse `class` and simple method defs (store methods on a class dict).
-  2. Instance creation (`C()`), attribute get/set on instances (use a dict per instance for `__dict__` or a fixed slot map).
-  3. Method binding (`self` insertion on attribute lookup of a function from a class).
-  4. Inheritance (MRO stub for simple single inheritance) and `super()`.
-- For unboxing: instance attributes that are proven numeric can live unboxed inside the instance storage (future).
-- Start with a minimal viable that makes common patterns in nbody-like code (if any) and user examples work. Full descriptor/protocol machinery is out of scope initially.
+### B6. Classes and Basic OOP — **COMPLETED (2026-07)**
+- ✅ Stage 1: Parse `class` and simple method defs (store methods on a class dict)
+- ✅ Stage 2: Instance creation (`C()`), attribute get/set on instances (dict per instance for `__dict__`)
+- ✅ Stage 3: Method binding (`self` insertion on attribute lookup of a function from a class)
+- ✅ Stage 4: Inheritance (single inheritance via `PyDict_Update` from base class dict) and `super()`
+- ✅ Class attributes: assignments in class body are added to class dict (e.g., `class Dog: species = "Canine"`)
+- ✅ Extended attribute lookup: `PyObject_GetAttrExtended` checks instance dict first, then class dict
+- ✅ `__str__` and `__repr__` dunder methods: `PyBuiltin_Repr` and `PyObject_Print` check for these methods
+- ✅ `print()` uses `__str__` via `PyObject_Print`
+- `super()` support: tracks first base class per class, generates code to look up methods on parent class
+- Remaining: multiple inheritance (only first base tracked for `super()`), `__class__` attribute access on instances
+- Tests: 245/267 passing, 0 file_case_failures
 
 ### B7. General Import / Module System
 - Current state: only a synthetic `sys` module (populated by `pyc_setup_sys` in `MainWrapper.cpp`) with `sys.argv`. `import sys` is faked via `PyObject_GetAttr` on the module object.
@@ -256,7 +260,7 @@ Recommended order (interleave correctness and unboxing where safe):
 7. nonlocal (B5).
 8. Homogeneous numeric lists (A4).
 9. Allocation sinking (A5) and specialized variants (A6).
-10. Classes (B6) and general import (B7) — larger efforts.
+10. Classes (B6) — **COMPLETED**. General import (B7) — next large effort.
 
 Testing:
 - Every change must pass `cd build && make check` (or `ctest`) and the full `tests/runner.py`.
