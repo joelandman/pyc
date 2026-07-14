@@ -46,17 +46,19 @@ struct IRFunction {
     std::vector<std::string> numericLocals;
 };
 
-class ModuleIR {
-public:
-    std::vector<IRFunction> functions;
-    // All variable names that are stored at module scope (declared global anywhere).
-    std::vector<std::string> moduleGlobals;
+ class ModuleIR {
+ public:
+     std::vector<IRFunction> functions;
+     // All variable names that are stored at module scope (declared global anywhere).
+     std::vector<std::string> moduleGlobals;
+     // Module name for B7 import system (e.g., "utils", "main")
+     std::string moduleName;
 
-    void addFunction(const std::string& name, const std::vector<std::string>& args = {});
-    void addInstruction(const std::string& funcName, const std::string& op, const std::vector<std::string>& operands, const std::string& result = "", const std::string& resultType = "boxed");
-    void addInstructionRaw(const std::string& funcName, const std::string& op, const std::vector<IRValue>& operands, const std::string& result = "", const std::string& resultType = "boxed");
-    void setFunctionGlobals(const std::string& funcName, const std::vector<std::string>& globals);
-    void addModuleGlobal(const std::string& name);
+     void addFunction(const std::string& name, const std::vector<std::string>& args = {});
+     void addInstruction(const std::string& funcName, const std::string& op, const std::vector<std::string>& operands, const std::string& result = "", const std::string& resultType = "boxed");
+     void addInstructionRaw(const std::string& funcName, const std::string& op, const std::vector<IRValue>& operands, const std::string& result = "", const std::string& resultType = "boxed");
+     void setFunctionGlobals(const std::string& funcName, const std::vector<std::string>& globals);
+     void addModuleGlobal(const std::string& name);
 };
 
 } // namespace pyc

@@ -47,6 +47,13 @@ PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b);
 PyObject* PyBuiltin_Range(PyObject* start, PyObject* stop, PyObject* step);
 int       PyObject_CompareBool(PyObject* a, PyObject* b, int op);
 PyObject* PyStr_FromAny(PyObject* obj);
+const char* PyStr_AsUTF8(PyObject* obj);
+PyObject* Pyc_OsPathExists(PyObject* path);
+PyObject* Pyc_OsPathIsFile(PyObject* path);
+PyObject* Pyc_OsPathIsDir(PyObject* path);
+PyObject* Pyc_OsUnlink(PyObject* path);
+PyObject* Pyc_SubprocessCall(PyObject* cmdList);
+PyObject* Pyc_SubprocessCheckOutput(PyObject* cmdList);
 PyObject* PyString_Concat(PyObject* a, PyObject* b);
 PyObject* PyString_Repeat(PyObject* s, PyObject* n);
 PyObject* PyBuiltin_Len(PyObject* obj);
@@ -194,7 +201,7 @@ PyObject* pyc_import_from_module(const char* module_name, const char* name);
 // Clear the module registry (for testing/cleanup)
 void pyc_clear_modules(void);
 // B7: Run a module's entry point by name (called by import handling)
-void pyc_run_module(const char* module_name);
+void pyc_run_module(PyObject* module_name);
 
 void* pyc_alloc(size_t size);
 void  pyc_free(void* obj);

@@ -498,6 +498,32 @@ Sorted by criticality (most critical at top).
 - Lists holding bundles and subscripts from them are marked so token/bundle propagation continues through containers.
 - Related prior fixes: unique `__nesteddef_N` / `__lambda_N` IR names; `lambdaAliases`; owned vs free cell separation; INCREF of received cells; no result capture on `PyList_Append` for bundles.
 
+### 43. File-based Import System with Cross-Module Globals
+
+**Severity:** High  
+**Location:** `src/Compiler.cpp` (module loading, `__module__` generation), `src/codegen/Codegen.cpp` (external function declarations), `src/frontend/PythonParser.cpp` (ast module caching)  
+**Status: PARTIAL**
+
+- File-based module loading: reads .py file, tokenizes, parses, builds IR, executes in module namespace
+- Caches loaded modules in `g_loaded_modules` map
+- `__module__<name>()` functions generated to return module dict pointer (`ptr` return type)
+- C runtime updated: `__module__` declarations return `void*`, `pyc_module_entry` uses `void* (*)(void)` signature
+- External function declarations added for unknown functions in codegen call handler (prevents silent call drops)
+- Parser ast module caching bug fixed: `PyImport_ImportModule` now works on subsequent calls for same module
+- Package structure (directories with `__init__.py`), relative imports, namespace packages supported
+- os.path stubs: `exists()`, `isfile()`, `isdir()` with real POSIX implementations. `os.unlink()` implemented.
+- subprocess stubs: `call()`, `check_output()` with fork/exec/pipe implementation
+- **Known issue**: `import utils` in main module loads from `@pyc_global_utils` instead of using `__module__utils` return value. The `__module__utils` call is generated (debug print confirms) but not visible in LLVM IR. Main module still sees null globals from imported module. `b7_import.py` and `b7_importfrom.py` fail with `None\nNone` instead of `5\n20`.
+
+### 44. Test Runner Masks FILE_CASE Regressions
+
+**Severity:** High  
+**Location:** `tests/runner.py:550-585`  
+**Status: FIXED**
+
+- The runner printed "PASS (optimizer-sensitive; see UNBOXING_AND_COMPLETENESS_PLAN.md)" when a FILE_CASE differed, then continued to report 200/200 — masking every real regression in the FILE_CASES as success.
+- Fix: the runner now prints "DIFF" with the expected and actual output, counts file failures separately, and exits non-zero when any FILE_CASE differs.
+
 ---
 
 ## Summary
@@ -505,7 +531,7 @@ Sorted by criticality (most critical at top).
 | Severity | Count | Status |
 |----------|-------|--------|
 | Critical | 3 | All FIXED |
-| High | 32 | 32 FIXED |
+| High | 34 | 32 FIXED, 1 PARTIAL |
 | Medium | 3 | All FIXED |
 | Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **43** | **42 FIXED, 1 UNSUPPORTED** |
+| **Total** | **45** | **42 FIXED, 1 PARTIAL, 1 UNSUPPORTED** |

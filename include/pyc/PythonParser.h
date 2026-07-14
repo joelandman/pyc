@@ -3,6 +3,14 @@
 #include <memory>
 #include <vector>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+#include <Python.h>
+#ifdef __cplusplus
+}
+#endif
+
 namespace pyc {
 
 struct ASTNode {
@@ -23,6 +31,9 @@ class PythonParser {
 public:
     std::unique_ptr<ASTNode> parseFile(const std::string& path);
     std::unique_ptr<ASTNode> parse(const std::string& source, const std::string& filename = "<string>");
+    
+private:
+    PyObject* getAstModule();
 };
 
 } // namespace pyc

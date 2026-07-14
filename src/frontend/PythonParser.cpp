@@ -13,6 +13,22 @@ std::string readFile(const std::string& path) {
     return buf.str();
 }
 
+PyObject* PythonParser::getAstModule() {
+    if (!Py_IsInitialized()) Py_Initialize();
+    static PyObject* cachedAstModule = nullptr;
+    static PyObject* cachedParseFunc = nullptr;
+    static bool astInitialized = false;
+    
+    if (!astInitialized) {
+        cachedAstModule = PyImport_ImportModule("ast");
+        if (cachedAstModule) {
+            cachedParseFunc = PyObject_GetAttrString(cachedAstModule, "parse");
+            astInitialized = true;
+        }
+    }
+    return cachedAstModule;
+}
+
 std::string getPyString(PyObject* obj, const char* attr) {
     PyObject* a = nullptr;
     int result = PyObject_GetOptionalAttrString(obj, attr, &a);
@@ -886,16 +902,63 @@ std::unique_ptr<ASTNode> PythonParser::parseFile(const std::string& path) {
 }
 
 std::unique_ptr<ASTNode> PythonParser::parse(const std::string& source, const std::string& filename) {
-    if (!Py_IsInitialized()) Py_Initialize();
-    PyObject* astModule = PyImport_ImportModule("ast");
-    if (!astModule) { PyErr_Print(); return nullptr; }
-    PyObject* parseFunc = PyObject_GetAttrString(astModule, "parse");
-    PyObject* args = PyTuple_Pack(1, PyUnicode_FromString(source.c_str()));
-    PyObject* kwargs = PyDict_New();
-    PyDict_SetItemString(kwargs, "filename", PyUnicode_FromString(filename.c_str()));
-    PyObject* pyAst = PyObject_Call(parseFunc, args, kwargs);
-    Py_DECREF(args); Py_DECREF(kwargs); Py_DECREF(parseFunc); Py_DECREF(astModule);
-    if (!pyAst) { PyErr_Print(); return nullptr; }
+    PyObject* astModule = getAstModule();
+    if (!astModule) {
+        fprintf(stderr, "Error: Failed to import ast module\n");
+        PyErr_Print();
+        return nullptr;
+    }
+    
+    // Get the parse function from the cached ast module
+    static PyObject* cachedParseFunc = nullptr;
+    PyObject* parseFunc = cachedParseFunc;
+    if (!parseFunc) {
+        parseFunc = PyObject_GetAttrString(astModule, "parse");
+        cachedParseFunc = parseFunc;
+    }
+    if (!parseFunc) {
+        fprintf(stderr, "Error: Failed to get ast.parse function\n");
+        PyErr_Print();
+        return nullptr;
+    }
+    
+    PyObject* srcUnicode = PyUnicode_FromString(source.c_str());
+    if (!srcUnicode) {
+        PyErr_Print();
+        return nullptr;
+    }
+    
+    PyObject* args = PyTuple_Pack(1, srcUnicode);
+    if (!args) {
+        PyErr_Print();
+        Py_DECREF(srcUnicode);
+        return nullptr;
+    }
+    
+    PyObject* pyAst = PyObject_Call(parseFunc, args, NULL);
+    
+    Py_DECREF(args);
+    Py_DECREF(srcUnicode);
+    
+    if (!pyAst) {
+        PyErr_Clear();
+        PyObject* kwargs = PyDict_New();
+        PyDict_SetItemString(kwargs, "filename", PyUnicode_FromString(filename.c_str()));
+        
+        srcUnicode = PyUnicode_FromString(source.c_str());
+        args = PyTuple_Pack(1, srcUnicode);
+        pyAst = PyObject_Call(parseFunc, args, kwargs);
+        
+        Py_DECREF(args);
+        Py_DECREF(srcUnicode);
+        Py_DECREF(kwargs);
+    }
+    
+    if (!pyAst) {
+        PyErr_Print();
+        return nullptr;
+    }
+    
     auto root = std::make_unique<ASTNode>();
     buildAST(pyAst, root.get());
     Py_DECREF(pyAst);

@@ -167,6 +167,22 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::Function::Create(pycImportFromTy, llvm::Function::ExternalLinkage, "pyc_import_from_module", module.get());
     llvm::FunctionType* pycRunModuleTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy}, false);
     llvm::Function::Create(pycRunModuleTy, llvm::Function::ExternalLinkage, "pyc_run_module", module.get());
+    
+    // os.path stub functions
+    llvm::FunctionType* osPathExistsTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(osPathExistsTy, llvm::Function::ExternalLinkage, "Pyc_OsPathExists", module.get());
+    llvm::FunctionType* osPathIsFileTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(osPathIsFileTy, llvm::Function::ExternalLinkage, "Pyc_OsPathIsFile", module.get());
+    llvm::FunctionType* osPathIsDirTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(osPathIsDirTy, llvm::Function::ExternalLinkage, "Pyc_OsPathIsDir", module.get());
+    llvm::FunctionType* osUnlinkTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(osUnlinkTy, llvm::Function::ExternalLinkage, "Pyc_OsUnlink", module.get());
+    
+    // subprocess stub functions
+    llvm::FunctionType* subCallTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(subCallTy, llvm::Function::ExternalLinkage, "Pyc_SubprocessCall", module.get());
+    llvm::FunctionType* subCheckOutTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(subCheckOutTy, llvm::Function::ExternalLinkage, "Pyc_SubprocessCheckOutput", module.get());
 
     // Exception support: pyc_raise(exc), pyc_current_exception(), pyc_clear_exception(),
     // pyc_try_push(jmpBuf, filter), pyc_try_pop().
@@ -1816,9 +1832,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 // been polluted by a later 'const' instruction with the same name).
                 std::string srcNameAssign = inst.operands.empty() ? "" : inst.operands[0].name;
                 llvm::Value* src = nullptr;
-                if (!srcNameAssign.empty() && module->getNamedGlobal("pyc_global_" + srcNameAssign)) {
-                    llvm::GlobalVariable* gvsrc = module->getNamedGlobal("pyc_global_" + srcNameAssign);
-                    src = builder.CreateLoad(pyObjectPtrTy, gvsrc, srcNameAssign + ".gload");
+                if (!srcNameAssign.empty()) {
+                    std::string globalName = "pyc_global_" + srcNameAssign;
+                    if (module->getNamedGlobal(globalName)) {
+                        llvm::GlobalVariable* gvsrc = module->getNamedGlobal(globalName);
+                        src = builder.CreateLoad(pyObjectPtrTy, gvsrc, srcNameAssign + ".gload");
+                    } else {
+                        src = getOrLoad(srcNameAssign);
+                    }
                 } else {
                     src = getOrLoad(srcNameAssign);
                 }
@@ -2079,6 +2100,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 } else {
                     llvm::Function* callee = module->getFunction(funcName);
                     if (!callee) callee = module->getFunction(llvmFunctionName(funcName));
+                    if (!callee) {
+                        // Function not found in this module - create external declaration
+                        // This handles cross-module calls like __module__utils
+                        llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " NOT FOUND, creating external\n";
+                        llvm::FunctionType* extTy = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
+                        callee = llvm::Function::Create(extTy, llvm::Function::ExternalLinkage, funcName, module.get());
+                    }
+                    llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " operands.size=" << inst.operands.size() << "\n";
                     if (callee) {
                         std::vector<llvm::Value*> callArgs;
                         // Track which args were native (i64/double) so that getAsPyObject's

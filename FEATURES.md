@@ -1,8 +1,8 @@
 # pyc — Implemented Features
 
-Current test count: **219/263** (runner shows 219/263, file_case_failures=6; see `CORRECTNESS.md` and `tests/runner.py`).
+Current test count: **235/269** (runner shows 235/269, file_case_failures=7; see `CORRECTNESS.md` and `tests/runner.py`).
 
-**Bug fixes:** `PyObject_Print` now flushes stdout after every print call (ensures output is visible when stdout is fully buffered). `pyc_setup_sys` now properly DECREFs all allocated index and string objects (fixes memory leaks). Subscript AugAssign (`a[i] += 1`) now carries result type metadata for native arithmetic optimization. Corrected `llvm::cast` → `llvm::dyn_cast` in class codegen. Fixed `PyDict_GetItem` to always return new references (caller responsible for DECREF). Added `ownedSlots` tracking in codegen assign path to DECREF old values on reassignment. LLVM verification failures are now fatal. List printing fixed for homogeneous lists (ilist/flist).
+**Bug fixes:** `PyObject_Print` now flushes stdout after every print call (ensures output is visible when stdout is fully buffered). `pyc_setup_sys` now properly DECREFs all allocated index and string objects (fixes memory leaks). Subscript AugAssign (`a[i] += 1`) now carries result type metadata for native arithmetic optimization. Corrected `llvm::cast` → `llvm::dyn_cast` in class codegen. Fixed `PyDict_GetItem` to always return new references (caller responsible for DECREF). Added `ownedSlots` tracking in codegen assign path to DECREF old values on reassignment. LLVM verification failures are now fatal. List printing fixed for homogeneous lists (ilist/flist). `//` (floor division) crash fixed with select-based DECREF cleanup and zero-division guard. None/True/False singletons fixed. Small int caching added. `dict.get()` with default fixed. `del` statement implemented. `print()` kwargs supported. Import of unsupported modules now reports clear ImportError. String `%` formatting rewritten. List/dict printing stray newlines fixed. `bool()`, `type()`, `hex()`, `oct()`, `bin()` implemented. `reversed()` implemented. `sorted(key=)` and `cmp_to_key` support added. Generator expressions fixed. Closures (nonlocal + nested functions) fully implemented. Import system: file-based module loading, package structure, relative imports, namespace packages. os.path stubs: exists, isfile, isdir. subprocess stubs: call, check_output. Module `__module__` functions now return module dict pointer for proper cross-module globals.
 
 **Milestone update:** `sum`/`sorted`/`any`/`all`/`isinstance` builtins and `str.find`/`count`/`replace` methods are now wired and passing (B1).
 Full slicing (get/set, step, negatives, str + list) implemented (B2).
@@ -100,6 +100,10 @@ d[k] = v       # dict subscript
 `min(a,b,...)` / `min(list)`, `max(a,b,...)` / `max(list)`,
 `list(x)`, `enumerate(iterable)`, `zip(a, b)`,
 `sum(x)`, `sorted(x)`, `any(x)`, `all(x)`, `isinstance(obj, info)`
+
+## Standard library stubs
+
+`os.path.exists()`, `os.path.isfile()`, `os.path.isdir()` — real POSIX implementations. `os.unlink()` — deletes files. `subprocess.call()` — executes commands via fork/exec/pipe. `subprocess.check_output()` — captures command output.
 
 ## String methods
 
@@ -201,6 +205,6 @@ with Dummy():
 
 - `lambda` expressions (B4 complete for the token model): write `lambda`, assign/pass/store/return/unpack/subscript it, call directly or indirectly via string "callable tokens" + `Pyc_Apply(token, list)` + generated `__apply__<name>` adapters (registered at startup). Dynamic `*args` works at indirect call sites (spliced into the flat list for `Pyc_Apply`). Lambdas may declare `*args` in their signature; callee-side collection works. Adapters are shape-aware for targets that declare `*vararg`. Full first-class objects (identity/equality) and `**kwargs` remain future.
 - `nonlocal` / cells (B5): single- and multi-level nesting (owner, assigning intermediates, forward-only forwarders); AugAssign to cell-backed names (`x += k`); multi-target unpack into nonlocals (`a,b = b,a`). Cells allocated in the owning scope (with param capture), hidden leading `<name>_cell` parameters, uniform `<name>_cell` slots, `isCellBackedHere`, and `PyCell_New/Get/Set/Check` (type=6). Capturing lambdas use descriptor bundles `[token, cell0, ...]` (plus prebound defaults for `lambda` defaults); adapters inject trailing defaults when fewer args are supplied. `tests/closures.py` (counters, adder, loop-var `lambda val=val`) matches CPython at --opt=0. Deeper aliasing and class interactions remain future work.
-- `import` / module system (partial): `import sys` registers `sys` as a module-level global, but `sys.version` and other attributes are not available. User module imports not yet supported.
+- `import` / module system (partial): `import sys` registers `sys` as a module-level global, but `sys.version` and other attributes are not available. File-based module loading implemented: reads .py file, parses, builds IR, executes in module namespace. Package structure support (directories with `__init__.py`). Relative imports. Namespace packages. `from ... import` with name binding. Cross-module globals via `__module__` function returning module dict pointer. Unsupported module imports (`re`, `math`) report clear ImportError.
 - `*args` / `**kwargs` (call-site * works for literals (static) and dynamic cases (via __va wrappers for direct targets or flat-list splice for indirect `Pyc_Apply`); declared * collection on callee side works; adapters support *vararg targets; **kwargs pending)
 - Walrus operator `:=`

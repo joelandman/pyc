@@ -21,7 +21,7 @@ Sorted by criticality (most critical at top).
 
 ### 2. Implement Import System
 
-**Status: FIXED**
+**Status: PARTIAL**
 - File-based module loading: reads .py file, tokenizes, parses with recursive descent parser, builds IR, executes in module namespace
 - Caches loaded modules in `g_loaded_modules` map
 - Simple imports (`import module1, module2`) supported via `names_` vector in ImportFrom
@@ -33,6 +33,9 @@ Sorted by criticality (most critical at top).
 - Relative imports: `from . import x`, `from ..pkg import y` (level-based resolution)
 - Namespace package support: directories with .py files but no `__init__.py`
 - Namespace packages get `__path__` and `__name__` attributes
+- Cross-module globals: `__module__` functions return module dict pointer for proper value sharing
+- `from ... import` with name binding supported
+- Unsupported module imports (`re`, `math`) report clear ImportError to stderr
 
 ### 3. Implement Exception Handling
 

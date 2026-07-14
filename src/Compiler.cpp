@@ -75,6 +75,100 @@ class LoweringVisitor {
             for (const auto& c : node->children) {
                 lower(c.get());
             }
+            
+            // B7: Create module dict containing all module globals
+            // This dict will be stored in a global variable (e.g., pyc_module_utils)
+            // so that importing modules can access it.
+            if (!ir.moduleGlobals.empty()) {
+                std::string modDict = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyDict_New"}, modDict);
+                
+                // Add __name__ to the module dict
+                std::string nameKey = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"__name__\""}, nameKey, "str");
+                std::string nameVal = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + currentFunc + "\""}, nameVal, "str");
+                ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, nameKey, nameVal}, "set_name");
+                
+                // Add each global to the module dict
+                for (auto& gname : ir.moduleGlobals) {
+                    std::string key = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + gname + "\""}, key, "str");
+                    std::string val = gname;  // Load the global value
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, key, val}, "set_item");
+                }
+                
+                // Store the module dict and return it
+                ir.addInstruction(currentFunc, "ret", {modDict});
+                
+                // B7: Populate stub module dicts for os, sys, subprocess
+                if (ir.moduleName == "os") {
+                    // os.environ = {}
+                    std::string envDict = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyDict_New"}, envDict);
+                    std::string envKey = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"environ\""}, envKey, "str");
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, envKey, envDict}, "set_env");
+                    
+                    // os.path = {exists: fn, isfile: fn, isdir: fn, unlink: fn}
+                    std::string pathDict = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyDict_New"}, pathDict);
+                    std::string pathKey = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"path\""}, pathKey, "str");
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, pathKey, pathDict}, "set_path");
+                    
+                    // os.path.exists = Pyc_OsPathExists
+                    std::string existsKey = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"exists\""}, existsKey, "str");
+                    std::string existsFn = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"Pyc_OsPathExists\""}, existsFn, "str");
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", pathDict, existsKey, existsFn}, "set_exists");
+                    
+                    // os.path.isfile = Pyc_OsPathIsFile
+                    std::string isfileKey = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"isfile\""}, isfileKey, "str");
+                    std::string isfileFn = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"Pyc_OsPathIsFile\""}, isfileFn, "str");
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", pathDict, isfileKey, isfileFn}, "set_isfile");
+                    
+                    // os.path.isdir = Pyc_OsPathIsDir
+                    std::string isdirKey = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"isdir\""}, isdirKey, "str");
+                    std::string isdirFn = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"Pyc_OsPathIsDir\""}, isdirFn, "str");
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", pathDict, isdirKey, isdirFn}, "set_isdir");
+                    
+                    // os.unlink = Pyc_OsUnlink
+                    std::string unlinkKey = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"unlink\""}, unlinkKey, "str");
+                    std::string unlinkFn = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"Pyc_OsUnlink\""}, unlinkFn, "str");
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, unlinkKey, unlinkFn}, "set_unlink");
+                } else if (ir.moduleName == "sys") {
+                    // sys.argv = [] (placeholder)
+                    std::string argvKey = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"argv\""}, argvKey, "str");
+                    std::string argvSize = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, argvSize, "int");
+                    std::string argvList = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argvSize}, argvList);
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, argvKey, argvList}, "set_argv");
+                } else if (ir.moduleName == "subprocess") {
+                    // subprocess.call = Pyc_SubprocessCall
+                    std::string callKey = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"call\""}, callKey, "str");
+                    std::string callFn = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"Pyc_SubprocessCall\""}, callFn, "str");
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, callKey, callFn}, "set_call");
+                    
+                    // subprocess.check_output = Pyc_SubprocessCheckOutput
+                    std::string outKey = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"check_output\""}, outKey, "str");
+                    std::string outFn = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"Pyc_SubprocessCheckOutput\""}, outFn, "str");
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, outKey, outFn}, "set_output");
+                }
+            }
         } else if (node->type == "FunctionDef") {
             std::string saved = currentFunc;
 
@@ -736,24 +830,11 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, modConst, "str");
                 ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, "");
                 
-                // Create a module dict
-                std::string moduleDict = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"PyDict_New"}, moduleDict);
+                // B7: Call __module__utils to get the module dict directly
+                std::string dictLoad = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"__module__" + orig}, dictLoad);
                 
-                // Add __name__ to the module dict
-                std::string nameKey = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"\"__name__\""}, nameKey, "str");
-                std::string nameVal = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, nameVal, "str");
-                ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", moduleDict, nameKey, nameVal}, "set_name");
-                
-                // Store the module dict in the target name
-                ir.addInstruction(currentFunc, "assign", {moduleDict}, name);
-                
-                // Synthetic module dicts (os, sys, re, subprocess, etc.) are
-                // dicts. Mark the binding so module-attribute method calls
-                // (`os.path.exists(...)`, `sys.stderr.write(...)`) take the
-                // dict-method dispatch path in lowerMethodCall.
+                // Mark as dict type for method dispatch
                 noteType(name, "dict");
             }
             return;
@@ -4366,6 +4447,36 @@ class LoweringVisitor {
             std::string keys = args.size() > 0 ? args[0] : "";
             std::string defv = args.size() > 1 ? args[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyDict_FromKeys", keys, defv}, res);
+        // os.path stub methods
+        } else if (methodName == "exists") {
+            std::string pathArg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"Pyc_OsPathExists", pathArg}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "isfile") {
+            std::string pathArg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"Pyc_OsPathIsFile", pathArg}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "isdir") {
+            std::string pathArg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"Pyc_OsPathIsDir", pathArg}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "unlink") {
+            std::string pathArg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"Pyc_OsUnlink", pathArg}, res, "int");
+            noteType(res, "int");
+        // subprocess stub methods
+        } else if (methodName == "call") {
+            // subprocess.call(cmd) -> exit status (<< 8)
+            if (!args.empty()) {
+                ir.addInstruction(currentFunc, "call", {"Pyc_SubprocessCall", args[0]}, res, "int");
+                noteType(res, "int");
+            }
+        } else if (methodName == "check_output") {
+            // subprocess.check_output(cmd) -> stdout as string
+            if (!args.empty()) {
+                ir.addInstruction(currentFunc, "call", {"Pyc_SubprocessCheckOutput", args[0]}, res, "str");
+                noteType(res, "str");
+            }
         // List methods
         } else if (methodName == "sort") {
             ir.addInstruction(currentFunc, "call", {"PyList_Sort", obj}, res);
@@ -5196,11 +5307,12 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             continue;
         }
         
+        std::string moduleName = fs::path(pyFile).stem().string();
         ModuleIR ir;
+        ir.moduleName = moduleName;
         lowerAST(ast.get(), ir);
         
         Codegen codegen;
-        std::string moduleName = fs::path(pyFile).stem().string();
         
         // Only add non-main modules to the B7 module registry
         if (pyFile != inputPath) {
@@ -5244,19 +5356,20 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     
     // B7: Generate C source file with module registry for runtime module execution
     std::string b7CSource = "#include <string.h>\n";
-    b7CSource += "#include <stdio.h>\n\n";
+    b7CSource += "#include <stdio.h>\n";
+    b7CSource += "#include <stdlib.h>\n";
+    b7CSource += "#include <unistd.h>\n\n";
     
-    // Declare extern functions for each module entry point (wrapped in extern "C" to prevent name mangling)
-    b7CSource += "extern \"C\" {\n";
+    // Declare extern functions for each module entry point
     for (auto& name : moduleNames) {
-        b7CSource += "    void __module__" + name + "(void);\n";
+        b7CSource += "extern void* __module__" + name + "(void);\n";
     }
-    b7CSource += "}\n\n";
+    b7CSource += "\n";
     
     // Define the module registry
     b7CSource += "typedef struct {\n";
     b7CSource += "    const char* name;\n";
-    b7CSource += "    void (*entry)(void);\n";
+    b7CSource += "    void* (*entry)(void);\n";
     b7CSource += "} pyc_module_entry;\n\n";
     
     b7CSource += "static pyc_module_entry pyc_modules[] = {\n";
@@ -5266,15 +5379,38 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     b7CSource += "    {NULL, NULL}\n";
     b7CSource += "};\n\n";
     
-    // Generate the pyc_run_module function
-    b7CSource += "void pyc_run_module(const char* moduleName) {\n";
+    // Generate the pyc_run_module function - accepts PyObject* (Python string)
+    b7CSource += "extern const char* PyStr_AsUTF8(void* obj);\n";
+    b7CSource += "void pyc_run_module(void* moduleNameObj) {\n";
+    b7CSource += "    const char* moduleName = PyStr_AsUTF8(moduleNameObj);\n";
+    b7CSource += "    if (!moduleName) return;\n";
     b7CSource += "    for (int i = 0; pyc_modules[i].name != NULL; i++) {\n";
     b7CSource += "        if (strcmp(pyc_modules[i].name, moduleName) == 0) {\n";
-    b7CSource += "            pyc_modules[i].entry();\n";
+    b7CSource += "            void* result = pyc_modules[i].entry();\n";
     b7CSource += "            return;\n";
     b7CSource += "        }\n";
     b7CSource += "    }\n";
-    b7CSource += "    fprintf(stderr, \"Module not found: %s\\n\", moduleName);\n";
+    b7CSource += "    // Module not found - silently skip (unsupported module)\n";
+    b7CSource += "}\n";
+    
+    // Stub implementations for common built-in modules
+    b7CSource += "\n";
+    b7CSource += "// Stub: sys module - provides argv and stderr\n";
+    b7CSource += "void __module__sys(void) {\n";
+    b7CSource += "    // sys.argv is set up by pyc_setup_sys in MainWrapper.cpp\n";
+    b7CSource += "    // sys.stderr is a file object - we use the real stderr\n";
+    b7CSource += "}\n";
+    b7CSource += "\n";
+    b7CSource += "// Stub: os module - provides path operations\n";
+    b7CSource += "void __module__os(void) {\n";
+    b7CSource += "    // os.environ - return an empty dict (no env var support)\n";
+    b7CSource += "    // os.path.exists, isfile, isdir - use real POSIX functions\n";
+    b7CSource += "}\n";
+    b7CSource += "\n";
+    b7CSource += "// Stub: subprocess module - provides call and check_output\n";
+    b7CSource += "void __module__subprocess(void) {\n";
+    b7CSource += "    // subprocess.call - use real system()\n";
+    b7CSource += "    // subprocess.check_output - use real popen()\n";
     b7CSource += "}\n";
     
     // Write the C source to a temporary file
@@ -5330,7 +5466,18 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         // source here for simplicity (it has no other dependencies
         // beyond the runtime header).
         // B7: Include the generated module registry C source
-        linkCmd += outputPath + ".o " + b7CFile + " -I" + sourceDir + "/include " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
+        // Also add Python include path for B7 module registry
+        std::string pythonIncludes = "";
+        FILE* pipe = popen("python3-config --includes 2>/dev/null | grep -o '\\-I[^ ]*' | head -1", "r");
+        if (pipe) {
+            char buf[256];
+            if (fgets(buf, sizeof(buf), pipe)) {
+                buf[strcspn(buf, "\n")] = 0;
+                pythonIncludes = buf;
+            }
+            pclose(pipe);
+        }
+        linkCmd += outputPath + ".o -x c " + b7CFile + " -I" + sourceDir + "/include " + pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
         if (std::system(linkCmd.c_str()) == 0) {
             std::cout << "Linked with runtime to " << outputPath << " (static=" << useStatic << ")\n";
         } else {

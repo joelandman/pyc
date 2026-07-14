@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <cstdint>
 #include <stdio.h>
@@ -768,6 +769,180 @@ PyObject* PyStr_FromAny(PyObject* obj) {
         return PyUnicode_FromString(r.c_str());
     }
     return PyUnicode_FromString("<object>");
+}
+
+// Extract C string from a PyObject* (type 3 = str).
+// Returns nullptr if obj is not a string type.
+const char* PyStr_AsUTF8(PyObject* obj) {
+    if (!obj || obj->type != 3) return nullptr;
+    return obj->str.c_str();
+}
+
+// os.path stubs - use real POSIX functions
+PyObject* Pyc_OsPathExists(PyObject* pathObj) {
+    const char* path = PyStr_AsUTF8(pathObj);
+    if (!path) return PyBool_New(0);
+    int result = access(path, F_OK) == 0;
+    return PyBool_New(result);
+}
+
+PyObject* Pyc_OsPathIsFile(PyObject* pathObj) {
+    const char* path = PyStr_AsUTF8(pathObj);
+    if (!path) return PyBool_New(0);
+    struct stat st;
+    int result = (stat(path, &st) == 0 && S_ISREG(st.st_mode));
+    return PyBool_New(result);
+}
+
+PyObject* Pyc_OsPathIsDir(PyObject* pathObj) {
+    const char* path = PyStr_AsUTF8(pathObj);
+    if (!path) return PyBool_New(0);
+    struct stat st;
+    int result = (stat(path, &st) == 0 && S_ISDIR(st.st_mode));
+    return PyBool_New(result);
+}
+
+PyObject* Pyc_OsUnlink(PyObject* pathObj) {
+    const char* path = PyStr_AsUTF8(pathObj);
+    if (!path) return nullptr;
+    int result = unlink(path);
+    return PyInt_FromLong(result);
+}
+
+// subprocess.call(cmd) -> exit status (caller shifts << 8 if needed)
+// cmd is a list of strings: [cmd, arg1, arg2, ...]
+PyObject* Pyc_SubprocessCall(PyObject* cmdList) {
+    if (!cmdList || cmdList->type != 1) {
+        return PyInt_FromLong(-1);
+    }
+    
+    // Count valid string arguments
+    int argc = 0;
+    for (auto* item : cmdList->list) {
+        if (item && item->type == 3) {
+            argc++;
+        }
+    }
+    
+    if (argc == 0) {
+        return PyInt_FromLong(-1);
+    }
+    
+    // Allocate argv array
+    char** argv = new char*[argc + 1];
+    std::vector<std::string> argvStrs;
+    argvStrs.reserve(argc);
+    
+    int i = 0;
+    for (auto* item : cmdList->list) {
+        if (item && item->type == 3) {
+            argvStrs.push_back(item->str);
+            argv[i++] = const_cast<char*>(argvStrs.back().c_str());
+        }
+    }
+    argv[argc] = nullptr;
+    
+    pid_t pid = fork();
+    if (pid < 0) {
+        delete[] argv;
+        return PyInt_FromLong(-1);
+    }
+    
+    if (pid == 0) {
+        // Child process
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    
+    // Parent process - wait for child
+    int status;
+    waitpid(pid, &status, 0);
+    
+    delete[] argv;
+    
+    if (WIFEXITED(status)) {
+        return PyInt_FromLong(WEXITSTATUS(status));
+    }
+    return PyInt_FromLong(1);
+}
+
+// subprocess.check_output(cmd) -> stdout as string
+// cmd is a list of strings: [cmd, arg1, arg2, ...]
+PyObject* Pyc_SubprocessCheckOutput(PyObject* cmdList) {
+    if (!cmdList || cmdList->type != 1) {
+        return PyUnicode_FromString("");
+    }
+    
+    // Count valid string arguments
+    int argc = 0;
+    for (auto* item : cmdList->list) {
+        if (item && item->type == 3) {
+            argc++;
+        }
+    }
+    
+    if (argc == 0) {
+        return PyUnicode_FromString("");
+    }
+    
+    // Allocate argv array
+    char** argv = new char*[argc + 1];
+    std::vector<std::string> argvStrs;
+    argvStrs.reserve(argc);
+    
+    int i = 0;
+    for (auto* item : cmdList->list) {
+        if (item && item->type == 3) {
+            argvStrs.push_back(item->str);
+            argv[i++] = const_cast<char*>(argvStrs.back().c_str());
+        }
+    }
+    argv[argc] = nullptr;
+    
+    // Create pipe for capturing stdout
+    int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        delete[] argv;
+        return PyUnicode_FromString("");
+    }
+    
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(pipefd[0]);
+        close(pipefd[1]);
+        delete[] argv;
+        return PyUnicode_FromString("");
+    }
+    
+    if (pid == 0) {
+        // Child process
+        close(pipefd[0]);
+        dup2(pipefd[1], STDOUT_FILENO);
+        close(pipefd[1]);
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    
+    // Parent process
+    close(pipefd[1]);
+    delete[] argv;
+    
+    // Read stdout
+    char buf[65536];
+    std::string output;
+    ssize_t n;
+    while ((n = read(pipefd[0], buf, sizeof(buf))) > 0) {
+        output.append(buf, n);
+    }
+    close(pipefd[0]);
+    
+    // Wait for child
+    int status;
+    waitpid(pid, &status, 0);
+    
+    (void)status;
+    
+    return PyUnicode_FromString(output.c_str());
 }
 
 PyObject* PyString_Concat(PyObject* a, PyObject* b) {
