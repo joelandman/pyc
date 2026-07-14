@@ -30,12 +30,12 @@ class LoweringVisitor {
         if (!node) return;
         if (!funcName.empty()) currentFunc = funcName;
 
-        if (node->type == "Module") {
-            ir.addFunction("__module__", {});
-            currentFunc = "__module__";
-            tempCounter = 0;
-            valueTypes.clear();
-            numericLocals.clear();
+         if (node->type == "Module") {
+             ir.addFunction("__module__", {});
+             currentFunc = "__module__";
+             tempCounter = 0;
+             valueTypes.clear();
+             numericLocals.clear();
             // Pre-scan: collect module bindings and global-declared variable
             // names so top-level assignments are visible from functions.
             collectModuleBindings(node);
@@ -94,7 +94,17 @@ class LoweringVisitor {
                 for (auto& gname : ir.moduleGlobals) {
                     std::string key = "c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + gname + "\""}, key, "str");
-                    std::string val = gname;  // Load the global value
+                    // For known IR functions (user-defined functions), register a string token
+                    // pointing to the function name (not null, not the global which is uninitialised).
+                    std::string val;
+                    auto knownIt = knownIRFunctions.find(gname);
+                    if (knownIt != knownIRFunctions.end()) {
+                        // Store the function name as a string token
+                        val = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"\"" + gname + "\""}, val, "str");
+                    } else {
+                        val = gname;  // Load the global value for regular variables
+                    }
                     ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, key, val}, "set_item");
                 }
                 
@@ -834,30 +844,27 @@ class LoweringVisitor {
                 std::string dictLoad = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"__module__" + orig}, dictLoad);
                 
+                // Store the module dict into the global variable for this name
+                ir.addInstruction(currentFunc, "assign", {dictLoad}, name);
+                
                 // Mark as dict type for method dispatch
                 noteType(name, "dict");
             }
             return;
         } else if (node->type == "ImportFrom") {
             // from math import sqrt
-            // B7: Call pyc_run_module to execute the module's code,
-            // then look up the imported names in the module dict.
+            // B7: Call __module__<mod> to get the module dict,
+            // then look up the imported names in it.
             const std::string& mod = node->id;
             if (!mod.empty()) {
+                // Call pyc_run_module to execute the module's code
                 std::string modConst = "c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modConst, "str");
                 ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, "");
                 
-                // Create a module dict
+                // Call __module__<mod> to get the module dict
                 std::string moduleDict = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"PyDict_New"}, moduleDict);
-                
-                // Add __name__ to the module dict
-                std::string nameKey = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"\"__name__\""}, nameKey, "str");
-                std::string nameVal = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, nameVal, "str");
-                ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", moduleDict, nameKey, nameVal}, "set_name");
+                ir.addInstruction(currentFunc, "call", {"__module__" + mod}, moduleDict);
                 
                 // For each imported name, look it up in the module dict
                 for (const auto& name : node->args) {

@@ -880,7 +880,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 if (!getSys) {
                     llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
                     getSys = llvm::Function::Create(ty, llvm::Function::ExternalLinkage,
-                                                   "pyc_get_sys_module", module.get());
+                                                    "pyc_get_sys_module", module.get());
                 }
                 return builder.CreateCall(getSys, {}, name + ".sys");
             }
