@@ -312,6 +312,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
+    // cmp_to_key(cmp) takes one arg and returns a dict token
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyBuiltin_CmpToKey", module.get());
+    }
     // sorted(lst, key) and sorted_with_cmp(lst, cmp) take 2 args.
     llvm::FunctionType* sortedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(sortedTy, llvm::Function::ExternalLinkage, "PyBuiltin_Sorted", module.get());
@@ -1868,11 +1873,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                      }
                  }
 
-                 // A5: If target is a numeric local (proven to stay numeric), use native i64 storage.
-                 bool isNumericLocal = false;
-                 for (const auto& nl : f.numericLocals) {
-                     if (nl == inst.result) { isNumericLocal = true; break; }
-                 }
+                  // A5: If target is a numeric local (proven to stay numeric), use native i64 storage.
+                  bool isNumericLocal = false;
+                  for (const auto& nl : f.numericLocals) {
+                      if (nl == inst.result) { isNumericLocal = true; break; }
+                  }
                  if (isNumericLocal && src->getType() == i64Ty) {
                      // Check if target already has an i64 alloca (from a prior i64assign or numeric local setup)
                      bool hasI64Alloca = false;
@@ -2104,7 +2109,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         // Function not found in this module - create external declaration
                         // This handles cross-module calls like __module__utils
                         llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " NOT FOUND, creating external\n";
-                        llvm::FunctionType* extTy = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
+                        // Use the actual number of arguments from the instruction
+                        size_t numArgs = inst.operands.size() - 1;
+                        std::vector<llvm::Type*> argTypes(numArgs, pyObjectPtrTy);
+                        llvm::FunctionType* extTy = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
                         callee = llvm::Function::Create(extTy, llvm::Function::ExternalLinkage, funcName, module.get());
                     }
                     llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " operands.size=" << inst.operands.size() << "\n";

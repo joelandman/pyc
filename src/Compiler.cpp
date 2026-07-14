@@ -24,7 +24,8 @@ namespace pyc {
 
 class LoweringVisitor {
  public:
-    LoweringVisitor(ModuleIR& moduleIR) : ir(moduleIR) {}
+     LoweringVisitor(ModuleIR& moduleIR, const std::unordered_set<std::string>& compiledModules = {})
+         : ir(moduleIR), compiledModules(compiledModules) {}
 
     void lower(const ASTNode* node, const std::string& funcName = "") {
         if (!node) return;
@@ -818,8 +819,8 @@ class LoweringVisitor {
             return;
         } else if (node->type == "Import") {
             // import sys, import math as m, import a, b, c as cc
-            // B7: Call pyc_run_module to execute the module's code,
-            // then create a module dict with the module's globals.
+            // B7: If the module was compiled, call __module__<name> to get the
+            // module dict. Otherwise emit pyc_import_failed to report the error.
             //
             // The original module names are stored in node->id (space-
             // separated for the comma-list case); node->args holds the
@@ -835,45 +836,61 @@ class LoweringVisitor {
                 const std::string& orig = (i < origNames.size()) ? origNames[i] : name;
                 ir.addModuleGlobal(name);
                 
-                // Call pyc_run_module to execute the module's code
-                std::string modConst = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, modConst, "str");
-                ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, "");
-                
-                // B7: Call __module__utils to get the module dict directly
-                std::string dictLoad = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"__module__" + orig}, dictLoad);
-                
-                // Store the module dict into the global variable for this name
-                ir.addInstruction(currentFunc, "assign", {dictLoad}, name);
-                
-                // Mark as dict type for method dispatch
-                noteType(name, "dict");
+                if (compiledModules.count(orig) > 0) {
+                    // Module was compiled — call its __module__ function
+                    std::string modConst = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, modConst, "str");
+                    ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, "");
+                    
+                    std::string dictLoad = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"__module__" + orig}, dictLoad);
+                    
+                    ir.addInstruction(currentFunc, "assign", {dictLoad}, name);
+                    noteType(name, "dict");
+                } else {
+                    // Module not found — call pyc_import_failed and store None
+                    std::string modName = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, modName, "str");
+                    std::string failResult = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modName}, failResult);
+                    
+                    ir.addInstruction(currentFunc, "assign", {failResult}, name);
+                }
             }
             return;
         } else if (node->type == "ImportFrom") {
             // from math import sqrt
-            // B7: Call __module__<mod> to get the module dict,
-            // then look up the imported names in it.
+            // B7: If the module was compiled, call __module__<mod> and look up names.
+            // Otherwise emit pyc_import_failed.
             const std::string& mod = node->id;
             if (!mod.empty()) {
-                // Call pyc_run_module to execute the module's code
-                std::string modConst = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modConst, "str");
-                ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, "");
-                
-                // Call __module__<mod> to get the module dict
-                std::string moduleDict = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"__module__" + mod}, moduleDict);
-                
-                // For each imported name, look it up in the module dict
-                for (const auto& name : node->args) {
-                    ir.addModuleGlobal(name);
-                    std::string attrKey = "c" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "const", {"\"" + name + "\""}, attrKey, "str");
-                    std::string attrVal = "t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", moduleDict, attrKey}, attrVal);
-                    ir.addInstruction(currentFunc, "assign", {attrVal}, name);
+                if (compiledModules.count(mod) > 0) {
+                    // Module was compiled
+                    std::string modConst = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modConst, "str");
+                    ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, "");
+                    
+                    std::string moduleDict = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"__module__" + mod}, moduleDict);
+                    
+                    for (const auto& name : node->args) {
+                        ir.addModuleGlobal(name);
+                        std::string attrKey = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"\"" + name + "\""}, attrKey, "str");
+                        std::string attrVal = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", moduleDict, attrKey}, attrVal);
+                        ir.addInstruction(currentFunc, "assign", {attrVal}, name);
+                    }
+                } else {
+                    // Module not found — call pyc_import_failed for each imported name
+                    std::string modName = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modName, "str");
+                    for (const auto& name : node->args) {
+                        ir.addModuleGlobal(name);
+                        std::string failResult = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modName}, failResult);
+                        ir.addInstruction(currentFunc, "assign", {failResult}, name);
+                    }
                 }
             }
             return;
@@ -1206,8 +1223,11 @@ class LoweringVisitor {
         }
     }
 
- private:
-    ModuleIR& ir;
+  private:
+     ModuleIR& ir;
+     // B7: set of module names that were successfully compiled (used to decide
+     // whether import lowering emits __module__<name> or pyc_import_failed).
+     std::unordered_set<std::string> compiledModules;
     std::string currentFunc;
     std::string currentClass;
     int tempCounter = 0;
@@ -1461,6 +1481,19 @@ class LoweringVisitor {
         if (type == "int" || type == "i64" || type == "bool") {
             numericLocals.insert(name);
         }
+    }
+
+    // Helper: check if a name is a global variable in the current function.
+    bool isGlobalHere(const std::string& name) const {
+        for (auto& fnr : ir.functions) {
+            if (fnr.name == currentFunc) {
+                for (const auto& g : fnr.globalVars) {
+                    if (g == name) return true;
+                }
+                return false;
+            }
+        }
+        return false;
     }
 
     std::string typeOf(const std::string& name) const {
@@ -2503,6 +2536,13 @@ class LoweringVisitor {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sum", arg}, res);
+            return res;
+        }
+        // cmp_to_key(cmp) → PyBuiltin_CmpToKey(cmp)
+        // Returns a dict token that sorted recognizes for the fast-path.
+        if (funcName == "cmp_to_key" && argRes.size() >= 1) {
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_CmpToKey", argRes[0]}, res);
             return res;
         }
         // sorted(iterable) → PyBuiltin_Sorted(iterable, null)
@@ -3645,7 +3685,8 @@ class LoweringVisitor {
             std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
             std::string vt = typeOf(val);
             for (const auto& name : node->args) {
-                if (numericLocals.count(name) || (vt == "int" || vt == "i64" || vt == "bool")) {
+                bool isGlob = isGlobalHere(name);
+                if (!isGlob && (numericLocals.count(name) || (vt == "int" || vt == "i64" || vt == "bool"))) {
                     ir.addInstruction(currentFunc, "i64assign", {val}, name, "i64");
                     numericLocals.insert(name);
                     noteType(name, "i64");
@@ -3763,7 +3804,8 @@ class LoweringVisitor {
                 // already handled above
             }
             std::string vt = typeOf(val);
-            if (numericLocals.count(node->id) || (vt == "int" || vt == "i64" || vt == "bool")) {
+            bool isGlob = isGlobalHere(node->id);
+            if (!isGlob && (numericLocals.count(node->id) || (vt == "int" || vt == "i64" || vt == "bool"))) {
                 // A2.1: use native i64assign for proven int/bool/i64 local
                 ir.addInstruction(currentFunc, "i64assign", {val}, node->id, "i64");
                 numericLocals.insert(node->id);
@@ -3771,6 +3813,8 @@ class LoweringVisitor {
             } else {
                 ir.addInstruction(currentFunc, "assign", {val}, node->id);
                 noteType(node->id, vt);
+                // For globals, remove from numericLocals to prevent i64 alloca creation
+                if (isGlob) numericLocals.erase(node->id);
             }
             if (vt != "int" && vt != "i64" && vt != "bool") {
                 killNumericLocal(node->id);
@@ -3941,7 +3985,7 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, result}, dummy);
                 return;
             }
-            if (numericLocals.count(node->id) || resultType == "int" || resultType == "i64" || resultType == "bool") {
+            if (!isGlobalHere(node->id) && (numericLocals.count(node->id) || resultType == "int" || resultType == "i64" || resultType == "bool")) {
                 ir.addInstruction(currentFunc, "i64assign", {result}, node->id, "i64");
                 numericLocals.insert(node->id);
                 noteType(node->id, "i64");
@@ -5234,9 +5278,9 @@ class LoweringVisitor {
 
 // Legacy thin wrapper kept temporarily for any external callers (to be removed)
 
-void lowerAST(const ASTNode* node, ModuleIR& ir) {
+void lowerAST(const ASTNode* node, ModuleIR& ir, const std::unordered_set<std::string>& compiledModules = {}) {
     if (!node) return;
-    LoweringVisitor visitor(ir);
+    LoweringVisitor visitor(ir, compiledModules);
     visitor.lower(node);
     // A6: Generate specialized variants after lowering completes.
     visitor.generateSpecializedVariants();
@@ -5302,6 +5346,16 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     // Collect module names for B7 runtime support (exclude main module)
     std::vector<std::string> moduleNames;
     
+    // B7: Build set of compiled module names (excluding main) so that import
+    // lowering in the main module can decide whether to emit __module__<name>
+    // or pyc_import_failed.
+    std::unordered_set<std::string> compiledModules;
+    for (auto& pyFile : pyFiles) {
+        if (pyFile != inputPath) {
+            compiledModules.insert(fs::path(pyFile).stem().string());
+        }
+    }
+    
     // Compile each .py file to an LLVM module
     std::vector<std::unique_ptr<llvm::Module>> modules;
     llvm::LLVMContext context;
@@ -5317,7 +5371,9 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         std::string moduleName = fs::path(pyFile).stem().string();
         ModuleIR ir;
         ir.moduleName = moduleName;
-        lowerAST(ast.get(), ir);
+        // Pass compiledModules only when lowering the main module so that
+        // import lowering can emit pyc_import_failed for missing modules.
+        lowerAST(ast.get(), ir, (pyFile == inputPath) ? compiledModules : std::unordered_set<std::string>{});
         
         Codegen codegen;
         

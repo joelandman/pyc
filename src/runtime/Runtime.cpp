@@ -339,20 +339,42 @@ PyObject* PyList_Range(int start, int end) {
 // TypeError on negative int * list, since it's a sequence repetition).
 // Each element is INCREF'd so the result owns its references; the source
 // list is unchanged.
-static PyObject* PyList_Repeat(PyObject* list, long n) {
-    if (n < 0) n = 0;     // conservative: matches "empty" rather than error
-    PyObject* srcSizeBox = PyInt_FromLong((long)list->list.size());
-    PyObject* result = PyList_NewBoxed(PyInt_FromLong((long)list->list.size() * n));
-    (void)srcSizeBox;
-    for (long i = 0; i < n; ++i) {
-        for (size_t j = 0; j < list->list.size(); ++j) {
-            PyObject* elem = list->list[j];
-            if (elem) Py_INCREF(elem);
-            PyList_SetItem(result, i * list->list.size() + j, elem);
-        }
-    }
-    return result;
-}
+ static PyObject* PyList_Repeat(PyObject* list, long n) {
+     if (n < 0) n = 0;     // conservative: matches "empty" rather than error
+     // Handle homogeneous int lists
+     if (list && list->type == 1 && list->list_item_type == 1) {
+         size_t srcSize = list->ilist.size();
+         PyObject* result = PyList_NewInt(0);
+         for (long i = 0; i < n; ++i) {
+             for (size_t j = 0; j < srcSize; ++j) {
+                 result->ilist.push_back(list->ilist[j]);
+             }
+         }
+         return result;
+     }
+     // Handle homogeneous float lists
+     if (list && list->type == 1 && list->list_item_type == 2) {
+         size_t srcSize = list->flist.size();
+         PyObject* result = PyList_NewFloat(0);
+         for (long i = 0; i < n; ++i) {
+             for (size_t j = 0; j < srcSize; ++j) {
+                 result->flist.push_back(list->flist[j]);
+             }
+         }
+         return result;
+     }
+     // Handle boxed lists
+     size_t srcSize = list->list.size();
+     PyObject* result = PyList_NewBoxed(PyInt_FromLong((long)srcSize * n));
+     for (long i = 0; i < n; ++i) {
+         for (size_t j = 0; j < srcSize; ++j) {
+             PyObject* elem = list->list[j];
+             if (elem) Py_INCREF(elem);
+             PyList_SetItem(result, i * srcSize + j, elem);
+         }
+     }
+     return result;
+ }
 
 PyObject* PyList_Comprehension(int start, int end) {
     return PyList_Range(start, end);
@@ -516,9 +538,24 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
     if (obj->type == 1) {
         // Nested list — open bracket, recurse, close.
         fprintf(fp, "[");
-        for (size_t i = 0; i < obj->list.size(); ++i) {
-            if (i > 0) fprintf(fp, ", ");
-            PyObject_PrintElement(obj->list[i], fp);
+        // Handle homogeneous int lists
+        if (obj->list_item_type == 1) {
+            for (size_t i = 0; i < obj->ilist.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                PyObject_PrintElement(PyInt_FromLong(obj->ilist[i]), fp);
+            }
+        } else if (obj->list_item_type == 2) {
+            // Handle homogeneous float lists
+            for (size_t i = 0; i < obj->flist.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                PyObject_PrintElement(PyFloat_FromDouble(obj->flist[i]), fp);
+            }
+        } else {
+            // boxed list
+            for (size_t i = 0; i < obj->list.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                PyObject_PrintElement(obj->list[i], fp);
+            }
         }
         return fprintf(fp, "]");
     }
@@ -1022,7 +1059,13 @@ PyObject* PyBuiltin_Bool(PyObject* obj) {
     if (obj->type == 0 || obj->type == 5) return PyBool_New(obj->value != 0);
     if (obj->type == 4) return PyBool_New(obj->dvalue != 0.0);
     if (obj->type == 3) return PyBool_New(!obj->str.empty());
-    if (obj->type == 1) return PyBool_New(!obj->list.empty());
+    if (obj->type == 1) {
+        size_t len = 0;
+        if (obj->list_item_type == 1) len = obj->ilist.size();
+        else if (obj->list_item_type == 2) len = obj->flist.size();
+        else len = obj->list.size();
+        return PyBool_New(len != 0);
+    }
     if (obj->type == 2) return PyBool_New(!obj->dict.empty());
     return PyBool_New(1);
 }
@@ -1992,6 +2035,27 @@ PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
 PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
     if (!container || !item) return PyBool_New(0);
     if (container->type == 1) {
+        // Homogeneous int list
+        if (container->list_item_type == 1) {
+            long itemVal = 0;
+            if (item->type == 0 || item->type == 5) itemVal = item->value;
+            else if (item->type == 4) itemVal = (long)item->dvalue;
+            else return PyBool_New(0);
+            for (auto val : container->ilist)
+                if (val == itemVal) return PyBool_New(1);
+            return PyBool_New(0);
+        }
+        // Homogeneous float list
+        if (container->list_item_type == 2) {
+            double itemVal = 0.0;
+            if (item->type == 4) itemVal = item->dvalue;
+            else if (item->type == 0 || item->type == 5) itemVal = (double)item->value;
+            else return PyBool_New(0);
+            for (auto val : container->flist)
+                if (val == itemVal) return PyBool_New(1);
+            return PyBool_New(0);
+        }
+        // General boxed list
         for (auto* elem : container->list)
             if (elem && PyObject_CompareBool(elem, item, 0)) return PyBool_New(1);
         return PyBool_New(0);
@@ -2029,9 +2093,14 @@ PyObject* PyBuiltin_Sum(PyObject* lst) {
         total = next ? next : PyInt_FromLong(0);
     };
     if (lst->type == 1) {
-        for (auto* item : lst->list) addOne(item);
+        if (lst->list_item_type == 1) {
+            for (auto val : lst->ilist) addOne(PyInt_FromLong(val));
+        } else if (lst->list_item_type == 2) {
+            for (auto val : lst->flist) addOne(PyFloat_FromDouble(val));
+        } else {
+            for (auto* item : lst->list) addOne(item);
+        }
     } else if (lst->type == 2) {
-        // CPython: sum of dict iterates over keys.
         for (auto& pair : lst->dict) addOne(pair.first);
     }
     return total;
@@ -2111,6 +2180,20 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key) {
     return r;
 }
 
+// PyBuiltin_CmpToKey(cmp) — returns a dict with a "cmp_to_key" token.
+// This is used by the special-case detection in lowerCall for
+// sorted(iterable, key=cmp_to_key(cmp)). The dict token allows the
+// sorted function to recognize that it should use PyBuiltin_SortedWithCmp.
+PyObject* PyBuiltin_CmpToKey(PyObject* cmp) {
+    PyObject* d = PyDict_New();
+    PyObject* k = PyUnicode_FromString("cmp_to_key");
+    PyObject* v = PyUnicode_FromString("cmp_to_key");
+    PyDict_SetItem(d, k, v);
+    Py_DECREF(k);
+    Py_DECREF(v);
+    return d;
+}
+
 // PyBuiltin_SortedWithCmp(iterable, cmp) — like sorted but takes a
 // 2-arg comparator function instead of a key function. The comparator
 // is invoked as cmp(a, b) for each pair; a negative return means
@@ -2173,15 +2256,31 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp) {
 
 PyObject* PyBuiltin_Any(PyObject* lst) {
     if (!lst || lst->type != 1) return PyBool_New(0);
-    for (auto* item : lst->list)
-        if (PyObject_TruthValue(item)) return PyBool_New(1);
+    if (lst->list_item_type == 1) {
+        for (auto val : lst->ilist)
+            if (val != 0) return PyBool_New(1);
+    } else if (lst->list_item_type == 2) {
+        for (auto val : lst->flist)
+            if (val != 0.0) return PyBool_New(1);
+    } else {
+        for (auto* item : lst->list)
+            if (PyObject_TruthValue(item)) return PyBool_New(1);
+    }
     return PyBool_New(0);
 }
 
 PyObject* PyBuiltin_All(PyObject* lst) {
     if (!lst || lst->type != 1) return PyBool_New(1);
-    for (auto* item : lst->list)
-        if (!PyObject_TruthValue(item)) return PyBool_New(0);
+    if (lst->list_item_type == 1) {
+        for (auto val : lst->ilist)
+            if (val == 0) return PyBool_New(0);
+    } else if (lst->list_item_type == 2) {
+        for (auto val : lst->flist)
+            if (val == 0.0) return PyBool_New(0);
+    } else {
+        for (auto* item : lst->list)
+            if (!PyObject_TruthValue(item)) return PyBool_New(0);
+    }
     return PyBool_New(1);
 }
 
@@ -2475,18 +2574,52 @@ PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b) {
     return PyObject_CompareBool(a, b, 3) ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
 }
 PyObject* PyBuiltin_MinList(PyObject* lst) {
-    if (!lst || lst->type != 1 || lst->list.empty()) return nullptr;
-    PyObject* r = lst->list[0];
-    for (size_t i = 1; i < lst->list.size(); ++i)
-        if (lst->list[i] && PyObject_CompareBool(lst->list[i], r, 2)) r = lst->list[i];
-    Py_INCREF(r); return r;
+    if (!lst || lst->type != 1) return nullptr;
+    size_t n = 0;
+    if (lst->list_item_type == 1) n = lst->ilist.size();
+    else if (lst->list_item_type == 2) n = lst->flist.size();
+    else n = lst->list.size();
+    if (n == 0) return nullptr;
+    PyObject* r = nullptr;
+    if (lst->list_item_type == 1) r = PyInt_FromLong(lst->ilist[0]);
+    else if (lst->list_item_type == 2) r = PyFloat_FromDouble(lst->flist[0]);
+    else { r = lst->list[0]; if (r) Py_INCREF(r); }
+    for (size_t i = 1; i < n; ++i) {
+        PyObject* item = nullptr;
+        if (lst->list_item_type == 1) item = PyInt_FromLong(lst->ilist[i]);
+        else if (lst->list_item_type == 2) item = PyFloat_FromDouble(lst->flist[i]);
+        else { item = lst->list[i]; if (item) Py_INCREF(item); }
+        if (item && PyObject_CompareBool(item, r, 2)) {
+            Py_DECREF(r); r = item;
+        } else if (item) {
+            Py_DECREF(item);
+        }
+    }
+    return r;
 }
 PyObject* PyBuiltin_MaxList(PyObject* lst) {
-    if (!lst || lst->type != 1 || lst->list.empty()) return nullptr;
-    PyObject* r = lst->list[0];
-    for (size_t i = 1; i < lst->list.size(); ++i)
-        if (lst->list[i] && PyObject_CompareBool(lst->list[i], r, 3)) r = lst->list[i];
-    Py_INCREF(r); return r;
+    if (!lst || lst->type != 1) return nullptr;
+    size_t n = 0;
+    if (lst->list_item_type == 1) n = lst->ilist.size();
+    else if (lst->list_item_type == 2) n = lst->flist.size();
+    else n = lst->list.size();
+    if (n == 0) return nullptr;
+    PyObject* r = nullptr;
+    if (lst->list_item_type == 1) r = PyInt_FromLong(lst->ilist[0]);
+    else if (lst->list_item_type == 2) r = PyFloat_FromDouble(lst->flist[0]);
+    else { r = lst->list[0]; if (r) Py_INCREF(r); }
+    for (size_t i = 1; i < n; ++i) {
+        PyObject* item = nullptr;
+        if (lst->list_item_type == 1) item = PyInt_FromLong(lst->ilist[i]);
+        else if (lst->list_item_type == 2) item = PyFloat_FromDouble(lst->flist[i]);
+        else { item = lst->list[i]; if (item) Py_INCREF(item); }
+        if (item && PyObject_CompareBool(item, r, 3)) {
+            Py_DECREF(r); r = item;
+        } else if (item) {
+            Py_DECREF(item);
+        }
+    }
+    return r;
 }
 PyObject* PyBuiltin_List(PyObject* obj) {
     if (!obj) return PyList_New(0);
@@ -2560,12 +2693,18 @@ PyObject* PyBuiltin_Reversed(PyObject* obj) {
 }
 PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
     if (!iterable || iterable->type != 1) return PyList_New(0);
-    PyObject* r = PyList_New(iterable->list.size());
-    for (size_t i = 0; i < iterable->list.size(); ++i) {
+    size_t n = 0;
+    if (iterable->list_item_type == 1) n = iterable->ilist.size();
+    else if (iterable->list_item_type == 2) n = iterable->flist.size();
+    else n = iterable->list.size();
+    PyObject* r = PyList_New(n);
+    for (size_t i = 0; i < n; ++i) {
         PyObject* pair = PyList_New(2);
         PyList_SetItem(pair, 0, PyInt_FromLong((long)i));
-        PyObject* v = iterable->list[i];
-        if (v) Py_INCREF(v);
+        PyObject* v = nullptr;
+        if (iterable->list_item_type == 1) v = PyInt_FromLong(iterable->ilist[i]);
+        else if (iterable->list_item_type == 2) v = PyFloat_FromDouble(iterable->flist[i]);
+        else { v = iterable->list[i]; if (v) Py_INCREF(v); }
         PyList_SetItem(pair, 1, v);
         PyList_SetItem(r, i, pair);
     }
@@ -2573,14 +2712,30 @@ PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
 }
 PyObject* PyBuiltin_Zip2(PyObject* a, PyObject* b) {
     if (!a || !b) return PyList_New(0);
-    size_t na = (a->type == 1) ? a->list.size() : 0;
-    size_t nb = (b->type == 1) ? b->list.size() : 0;
+    size_t na = 0, nb = 0;
+    if (a->type == 1) {
+        if (a->list_item_type == 1) na = a->ilist.size();
+        else if (a->list_item_type == 2) na = a->flist.size();
+        else na = a->list.size();
+    }
+    if (b->type == 1) {
+        if (b->list_item_type == 1) nb = b->ilist.size();
+        else if (b->list_item_type == 2) nb = b->flist.size();
+        else nb = b->list.size();
+    }
     size_t n = na < nb ? na : nb;
     PyObject* r = PyList_New(n);
     for (size_t i = 0; i < n; ++i) {
         PyObject* pair = PyList_New(2);
-        PyObject* va = a->list[i]; if (va) Py_INCREF(va); PyList_SetItem(pair, 0, va);
-        PyObject* vb = b->list[i]; if (vb) Py_INCREF(vb); PyList_SetItem(pair, 1, vb);
+        PyObject* va = nullptr, *vb = nullptr;
+        if (a->list_item_type == 1) va = PyInt_FromLong(a->ilist[i]);
+        else if (a->list_item_type == 2) va = PyFloat_FromDouble(a->flist[i]);
+        else { va = a->list[i]; if (va) Py_INCREF(va); }
+        if (b->list_item_type == 1) vb = PyInt_FromLong(b->ilist[i]);
+        else if (b->list_item_type == 2) vb = PyFloat_FromDouble(b->flist[i]);
+        else { vb = b->list[i]; if (vb) Py_INCREF(vb); }
+        PyList_SetItem(pair, 0, va);
+        PyList_SetItem(pair, 1, vb);
         PyList_SetItem(r, i, pair);
     }
     return r;
