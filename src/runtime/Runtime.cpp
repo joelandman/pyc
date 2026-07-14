@@ -1472,6 +1472,17 @@ void PyBuiltin_PrintNewline(void) {
     printf("\n");
 }
 
+void PyBuiltin_AssertFailure(PyObject* msg) {
+    // Raise AssertionError with optional message
+    fprintf(stderr, "AssertionError");
+    if (msg && msg->type == 3) {
+        fprintf(stderr, ": %s", msg->str.c_str());
+    }
+    fprintf(stderr, "\n");
+    fflush(stderr);
+    exit(1);
+}
+
 // print(*args, sep=' ', end='\n', file=None) — builds the output string
 // from the elements of `argList` joined by `sep`, appends `end`, and
 // writes it to stdout. `argList` may be a Python list or nullptr (in

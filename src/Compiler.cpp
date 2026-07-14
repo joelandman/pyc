@@ -817,6 +817,23 @@ class LoweringVisitor {
                 lowerDelTarget(c.get());
             }
             return;
+        } else if (node->type == "Assert") {
+            // assert test, msg — children: [test, msg]
+            if (node->children.empty()) return;
+            std::string cond = lowerExpr(node->children[0].get());
+            std::string failL = "assert_fail_" + std::to_string(tempCounter++);
+            std::string endL = "assert_end_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "br", {cond, endL, failL});
+            ir.addInstruction(currentFunc, "label", {}, failL);
+            // Assert failed — raise AssertionError
+            if (node->children.size() >= 2 && node->children[1]) {
+                std::string msg = lowerExpr(node->children[1].get());
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_AssertFailure", msg}, "");
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_AssertFailure"}, "");
+            }
+            ir.addInstruction(currentFunc, "label", {}, endL);
+            return;
         } else if (node->type == "Import") {
             // import sys, import math as m, import a, b, c as cc
             // B7: If the module was compiled, call __module__<name> to get the
@@ -1134,6 +1151,15 @@ class LoweringVisitor {
             return lowerSubscriptGet(node);
         } else if (node->type == "IfExp") {
             return lowerIfExpr(node);
+        } else if (node->type == "NamedExpr") {
+            // (x := y) — evaluate y, assign to x, return y
+            if (node->children.empty()) return "";
+            std::string value = lowerExpr(node->children[0].get());
+            if (node->args.empty()) return value;
+            // Assign to the target name
+            ir.addInstruction(currentFunc, "assign", {value}, node->args[0]);
+            noteType(node->args[0], typeOf(value));
+            return value;
         }
         return "";
     }

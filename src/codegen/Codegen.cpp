@@ -153,6 +153,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* printNewlineTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
     llvm::Function::Create(printNewlineTy, llvm::Function::ExternalLinkage, "PyBuiltin_PrintNewline", module.get());
 
+    llvm::FunctionType* assertFailTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(assertFailTy, llvm::Function::ExternalLinkage, "PyBuiltin_AssertFailure", module.get());
+
     llvm::FunctionType* pycPrintTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context),
         {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(pycPrintTy, llvm::Function::ExternalLinkage, "pyc_print", module.get());

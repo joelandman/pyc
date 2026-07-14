@@ -322,6 +322,16 @@ print(a[0],a[1],a[2])
     ("print(257 == 257, 1000 == 1000)", "True True\n"),  # still equal by value
     # Tier-2 regression: True/False equality with int (0/1)
     ("print(True == 1, False == 0, True + False)", "True True 1\n"),
+
+    # B9: Walrus operator (:=) — named expressions
+    ("x = (y := 5)\nprint(x, y)", "5 5\n"),
+    ("if (n := len([1, 2, 3])) > 2:\n    print(n)", "3\n"),
+    ("print((a := 10) + (b := 20))", "30\n"),
+    ("data = [1, 2, 3]\nprint([y for x in data if (y := x*2) > 2])", "[4, 6]\n"),
+
+    # B10: assert statement
+    ("x = 5\nassert x > 0\nprint('ok')", "ok\n"),
+    ("x = 5\nassert x > 0, 'x must be positive'\nprint('ok')", "ok\n"),
     # Tier-2 regression: list*int and int*list sequence repetition.
     # Use element access to avoid the list-printing bug (separate Tier-2 issue).
     ("a=[0]*3\nprint(len(a), a[0], a[1], a[2])", "3 0 0 0\n"),

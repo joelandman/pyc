@@ -259,6 +259,22 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(targets);
+    } else if (node->type == "Assert") {
+        // assert test, msg — children: [test, msg]
+        PyObject* test = PyObject_GetAttrString(pyNode, "test");
+        if (test) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(test, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(test);
+        }
+        PyObject* msg = PyObject_GetAttrString(pyNode, "msg");
+        if (msg) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(msg, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(msg);
+        }
     } else if (node->type == "Lambda") {
         // Lambda(args, body) — args stored in node->args, body in children[0]
         PyObject* a = PyObject_GetAttrString(pyNode, "args");
@@ -359,6 +375,25 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 Py_DECREF(v);
             }
         }
+    } else if (node->type == "NamedExpr") {
+        // (x := y)  →  children: [value], args: [target_name]
+        PyObject* value = PyObject_GetAttrString(pyNode, "value");
+        if (value) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(value, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(value);
+        }
+        PyObject* target = PyObject_GetAttrString(pyNode, "target");
+        if (target) {
+            PyObject* targetId = PyObject_GetAttrString(target, "id");
+            if (targetId && PyUnicode_Check(targetId)) {
+                const char* cStr = PyUnicode_AsUTF8(targetId);
+                if (cStr) node->args.push_back(cStr);
+                Py_DECREF(targetId);
+            }
+        }
+        Py_XDECREF(target);
     } else if (node->type == "Compare") {
         PyObject* left = PyObject_GetAttrString(pyNode, "left");
         if (left) {
