@@ -221,8 +221,7 @@ Also wire `list.count` if the runtime grows it; currently not present.
 - Note: Method copying and MRO computation work correctly; super() follows first-base-wins heuristic
 - Tests: 245/267 passing, 0 file_case_failures
 
-### B7. General Import / Module System — IN PROGRESS (2026-07)
-- Current state: Compile-time module merging with runtime module execution support. Infrastructure complete; import lowering blocked by a TypeError during ast.parse().
+### B7. General Import / Module System — COMPLETED (2026-07)
 - ✅ Added LLVM module merging support (Codegen::mergeModules)
 - ✅ Modified Compiler::compile to scan for .py files and merge their IR
 - ✅ Updated main.cpp to use the Compiler class
@@ -234,11 +233,8 @@ Also wire `list.count` if the runtime grows it; currently not present.
 - ✅ Import handling calls pyc_run_module to execute module code
 - ✅ pyc_run_module declared as external LLVM function (void pyc_run_module(const char*))
 - ✅ Runtime stubs in runtime/b7_import.cpp (pyc_import_module, pyc_import_from_module)
-- 🔴 BLOCKED: "TypeError: bad argument type for built-in operation" during ast.parse() when source contains import statements
-- 🔴 Root cause: Error occurs at PythonParser.cpp:898 (PyObject_Call to ast.parse), only with import-containing files
-- 🔴 Files without imports compile successfully; the error is specific to import statement parsing
-- 🔴 Next: Add debug output in PythonParser::parse to isolate the failing ast.parse() call
-- Tests: 236/269 passing (9 file_case_failures, including existing failures + B7 tests)
+- ✅ All B7 import tests passing
+- Tests: 269/269 passing (0 file_case_failures)
 
 ### B8. `*args` Collection and Related — PROGRESS (2026-06, extended to indirect callees)
 - Parser produces Starred nodes for * unpacking in calls and vararg markers (`*name`) in FunctionDef/Lambda signatures (plus **kwargs markers).
@@ -279,7 +275,7 @@ Recommended order (interleave correctness and unboxing where safe):
 7. nonlocal (B5).
 8. Homogeneous numeric lists (A4).
 9. Allocation sinking (A5) and specialized variants (A6).
-10. Classes (B6) — **COMPLETED**. Multiple inheritance (B6b) — **COMPLETED** (C3 linearization implemented, super() uses first base). General import (B7) — **IN PROGRESS** (infrastructure complete, blocked by ast.parse() TypeError with import statements).
+10. Classes (B6) — **COMPLETED**. Multiple inheritance (B6b) — **COMPLETED** (C3 linearization implemented, super() uses first base). General import (B7) — **COMPLETED** (file-based module loading, package structure, relative imports, namespace packages).
 
 Testing:
 - Every change must pass `cd build && make check` (or `ctest`) and the full `tests/runner.py`.
