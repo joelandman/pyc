@@ -2245,6 +2245,7 @@ class LoweringVisitor {
 
         std::vector<std::string> argRes;
         std::vector<std::pair<std::string, std::string>> kwArgs; // (name, value)
+        std::vector<std::string> kwargDicts; // dicts from **kwargs unpacking
         bool hadRuntimeStar = false; // true if this call used * with a non-literal (dynamic splice via __va wrapper)
 
         for (size_t i = 1; i < node->children.size(); ++i) {
@@ -2252,7 +2253,12 @@ class LoweringVisitor {
             if (node->children[i]->type == "Keyword") {
                 if (!node->children[i]->children.empty()) {
                     std::string val = lowerExpr(node->children[i]->children[0].get());
-                    kwArgs.emplace_back(node->children[i]->id, val);
+                    // **kwargs unpacking: keyword with empty name means unpack dict as kwargs
+                    if (node->children[i]->id.empty()) {
+                        kwargDicts.push_back(val);
+                    } else {
+                        kwArgs.emplace_back(node->children[i]->id, val);
+                    }
                 }
             } else if (node->children[i]->type == "Starred" &&
                         !node->children[i]->children.empty()) {
@@ -2424,10 +2430,11 @@ class LoweringVisitor {
         const size_t posArgCount = argRes.size();
 
         // Handle keyword arguments by mapping to parameter positions
-        if (!kwArgs.empty()) {
+        if (!kwArgs.empty() || !kwargDicts.empty()) {
             auto pit = funcParamNames.find(funcName);
             if (pit != funcParamNames.end()) {
                 const auto& params = pit->second;
+                // First, apply regular keyword arguments
                 for (auto& kw : kwArgs) {
                     for (size_t j = 0; j < params.size(); ++j) {
                         if (params[j] == kw.first) {
@@ -2437,9 +2444,36 @@ class LoweringVisitor {
                         }
                     }
                 }
+                // Then, expand **kwargs dicts using a runtime helper
+                for (auto& dictVal : kwargDicts) {
+                    // Call Pyc_ExpandKwargs(dict, param1, param2, ...) -> list of args
+                    std::string expandResult = "t" + std::to_string(tempCounter++);
+                    std::vector<std::string> expandArgs;
+                    expandArgs.push_back(dictVal);
+                    for (const auto& p : params) {
+                        std::string paramConst = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"\"" + p + "\""}, paramConst, "str");
+                        expandArgs.push_back(paramConst);
+                    }
+                    std::vector<std::string> callOperands;
+                    callOperands.push_back("Pyc_ExpandKwargs");
+                    for (const auto& a : expandArgs) callOperands.push_back(a);
+                    ir.addInstruction(currentFunc, "call", callOperands, expandResult);
+                    // Now unpack the result list into argRes
+                    // The result list has len(params) elements, in order
+                    for (size_t j = 0; j < params.size(); ++j) {
+                        std::string idx = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {std::to_string(j)}, idx);
+                        std::string elem = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", expandResult, idx}, elem);
+                        if (argRes.size() <= j) argRes.resize(j + 1);
+                        argRes[j] = elem;
+                    }
+                }
             } else {
                 // Fallback: append keyword values
                 for (auto& kw : kwArgs) argRes.push_back(kw.second);
+                for (auto& dictVal : kwargDicts) argRes.push_back(dictVal);
             }
         }
 

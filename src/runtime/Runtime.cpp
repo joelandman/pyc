@@ -1,5 +1,6 @@
 #include <cstdio>
 #include <cstdlib>
+#include <cstdarg>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -247,6 +248,15 @@ PyObject* PyList_FromArray(PyObject** items, size_t size) {
 // Boxed wrappers so the compiler can stay entirely in PyObject* world.
 PyObject* PyList_SizeBoxed(PyObject* list) {
     return PyInt_FromLong((long)PyList_Size(list));
+}
+
+PyObject* PyDict_SizeBoxed(PyObject* dict) {
+    if (!dict || dict->type != 2) return PyInt_FromLong(0);
+    return PyInt_FromLong((long)dict->dict.size());
+}
+
+PyObject* PyDict_GetItemBoxed(PyObject* dict, PyObject* key) {
+    return PyDict_GetItem(dict, key);
 }
 
 PyObject* PyList_GetItemObj(PyObject* list, PyObject* idx) {
@@ -4474,6 +4484,45 @@ extern "C" PyObject* PyObject_GetAttrExtended(PyObject* obj, PyObject* attr) {
     none->type = 5;  // None type
     none->str = "None";
     return none;
+}
+
+// Expand **kwargs: takes dict + param names, returns list of args in order
+// Args: dict, param1, param2, ..., paramN
+// Returns: [value_for_param1, value_for_param2, ..., value_for_paramN]
+PyObject* Pyc_ExpandKwargs(PyObject* dict, ...) {
+    if (!dict || dict->type != 2) {
+        // Return empty list if dict is invalid
+        return PyList_NewBoxed(PyInt_FromLong(0));
+    }
+    va_list ap;
+    va_start(ap, dict);
+    // Count remaining args to get param count
+    std::vector<PyObject*> params;
+    while (true) {
+        PyObject* p = va_arg(ap, PyObject*);
+        if (!p) break;
+        params.push_back(p);
+    }
+    va_end(ap);
+    // Build result list
+    PyObject* result = PyList_NewBoxed(PyInt_FromLong((long)params.size()));
+    for (size_t i = 0; i < params.size(); ++i) {
+        // Find value for this param key in the dict
+        PyObject* key = params[i];
+        PyObject* val = PyDict_GetItem(dict, key);
+        if (val) {
+            Py_INCREF(val);
+            PyList_SetItemBoxed(result, PyInt_FromLong((long)i), val);
+        } else {
+            // Key not found - store None
+            PyObject* none = new PyObject();
+            none->refcount = 1;
+            none->type = 5;
+            none->str = "None";
+            PyList_SetItemBoxed(result, PyInt_FromLong((long)i), none);
+        }
+    }
+    return result;
 }
 
 } // extern "C"

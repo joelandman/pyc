@@ -2022,9 +2022,30 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         builder.CreateStore(newVal, alloca);
                     }
                 }
-            } else if (inst.op == "call") {
-                 std::string funcName = inst.operands.empty() ? "" : inst.operands[0].name;
-                 // A4: native list subscript get for proven homogeneous lists.
+             } else if (inst.op == "call") {
+                  std::string funcName = inst.operands.empty() ? "" : inst.operands[0].name;
+                  // PyObject_CompareBool(a, b, op) — third arg is i32, not ptr
+                  if (funcName == "PyObject_CompareBool" && inst.operands.size() >= 4) {
+                      std::string aName = inst.operands[1].name;
+                      std::string bName = inst.operands[2].name;
+                      std::string opStr = inst.operands[3].name;
+                      int opVal = 0;
+                      try { opVal = std::stoi(opStr); } catch (...) {}
+                      llvm::Value* a = getAsPyObject(aName);
+                      llvm::Value* b = getAsPyObject(bName);
+                      llvm::Value* op = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), opVal);
+                      llvm::Function* cmpFn = module->getFunction("PyObject_CompareBool");
+                      if (cmpFn) {
+                          llvm::Value* res = builder.CreateCall(cmpFn, {a, b, op}, inst.result);
+                          if (!inst.result.empty()) {
+                              valueMap[inst.result] = res;
+                          }
+                      }
+                      emitDecRefIfOwned(aName);
+                      emitDecRefIfOwned(bName);
+                      continue;
+                  }
+                  // A4: native list subscript get for proven homogeneous lists.
                  if (funcName == "Pyc_GetItem" && inst.operands.size() >= 3) {
                      std::string listName = inst.operands[1].name;
                      std::string idxName = inst.operands[2].name;
