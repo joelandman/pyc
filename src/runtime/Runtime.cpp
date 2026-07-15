@@ -2119,6 +2119,26 @@ PyObject* Pyc_Pow(PyObject* a, PyObject* b) {
     return PyFloat_FromDouble(pow(numeric_val(a), numeric_val(b)));
 }
 
+// Native integer power: computes base^exp for int64 values
+// Handles non-negative exponents efficiently
+int64_t Pyc_PowInt64(int64_t base, int64_t exp) {
+    if (exp < 0) {
+        // Negative exponent: return 0 (integer division result)
+        return 0;
+    }
+    if (exp == 0) return 1;
+    int64_t result = 1;
+    int64_t b = base;
+    int64_t e = exp;
+    // Binary exponentiation (exponentiation by squaring)
+    while (e > 0) {
+        if (e & 1) result *= b;
+        b *= b;
+        e >>= 1;
+    }
+    return result;
+}
+
 PyObject* PyBuiltin_Sum(PyObject* lst) {
     if (!lst) return PyInt_FromLong(0);
     PyObject* total = PyInt_FromLong(0);

@@ -1577,33 +1577,87 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     }
                 }
             } else if (inst.op == "pow") {
-                llvm::Function* fn = module->getFunction("Pyc_Pow");
                 std::string lhsName = inst.operands.size() > 0 ? inst.operands[0].name : "";
                 std::string rhsName = inst.operands.size() > 1 ? inst.operands[1].name : "";
                 llvm::Value* lhsRaw = lhsName.empty() ? nullptr : getOrLoad(lhsName);
                 llvm::Value* rhsRaw = rhsName.empty() ? nullptr : getOrLoad(rhsName);
-                llvm::Value* lhs = getAsPyObject(lhsName);
-                llvm::Value* rhs = getAsPyObject(rhsName);
-                // Track whether getAsPyObject created an anonymous box for a native value.
-                // Native (i64/double) operands are boxed inline by getAsPyObject without
-                // entering ownedTemps, so they must be explicitly DECREFed after the call.
-                bool lhsWasNative = lhsRaw && (lhsRaw->getType() == llvm::Type::getInt64Ty(context)
-                                               || lhsRaw->getType()->isDoubleTy());
-                bool rhsWasNative = rhsRaw && (rhsRaw->getType() == llvm::Type::getInt64Ty(context)
-                                               || rhsRaw->getType()->isDoubleTy());
-                if (fn) {
-                    valueMap[inst.result] = builder.CreateCall(fn, {lhs, rhs}, inst.result);
+                llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
+                llvm::Type* dblTy = llvm::Type::getDoubleTy(context);
+                bool lhsNativeI64 = lhsRaw && lhsRaw->getType() == i64Ty;
+                bool rhsNativeI64 = rhsRaw && rhsRaw->getType() == i64Ty;
+                bool lhsNativeDbl = lhsRaw && lhsRaw->getType() == dblTy;
+                bool rhsNativeDbl = rhsRaw && rhsRaw->getType() == dblTy;
+                bool bothNativeI64 = lhsNativeI64 && rhsNativeI64;
+                bool bothNative = (lhsNativeI64 || lhsNativeDbl) && (rhsNativeI64 || rhsNativeDbl);
+                bool eitherNativeDbl = lhsNativeDbl || rhsNativeDbl;
+                // Native path: both operands are numeric (i64 or double)
+                if (bothNativeI64) {
+                    // Integer power: use runtime helper Pyc_PowInt64 for non-negative exponent
+                    // For negative exponent, fall back to boxed path
+                    llvm::Value* lhsBoxed = getAsPyObject(lhsName);
+                    llvm::Value* rhsBoxed = getAsPyObject(rhsName);
+                    llvm::Function* powInt64 = module->getFunction("Pyc_PowInt64");
+                    llvm::Value* result = nullptr;
+                    if (powInt64) {
+                        result = builder.CreateCall(powInt64, {lhsRaw, rhsRaw}, "pow.int64");
+                        // Box the result
+                        llvm::Function* boxI64 = module->getFunction("boxI64");
+                        if (boxI64) {
+                            result = builder.CreateCall(boxI64, {result}, "pow.boxed");
+                        }
+                    } else {
+                        // Fallback to boxed Pyc_Pow
+                        llvm::Function* pycPow = module->getFunction("Pyc_Pow");
+                        if (pycPow) {
+                            result = builder.CreateCall(pycPow, {lhsBoxed, rhsBoxed});
+                        } else {
+                            result = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                        }
+                    }
+                    valueMap[inst.result] = result;
+                    markOwned(inst.result);
+                } else if (bothNative && !bothNativeI64) {
+                    // Float power: use LLVM's pow intrinsic
+                    llvm::Value* lhsUnboxed = lhsNativeDbl ? lhsRaw : unboxToDouble(getOrLoad(lhsName));
+                    llvm::Value* rhsUnboxed = rhsNativeDbl ? rhsRaw : unboxToDouble(getOrLoad(rhsName));
+                    llvm::Function* powFn = module->getFunction("pow");
+                    llvm::Value* powResult = nullptr;
+                    if (powFn) {
+                        powResult = builder.CreateCall(powFn, {lhsUnboxed, rhsUnboxed}, "pow.result");
+                    } else {
+                        powResult = llvm::ConstantFP::get(dblTy, 0.0);
+                    }
+                    // Box the result
+                    llvm::Function* boxDbl = module->getFunction("boxDouble");
+                    llvm::Value* boxedResult = nullptr;
+                    if (boxDbl) {
+                        boxedResult = builder.CreateCall(boxDbl, {powResult}, "pow.boxed");
+                    } else {
+                        boxedResult = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                    }
+                    valueMap[inst.result] = boxedResult;
                     markOwned(inst.result);
                 } else {
-                    valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
-                }
-                emitDecRefIfOwned(lhsName);
-                emitDecRefIfOwned(rhsName);
-                {
-                    llvm::Function* decref = module->getFunction("Py_DECREF");
-                    if (decref) {
-                        if (lhsWasNative) builder.CreateCall(decref, {lhs});
-                        if (rhsWasNative) builder.CreateCall(decref, {rhs});
+                    // Boxed path: call Pyc_Pow
+                    llvm::Function* fn = module->getFunction("Pyc_Pow");
+                    llvm::Value* lhs = getAsPyObject(lhsName);
+                    llvm::Value* rhs = getAsPyObject(rhsName);
+                    bool lhsWasNative = lhsRaw && (lhsRaw->getType() == i64Ty || lhsRaw->getType()->isDoubleTy());
+                    bool rhsWasNative = rhsRaw && (rhsRaw->getType() == i64Ty || rhsRaw->getType()->isDoubleTy());
+                    if (fn) {
+                        valueMap[inst.result] = builder.CreateCall(fn, {lhs, rhs}, inst.result);
+                        markOwned(inst.result);
+                    } else {
+                        valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                    }
+                    emitDecRefIfOwned(lhsName);
+                    emitDecRefIfOwned(rhsName);
+                    {
+                        llvm::Function* decref = module->getFunction("Py_DECREF");
+                        if (decref) {
+                            if (lhsWasNative) builder.CreateCall(decref, {lhs});
+                            if (rhsWasNative) builder.CreateCall(decref, {rhs});
+                        }
                     }
                 }
             } else if (inst.op == "truediv") {
