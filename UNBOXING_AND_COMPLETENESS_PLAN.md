@@ -256,9 +256,10 @@ Also wire `list.count` if the runtime grows it; currently not present.
 
 ### B10. Other Gaps (Lower Priority)
 - More string methods if users request them.
-- `assert`, `del`, `with`, `async` — decide case-by-case.
+- `assert` — **COMPLETED**. `del`, `async` — decide case-by-case.
+- `with` statement — **COMPLETED** (context managers with `__enter__`/`__exit__`).
 - Full exception semantics beyond basic `try/except`.
-- `match`/`case` (structural pattern matching).
+- `match`/`case` (structural pattern matching) — **COMPLETED**. Supports: literal comparison, wildcard (`_`), binding (`case x:`), singletons (`None`, `True`, `False`), guards.
 
 ---
 
@@ -275,7 +276,7 @@ Recommended order (interleave correctness and unboxing where safe):
 7. nonlocal (B5).
 8. Homogeneous numeric lists (A4).
 9. Allocation sinking (A5) and specialized variants (A6).
-10. Classes (B6) — **COMPLETED**. Multiple inheritance (B6b) — **COMPLETED** (C3 linearization implemented, super() uses first base). General import (B7) — **COMPLETED** (file-based module loading, package structure, relative imports, namespace packages).
+10. Classes (B6) — **COMPLETED**. Multiple inheritance (B6b) — **COMPLETED** (C3 linearization implemented, super() uses first base). General import (B7) — **COMPLETED** (file-based module loading, package structure, relative imports, namespace packages). Walrus operator (B9) — **COMPLETED**. Assert and with statement (B10) — **COMPLETED**.
 
 Testing:
 - Every change must pass `cd build && make check` (or `ctest`) and the full `tests/runner.py`.
@@ -318,6 +319,7 @@ Testing:
 - [x] A5 Allocation Sinking / Temporary Boxing Reduction (2026-07): `IRFunction::numericLocals` field tracks variables using native i64 storage; lowering populates `numericLocals` per function; codegen `assign` handler creates i64 alloca for numeric locals instead of boxing; escape boxing via `getAsPyObject`. Eliminates boxing cycle for accumulators. 219/263 passing (optimization, no correctness change).
 - [x] A6 Specialized Function Variants (Call-site Monomorphization) (2026-07): `callSiteTypes` now tracks all type lists per function; `generateSpecializedVariants()` generates native-param variants when all call sites use consistent numeric types; codegen registers variants with native LLVM types and dispatches calls to them with native args; adapters skipped for variants. 219/263 passing (same as before A6).
 - [x] A7 Measurement and Guardrails (2026-07): Runtime atomic allocation counters for int/float/list/dict/str; exposed via `PyAlloc_Get*Count()` in `runtime.h`; BENCHMARKS.md updated with API docs and guardrails for A1-A6; 4 microbenchmark test files added (223/267 total).
+- [x] B10 match/case (2026-07): Parser handles Match/match_case/MatchValue/MatchAs/MatchWildcard/MatchSingleton node types. Lowering converts match to chain of if/elif/else using icmp for literal comparisons and bconst for wildcards. Codegen fixes: removed curBlock switch after conditional br (let labels handle transitions), fixed unconditional br to create target block if missing, removed curBlock update in unconditional br. Supports: literal comparison, wildcard (`_`), binding (`case x:`), singletons (`None`, `True`, `False`). 276/276 passing, 0 file_case_failures.
 
 This plan is intended to be updated as work progresses. Add dates or "Implemented in commit X" annotations when items land.
 

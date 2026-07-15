@@ -115,6 +115,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* getAttrTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, int8PtrTy}, false);
     llvm::Function::Create(getAttrTy, llvm::Function::ExternalLinkage, "PyObject_GetAttr", module.get());
 
+    llvm::FunctionType* callTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(callTy, llvm::Function::ExternalLinkage, "PyObject_Call", module.get());
+
     llvm::FunctionType* objectPrintTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pyObjectPtrTy, int8PtrTy}, false);
     llvm::Function::Create(objectPrintTy, llvm::Function::ExternalLinkage, "PyObject_Print", module.get());
 
@@ -864,10 +867,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         jmpBufAllocas[jn] = a;
                     }
                 }
-            }
-        }
+             }
+         }
 
-        auto getOrLoad = [&](const std::string& name) -> llvm::Value* {
+         auto getOrLoad = [&](const std::string& name) -> llvm::Value* {
             // Special-case `sys` so user code can do `sys.argv` etc. The
             // runtime provides a `pyc_get_sys_module()` accessor that
             // returns the same global `sys` object every call.
@@ -1131,14 +1134,24 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     std::string fname = inst.operands[2].name;
                     llvm::Value* cval = getOrLoad(cname);
 
-                    // Unbox if this is a boxed comparison result (PyObject*)
+                    // Handle different condition types:
+                    // - i1: native boolean, use directly
+                    // - i32: result of PyObject_CompareBool, convert to i1
+                    // - ptr: boxed value, unbox to i64 then compare to 0
                     if (cval->getType() != llvm::Type::getInt1Ty(context)) {
-                        llvm::Value* unboxed = unboxToI64(cval);
-                        cval = builder.CreateICmpNE(unboxed, llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
+                        if (cval->getType()->isIntegerTy() && cval->getType()->getIntegerBitWidth() == 32) {
+                            // i32 from PyObject_CompareBool — truncate to i1
+                            cval = builder.CreateTrunc(cval, llvm::Type::getInt1Ty(context), "cond.i1");
+                        } else {
+                            // ptr (boxed) — unbox and compare to zero
+                            llvm::Value* unboxed = unboxToI64(cval);
+                            cval = builder.CreateICmpNE(unboxed, llvm::ConstantInt::get(context, llvm::APInt(64, 0)), "cond.i1");
+                        }
                     }
 
                     // DECREF boxed condition temp after extracting truth value.
-                    emitDecRefIfOwned(cname);
+                    if (cval->getType()->isPointerTy())
+                        emitDecRefIfOwned(cname);
 
                     auto tit = blockMap.find(tname);
                     auto fit = blockMap.find(fname);
@@ -1147,7 +1160,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     }
                 } else if (!inst.result.empty()) {
                     auto it = blockMap.find(inst.result);
-                    if (it != blockMap.end() && !curBlock->getTerminator()) {
+                    if (it == blockMap.end()) {
+                        blockMap[inst.result] = llvm::BasicBlock::Create(context, inst.result, func);
+                        it = blockMap.find(inst.result);
+                    }
+                    if (!curBlock->getTerminator()) {
                         builder.CreateBr(it->second);
                     }
                 }
@@ -1218,6 +1235,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 // Dispatch to PyObject_CompareBool so both int and float work.
                 // op codes: 0=Eq, 1=NotEq, 2=Lt, 3=Gt, 4=LtE, 5=GtE
                 std::string opstr = inst.operands.empty() ? "" : inst.operands[0].name;
+                std::string lhs = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                std::string rhs = inst.operands.size() > 2 ? inst.operands[2].name : "";
                 int opcode = 0;
                 if      (opstr == "Eq"    || opstr == "eq") opcode = 0;
                 else if (opstr == "NotEq" || opstr == "ne") opcode = 1;

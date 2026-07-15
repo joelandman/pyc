@@ -866,6 +866,105 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(body);
+    } else if (node->type == "Match") {
+        // match subject: cases...
+        // children[0] = subject (the expression being matched)
+        // children[1..] = case blocks
+        PyObject* subject = PyObject_GetAttrString(pyNode, "subject");
+        if (subject) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(subject, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(subject);
+        }
+        PyObject* cases = PyObject_GetAttrString(pyNode, "cases");
+        if (cases && PyList_Check(cases)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(cases); ++i) {
+                PyObject* item = PyList_GetItem(cases, i);
+                auto child = std::make_unique<ASTNode>();
+                buildAST(item, child.get());
+                node->children.push_back(std::move(child));
+            }
+        }
+        Py_XDECREF(cases);
+    } else if (node->type == "match_case") {
+        // match_case(pattern, guard, body)
+        // children[0] = pattern
+        // children[1] = optional guard (if any)
+        // children[2..] = body statements
+        PyObject* pattern = PyObject_GetAttrString(pyNode, "pattern");
+        if (pattern) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(pattern, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(pattern);
+        }
+        PyObject* guard = PyObject_GetAttrString(pyNode, "guard");
+        if (guard && guard != Py_None) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(guard, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(guard);
+        }
+        PyObject* body = PyObject_GetAttrString(pyNode, "body");
+        if (body && PyList_Check(body)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(body); ++i) {
+                PyObject* item = PyList_GetItem(body, i);
+                auto child = std::make_unique<ASTNode>();
+                buildAST(item, child.get());
+                node->children.push_back(std::move(child));
+            }
+        }
+        Py_XDECREF(body);
+    } else if (node->type == "MatchValue") {
+        // MatchValue(value) — literal pattern
+        PyObject* value = PyObject_GetAttrString(pyNode, "value");
+        if (value) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(value, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(value);
+        }
+    } else if (node->type == "MatchSingleton") {
+        // MatchSingleton(value) — True, False, None patterns
+        PyObject* val = PyObject_GetAttrString(pyNode, "value");
+        if (val) {
+            if (val == Py_None) {
+                node->value = "None";
+            } else if (val == Py_True) {
+                node->value = "True";
+            } else if (val == Py_False) {
+                node->value = "False";
+            } else {
+                node->value = getPyString(pyNode, "value");
+            }
+            Py_DECREF(val);
+        }
+    } else if (node->type == "MatchClass") {
+        // MatchClass(cls, patterns, keywords) — class pattern
+        // For simplicity, treat as a wildcard (matches any instance of the class)
+        node->args.push_back("class_pattern");
+    } else if (node->type == "MatchSequence") {
+        // MatchSequence(patterns) — sequence pattern
+        // For simplicity, treat as a wildcard
+        node->args.push_back("sequence_pattern");
+    } else if (node->type == "MatchMapping") {
+        // MatchMapping(keys, patterns) — mapping pattern
+        // For simplicity, treat as a wildcard
+        node->args.push_back("mapping_pattern");
+    } else if (node->type == "MatchWildcard") {
+        // MatchWildcard(name) — _ pattern
+        node->id = getPyString(pyNode, "name");
+    } else if (node->type == "MatchAs") {
+        // MatchAs(pattern, name) — x | _ as x pattern
+        node->value = getPyString(pyNode, "name");
+        PyObject* pat = PyObject_GetAttrString(pyNode, "pattern");
+        if (pat && pat != Py_None) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(pat, child.get());
+            node->children.push_back(std::move(child));
+        }
+        Py_XDECREF(pat);
     }
     if (node->children.empty()) {
         // Some AST node types (With, withitem, etc.) need special handling for

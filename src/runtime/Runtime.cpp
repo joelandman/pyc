@@ -2023,6 +2023,21 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
                 return pair.second;
             }
         }
+        // Class instances (dict-backed objects with __class__): look up in class dict
+        for (auto& kv : obj->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == "__class__") {
+                PyObject* classDict = kv.second;
+                if (classDict && classDict->type == 2) {
+                    for (auto& ck : classDict->dict) {
+                        if (PyObject_CompareBool(ck.first, key, 0)) {
+                            if (ck.second) Py_INCREF(ck.second);
+                            return ck.second;
+                        }
+                    }
+                }
+                break;
+            }
+        }
         return nullptr;
     }
     if (obj->type == 3 && (key->type == 0 || key->type == 5)) {
@@ -4049,11 +4064,42 @@ PyObject* PyObject_GetAttr(PyObject* obj, const char* attr) {
         if (strcmp(attr, "count")      == 0) return PyInt_FromLong(0);
         if (strcmp(attr, "replace")    == 0) return PyInt_FromLong(0);
     }
+    // Class instances (dict-backed objects with __class__): look up attribute
+    // in instance dict first, then class dict. This enables method calls like
+    // ctx.__enter__() in `with` statements and attribute access on user classes.
+    if (obj->type == 2) {
+        // Check instance dict first
+        for (auto& kv : obj->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == attr) {
+                Py_INCREF(kv.second);
+                return kv.second;
+            }
+        }
+        // Check class dict
+        for (auto& kv : obj->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == "__class__") {
+                PyObject* classDict = kv.second;
+                if (classDict && classDict->type == 2) {
+                    for (auto& ck : classDict->dict) {
+                        if (ck.first && ck.first->type == 3 && ck.first->str == attr) {
+                            Py_INCREF(ck.second);
+                            return ck.second;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+    }
     // Fallback: return the object itself (matches the previous stub
     // behaviour for unsupported lookups; doesn't crash).
     Py_INCREF(obj);
     return obj;
 }
+
+// PyObject_Call(obj, args, kwargs) — call obj with positional and keyword args
+// Simplified implementation: for callable tokens, look them up in the registry
+extern "C" PyObject* PyObject_Call(PyObject* obj, PyObject* args, PyObject* kwargs);
 
 void PyErr_Print(void) { fprintf(stderr, "Python error occurred\n"); }
 
@@ -4206,6 +4252,23 @@ extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
         return r;
     }
     return it->second ? it->second(finalList) : nullptr;
+}
+
+// PyObject_Call(obj, args, kwargs) — call obj with positional and keyword args
+// Simplified implementation: for callable tokens, look them up in the registry
+extern "C" PyObject* PyObject_Call(PyObject* obj, PyObject* args, PyObject* kwargs) {
+    if (!obj || !args || args->type != 1) return nullptr;
+    if (obj->type == 3) {
+        // It's a string token — look it up in the registry
+        auto it = g_callableRegistry.find(obj->str);
+        if (it != g_callableRegistry.end() && it->second) {
+            return it->second(args);
+        }
+        return nullptr;
+    }
+    // For methods (bound functions), we need to call them with self as first arg
+    // This is a simplified implementation
+    return nullptr;
 }
 
 // ---- B5 (nonlocal / cells) minimal primitives ----

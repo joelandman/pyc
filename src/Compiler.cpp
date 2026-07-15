@@ -733,67 +733,10 @@ class LoweringVisitor {
             currentReturnedBundleCaps.clear();
             // Do not fall through to the generic FunctionDef handling below.
             return;
-      } else if (node->type == "ClassDef") {
-            lowerClass(node);
-            return;
-      } else if (node->type == "With") {
-            // with ctx as target: body
-            // Lowers to: target = ctx.__enter__(); body; ctx.__exit__(None, None, None)
-            if (node->children.empty()) return;
-            const ASTNode* withItem = node->children[0].get();
-            // withitem has context_expr in children[0], optional_vars in children[1]
-            if (withItem->children.empty()) return;
-            std::string ctxExpr = lowerExpr(withItem->children[0].get());
-            // Call __enter__
-            std::string enterConst = "c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {"\"__enter__\""}, enterConst, "str");
-            std::string enterCall = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, enterConst}, enterCall);
-            // Build arg list for __enter__ (just self)
-            std::string enterArgList = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {"1"}, "enter_arg_count");
-            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "enter_arg_count"}, enterArgList);
-            std::string zeroConst = "c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {"0"}, zeroConst);
-            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", enterArgList, zeroConst, ctxExpr}, "enter_set0");
-            std::string enterResult = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", enterCall, enterArgList}, enterResult);
-            // Bind result to target if present
-            if (withItem->children.size() > 1 && withItem->children[1]) {
-                const ASTNode* target = withItem->children[1].get();
-                if (target->type == "Name") {
-                    ir.addInstruction(currentFunc, "assign", {enterResult}, target->id);
-                }
-            }
-            // Lower body
-            for (size_t i = 1; i < node->children.size(); ++i) {
-                if (node->children[i]) {
-                    lower(node->children[i].get());
-                }
-            }
-            // Call __exit__(None, None, None) in finally
-            std::string exitConst = "c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {"\"__exit__\""}, exitConst, "str");
-            std::string exitCall = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, exitConst}, exitCall);
-            // Build arg list for __exit__ (self, None, None, None)
-            std::string exitArgList = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {"4"}, "exit_arg_count");
-            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "exit_arg_count"}, exitArgList);
-            std::string oneConst = "c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {"1"}, oneConst);
-            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgList, oneConst, ctxExpr}, "exit_set1");
-            // Add three None values
-            for (int j = 0; j < 3; ++j) {
-                std::string jConst = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {std::to_string(j)}, jConst);
-                ir.addInstruction(currentFunc, "const", {"0"}, "none_val");
-                std::string noneKey = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {std::to_string(j + 2)}, noneKey);
-                ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgList, noneKey, "none_val"}, "exit_set");
-            }
-            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", exitCall, exitArgList}, "exit_result");
-        } else if (node->type == "If") {
+       } else if (node->type == "ClassDef") {
+             lowerClass(node);
+             return;
+       } else if (node->type == "If") {
             lowerIf(node);
         } else if (node->type == "While") {
             lowerWhile(node);
@@ -922,6 +865,158 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", {"pyc_raise", exc}, "");
         } else if (node->type == "Try") {
             lowerTry(node);
+        } else if (node->type == "With") {
+            llvm::errs() << "[DEBUG With] lowering With statement\n";
+            // with context_expr as var: body
+            // Simplified: evaluate context_expr, call __enter__, bind result, execute body, call __exit__
+            if (node->children.empty()) return;
+            const ASTNode* withItem = node->children[0].get();
+            if (!withItem || withItem->children.empty()) return;
+            // children[0] = context_expr, children[1] = optional_vars (if any)
+            std::string ctxExpr = lowerExpr(withItem->children[0].get());
+            llvm::errs() << "[DEBUG With] ctxExpr=" << ctxExpr << "\n";
+            // Call __enter__ on the context manager
+            // Get the __enter__ method using Pyc_GetItem (supports class dict fallback)
+            std::string enterMethod = "t" + std::to_string(tempCounter++);
+            std::string enterMethodToken = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"__enter__\""}, enterMethodToken, "str");
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, enterMethodToken}, enterMethod);
+            llvm::errs() << "[DEBUG With] enterMethod=" << enterMethod << "\n";
+            // Build args list: [self]
+            std::string enterArgs = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "1"}, enterArgs);
+            std::string enterIdx = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, enterIdx);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", enterArgs, enterIdx, ctxExpr}, "");
+            // Call __enter__(self) via Pyc_Apply
+            std::string enterResult = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", enterMethod, enterArgs}, enterResult);
+            llvm::errs() << "[DEBUG With] enterResult=" << enterResult << "\n";
+            // Bind to target variable if present
+            if (withItem->children.size() >= 2 && withItem->children[1]) {
+                std::string targetName = withItem->children[1]->id;
+                ir.addInstruction(currentFunc, "assign", {enterResult}, targetName);
+            }
+            // Execute body
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                if (node->children[i]) lower(node->children[i].get());
+            }
+            // Call __exit__ with None, None, None (simplified)
+            std::string exitMethod = "t" + std::to_string(tempCounter++);
+            std::string exitMethodToken = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"__exit__\""}, exitMethodToken, "str");
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, exitMethodToken}, exitMethod);
+            std::string exitArgs = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "4"}, exitArgs);
+            std::string exitIdx = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, exitIdx);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgs, exitIdx, ctxExpr}, "");
+            std::string noneVal = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "nconst", {}, noneVal);
+            for (int i = 1; i < 4; ++i) {
+                std::string idx = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idx);
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgs, idx, noneVal}, "");
+            }
+            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", exitMethod, exitArgs}, "");
+        } else if (node->type == "Match") {
+            // match subject: cases...
+            // Lower to a chain of if/elif/else.  The codegen skips non-label
+            // instructions when the current block is terminated, so we must
+            // place each case's condition+br AFTER a label.  Structure:
+            //   <entry> → label check_1 → icmp → br(cond, body, check_2)
+            //             label body_1 → body → br end
+            //             label check_2 → icmp → br(cond, body, check_3)
+            //             label body_2 → body → br end
+            //             …
+            //             label end
+            if (node->children.empty()) return;
+            std::string subject = lowerExpr(node->children[0].get());
+
+            int matchEndCounter = tempCounter++;
+            std::string matchEnd = "match_end_" + std::to_string(matchEndCounter);
+            std::vector<int> checkLabelCounters;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                checkLabelCounters.push_back(tempCounter++);
+            }
+
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const ASTNode* caseNode = node->children[i].get();
+                if (!caseNode || caseNode->children.empty()) continue;
+                const ASTNode* pattern = caseNode->children[0].get();
+                if (!pattern) continue;
+
+                bool isWildcard = (pattern->type == "MatchWildcard");
+                bool isMatchAs = (pattern->type == "MatchAs");
+                bool hasBinding = isMatchAs && !pattern->value.empty();
+
+                // Emit label for this case's check point
+                std::string checkLabel = "check_" + std::to_string(i) + "_" + std::to_string(checkLabelCounters[i - 1]);
+                ir.addInstruction(currentFunc, "label", {}, checkLabel);
+
+                std::string matchCond;
+                if (isWildcard || isMatchAs) {
+                    std::string trueConst = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "bconst", {"True"}, trueConst, "bool");
+                    matchCond = trueConst;
+                    if (hasBinding) {
+                        ir.addInstruction(currentFunc, "assign", {subject}, pattern->value);
+                    }
+                } else if (pattern->type == "MatchValue") {
+                    if (pattern->children.empty()) continue;
+                    std::string patternVal = lowerExpr(pattern->children[0].get());
+                    if (patternVal.empty()) continue;
+                    std::string cmpResult = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "icmp", {"Eq", subject, patternVal}, cmpResult, "bool");
+                    matchCond = cmpResult;
+                } else if (pattern->type == "MatchSingleton") {
+                    std::string cmpResult = "t" + std::to_string(tempCounter++);
+                    if (pattern->value == "None") {
+                        std::string noneConst = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "nconst", {}, noneConst);
+                        ir.addInstruction(currentFunc, "icmp", {"Eq", subject, noneConst}, cmpResult, "bool");
+                        matchCond = cmpResult;
+                    } else {
+                        std::string boolVal = pattern->value == "True" ? "True" : "False";
+                        std::string boolConst = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "bconst", {boolVal}, boolConst, "bool");
+                        ir.addInstruction(currentFunc, "icmp", {"Eq", subject, boolConst}, cmpResult, "bool");
+                        matchCond = cmpResult;
+                    }
+                } else if (pattern->type == "Name") {
+                    std::string targetName = pattern->id;
+                    ir.addInstruction(currentFunc, "assign", {subject}, targetName);
+                    for (size_t j = 1; j < caseNode->children.size(); ++j) {
+                        if (caseNode->children[j]) lower(caseNode->children[j].get());
+                    }
+                    ir.addInstruction(currentFunc, "br", {}, matchEnd);
+                    continue;
+                } else {
+                    matchCond = "1";
+                }
+
+                std::string caseBody = "case_body_" + std::to_string(i) + "_" + std::to_string(checkLabelCounters[i - 1]);
+                std::string nextCase;
+                if (i + 1 < node->children.size()) {
+                    nextCase = "check_" + std::to_string(i + 1) + "_" + std::to_string(checkLabelCounters[i]);
+                } else {
+                    nextCase = matchEnd;
+                }
+
+                ir.addInstruction(currentFunc, "br", {matchCond, caseBody, nextCase}, "");
+
+                ir.addInstruction(currentFunc, "label", {}, caseBody);
+                size_t bodyStart = 1;
+                if (caseNode->children.size() > 1 && caseNode->children[1]->type == "MatchGuard") {
+                    bodyStart = 2;
+                }
+                for (size_t j = bodyStart; j < caseNode->children.size(); ++j) {
+                    if (caseNode->children[j]) lower(caseNode->children[j].get());
+                }
+                ir.addInstruction(currentFunc, "br", {}, matchEnd);
+            }
+
+            ir.addInstruction(currentFunc, "label", {}, matchEnd);
         } else if (node->type == "Expr") {
             if (!node->children.empty() && node->children[0]) {
                 lowerExpr(node->children[0].get());

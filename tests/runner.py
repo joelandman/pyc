@@ -332,6 +332,9 @@ print(a[0],a[1],a[2])
     # B10: assert statement
     ("x = 5\nassert x > 0\nprint('ok')", "ok\n"),
     ("x = 5\nassert x > 0, 'x must be positive'\nprint('ok')", "ok\n"),
+
+    # B10: with statement (context manager)
+    ("class DummyCtx:\n    def __enter__(self): return 42\n    def __exit__(self, *a): pass\nwith DummyCtx() as x:\n    print(x)", "42\n"),
     # Tier-2 regression: list*int and int*list sequence repetition.
     # Use element access to avoid the list-printing bug (separate Tier-2 issue).
     ("a=[0]*3\nprint(len(a), a[0], a[1], a[2])", "3 0 0 0\n"),
