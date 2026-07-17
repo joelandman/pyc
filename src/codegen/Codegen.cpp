@@ -1588,8 +1588,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 std::string rhsName = inst.operands.size() > 1 ? inst.operands[1].name : "";
                 llvm::Value* lhsRaw = lhsName.empty() ? nullptr : getOrLoad(lhsName);
                 llvm::Value* rhsRaw = rhsName.empty() ? nullptr : getOrLoad(rhsName);
-                llvm::errs() << "[DEBUG pow] lhsName=" << lhsName << " rhsName=" << rhsName << "\n";
-                llvm::errs() << "[DEBUG pow] lhsRaw=" << (lhsRaw ? "non-null" : "null") << " rhsRaw=" << (rhsRaw ? "non-null" : "null") << "\n";
                 llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
                 llvm::Type* dblTy = llvm::Type::getDoubleTy(context);
                 bool lhsNativeI64 = lhsRaw && lhsRaw->getType() == i64Ty;
@@ -1598,10 +1596,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 bool rhsNativeDbl = rhsRaw && rhsRaw->getType() == dblTy;
                 bool bothNativeI64 = lhsNativeI64 && rhsNativeI64;
                 bool bothNative = (lhsNativeI64 || lhsNativeDbl) && (rhsNativeI64 || rhsNativeDbl);
-                bool eitherNativeDbl = lhsNativeDbl || rhsNativeDbl;
-                llvm::errs() << "[DEBUG pow] lhsNativeI64=" << lhsNativeI64 << " rhsNativeI64=" << rhsNativeI64 << "\n";
-                llvm::errs() << "[DEBUG pow] lhsNativeDbl=" << lhsNativeDbl << " rhsNativeDbl=" << rhsNativeDbl << "\n";
-                llvm::errs() << "[DEBUG pow] bothNativeI64=" << bothNativeI64 << " bothNative=" << bothNative << "\n";
                 // Native path: both operands are numeric (i64 or double)
                 if (bothNativeI64) {
                     // Integer power: use runtime helper Pyc_PowInt64 for non-negative exponent
@@ -1612,11 +1606,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     llvm::Value* result = nullptr;
                     if (powInt64) {
                         result = builder.CreateCall(powInt64, {lhsRaw, rhsRaw}, "pow.int64");
-                        // Box the result
-                        llvm::Function* boxI64 = module->getFunction("boxI64");
-                        if (boxI64) {
-                            result = builder.CreateCall(boxI64, {result}, "pow.boxed");
-                        }
+                        // Box the result via the boxI64 lambda (declares PyInt_FromLong internally)
+                        result = boxI64(result, "pow.boxed");
                     } else {
                         // Fallback to boxed Pyc_Pow
                         llvm::Function* pycPow = module->getFunction("Pyc_Pow");
@@ -1639,12 +1630,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     } else {
                         powResult = llvm::ConstantFP::get(dblTy, 0.0);
                     }
-                    // Box the result
-                    llvm::Function* boxDbl = module->getFunction("boxDouble");
-                    llvm::Value* boxedResult = nullptr;
-                    if (boxDbl) {
-                        boxedResult = builder.CreateCall(boxDbl, {powResult}, "pow.boxed");
-                    } else {
+                    // Box the result via the boxDouble lambda (declares PyFloat_FromDouble internally)
+                    llvm::Value* boxedResult = boxDouble(powResult, "pow.boxed");
+                    if (!boxedResult) {
                         boxedResult = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                     }
                     valueMap[inst.result] = boxedResult;
@@ -2090,6 +2078,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
              } else if (inst.op == "call") {
                   std::string funcName = inst.operands.empty() ? "" : inst.operands[0].name;
+                  if (std::getenv("PYC_DUMP_IR")) {
+                      for (size_t ii = 1; ii < inst.operands.size(); ++ii) {
+                          auto vit = valueMap.find(inst.operands[ii].name);
+                          llvm::errs() << "  call " << funcName << " operand[" << ii << "]=" << inst.operands[ii].name << " in valueMap=" << (vit != valueMap.end() ? "yes" : "no") << "\n";
+                      }
+                  }
                   // PyObject_CompareBool(a, b, op) — third arg is i32, not ptr
                   if (funcName == "PyObject_CompareBool" && inst.operands.size() >= 4) {
                       std::string aName = inst.operands[1].name;
@@ -2217,14 +2211,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     if (!callee) {
                         // Function not found in this module - create external declaration
                         // This handles cross-module calls like __module__utils
-                        llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " NOT FOUND, creating external\n";
+                        if (std::getenv("PYC_DUMP_IR")) {
+                            llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " NOT FOUND, creating external\n";
+                        }
                         // Use the actual number of arguments from the instruction
                         size_t numArgs = inst.operands.size() - 1;
                         std::vector<llvm::Type*> argTypes(numArgs, pyObjectPtrTy);
                         llvm::FunctionType* extTy = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
                         callee = llvm::Function::Create(extTy, llvm::Function::ExternalLinkage, funcName, module.get());
                     }
-                    llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " operands.size=" << inst.operands.size() << "\n";
+                    if (std::getenv("PYC_DUMP_IR")) {
+                        llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " operands.size=" << inst.operands.size() << "\n";
+                    }
                     if (callee) {
                         std::vector<llvm::Value*> callArgs;
                         // Track which args were native (i64/double) so that getAsPyObject's
@@ -2401,10 +2399,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             }
             builder.CreateRet(zero);
         }
-
-        // Small helper to box an i64 value on demand (used by some numeric
-        // binary paths and for range loop visible var boxing on escape).
-        (void)boxI64; // already defined above; keep reference for future native paths.
     }
     if (llvm::verifyModule(*module, &llvm::errs())) {
         std::cerr << "Module verification failed\n";
@@ -2415,6 +2409,17 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             std::cerr << s << std::endl;
         }
         return nullptr;
+    }
+    // DEBUG: print instructions for the module function
+    if (std::getenv("PYC_DUMP_IR")) {
+        for (auto& f : *module) {
+            if (f.getName() == "__module__") {
+                std::string s;
+                llvm::raw_string_ostream os(s);
+                f.print(os);
+                std::cerr << "=== __module__ IR ===\n" << s << "\n=== END ===\n";
+            }
+        }
     }
     return module;
 }
