@@ -1577,10 +1577,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     }
                 }
             } else if (inst.op == "pow") {
+                llvm::errs() << "[DEBUG codegen] Processing pow instruction\n";
                 std::string lhsName = inst.operands.size() > 0 ? inst.operands[0].name : "";
                 std::string rhsName = inst.operands.size() > 1 ? inst.operands[1].name : "";
                 llvm::Value* lhsRaw = lhsName.empty() ? nullptr : getOrLoad(lhsName);
                 llvm::Value* rhsRaw = rhsName.empty() ? nullptr : getOrLoad(rhsName);
+                llvm::errs() << "[DEBUG pow] lhsName=" << lhsName << " rhsName=" << rhsName << "\n";
+                llvm::errs() << "[DEBUG pow] lhsRaw=" << (lhsRaw ? "non-null" : "null") << " rhsRaw=" << (rhsRaw ? "non-null" : "null") << "\n";
                 llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
                 llvm::Type* dblTy = llvm::Type::getDoubleTy(context);
                 bool lhsNativeI64 = lhsRaw && lhsRaw->getType() == i64Ty;
@@ -1590,6 +1593,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 bool bothNativeI64 = lhsNativeI64 && rhsNativeI64;
                 bool bothNative = (lhsNativeI64 || lhsNativeDbl) && (rhsNativeI64 || rhsNativeDbl);
                 bool eitherNativeDbl = lhsNativeDbl || rhsNativeDbl;
+                llvm::errs() << "[DEBUG pow] lhsNativeI64=" << lhsNativeI64 << " rhsNativeI64=" << rhsNativeI64 << "\n";
+                llvm::errs() << "[DEBUG pow] lhsNativeDbl=" << lhsNativeDbl << " rhsNativeDbl=" << rhsNativeDbl << "\n";
+                llvm::errs() << "[DEBUG pow] bothNativeI64=" << bothNativeI64 << " bothNative=" << bothNative << "\n";
                 // Native path: both operands are numeric (i64 or double)
                 if (bothNativeI64) {
                     // Integer power: use runtime helper Pyc_PowInt64 for non-negative exponent
@@ -1620,6 +1626,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     // Float power: use LLVM's pow intrinsic
                     llvm::Value* lhsUnboxed = lhsNativeDbl ? lhsRaw : unboxToDouble(getOrLoad(lhsName));
                     llvm::Value* rhsUnboxed = rhsNativeDbl ? rhsRaw : unboxToDouble(getOrLoad(rhsName));
+                    llvm::errs() << "[DEBUG pow float] lhsUnboxed=" << (lhsUnboxed ? "non-null" : "null") << " rhsUnboxed=" << (rhsUnboxed ? "non-null" : "null") << "\n";
                     llvm::Function* powFn = module->getFunction("pow");
                     llvm::Value* powResult = nullptr;
                     if (powFn) {
@@ -1635,13 +1642,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     } else {
                         boxedResult = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                     }
+                    llvm::errs() << "[DEBUG pow float] boxedResult=" << (boxedResult ? "non-null" : "null") << " inst.result=" << inst.result << "\n";
                     valueMap[inst.result] = boxedResult;
                     markOwned(inst.result);
+                    llvm::errs() << "[DEBUG codegen] pow result stored in valueMap[" << inst.result << "]\n";
                 } else {
                     // Boxed path: call Pyc_Pow
                     llvm::Function* fn = module->getFunction("Pyc_Pow");
                     llvm::Value* lhs = getAsPyObject(lhsName);
                     llvm::Value* rhs = getAsPyObject(rhsName);
+                    llvm::errs() << "[DEBUG pow boxed] lhs=" << (lhs ? "non-null" : "null") << " rhs=" << (rhs ? "non-null" : "null") << " fn=" << (fn ? "non-null" : "null") << "\n";
                     bool lhsWasNative = lhsRaw && (lhsRaw->getType() == i64Ty || lhsRaw->getType()->isDoubleTy());
                     bool rhsWasNative = rhsRaw && (rhsRaw->getType() == i64Ty || rhsRaw->getType()->isDoubleTy());
                     if (fn) {
