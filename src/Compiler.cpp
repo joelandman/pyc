@@ -24,8 +24,10 @@ namespace pyc {
 
 class LoweringVisitor {
  public:
-     LoweringVisitor(ModuleIR& moduleIR, const std::unordered_set<std::string>& compiledModules = {})
-         : ir(moduleIR), compiledModules(compiledModules) {}
+     LoweringVisitor(ModuleIR& moduleIR,
+                     const std::unordered_set<std::string>& compiledModules = {},
+                     const std::unordered_map<std::string, std::vector<std::string>>& importedModuleGlobals = {})
+         : ir(moduleIR), compiledModules(compiledModules), importedModuleGlobals(importedModuleGlobals) {}
 
     void lower(const ASTNode* node, const std::string& funcName = "") {
         if (!node) return;
@@ -820,6 +822,7 @@ class LoweringVisitor {
             return;
         } else if (node->type == "ImportFrom") {
             // from math import sqrt
+            // from utils import *
             // B7: If the module was compiled, call __module__<mod> and look up names.
             // Otherwise emit pyc_import_failed.
             const std::string& mod = node->id;
@@ -829,11 +832,35 @@ class LoweringVisitor {
                     std::string modConst = "c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modConst, "str");
                     ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, "");
-                    
+
                     std::string moduleDict = "t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"__module__" + mod}, moduleDict);
-                    
-                    for (const auto& name : node->args) {
+
+                    // Detect `from X import *`. The parser puts the literal "*"
+                    // into node->args. We expand to the imported module's known
+                    // (non-underscore) globals at lowering time, so each name
+                    // becomes a real module global in the main module.
+                    std::vector<std::string> exportNames;
+                    bool isStar = false;
+                    for (const auto& n : node->args) {
+                        if (n == "*") { isStar = true; break; }
+                    }
+                    if (isStar) {
+                        auto igit = importedModuleGlobals.find(mod);
+                        if (igit != importedModuleGlobals.end()) {
+                            for (const auto& nm : igit->second) {
+                                if (nm.empty() || nm[0] == '_') continue;
+                                exportNames.push_back(nm);
+                            }
+                        }
+                        // If the imported module's globals weren't collected
+                        // (e.g. parse failure), fall through with an empty
+                        // export list — no `*` global is created.
+                    } else {
+                        exportNames = node->args;
+                    }
+
+                    for (const auto& name : exportNames) {
                         ir.addModuleGlobal(name);
                         std::string attrKey = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + name + "\""}, attrKey, "str");
@@ -846,6 +873,7 @@ class LoweringVisitor {
                     std::string modName = "c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modName, "str");
                     for (const auto& name : node->args) {
+                        if (name == "*") continue;  // nothing to bind for star on a missing module
                         ir.addModuleGlobal(name);
                         std::string failResult = "t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modName}, failResult);
@@ -1349,6 +1377,10 @@ class LoweringVisitor {
      // B7: set of module names that were successfully compiled (used to decide
      // whether import lowering emits __module__<name> or pyc_import_failed).
      std::unordered_set<std::string> compiledModules;
+     // B7: map from imported module name to its exported (non-underscore) globals
+     // at the time the main module is lowered. Used to statically expand
+     // `from X import *` instead of trying to look up the literal key "*".
+     std::unordered_map<std::string, std::vector<std::string>> importedModuleGlobals;
     std::string currentFunc;
     std::string currentClass;
     int tempCounter = 0;
@@ -5433,9 +5465,11 @@ class LoweringVisitor {
 
 // Legacy thin wrapper kept temporarily for any external callers (to be removed)
 
-void lowerAST(const ASTNode* node, ModuleIR& ir, const std::unordered_set<std::string>& compiledModules = {}) {
+void lowerAST(const ASTNode* node, ModuleIR& ir,
+               const std::unordered_set<std::string>& compiledModules = {},
+               const std::unordered_map<std::string, std::vector<std::string>>& importedModuleGlobals = {}) {
     if (!node) return;
-    LoweringVisitor visitor(ir, compiledModules);
+    LoweringVisitor visitor(ir, compiledModules, importedModuleGlobals);
     visitor.lower(node);
     // A6: Generate specialized variants after lowering completes.
     visitor.generateSpecializedVariants();
@@ -5510,11 +5544,56 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             compiledModules.insert(fs::path(pyFile).stem().string());
         }
     }
-    
+
+    // B7: pre-parse each imported module and collect its exported globals so
+    // that `from X import *` in the main module can be expanded statically
+    // (each exported name becomes a real module global in the main module).
+    // The parser is the same one we use for full compilation; this is just
+    // a light pass that walks top-level Assign/FunctionDef children and
+    // records the bound names.
+    std::unordered_map<std::string, std::vector<std::string>> importedModuleGlobals;
+    {
+        auto collectTopLevelNames = [](const ASTNode* modNode) {
+            std::vector<std::string> out;
+            if (!modNode || modNode->type != "Module") return out;
+            std::function<void(const ASTNode*, bool)> walk = [&](const ASTNode* n, bool top) {
+                if (!n) return;
+                if (top) {
+                    if (n->type == "Assign") {
+                        if (!n->args.empty()) {
+                            for (const auto& nm : n->args) {
+                                if (!nm.empty()) out.push_back(nm);
+                            }
+                        } else if (!n->id.empty() && n->id != "__subscript__" && n->id != "__unpack__") {
+                            out.push_back(n->id);
+                        }
+                    } else if (n->type == "FunctionDef" && !n->id.empty()) {
+                        out.push_back(n->id);
+                    } else if (n->type == "ClassDef" && !n->id.empty()) {
+                        out.push_back(n->id);
+                    }
+                }
+                for (const auto& c : n->children) walk(c.get(), false);
+            };
+            for (const auto& c : modNode->children) walk(c.get(), true);
+            std::sort(out.begin(), out.end());
+            out.erase(std::unique(out.begin(), out.end()), out.end());
+            return out;
+        };
+        for (auto& pyFile : pyFiles) {
+            if (pyFile == inputPath) continue;
+            PythonParser pp;
+            auto ast = pp.parseFile(pyFile);
+            if (!ast) continue;
+            std::string mn = fs::path(pyFile).stem().string();
+            importedModuleGlobals[mn] = collectTopLevelNames(ast.get());
+        }
+    }
+
     // Compile each .py file to an LLVM module
     std::vector<std::unique_ptr<llvm::Module>> modules;
     llvm::LLVMContext context;
-    
+
     for (auto& pyFile : pyFiles) {
         PythonParser parser;
         auto ast = parser.parseFile(pyFile);
@@ -5522,13 +5601,19 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             std::cerr << "Warning: Failed to parse " << pyFile << ", skipping\n";
             continue;
         }
-        
+
         std::string moduleName = fs::path(pyFile).stem().string();
         ModuleIR ir;
         ir.moduleName = moduleName;
         // Pass compiledModules only when lowering the main module so that
         // import lowering can emit pyc_import_failed for missing modules.
-        lowerAST(ast.get(), ir, (pyFile == inputPath) ? compiledModules : std::unordered_set<std::string>{});
+        // Pass importedModuleGlobals only to the main module so its
+        // `from X import *` can be expanded statically.
+        if (pyFile == inputPath) {
+            lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals);
+        } else {
+            lowerAST(ast.get(), ir, std::unordered_set<std::string>{}, std::unordered_map<std::string, std::vector<std::string>>{});
+        }
         
         Codegen codegen;
         

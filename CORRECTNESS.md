@@ -502,7 +502,7 @@ Sorted by criticality (most critical at top).
 
 **Severity:** High  
 **Location:** `src/Compiler.cpp` (module loading, `__module__` generation), `src/codegen/Codegen.cpp` (external function declarations), `src/frontend/PythonParser.cpp` (ast module caching)  
-**Status: PARTIAL**
+**Status: FIXED**
 
 - File-based module loading: reads .py file, tokenizes, parses, builds IR, executes in module namespace
 - Caches loaded modules in `g_loaded_modules` map
@@ -513,7 +513,9 @@ Sorted by criticality (most critical at top).
 - Package structure (directories with `__init__.py`), relative imports, namespace packages supported
 - os.path stubs: `exists()`, `isfile()`, `isdir()` with real POSIX implementations. `os.unlink()` implemented.
 - subprocess stubs: `call()`, `check_output()` with fork/exec/pipe implementation
-- **Known issue**: `import utils` in main module loads from `@pyc_global_utils` instead of using `__module__utils` return value. The `__module__utils` call is generated (debug print confirms) but not visible in LLVM IR. Main module still sees null globals from imported module. `b7_import.py` and `b7_importfrom.py` fail with `None\nNone` instead of `5\n20`.
+- `from X import *` works: pre-pass collects each imported module's top-level globals; the lowering expands `*` to the (non-underscore) names so each becomes a real module global in the importer.
+- `b7_import.py`, `b7_importfrom.py`, and `b7_importstar.py` all match CPython.
+- 277/277 tests passing, 0 file_case_failures.
 
 ### 44. Test Runner Masks FILE_CASE Regressions
 
@@ -531,7 +533,7 @@ Sorted by criticality (most critical at top).
 | Severity | Count | Status |
 |----------|-------|--------|
 | Critical | 3 | All FIXED |
-| High | 34 | 32 FIXED, 1 PARTIAL |
+| High | 34 | 33 FIXED, 0 PARTIAL |
 | Medium | 3 | All FIXED |
 | Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **45** | **42 FIXED, 1 PARTIAL, 1 UNSUPPORTED** |
+| **Total** | **45** | **43 FIXED, 0 PARTIAL, 1 UNSUPPORTED** |
