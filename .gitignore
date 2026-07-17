@@ -10,3 +10,8 @@ a.out.*
 *.s
 *_dbg.py
 *.dbg.py
+
+# Python bytecode caches (created by Python3 imports during build/test)
+__pycache__/
+*.pyc
+
