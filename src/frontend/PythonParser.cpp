@@ -162,6 +162,23 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(body);
+        // Decorators: each entry of decorator_list becomes a synthetic
+        // "Decorator" child wrapping the decorator expression (a Name for
+        // @deco, a Call for @deco(args)). Source order is preserved;
+        // lowering applies them bottom-up.
+        PyObject* decos = PyObject_GetAttrString(pyNode, "decorator_list");
+        if (decos && PyList_Check(decos)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(decos); ++i) {
+                PyObject* d = PyList_GetItem(decos, i);
+                auto dn = std::make_unique<ASTNode>();
+                dn->type = "Decorator";
+                auto expr = std::make_unique<ASTNode>();
+                buildAST(d, expr.get());
+                dn->children.push_back(std::move(expr));
+                node->children.push_back(std::move(dn));
+            }
+        }
+        Py_XDECREF(decos);
     } else if (node->type == "Call") {
         PyObject* func = PyObject_GetAttrString(pyNode, "func");
         if (func) {

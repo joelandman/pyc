@@ -855,6 +855,62 @@ try:
 except ValueError:
     print("integrity ok")
 """, "i 0\nfin 0\nfin 1\ndone\nj 0\ncfin 0\ncfin 1\nj 2\ncfin 2\nhfin 0\nhfin 1\nhfin 2\n20\nintegrity ok\n"),
+    # Decorators: plain, stacked (bottom-up), wrapper closures over the
+    # decorated function.
+    ("""
+def shout(fn):
+    def wrapper(x):
+        return fn(x) + "!"
+    return wrapper
+@shout
+def greet(name):
+    return "hi " + name
+print(greet("joe"))
+@shout
+@shout
+def hey(name):
+    return "hey " + name
+print(hey("bob"))
+def twice(fn):
+    def wrapper(x):
+        return fn(fn(x))
+    return wrapper
+@twice
+def inc(n):
+    return n + 1
+print(inc(5))
+""", "hi joe!\nhey bob!!\n7\n"),
+    # Decorator factories (@deco(args)) and decorated functions as values.
+    ("""
+def repeat(n):
+    def deco(fn):
+        def wrapper(x):
+            out = []
+            for _ in range(n):
+                out.append(fn(x))
+            return out
+        return wrapper
+    return deco
+@repeat(3)
+def salute(name):
+    return "yo " + name
+print(salute("ann"))
+def log(fn):
+    def wrapper(a, b):
+        r = fn(a, b)
+        print("call ->", r)
+        return r
+    return wrapper
+@log
+def add(a, b):
+    return a + b
+print(add(2, 3))
+g = add
+print(g(10, 20))
+def hof(f, x, y):
+    return f(x, y)
+print(hof(add, 1, 1))
+""", "['yo ann', 'yo ann', 'yo ann']\ncall -> 5\n5\ncall -> 30\n30\ncall -> 2\n2\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

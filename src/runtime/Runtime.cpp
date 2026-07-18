@@ -4446,6 +4446,9 @@ extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObje
 // extract the token and prepend the extras to the provided argList before dispatch.
 extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
     if (!token) return nullptr;
+    // A cell-backed callee (closure free variable holding a callable) may
+    // arrive as the cell itself — unwrap to its content.
+    while (token && token->type == 6 && token->cell_content) token = token->cell_content;
     // Accept a bare string token, a function object (type 11, token in str),
     // or a descriptor bundle list whose first element is either of those.
     std::string tokName;

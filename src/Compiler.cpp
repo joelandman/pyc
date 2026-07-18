@@ -55,9 +55,18 @@ class LoweringVisitor {
             // direct targets. Lambdas are added when their expr is lowered.
             // This keeps ordinary calls direct while still allowing bare-name
             // variables/parameters holding callable tokens to take the Pyc_Apply path.
+            // Decorated defs are excluded everywhere below: their python name
+            // is a variable bound to the decorator's result, so calls and
+            // value references must resolve dynamically, never to the
+            // undecorated IR function.
+            auto hasDecorators = [](const ASTNode* n) {
+                for (const auto& c : n->children)
+                    if (c && c->type == "Decorator") return true;
+                return false;
+            };
             std::function<void(const ASTNode*)> collectDefs = [&](const ASTNode* n) {
                 if (!n) return;
-                if (n->type == "FunctionDef" && !n->id.empty()) {
+                if (n->type == "FunctionDef" && !n->id.empty() && !hasDecorators(n)) {
                     knownIRFunctions.insert(n->id);
                 }
                 for (const auto& c : n->children) collectDefs(c.get());
@@ -68,7 +77,8 @@ class LoweringVisitor {
             // Track them separately from the special builtin shims below so
             // bare-name value uses produce callable tokens (lowerExpr Name).
             for (const auto& c : node->children) {
-                if (c && c->type == "FunctionDef" && !c->id.empty()) userDefFunctions.insert(c->id);
+                if (c && c->type == "FunctionDef" && !c->id.empty() && !hasDecorators(c.get()))
+                    userDefFunctions.insert(c->id);
             }
             // Pre-populate our special builtin shims (print, len, range, sum, sorted, min/max,
             // any/all, isinstance, int/float/abs/str, list, enumerate, zip, ...) so bare-name
@@ -206,13 +216,24 @@ class LoweringVisitor {
                 }
                 bareParams.push_back(b);
             }
+            // Decorators (synthetic "Decorator" children appended by the parser).
+            std::vector<const ASTNode*> decorators;
+            for (const auto& c : node->children)
+                if (c && c->type == "Decorator" && !c->children.empty()) decorators.push_back(c->children[0].get());
+
             // Use a unique IR name for nested defs to avoid collisions on source name
             // (e.g. two 'def inner()' in different enclosing functions). Top-level defs
             // keep their Python id. This is required for correct per-function cell metadata,
             // separate bodies, signatures, and token registration.
+            // Decorated defs ALWAYS get a synthetic IR name (and no alias): the
+            // Python name is bound to the decorator's result, so bare-name calls
+            // must resolve dynamically through the variable, never directly to
+            // the undecorated IR function.
             std::string defIRName = node->id;
             bool isNestedDef = !currentFunc.empty() && currentFunc != "__module__";
-            if (isNestedDef) {
+            if (!decorators.empty()) {
+                defIRName = "__decorated_" + std::to_string(nestedFuncCounter++);
+            } else if (isNestedDef) {
                 defIRName = "__nesteddef_" + std::to_string(nestedFuncCounter++);
                 // Make bare-name references to this python id inside the enclosing resolve
                 // to the unique synthetic (for direct calls and value/bundle construction).
@@ -232,7 +253,9 @@ class LoweringVisitor {
 
             // Record the python -> IR name mapping for this nested def so that
             // later name lookups and bundle tokens can resolve to the registered name.
-            enclosingToNestedDef[saved].emplace(node->id, defIRName);
+            // Not for decorated defs: their python name is a plain variable
+            // holding the decorator's result.
+            if (decorators.empty()) enclosingToNestedDef[saved].emplace(node->id, defIRName);
 
             // Collect python-level names of nested FunctionDefs defined directly in this scope.
             // These names are *bindings* in this scope (like locals), not variables closed over
@@ -529,6 +552,23 @@ class LoweringVisitor {
                 };
                 for (const auto& c : node->children) scanAsg(c.get());
 
+                // Also count names our nested functions need from beyond this
+                // scope (transitively) — this scope must receive and forward
+                // those cells even if it never reads the names itself
+                // (decorator factories: deco forwards repeat's n to wrapper).
+                {
+                    std::unordered_set<std::string> nestedNeeds;
+                    std::function<void(const ASTNode*)> findNestedTop = [&](const ASTNode* n) {
+                        if (!n) return;
+                        if (n->type == "FunctionDef" || n->type == "Lambda") {
+                            collectTransitiveFreeReads(n, nestedNeeds);
+                            return;
+                        }
+                        for (const auto& c : n->children) findNestedTop(c.get());
+                    };
+                    for (const auto& c : node->children) findNestedTop(c.get());
+                    for (const auto& nm : nestedNeeds) used.insert(nm);
+                }
                 for (const auto& nm : used) {
                     if (localsHere.count(nm) == 0) {
                         // Never treat a nested def defined in *this* scope as a free cell
@@ -706,7 +746,7 @@ class LoweringVisitor {
             }
 
             for (const auto& c : node->children) {
-                if (c && c->type == "Default") continue;
+                if (c && (c->type == "Default" || c->type == "Decorator")) continue;
                 lower(c.get());
             }
             // A5: record numericLocals in the IRFunction for codegen.
@@ -756,6 +796,23 @@ class LoweringVisitor {
                 std::string fv = emitFuncValue(defIRName, node->id);
                 ir.addInstruction(currentFunc, "assign", {fv}, node->id);
                 noteType(node->id, "str");
+                // Decorators, bottom-up: name = decoN(...(deco1(name))...).
+                // Each application: lower the decorator expression (a Name or a
+                // factory Call), then Pyc_Apply it to the current value.
+                for (auto it = decorators.rbegin(); it != decorators.rend(); ++it) {
+                    std::string dv = lowerExpr(*it);
+                    std::string z = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, z);
+                    std::string argList = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, node->id}, "");
+                    std::string decorated = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"Pyc_Apply", dv, argList}, decorated);
+                    ir.addInstruction(currentFunc, "assign", {decorated}, node->id);
+                }
+            } else if (!decorators.empty()) {
+                llvm::errs() << "pyc: warning: decorators on closure function '"
+                             << node->id << "' are not supported; decorators ignored\n";
             }
             // Do not fall through to the generic FunctionDef handling below.
             return;
@@ -1952,6 +2009,52 @@ class LoweringVisitor {
     // This gives the full set of names that must be backed by cells for any scope
     // that can reach those declarations via nesting. Used for correct forwarding
     // through intermediate scopes that neither assign nor declare the name.
+    // Names a function subtree reads but does not bind at the reading scope
+    // (or below): its own free reads plus, transitively, the free reads of
+    // its nested functions that this scope does not bind either. Used so an
+    // intermediate scope forwards cells its inner closures need even when it
+    // never references the name itself (decorator factories: repeat(n) ->
+    // deco -> wrapper reads n; deco must carry n through).
+    void collectTransitiveFreeReads(const ASTNode* fn, std::unordered_set<std::string>& out) {
+        if (!fn) return;
+        std::unordered_set<std::string> used;
+        std::function<void(const ASTNode*)> walkOwn = [&](const ASTNode* n) {
+            if (!n) return;
+            if (n->type == "FunctionDef" || n->type == "Lambda") return;
+            if (n->type == "Name" && !n->id.empty()) used.insert(n->id);
+            for (const auto& c : n->children) walkOwn(c.get());
+        };
+        for (const auto& c : fn->children) walkOwn(c.get());
+        std::unordered_set<std::string> localsHere;
+        for (const auto& a : fn->args) {
+            std::string b = a;
+            while (!b.empty() && b[0] == '*') b = b.substr(1);
+            if (!b.empty()) localsHere.insert(b);
+        }
+        std::function<void(const ASTNode*)> scanAsg = [&](const ASTNode* n) {
+            if (!n) return;
+            if (n->type == "FunctionDef" || n->type == "Lambda") {
+                if (!n->id.empty()) localsHere.insert(n->id);  // def binds its name here
+                return;
+            }
+            if (n->type == "Assign" && !n->id.empty()) localsHere.insert(n->id);
+            for (const auto& c : n->children) scanAsg(c.get());
+        };
+        for (const auto& c : fn->children) scanAsg(c.get());
+        std::unordered_set<std::string> sub;
+        std::function<void(const ASTNode*)> findNested = [&](const ASTNode* n) {
+            if (!n) return;
+            if (n->type == "FunctionDef" || n->type == "Lambda") {
+                collectTransitiveFreeReads(n, sub);
+                return;
+            }
+            for (const auto& c : n->children) findNested(c.get());
+        };
+        for (const auto& c : fn->children) findNested(c.get());
+        for (const auto& nm : used) if (!localsHere.count(nm)) out.insert(nm);
+        for (const auto& nm : sub) if (!localsHere.count(nm)) out.insert(nm);
+    }
+
     std::vector<std::string> collectDemandedNonlocals(const ASTNode* funcNode) {
         std::vector<std::string> result;
         std::function<void(const ASTNode*)> walk = [&](const ASTNode* n) {
@@ -2348,7 +2451,17 @@ class LoweringVisitor {
                     // Regular user "def" calls stay direct (their names are pre-populated in
                     // knownIRFunctions). Special builtins keep their fast/special paths.
                     useDynamicApply = true;
-                    tokenTempForApply = theName;
+                    if (isCellBackedHere(theName)) {
+                        // Cell-backed callee (closure free variable holding a
+                        // callable, e.g. a decorator wrapper's captured fn):
+                        // the bare name has no direct slot here — fetch the
+                        // cell content and apply that.
+                        std::string cellVal = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyCell_Get", theName + "_cell"}, cellVal);
+                        tokenTempForApply = cellVal;
+                    } else {
+                        tokenTempForApply = theName;
+                    }
                 }
             } else if (!calleeValEarly.empty()) {
                 // Non-plain-name callee expression (subscript, attribute, result of a call
@@ -5092,7 +5205,7 @@ class LoweringVisitor {
                 std::string savedFunc = currentFunc;
                 currentFunc = initFuncName;
                 for (size_t i = 0; i < c->children.size(); ++i) {
-                    if (c->children[i] && c->children[i]->type != "Default") {
+                    if (c->children[i] && c->children[i]->type != "Default" && c->children[i]->type != "Decorator") {
                         lower(c->children[i].get());
                     }
                 }
@@ -5123,7 +5236,7 @@ class LoweringVisitor {
                 std::string savedFunc = currentFunc;
                 currentFunc = methodFuncName;
                 for (size_t i = 0; i < c->children.size(); ++i) {
-                    if (c->children[i] && c->children[i]->type != "Default") {
+                    if (c->children[i] && c->children[i]->type != "Default" && c->children[i]->type != "Decorator") {
                         lower(c->children[i].get());
                     }
                 }
