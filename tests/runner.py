@@ -678,6 +678,92 @@ class Z(Y):
         return "Z(" + super().hello() + ")"
 print(Z().hello())
 """, "Z(X.hello)\n"),
+    # Exceptions: typed dispatch — only the matching clause runs; unmatched
+    # propagates to the outer try.
+    ("""
+try:
+    raise KeyError("k")
+except ValueError:
+    print("wrong")
+except KeyError:
+    print("ke")
+try:
+    try:
+        raise KeyError("inner")
+    except ValueError:
+        print("no")
+except KeyError:
+    print("outer")
+""", "ke\nouter\n"),
+    # Exceptions: `as` binding carries the message; else/finally clauses.
+    ("""
+try:
+    raise ValueError("msg here")
+except ValueError as e:
+    print("got:", e)
+try:
+    raise ValueError("x")
+except ValueError:
+    print("h")
+finally:
+    print("fin")
+try:
+    print("ok")
+except ValueError:
+    print("no")
+else:
+    print("else ran")
+""", "got: msg here\nh\nfin\nok\nelse ran\n"),
+    # Exceptions: builtins raise at the point of error; hierarchy matching.
+    ("""
+try:
+    print(1 // 0)
+except ZeroDivisionError:
+    print("zde")
+lst = [1, 2]
+try:
+    print(lst[5])
+except LookupError:
+    print("ie")
+d = {"a": 1}
+try:
+    print(d["zz"])
+except KeyError as e:
+    print("ke:", e)
+try:
+    print(int("nope"))
+except ValueError:
+    print("ve")
+try:
+    print(5 // 0)
+except ArithmeticError:
+    print("arith")
+""", "zde\nie\nke: 'zz'\nve\narith\n"),
+    # Exceptions: bare re-raise, tuple clauses, propagation through calls
+    # with finally on the way out.
+    ("""
+try:
+    try:
+        raise ValueError("original")
+    except ValueError as e:
+        print("inner:", e)
+        raise
+except ValueError as e2:
+    print("outer:", e2)
+try:
+    raise TypeError("t")
+except (ValueError, TypeError) as e:
+    print("tuple:", e)
+def g():
+    try:
+        raise ValueError("deep")
+    finally:
+        print("g fin")
+try:
+    g()
+except ValueError as e:
+    print("main:", e)
+""", "inner: original\nouter: original\ntuple: t\ng fin\nmain: deep\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

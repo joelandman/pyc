@@ -202,6 +202,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::Function::Create(pycTryPushTy, llvm::Function::ExternalLinkage, "pyc_try_push", module.get());
     llvm::FunctionType* pycTryPopTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
     llvm::Function::Create(pycTryPopTy, llvm::Function::ExternalLinkage, "pyc_try_pop", module.get());
+    llvm::FunctionType* pycReraiseTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
+    llvm::Function::Create(pycReraiseTy, llvm::Function::ExternalLinkage, "pyc_reraise", module.get());
+    llvm::FunctionType* pycMakeExcTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(pycMakeExcTy, llvm::Function::ExternalLinkage, "pyc_make_exc", module.get());
+    llvm::FunctionType* pycExcMatchesTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(pycExcMatchesTy, llvm::Function::ExternalLinkage, "pyc_exc_matches", module.get());
     // setjmp is special: declaration with the ReturnsTwice attribute.
     {
         llvm::FunctionType* setjmpTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {int8PtrTy}, false);
@@ -369,6 +375,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     // Subscript / membership / power
     llvm::FunctionType* getItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(getItemTy, llvm::Function::ExternalLinkage, "Pyc_GetItem", module.get());
+    llvm::FunctionType* subscriptTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(subscriptTy, llvm::Function::ExternalLinkage, "Pyc_Subscript", module.get());
 
     // B6: Extended attribute lookup (instance dict + class dict fallback)
     llvm::FunctionType* getAttrExtTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
@@ -1198,17 +1206,22 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     //    attribute tells LLVM that the call may return twice
                     //    (once normally, once after longjmp).
                     llvm::Value* rv = builder.CreateCall(sj, {jbufPtr}, "setjmp.rv");
-                    // 2) After setjmp has filled the buffer, push the try
-                    //    frame and copy the buffer into it. The matching
-                    //    pyc_raise will longjmp to the address setjmp recorded.
-                    builder.CreateCall(pycTryPush, {jbufPtr, zero});
+                    // 2) Push the try frame ONLY on first entry (setjmp == 0).
+                    //    pyc_raise pops the frame before longjmp'ing, so the
+                    //    exception re-entry path must NOT push again — that
+                    //    would grow the stack by one dead frame per exception.
                     llvm::Value* isExc = builder.CreateICmpNE(rv,
                         llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0));
                     auto nit = blockMap.find(normalL);
                     auto eit = blockMap.find(excL);
                     if (nit != blockMap.end() && eit != blockMap.end()) {
-                        builder.CreateCondBr(isExc, eit->second, nit->second);
+                        llvm::BasicBlock* pushBB = llvm::BasicBlock::Create(context, "try.push", func);
+                        builder.CreateCondBr(isExc, eit->second, pushBB);
+                        builder.SetInsertPoint(pushBB);
+                        builder.CreateCall(pycTryPush, {jbufPtr, zero});
+                        builder.CreateBr(nit->second);
                     } else if (nit != blockMap.end()) {
+                        builder.CreateCall(pycTryPush, {jbufPtr, zero});
                         builder.CreateBr(nit->second);
                     }
                 } else if (jbuf) {
@@ -2072,7 +2085,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                       continue;
                   }
                   // A4: native list subscript get for proven homogeneous lists.
-                 if (funcName == "Pyc_GetItem" && inst.operands.size() >= 3) {
+                 if ((funcName == "Pyc_GetItem" || funcName == "Pyc_Subscript") && inst.operands.size() >= 3) {
                      std::string listName = inst.operands[1].name;
                      std::string idxName = inst.operands[2].name;
                      // Check if result type is known to be int or float (set by lowering).

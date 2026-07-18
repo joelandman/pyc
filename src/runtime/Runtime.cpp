@@ -30,6 +30,7 @@ static constexpr int IMMORTAL_REFCOUNT = 0x3fffffff;
 // print-and-exit otherwise).
 struct TryFrame;
 static thread_local TryFrame* g_try_stack = nullptr;
+static void pyc_raise_msg(const char* type, const char* msg);
 
 // Flat struct (no union) so we can add dvalue alongside value cleanly.
 // LLVM codegen in Codegen.cpp mirrors fields 0-3: {i32, i32, i64, double}.
@@ -319,6 +320,8 @@ PyObject* PyList_NewFloatBoxed(PyObject* n) {
 long PyList_GetItemInt64(PyObject* list, size_t index) {
     if (list && list->type == 1 && list->list_item_type == 1 && index < list->ilist.size())
         return list->ilist[index];
+    if (list && list->type == 1 && list->list_item_type == 1)
+        pyc_raise_msg("IndexError", "list index out of range");
     return 0;
 }
 
@@ -330,6 +333,8 @@ void PyList_SetItemInt64(PyObject* list, size_t index, long v) {
 double PyList_GetItemDouble(PyObject* list, size_t index) {
     if (list && list->type == 1 && list->list_item_type == 2 && index < list->flist.size())
         return list->flist[index];
+    if (list && list->type == 1 && list->list_item_type == 2)
+        pyc_raise_msg("IndexError", "list index out of range");
     return 0.0;
 }
 
@@ -527,12 +532,15 @@ void Py_DECREF(PyObject* obj) {
         } else if (obj->type == 9) {
             MatchObj* mo = reinterpret_cast<MatchObj*>(obj->value);
             delete mo;
+        } else if (obj->type == 10) {
+            if (obj->cell_content) { Py_DECREF(obj->cell_content); obj->cell_content = nullptr; }
         }
         delete obj;   // calls dtors for vector/map/string
     }
 }
 
 static int PyObject_PrintBase(PyObject* obj, FILE* fp);
+static std::string pyc_exc_message(PyObject* exc);
 static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
     // Like PyObject_PrintBase but writes NO trailing newline. Used by
     // container printers (list/dict) so we get "[1, 2, 3]" instead of
@@ -603,6 +611,10 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
     if (obj->type == 9) {
         // Match object — print "<re.Match object>" for safety.
         int r = fprintf(fp, "<re.Match object>\n"); fflush(fp); return r;
+    }
+    if (obj->type == 10) {
+        // Exception — print str(e), i.e. the message (empty when none).
+        int r = fprintf(fp, "%s\n", pyc_exc_message(obj).c_str()); fflush(fp); return r;
     }
     if (obj->type == 1) {
         fprintf(fp, "[");
@@ -1019,12 +1031,30 @@ PyObject* PyNumber_Negate(PyObject* obj) {
     return NULL;
 }
 
+// Strict full-string integer parse (Python semantics): the whole string,
+// modulo surrounding whitespace, must be consumed or it's a ValueError.
+static bool pyc_parse_long(const std::string& s, int base, long* out) {
+    try {
+        size_t pos = 0;
+        long v = std::stol(s, &pos, base);
+        while (pos < s.size() && isspace((unsigned char)s[pos])) ++pos;
+        if (pos != s.size()) return false;
+        *out = v;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 PyObject* PyBuiltin_Int(PyObject* obj) {
     if (!obj) return PyInt_FromLong(0);
     if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(obj->value);
     if (obj->type == 4) return PyInt_FromLong((long)obj->dvalue);
     if (obj->type == 3) {
-        try { return PyInt_FromLong(std::stol(obj->str)); } catch (...) {}
+        long v;
+        if (pyc_parse_long(obj->str, 10, &v)) return PyInt_FromLong(v);
+        pyc_raise_msg("ValueError", ("invalid literal for int() with base 10: '" + obj->str + "'").c_str());
+        return nullptr;
     }
     return PyInt_FromLong(0);
 }
@@ -1033,7 +1063,10 @@ PyObject* PyBuiltin_IntBase(PyObject* obj, PyObject* base) {
     int b = base ? (int)base->value : 10;
     if (!obj) return PyInt_FromLong(0);
     if (obj->type == 3) {
-        try { return PyInt_FromLong(std::stol(obj->str, nullptr, b)); } catch (...) {}
+        long v;
+        if (pyc_parse_long(obj->str, b, &v)) return PyInt_FromLong(v);
+        pyc_raise_msg("ValueError", ("invalid literal for int() with base " + std::to_string(b) + ": '" + obj->str + "'").c_str());
+        return nullptr;
     }
     if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(obj->value);
     return PyInt_FromLong(0);
@@ -2058,6 +2091,26 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
             return PyUnicode_FromString(buf);
         }
     }
+    return nullptr;
+}
+
+// User-facing subscript (a[k]): like Pyc_GetItem but raises IndexError /
+// KeyError on a miss, Python-style. Internal probes (method lookup, module
+// attributes, with-statement dunders) keep using the non-raising Pyc_GetItem.
+PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
+    PyObject* r = Pyc_GetItem(obj, key);
+    if (r) return r;
+    if (obj && obj->type == 2) {
+        // Raw key as the message; pyc_exc_message adds the repr quoting for
+        // string keys (str(KeyError('k')) is "'k'").
+        PyObject* t = PyUnicode_FromString("KeyError");
+        PyObject* e = pyc_make_exc(t, key);
+        Py_DECREF(t);
+        pyc_raise(e);
+        return nullptr;
+    }
+    if (obj && obj->type == 1) { pyc_raise_msg("IndexError", "list index out of range"); return nullptr; }
+    if (obj && obj->type == 3) { pyc_raise_msg("IndexError", "string index out of range"); return nullptr; }
     return nullptr;
 }
 
@@ -3832,7 +3885,7 @@ PyObject* PyNumber_Divide(PyObject* a, PyObject* b) {
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) {
         if (b->value == 0) {
-            if (g_try_stack) { pyc_raise(PyUnicode_FromString("ZeroDivisionError: integer division or modulo by zero")); return NULL; }
+            { pyc_raise_msg("ZeroDivisionError", "integer division or modulo by zero"); return NULL; }
             std::fprintf(stderr, "ZeroDivisionError: integer division or modulo by zero\n");
             std::fflush(stderr);
             std::exit(1);
@@ -3843,7 +3896,7 @@ PyObject* PyNumber_Divide(PyObject* a, PyObject* b) {
     }
     double bv = numeric_val(b);
     if (bv == 0.0) {
-        if (g_try_stack) { pyc_raise(PyUnicode_FromString("ZeroDivisionError: float divmod()")); return NULL; }
+        { pyc_raise_msg("ZeroDivisionError", "float divmod()"); return NULL; }
         std::fprintf(stderr, "ZeroDivisionError: float divmod()\n");
         std::fflush(stderr);
         std::exit(1);
@@ -3856,7 +3909,7 @@ PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b) {
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     double bv = numeric_val(b);
     if (bv == 0.0) {
-        if (g_try_stack) { pyc_raise(PyUnicode_FromString("ZeroDivisionError: float division by zero")); return NULL; }
+        { pyc_raise_msg("ZeroDivisionError", "float division by zero"); return NULL; }
         std::fprintf(stderr, "ZeroDivisionError: float division by zero\n");
         std::fflush(stderr);
         std::exit(1);
@@ -3869,7 +3922,7 @@ PyObject* PyNumber_Remainder(PyObject* a, PyObject* b) {
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) {
         if (b->value == 0) {
-            if (g_try_stack) { pyc_raise(PyUnicode_FromString("ZeroDivisionError: integer division or modulo by zero")); return NULL; }
+            { pyc_raise_msg("ZeroDivisionError", "integer division or modulo by zero"); return NULL; }
             std::fprintf(stderr, "ZeroDivisionError: integer division or modulo by zero\n");
             std::fflush(stderr);
             std::exit(1);
@@ -3880,7 +3933,7 @@ PyObject* PyNumber_Remainder(PyObject* a, PyObject* b) {
     }
     double bv = numeric_val(b);
     if (bv == 0.0) {
-        if (g_try_stack) { pyc_raise(PyUnicode_FromString("ZeroDivisionError: float modulo")); return NULL; }
+        { pyc_raise_msg("ZeroDivisionError", "float modulo"); return NULL; }
         std::fprintf(stderr, "ZeroDivisionError: float modulo\n");
         std::fflush(stderr);
         std::exit(1);
@@ -4170,39 +4223,152 @@ void pyc_try_pop(void) {
     if (f->exc) Py_DECREF(f->exc);
     delete f;
 }
+
+// ---- Structured exceptions (type 10) ----
+// str          = exception type name ("ValueError", ...)
+// cell_content = message object (usually a str), may be null.
+// Legacy string exceptions ("TypeName: message") are still accepted by
+// the matcher and printers for backward compatibility.
+PyObject* pyc_make_exc(PyObject* typeName, PyObject* msg) {
+    PyObject* e = new PyObject();
+    e->refcount = 1;
+    e->type = 10;
+    e->str = (typeName && typeName->type == 3) ? typeName->str : "Exception";
+    e->cell_content = nullptr;
+    // An empty-string message from the compiler's no-argument constructor
+    // sentinel means "no message".
+    if (msg && !(msg->type == 3 && msg->str.empty())) {
+        e->cell_content = msg;
+        Py_INCREF(msg);
+    }
+    return e;
+}
+
+// Type name and message of any exception value (structured, legacy string,
+// or arbitrary object).
+static std::string pyc_exc_type_name(PyObject* exc) {
+    if (!exc) return "Exception";
+    if (exc->type == 10) return exc->str;
+    if (exc->type == 3) {
+        size_t p = exc->str.find(": ");
+        if (p != std::string::npos) return exc->str.substr(0, p);
+        return exc->str;
+    }
+    return "Exception";
+}
+static std::string pyc_exc_message(PyObject* exc) {
+    if (!exc) return "";
+    if (exc->type == 10) {
+        if (!exc->cell_content) return "";
+        // KeyError displays the repr of its argument (str(KeyError('k')) == "'k'").
+        if (exc->str == "KeyError" && exc->cell_content->type == 3)
+            return "'" + exc->cell_content->str + "'";
+        PyObject* s = PyStr_FromAny(exc->cell_content);
+        std::string r = s ? s->str : "";
+        if (s) Py_DECREF(s);
+        return r;
+    }
+    if (exc->type == 3) {
+        size_t p = exc->str.find(": ");
+        if (p != std::string::npos) return exc->str.substr(p + 2);
+        return exc->str;
+    }
+    PyObject* s = PyStr_FromAny(exc);
+    std::string r = s ? s->str : "";
+    if (s) Py_DECREF(s);
+    return r;
+}
+
+// Minimal builtin exception hierarchy (child -> parent). Everything is
+// implicitly a subclass of Exception/BaseException.
+static const char* pyc_exc_parent(const std::string& n) {
+    if (n == "ZeroDivisionError" || n == "OverflowError" || n == "FloatingPointError") return "ArithmeticError";
+    if (n == "IndexError" || n == "KeyError") return "LookupError";
+    if (n == "FileNotFoundError" || n == "PermissionError" || n == "IOError") return "OSError";
+    if (n == "IndentationError") return "SyntaxError";
+    if (n == "UnboundLocalError") return "NameError";
+    return nullptr;
+}
+
+// Boxed-bool: does `exc` match an except clause naming `typeName`?
+PyObject* pyc_exc_matches(PyObject* exc, PyObject* typeName) {
+    if (!typeName || typeName->type != 3) return PyBool_New(0);
+    const std::string& want = typeName->str;
+    if (want == "Exception" || want == "BaseException") return PyBool_New(1);
+    std::string have = pyc_exc_type_name(exc);
+    while (!have.empty()) {
+        if (have == want) return PyBool_New(1);
+        const char* up = pyc_exc_parent(have);
+        have = up ? up : "";
+    }
+    return PyBool_New(0);
+}
+
+// Most recent exception raised — used by bare `raise` (re-raise). Never
+// cleared by pyc_clear_exception.
+static thread_local PyObject* g_last_exception = nullptr;
+
+// Uncaught exception: report like CPython (type: message on stderr) and exit.
+static void pyc_fatal_exception(PyObject* exc) {
+    std::string tn = pyc_exc_type_name(exc);
+    std::string msg = pyc_exc_message(exc);
+    fprintf(stderr, "Traceback (most recent call last):\n");
+    if (msg.empty()) fprintf(stderr, "%s\n", tn.c_str());
+    else fprintf(stderr, "%s: %s\n", tn.c_str(), msg.c_str());
+    exit(1);
+}
+
 void pyc_raise(PyObject* exc) {
     if (!exc) return;
-    if (g_try_stack) {
-        // Transfer to the innermost try frame. We do NOT pop the frame
-        // here — the catch block will clear the exception via
-        // pyc_clear_exception / pyc_try_pop, and leaving the frame on
-        // the stack ensures longjmp re-entry (e.g. inside an except
-        // handler) targets the next outer try. The frame's `exc` field
-        // holds the exception so the catch can retrieve it.
-        TryFrame* f = g_try_stack;
-        if (f->exc) Py_DECREF(f->exc);
-        f->exc = exc;
+    if (g_last_exception != exc) {
+        if (g_last_exception) Py_DECREF(g_last_exception);
+        g_last_exception = exc;
         Py_INCREF(exc);
-        std::longjmp(f->jmp, 1);
     }
-    if (g_current_exception) Py_DECREF(g_current_exception);
-    g_current_exception = exc;
-    Py_INCREF(exc);
+    if (g_try_stack) {
+        // Pop the frame BEFORE the jump: handler dispatch runs in generated
+        // code on the exception path, and a raise from a handler / no-match
+        // re-raise must target the next outer try. The exception itself
+        // travels in g_current_exception.
+        TryFrame* f = g_try_stack;
+        g_try_stack = f->next;
+        if (g_current_exception) Py_DECREF(g_current_exception);
+        g_current_exception = exc;
+        Py_INCREF(exc);
+        jmp_buf jmp;
+        memcpy(jmp, f->jmp, sizeof(jmp_buf));
+        if (f->exc) Py_DECREF(f->exc);
+        delete f;
+        std::longjmp(jmp, 1);
+    }
+    pyc_fatal_exception(exc);
 }
-PyObject* pyc_current_exception(void) {
-    if (g_try_stack && g_try_stack->exc) {
-        Py_INCREF(g_try_stack->exc);
-        return g_try_stack->exc;
+
+// Convenience for runtime operations raising builtin exceptions.
+static void pyc_raise_msg(const char* type, const char* msg) {
+    PyObject* t = PyUnicode_FromString(type);
+    PyObject* m = PyUnicode_FromString(msg);
+    PyObject* e = pyc_make_exc(t, m);
+    Py_DECREF(t);
+    Py_DECREF(m);
+    pyc_raise(e);   // does not return when a try frame exists
+    Py_DECREF(e);
+}
+
+void pyc_reraise(void) {
+    if (g_last_exception) {
+        pyc_raise(g_last_exception);
+        return;
     }
+    pyc_raise_msg("RuntimeError", "No active exception to reraise");
+}
+
+PyObject* pyc_current_exception(void) {
     if (!g_current_exception) return nullptr;
     Py_INCREF(g_current_exception);
     return g_current_exception;
 }
 void pyc_clear_exception(void) {
-    if (g_try_stack && g_try_stack->exc) {
-        Py_DECREF(g_try_stack->exc);
-        g_try_stack->exc = nullptr;
-    }
     if (g_current_exception) {
         Py_DECREF(g_current_exception);
         g_current_exception = nullptr;

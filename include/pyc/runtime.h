@@ -153,6 +153,7 @@ PyObject* PyList_Clear(PyObject* list);
 PyObject* PyList_PopAt(PyObject* list, PyObject* idx);
 PyObject* PyObject_TruthBoxed(PyObject* obj);
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key);
+PyObject* Pyc_Subscript(PyObject* obj, PyObject* key);
 PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val);
 PyObject* Pyc_Contains(PyObject* container, PyObject* item);
 PyObject* Pyc_Pow(PyObject* a, PyObject* b);
@@ -172,8 +173,14 @@ void PyErr_Print(void);
 void      pyc_try_push(void* jmpBuf, PyObject* filterType);
 void      pyc_try_pop(void);
 void      pyc_raise(PyObject* exc);
+void      pyc_reraise(void);
 PyObject* pyc_current_exception(void);
 void      pyc_clear_exception(void);
+// Structured exceptions (type 8): typeName + optional message object.
+PyObject* pyc_make_exc(PyObject* typeName, PyObject* msg);
+// Boxed-bool: does exc match an except clause naming typeName (incl. the
+// builtin hierarchy, e.g. except ArithmeticError catches ZeroDivisionError)?
+PyObject* pyc_exc_matches(PyObject* exc, PyObject* typeName);
 
 // Build a synthetic `sys` module from C argc/argv. The module has at
 // least `sys.argv` as a list of Python strings. The C entry point

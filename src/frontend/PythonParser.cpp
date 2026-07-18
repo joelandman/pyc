@@ -579,12 +579,53 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             node->children.push_back(std::move(fbChild));
         }
         Py_XDECREF(finalbody);
+        // orelse: the `else` clause, run only when the body raised nothing.
+        // Synthesized as an "elsebody" child mirroring "finalbody".
+        PyObject* orelse = PyObject_GetAttrString(pyNode, "orelse");
+        if (orelse && PyList_Check(orelse) && PyList_Size(orelse) > 0) {
+            auto ebChild = std::make_unique<ASTNode>();
+            ebChild->type = "elsebody";
+            for (Py_ssize_t i = 0; i < PyList_Size(orelse); ++i) {
+                PyObject* item = PyList_GetItem(orelse, i);
+                auto st = std::make_unique<ASTNode>();
+                buildAST(item, st.get());
+                ebChild->children.push_back(std::move(st));
+            }
+            node->children.push_back(std::move(ebChild));
+        }
+        Py_XDECREF(orelse);
     } else if (node->type == "ExceptHandler") {
         // `name` is the optional `as e` binding.
         node->id = getPyString(pyNode, "name");
-        // `type` is the optional exception class (we don't currently
-        // dispatch on it — every handler catches everything that reached it).
-        (void)getPyString(pyNode, "type");
+        // `type` is the optional exception class expression: a Name for
+        // `except ValueError:` or a Tuple of Names for `except (A, B):`.
+        // Collect the class names into node->args (empty = bare `except:`).
+        {
+            PyObject* typeNode = PyObject_GetAttrString(pyNode, "type");
+            if (typeNode && typeNode != Py_None) {
+                PyObject* idAttr = PyObject_GetAttrString(typeNode, "id");
+                if (idAttr && PyUnicode_Check(idAttr)) {
+                    node->args.push_back(PyUnicode_AsUTF8(idAttr));
+                } else {
+                    PyErr_Clear();
+                    PyObject* elts = PyObject_GetAttrString(typeNode, "elts");
+                    if (elts && PyList_Check(elts)) {
+                        for (Py_ssize_t i = 0; i < PyList_Size(elts); ++i) {
+                            PyObject* elt = PyList_GetItem(elts, i);
+                            PyObject* eid = PyObject_GetAttrString(elt, "id");
+                            if (eid && PyUnicode_Check(eid)) node->args.push_back(PyUnicode_AsUTF8(eid));
+                            Py_XDECREF(eid);
+                            PyErr_Clear();
+                        }
+                    }
+                    Py_XDECREF(elts);
+                }
+                Py_XDECREF(idAttr);
+                PyErr_Clear();
+            }
+            Py_XDECREF(typeNode);
+            PyErr_Clear();
+        }
         PyObject* body = PyObject_GetAttrString(pyNode, "body");
         if (body && PyList_Check(body)) {
             for (Py_ssize_t i = 0; i < PyList_Size(body); ++i) {

@@ -882,8 +882,25 @@ class LoweringVisitor {
         } else if (node->type == "Return") {
             lowerReturn(node);
         } else if (node->type == "Raise") {
-            std::string exc = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
-            ir.addInstruction(currentFunc, "call", {"pyc_raise", exc}, "");
+            if (node->children.empty() || !node->children[0]) {
+                // bare `raise` — re-raise the active exception
+                ir.addInstruction(currentFunc, "call", {"pyc_reraise"}, "");
+            } else if (node->children[0]->type == "Name" &&
+                       builtinExcNames().count(node->children[0]->id)) {
+                // `raise ValueError` — construct with no message
+                std::string nameConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + node->children[0]->id + "\""}, nameConst, "str");
+                std::string emptyMsg = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"\""}, emptyMsg, "str");
+                std::string exc = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"pyc_make_exc", nameConst, emptyMsg}, exc);
+                ir.addInstruction(currentFunc, "call", {"pyc_raise", exc}, "");
+            } else {
+                // `raise <expr>` — exception constructors (ValueError("x")) are
+                // handled by lowerCall's builtin-exception special case.
+                std::string exc = lowerExpr(node->children[0].get());
+                ir.addInstruction(currentFunc, "call", {"pyc_raise", exc}, "");
+            }
         } else if (node->type == "Try") {
             lowerTry(node);
         } else if (node->type == "With") {
@@ -1636,6 +1653,21 @@ class LoweringVisitor {
         return false;
     }
 
+    // Builtin exception class names — calls to these construct a structured
+    // exception object (pyc_make_exc) instead of going through normal call
+    // resolution.
+    static const std::unordered_set<std::string>& builtinExcNames() {
+        static const std::unordered_set<std::string> names = {
+            "BaseException", "Exception", "ArithmeticError", "ZeroDivisionError",
+            "OverflowError", "FloatingPointError", "LookupError", "IndexError",
+            "KeyError", "ValueError", "TypeError", "RuntimeError", "StopIteration",
+            "AttributeError", "NameError", "UnboundLocalError", "NotImplementedError",
+            "OSError", "IOError", "FileNotFoundError", "PermissionError",
+            "AssertionError", "SyntaxError", "IndentationError"
+        };
+        return names;
+    }
+
     // True when 'name' is bound locally in the current scope (parameter or a
     // name assigned so far), i.e. it must resolve as a variable even if a
     // user def of the same name exists.
@@ -2096,6 +2128,31 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Super"}, superProxy);
             superProxyTemps.insert(superProxy);
             return superProxy;
+        }
+        // Builtin exception constructor: ValueError("msg"), KeyError(k), ...
+        // Produces a structured exception object via pyc_make_exc. A local
+        // binding with the same name (or a user class) takes precedence.
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Name" &&
+            builtinExcNames().count(node->children[0]->id) &&
+            !knownClasses.count(node->children[0]->id) &&
+            !isShadowedLocal(node->children[0]->id)) {
+            std::string nameConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + node->children[0]->id + "\""}, nameConst, "str");
+            std::string msg;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                if (node->children[i] && node->children[i]->type != "Keyword") {
+                    msg = lowerExpr(node->children[i].get());
+                    break;
+                }
+            }
+            if (msg.empty()) {
+                msg = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"\""}, msg, "str");
+            }
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"pyc_make_exc", nameConst, msg}, res);
+            return res;
         }
     // Class instantiation: ClassName(args) — create instance dict and call __init__
         std::string funcName;
@@ -4166,7 +4223,7 @@ class LoweringVisitor {
             std::string idx = lowerExpr(sub->children.size() > 1 ? sub->children[1].get() : nullptr);
             std::string rhs = lowerExpr(node->children[1].get());
             std::string cur = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, idx}, cur);
+            ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, cur);
             noteType(cur, typeOf(rhs));
             std::string res = "t" + std::to_string(tempCounter++);
             std::string resultType = numericResultType(op, cur, rhs);
@@ -4227,7 +4284,7 @@ class LoweringVisitor {
         }
         std::string idx = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
         std::string res = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, idx}, res);
+        ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, res);
         // A4: annotate element type for homogeneous lists so codegen can use native path.
         std::string objType = typeOf(obj);
         if (objType == "list_int") noteType(res, "int");
@@ -4267,27 +4324,41 @@ class LoweringVisitor {
         lowerReturnExpr(node);
     }
 
-    // try/except/else/finally lowering.
-    //   node->children[0..nBody-1] = body statements
-    //   node->children[nBody..]    = ExceptHandler nodes (each with handler body as children)
-    //   plus an optional "finalbody" synthetic child with the final-body statements.
+    // try/except/else/finally lowering with typed handler dispatch.
     //
-    // The runtime uses setjmp/longjmp: try body entry calls setjmp on a
-    // fresh alloca; if it returns 0, fall through to the body; if it returns
-    // non-zero (i.e. pyc_raise longjmp'd), branch to the first except handler.
-    // After the try (and after each handler) we branch to a finally block (if
-    // present) and then to the end label. The finally block runs in both the
-    // normal and the exception path.
+    // Runtime protocol (see Runtime.cpp): try_begin pushes a setjmp frame on
+    // first entry only; pyc_raise POPS the innermost frame before longjmp'ing
+    // to it and leaves the exception in g_current_exception. So on the
+    // exception path the frame is already gone: handler dispatch, re-raise
+    // (to the next outer try or fatal), and handler-body raises all work
+    // without further stack bookkeeping. The normal path pops explicitly
+    // after the body.
+    //
+    // Layout:
+    //   try_begin(jmp, tryL, excL)
+    //   tryL:   body; pyc_try_pop; [else]; br finallyL/endL
+    //   excL:   exc = pyc_current_exception; typed dispatch chain
+    //   H_i:    [bind as-name]; pyc_clear_exception; handler body; br finallyL/endL
+    //   nomatchL: [finally]; pyc_raise(exc)  (propagate outward)
+    //   finallyL: finally body; br endL
+    //   endL:
+    //
+    // Known limitations: `return` inside a try body leaves the frame pushed;
+    // a raise inside a handler body propagates without running this try's
+    // finally first.
     void lowerTry(const ASTNode* node) {
         if (node->children.empty()) return;
-        // Split children into body / handlers / optional finally.
+        // Split children into body / handlers / optional else / optional finally.
         std::vector<const ASTNode*> bodyStmts;
         std::vector<const ASTNode*> handlers;
+        const ASTNode* elseBody = nullptr;
         const ASTNode* finallyBody = nullptr;
         for (const auto& c : node->children) {
             if (!c) continue;
             if (c->type == "finalbody") {
                 finallyBody = c.get();
+            } else if (c->type == "elsebody") {
+                elseBody = c.get();
             } else if (c->type == "ExceptHandler") {
                 handlers.push_back(c.get());
             } else {
@@ -4295,75 +4366,76 @@ class LoweringVisitor {
             }
         }
         int c = tempCounter++;
-        std::string jmpVar      = "__tryjmp_" + std::to_string(c);
-        std::string tryL        = "try_body_" + std::to_string(c);
-        std::string endL        = "try_end_"  + std::to_string(c);
-        std::string finallyL    = "try_finally_" + std::to_string(c);
-        // Each handler has an entry label; the FIRST one is the target of the
-        // exception path (the longjmp destination).
+        std::string jmpVar   = "__tryjmp_" + std::to_string(c);
+        std::string tryL     = "try_body_" + std::to_string(c);
+        std::string excL     = "try_exc_" + std::to_string(c);
+        std::string nomatchL = "try_nomatch_" + std::to_string(c);
+        std::string endL     = "try_end_"  + std::to_string(c);
+        std::string finallyL = "try_finally_" + std::to_string(c);
+        std::string afterBodyL = finallyBody ? finallyL : endL;
         std::vector<std::string> handlerLabels;
         for (size_t i = 0; i < handlers.size(); ++i)
             handlerLabels.push_back("try_h_" + std::to_string(c) + "_" + std::to_string(i));
 
-        // Allocate the jmp buffer at function entry. We need an alloca, which
-        // is normally a value; the easiest path is to make `try_begin` allocate
-        // it lazily. But alloca is at the top of the function in LLVM, so we
-        // rely on `alloca` to insert at the function's entry block.
-        // We use the IR's "alloca" name as the storage; codegen handles it.
-        // The try_begin/try_end instructions take a jmpVar name to make this
-        // explicit.
-
-        // try_begin: stack-allocate jmpVar, then call setjmp. If result == 0,
-        // branch to tryL (normal entry). If result != 0, branch to first
-        // handler (or to finally if no handlers). We model this with a
-        // single instruction "try_begin" carrying:
-        //   operands[0] = jmpVar name
-        //   result     = tryL (normal entry)
-        // The codegen handles the setjmp + branch; the exception path's
-        // target is the first handler label (or finally if no handlers).
-        std::string excTarget = handlerLabels.empty() ? finallyL : handlerLabels[0];
-        // If there is no finally AND no handlers, we have no excTarget;
-        // we still need a label to longjmp to. The codegen treats the case
-        // "no handlers, no finally" as a no-op (raise just stores).
-        // The exception target is encoded in a hidden `try_excL` field —
-        // for simplicity we pass it as inst.op's result while the body
-        // branch target is the second operand.
-
-        // We model: try_begin(jmpVar, normalL, excL)
-        std::string tryNormalL = tryL;
-        std::string tryExcL = excTarget;
-        if (handlerLabels.empty() && finallyBody == nullptr) {
-            // No handler and no finally: emit a clear_exception + a "passthrough"
-            // — `raise` will just store the exception (handled by runtime when
-            // try stack is empty). Emit an unconditional branch to endL so the
-            // IR is well-formed.
-            ir.addInstruction(currentFunc, "call", {"pyc_clear_exception"}, "");
+        if (handlers.empty() && finallyBody == nullptr) {
+            // Degenerate try (no except, no finally): body + else inline.
             for (const auto* s : bodyStmts) lower(s);
-            ir.addInstruction(currentFunc, "br", {}, endL);
-            ir.addInstruction(currentFunc, "label", {}, endL);
+            if (elseBody) for (const auto& s : elseBody->children) if (s) lower(s.get());
             return;
         }
-        ir.addInstruction(currentFunc, "try_begin", {jmpVar, tryNormalL, tryExcL}, tryNormalL);
 
-        // Try body (entered when setjmp returns 0)
+        ir.addInstruction(currentFunc, "try_begin", {jmpVar, tryL, excL}, tryL);
+
+        // Normal path: body, pop the frame, then else (outside the frame --
+        // exceptions in else/finally are not caught by this try).
         ir.addInstruction(currentFunc, "label", {}, tryL);
         for (const auto* s : bodyStmts) lower(s);
-        // If the body didn't terminate, branch to finallyL (if any) or endL.
-        if (finallyBody) {
-            ir.addInstruction(currentFunc, "br", {}, finallyL);
+        ir.addInstruction(currentFunc, "call", {"pyc_try_pop"}, "");
+        if (elseBody) for (const auto& s : elseBody->children) if (s) lower(s.get());
+        ir.addInstruction(currentFunc, "br", {}, afterBodyL);
+
+        // Exception path: fetch the exception, then run the dispatch chain.
+        ir.addInstruction(currentFunc, "label", {}, excL);
+        std::string excVar = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"pyc_current_exception"}, excVar);
+        for (size_t i = 0; i < handlers.size(); ++i) {
+            const ASTNode* h = handlers[i];
+            std::string nextClauseL = (i + 1 < handlers.size())
+                ? ("try_chk_" + std::to_string(c) + "_" + std::to_string(i + 1))
+                : nomatchL;
+            if (h->args.empty()) {
+                // bare `except:` catches everything
+                ir.addInstruction(currentFunc, "br", {}, handlerLabels[i]);
+            } else {
+                // One check per listed type; any match enters the handler.
+                for (size_t k = 0; k < h->args.size(); ++k) {
+                    std::string nameConst = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + h->args[k] + "\""}, nameConst, "str");
+                    std::string m = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"pyc_exc_matches", excVar, nameConst}, m);
+                    std::string noMatchNextL = (k + 1 < h->args.size())
+                        ? ("try_chk_" + std::to_string(c) + "_" + std::to_string(i) + "_" + std::to_string(k + 1))
+                        : nextClauseL;
+                    ir.addInstruction(currentFunc, "br", {m, handlerLabels[i], noMatchNextL});
+                    if (k + 1 < h->args.size())
+                        ir.addInstruction(currentFunc, "label", {}, noMatchNextL);
+                }
+            }
+            if (i + 1 < handlers.size())
+                ir.addInstruction(currentFunc, "label", {}, nextClauseL);
         }
 
-        // Handlers — each fetches the current exception, binds it, runs body.
+        // No handler matched (or a typed chain fell through): run finally,
+        // then propagate to the next outer try (or fatal if none).
+        ir.addInstruction(currentFunc, "label", {}, nomatchL);
+        if (finallyBody) for (const auto& s : finallyBody->children) if (s) lower(s.get());
+        ir.addInstruction(currentFunc, "call", {"pyc_raise", excVar}, "");
+        ir.addInstruction(currentFunc, "br", {}, endL);   // unreachable formality
+
+        // Handler bodies.
         for (size_t i = 0; i < handlers.size(); ++i) {
             const ASTNode* h = handlers[i];
             ir.addInstruction(currentFunc, "label", {}, handlerLabels[i]);
-            // The exception was already raised via longjmp; pop the try
-            // frame so any raise in the handler body targets the next
-            // outer try (not the same one again).
-            std::string popRes = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"pyc_try_pop"}, popRes);
-            std::string excVar = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"pyc_current_exception"}, excVar);
             if (!h->id.empty()) {
                 ir.addInstruction(currentFunc, "assign", {excVar}, h->id);
             }
@@ -4371,34 +4443,17 @@ class LoweringVisitor {
             for (const auto& s : h->children) {
                 if (s) lower(s.get());
             }
-            // After handler body, fall through to finallyL.
-            if (finallyBody) {
-                ir.addInstruction(currentFunc, "br", {}, finallyL);
-            }
+            ir.addInstruction(currentFunc, "br", {}, afterBodyL);
         }
 
-        // Finally block (if any): runs in both normal and exception paths.
-        // If no finally, exception with no handler goes to a synthetic
-        // "excep_L" label that just pops and branches to endL.
         if (finallyBody) {
             ir.addInstruction(currentFunc, "label", {}, finallyL);
-            for (const auto& s : finallyBody->children) {
-                if (s) lower(s.get());
-            }
-        } else {
-            // No finally: we need a place for the unhandled exception to
-            // land. Use a synthetic excepL that just pops and re-raises by
-            // re-calling pyc_raise. But since there's no enclosing try in
-            // our model, we just print and exit. (The runtime already prints
-            // ZeroDivisionError on division by zero if no try is in scope.)
-            // For now, we have a label that's simply unreachable; codegen
-            // will see no predecessor so it's pruned.
-            (void)0;
+            for (const auto& s : finallyBody->children) if (s) lower(s.get());
+            ir.addInstruction(currentFunc, "br", {}, endL);
         }
-        // try_end: pop the try frame, then branch to endL.
-        ir.addInstruction(currentFunc, "try_end", {jmpVar}, endL);
         ir.addInstruction(currentFunc, "label", {}, endL);
     }
+
 
     // obj.method(args) dispatch
     std::string lowerMethodCall(const ASTNode* node) {
