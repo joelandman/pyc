@@ -176,8 +176,10 @@ void      pyc_raise(PyObject* exc);
 void      pyc_reraise(void);
 PyObject* pyc_current_exception(void);
 void      pyc_clear_exception(void);
-// Structured exceptions (type 8): typeName + optional message object.
+// Structured exceptions (type 10): typeName + optional message object.
 PyObject* pyc_make_exc(PyObject* typeName, PyObject* msg);
+// Function objects (type 11): callable token + display name for repr.
+PyObject* pyc_make_func(PyObject* token, PyObject* displayName);
 // Boxed-bool: does exc match an except clause naming typeName (incl. the
 // builtin hierarchy, e.g. except ArithmeticError catches ZeroDivisionError)?
 PyObject* pyc_exc_matches(PyObject* exc, PyObject* typeName);

@@ -208,6 +208,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::Function::Create(pycMakeExcTy, llvm::Function::ExternalLinkage, "pyc_make_exc", module.get());
     llvm::FunctionType* pycExcMatchesTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(pycExcMatchesTy, llvm::Function::ExternalLinkage, "pyc_exc_matches", module.get());
+    llvm::FunctionType* pycMakeFuncTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(pycMakeFuncTy, llvm::Function::ExternalLinkage, "pyc_make_func", module.get());
     // setjmp is special: declaration with the ReturnsTwice attribute.
     {
         llvm::FunctionType* setjmpTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {int8PtrTy}, false);

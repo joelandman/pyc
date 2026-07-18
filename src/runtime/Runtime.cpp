@@ -532,7 +532,7 @@ void Py_DECREF(PyObject* obj) {
         } else if (obj->type == 9) {
             MatchObj* mo = reinterpret_cast<MatchObj*>(obj->value);
             delete mo;
-        } else if (obj->type == 10) {
+        } else if (obj->type == 10 || obj->type == 11) {
             if (obj->cell_content) { Py_DECREF(obj->cell_content); obj->cell_content = nullptr; }
         }
         delete obj;   // calls dtors for vector/map/string
@@ -615,6 +615,11 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
     if (obj->type == 10) {
         // Exception — print str(e), i.e. the message (empty when none).
         int r = fprintf(fp, "%s\n", pyc_exc_message(obj).c_str()); fflush(fp); return r;
+    }
+    if (obj->type == 11) {
+        // Function object — CPython-style repr.
+        const char* nm = obj->cell_content ? obj->cell_content->str.c_str() : obj->str.c_str();
+        int r = fprintf(fp, "<function %s at %p>\n", nm, (void*)obj); fflush(fp); return r;
     }
     if (obj->type == 1) {
         fprintf(fp, "[");
@@ -3962,6 +3967,14 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
             default: return 0;
         }
     }
+    // Function objects compare by identity (CPython: no __eq__ on functions).
+    if (a->type == 11 || b->type == 11) {
+        switch (op) {
+            case 0: return a == b;   // ==
+            case 1: return a != b;   // !=
+            default: return 0;       // ordering: TypeError in CPython
+        }
+    }
     // List equality and ordering. CPython compares element-wise; the
     // first unequal pair decides, with shorter < longer when all
     // shared elements are equal. We do the same here.
@@ -4224,6 +4237,25 @@ void pyc_try_pop(void) {
     delete f;
 }
 
+// ---- Function objects (type 11) ----
+// str          = callable token (IR/synthetic name, resolvable via the
+//                callable registry in Pyc_Apply)
+// cell_content = display name for repr (the Python-level name; "<lambda>"
+//                for lambdas), may be null.
+PyObject* pyc_make_func(PyObject* token, PyObject* displayName) {
+    PyObject* f = new PyObject();
+    f->refcount = 1;
+    f->type = 11;
+    f->value = 1;   // functions are truthy (codegen truth tests read ->value)
+    f->str = (token && token->type == 3) ? token->str : "";
+    f->cell_content = nullptr;
+    if (displayName && displayName->type == 3) {
+        f->cell_content = displayName;
+        Py_INCREF(displayName);
+    }
+    return f;
+}
+
 // ---- Structured exceptions (type 10) ----
 // str          = exception type name ("ValueError", ...)
 // cell_content = message object (usually a str), may be null.
@@ -4233,6 +4265,7 @@ PyObject* pyc_make_exc(PyObject* typeName, PyObject* msg) {
     PyObject* e = new PyObject();
     e->refcount = 1;
     e->type = 10;
+    e->value = 1;   // exceptions are truthy (codegen truth tests read ->value)
     e->str = (typeName && typeName->type == 3) ? typeName->str : "Exception";
     e->cell_content = nullptr;
     // An empty-string message from the compiler's no-argument constructor
@@ -4413,15 +4446,22 @@ extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObje
 // extract the token and prepend the extras to the provided argList before dispatch.
 extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
     if (!token) return nullptr;
-    PyObject* realTok = nullptr;
-    if (token->type == 3) {
-        realTok = token;
+    // Accept a bare string token, a function object (type 11, token in str),
+    // or a descriptor bundle list whose first element is either of those.
+    std::string tokName;
+    bool haveTok = false;
+    if (token->type == 3 || token->type == 11) {
+        tokName = token->str;
+        haveTok = true;
     } else if (token->type == 1 && !token->list.empty()) {
         PyObject* first = token->list[0];
-        if (first && first->type == 3) realTok = first;
+        if (first && (first->type == 3 || first->type == 11)) {
+            tokName = first->str;
+            haveTok = true;
+        }
     }
-    if (!realTok || realTok->type != 3) return nullptr;
-    auto it = g_callableRegistry.find(realTok->str);
+    if (!haveTok) return nullptr;
+    auto it = g_callableRegistry.find(tokName);
     if (it == g_callableRegistry.end()) return nullptr;
 
     PyObject* prepend = nullptr;

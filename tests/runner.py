@@ -764,6 +764,23 @@ try:
 except ValueError as e:
     print("main:", e)
 """, "inner: original\nouter: original\ntuple: t\ng fin\nmain: deep\n"),
+    # Function objects: repr prefix (address varies), identity, equality,
+    # truthiness — all address-independent assertions.
+    ("""
+def add(a, b):
+    return a + b
+print(str(add)[:14])
+g = add
+print(g is add, g == add)
+def sub(a, b):
+    return a - b
+print(add == sub)
+sq = lambda x: x * x
+print(str(sq)[:19])
+print(sq(7))
+if add:
+    print("truthy")
+""", "<function add \nTrue True\nFalse\n<function <lambda> \n49\ntruthy\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

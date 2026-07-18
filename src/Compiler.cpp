@@ -747,9 +747,8 @@ class LoweringVisitor {
             // are skipped: their value references build descriptor bundles with
             // the enclosing scope's cells at each use site.
             if (!closureFunctions.count(defIRName)) {
-                std::string tok = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"\"" + defIRName + "\""}, tok, "str");
-                ir.addInstruction(currentFunc, "assign", {tok}, node->id);
+                std::string fv = emitFuncValue(defIRName, node->id);
+                ir.addInstruction(currentFunc, "assign", {fv}, node->id);
                 noteType(node->id, "str");
             }
             // Do not fall through to the generic FunctionDef handling below.
@@ -1156,15 +1155,14 @@ class LoweringVisitor {
                         return lst;
                     }
                 }
-                // First-class use of a named def in value position: produce its
-                // callable token (same string-token model as lambdas) so it can
-                // be assigned, passed as an argument, stored in containers,
-                // returned, and called indirectly via Pyc_Apply. Skip names
-                // shadowed by a local binding (parameter or prior assignment).
+                // First-class use of a named def in value position: produce a
+                // function object wrapping its callable token so it can be
+                // assigned, passed as an argument, stored in containers,
+                // returned, called indirectly via Pyc_Apply, and printed as
+                // <function name at ...>. Skip names shadowed by a local
+                // binding (parameter or prior assignment).
                 if (userDefFunctions.count(eff) && !isShadowedLocal(node->id)) {
-                    std::string res = "c" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "const", {"\"" + eff + "\""}, res, "str");
-                    noteType(res, "str");
+                    std::string res = emitFuncValue(eff, node->id);
                     callableTokenToSynthetic[res] = eff;
                     callableTokenTemps.insert(res);
                     return res;
@@ -1267,10 +1265,8 @@ class LoweringVisitor {
                 }
             }
 
-            // Non-capturing path (original B4): bare string token.
-            std::string res = "c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {"\"" + lamName + "\""}, res, "str");
-            noteType(res, "str");
+            // Non-capturing path (original B4): function object wrapping the token.
+            std::string res = emitFuncValue(lamName, "<lambda>");
             callableTokenToSynthetic[res] = lamName;
             callableTokenTemps.insert(res);
             lastLambdaSynthetic = lamName;
@@ -1667,6 +1663,26 @@ class LoweringVisitor {
         };
         return names;
     }
+
+    // Emit a function-object value: pyc_make_func(token, displayName).
+    // The token resolves through the callable registry in Pyc_Apply; the
+    // display name is what repr shows (<function displayName at ...>).
+    std::string emitFuncValue(const std::string& irName, const std::string& displayName) {
+        // Dedicated temp namespace: emitFuncValue also runs right after a
+        // FunctionDef restores tempCounter, and consuming shared-counter
+        // numbers there collides with temp-name-keyed compile-time maps
+        // (bundleTemps / callableTokenToSynthetic) populated during the
+        // function body's lowering.
+        int n = fvCounter++;
+        std::string tok = "cfv" + std::to_string(n);
+        ir.addInstruction(currentFunc, "const", {"\"" + irName + "\""}, tok, "str");
+        std::string disp = "cfv" + std::to_string(n) + "d";
+        ir.addInstruction(currentFunc, "const", {"\"" + displayName + "\""}, disp, "str");
+        std::string res = "tfv" + std::to_string(n);
+        ir.addInstruction(currentFunc, "call", {"pyc_make_func", tok, disp}, res);
+        return res;
+    }
+    int fvCounter = 0;
 
     // True when 'name' is bound locally in the current scope (parameter or a
     // name assigned so far), i.e. it must resolve as a variable even if a
