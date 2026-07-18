@@ -4392,13 +4392,28 @@ static PyObject* PyList_GetItemInt(PyObject* list, size_t index) {
     return list->list[index];
 }
 
+// ---- B6b: runtime class registry ----
+// __mro__ lists hold class *names* (strings); the registry maps a name to the
+// class dict object so super() can resolve MRO entries at runtime. Classes are
+// registered at module init right after their class dict is assembled.
+static std::unordered_map<std::string, PyObject*>& classRegistry() {
+    static std::unordered_map<std::string, PyObject*> reg;
+    return reg;
+}
+
+extern "C" void pyc_register_class(PyObject* name, PyObject* cls) {
+    if (!name || name->type != 3 || !cls) return;
+    Py_INCREF(cls);
+    classRegistry()[name->str] = cls;
+}
+
 // ---- B6b: super() with MRO-based method resolution ----
 // PyBuiltin_SuperMethod(self, definingClass, methodName, [args...])
 // Implements Python's super() behavior:
 // 1. Gets self.__class__
 // 2. Looks up __mro__ from that class dict
 // 3. Finds definingClass in the MRO
-// 4. Calls methodName on the next class in the MRO
+// 4. Searches the classes after definingClass in MRO order for methodName
 extern "C" PyObject* PyBuiltin_SuperMethod(PyObject* args) {
     if (!args || args->type != 1) return nullptr;  // args must be a list
     if (PyList_Size(args) < 3) return nullptr;  // need at least self, definingClass, methodName
@@ -4440,16 +4455,35 @@ extern "C" PyObject* PyBuiltin_SuperMethod(PyObject* args) {
         }
     }
     if (definingIndex == (size_t)-1 || definingIndex + 1 >= mroSize) return nullptr;
-    
-    PyObject* nextClass = PyList_GetItemInt(mroList, definingIndex + 1);
-    if (!nextClass) return nullptr;
-    
-    // Look up method on next class
+
+    // Search the remaining MRO (everything after definingClass) for the first
+    // class providing the method — Python semantics; the immediate next class
+    // may not define it (e.g. a pass-through intermediate in a diamond).
+    // MRO entries are class-name strings; resolve them via the class registry.
     PyObject* method = nullptr;
-    for (auto& kv : nextClass->dict) {
-        if (pyObjStrEqual(kv.first, methodName)) {
-            method = kv.second;
-            break;
+    if (getenv("PYC_DEBUG_SUPER")) {
+        fprintf(stderr, "[super] defining=%s method=%s mro=[", definingClass->str.c_str(), methodName->str.c_str());
+        for (size_t i = 0; i < mroSize; ++i) {
+            PyObject* it = PyList_GetItemInt(mroList, i);
+            fprintf(stderr, "%s%s", i ? "," : "", (it && it->type == 3) ? it->str.c_str() : "?");
+        }
+        fprintf(stderr, "] definingIndex=%zu\n", definingIndex);
+    }
+    for (size_t i = definingIndex + 1; i < mroSize && !method; ++i) {
+        PyObject* mroItem = PyList_GetItemInt(mroList, i);
+        PyObject* cls = nullptr;
+        if (mroItem && mroItem->type == 3) {
+            auto it = classRegistry().find(mroItem->str);
+            if (it != classRegistry().end()) cls = it->second;
+        } else if (mroItem && mroItem->type == 2) {
+            cls = mroItem;  // already a class dict
+        }
+        if (!cls) continue;
+        for (auto& kv : cls->dict) {
+            if (pyObjStrEqual(kv.first, methodName)) {
+                method = kv.second;
+                break;
+            }
         }
     }
     if (!method) return nullptr;

@@ -392,6 +392,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* powI64ObjTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt64Ty(context), llvm::Type::getInt64Ty(context)}, false);
     llvm::Function::Create(powI64ObjTy, llvm::Function::ExternalLinkage, "Pyc_PowInt64Obj", module.get());
 
+    llvm::FunctionType* regClassTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(regClassTy, llvm::Function::ExternalLinkage, "pyc_register_class", module.get());
+
     // Boolean / unary ops
     llvm::FunctionType* truthBoxedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(truthBoxedTy, llvm::Function::ExternalLinkage, "PyObject_TruthBoxed", module.get());

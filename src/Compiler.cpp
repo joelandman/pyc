@@ -1464,6 +1464,9 @@ class LoweringVisitor {
           // Get bases for this class
           std::vector<std::string> bases = getAllBases(className);
           if (bases.empty()) {
+              // Store the trivial MRO too — otherwise the class dict gets no
+              // __mro__ and later lookups default-construct an empty entry.
+              classMRO[className] = {className};
               return {className};
           }
           // C3 linearization algorithm
@@ -1495,7 +1498,10 @@ class LoweringVisitor {
               bool found = false;
               for (size_t i = 0; i < mergeList.size(); ++i) {
                   if (mergeList[i].empty()) continue;
-                  const std::string& candidate = mergeList[i][0];
+                  // Copy, not reference: the removal loop below erases list
+                  // heads, which would shift what a reference points at and
+                  // corrupt the comparisons for the remaining lists.
+                  const std::string candidate = mergeList[i][0];
                   // Check if candidate is in the tail of any other list
                   bool bad = false;
                   for (size_t j = 0; j < mergeList.size(); ++j) {
@@ -4837,19 +4843,34 @@ class LoweringVisitor {
         // B6: Track whether this class defines its own __init__
         bool hasOwnInitDefined = false;
         
-        // B6: Handle inheritance - copy methods from base classes
+        // B6: Track all base classes for super() and multiple inheritance support
         // Bases are stored in node->args by the parser
         for (const auto& baseName : node->args) {
             if (baseName.empty() || baseName == "(complex base)") continue;
-            // Track all base classes for super() and multiple inheritance support
             classBases[className].push_back(baseName);
-            // Copy methods from base class to derived class
-            // The base class dict IS the class global (classes are represented as dicts)
-            ir.addInstruction("__module__", "call", {"PyDict_Update", classDictTemp, baseName}, "dummy");
         }
-        
+
         // B6b: Compute MRO for this class using C3 linearization
         computeMRO(className);
+
+        // B6: Copy inherited methods into the class dict following the MRO in
+        // reverse, so that classes earlier in the MRO override later ones
+        // (Python resolution order). The base class dict IS the class global
+        // (classes are represented as dicts).
+        {
+            const auto& mro = classMRO[className];
+            for (auto it = mro.rbegin(); it != mro.rend(); ++it) {
+                if (*it == className) continue;
+                ir.addInstruction("__module__", "call", {"PyDict_Update", classDictTemp, *it}, "dummy");
+            }
+        }
+        if (getenv("PYC_DEBUG_MRO")) {
+            llvm::errs() << "[mro] " << className << " bases=[";
+            for (const auto& b : getAllBases(className)) llvm::errs() << b << ",";
+            llvm::errs() << "] mro=[";
+            for (const auto& m : classMRO[className]) llvm::errs() << m << ",";
+            llvm::errs() << "]\n";
+        }
         
         // Process all methods
         std::string savedClass = currentClass;
@@ -4983,6 +5004,13 @@ class LoweringVisitor {
         // Store class dict as the class value
         ir.addInstruction("__module__", "assign", {classDictTemp}, className);
         noteType(className, "dict");
+        // B6b: register the class in the runtime registry so super() can
+        // resolve the class-name strings stored in __mro__ to class dicts.
+        {
+            std::string regNameConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "const", {"\"" + className + "\""}, regNameConst, "str");
+            ir.addInstruction("__module__", "call", {"pyc_register_class", regNameConst, classDictTemp}, "");
+        }
         
         // B6: If this class doesn't define __init__, create a wrapper that calls base __init__
         if (!hasOwnInitDefined) {

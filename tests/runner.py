@@ -630,6 +630,54 @@ print(use(5))
 size = 3
 print(size + 1)
 """, "6\n4\n"),
+    # B6b: super() chain through single inheritance (init + method).
+    ("""
+class A:
+    def __init__(self, name):
+        self.name = name
+    def speak(self):
+        return "A:" + self.name
+class B(A):
+    def __init__(self, name):
+        super().__init__(name)
+    def speak(self):
+        return "B(" + super().speak() + ")"
+b = B("rex")
+print(b.name)
+print(b.speak())
+""", "rex\nB(A:rex)\n"),
+    # B6b: diamond inheritance — super() follows the full C3 MRO (D->B->C->A),
+    # both when D defines the method and when it inherits it.
+    ("""
+class A:
+    def m(self):
+        return "A"
+class B(A):
+    def m(self):
+        return "B->" + super().m()
+class C(A):
+    def m(self):
+        return "C->" + super().m()
+class D(B, C):
+    def m(self):
+        return "D->" + super().m()
+class E(B, C):
+    pass
+print(D().m())
+print(E().m())
+""", "D->B->C->A\nB->C->A\n"),
+    # B6b: super() skips an intermediate class that lacks the method.
+    ("""
+class X:
+    def hello(self):
+        return "X.hello"
+class Y(X):
+    pass
+class Z(Y):
+    def hello(self):
+        return "Z(" + super().hello() + ")"
+print(Z().hello())
+""", "Z(X.hello)\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
