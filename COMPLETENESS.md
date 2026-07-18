@@ -3,6 +3,13 @@
 Missing language features and runtime capabilities.
 Sorted by criticality (most critical at top).
 
+> **Status (2026-07-17):** this file is largely a historical audit from earlier
+> phases. Current completeness state lives in
+> `UNBOXING_AND_COMPLETENESS_PLAN.md` (checklist at the bottom) and the
+> "What compiles today" / "Known gaps" sections of `README.md`. Headline
+> remaining items: generators (`yield`; planned as chunked materialization),
+> class/method decorators, exception classes as values, complex numbers.
+
 ---
 
 ## Critical

@@ -6,7 +6,7 @@ LLVM IR, optimizes it, and produces standalone native executables via a minimal
 `PyObject*`-based boxed runtime with refcounting.
 
 Written in C++ with Clang++ and LLVM 18. No C/C++ intermediate language for
-the normal compiler path. **263/263 tests passing** (runner reports 263/263, file_case_failures=0; see `CORRECTNESS.md` and `tests/runner.py`).
+the normal compiler path. **293/293 tests passing** (runner reports 293/293, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
 
 ## Build
 
@@ -70,11 +70,39 @@ arguments, nested destructuring, and `tests/nbody.py`.
 - Ternary `x if cond else y`
 
 ### Functions
-- `def` with positional args, default args, keyword args (`f(b=3, a=4)`)
+- `def` with positional args, default args, keyword args (`f(b=3, a=4)`),
+  `*args` collection and call-site unpacking, `**kwargs`
 - `return` (including multiple return values `return a, b`)
-- Nested functions
+- Nested functions, closures (`nonlocal`, cell capture, skip-level forwarding)
+- `lambda` expressions (defaults, `*args`, as values in containers/args/returns)
+- First-class functions: defs and lambdas as values with real function objects —
+  `print(f)` gives `<function f at 0x...>`, identity-based `==`/`is`
+- Decorators: `@deco`, `@deco(args)` factories, stacked (applied bottom-up)
 - `global x` declaration (shared module-level storage)
-- `try` / `except` basic
+
+### Classes
+- `class` with `__init__`, instance attributes, method dispatch, class attributes
+- Single and multiple inheritance with C3-linearized MRO
+- `super()` following the runtime MRO (full remaining-MRO method search)
+- `__str__` / `__repr__` protocol (used by `print`, `str`, f-strings)
+
+### Exceptions
+- `try` / `except` / `except ... as e` / `else` / `finally`
+- Typed handler dispatch with the builtin exception hierarchy
+  (`ArithmeticError`, `LookupError`, `OSError` parents; `Exception` catch-all)
+- Tuple clauses `except (A, B)`, bare re-raise, structured exception objects
+- Builtins raise at the point of error (`ZeroDivisionError`, `IndexError`,
+  `KeyError`, `ValueError` from `int()`)
+- `finally` runs on every exit path: fall-through, exception, `return`,
+  `break` / `continue`, raise inside a handler or `else`
+- Uncaught exceptions print a CPython-style traceback line to stderr, exit 1
+
+### Statements
+- `with` (context managers via `__enter__` / `__exit__`)
+- `match` / `case` (literals, wildcard, capture, singletons, guards)
+- `assert`, `del`, walrus `:=`
+- `import` / `from ... import` (file-based modules, packages, `os.path` /
+  `subprocess` / `sys` / `re` stubs)
 
 ### Builtins
 `print()` (multi-arg), `range()`, `len()`, `str()`, `int()`, `float()`, `abs()`,
@@ -110,8 +138,12 @@ native executable
 
 **Runtime** (`src/runtime/Runtime.cpp`): standalone C++ file, no CPython
 dependency. Provides `PyObject` (flat struct: `refcount`, `type`, `value`/`dvalue`/
-`list`/`dict`/`str`), refcounting, arithmetic, comparison, print, and all builtins.
-Linked into every compiled binary.
+`list`/`dict`/`str`/`cell_content`), refcounting, arithmetic, comparison, print,
+and all builtins. Types: int, list, dict, str, float, bool/None, cell, super
+proxy, compiled regex, match object, exception, function. Exceptions use
+setjmp/longjmp frames (raise pops the frame before the jump; handler dispatch
+happens in generated code). Callables dispatch through a registry of
+`__apply__` adapters (`Pyc_Apply`). Linked into every compiled binary.
 
 **IR**: linear instruction list per function. Instructions: `const`, `fconst`,
 `bconst`, `assign`, `add`/`sub`/`mul`/`div`/`truediv`/`mod`/`pow`, `icmp`, `br`,
@@ -120,28 +152,32 @@ metadata (`int`, `float`, `bool`, `str`, or `boxed`). Codegen uses that metadata
 for specific general native paths, such as range loop counters and numeric
 `+`/`-`/`*`, and otherwise falls back to boxed `PyObject*` runtime operations.
 
-## Optimization Roadmap
+## Optimizations (landed)
 
-Correctness remains the default path. The first general allocation reductions are
-native lowering for `for ... in range(...)` and native i64 loop-control counters,
-which avoid building a Python list for the range object and avoid boxed compare /
-increment operations for the hidden loop counter. The visible Python loop
-variable is still boxed each iteration.
+Correctness remains the default path; every optimization preserves a boxed
+fallback. Landed so far (A1–A7, see `UNBOXING_AND_COMPLETENESS_PLAN.md`):
 
-The compiler also lowers proven numeric `+`, `-`, and `*` operations to LLVM
-integer or double arithmetic and boxes the result at the boundary. Division,
-mixed/unknown types, and operations with additional Python edge cases remain on
-the boxed runtime path. The next planned steps are longer-lived unboxed numeric
-locals, vector-backed homogeneous numeric lists, and specialized function
-variants selected from proven call-site types. Unsupported or uncertain cases
-must continue to use the boxed runtime path.
+- Conservative type tracking with loop back-edge widening (A1)
+- Native `for ... in range(...)` with unboxed i64 loop variables, and general
+  unboxed numeric locals/accumulators with boxing only at escape points (A2)
+- Native arithmetic for proven numeric `+ - * // % **` and unary minus, with
+  Python floor/sign semantics and zero-division fallback (A3)
+- Homogeneous numeric lists with native `int64`/`double` element storage (A4)
+- Allocation sinking for numeric locals (A5)
+- Specialized function variants from proven call-site types (A6)
+- Allocation counters and microbenchmark guardrails (A7; see `BENCHMARKS.md`)
+
+Unsupported or uncertain cases always use the boxed runtime path.
 
 ## Known gaps (planned)
 
-- `lambda` expressions
-- `nonlocal` statement
-- Classes (`class`, `self`, method dispatch)
-- `import` / module system
+- Generators (`yield`) — next major item; design: chunked materialization
+  (bounded buffer, ~16 elements per refill) rather than full eager lists
+- Decorators on closure defs, decorated class methods, class decorators
+- Exception classes as first-class values; `raise ... from ...` chaining
+- Complex numbers (negative base with fractional exponent yields NaN)
+- Cross-scope function identity (`f is f` from another scope mints a fresh
+  object); closure values print as descriptor bundles, not `<function ...>`
 
 ## License
 
