@@ -10,3 +10,6 @@ a.out.*
 *.s
 *_dbg.py
 *.dbg.py
+
+# Python bytecode caches
+__pycache__/
