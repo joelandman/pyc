@@ -389,6 +389,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* powerTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(powerTy, llvm::Function::ExternalLinkage, "Pyc_Pow", module.get());
 
+    llvm::FunctionType* powI64ObjTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt64Ty(context), llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(powI64ObjTy, llvm::Function::ExternalLinkage, "Pyc_PowInt64Obj", module.get());
+
     // Boolean / unary ops
     llvm::FunctionType* truthBoxedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(truthBoxedTy, llvm::Function::ExternalLinkage, "PyObject_TruthBoxed", module.get());
@@ -1577,13 +1580,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     }
                 }
             } else if (inst.op == "pow") {
-                llvm::errs() << "[DEBUG codegen] Processing pow instruction\n";
                 std::string lhsName = inst.operands.size() > 0 ? inst.operands[0].name : "";
                 std::string rhsName = inst.operands.size() > 1 ? inst.operands[1].name : "";
                 llvm::Value* lhsRaw = lhsName.empty() ? nullptr : getOrLoad(lhsName);
                 llvm::Value* rhsRaw = rhsName.empty() ? nullptr : getOrLoad(rhsName);
-                llvm::errs() << "[DEBUG pow] lhsName=" << lhsName << " rhsName=" << rhsName << "\n";
-                llvm::errs() << "[DEBUG pow] lhsRaw=" << (lhsRaw ? "non-null" : "null") << " rhsRaw=" << (rhsRaw ? "non-null" : "null") << "\n";
                 llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
                 llvm::Type* dblTy = llvm::Type::getDoubleTy(context);
                 bool lhsNativeI64 = lhsRaw && lhsRaw->getType() == i64Ty;
@@ -1592,66 +1592,25 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 bool rhsNativeDbl = rhsRaw && rhsRaw->getType() == dblTy;
                 bool bothNativeI64 = lhsNativeI64 && rhsNativeI64;
                 bool bothNative = (lhsNativeI64 || lhsNativeDbl) && (rhsNativeI64 || rhsNativeDbl);
-                bool eitherNativeDbl = lhsNativeDbl || rhsNativeDbl;
-                llvm::errs() << "[DEBUG pow] lhsNativeI64=" << lhsNativeI64 << " rhsNativeI64=" << rhsNativeI64 << "\n";
-                llvm::errs() << "[DEBUG pow] lhsNativeDbl=" << lhsNativeDbl << " rhsNativeDbl=" << rhsNativeDbl << "\n";
-                llvm::errs() << "[DEBUG pow] bothNativeI64=" << bothNativeI64 << " bothNative=" << bothNative << "\n";
                 // Native path: both operands are numeric (i64 or double)
                 if (bothNativeI64) {
-                    // Integer power: use runtime helper Pyc_PowInt64 for non-negative exponent
-                    // For negative exponent, fall back to boxed path
-                    llvm::Value* lhsBoxed = getAsPyObject(lhsName);
-                    llvm::Value* rhsBoxed = getAsPyObject(rhsName);
-                    llvm::Function* powInt64 = module->getFunction("Pyc_PowInt64");
-                    llvm::Value* result = nullptr;
-                    if (powInt64) {
-                        result = builder.CreateCall(powInt64, {lhsRaw, rhsRaw}, "pow.int64");
-                        // Box the result
-                        llvm::Function* boxI64 = module->getFunction("boxI64");
-                        if (boxI64) {
-                            result = builder.CreateCall(boxI64, {result}, "pow.boxed");
-                        }
-                    } else {
-                        // Fallback to boxed Pyc_Pow
-                        llvm::Function* pycPow = module->getFunction("Pyc_Pow");
-                        if (pycPow) {
-                            result = builder.CreateCall(pycPow, {lhsBoxed, rhsBoxed});
-                        } else {
-                            result = llvm::ConstantPointerNull::get(pyObjectPtrTy);
-                        }
-                    }
-                    valueMap[inst.result] = result;
+                    // Integer power: exp >= 0 yields int, exp < 0 yields float
+                    // (Python semantics); the runtime helper handles the sign.
+                    llvm::Function* powInt64Obj = module->getFunction("Pyc_PowInt64Obj");
+                    valueMap[inst.result] = builder.CreateCall(powInt64Obj, {lhsRaw, rhsRaw}, inst.result);
                     markOwned(inst.result);
-                } else if (bothNative && !bothNativeI64) {
-                    // Float power: use LLVM's pow intrinsic
-                    llvm::Value* lhsUnboxed = lhsNativeDbl ? lhsRaw : unboxToDouble(getOrLoad(lhsName));
-                    llvm::Value* rhsUnboxed = rhsNativeDbl ? rhsRaw : unboxToDouble(getOrLoad(rhsName));
-                    llvm::errs() << "[DEBUG pow float] lhsUnboxed=" << (lhsUnboxed ? "non-null" : "null") << " rhsUnboxed=" << (rhsUnboxed ? "non-null" : "null") << "\n";
-                    llvm::Function* powFn = module->getFunction("pow");
-                    llvm::Value* powResult = nullptr;
-                    if (powFn) {
-                        powResult = builder.CreateCall(powFn, {lhsUnboxed, rhsUnboxed}, "pow.result");
-                    } else {
-                        powResult = llvm::ConstantFP::get(dblTy, 0.0);
-                    }
-                    // Box the result
-                    llvm::Function* boxDbl = module->getFunction("boxDouble");
-                    llvm::Value* boxedResult = nullptr;
-                    if (boxDbl) {
-                        boxedResult = builder.CreateCall(boxDbl, {powResult}, "pow.boxed");
-                    } else {
-                        boxedResult = llvm::ConstantPointerNull::get(pyObjectPtrTy);
-                    }
-                    llvm::errs() << "[DEBUG pow float] boxedResult=" << (boxedResult ? "non-null" : "null") << " inst.result=" << inst.result << "\n";
-                    valueMap[inst.result] = boxedResult;
+                } else if (bothNative) {
+                    // Float power: LLVM pow intrinsic on native doubles, box result
+                    llvm::Value* lhsUnboxed = lhsNativeDbl ? lhsRaw : builder.CreateSIToFP(lhsRaw, dblTy, "pow.lhs.dbl");
+                    llvm::Value* rhsUnboxed = rhsNativeDbl ? rhsRaw : builder.CreateSIToFP(rhsRaw, dblTy, "pow.rhs.dbl");
+                    llvm::Value* powResult = builder.CreateBinaryIntrinsic(llvm::Intrinsic::pow, lhsUnboxed, rhsUnboxed, nullptr, "pow.result");
+                    valueMap[inst.result] = boxDouble(powResult, inst.result);
                     markOwned(inst.result);
-                    llvm::errs() << "[DEBUG codegen] pow result stored in valueMap[" << inst.result << "]\n";
                 } else {
                     // Boxed path: call Pyc_Pow
                     llvm::Function* fn = module->getFunction("Pyc_Pow");
                     llvm::Value* lhs = getAsPyObject(lhsName);
                     llvm::Value* rhs = getAsPyObject(rhsName);
-                    llvm::errs() << "[DEBUG pow boxed] lhs=" << (lhs ? "non-null" : "null") << " rhs=" << (rhs ? "non-null" : "null") << " fn=" << (fn ? "non-null" : "null") << "\n";
                     bool lhsWasNative = lhsRaw && (lhsRaw->getType() == i64Ty || lhsRaw->getType()->isDoubleTy());
                     bool rhsWasNative = rhsRaw && (rhsRaw->getType() == i64Ty || rhsRaw->getType()->isDoubleTy());
                     if (fn) {
@@ -2215,14 +2174,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     if (!callee) {
                         // Function not found in this module - create external declaration
                         // This handles cross-module calls like __module__utils
-                        llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " NOT FOUND, creating external\n";
                         // Use the actual number of arguments from the instruction
                         size_t numArgs = inst.operands.size() - 1;
                         std::vector<llvm::Type*> argTypes(numArgs, pyObjectPtrTy);
                         llvm::FunctionType* extTy = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
                         callee = llvm::Function::Create(extTy, llvm::Function::ExternalLinkage, funcName, module.get());
                     }
-                    llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " operands.size=" << inst.operands.size() << "\n";
                     if (callee) {
                         std::vector<llvm::Value*> callArgs;
                         // Track which args were native (i64/double) so that getAsPyObject's

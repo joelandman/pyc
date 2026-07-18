@@ -1,5 +1,5 @@
 build/
-pyc
+/pyc
 build_asan/
 
 # root-level artifacts from direct `pyc` runs (a.out, objects, IR dumps, debug helpers)

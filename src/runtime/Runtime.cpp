@@ -2139,6 +2139,12 @@ int64_t Pyc_PowInt64(int64_t base, int64_t exp) {
     return result;
 }
 
+// Boxed integer power: exp >= 0 yields int, exp < 0 yields float (Python semantics)
+PyObject* Pyc_PowInt64Obj(int64_t base, int64_t exp) {
+    if (exp >= 0) return PyInt_FromLong(Pyc_PowInt64(base, exp));
+    return PyFloat_FromDouble(pow((double)base, (double)exp));
+}
+
 PyObject* PyBuiltin_Sum(PyObject* lst) {
     if (!lst) return PyInt_FromLong(0);
     PyObject* total = PyInt_FromLong(0);

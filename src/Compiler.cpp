@@ -866,7 +866,6 @@ class LoweringVisitor {
         } else if (node->type == "Try") {
             lowerTry(node);
         } else if (node->type == "With") {
-            llvm::errs() << "[DEBUG With] lowering With statement\n";
             // with context_expr as var: body
             // Simplified: evaluate context_expr, call __enter__, bind result, execute body, call __exit__
             if (node->children.empty()) return;
@@ -874,14 +873,12 @@ class LoweringVisitor {
             if (!withItem || withItem->children.empty()) return;
             // children[0] = context_expr, children[1] = optional_vars (if any)
             std::string ctxExpr = lowerExpr(withItem->children[0].get());
-            llvm::errs() << "[DEBUG With] ctxExpr=" << ctxExpr << "\n";
             // Call __enter__ on the context manager
             // Get the __enter__ method using Pyc_GetItem (supports class dict fallback)
             std::string enterMethod = "t" + std::to_string(tempCounter++);
             std::string enterMethodToken = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"__enter__\""}, enterMethodToken, "str");
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, enterMethodToken}, enterMethod);
-            llvm::errs() << "[DEBUG With] enterMethod=" << enterMethod << "\n";
             // Build args list: [self]
             std::string enterArgs = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "1"}, enterArgs);
@@ -891,7 +888,6 @@ class LoweringVisitor {
             // Call __enter__(self) via Pyc_Apply
             std::string enterResult = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_Apply", enterMethod, enterArgs}, enterResult);
-            llvm::errs() << "[DEBUG With] enterResult=" << enterResult << "\n";
             // Bind to target variable if present
             if (withItem->children.size() >= 2 && withItem->children[1]) {
                 std::string targetName = withItem->children[1]->id;
@@ -5695,7 +5691,9 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             }
             pclose(pipe);
         }
-        linkCmd += outputPath + ".o -x c " + b7CFile + " -I" + sourceDir + "/include " + pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
+        // -x c applies to everything after it on the command line, so reset with
+        // -x none or the C++ sources that follow would be compiled as C.
+        linkCmd += outputPath + ".o -x c " + b7CFile + " -x none -I" + sourceDir + "/include " + pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
         if (std::system(linkCmd.c_str()) == 0) {
             std::cout << "Linked with runtime to " << outputPath << " (static=" << useStatic << ")\n";
         } else {
