@@ -623,6 +623,10 @@ class LoweringVisitor {
             lastLambdaSynthetic.clear();
             // Save and clear numericLocals for this function scope
             std::unordered_set<std::string> savedNumericLocals = numericLocals;
+            // Fresh try-scope state for the nested function's body — its
+            // returns must not run the enclosing scope's try exits.
+            std::vector<ActiveTry> savedActiveTries = activeTries; activeTries.clear();
+            std::vector<size_t> savedLoopTryDepths = loopTryDepths; loopTryDepths.clear();
             numericLocals.clear();
 
             // B5: allocate owned cells (for names we assign here that inner scopes close over via nonlocal).
@@ -712,6 +716,8 @@ class LoweringVisitor {
             }
             // Restore numericLocals to outer scope
             numericLocals = savedNumericLocals;
+            activeTries = savedActiveTries;
+            loopTryDepths = savedLoopTryDepths;
             currentFunc = saved;   // restore context for siblings (important for top-level code after defs)
             tempCounter = savedTempCounter;  // restore counter to prevent collisions with module-level temps
             lastLambdaSynthetic.clear();  // do not leak "last lambda expr" from this function to later assigns/calls in outer scope
@@ -763,8 +769,11 @@ class LoweringVisitor {
         } else if (node->type == "For") {
             lowerFor(node);
         } else if (node->type == "Break") {
+            // Exit try scopes entered inside the loop (pops + finallys) first.
+            emitTryExits(loopTryDepths.empty() ? activeTries.size() : loopTryDepths.back());
             ir.addInstruction(currentFunc, "br", {}, loopBreakLabel);
         } else if (node->type == "Continue") {
+            emitTryExits(loopTryDepths.empty() ? activeTries.size() : loopTryDepths.back());
             ir.addInstruction(currentFunc, "br", {}, loopContinueLabel);
         } else if (node->type == "Global") {
             // Declaration only — already collected in pre-scan, no IR emitted.
@@ -3587,6 +3596,7 @@ class LoweringVisitor {
         std::string exitL = "while_exit_" + std::to_string(c);
 
         std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
+        loopTryDepths.push_back(activeTries.size());
         loopContinueLabel = loopL;
         loopBreakLabel    = exitL;
 
@@ -3601,6 +3611,7 @@ class LoweringVisitor {
         ir.addInstruction(currentFunc, "br", {}, loopL);
         ir.addInstruction(currentFunc, "label", {}, exitL);
 
+        loopTryDepths.pop_back();
         loopContinueLabel = savedCont;
         loopBreakLabel    = savedBreak;
     }
@@ -3663,6 +3674,7 @@ class LoweringVisitor {
         tempCounter++;
 
         std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
+        loopTryDepths.push_back(activeTries.size());
         loopContinueLabel = loopLabel;
         loopBreakLabel    = exitLabel;
 
@@ -3723,6 +3735,7 @@ class LoweringVisitor {
         ir.addInstruction(currentFunc, "br", {}, loopLabel);
         ir.addInstruction(currentFunc, "label", {}, exitLabel);
 
+        loopTryDepths.pop_back();
         loopContinueLabel = savedCont;
         loopBreakLabel    = savedBreak;
     }
@@ -3851,6 +3864,7 @@ class LoweringVisitor {
         noteType(idxVar, "i64");
 
         std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
+        loopTryDepths.push_back(activeTries.size());
         loopContinueLabel = incrLabel;
         loopBreakLabel = exitLabel;
 
@@ -3880,6 +3894,7 @@ class LoweringVisitor {
         ir.addInstruction(currentFunc, "br", {}, loopLabel);
         ir.addInstruction(currentFunc, "label", {}, exitLabel);
 
+        loopTryDepths.pop_back();
         loopContinueLabel = savedCont;
         loopBreakLabel = savedBreak;
     }
@@ -4318,6 +4333,10 @@ class LoweringVisitor {
 
     std::string lowerReturnExpr(const ASTNode* node) {
         std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        // Returning from inside try scopes: pop still-pushed frames and run
+        // pending finally bodies (innermost first) before the ret. The return
+        // value is evaluated first, matching Python.
+        if (!activeTries.empty()) emitTryExits(0);
         ir.addInstruction(currentFunc, "ret", {val}, val);
         // B4: if this return carries a tracked callable token (or is the result of a function
         // known to return callables), mark the current function so callers can propagate tokens.
@@ -4340,6 +4359,68 @@ class LoweringVisitor {
         lowerReturnExpr(node);
     }
 
+    // Active try scopes in the current function, innermost last. Tracks
+    // whether the runtime frame is still pushed in the region being lowered
+    // and which finally body (if any) must run when control exits the scope
+    // early (return / break / continue).
+    struct ActiveTry {
+        bool framePushed;
+        const ASTNode* finallyBody;   // synthetic "finalbody" node, or null
+    };
+    std::vector<ActiveTry> activeTries;
+    // activeTries.size() at each enclosing loop entry — break/continue exit
+    // try scopes down to the innermost loop's depth only.
+    std::vector<size_t> loopTryDepths;
+
+    // Emit frame pops + pending finally bodies for every try scope above
+    // targetDepth (0 = function exit for `return`). Each finally body is
+    // lowered with its own scope already removed from activeTries so nested
+    // early exits inside the finally only see outer scopes.
+    void emitTryExits(size_t targetDepth) {
+        auto saved = activeTries;
+        while (activeTries.size() > targetDepth) {
+            ActiveTry t = activeTries.back();
+            activeTries.pop_back();
+            if (t.framePushed) ir.addInstruction(currentFunc, "call", {"pyc_try_pop"}, "");
+            if (t.finallyBody)
+                for (const auto& s : t.finallyBody->children) if (s) lower(s.get());
+        }
+        activeTries = saved;
+    }
+
+    // Lower a region (handler body or else clause) whose raises must run
+    // `finallyBody` before propagating. With a finally, the region runs under
+    // its own setjmp frame: on exception, run the finally, then re-raise
+    // outward. Without one, the statements lower inline. Ends the region with
+    // a branch to afterL on the normal path.
+    void lowerFinallyProtected(const std::vector<const ASTNode*>& stmts,
+                               const ASTNode* finallyBody,
+                               const std::string& afterL,
+                               const std::string& endL) {
+        if (!finallyBody || stmts.empty()) {
+            for (const auto* s : stmts) lower(s);
+            ir.addInstruction(currentFunc, "br", {}, afterL);
+            return;
+        }
+        int pc = tempCounter++;
+        std::string jmp   = "__tryjmp_p" + std::to_string(pc);
+        std::string bodyL = "try_pb_" + std::to_string(pc);
+        std::string pexcL = "try_px_" + std::to_string(pc);
+        ir.addInstruction(currentFunc, "try_begin", {jmp, bodyL, pexcL}, bodyL);
+        ir.addInstruction(currentFunc, "label", {}, bodyL);
+        activeTries.push_back({true, finallyBody});
+        for (const auto* s : stmts) lower(s);
+        activeTries.pop_back();
+        ir.addInstruction(currentFunc, "call", {"pyc_try_pop"}, "");
+        ir.addInstruction(currentFunc, "br", {}, afterL);
+        ir.addInstruction(currentFunc, "label", {}, pexcL);
+        std::string e2 = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"pyc_current_exception"}, e2);
+        for (const auto& s : finallyBody->children) if (s) lower(s.get());
+        ir.addInstruction(currentFunc, "call", {"pyc_raise", e2}, "");
+        ir.addInstruction(currentFunc, "br", {}, endL);   // unreachable formality
+    }
+
     // try/except/else/finally lowering with typed handler dispatch.
     //
     // Runtime protocol (see Runtime.cpp): try_begin pushes a setjmp frame on
@@ -4350,6 +4431,12 @@ class LoweringVisitor {
     // without further stack bookkeeping. The normal path pops explicitly
     // after the body.
     //
+    // Early exits: activeTries records each region's pushed-frame state and
+    // pending finally; lowerReturnExpr and Break/Continue emit the required
+    // pops + finally bodies (emitTryExits). Handler bodies and the else
+    // clause of a try that has a finally run under their own frame
+    // (lowerFinallyProtected) so raises there still run the finally.
+    //
     // Layout:
     //   try_begin(jmp, tryL, excL)
     //   tryL:   body; pyc_try_pop; [else]; br finallyL/endL
@@ -4358,10 +4445,6 @@ class LoweringVisitor {
     //   nomatchL: [finally]; pyc_raise(exc)  (propagate outward)
     //   finallyL: finally body; br endL
     //   endL:
-    //
-    // Known limitations: `return` inside a try body leaves the frame pushed;
-    // a raise inside a handler body propagates without running this try's
-    // finally first.
     void lowerTry(const ASTNode* node) {
         if (node->children.empty()) return;
         // Split children into body / handlers / optional else / optional finally.
@@ -4405,10 +4488,15 @@ class LoweringVisitor {
         // Normal path: body, pop the frame, then else (outside the frame --
         // exceptions in else/finally are not caught by this try).
         ir.addInstruction(currentFunc, "label", {}, tryL);
+        activeTries.push_back({true, finallyBody});
         for (const auto* s : bodyStmts) lower(s);
+        activeTries.pop_back();
         ir.addInstruction(currentFunc, "call", {"pyc_try_pop"}, "");
-        if (elseBody) for (const auto& s : elseBody->children) if (s) lower(s.get());
-        ir.addInstruction(currentFunc, "br", {}, afterBodyL);
+        {
+            std::vector<const ASTNode*> elseStmts;
+            if (elseBody) for (const auto& s : elseBody->children) if (s) elseStmts.push_back(s.get());
+            lowerFinallyProtected(elseStmts, finallyBody, afterBodyL, endL);
+        }
 
         // Exception path: fetch the exception, then run the dispatch chain.
         ir.addInstruction(currentFunc, "label", {}, excL);
@@ -4448,7 +4536,8 @@ class LoweringVisitor {
         ir.addInstruction(currentFunc, "call", {"pyc_raise", excVar}, "");
         ir.addInstruction(currentFunc, "br", {}, endL);   // unreachable formality
 
-        // Handler bodies.
+        // Handler bodies. With a finally present, each runs finally-protected
+        // (a raise in the handler must still run this try's finally).
         for (size_t i = 0; i < handlers.size(); ++i) {
             const ASTNode* h = handlers[i];
             ir.addInstruction(currentFunc, "label", {}, handlerLabels[i]);
@@ -4456,10 +4545,9 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "assign", {excVar}, h->id);
             }
             ir.addInstruction(currentFunc, "call", {"pyc_clear_exception"}, "");
-            for (const auto& s : h->children) {
-                if (s) lower(s.get());
-            }
-            ir.addInstruction(currentFunc, "br", {}, afterBodyL);
+            std::vector<const ASTNode*> hStmts;
+            for (const auto& s : h->children) if (s) hStmts.push_back(s.get());
+            lowerFinallyProtected(hStmts, finallyBody, afterBodyL, endL);
         }
 
         if (finallyBody) {
@@ -4903,6 +4991,15 @@ class LoweringVisitor {
     void lowerClass(const ASTNode* node) {
         std::string className = node->id;
         knownClasses.insert(className);
+        // Method bodies get fresh try-scope state (mirrors FunctionDef).
+        std::vector<ActiveTry> savedActiveTries = activeTries; activeTries.clear();
+        std::vector<size_t> savedLoopTryDepths = loopTryDepths; loopTryDepths.clear();
+        struct TryScopeRestore {
+            LoweringVisitor* v;
+            std::vector<ActiveTry> at;
+            std::vector<size_t> ltd;
+            ~TryScopeRestore() { v->activeTries = std::move(at); v->loopTryDepths = std::move(ltd); }
+        } tryScopeRestore{this, std::move(savedActiveTries), std::move(savedLoopTryDepths)};
         // Register class as module-level global
         ir.addModuleGlobal(className);
         // Create class dict to hold methods

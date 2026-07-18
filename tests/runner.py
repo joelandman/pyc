@@ -781,6 +781,80 @@ print(sq(7))
 if add:
     print("truthy")
 """, "<function add \nTrue True\nFalse\n<function <lambda> \n49\ntruthy\n"),
+    # Early exits from try scopes: return runs finally and pops frames
+    # (a later raise must still be caught — stack integrity).
+    ("""
+def f():
+    try:
+        return 1
+    finally:
+        print("fin1")
+print(f())
+def g():
+    try:
+        return 5
+    except ValueError:
+        return -1
+print(g())
+try:
+    raise KeyError("k")
+except KeyError:
+    print("stack ok")
+""", "fin1\n1\n5\nstack ok\n"),
+    # Raise inside a handler or else clause still runs that try's finally.
+    ("""
+try:
+    try:
+        raise ValueError("a")
+    except ValueError:
+        print("h")
+        raise KeyError("b")
+    finally:
+        print("fin")
+except KeyError as e:
+    print("outer", e)
+try:
+    try:
+        pass
+    except ValueError:
+        print("no")
+    else:
+        raise KeyError("e")
+    finally:
+        print("fin2")
+except KeyError:
+    print("outer2")
+""", "h\nfin\nouter b\nfin2\nouter2\n"),
+    # break/continue/return exiting try-inside-loop run the finally.
+    ("""
+for i in range(3):
+    try:
+        if i == 1:
+            break
+        print("i", i)
+    finally:
+        print("fin", i)
+print("done")
+for i in range(3):
+    try:
+        if i == 1:
+            continue
+        print("j", i)
+    finally:
+        print("cfin", i)
+def h():
+    for i in range(5):
+        try:
+            if i == 2:
+                return i * 10
+        finally:
+            print("hfin", i)
+print(h())
+try:
+    raise ValueError("v")
+except ValueError:
+    print("integrity ok")
+""", "i 0\nfin 0\nfin 1\ndone\nj 0\ncfin 0\ncfin 1\nj 2\ncfin 2\nhfin 0\nhfin 1\nhfin 2\n20\nintegrity ok\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
