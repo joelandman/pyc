@@ -946,6 +946,7 @@ FILE_CASES = [
      # These require utils.py to be in the same directory
      ("b7_import.py", []),
      ("b7_importfrom.py", []),
+     ("b7_importstar.py", []),
      # The following crash or don't compile - excluded
     # ("builtins.py", []),   # uses re module + sys.argv - works now (re is PCRE2-backed)
 ]

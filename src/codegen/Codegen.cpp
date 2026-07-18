@@ -405,6 +405,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* regClassTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(regClassTy, llvm::Function::ExternalLinkage, "pyc_register_class", module.get());
 
+    // Declare libm pow(double, double) for native float power codegen.
+    llvm::FunctionType* libmPowTy = llvm::FunctionType::get(
+        llvm::Type::getDoubleTy(context),
+        {llvm::Type::getDoubleTy(context), llvm::Type::getDoubleTy(context)},
+        false);
+    llvm::Function::Create(libmPowTy, llvm::Function::ExternalLinkage, "pow", module.get());
+
     // Boolean / unary ops
     llvm::FunctionType* truthBoxedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(truthBoxedTy, llvm::Function::ExternalLinkage, "PyObject_TruthBoxed", module.get());
@@ -1612,6 +1619,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 bool bothNative = (lhsNativeI64 || lhsNativeDbl) && (rhsNativeI64 || rhsNativeDbl);
                 // Native path: both operands are numeric (i64 or double)
                 if (bothNativeI64) {
+<<<<<<< HEAD
                     // Integer power: exp >= 0 yields int, exp < 0 yields float
                     // (Python semantics); the runtime helper handles the sign.
                     llvm::Function* powInt64Obj = module->getFunction("Pyc_PowInt64Obj");
@@ -1623,6 +1631,46 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     llvm::Value* rhsUnboxed = rhsNativeDbl ? rhsRaw : builder.CreateSIToFP(rhsRaw, dblTy, "pow.rhs.dbl");
                     llvm::Value* powResult = builder.CreateBinaryIntrinsic(llvm::Intrinsic::pow, lhsUnboxed, rhsUnboxed, nullptr, "pow.result");
                     valueMap[inst.result] = boxDouble(powResult, inst.result);
+=======
+                    // Integer power: use runtime helper Pyc_PowInt64 for non-negative exponent
+                    // For negative exponent, fall back to boxed path
+                    llvm::Value* lhsBoxed = getAsPyObject(lhsName);
+                    llvm::Value* rhsBoxed = getAsPyObject(rhsName);
+                    llvm::Function* powInt64 = module->getFunction("Pyc_PowInt64");
+                    llvm::Value* result = nullptr;
+                    if (powInt64) {
+                        result = builder.CreateCall(powInt64, {lhsRaw, rhsRaw}, "pow.int64");
+                        // Box the result via the boxI64 lambda (declares PyInt_FromLong internally)
+                        result = boxI64(result, "pow.boxed");
+                    } else {
+                        // Fallback to boxed Pyc_Pow
+                        llvm::Function* pycPow = module->getFunction("Pyc_Pow");
+                        if (pycPow) {
+                            result = builder.CreateCall(pycPow, {lhsBoxed, rhsBoxed});
+                        } else {
+                            result = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                        }
+                    }
+                    valueMap[inst.result] = result;
+                    markOwned(inst.result);
+                } else if (bothNative && !bothNativeI64) {
+                    // Float power: use LLVM's pow intrinsic
+                    llvm::Value* lhsUnboxed = lhsNativeDbl ? lhsRaw : unboxToDouble(getOrLoad(lhsName));
+                    llvm::Value* rhsUnboxed = rhsNativeDbl ? rhsRaw : unboxToDouble(getOrLoad(rhsName));
+                    llvm::Function* powFn = module->getFunction("pow");
+                    llvm::Value* powResult = nullptr;
+                    if (powFn) {
+                        powResult = builder.CreateCall(powFn, {lhsUnboxed, rhsUnboxed}, "pow.result");
+                    } else {
+                        powResult = llvm::ConstantFP::get(dblTy, 0.0);
+                    }
+                    // Box the result via the boxDouble lambda (declares PyFloat_FromDouble internally)
+                    llvm::Value* boxedResult = boxDouble(powResult, "pow.boxed");
+                    if (!boxedResult) {
+                        boxedResult = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                    }
+                    valueMap[inst.result] = boxedResult;
+>>>>>>> origin/main
                     markOwned(inst.result);
                 } else {
                     // Boxed path: call Pyc_Pow
@@ -2065,6 +2113,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
              } else if (inst.op == "call") {
                   std::string funcName = inst.operands.empty() ? "" : inst.operands[0].name;
+                  if (std::getenv("PYC_DUMP_IR")) {
+                      for (size_t ii = 1; ii < inst.operands.size(); ++ii) {
+                          auto vit = valueMap.find(inst.operands[ii].name);
+                          llvm::errs() << "  call " << funcName << " operand[" << ii << "]=" << inst.operands[ii].name << " in valueMap=" << (vit != valueMap.end() ? "yes" : "no") << "\n";
+                      }
+                  }
                   // PyObject_CompareBool(a, b, op) — third arg is i32, not ptr
                   if (funcName == "PyObject_CompareBool" && inst.operands.size() >= 4) {
                       std::string aName = inst.operands[1].name;
@@ -2192,12 +2246,24 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     if (!callee) {
                         // Function not found in this module - create external declaration
                         // This handles cross-module calls like __module__utils
+<<<<<<< HEAD
+=======
+                        if (std::getenv("PYC_DUMP_IR")) {
+                            llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " NOT FOUND, creating external\n";
+                        }
+>>>>>>> origin/main
                         // Use the actual number of arguments from the instruction
                         size_t numArgs = inst.operands.size() - 1;
                         std::vector<llvm::Type*> argTypes(numArgs, pyObjectPtrTy);
                         llvm::FunctionType* extTy = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
                         callee = llvm::Function::Create(extTy, llvm::Function::ExternalLinkage, funcName, module.get());
                     }
+<<<<<<< HEAD
+=======
+                    if (std::getenv("PYC_DUMP_IR")) {
+                        llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " operands.size=" << inst.operands.size() << "\n";
+                    }
+>>>>>>> origin/main
                     if (callee) {
                         std::vector<llvm::Value*> callArgs;
                         // Track which args were native (i64/double) so that getAsPyObject's
@@ -2374,10 +2440,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             }
             builder.CreateRet(zero);
         }
-
-        // Small helper to box an i64 value on demand (used by some numeric
-        // binary paths and for range loop visible var boxing on escape).
-        (void)boxI64; // already defined above; keep reference for future native paths.
     }
     if (llvm::verifyModule(*module, &llvm::errs())) {
         std::cerr << "Module verification failed\n";
@@ -2388,6 +2450,17 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             std::cerr << s << std::endl;
         }
         return nullptr;
+    }
+    // DEBUG: print instructions for the module function
+    if (std::getenv("PYC_DUMP_IR")) {
+        for (auto& f : *module) {
+            if (f.getName() == "__module__") {
+                std::string s;
+                llvm::raw_string_ostream os(s);
+                f.print(os);
+                std::cerr << "=== __module__ IR ===\n" << s << "\n=== END ===\n";
+            }
+        }
     }
     return module;
 }
