@@ -580,6 +580,56 @@ def outer():
 outer()
 print(a,b)
 """, "2 1\n0 0\n"),
+    # First-class named defs: pass as argument, store in containers, return.
+    ("""
+def add(a, b):
+    return a + b
+def apply2(fn, x, y):
+    return fn(x, y)
+print(apply2(add, 2, 3))
+ops = [add]
+print(ops[0](10, 20))
+d = {"a": add}
+print(d["a"](1, 1))
+def pick():
+    return add
+p = pick()
+print(p(7, 8))
+""", "5\n30\n2\n15\n"),
+    # First-class named defs: alias call, identity, equality.
+    ("""
+def f(x):
+    return x + 1
+g = f
+print(g(4))
+print(g is f)
+print(g == f)
+def h(x):
+    return x - 1
+print(f == h)
+""", "5\nTrue\nTrue\nFalse\n"),
+    # First-class nested defs: value references share one binding.
+    ("""
+def outer():
+    def inner(v):
+        return v * 2
+    a = inner
+    b = inner
+    print(a is b)
+    return a
+q = outer()
+print(q(21))
+""", "True\n42\n"),
+    # Shadowing: a local binding wins over a same-named def in value position.
+    ("""
+def size(v):
+    return v * 10
+def use(size):
+    return size + 1
+print(use(5))
+size = 3
+print(size + 1)
+""", "6\n4\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

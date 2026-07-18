@@ -63,6 +63,13 @@ class LoweringVisitor {
                 for (const auto& c : n->children) collectDefs(c.get());
             };
             collectDefs(node);
+            // First-class defs: top-level def names may be referenced in value
+            // position (including forward refs from inside earlier functions).
+            // Track them separately from the special builtin shims below so
+            // bare-name value uses produce callable tokens (lowerExpr Name).
+            for (const auto& c : node->children) {
+                if (c && c->type == "FunctionDef" && !c->id.empty()) userDefFunctions.insert(c->id);
+            }
             // Pre-populate our special builtin shims (print, len, range, sum, sorted, min/max,
             // any/all, isinstance, int/float/abs/str, list, enumerate, zip, ...) so bare-name
             // calls to them are recognized as "direct" and never routed through the B4 dynamic
@@ -214,6 +221,7 @@ class LoweringVisitor {
 
             ir.addFunction(defIRName, bareParams);
             knownIRFunctions.insert(defIRName);
+            userDefFunctions.insert(defIRName);
             for (auto& fnr : ir.functions) if (fnr.name == defIRName) { fnr.paramNames = node->args; break; }
             for (auto& fnr : ir.functions) if (fnr.name == defIRName) { /* freeCellVars set later */ break; }
 
@@ -731,6 +739,19 @@ class LoweringVisitor {
             currentFnReturnsBundle = false;
             currentReturnedBundleSynthetic.clear();
             currentReturnedBundleCaps.clear();
+            // First-class defs: a def statement binds its name to the function
+            // value in the enclosing scope (like `name = lambda ...`). Bind the
+            // callable token to the name so later value references share one
+            // object — making `g = f; g is f` hold. Direct calls are unaffected
+            // (resolved via knownIRFunctions on the AST name). Closure functions
+            // are skipped: their value references build descriptor bundles with
+            // the enclosing scope's cells at each use site.
+            if (!closureFunctions.count(defIRName)) {
+                std::string tok = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + defIRName + "\""}, tok, "str");
+                ir.addInstruction(currentFunc, "assign", {tok}, node->id);
+                noteType(node->id, "str");
+            }
             // Do not fall through to the generic FunctionDef handling below.
             return;
        } else if (node->type == "ClassDef") {
@@ -1118,6 +1139,19 @@ class LoweringVisitor {
                         return lst;
                     }
                 }
+                // First-class use of a named def in value position: produce its
+                // callable token (same string-token model as lambdas) so it can
+                // be assigned, passed as an argument, stored in containers,
+                // returned, and called indirectly via Pyc_Apply. Skip names
+                // shadowed by a local binding (parameter or prior assignment).
+                if (userDefFunctions.count(eff) && !isShadowedLocal(node->id)) {
+                    std::string res = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + eff + "\""}, res, "str");
+                    noteType(res, "str");
+                    callableTokenToSynthetic[res] = eff;
+                    callableTokenTemps.insert(res);
+                    return res;
+                }
             }
             return node->id;
         } else if (node->type == "Attribute") {
@@ -1370,6 +1404,10 @@ class LoweringVisitor {
     // Names of IR functions we have registered (for deciding static vs dynamic
     // call lowering in B4/B8 indirect callable support).
     std::unordered_set<std::string> knownIRFunctions;
+    // User-defined functions only (defs + nested defs by IR name) — excludes the
+    // special builtin shims that share knownIRFunctions. Used to decide when a
+    // bare Name in value position should produce a callable token.
+    std::unordered_set<std::string> userDefFunctions;
     // Set of class names for class instantiation support.
     std::unordered_set<std::string> knownClasses;
     // Map from class name to __init__ parameter names (comma-separated).
@@ -1588,6 +1626,22 @@ class LoweringVisitor {
         auto fit = funcFreeCells.find(currentFunc);
         if (fit != funcFreeCells.end()) {
             for (const auto& v : fit->second) if (v == nm) return true;
+        }
+        return false;
+    }
+
+    // True when 'name' is bound locally in the current scope (parameter or a
+    // name assigned so far), i.e. it must resolve as a variable even if a
+    // user def of the same name exists.
+    bool isShadowedLocal(const std::string& name) const {
+        if (valueTypes.count(name)) return true;
+        auto pit = funcParamNames.find(currentFunc);
+        if (pit != funcParamNames.end()) {
+            for (const auto& p : pit->second) {
+                std::string b = p;
+                while (!b.empty() && b[0] == '*') b = b.substr(1);
+                if (b == name) return true;
+            }
         }
         return false;
     }
@@ -2143,7 +2197,10 @@ class LoweringVisitor {
             // or container element that was a lambda), use the synthetic as the target.
             // This allows lambdas used as values to be called when they appear as the
             // callee expression.
-            if (!node->children.empty() && node->children[0]) {
+            // Skip for plain Names already resolved to a known direct IR function:
+            // lowering those would just emit a dead callable-token const per call site.
+            if (!node->children.empty() && node->children[0] &&
+                !(node->children[0]->type == "Name" && knownIRFunctions.count(funcName))) {
                 std::string calleeVal = lowerExpr(node->children[0].get());
                 auto tit = callableTokenToSynthetic.find(calleeVal);
                 if (tit != callableTokenToSynthetic.end()) {
@@ -2154,7 +2211,8 @@ class LoweringVisitor {
 
         // Compute lowered callee value early (needed for indirect detection before processing *).
         std::string calleeValEarly;
-        if (!node->children.empty() && node->children[0]) {
+        if (!node->children.empty() && node->children[0] &&
+            !(node->children[0]->type == "Name" && knownIRFunctions.count(funcName))) {
             calleeValEarly = lowerExpr(node->children[0].get());
         }
         // Re-check token map (in case the early lower produced the const temp for a lambda value).
