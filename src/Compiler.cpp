@@ -1210,6 +1210,7 @@ class LoweringVisitor {
                 std::string complexRes = "t" + std::to_string(tempCounter++);
                 // Use a special IR instruction that passes native doubles
                 ir.addInstruction(currentFunc, "call", {"PyComplex_New", realConst, imagConst}, complexRes);
+                complexVars.insert(complexRes);
                 noteType(res, "boxed");
                 return complexRes;
             } else if (node->is_str) {
@@ -2350,26 +2351,30 @@ class LoweringVisitor {
         }
         std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         std::string right = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
-        // B16: Complex arithmetic — if both operands are complex (boxed), emit complex calls
+        // B16: Complex arithmetic — if both operands are complex, emit complex calls
         if (op == "add" || op == "sub" || op == "mul" || op == "truediv") {
             std::string funcName;
             if (op == "add") funcName = "PyComplex_Add";
             else if (op == "sub") funcName = "PyComplex_Sub";
             else if (op == "mul") funcName = "PyComplex_Mul";
             else if (op == "truediv") funcName = "PyComplex_Div";
-            if (!funcName.empty() && typeOf(left) == "boxed" && typeOf(right) == "boxed") {
+            if (!funcName.empty() && complexVars.count(left) > 0 && complexVars.count(right) > 0) {
                 std::string res = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {funcName, left, right}, res);
+                complexVars.insert(res);
                 noteType(res, "boxed");
                 return res;
             }
         }
         // B16: Complex pow — if op is pow and operands are complex, emit PyComplex_Pow
         if (op == "pow") {
-            std::string res = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyComplex_Pow", left, right}, res);
-            noteType(res, "boxed");
-            return res;
+            if (complexVars.count(left) > 0 && complexVars.count(right) > 0) {
+                std::string res = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyComplex_Pow", left, right}, res);
+                complexVars.insert(res);
+                noteType(res, "boxed");
+                return res;
+            }
         }
         std::string res = "t" + std::to_string(tempCounter++);
         std::string resultType = numericResultType(op, left, right);
@@ -3315,6 +3320,7 @@ class LoweringVisitor {
             std::string arg1 = argRes.empty() ? "" : argRes[0];
             std::string arg2 = argRes.size() >= 2 ? argRes[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Complex", arg1, arg2}, res, "boxed");
+            complexVars.insert(res);
             noteType(res, "boxed");
             return res;
         }
