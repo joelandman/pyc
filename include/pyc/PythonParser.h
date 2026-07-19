@@ -23,6 +23,9 @@ struct ASTNode {
     bool is_str   = false;
     bool is_bool  = false;
     bool is_none  = false;
+    bool is_complex = false;
+    double complex_real = 0.0;
+    double complex_imag = 0.0;
     std::vector<std::string> args;
     std::vector<std::unique_ptr<ASTNode>> children;
 };

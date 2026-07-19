@@ -90,6 +90,7 @@ enum PyTypeKind : uint32_t {
     TYPE_BOOL,
     TYPE_INT,
     TYPE_FLOAT,
+    TYPE_COMPLEX,
     TYPE_STR,
     TYPE_LIST,
     TYPE_DICT,

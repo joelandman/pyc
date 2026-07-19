@@ -911,6 +911,82 @@ def hof(f, x, y):
     return f(x, y)
 print(hof(add, 1, 1))
 """, "['yo ann', 'yo ann', 'yo ann']\ncall -> 5\n5\ncall -> 30\n30\ncall -> 2\n2\n"),
+    # Class decorators: simple, stacked, factory, __repr__ injection.
+    ("""
+def mark(cls):
+    cls['marked'] = True
+    return cls
+
+@mark
+class Simple:
+    pass
+
+print(Simple['marked'])
+def add_repr(cls):
+    def repr_method(self):
+        return "Point"
+    cls['__repr__'] = repr_method
+    return cls
+
+@add_repr
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+p = Point(1, 2)
+print(repr(p))
+def uppercase_name(cls):
+    cls['NAME'] = 'UPPER'
+    return cls
+def add_version(cls):
+    cls['VERSION'] = '1.0'
+    return cls
+
+@uppercase_name
+@add_version
+class App:
+    pass
+
+print(App['NAME'])
+print(App['VERSION'])
+def with_attr(name, value):
+    def decorator(cls):
+        cls[name] = value
+        return cls
+    return decorator
+
+@with_attr('SPECIAL', 'yes')
+class Feature:
+    pass
+
+print(Feature['SPECIAL'])
+""", "True\nPoint\nUPPER\n1.0\nyes\n"),
+    # Exception classes as first-class values (B13).
+    ("""
+exc = ValueError
+e = exc("hello world")
+print(e)
+MyError = ValueError
+try:
+    raise MyError("first")
+except ValueError:
+    print("caught 1")
+try:
+    raise MyError("second")
+except ValueError:
+    print("caught 2")
+exc2 = ZeroDivisionError
+try:
+    raise exc2("can't divide")
+except ArithmeticError:
+    print("caught ArithmeticError")
+exc3 = KeyError
+try:
+    raise exc3("missing")
+except KeyError:
+    print("caught KeyError")
+""", "hello world\ncaught 1\ncaught 2\ncaught ArithmeticError\ncaught KeyError\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -942,7 +1018,64 @@ FILE_CASES = [
     ("regex.py", []),
     ("features.py", []),
      ("closures.py", []),
-     # B7: Import / module system tests
+     ("generators.py", []),
+    # B14: Function object identity and closure printing.
+    ("""
+def foo():
+    pass
+def bar():
+    pass
+g = foo
+print(foo is foo)
+print(g is foo)
+print(foo is bar)
+print(foo == foo)
+print(foo == bar)
+def outer():
+    x = 1
+    def inner():
+        return x
+    return inner
+f = outer()
+print(f)
+print(str(f))
+print(repr(f))
+""", "True\nTrue\nFalse\nTrue\nFalse\n<function inner at 0x>True\n<function inner at 0x>True\n<function inner at 0x>\n"),
+    # B15: Exception class identity.
+    ("""
+exc = ValueError
+print(exc is ValueError)
+print(ValueError is exc)
+exc2 = KeyError
+print(ValueError is exc2)
+""", "True\nTrue\nFalse\n"),
+    # B16: Complex number literals and arithmetic (Phases 1-5).
+    ("""
+print(1j)
+print(3j)
+print(2.5j)
+a = 1j
+b = 2j
+print(a + b)
+print(a - b)
+print(a * b)
+print(a / b)
+print(a ** 2)
+print(abs(3j))
+print(complex())
+print(complex(3))
+print(complex(3.5))
+print(complex(3, 4))
+print(complex(1j))
+import cmath
+print(cmath.sqrt(-1))
+print(cmath.exp(0))
+print(cmath.log(1))
+print(cmath.sin(0))
+print(cmath.cos(0))
+print(cmath.tan(0))
+""", "(0.0+1.0j)\n(0.0+3.0j)\n(0.0+2.5j)\n(0.0+3.0j)\n(0.0-1.0j)\n(-2.0+0.0j)\n(0.5+0.0j)\n(-1.0+0.0j)\n3.0\n(0.0+0.0j)\n(3.0+0.0j)\n(3.5+0.0j)\n(3.0+4.0j)\n(0.0+1.0j)\n(0.0+1.0j)\n(1.0+0.0j)\n(0.0+0.0j)\n(0.0+0.0j)\n(1.0+0.0j)\n(0.0+0.0j)\n"),
+    # B7: Import / module system tests
      # These require utils.py to be in the same directory
      ("b7_import.py", []),
      ("b7_importfrom.py", []),

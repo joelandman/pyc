@@ -703,6 +703,10 @@ std::shared_ptr<ast::Expr> Parser::parse_primary_expr() {
         double val = std::stod(tok.value);
         return std::make_shared<ast::FloatLiteral>(val);
     }
+    if (tok.kind == pyc::lexer::TokenType::COMPLEX_LITERAL) {
+        advance();
+        return std::make_shared<ast::ComplexLiteral>(tok.complex_real, tok.complex_imag);
+    }
   if (tok.kind == pyc::lexer::TokenType::FSTRING_START) {
         advance();
         std::vector<std::shared_ptr<ast::Expr>> parts;

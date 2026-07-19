@@ -194,16 +194,39 @@ std::vector<Token> tokenize(const std::string& source) {
             size_t start = pos;
             while (pos < len && std::isdigit(source[pos])) ++pos;
             bool is_float = false;
+            bool is_complex = false;
             if (pos < len && source[pos] == '.') {
                 is_float = true;
                 ++pos;
                 while (pos < len && std::isdigit(source[pos])) ++pos;
             }
+            // Check for complex literal (e.g., 3j, 3.5j)
+            if (pos < len && (source[pos] == 'j' || source[pos] == 'J')) {
+                is_complex = true;
+                ++pos;
+            }
             std::string num_str = source.substr(start, pos - start);
             Token tok;
-            if (is_float) {
+            if (is_complex) {
+                tok.kind = TokenType::COMPLEX_LITERAL;
+                tok.value = num_str;
+                std::string imag_part = num_str;
+                if (imag_part.back() == 'j' || imag_part.back() == 'J') {
+                    imag_part = imag_part.substr(0, imag_part.size() - 1);
+                }
+                try {
+                    tok.complex_imag = std::stod(imag_part);
+                } catch (...) {
+                    tok.complex_imag = 0.0;
+                }
+            } else if (is_float) {
                 tok.kind = TokenType::FLOAT_LITERAL;
                 tok.value = num_str;
+                try {
+                    tok.float_val = std::stod(num_str);
+                } catch (...) {
+                    tok.float_val = 0.0;
+                }
             } else {
                 tok.kind = TokenType::INT_LITERAL;
                 tok.value = num_str;

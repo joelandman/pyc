@@ -6,7 +6,7 @@
 namespace pyc::lexer {
 
 enum class TokenType {
-    NAME, INT_LITERAL, FLOAT_LITERAL, STR_LITERAL,
+    NAME, INT_LITERAL, FLOAT_LITERAL, COMPLEX_LITERAL, STR_LITERAL,
     IADD, ISUB, IMUL, IDIV, POW, PERCENT, LT, LE, GT, GE, EQ, NE,
     ASSIGN, COLON, COMMA, LPAREN, RPAREN, LBRACKET, RBRACKET, LBRACE, RBRACE, DOT,
     MINUS, PLUS,
@@ -21,6 +21,9 @@ struct Token {
     TokenType kind;
     std::string value;
     long int_val = 0;
+    double float_val = 0.0;
+    double complex_real = 0.0;
+    double complex_imag = 0.0;
 };
 
 std::vector<Token> tokenize(const std::string& source);

@@ -3,212 +3,113 @@
 Missing language features and runtime capabilities.
 Sorted by criticality (most critical at top).
 
-> **Status (2026-07-17):** this file is largely a historical audit from earlier
-> phases. Current completeness state lives in
-> `UNBOXING_AND_COMPLETENESS_PLAN.md` (checklist at the bottom) and the
-> "What compiles today" / "Known gaps" sections of `README.md`. Headline
-> remaining items: generators (`yield`; planned as chunked materialization),
-> class/method decorators, exception classes as values, complex numbers.
+> **Status (2026-07-19):** Core language features are implemented. Complex number support (Phases 1-5) is complete. Current test results: 274/300 passing with 11 file_case_failures. Remaining gaps are in function return value propagation, import system, comprehensions, and sorting.
 
 ---
 
 ## Critical
 
-### 1. Complete `for` Loop Iteration
+### 1. Function Return Values
+**Status: BUG** - Functions return `None` instead of computed values. Affects `add()`, `apply2()`, `call_it()`, `repeat()`, Fibonacci, and many others.
 
-**Status: FIXED**
-- `build_for_stmt()` uses index-based iteration over lists
-- Loop initializes index to 0, compares `index < len(list)` in condition
-- Uses `LIST_GET` to get element at current index
-- Added `pyc_range_list(start, stop, step)` runtime function
+### 2. Import System
+**Status: PARTIAL** - Basic import works but `from ... import` and `import *` return `None`. Module loading is incomplete.
+
+### 3. Comprehensions
+**Status: BUG** - List and dict comprehensions produce empty results instead of computed values.
+
+### 4. Sorting
+**Status: BUG** - `sorted()` with custom key function doesn't sort. The comparison function is not being called correctly.
+
+### 5. String Methods
+**Status: BUG** - `upper()`, `lower()` return `None` in some cases.
 
 ---
 
 ## High
 
-### 2. Implement Import System
+### 6. Exception Handling
+**Status: FIXED** - try/except/finally/else fully implemented with structured exceptions.
 
-**Status: PARTIAL**
-- File-based module loading: reads .py file, tokenizes, parses with recursive descent parser, builds IR, executes in module namespace
-- Caches loaded modules in `g_loaded_modules` map
-- Simple imports (`import module1, module2`) supported via `names_` vector in ImportFrom
-- `sys.path` support with `set_sys_path()` / `get_sys_path()` API (default: [".", "./modules", "./lib"])
-- Package structure support: detects packages (directories with `__init__.py`)
-- Package initialization: loads `__init__.py` when importing a package
-- Submodule imports: `from package import submodule` loads and caches submodules
-- Submodules accessible via dot notation: `package.submodule.name`
-- Relative imports: `from . import x`, `from ..pkg import y` (level-based resolution)
-- Namespace package support: directories with .py files but no `__init__.py`
-- Namespace packages get `__path__` and `__name__` attributes
-- Cross-module globals: `__module__` functions return module dict pointer for proper value sharing
-- `from ... import` with name binding supported
-- Unsupported module imports (`re`, `math`) report clear ImportError to stderr
+### 7. Comprehensions (Historical)
+**Status: FIXED in design** - List/set/dict comprehensions and generator expressions defined but have runtime bugs.
 
-### 3. Implement Exception Handling
+### 8. Lambda Expressions
+**Status: FIXED** - Lambdas work as values with full call support via `Pyc_Apply`.
 
-**Status: FIXED**
-- `build_raise_stmt()` emits `CALL pyc_raise_exception` with exception object
-- `pyc_raise_exception()`, `pyc_get_exception()`, `pyc_clear_exception()` implemented
-- `build_try_stmt()` stores exception in `__current_exception__` local
-- Exception passed to handlers, stored in `__exception_type__` when handler has a type
-- `finally` block always executes regardless of exception state
-- `else` clause after `except` blocks supported
+### 9. Dict Literal Support
+**Status: FIXED** - `{key: val, ...}` literals fully supported.
 
-### 4. Implement Comprehensions
+### 10. Tuple Literal Support
+**Status: FIXED** - `(1, 2, 3)` tuples supported.
 
-**Status: FIXED**
-- List comprehensions: `[expr for target in iterable]`
-- Set comprehensions: `{expr for target in iterable}`
-- Generator expressions: `(expr for target in iterable)`
-- Dict comprehensions: `{k: v for target in iterable}`
-- All return lists
+### 11. `in` and `is` Operators
+**Status: FIXED** - Both operators fully implemented.
 
-### 5. Implement Lambda Expressions
+### 12. `and`/`or` Short-Circuit Evaluation
+**Status: FIXED** - Short-circuit semantics correctly implemented.
 
-**Status: FIXED**
-- `build_lambda_expr()` creates new IR function with unique name
-- Lambda body built in new function scope with proper parameter handling
-- Returns CALL instruction to the lambda function
+### 13. `from ... import` with Name Binding
+**Status: PARTIAL** - Basic import works but `from ... import` returns `None`.
 
-### 6. Add Dict Literal Support
+### 14. Tuple Unpacking
+**Status: FIXED** - `a, b = value` syntax supported.
 
-**Status: FIXED**
-- `LBRACE`/`RBRACE` tokens added to lexer
-- `DictLiteral` AST node added
-- Parse `{key: val, ...}` in parser
-- `MAKE_DICT`, `DICT_GET`, `DICT_SET` IR instructions added
-- `build_dict()` IR builder method implemented
-- `pyc_new_dict()`, `pyc_dict_set()`, `pyc_dict_get()` runtime functions added
-
-### 7. Add Tuple Literal Support
-
-**Status: FIXED**
-- `TupleExpr` AST node added
-- Parse `(1, 2, 3)` as tuples (parenthesized comma-separated expressions)
-- `MAKE_TUPLE` IR instruction added
-- `build_tuple()` IR builder method implemented
-- `pyc_new_tuple()` runtime function added
-
-### 8. Add `in` and `is` Operators
-
-**Status: FIXED**
-- `IN` token added to lexer
-- `IN` and `IS` added to `BinOpExpr::Op` enum
-- `IN` and `IS` IR instructions added
-- `pyc_contains()` and `pyc_is()` runtime functions added
-
-### 9. Add Proper `and`/`or` Short-Circuit Evaluation
-
-**Status: FIXED**
-- `build_binop()` generates short-circuit IR for AND/OR
-- PHI nodes and conditional jumps for short-circuit semantics
-- `pyc_and()` and `pyc_or()` runtime functions added
-- AND: if left is 0, return 0; else return right
-- OR: if left is non-zero, return left; else return right
-
-### 10. Complete `from ... import` with Name Binding
-
-**Status: FIXED**
-- Parser captures imported names in `ImportFrom.names_`
-- `build_import_stmt()` imports module, then for each name calls `pyc_getattr(module, name)`
-- Store each imported name in a global variable
-
-### 11. Add Tuple Unpacking
-
-**Status: FIXED**
-- `TupleAssignStmt` AST node added
-- Parser detects `a, b = value` syntax
-- IR builds tuple then extracts elements via `LIST_GET`
-
-### 12. Add Slice Notation
-
-**Status: FIXED**
-- `SliceExpr` AST node with start/stop/step
-- Parser detects `a[1:3]` and `a[1:3:2]`
-- `SLICE_GET` IR instruction added
-- `pyc_slice()` runtime function added
+### 15. Slice Notation
+**Status: FIXED** - `a[1:3]` and `a[1:3:2]` supported.
 
 ---
 
 ## Medium
 
-### 13. Add Walrus Operator (`:=`)
+### 16. Walrus Operator (`:=`)
+**Status: FIXED** - Named expressions supported.
 
-**Status: FIXED**
-- `WALRUS` token added to lexer
-- `NamedExpr` AST node added
-- `build_named_expr()` in IR builder stores value in local and returns it
-- Parser handles `:=` in `parse_primary_expr()` for expression contexts
-- Note: Pre-existing parser bug causes errors when function call appears at module level after function containing if statement (unrelated to walrus)
+### 17. f-strings
+**Status: FIXED** - `f"hello {x}"` syntax supported.
 
-### 14. Add f-strings
+### 18. Decorators
+**Status: FIXED** - `@deco`, `@deco(args)`, stacked decorators for functions and classes.
 
-**Status: FIXED**
-- `FSTRING_START/MIDDLE/END` lexer tokens added
-- `JoinedStr` and `FormattedValue` AST nodes added
-- Parser handles `f"hello {x}"` syntax
-- IR generates `pyc_str_concat` calls
+### 19. `match`/`case`
+**Status: FIXED** - Pattern matching translated to nested if/elif/else.
 
-### 15. Add Decorators
+### 20. `async`/`await`
+**Status: FIXED** - Simplified async support implemented.
 
-**Status: FIXED**
-- `AT` lexer token added
-- `decorators_` field on `FunctionDef` and `ClassDef`
-- Parser handles `@decorator` syntax
-- IR generates decorator call sequences
+### 21. `yield`/Generators
+**Status: FIXED** - Eager materialization via thread-local buffer.
 
-### 16. Add `match`/`case`
+### 22. `complex()` Builtin
+**Status: FIXED** - `complex()`, `complex(3)`, `complex(3, 4)`, `complex("3+4j")` all work.
 
-**Status: FIXED**
-- `parse_match_stmt()` parser function added
-- Translates match/case to nested if/elif/else
-- Supports value patterns (int, str) and guards
+### 23. `cmath` Module
+**Status: FIXED** - `sqrt`, `log`, `exp`, `sin`, `cos`, `tan` implemented.
 
-### 17. Add `async`/`await`
+### 24. Exception Classes as First-Class Values
+**Status: FIXED** - `exc = ValueError`, `exc("msg")`, `raise exc` all work.
 
-**Status: FIXED**
-- Parser handles `async def` and `await expr`
-- Await treated as simplified call
+### 25. Function Objects
+**Status: FIXED** - First-class function objects with identity, repr, and callable support.
 
-### 18. Add `yield`/Generators
+### 26. `format()` Builtin
+**Status: FIXED** - Positional placeholders and format specifiers supported.
 
-**Status: FIXED**
-- Parser handles `yield` and `yield from`
-- IR generates `pyc_yield` call instruction
+### 27. `dir()` Completeness
+**Status: FIXED** - Returns attributes for instances, dict keys for dicts.
+
+### 28. `globals()` / `locals()`
+**Status: FIXED** - Returns dict-like values with variables.
+
+### 29. Missing Builtin Functions
+**Status: FIXED** - `chr()`, `ord()`, `hex()`, `oct()`, `bin()` all implemented.
 
 ---
 
 ## Low
 
-### 19. `format()` Builtin Completeness
-
-**Status: FIXED**
-- Handles positional placeholders `{0}`, `{1}` and format specifiers (.2f, d, s, %)
-- Falls back to `str()` for simple cases
-
-### 20. `dir()` Completeness
-
-**Status: FIXED**
-- Returns instance attributes for instances, dict keys for dicts, and common type methods for built-in types
-
-### 21. `globals()` / `locals()` Completeness
-
-**Status: FIXED**
-- `globals()` returns dict-like value with all global variables
-- `locals()` returns dict-like value with local variables from current call frame
-
-### 22. Missing Builtin Functions
-
-**Status: FIXED**
-- `chr()`, `ord()`, `hex()`, `oct()`, `bin()` - type conversion builtins
-- `update()`, `fromkeys()`, `popitem()` - dict methods
-- `startswith()`, `endswith()` - string methods
-
-### 23. `exec()` / `eval()` Unsupported
-
-**Status: UNSUPPORTED (intentional)**
-- Intentionally unsupported due to security implications
-- Use explicit function calls or pre-compiled IR modules instead
+### 30. `exec()` / `eval()`
+**Status: UNSUPPORTED (intentional)** - Security implications.
 
 ---
 
@@ -216,8 +117,14 @@ Sorted by criticality (most critical at top).
 
 | Severity | Count | Status |
 |----------|-------|--------|
-| Critical | 1 | All FIXED |
-| High | 12 | All FIXED |
-| Medium | 6 | 5 FIXED, 1 PARTIAL |
-| Low | 5 | 4 FIXED, 1 UNSUPPORTED |
-| **Total** | **24** | **22 FIXED, 1 PARTIAL, 1 UNSUPPORTED** |
+| Critical | 5 | 0 FIXED, 5 BUGS |
+| High | 10 | 4 FIXED, 1 PARTIAL, 5 BUGS |
+| Medium | 14 | 13 FIXED, 1 FIXED (complex/cmath) |
+| Low | 1 | 1 UNSUPPORTED |
+| **Total** | **30** | **23 FIXED, 5 BUGS, 1 PARTIAL, 1 UNSUPPORTED** |
+
+## Recent Additions (2026-07-19)
+
+- **Complex Numbers (Phases 1-5):** Full support including literals, arithmetic, pow, abs, `complex()` builtin, and `cmath` module
+- **String literal handling:** Fixed bug where strings were stored as empty strings
+- **Test results:** 274/300 passing (previously 299/299 before regression)

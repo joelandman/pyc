@@ -1851,12 +1851,55 @@ uint32_t IRBuilder::build_joined_str(const ast::JoinedStr& expr) {
 }
 
 uint32_t IRBuilder::build_yield(const ast::YieldExpr& expr) {
+    // yield from subgen(): iterate subgen's result list and yield each element
+    if (expr.is_from()) {
+        uint32_t subgenVal = build_expr(*expr.value());
+        // subgenVal is a list of yielded values; iterate and yield each
+        std::string idxVar = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, idxVar);
+        
+        std::string loopLabel = "yfrom_loop_" + std::to_string(tempCounter);
+        std::string bodyLabel = "yfrom_body_" + std::to_string(tempCounter);
+        std::string exitLabel = "yfrom_exit_" + std::to_string(tempCounter);
+        tempCounter++;
+        
+        ir.addInstruction(currentFunc, "label", {}, loopLabel);
+        // for i in range(len(subgenVal)):
+        std::string lenRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_Size", subgenVal}, lenRes);
+        std::string cmpRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenRes}, cmpRes);
+        ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
+        
+        ir.addInstruction(currentFunc, "label", {}, bodyLabel);
+        // elem = PyList_GetItem(subgenVal, i)
+        std::string elemRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItem", subgenVal, idxVar}, elemRes);
+        // pyc_yield_collect(elem)
+        auto* yieldInst = current_func_->new_inst(IRInstKind::CALL, "pyc_yield_collect");
+        yieldInst->operands.push_back(elemRes);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(yieldInst));
+        
+        // idxVar = idxVar + 1
+        std::string oneRes = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"1"}, oneRes);
+        std::string nextIdx = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "add", {idxVar, oneRes}, nextIdx);
+        ir.addInstruction(currentFunc, "assign", {nextIdx}, idxVar);
+        
+        ir.addInstruction(currentFunc, "br", {}, loopLabel);
+        ir.addInstruction(currentFunc, "label", {}, exitLabel);
+        
+        return yieldInst->id;
+    }
+    
+    // regular yield: yield value
     uint32_t val = UINT32_MAX;
     if (expr.value()) {
         val = build_expr(*expr.value());
     }
     
-    auto* yield_inst = current_func_->new_inst(IRInstKind::CALL, "pyc_yield");
+    auto* yield_inst = current_func_->new_inst(IRInstKind::CALL, "pyc_yield_collect");
     if (val != UINT32_MAX) {
         yield_inst->operands.push_back(val);
     }

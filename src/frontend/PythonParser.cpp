@@ -73,8 +73,28 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 node->value = "None";
                 node->is_none = true;
             } else {
-                node->value = "";
-                node->is_str = true;
+                // Check if it's a complex number by type name (PyComplex_Check not available in Python 3.12+)
+                PyObject* typeObj = (PyObject*)Py_TYPE(v);
+                PyObject* typeName = PyObject_GetAttrString(typeObj, "__name__");
+                if (typeName && PyUnicode_Check(typeName)) {
+                    const char* tname = PyUnicode_AsUTF8(typeName);
+                    if (tname && strcmp(tname, "complex") == 0) {
+                        // It's a complex number - extract real and imag
+                        // Use Python's complex formatting to get the values
+                        PyObject* strVal = PyObject_Str(v);
+                        if (strVal && PyUnicode_Check(strVal)) {
+                            const char* s = PyUnicode_AsUTF8(strVal);
+                            node->value = s ? s : "";
+                            node->is_complex = true;
+                        }
+                        Py_XDECREF(strVal);
+                    }
+                }
+                Py_XDECREF(typeName);
+                if (!node->is_complex) {
+                    node->value = "";
+                    node->is_str = true;
+                }
             }
             Py_DECREF(v);
         }
@@ -714,6 +734,36 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             node->children.push_back(std::move(child));
             Py_DECREF(value);
         }
+    } else if (node->type == "Yield") {
+        // Rename to YieldExpr for consistency with ast.h
+        node->type = "YieldExpr";
+        PyObject* value = PyObject_GetAttrString(pyNode, "value");
+        if (value && value != Py_None) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(value, child.get());
+            node->children.push_back(std::move(child));
+        }
+        Py_XDECREF(value);
+        // Check for yield from
+        PyObject* is_from = PyObject_GetAttrString(pyNode, "is_from");
+        if (is_from && is_from != Py_None) {
+            long is_from_val = PyLong_AsLong(is_from);
+            if (is_from_val) {
+                node->args.push_back("1");
+            }
+        }
+        Py_XDECREF(is_from);
+    } else if (node->type == "YieldFrom") {
+        // YieldFrom is always a yield from
+        node->type = "YieldExpr";
+        node->args.push_back("1");
+        PyObject* value = PyObject_GetAttrString(pyNode, "value");
+        if (value) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(value, child.get());
+            node->children.push_back(std::move(child));
+        }
+        Py_XDECREF(value);
     } else if (node->type == "ListComp" || node->type == "GeneratorExp") {
         // List comprehensions: [elt for target in iter if ifs]
         // Generator expressions: (elt for target in iter if ifs) — same AST
@@ -924,6 +974,22 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(body);
+        // Decorators: each entry of decorator_list becomes a synthetic
+        // "Decorator" child wrapping the decorator expression. Source order
+        // is preserved; lowering applies them bottom-up.
+        PyObject* decos = PyObject_GetAttrString(pyNode, "decorator_list");
+        if (decos && PyList_Check(decos)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(decos); ++i) {
+                PyObject* d = PyList_GetItem(decos, i);
+                auto dn = std::make_unique<ASTNode>();
+                dn->type = "Decorator";
+                auto expr = std::make_unique<ASTNode>();
+                buildAST(d, expr.get());
+                dn->children.push_back(std::move(expr));
+                node->children.push_back(std::move(dn));
+            }
+        }
+        Py_XDECREF(decos);
     } else if (node->type == "Match") {
         // match subject: cases...
         // children[0] = subject (the expression being matched)

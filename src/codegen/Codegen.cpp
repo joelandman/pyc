@@ -210,6 +210,25 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::Function::Create(pycExcMatchesTy, llvm::Function::ExternalLinkage, "pyc_exc_matches", module.get());
     llvm::FunctionType* pycMakeFuncTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(pycMakeFuncTy, llvm::Function::ExternalLinkage, "pyc_make_func", module.get());
+    // Complex numbers (type 13): PyComplex_New(real: double, imag: double) -> ptr
+    llvm::FunctionType* pyComplexNewTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getDoubleTy(context), llvm::Type::getDoubleTy(context)}, false);
+    llvm::Function::Create(pyComplexNewTy, llvm::Function::ExternalLinkage, "PyComplex_New", module.get());
+    // Complex arithmetic: PyComplex_Add/Sub/Mul/Div(a: ptr, b: ptr) -> ptr
+    llvm::FunctionType* pyComplexArithTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    for (const char* name : {"PyComplex_Add", "PyComplex_Sub", "PyComplex_Mul", "PyComplex_Div"}) {
+        llvm::Function::Create(pyComplexArithTy, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    // Complex pow: PyComplex_Pow(base: ptr, exp: ptr) -> ptr
+    llvm::FunctionType* pyComplexPowTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(pyComplexPowTy, llvm::Function::ExternalLinkage, "PyComplex_Pow", module.get());
+    // Complex abs: PyComplex_Abs(z: ptr) -> ptr (returns float)
+    llvm::FunctionType* pyComplexAbsTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(pyComplexAbsTy, llvm::Function::ExternalLinkage, "PyComplex_Abs", module.get());
+    // cmath module functions: sqrt, log, exp, sin, cos, tan (all take one complex ptr, return complex ptr)
+    for (const char* name : {"PyCmath_Sqrt", "PyCmath_Log", "PyCmath_Exp", "PyCmath_Sin", "PyCmath_Cos", "PyCmath_Tan"}) {
+        llvm::FunctionType* cmathTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(cmathTy, llvm::Function::ExternalLinkage, name, module.get());
+    }
     // setjmp is special: declaration with the ReturnsTwice attribute.
     {
         llvm::FunctionType* setjmpTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {int8PtrTy}, false);
@@ -245,11 +264,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
-    // 2-arg builtins: divmod, round, pow
+    // 2-arg builtins: divmod, round, pow, complex
     llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Divmod", module.get());
     llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Round", module.get());
     llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Pow", module.get());
+    llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Complex", module.get());
 
     for (const char* name : {"PyString_Split","PyString_Join","PyBuiltin_IntBase",
                               "PyString_RFind"}) {
@@ -1604,11 +1624,19 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         if (rhsNativeD) builder.CreateCall(decrefN, {rhs});
                     }
                 }
-            } else if (inst.op == "pow") {
-                std::string lhsName = inst.operands.size() > 0 ? inst.operands[0].name : "";
-                std::string rhsName = inst.operands.size() > 1 ? inst.operands[1].name : "";
-                llvm::Value* lhsRaw = lhsName.empty() ? nullptr : getOrLoad(lhsName);
-                llvm::Value* rhsRaw = rhsName.empty() ? nullptr : getOrLoad(rhsName);
+             } else if (inst.op == "pow") {
+                 // B16: Complex pow — if both operands are complex (boxed), use PyComplex_Pow
+                 std::string lhsName = inst.operands.size() > 0 ? inst.operands[0].name : "";
+                 std::string rhsName = inst.operands.size() > 1 ? inst.operands[1].name : "";
+                 // Check if this is a complex pow by checking if the call was emitted as PyComplex_Pow
+                 // (The compiler emits "call" with funcName="PyComplex_Pow" for complex pow)
+                 // For the "pow" IR instruction, we need to check if operands are complex
+                 // Since complex values are always boxed, we check resultType and operand types
+                 // For now, handle via the boxed path if resultType is "boxed" and we detect complex
+                 // Actually, the compiler emits a "call" instruction for complex pow, not "pow"
+                 // So this "pow" instruction is only for native/boxed numeric pow
+                 llvm::Value* lhsRaw = lhsName.empty() ? nullptr : getOrLoad(lhsName);
+                 llvm::Value* rhsRaw = rhsName.empty() ? nullptr : getOrLoad(rhsName);
                 llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
                 llvm::Type* dblTy = llvm::Type::getDoubleTy(context);
                 bool lhsNativeI64 = lhsRaw && lhsRaw->getType() == i64Ty;
@@ -1619,7 +1647,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 bool bothNative = (lhsNativeI64 || lhsNativeDbl) && (rhsNativeI64 || rhsNativeDbl);
                 // Native path: both operands are numeric (i64 or double)
                 if (bothNativeI64) {
-<<<<<<< HEAD
                     // Integer power: exp >= 0 yields int, exp < 0 yields float
                     // (Python semantics); the runtime helper handles the sign.
                     llvm::Function* powInt64Obj = module->getFunction("Pyc_PowInt64Obj");
@@ -1631,46 +1658,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     llvm::Value* rhsUnboxed = rhsNativeDbl ? rhsRaw : builder.CreateSIToFP(rhsRaw, dblTy, "pow.rhs.dbl");
                     llvm::Value* powResult = builder.CreateBinaryIntrinsic(llvm::Intrinsic::pow, lhsUnboxed, rhsUnboxed, nullptr, "pow.result");
                     valueMap[inst.result] = boxDouble(powResult, inst.result);
-=======
-                    // Integer power: use runtime helper Pyc_PowInt64 for non-negative exponent
-                    // For negative exponent, fall back to boxed path
-                    llvm::Value* lhsBoxed = getAsPyObject(lhsName);
-                    llvm::Value* rhsBoxed = getAsPyObject(rhsName);
-                    llvm::Function* powInt64 = module->getFunction("Pyc_PowInt64");
-                    llvm::Value* result = nullptr;
-                    if (powInt64) {
-                        result = builder.CreateCall(powInt64, {lhsRaw, rhsRaw}, "pow.int64");
-                        // Box the result via the boxI64 lambda (declares PyInt_FromLong internally)
-                        result = boxI64(result, "pow.boxed");
-                    } else {
-                        // Fallback to boxed Pyc_Pow
-                        llvm::Function* pycPow = module->getFunction("Pyc_Pow");
-                        if (pycPow) {
-                            result = builder.CreateCall(pycPow, {lhsBoxed, rhsBoxed});
-                        } else {
-                            result = llvm::ConstantPointerNull::get(pyObjectPtrTy);
-                        }
-                    }
-                    valueMap[inst.result] = result;
-                    markOwned(inst.result);
-                } else if (bothNative && !bothNativeI64) {
-                    // Float power: use LLVM's pow intrinsic
-                    llvm::Value* lhsUnboxed = lhsNativeDbl ? lhsRaw : unboxToDouble(getOrLoad(lhsName));
-                    llvm::Value* rhsUnboxed = rhsNativeDbl ? rhsRaw : unboxToDouble(getOrLoad(rhsName));
-                    llvm::Function* powFn = module->getFunction("pow");
-                    llvm::Value* powResult = nullptr;
-                    if (powFn) {
-                        powResult = builder.CreateCall(powFn, {lhsUnboxed, rhsUnboxed}, "pow.result");
-                    } else {
-                        powResult = llvm::ConstantFP::get(dblTy, 0.0);
-                    }
-                    // Box the result via the boxDouble lambda (declares PyFloat_FromDouble internally)
-                    llvm::Value* boxedResult = boxDouble(powResult, "pow.boxed");
-                    if (!boxedResult) {
-                        boxedResult = llvm::ConstantPointerNull::get(pyObjectPtrTy);
-                    }
-                    valueMap[inst.result] = boxedResult;
->>>>>>> origin/main
                     markOwned(inst.result);
                 } else {
                     // Boxed path: call Pyc_Pow
@@ -2119,27 +2106,71 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                           llvm::errs() << "  call " << funcName << " operand[" << ii << "]=" << inst.operands[ii].name << " in valueMap=" << (vit != valueMap.end() ? "yes" : "no") << "\n";
                       }
                   }
-                  // PyObject_CompareBool(a, b, op) — third arg is i32, not ptr
-                  if (funcName == "PyObject_CompareBool" && inst.operands.size() >= 4) {
-                      std::string aName = inst.operands[1].name;
-                      std::string bName = inst.operands[2].name;
-                      std::string opStr = inst.operands[3].name;
-                      int opVal = 0;
-                      try { opVal = std::stoi(opStr); } catch (...) {}
-                      llvm::Value* a = getAsPyObject(aName);
-                      llvm::Value* b = getAsPyObject(bName);
-                      llvm::Value* op = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), opVal);
-                      llvm::Function* cmpFn = module->getFunction("PyObject_CompareBool");
-                      if (cmpFn) {
-                          llvm::Value* res = builder.CreateCall(cmpFn, {a, b, op}, inst.result);
-                          if (!inst.result.empty()) {
-                              valueMap[inst.result] = res;
-                          }
-                      }
-                      emitDecRefIfOwned(aName);
-                      emitDecRefIfOwned(bName);
-                      continue;
-                  }
+                   // PyObject_CompareBool(a, b, op) — third arg is i32, not ptr
+                   if (funcName == "PyObject_CompareBool" && inst.operands.size() >= 4) {
+                       std::string aName = inst.operands[1].name;
+                       std::string bName = inst.operands[2].name;
+                       std::string opStr = inst.operands[3].name;
+                       int opVal = 0;
+                       try { opVal = std::stoi(opStr); } catch (...) {}
+                       llvm::Value* a = getAsPyObject(aName);
+                       llvm::Value* b = getAsPyObject(bName);
+                       llvm::Value* op = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), opVal);
+                       llvm::Function* cmpFn = module->getFunction("PyObject_CompareBool");
+                       if (cmpFn) {
+                           llvm::Value* res = builder.CreateCall(cmpFn, {a, b, op}, inst.result);
+                           if (!inst.result.empty()) {
+                               valueMap[inst.result] = res;
+                           }
+                       }
+                       emitDecRefIfOwned(aName);
+                       emitDecRefIfOwned(bName);
+                       continue;
+                   }
+                    // PyComplex_New(real: double, imag: double) — takes native doubles, not boxed ptrs
+                    if (funcName == "PyComplex_New" && inst.operands.size() >= 3) {
+                        std::string realName = inst.operands[1].name;
+                        std::string imagName = inst.operands[2].name;
+                        llvm::Value* realVal = getOrLoad(realName);
+                        llvm::Value* imagVal = getOrLoad(imagName);
+                        // Ensure they are double type
+                        if (realVal->getType() != llvm::Type::getDoubleTy(context)) {
+                            realVal = builder.CreateBitCast(realVal, llvm::Type::getDoubleTy(context), "real.cast");
+                        }
+                        if (imagVal->getType() != llvm::Type::getDoubleTy(context)) {
+                            imagVal = builder.CreateBitCast(imagVal, llvm::Type::getDoubleTy(context), "imag.cast");
+                        }
+                        llvm::Function* complexFn = module->getFunction("PyComplex_New");
+                        if (complexFn) {
+                            llvm::Value* res = builder.CreateCall(complexFn, {realVal, imagVal}, inst.result);
+                            if (!inst.result.empty()) {
+                                valueMap[inst.result] = res;
+                            }
+                        }
+                        emitDecRefIfOwned(realName);
+                        emitDecRefIfOwned(imagName);
+                        continue;
+                    }
+                    // PyComplex_Add/Sub/Mul/Div — complex arithmetic
+                    if ((funcName == "PyComplex_Add" || funcName == "PyComplex_Sub" ||
+                         funcName == "PyComplex_Mul" || funcName == "PyComplex_Div") &&
+                        inst.operands.size() >= 3) {
+                        std::string lhsName = inst.operands[1].name;
+                        std::string rhsName = inst.operands[2].name;
+                        llvm::Value* lhs = getAsPyObject(lhsName);
+                        llvm::Value* rhs = getAsPyObject(rhsName);
+                        llvm::Function* complexFn = module->getFunction(funcName);
+                        if (complexFn) {
+                            llvm::Value* res = builder.CreateCall(complexFn, {lhs, rhs}, inst.result);
+                            if (!inst.result.empty()) {
+                                valueMap[inst.result] = res;
+                                markOwned(inst.result);
+                            }
+                        }
+                        emitDecRefIfOwned(lhsName);
+                        emitDecRefIfOwned(rhsName);
+                        continue;
+                    }
                   // A4: native list subscript get for proven homogeneous lists.
                  if ((funcName == "Pyc_GetItem" || funcName == "Pyc_Subscript") && inst.operands.size() >= 3) {
                      std::string listName = inst.operands[1].name;
@@ -2246,24 +2277,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     if (!callee) {
                         // Function not found in this module - create external declaration
                         // This handles cross-module calls like __module__utils
-<<<<<<< HEAD
-=======
-                        if (std::getenv("PYC_DUMP_IR")) {
-                            llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " NOT FOUND, creating external\n";
-                        }
->>>>>>> origin/main
                         // Use the actual number of arguments from the instruction
                         size_t numArgs = inst.operands.size() - 1;
                         std::vector<llvm::Type*> argTypes(numArgs, pyObjectPtrTy);
                         llvm::FunctionType* extTy = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
                         callee = llvm::Function::Create(extTy, llvm::Function::ExternalLinkage, funcName, module.get());
                     }
-<<<<<<< HEAD
-=======
-                    if (std::getenv("PYC_DUMP_IR")) {
-                        llvm::errs() << "[DEBUG] call: funcName=" << funcName << " result=" << inst.result << " operands.size=" << inst.operands.size() << "\n";
-                    }
->>>>>>> origin/main
                     if (callee) {
                         std::vector<llvm::Value*> callArgs;
                         // Track which args were native (i64/double) so that getAsPyObject's

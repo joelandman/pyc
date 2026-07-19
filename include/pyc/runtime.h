@@ -91,6 +91,7 @@ PyObject* PyBuiltin_IntBase(PyObject* obj, PyObject* base);
 PyObject* PyBuiltin_Ord(PyObject* obj);
 PyObject* PyBuiltin_Chr(PyObject* obj);
 PyObject* PyBuiltin_Float(PyObject* obj);
+PyObject* PyBuiltin_Complex(PyObject* obj1, PyObject* obj2);
 PyObject* PyBuiltin_Abs(PyObject* obj);
 PyObject* PyBuiltin_Id(PyObject* obj);
 PyObject* PyBuiltin_Divmod(PyObject* a, PyObject* b);
@@ -180,6 +181,25 @@ void      pyc_clear_exception(void);
 PyObject* pyc_make_exc(PyObject* typeName, PyObject* msg);
 // Function objects (type 11): callable token + display name for repr.
 PyObject* pyc_make_func(PyObject* token, PyObject* displayName);
+// Exception class objects (type 12): callable, constructs exceptions via pyc_make_exc.
+PyObject* pyc_make_exc_class(PyObject* excName);
+// Complex numbers (type 13): real and imaginary parts as doubles.
+PyObject* PyComplex_New(double real, double imag);
+// Complex arithmetic: returns new complex object (owned ref).
+PyObject* PyComplex_Add(PyObject* a, PyObject* b);
+PyObject* PyComplex_Sub(PyObject* a, PyObject* b);
+PyObject* PyComplex_Mul(PyObject* a, PyObject* b);
+PyObject* PyComplex_Div(PyObject* a, PyObject* b);
+// Complex pow and abs
+PyObject* PyComplex_Pow(PyObject* base, PyObject* exp);
+PyObject* PyComplex_Abs(PyObject* z);
+// cmath module functions
+PyObject* PyCmath_Sqrt(PyObject* z);
+PyObject* PyCmath_Log(PyObject* z);
+PyObject* PyCmath_Exp(PyObject* z);
+PyObject* PyCmath_Sin(PyObject* z);
+PyObject* PyCmath_Cos(PyObject* z);
+PyObject* PyCmath_Tan(PyObject* z);
 // Boxed-bool: does exc match an except clause naming typeName (incl. the
 // builtin hierarchy, e.g. except ArithmeticError catches ZeroDivisionError)?
 PyObject* pyc_exc_matches(PyObject* exc, PyObject* typeName);
@@ -256,6 +276,14 @@ PyObject* PyBuiltin_ReSub(PyObject* pattern, PyObject* repl, PyObject* subject, 
 PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject, PyObject* maxsplit);
 // m.group(i) — return the i-th capture group as a string.
 PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj);
+
+// Generator yield helpers (eager materialization):
+// pyc_yield_collect(value)  — appends value to thread-local buffer, returns value
+// pyc_get_yield_buffer()    — returns collected list, clears buffer
+// pyc_clear_yield_buffer()  — clears buffer (called before generator function runs)
+PyObject* pyc_yield_collect(PyObject* value);
+PyObject* pyc_get_yield_buffer(void);
+void      pyc_clear_yield_buffer(void);
 
 #ifdef __cplusplus
 }

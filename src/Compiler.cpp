@@ -39,6 +39,7 @@ class LoweringVisitor {
              tempCounter = 0;
              valueTypes.clear();
              numericLocals.clear();
+            complexVars.clear();
             // Pre-scan: collect module bindings and global-declared variable
             // names so top-level assignments are visible from functions.
             collectModuleBindings(node);
@@ -52,6 +53,10 @@ class LoweringVisitor {
             funcCells.clear();
             funcFreeCells.clear();
             funcOwnedCells.clear();
+            // Scan all function bodies for yield expressions to detect generators.
+            // Must happen before any function lowering so that lowerCall can
+            // detect generator calls and wrap them with clear→call→get_buffer.
+            scanForGenerators(node);
             // B4: pre-populate knownIRFunctions with all user FunctionDef ids
             // (including nested) so that calls (even forward refs) see them as
             // direct targets. Lambdas are added when their expr is lowered.
@@ -88,7 +93,7 @@ class LoweringVisitor {
             // Pyc_Apply(token) path. This preserves all the fast/special lowering paths while
             // still giving full lambda-as-value (B4) behavior for user callables.
             for (const char* s : {"print","len","range","min","max","sum","sorted","any","all","isinstance",
-                                   "int","float","abs","str","list","reversed","enumerate","zip","bool","type","id",
+                                   "int","float","complex","abs","str","list","reversed","enumerate","zip","bool","type","id",
                                    "repr","hex","oct","bin","ord","chr","round","cmp_to_key","open"}) {
                 knownIRFunctions.insert(s);
             }
@@ -670,6 +675,7 @@ class LoweringVisitor {
             std::vector<ActiveTry> savedActiveTries = activeTries; activeTries.clear();
             std::vector<size_t> savedLoopTryDepths = loopTryDepths; loopTryDepths.clear();
             numericLocals.clear();
+            complexVars.clear();
 
             // B5: allocate owned cells (for names we assign here that inner scopes close over via nonlocal).
             // Initialize at creation time:
@@ -1174,6 +1180,38 @@ class LoweringVisitor {
             } else if (node->is_float) {
                 ir.addInstruction(currentFunc, "fconst", {val}, res, "float");
                 noteType(res, "float");
+            } else if (node->is_complex) {
+                // Complex literals are always boxed — emit pyc_make_complex(real, imag).
+                // Parse the string value like "0+1j" or "3+4j" or "0+0j"
+                std::string val = node->value;
+                double real = 0.0, imag = 0.0;
+                // Find the 'j' position
+                size_t jpos = val.find('j');
+                if (jpos != std::string::npos) {
+                    std::string imag_str = val.substr(0, jpos);
+                    try { imag = std::stod(imag_str); } catch (...) { imag = 0.0; }
+                    // Check if there's a real part (look for + or - before the imag part)
+                    if (jpos > 0) {
+                        // Find the separator (+ or -) between real and imag
+                        for (size_t i = jpos - 1; i > 0; --i) {
+                            if (val[i] == '+' || val[i] == '-') {
+                                std::string real_str = val.substr(0, i);
+                                try { real = std::stod(real_str); } catch (...) { real = 0.0; }
+                                break;
+                            }
+                        }
+                    }
+                }
+                // Emit native doubles directly (PyComplex_New expects double args)
+                std::string realConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "fconst", {std::to_string(real)}, realConst, "float");
+                std::string imagConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "fconst", {std::to_string(imag)}, imagConst, "float");
+                std::string complexRes = "t" + std::to_string(tempCounter++);
+                // Use a special IR instruction that passes native doubles
+                ir.addInstruction(currentFunc, "call", {"PyComplex_New", realConst, imagConst}, complexRes);
+                noteType(res, "boxed");
+                return complexRes;
             } else if (node->is_str) {
                 // Wrap in quotes so codegen detects it as a string.
                 // Embedded quotes are not escaped in this MVP.
@@ -1261,6 +1299,18 @@ class LoweringVisitor {
                     callableTokenTemps.insert(res);
                     return res;
                 }
+            }
+            // B13: Builtin exception classes as first-class values.
+            // `exc = ValueError` produces a type-12 callable that constructs
+            // exceptions via pyc_make_exc when invoked.
+            if (builtinExcNames().count(node->id) &&
+                !knownClasses.count(node->id) &&
+                !isShadowedLocal(node->id)) {
+                std::string excNameConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + node->id + "\""}, excNameConst, "str");
+                std::string excClass = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"pyc_make_exc_class", excNameConst}, excClass);
+                return excClass;
             }
             return node->id;
         } else if (node->type == "Attribute") {
@@ -1392,8 +1442,86 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "assign", {value}, node->args[0]);
             noteType(node->args[0], typeOf(value));
             return value;
+        } else if (node->type == "YieldExpr") {
+            // yield / yield from — emit pyc_yield_collect call
+            return lowerYield(node);
         }
         return "";
+    }
+
+    std::string lowerYield(const ASTNode* node) {
+        // node is a YieldExpr with optional value and is_yield_from flag
+        if (!node || node->type != "YieldExpr") {
+            return "";
+        }
+        bool is_yield_from = false;
+        // Check if this is a yield from by looking at the node's args
+        // (the Python C API stores is_yield_from in the node)
+        if (!node->args.empty() && node->args[0] == "1") {
+            is_yield_from = true;
+        }
+        std::string result = "t" + std::to_string(tempCounter++);
+        if (is_yield_from && !node->children.empty()) {
+            // yield from subgen(): directly call subgen (no generator wrapper)
+            // and iterate its result list, yielding each element.
+            // We emit the call directly to avoid the generator wrapper,
+            // since yield from handles the iteration itself.
+            // The subgen's yields go directly into the current buffer.
+            std::string subgenVal;
+            // Extract the function name from the call expression
+            std::string funcName;
+            if (!node->children[0]->children.empty() && 
+                node->children[0]->children[0]->type == "Name") {
+                funcName = node->children[0]->children[0]->id;
+            }
+            // Emit direct call to subgen (no wrapper)
+            std::string callRes = "t" + std::to_string(tempCounter++);
+            std::vector<std::string> callOps;
+            callOps.push_back(funcName);
+            ir.addInstruction(currentFunc, "call", callOps, callRes);
+            subgenVal = callRes;
+            // Store subgen result in a slot to keep it alive through the loop
+            std::string subgenSlot = "__yfrom_subgen_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {subgenVal}, subgenSlot);
+            subgenVal = subgenSlot;
+            // Use boxed index for comparison and iteration
+            std::string idxVar = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, idxVar);
+            std::string loopLabel = "yfrom_loop_" + std::to_string(tempCounter);
+            std::string bodyLabel = "yfrom_body_" + std::to_string(tempCounter);
+            std::string exitLabel = "yfrom_exit_" + std::to_string(tempCounter);
+            tempCounter++;
+            ir.addInstruction(currentFunc, "label", {}, loopLabel);
+            // len = PyList_SizeBoxed(subgenVal) returns boxed int
+            std::string lenRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", subgenVal}, lenRes);
+            std::string lenSlot = "__sl_yfrom_" + std::to_string(tempCounter);
+            ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
+            std::string cmpRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenSlot}, cmpRes);
+            ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
+            ir.addInstruction(currentFunc, "label", {}, bodyLabel);
+            std::string elemRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", subgenVal, idxVar}, elemRes);
+            std::string yld = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"pyc_yield_collect", elemRes}, yld);
+            std::string oneRes = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, oneRes);
+            std::string nextIdx = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "add", {idxVar, oneRes}, nextIdx);
+            ir.addInstruction(currentFunc, "assign", {nextIdx}, idxVar);
+            ir.addInstruction(currentFunc, "br", {}, loopLabel);
+            ir.addInstruction(currentFunc, "label", {}, exitLabel);
+            return yld;
+        }
+        // regular yield
+        if (!node->children.empty()) {
+            std::string val = lowerExpr(node->children[0].get());
+            ir.addInstruction(currentFunc, "call", {"pyc_yield_collect", val}, result);
+        } else {
+            ir.addInstruction(currentFunc, "call", {"pyc_yield_collect"}, result);
+        }
+        return result;
     }
 
     // A6: Generate specialized function variants based on call-site type info.
@@ -1501,10 +1629,12 @@ class LoweringVisitor {
     std::unordered_map<std::string, std::vector<std::string>> funcDefaultValues;
     std::unordered_map<std::string, std::vector<std::string>> funcParamNames;
     std::unordered_map<std::string, std::string> valueTypes;
-    // A2.1: names proven to stay numeric (int/i64/float) for their live range.
-    // These get native i64/double slots instead of boxed PyObject*.
-    std::unordered_set<std::string> numericLocals;
-    // Map from user-level name to synthetic lambda function name for call resolution.
+     // A2.1: names proven to stay numeric (int/i64/float) for their live range.
+     // These get native i64/double slots instead of boxed PyObject*.
+     std::unordered_set<std::string> numericLocals;
+     // B16: names proven to be complex numbers (type 13).
+     std::unordered_set<std::string> complexVars;
+     // Map from user-level name to synthetic lambda function name for call resolution.
     std::unordered_map<std::string, std::string> lambdaAliases;
     // Track list/tuple literals assigned to names (intra-function) so that
     // *args at call sites can statically expand to the right number of
@@ -1707,6 +1837,44 @@ class LoweringVisitor {
 
     // B5: functions that return descriptor bundles (capturing lambdas returned from makers etc.).
     std::unordered_set<std::string> functionsThatReturnBundles;
+    // Generator functions: contain yield expressions. Calls to them are
+    // wrapped with clear→call→get_buffer to materialize the yielded values.
+    std::unordered_set<std::string> generatorFunctions;
+
+    // Helper: recursively check if an AST node contains a YieldExpr.
+    bool containsYield(const ASTNode* node) const {
+        if (!node) return false;
+        if (node->type == "YieldExpr") return true;
+        for (const auto& c : node->children) {
+            if (containsYield(c.get())) return true;
+        }
+        return false;
+    }
+
+    // Pre-scan all function bodies to detect generators.
+    void scanForGenerators(const ASTNode* node) {
+        if (!node) return;
+        if (node->type == "FunctionDef" || node->type == "Lambda") {
+            std::string fnName;
+            if (node->type == "FunctionDef" && !node->id.empty()) {
+                fnName = node->id;
+            } else if (node->type == "Lambda") {
+                // Lambdas get synthetic names; check if any child is a FunctionDef
+                // that we've already processed. For now, skip lambda detection.
+            }
+            if (!fnName.empty()) {
+                for (const auto& c : node->children) {
+                    if (containsYield(c.get())) {
+                        generatorFunctions.insert(fnName);
+                        break;
+                    }
+                }
+            }
+        }
+        for (const auto& c : node->children) {
+            scanForGenerators(c.get());
+        }
+    }
     std::unordered_map<std::string, std::string> functionReturnedBundleSynthetic;
     std::unordered_map<std::string, std::vector<std::string>> functionReturnedBundleCaps;
     std::unordered_map<std::string, std::vector<std::string>> lambdaDefaultTemps;
@@ -2162,11 +2330,18 @@ class LoweringVisitor {
                         return one;
                     }
                     std::string cur = left;
+                    // Check if left is complex (boxed type from complex literal or complex op)
+                    bool isComplex = (typeOf(left) == "boxed");
                     for (long k = 1; k < expv; ++k) {
                         std::string t = "t" + std::to_string(tempCounter++);
-                        std::string rt = numericResultType("mul", cur, left);
-                        ir.addInstruction(currentFunc, "mul", {cur, left}, t, rt);
-                        noteType(t, rt);
+                        if (isComplex) {
+                            ir.addInstruction(currentFunc, "call", {"PyComplex_Mul", cur, left}, t);
+                            noteType(t, "boxed");
+                        } else {
+                            std::string rt = numericResultType("mul", cur, left);
+                            ir.addInstruction(currentFunc, "mul", {cur, left}, t, rt);
+                            noteType(t, rt);
+                        }
                         cur = t;
                     }
                     return cur;
@@ -2175,6 +2350,27 @@ class LoweringVisitor {
         }
         std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         std::string right = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
+        // B16: Complex arithmetic — if both operands are complex (boxed), emit complex calls
+        if (op == "add" || op == "sub" || op == "mul" || op == "truediv") {
+            std::string funcName;
+            if (op == "add") funcName = "PyComplex_Add";
+            else if (op == "sub") funcName = "PyComplex_Sub";
+            else if (op == "mul") funcName = "PyComplex_Mul";
+            else if (op == "truediv") funcName = "PyComplex_Div";
+            if (!funcName.empty() && typeOf(left) == "boxed" && typeOf(right) == "boxed") {
+                std::string res = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {funcName, left, right}, res);
+                noteType(res, "boxed");
+                return res;
+            }
+        }
+        // B16: Complex pow — if op is pow and operands are complex, emit PyComplex_Pow
+        if (op == "pow") {
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyComplex_Pow", left, right}, res);
+            noteType(res, "boxed");
+            return res;
+        }
         std::string res = "t" + std::to_string(tempCounter++);
         std::string resultType = numericResultType(op, left, right);
         ir.addInstruction(currentFunc, op, {left, right}, res, resultType);
@@ -2470,7 +2666,7 @@ class LoweringVisitor {
                 // collect args normally into argRes.
                 static const std::unordered_set<std::string> neverDynamic = {
                     "print","len","range","min","max","sum","sorted","any","all","isinstance",
-                    "int","float","abs","str","list","enumerate","zip","bool","type","id",
+                    "int","float","complex","abs","str","list","enumerate","zip","bool","type","id",
                     "repr","hex","oct","bin","ord","chr","round","open"
                 };
                 if (!theName.empty() && neverDynamic.count(theName) == 0) {
@@ -3113,11 +3309,33 @@ class LoweringVisitor {
             noteType(res, "float");
             return res;
         }
-        // abs(x) → PyBuiltin_Abs(x)
+        // complex(x) or complex(x, y) → PyBuiltin_Complex(x, y)
+        if (funcName == "complex") {
+            std::string res = "t" + std::to_string(tempCounter++);
+            std::string arg1 = argRes.empty() ? "" : argRes[0];
+            std::string arg2 = argRes.size() >= 2 ? argRes[1] : "";
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Complex", arg1, arg2}, res, "boxed");
+            noteType(res, "boxed");
+            return res;
+        }
+        // abs(x) → PyBuiltin_Abs(x) or PyComplex_Abs(x) for complex
         if (funcName == "abs") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
+            // Check if arg is complex (type 13, boxed)
+            // Complex values are always boxed, so we check if the arg was produced by complex literal lowering
+            // For now, use a heuristic: if resultType would be "boxed" and we can't determine it's int/float,
+            // check if it might be complex. Actually, we need to track complex types.
+            // Simple approach: always use PyComplex_Abs if the arg is boxed — the runtime will type-check.
+            // Better: check if arg was produced by complex literal (has a specific temp pattern or annotation)
+            // For now, emit PyComplex_Abs for boxed args — runtime handles type checking
             std::string resultType = typeOf(arg);
+            if (resultType == "boxed") {
+                // Could be complex — try PyComplex_Abs first
+                ir.addInstruction(currentFunc, "call", {"PyComplex_Abs", arg}, res);
+                noteType(res, "float");  // abs(complex) returns float
+                return res;
+            }
             if (resultType != "int" && resultType != "float" && resultType != "bool") {
                 resultType = "boxed";
             }
@@ -3521,8 +3739,18 @@ class LoweringVisitor {
                 }
                 callSiteTypes[funcName].push_back(sig);
             }
+            // Generator call: wrap with clear→call→get_buffer to materialize yields.
+            bool isGenCall = generatorFunctions.count(funcName) > 0;
+            if (isGenCall) {
+                ir.addInstruction(currentFunc, "call", {"pyc_clear_yield_buffer"}, "");
+            }
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", finalOps, res);
+            if (isGenCall) {
+                std::string genRes = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"pyc_get_yield_buffer"}, genRes);
+                res = genRes;
+            }
             // B4: if the callee is a function we have recorded as returning a callable token
             // (e.g. a Python function whose body does "return lambda ..."), mark the call result
             // so subsequent assign/unpack/call through that result can propagate tokens.
@@ -4844,6 +5072,27 @@ class LoweringVisitor {
             // Other re.* methods fall through to default lookup.
         }
 
+        // cmath module dispatch: detect `cmath.<name>(...)` by looking at the
+        // AST node (Name "cmath" as the Attribute's base).
+        if (attr->children.size() >= 1 && attr->children[0] &&
+            attr->children[0]->type == "Name" && attr->children[0]->id == "cmath") {
+            if (methodName == "sqrt" || methodName == "log" || methodName == "exp" ||
+                methodName == "sin" || methodName == "cos" || methodName == "tan") {
+                std::string z = args.empty() ? "" : args[0];
+                std::string fn;
+                if (methodName == "sqrt") fn = "PyCmath_Sqrt";
+                else if (methodName == "log") fn = "PyCmath_Log";
+                else if (methodName == "exp") fn = "PyCmath_Exp";
+                else if (methodName == "sin") fn = "PyCmath_Sin";
+                else if (methodName == "cos") fn = "PyCmath_Cos";
+                else if (methodName == "tan") fn = "PyCmath_Tan";
+                ir.addInstruction(currentFunc, "call", {fn, z}, res);
+                noteType(res, "boxed");
+                return res;
+            }
+            // Other cmath.* methods fall through to default lookup.
+        }
+
         // Match.group(i) — dispatch when the inferred type of obj is a
         // Match (which we'll tag with "match" when we construct it).
         if (methodName == "group" && typeOf(obj) == "match") {
@@ -5136,6 +5385,10 @@ class LoweringVisitor {
     void lowerClass(const ASTNode* node) {
         std::string className = node->id;
         knownClasses.insert(className);
+        // Decorators (synthetic "Decorator" children appended by the parser).
+        std::vector<const ASTNode*> decorators;
+        for (const auto& c : node->children)
+            if (c && c->type == "Decorator" && !c->children.empty()) decorators.push_back(c->children[0].get());
         // Method bodies get fresh try-scope state (mirrors FunctionDef).
         std::vector<ActiveTry> savedActiveTries = activeTries; activeTries.clear();
         std::vector<size_t> savedLoopTryDepths = loopTryDepths; loopTryDepths.clear();
@@ -5313,6 +5566,19 @@ class LoweringVisitor {
             }
             std::string mroDummy = "t" + std::to_string(tempCounter++);
             ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, mroKeyConst, mroList}, mroDummy);
+        }
+        // Decorators, bottom-up: className = decoN(...(deco1(classDict))...).
+        // Each application: lower the decorator expression, wrap classDictTemp
+        // in a one-element list, call Pyc_Apply, and update classDictTemp.
+        for (auto it = decorators.rbegin(); it != decorators.rend(); ++it) {
+            std::string dv = lowerExpr(*it);
+            std::string z = "c" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "const", {"0"}, z);
+            std::string argList = "t" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "call", {"PyList_NewBoxed", z}, argList);
+            ir.addInstruction("__module__", "call", {"PyList_Append", argList, classDictTemp}, "");
+            classDictTemp = "t" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "call", {"Pyc_Apply", dv, argList}, classDictTemp);
         }
         // Store class dict as the class value
         ir.addInstruction("__module__", "assign", {classDictTemp}, className);

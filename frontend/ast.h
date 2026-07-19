@@ -26,6 +26,14 @@ public:
     explicit FloatLiteral(double v) : val_(v) {}
     double value() const { return val_; }
 };
+class ComplexLiteral final : public Expr {
+    double real_;
+    double imag_;
+public:
+    ComplexLiteral(double r, double i) : real_(r), imag_(i) {}
+    double real() const { return real_; }
+    double imag() const { return imag_; }
+};
 class StrLiteral final : public Expr {
     std::string val_;
 public:

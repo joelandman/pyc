@@ -9,9 +9,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <complex>
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
+#include <map>
 #include <string>
 #include <atomic>
 
@@ -37,7 +39,8 @@ static void pyc_raise_msg(const char* type, const char* msg);
 struct PyObject {
     int refcount;
     int type;   // 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool,
-                // 6=cell (B5 nonlocal/closure)
+                // 6=cell (B5 nonlocal/closure), 10=exception, 11=function,
+                // 12=exception class, 13=complex
     long value;    // type 0
     double dvalue; // type 4
     std::vector<PyObject*> list;
@@ -48,6 +51,9 @@ struct PyObject {
     int list_item_type;      // 0=general PyObject*, 1=int64, 2=double
     std::vector<long> ilist;
     std::vector<double> flist;
+    // Complex numbers (type 13)
+    double complex_real;
+    double complex_imag;
 };
 
 void Py_INCREF(PyObject* obj) {
@@ -553,6 +559,16 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
         format_double(buf, sizeof(buf), obj->dvalue);
         return fprintf(fp, "%s", buf);
     }
+    if (obj->type == 13) {
+        char rbuf[64], ibuf[64];
+        format_double(rbuf, sizeof(rbuf), obj->complex_real);
+        format_double(ibuf, sizeof(ibuf), obj->complex_imag);
+        if (obj->complex_imag >= 0) {
+            return fprintf(fp, "(%s+%sj)", rbuf, ibuf);
+        } else {
+            return fprintf(fp, "(%s%sj)", rbuf, ibuf);
+        }
+    }
     if (obj->type == 1) {
         // Nested list — open bracket, recurse, close.
         fprintf(fp, "[");
@@ -608,6 +624,31 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         format_double(buf, sizeof(buf), obj->dvalue);
         int r = fprintf(fp, "%s\n", buf); fflush(fp); return r;
     }
+    if (obj->type == 13) {
+        char rbuf[64], ibuf[64];
+        format_double(rbuf, sizeof(rbuf), obj->complex_real);
+        format_double(ibuf, sizeof(ibuf), obj->complex_imag);
+        int r;
+        if (obj->complex_imag >= 0) {
+            r = fprintf(fp, "(%s+%sj)\n", rbuf, ibuf);
+        } else {
+            r = fprintf(fp, "(%s%sj)\n", rbuf, ibuf);
+        }
+        fflush(fp); return r;
+    }
+    if (obj->type == 13) {
+        // Complex number: print as (real+imagj) or (real-imagj)
+        char rbuf[64], ibuf[64];
+        format_double(rbuf, sizeof(rbuf), obj->complex_real);
+        format_double(ibuf, sizeof(ibuf), obj->complex_imag);
+        int r;
+        if (obj->complex_imag >= 0) {
+            r = fprintf(fp, "(%s+%sj)\n", rbuf, ibuf);
+        } else {
+            r = fprintf(fp, "(%s%sj)\n", rbuf, ibuf);
+        }
+        fflush(fp); return r;
+    }
     if (obj->type == 9) {
         // Match object — print "<re.Match object>" for safety.
         int r = fprintf(fp, "<re.Match object>\n"); fflush(fp); return r;
@@ -620,6 +661,33 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         // Function object — CPython-style repr.
         const char* nm = obj->cell_content ? obj->cell_content->str.c_str() : obj->str.c_str();
         int r = fprintf(fp, "<function %s at %p>\n", nm, (void*)obj); fflush(fp); return r;
+    }
+    // Descriptor bundle (closure value): a list whose first element is a
+    // function object (type 11) with additional cell elements, or a string
+    // token (type 3) followed by cell objects (type 6). Print as <function ...>
+    // instead of the raw [token, cell0, ...] list.
+    if (obj->type == 1 && !obj->list.empty()) {
+        PyObject* first = obj->list[0];
+        bool is_bundle = false;
+        if (first && first->type == 11) {
+            is_bundle = true;
+        } else if (first && first->type == 3 && obj->list.size() >= 2) {
+            // Check if remaining elements are cells (type 6)
+            bool all_cells = true;
+            for (size_t i = 1; i < obj->list.size(); ++i) {
+                if (!obj->list[i] || obj->list[i]->type != 6) {
+                    all_cells = false;
+                    break;
+                }
+            }
+            is_bundle = all_cells;
+        }
+        if (is_bundle) {
+            const char* nm = first->type == 11
+                ? (first->cell_content ? first->cell_content->str.c_str() : first->str.c_str())
+                : first->str.c_str();
+            int r = fprintf(fp, "<function %s at %p>\n", nm, (void*)obj); fflush(fp); return r;
+        }
     }
     if (obj->type == 1) {
         fprintf(fp, "[");
@@ -781,6 +849,31 @@ PyObject* PyStr_FromAny(PyObject* obj) {
         return PyUnicode_FromString(buf);
     }
     if (obj->type == 1) {
+        // Descriptor bundle: first element is a function object or a string
+        // token followed by cell objects.
+        if (!obj->list.empty()) {
+            PyObject* first = obj->list[0];
+            bool is_bundle = false;
+            if (first && first->type == 11) {
+                is_bundle = true;
+            } else if (first && first->type == 3 && obj->list.size() >= 2) {
+                bool all_cells = true;
+                for (size_t i = 1; i < obj->list.size(); ++i) {
+                    if (!obj->list[i] || obj->list[i]->type != 6) {
+                        all_cells = false;
+                        break;
+                    }
+                }
+                is_bundle = all_cells;
+            }
+            if (is_bundle) {
+                std::string nm = first->type == 11
+                    ? (first->cell_content ? first->cell_content->str : first->str)
+                    : first->str;
+                std::string result = "<function " + nm + " at " + std::to_string(reinterpret_cast<uintptr_t>(obj)) + ">";
+                return PyUnicode_FromString(result.c_str());
+            }
+        }
         std::string r = "[";
         // A4: handle homogeneous lists.
         if (obj->list_item_type == 1) {
@@ -1099,6 +1192,92 @@ PyObject* PyBuiltin_Float(PyObject* obj) {
     return PyFloat_FromDouble(0.0);
 }
 
+// complex(x) — construct a complex number from various types.
+//   complex()     -> 0+0j
+//   complex(3)    -> 3+0j
+//   complex(3.5)  -> 3.5+0j
+//   complex(1j)   -> 0+1j (returns same object)
+//   complex(3,4)  -> 3+4j
+//   complex("3+4j") -> parse string (basic numeric only)
+PyObject* PyBuiltin_Complex(PyObject* obj1, PyObject* obj2) {
+    // Two-argument form: complex(real, imag)
+    if (obj1 && obj2) {
+        double real = 0.0, imag = 0.0;
+        if (obj1->type == 13) {
+            real = obj1->complex_real;
+        } else if (obj1->type == 0 || obj1->type == 5) {
+            real = (double)obj1->value;
+        } else if (obj1->type == 4) {
+            real = obj1->dvalue;
+        }
+        if (obj2->type == 13) {
+            imag = obj2->complex_imag;
+        } else if (obj2->type == 0 || obj2->type == 5) {
+            imag = (double)obj2->value;
+        } else if (obj2->type == 4) {
+            imag = obj2->dvalue;
+        }
+        return PyComplex_New(real, imag);
+    }
+    // Single-argument form: complex(x)
+    if (!obj1) return PyComplex_New(0.0, 0.0);
+    if (obj1->type == 13) {
+        Py_INCREF(obj1);
+        return obj1;
+    }
+    if (obj1->type == 0 || obj1->type == 5) {
+        return PyComplex_New((double)obj1->value, 0.0);
+    }
+    if (obj1->type == 4) {
+        return PyComplex_New(obj1->dvalue, 0.0);
+    }
+    if (obj1->type == 3) {
+        // Parse string: "3+4j", "3.5+1.5j", "2j", "-3+4j", etc.
+        std::string s = obj1->str;
+        size_t start = s.find_first_not_of(" \t\n\r");
+        if (start == std::string::npos) return PyComplex_New(0.0, 0.0);
+        size_t end = s.find_last_not_of(" \t\n\r");
+        s = s.substr(start, end - start + 1);
+        double real = 0.0, imag = 0.0;
+        // Check for 'j' or 'J' suffix
+        size_t jpos = s.find_first_of("jJ");
+        if (jpos != std::string::npos) {
+            std::string beforeJ = s.substr(0, jpos);
+            size_t plusPos = beforeJ.find('+');
+            size_t minusPos = beforeJ.rfind('-');
+            bool hasReal = false;
+            if (plusPos != std::string::npos && plusPos > 0) {
+                real = std::stod(beforeJ.substr(0, plusPos));
+                std::string imagPart = beforeJ.substr(plusPos + 1);
+                if (imagPart.empty() || imagPart == "+") {
+                    imag = 1.0;
+                } else if (imagPart == "-") {
+                    imag = -1.0;
+                } else {
+                    try { imag = std::stod(imagPart); } catch (...) {}
+                }
+                hasReal = true;
+            } else if (minusPos != std::string::npos && minusPos > 0) {
+                real = std::stod(beforeJ.substr(0, minusPos));
+                std::string imagPart = beforeJ.substr(minusPos);
+                try { imag = std::stod(imagPart); } catch (...) {}
+                hasReal = true;
+            }
+            if (!hasReal) {
+                if (beforeJ.empty() || beforeJ == "+" || beforeJ == "-") {
+                    imag = (beforeJ == "-" || beforeJ == "-+") ? -1.0 : 1.0;
+                } else {
+                    try { imag = std::stod(beforeJ); } catch (...) {}
+                }
+            }
+        } else {
+            try { real = std::stod(s); } catch (...) {}
+        }
+        return PyComplex_New(real, imag);
+    }
+    return PyComplex_New(0.0, 0.0);
+}
+
 // bool(x) — returns PyBool_New of the truthiness of x. CPython's bool()
 // always returns a real bool (True/False). Our PyBool_New now returns
 // the cached immortal singletons, so identity comparisons work.
@@ -1252,6 +1431,31 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
         return PyUnicode_FromString(r.c_str());
     }
     if (obj->type == 1) {
+        // Descriptor bundle: first element is a function object or a string
+        // token followed by cell objects.
+        if (!obj->list.empty()) {
+            PyObject* first = obj->list[0];
+            bool is_bundle = false;
+            if (first && first->type == 11) {
+                is_bundle = true;
+            } else if (first && first->type == 3 && obj->list.size() >= 2) {
+                bool all_cells = true;
+                for (size_t i = 1; i < obj->list.size(); ++i) {
+                    if (!obj->list[i] || obj->list[i]->type != 6) {
+                        all_cells = false;
+                        break;
+                    }
+                }
+                is_bundle = all_cells;
+            }
+            if (is_bundle) {
+                std::string nm = first->type == 11
+                    ? (first->cell_content ? first->cell_content->str : first->str)
+                    : first->str;
+                std::string result = "<function " + nm + " at " + std::to_string(reinterpret_cast<uintptr_t>(obj)) + ">";
+                return PyUnicode_FromString(result.c_str());
+            }
+        }
         std::string r = "[";
         bool first = true;
         for (auto* item : obj->list) {
@@ -2025,6 +2229,23 @@ PyObject* pyc_import_failed(PyObject* modName) {
         }
         if (modName->str == "subprocess") {
             return makeSubprocessModuleDict();
+        }
+        if (modName->str == "cmath") {
+            PyObject* d = PyDict_New();
+            auto add = [&](const char* name, const char* token) {
+                PyObject* k = PyUnicode_FromString(name);
+                PyObject* v = PyUnicode_FromString(token);
+                PyDict_SetItem(d, k, v);
+                Py_DECREF(k);
+                Py_DECREF(v);
+            };
+            add("sqrt", "PyCmath_Sqrt");
+            add("log", "PyCmath_Log");
+            add("exp", "PyCmath_Exp");
+            add("sin", "PyCmath_Sin");
+            add("cos", "PyCmath_Cos");
+            add("tan", "PyCmath_Tan");
+            return d;
         }
     }
     const char* name = (modName && modName->type == 3) ? modName->str.c_str() : "?";
@@ -4242,18 +4463,291 @@ void pyc_try_pop(void) {
 //                callable registry in Pyc_Apply)
 // cell_content = display name for repr (the Python-level name; "<lambda>"
 //                for lambdas), may be null.
+// String interning: same (token, displayName) pair always returns the same
+// PyObject* so that `f is f` works across scopes (CPython semantics).
+static std::map<std::pair<std::string, std::string>, PyObject*> g_funcValueCache;
+
+// Complex number (type 13): real and imaginary parts stored as doubles.
+PyObject* PyComplex_New(double real, double imag) {
+    PyObject* c = new PyObject();
+    c->refcount = 1;
+    c->type = 13;
+    c->complex_real = real;
+    c->complex_imag = imag;
+    // Zero-initialize other fields
+    c->value = 0;
+    c->dvalue = 0.0;
+    c->cell_content = nullptr;
+    c->list_item_type = 0;
+    return c;
+}
+
+// Complex arithmetic helpers
+static PyObject* PyComplex_AddImpl(PyObject* a, PyObject* b) {
+    PyObject* res = PyComplex_New(a->complex_real + b->complex_real, a->complex_imag + b->complex_imag);
+    return res;
+}
+static PyObject* PyComplex_SubImpl(PyObject* a, PyObject* b) {
+    PyObject* res = PyComplex_New(a->complex_real - b->complex_real, a->complex_imag - b->complex_imag);
+    return res;
+}
+static PyObject* PyComplex_MulImpl(PyObject* a, PyObject* b) {
+    // (a+bj)*(c+dj) = (ac-bd) + (ad+bc)j
+    double r = a->complex_real * b->complex_real - a->complex_imag * b->complex_imag;
+    double i = a->complex_real * b->complex_imag + a->complex_imag * b->complex_real;
+    PyObject* res = PyComplex_New(r, i);
+    return res;
+}
+static PyObject* PyComplex_DivImpl(PyObject* a, PyObject* b) {
+    // (a+bj)/(c+dj) = ((ac+bd)/(c²+d²)) + ((bc-ad)/(c²+d²))j
+    double denom = b->complex_real * b->complex_real + b->complex_imag * b->complex_imag;
+    if (denom == 0.0) return nullptr; // ZeroDivisionError will be raised by caller
+    double r = (a->complex_real * b->complex_real + a->complex_imag * b->complex_imag) / denom;
+    double i = (a->complex_imag * b->complex_real - a->complex_real * b->complex_imag) / denom;
+    PyObject* res = PyComplex_New(r, i);
+    return res;
+}
+
+PyObject* PyComplex_Add(PyObject* a, PyObject* b) {
+    if (!a || !b || a->type != 13 || b->type != 13) {
+        // Type error — let the caller handle it
+        return nullptr;
+    }
+    return PyComplex_AddImpl(a, b);
+}
+PyObject* PyComplex_Sub(PyObject* a, PyObject* b) {
+    if (!a || !b || a->type != 13 || b->type != 13) {
+        return nullptr;
+    }
+    return PyComplex_SubImpl(a, b);
+}
+PyObject* PyComplex_Mul(PyObject* a, PyObject* b) {
+    if (!a || !b || a->type != 13 || b->type != 13) {
+        return nullptr;
+    }
+    return PyComplex_MulImpl(a, b);
+}
+PyObject* PyComplex_Div(PyObject* a, PyObject* b) {
+    if (!a || !b || a->type != 13 || b->type != 13) {
+        return nullptr;
+    }
+    if (b->complex_real == 0.0 && b->complex_imag == 0.0) {
+        // Raise ZeroDivisionError
+        PyObject* msg = PyUnicode_FromString("complex division by zero");
+        PyObject* exc = pyc_make_exc(PyUnicode_FromString("ZeroDivisionError"), msg);
+        Py_DECREF(msg);
+        pyc_raise(exc);
+        Py_DECREF(exc);
+        return nullptr; // unreachable
+    }
+    return PyComplex_DivImpl(a, b);
+}
+
+// Complex pow: z1 ** z2 = exp(z2 * log(z1))
+// Uses std::powl for the actual computation
+#include <cmath>
+PyObject* PyComplex_Pow(PyObject* base, PyObject* exp) {
+    if (!base || !exp || base->type != 13 || exp->type != 13) {
+        return nullptr;
+    }
+    std::complex<double> z1(base->complex_real, base->complex_imag);
+    std::complex<double> z2(exp->complex_real, exp->complex_imag);
+    std::complex<double> result = std::pow(z1, z2);
+    return PyComplex_New(result.real(), result.imag());
+}
+
+// Complex abs: |a+bj| = sqrt(a² + b²)
+PyObject* PyComplex_Abs(PyObject* z) {
+    if (!z || z->type != 13) {
+        return nullptr;
+    }
+    double magnitude = std::sqrt(z->complex_real * z->complex_real + z->complex_imag * z->complex_imag);
+    // Return as float (type 4)
+    PyObject* f = new PyObject();
+    f->refcount = 1;
+    f->type = 4;
+    f->dvalue = magnitude;
+    return f;
+}
+
+// === cmath module functions ===
+// These are called via the cmath synthetic module dict.
+
+// cmath.sqrt(z) — square root of complex number
+PyObject* PyCmath_Sqrt(PyObject* z) {
+    if (!z) return PyComplex_New(0.0, 0.0);
+    if (z->type == 13) {
+        std::complex<double> c(z->complex_real, z->complex_imag);
+        std::complex<double> r = std::sqrt(c);
+        return PyComplex_New(r.real(), r.imag());
+    }
+    if (z->type == 0 || z->type == 5) {
+        double v = (double)z->value;
+        if (v >= 0) {
+            return PyComplex_New(std::sqrt(v), 0.0);
+        } else {
+            return PyComplex_New(0.0, std::sqrt(-v));
+        }
+    }
+    if (z->type == 4) {
+        double v = z->dvalue;
+        if (v >= 0) {
+            return PyComplex_New(std::sqrt(v), 0.0);
+        } else {
+            return PyComplex_New(0.0, std::sqrt(-v));
+        }
+    }
+    return PyComplex_New(0.0, 0.0);
+}
+
+// cmath.log(z) — natural logarithm of complex number
+PyObject* PyCmath_Log(PyObject* z) {
+    if (!z) return PyComplex_New(0.0, 0.0);
+    if (z->type == 13) {
+        std::complex<double> c(z->complex_real, z->complex_imag);
+        std::complex<double> r = std::log(c);
+        return PyComplex_New(r.real(), r.imag());
+    }
+    if (z->type == 0 || z->type == 5) {
+        double v = (double)z->value;
+        if (v > 0) {
+            return PyComplex_New(std::log(v), 0.0);
+        } else if (v == 0) {
+            return PyComplex_New(-1.0/0.0, 0.0); // -inf
+        } else {
+            return PyComplex_New(0.0, M_PI);
+        }
+    }
+    if (z->type == 4) {
+        double v = z->dvalue;
+        if (v > 0) {
+            return PyComplex_New(std::log(v), 0.0);
+        } else if (v == 0) {
+            return PyComplex_New(-1.0/0.0, 0.0);
+        } else {
+            return PyComplex_New(0.0, M_PI);
+        }
+    }
+    return PyComplex_New(0.0, 0.0);
+}
+
+// cmath.exp(z) — e^z for complex number
+PyObject* PyCmath_Exp(PyObject* z) {
+    if (!z) return PyComplex_New(0.0, 0.0);
+    if (z->type == 13) {
+        std::complex<double> c(z->complex_real, z->complex_imag);
+        std::complex<double> r = std::exp(c);
+        return PyComplex_New(r.real(), r.imag());
+    }
+    if (z->type == 0 || z->type == 5) {
+        double v = (double)z->value;
+        return PyComplex_New(std::exp(v), 0.0);
+    }
+    if (z->type == 4) {
+        return PyComplex_New(std::exp(z->dvalue), 0.0);
+    }
+    return PyComplex_New(0.0, 0.0);
+}
+
+// cmath.sin(z) — sine of complex number
+PyObject* PyCmath_Sin(PyObject* z) {
+    if (!z) return PyComplex_New(0.0, 0.0);
+    if (z->type == 13) {
+        std::complex<double> c(z->complex_real, z->complex_imag);
+        std::complex<double> r = std::sin(c);
+        return PyComplex_New(r.real(), r.imag());
+    }
+    if (z->type == 0 || z->type == 5) {
+        double v = (double)z->value;
+        return PyComplex_New(std::sin(v), 0.0);
+    }
+    if (z->type == 4) {
+        return PyComplex_New(std::sin(z->dvalue), 0.0);
+    }
+    return PyComplex_New(0.0, 0.0);
+}
+
+// cmath.cos(z) — cosine of complex number
+PyObject* PyCmath_Cos(PyObject* z) {
+    if (!z) return PyComplex_New(0.0, 0.0);
+    if (z->type == 13) {
+        std::complex<double> c(z->complex_real, z->complex_imag);
+        std::complex<double> r = std::cos(c);
+        return PyComplex_New(r.real(), r.imag());
+    }
+    if (z->type == 0 || z->type == 5) {
+        double v = (double)z->value;
+        return PyComplex_New(std::cos(v), 0.0);
+    }
+    if (z->type == 4) {
+        return PyComplex_New(std::cos(z->dvalue), 0.0);
+    }
+    return PyComplex_New(0.0, 0.0);
+}
+
+// cmath.tan(z) — tangent of complex number
+PyObject* PyCmath_Tan(PyObject* z) {
+    if (!z) return PyComplex_New(0.0, 0.0);
+    if (z->type == 13) {
+        std::complex<double> c(z->complex_real, z->complex_imag);
+        std::complex<double> r = std::tan(c);
+        return PyComplex_New(r.real(), r.imag());
+    }
+    if (z->type == 0 || z->type == 5) {
+        double v = (double)z->value;
+        return PyComplex_New(std::tan(v), 0.0);
+    }
+    if (z->type == 4) {
+        return PyComplex_New(std::tan(z->dvalue), 0.0);
+    }
+    return PyComplex_New(0.0, 0.0);
+}
+
 PyObject* pyc_make_func(PyObject* token, PyObject* displayName) {
+    std::string tokStr = (token && token->type == 3) ? token->str : "";
+    std::string dispStr = (displayName && displayName->type == 3) ? displayName->str : "";
+    auto key = std::make_pair(tokStr, dispStr);
+    auto it = g_funcValueCache.find(key);
+    if (it != g_funcValueCache.end()) {
+        Py_INCREF(it->second);
+        return it->second;
+    }
     PyObject* f = new PyObject();
     f->refcount = 1;
     f->type = 11;
     f->value = 1;   // functions are truthy (codegen truth tests read ->value)
-    f->str = (token && token->type == 3) ? token->str : "";
+    f->str = tokStr;
     f->cell_content = nullptr;
     if (displayName && displayName->type == 3) {
         f->cell_content = displayName;
         Py_INCREF(displayName);
     }
+    g_funcValueCache[key] = f;
     return f;
+}
+
+// Exception class objects (type 12): behave like first-class exception
+// classes.  When called via Pyc_Apply they construct a structured
+// exception (type 10) using pyc_make_exc.
+// String interning: same exception name always returns the same PyObject*
+// so that `ValueError is exc` works (CPython semantics).
+static std::map<std::string, PyObject*> g_excClassCache;
+
+PyObject* pyc_make_exc_class(PyObject* excName) {
+    std::string name = (excName && excName->type == 3) ? excName->str : "Exception";
+    auto it = g_excClassCache.find(name);
+    if (it != g_excClassCache.end()) {
+        Py_INCREF(it->second);
+        return it->second;
+    }
+    PyObject* e = new PyObject();
+    e->refcount = 1;
+    e->type = 12;
+    e->value = 1;   // truthy
+    e->str = name;
+    e->cell_content = nullptr;
+    g_excClassCache[name] = e;
+    return e;
 }
 
 // ---- Structured exceptions (type 10) ----
@@ -4353,6 +4847,35 @@ static void pyc_fatal_exception(PyObject* exc) {
 
 void pyc_raise(PyObject* exc) {
     if (!exc) return;
+    // Exception class objects (type 12): instantiate to a structured
+    // exception (type 10) before raising.
+    if (exc->type == 12) {
+        PyObject* msg = PyUnicode_FromString("");
+        PyObject* typeStr = PyUnicode_FromString(exc->str.c_str());
+        PyObject* instantiated = pyc_make_exc(typeStr, msg);
+        Py_DECREF(typeStr);
+        Py_DECREF(msg);
+        if (g_last_exception != instantiated) {
+            if (g_last_exception) Py_DECREF(g_last_exception);
+            g_last_exception = instantiated;
+            Py_INCREF(instantiated);
+        }
+        if (g_try_stack) {
+            TryFrame* f = g_try_stack;
+            g_try_stack = f->next;
+            if (g_current_exception) Py_DECREF(g_current_exception);
+            g_current_exception = instantiated;
+            Py_INCREF(instantiated);
+            jmp_buf jmp;
+            memcpy(jmp, f->jmp, sizeof(jmp_buf));
+            if (f->exc) Py_DECREF(f->exc);
+            delete f;
+            std::longjmp(jmp, 1);
+        }
+        pyc_fatal_exception(instantiated);
+        Py_DECREF(instantiated);
+        return;
+    }
     if (g_last_exception != exc) {
         if (g_last_exception) Py_DECREF(g_last_exception);
         g_last_exception = exc;
@@ -4432,6 +4955,35 @@ PyObject* PyDict_Comprehension(int start, int end) {
 void* pyc_alloc(size_t size) { return ::operator new(size); }
 void  pyc_free(void* obj)    { ::operator delete(obj); }
 
+// ---- Generator yield helpers (eager materialization) --------------------
+// Thread-local buffer used by pyc_yield_collect / pyc_get_yield_buffer /
+// pyc_clear_yield_buffer.  The compiler wraps every call to a generator
+// function with:  clear_buffer → call → get_buffer.
+// yield expressions inside the body call pyc_yield_collect which appends
+// the value to the buffer and returns it (so `x = yield 5` works as
+// `x = 5`).  The final get_buffer returns the collected list.
+
+static thread_local std::vector<PyObject*> g_yieldBuffer;
+
+extern "C" PyObject* pyc_yield_collect(PyObject* value) {
+    if (value) Py_INCREF(value);
+    g_yieldBuffer.push_back(value);
+    return value;
+}
+
+extern "C" PyObject* pyc_get_yield_buffer(void) {
+    PyObject* result = PyList_New((size_t)g_yieldBuffer.size());
+    for (size_t i = 0; i < g_yieldBuffer.size(); ++i) {
+        PyList_SetItem(result, i, g_yieldBuffer[i]);  // steals ref
+    }
+    g_yieldBuffer.clear();
+    return result;
+}
+
+extern "C" void pyc_clear_yield_buffer(void) {
+    g_yieldBuffer.clear();
+}
+
 // ---- B4/B8 callable dispatch (lambdas as values, dynamic call via token) ----
 
 // Simple registry: token name -> function pointer that accepts a PyObject* list and returns a boxed result.
@@ -4449,6 +5001,24 @@ extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
     // A cell-backed callee (closure free variable holding a callable) may
     // arrive as the cell itself — unwrap to its content.
     while (token && token->type == 6 && token->cell_content) token = token->cell_content;
+    // Exception class objects (type 12): construct a structured exception
+    // (type 10) by calling pyc_make_exc with the stored type name and the
+    // first argument as the message.
+    if (token && token->type == 12) {
+        PyObject* msg = nullptr;
+        if (argList && argList->type == 1 && !argList->list.empty()) {
+            msg = argList->list[0];
+            if (msg) Py_INCREF(msg);
+        }
+        if (!msg) {
+            msg = PyUnicode_FromString("");
+        }
+        PyObject* typeStr = PyUnicode_FromString(token->str.c_str());
+        PyObject* exc = pyc_make_exc(typeStr, msg);
+        Py_DECREF(typeStr);
+        Py_DECREF(msg);
+        return exc;
+    }
     // Accept a bare string token, a function object (type 11, token in str),
     // or a descriptor bundle list whose first element is either of those.
     std::string tokName;

@@ -6,7 +6,7 @@ LLVM IR, optimizes it, and produces standalone native executables via a minimal
 `PyObject*`-based boxed runtime with refcounting.
 
 Written in C++ with Clang++ and LLVM 18. No C/C++ intermediate language for
-the normal compiler path. **293/293 tests passing** (runner reports 293/293, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
+the normal compiler path. **274/300 tests passing** (runner reports 274/300, file_case_failures=11; some regressions in function return values, comprehensions, and sorting).
 
 ## Build
 
@@ -173,11 +173,9 @@ Unsupported or uncertain cases always use the boxed runtime path.
 
 - Generators (`yield`) — next major item; design: chunked materialization
   (bounded buffer, ~16 elements per refill) rather than full eager lists
-- Decorators on closure defs, decorated class methods, class decorators
-- Exception classes as first-class values; `raise ... from ...` chaining
 - Complex numbers (negative base with fractional exponent yields NaN)
-- Cross-scope function identity (`f is f` from another scope mints a fresh
-  object); closure values print as descriptor bundles, not `<function ...>`
+- Exception class identity (`ValueError is exc` where `exc = ValueError`);
+  each lowering of a builtin exception name mints a fresh type-12 object.
 
 ## License
 
