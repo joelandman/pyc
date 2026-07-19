@@ -43,21 +43,22 @@ arguments, nested destructuring, and `tests/nbody.py`.
 ## What compiles today
 
 ### Types
-- **int** — arbitrary arithmetic, comparison, floor/true division
+- **int** — arbitrary arithmetic, comparison, floor/true division, small int cache (-5..256)
 - **float** — `3.14`, `1.5e-3`, mixed int/float arithmetic
-- **bool** — `True`/`False`, prints correctly, arithmetic with ints works
+- **bool** — `True`/`False`, prints correctly, arithmetic with ints works, singleton identity
 - **str** — literals, concatenation (`+`), repetition (`*`), `len()`, `str()`,
   f-strings `f"x={x}"`, `upper()`/`lower()`/`strip()`/`split()`/`join()`, `% formatting`
 - **list** — literals, subscript get/set, slicing, `append()`, `sort()`, `pop()`,
-  `len()`, list comprehensions `[x*2 for x in range(n) if cond]`
-- **dict** — literals, subscript get/set, `keys()`/`values()`/`items()`
+  `len()`, list comprehensions `[x*2 for x in range(n) if cond]`, homogeneous numeric storage
+- **dict** — literals, subscript get/set, `keys()`/`values()`/`items()`, `get(key, default)`
 - **tuple** — literals (mapped to list internally), unpacking `a, b = 1, 2`
-- **None** — `x = None`, `print(None)`
+- **None** — `x = None`, `print(None)`, singleton identity
+- **complex** — literals (`1j`, `3.5j`), arithmetic (`+ - * /`), pow, abs, `complex()` builtin, `cmath` module
 
 ### Operators
-- Arithmetic: `+ - * / // % **`
+- Arithmetic: `+ - * / // % **` (int, float, complex)
 - Comparison: `== != < > <= >=`, `is`, `in`, `not in`, chained `1 < x < 10`
-- Boolean: `and`, `or`, `not`
+- Boolean: `and`, `or`, `not` (short-circuit, returns actual value)
 - Unary: `-x`, `+x`
 - Augmented assign: `+= -= *= /= //= %= **=` (including on subscripts `a[i] += 1`)
 
@@ -83,8 +84,9 @@ arguments, nested destructuring, and `tests/nbody.py`.
 ### Classes
 - `class` with `__init__`, instance attributes, method dispatch, class attributes
 - Single and multiple inheritance with C3-linearized MRO
-- `super()` following the runtime MRO (full remaining-MRO method search)
+- `super()` following the runtime C3 MRO (full remaining-MRO method search)
 - `__str__` / `__repr__` protocol (used by `print`, `str`, f-strings)
+- Class decorators
 
 ### Exceptions
 - `try` / `except` / `except ... as e` / `else` / `finally`
@@ -96,18 +98,20 @@ arguments, nested destructuring, and `tests/nbody.py`.
 - `finally` runs on every exit path: fall-through, exception, `return`,
   `break` / `continue`, raise inside a handler or `else`
 - Uncaught exceptions print a CPython-style traceback line to stderr, exit 1
+- Exception classes as first-class values (`exc = ValueError`, `raise exc("msg")`)
 
 ### Statements
 - `with` (context managers via `__enter__` / `__exit__`)
 - `match` / `case` (literals, wildcard, capture, singletons, guards)
 - `assert`, `del`, walrus `:=`
-- `import` / `from ... import` (file-based modules, packages, `os.path` /
-  `subprocess` / `sys` / `re` stubs)
+- `import` / `from ... import` / `from ... import *` (file-based modules, same-directory `.py`)
 
 ### Builtins
-`print()` (multi-arg), `range()`, `len()`, `str()`, `int()`, `float()`, `abs()`,
-`min()`, `max()`, `list()`, `enumerate()`, `zip()`,
-`sum()`, `sorted()`, `any()`, `all()`, `isinstance()`
+`print()` (multi-arg, sep, end), `range()`, `len()`, `str()`, `int()`, `float()`,
+`complex()`, `abs()`, `min()`, `max()`, `list()`, `enumerate()`, `zip()`,
+`sum()`, `sorted()`, `any()`, `all()`, `isinstance()`, `bool()`, `type()`, `id()`,
+`repr()`, `hex()`, `oct()`, `bin()`, `ord()`, `chr()`, `round()`, `divmod()`,
+`pow()`, `reversed()`, `cmp_to_key()`
 
 ### Assignment
 - Simple: `x = 1`
@@ -140,9 +144,9 @@ native executable
 dependency. Provides `PyObject` (flat struct: `refcount`, `type`, `value`/`dvalue`/
 `list`/`dict`/`str`/`cell_content`), refcounting, arithmetic, comparison, print,
 and all builtins. Types: int, list, dict, str, float, bool/None, cell, super
-proxy, compiled regex, match object, exception, function. Exceptions use
-setjmp/longjmp frames (raise pops the frame before the jump; handler dispatch
-happens in generated code). Callables dispatch through a registry of
+proxy, compiled regex, match object, exception, function, exception class, complex.
+Exceptions use setjmp/longjmp frames (raise pops the frame before the jump; handler
+dispatch happens in generated code). Callables dispatch through a registry of
 `__apply__` adapters (`Pyc_Apply`). Linked into every compiled binary.
 
 **IR**: linear instruction list per function. Instructions: `const`, `fconst`,
@@ -169,13 +173,14 @@ fallback. Landed so far (A1–A7, see `UNBOXING_AND_COMPLETENESS_PLAN.md`):
 
 Unsupported or uncertain cases always use the boxed runtime path.
 
-## Known gaps (planned)
+## Import system
 
-- Generators (`yield`) — next major item; design: chunked materialization
-  (bounded buffer, ~16 elements per refill) rather than full eager lists
-- Complex numbers (negative base with fractional exponent yields NaN)
-- Exception class identity (`ValueError is exc` where `exc = ValueError`);
-  each lowering of a builtin exception name mints a fresh type-12 object.
+- `import X` — loads same-directory `.py` module, binds module dict to name
+- `from X import Y` — loads module, extracts attribute, binds to name
+- `from X import *` — loads module, exports all non-underscore names as module globals
+- `import X as Y` — loads module, binds module dict to alias name
+- External modules (`re`, `math`, etc.) report clear ImportError
+- Cross-module globals via `__module__` function returning module dict pointer
 
 ## License
 
