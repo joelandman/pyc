@@ -13,7 +13,7 @@ Sorted by criticality (most critical at top).
 **Status: FIXED** - Functions now correctly return computed values. The bug was caused by complex arithmetic being incorrectly triggered for all boxed operands. Fixed by using `complexVars` set to track actual complex numbers.
 
 ### 2. Import System
-**Status: PARTIAL** - Basic import works. `from ... import` and `import *` have limited support. Module loading is incomplete for external modules.
+**Status: FIXED** - Basic import, `from ... import`, and `from ... import *` all work correctly for same-directory `.py` modules. External modules (like `re`, `math`) are not supported.
 
 ### 3. Comprehensions
 **Status: FIXED** - List and dict comprehensions now produce correct results.
@@ -50,7 +50,7 @@ Sorted by criticality (most critical at top).
 **Status: FIXED** - Short-circuit semantics correctly implemented.
 
 ### 13. `from ... import` with Name Binding
-**Status: PARTIAL** - Basic import works but `from ... import` has limited support.
+**Status: FIXED** - `from X import Y` and `from X import *` work correctly for same-directory `.py` modules.
 
 ### 14. Tuple Unpacking
 **Status: FIXED** - `a, b = value` syntax supported.
@@ -118,14 +118,15 @@ Sorted by criticality (most critical at top).
 | Severity | Count | Status |
 |----------|-------|--------|
 | Critical | 5 | 5 FIXED |
-| High | 10 | 8 FIXED, 2 PARTIAL |
+| High | 10 | 10 FIXED |
 | Medium | 14 | 14 FIXED |
 | Low | 1 | 1 UNSUPPORTED |
-| **Total** | **30** | **27 FIXED, 2 PARTIAL, 1 UNSUPPORTED** |
+| **Total** | **30** | **29 FIXED, 1 UNSUPPORTED** |
 
 ## Recent Additions (2026-07-19)
 
 - **Complex Numbers (Phases 1-5):** Full support including literals, arithmetic, pow, abs, `complex()` builtin, and `cmath` module
 - **String literal handling:** Fixed bug where strings were stored as empty strings
 - **Function return values:** Fixed bug where functions returned `None` due to complex arithmetic being incorrectly triggered for all boxed operands
+- **Import system:** Verified working for same-directory `.py` modules (`import`, `from ... import`, `from ... import *`, `import X as Y`)
 - **Test results:** 300/300 passing (all tests passing)
