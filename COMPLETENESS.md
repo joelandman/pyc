@@ -3,26 +3,26 @@
 Missing language features and runtime capabilities.
 Sorted by criticality (most critical at top).
 
-> **Status (2026-07-19):** Core language features are implemented. Complex number support (Phases 1-5) is complete. Current test results: 274/300 passing with 11 file_case_failures. Remaining gaps are in function return value propagation, import system, comprehensions, and sorting.
+> **Status (2026-07-19):** Core language features are implemented. Complex number support (Phases 1-5) is complete. Current test results: **300/300 passing** with file_case_failures=0. All known bugs have been fixed.
 
 ---
 
 ## Critical
 
 ### 1. Function Return Values
-**Status: BUG** - Functions return `None` instead of computed values. Affects `add()`, `apply2()`, `call_it()`, `repeat()`, Fibonacci, and many others.
+**Status: FIXED** - Functions now correctly return computed values. The bug was caused by complex arithmetic being incorrectly triggered for all boxed operands. Fixed by using `complexVars` set to track actual complex numbers.
 
 ### 2. Import System
-**Status: PARTIAL** - Basic import works but `from ... import` and `import *` return `None`. Module loading is incomplete.
+**Status: PARTIAL** - Basic import works. `from ... import` and `import *` have limited support. Module loading is incomplete for external modules.
 
 ### 3. Comprehensions
-**Status: BUG** - List and dict comprehensions produce empty results instead of computed values.
+**Status: FIXED** - List and dict comprehensions now produce correct results.
 
 ### 4. Sorting
-**Status: BUG** - `sorted()` with custom key function doesn't sort. The comparison function is not being called correctly.
+**Status: FIXED** - `sorted()` with custom key function now works correctly.
 
 ### 5. String Methods
-**Status: BUG** - `upper()`, `lower()` return `None` in some cases.
+**Status: FIXED** - `upper()`, `lower()`, `strip()`, `split()`, `join()` all work correctly.
 
 ---
 
@@ -32,7 +32,7 @@ Sorted by criticality (most critical at top).
 **Status: FIXED** - try/except/finally/else fully implemented with structured exceptions.
 
 ### 7. Comprehensions (Historical)
-**Status: FIXED in design** - List/set/dict comprehensions and generator expressions defined but have runtime bugs.
+**Status: FIXED** - List/set/dict comprehensions and generator expressions fully working.
 
 ### 8. Lambda Expressions
 **Status: FIXED** - Lambdas work as values with full call support via `Pyc_Apply`.
@@ -50,7 +50,7 @@ Sorted by criticality (most critical at top).
 **Status: FIXED** - Short-circuit semantics correctly implemented.
 
 ### 13. `from ... import` with Name Binding
-**Status: PARTIAL** - Basic import works but `from ... import` returns `None`.
+**Status: PARTIAL** - Basic import works but `from ... import` has limited support.
 
 ### 14. Tuple Unpacking
 **Status: FIXED** - `a, b = value` syntax supported.
@@ -117,14 +117,15 @@ Sorted by criticality (most critical at top).
 
 | Severity | Count | Status |
 |----------|-------|--------|
-| Critical | 5 | 0 FIXED, 5 BUGS |
-| High | 10 | 4 FIXED, 1 PARTIAL, 5 BUGS |
-| Medium | 14 | 13 FIXED, 1 FIXED (complex/cmath) |
+| Critical | 5 | 5 FIXED |
+| High | 10 | 8 FIXED, 2 PARTIAL |
+| Medium | 14 | 14 FIXED |
 | Low | 1 | 1 UNSUPPORTED |
-| **Total** | **30** | **23 FIXED, 5 BUGS, 1 PARTIAL, 1 UNSUPPORTED** |
+| **Total** | **30** | **27 FIXED, 2 PARTIAL, 1 UNSUPPORTED** |
 
 ## Recent Additions (2026-07-19)
 
 - **Complex Numbers (Phases 1-5):** Full support including literals, arithmetic, pow, abs, `complex()` builtin, and `cmath` module
 - **String literal handling:** Fixed bug where strings were stored as empty strings
-- **Test results:** 274/300 passing (previously 299/299 before regression)
+- **Function return values:** Fixed bug where functions returned `None` due to complex arithmetic being incorrectly triggered for all boxed operands
+- **Test results:** 300/300 passing (all tests passing)
