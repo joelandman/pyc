@@ -1,6 +1,6 @@
 # pyc Optimization Plan
 
-Multi-level optimization strategy for pyc compiler output binaries.
+Multi-level optimization strategy for pcy compiler output binaries.
 Each level encompasses all lower-level optimizations with additional passes.
 
 ## Current State
@@ -295,24 +295,256 @@ Each level encompasses all lower-level optimizations with additional passes.
 - Microbenchmarks (loop, arithmetic, list, function call)
 - Real-world programs (`tests/fib.py`, `tests/builtins.py`, etc.)
 
-### Metrics to Track
-- Execution time (relative to CPython)
-- Compile time (absolute and relative)
-- Binary size (absolute and relative)
-- Memory usage (peak RSS)
-- Instruction count (via perf)
+### Memory Testing (First-Class Concern)
 
-### Benchmark Script
+Memory usage and leaks are treated as a first-class problem. No run-away allocations allowed.
+
+#### Memory Metrics to Track
+- **Peak RSS** (Resident Set Size) - maximum memory used
+- **Memory Leaks** - allocated but never freed memory
+- **Allocation Count** - total number of PyObject allocations
+- **Allocation Rate** - allocations per second
+- **Memory Growth** - memory usage over time (detect leaks)
+
+#### Memory Leak Detection
+
+**Tool 1: Valgrind (Development)**
+```bash
+valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes \
+    ./build/pyc tests/nbody.py -o nbody_test --opt=2
+./nbody_test 10000
+```
+
+**Tool 2: AddressSanitizer (Development)**
+```bash
+# Rebuild with ASan
+cmake .. -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+make -j$(nproc)
+
+# Run with ASan
+./build/pyc tests/nbody.py -o nbody_asan --opt=2
+./nbody_asan 10000
+```
+
+**Tool 3: Custom Allocation Counters (Production)**
+```cpp
+// Runtime provides allocation counters in runtime.h
+extern "C" int64_t PyAlloc_GetTotal();
+extern "C" int64_t PyAlloc_GetIntCount();
+extern "C" int64_t PyAlloc_GetListCount();
+extern "C" int64_t PyAlloc_GetDictCount();
+extern "C" int64_t PyAlloc_GetStrCount();
+
+// After program execution, check for leaks:
+// - Total allocations should match expected count
+// - No unbounded growth during loops
+// - All allocations properly DECREFed
+```
+
+#### Memory Limits
+
+| Optimization Level | Max Peak RSS | Max Leak | Max Allocation Count (nbody 1M iterations) |
+|-------------------|--------------|----------|-------------------------------------------|
+| 0 | 100 MB | 0 bytes | 500,000 |
+| 1 | 100 MB | 0 bytes | 400,000 |
+| 2 | 150 MB | 0 bytes | 300,000 |
+| 3 | 200 MB | 0 bytes | 200,000 |
+| 4 | 300 MB | 0 bytes | 150,000 |
+| 5 | 500 MB | 0 bytes | 100,000 |
+
+**Note:** Higher optimization levels may use more memory due to:
+- Larger binaries (more inlined code)
+- More aggressive constant folding (more constants in memory)
+- LTO (whole-program optimization data)
+- PGO (profile data in memory)
+
+But **memory leaks are never acceptable** at any level.
+
+#### Memory Testing Script
+
 ```bash
 #!/bin/bash
-# benchmark_all_levels.sh
+# memory_test.sh - Test memory usage across optimization levels
+set -e
+
+TEST_FILE="tests/nbody.py"
+ITERATIONS=100000
+MAX_RSS_KB=512000  # 500 MB max
+
 for opt in 0 1 2 3 4 5; do
-    echo "=== Level $opt ==="
-    ./build/pyc tests/nbody.py -o nbody_l${opt} --opt=$opt
-    time ./nbody_l${opt} 1000000
-    du -h nbody_l${opt}
+    echo "=== Testing Level $opt ==="
+    
+    # Compile
+    ./build/pyc "$TEST_FILE" -o nbody_l${opt} --opt=$opt
+    
+    # Run with memory tracking
+    /usr/bin/time -v ./nbody_l${opt} $ITERATIONS 2> memory_stats.txt
+    
+    # Extract peak RSS (KB)
+    PEAK_RSS_KB=$(grep "Maximum resident set size" memory_stats.txt | awk '{print $NF}')
+    echo "Peak RSS: ${PEAK_RSS_KB} KB"
+    
+    # Check against limit
+    if [ "$PEAK_RSS_KB" -gt "$MAX_RSS_KB" ]; then
+        echo "ERROR: Peak RSS ${PEAK_RSS_KB} KB exceeds limit ${MAX_RSS_KB} KB"
+        exit 1
+    fi
+    
+    # Run with Valgrind for leak detection (Level 0 only, too slow for others)
+    if [ "$opt" -eq 0 ]; then
+        echo "Running Valgrind leak check..."
+        valgrind --leak-check=full --error-exitcode=1 \
+            ./nbody_l${opt} $ITERATIONS > /dev/null
+    fi
+    
+    echo "Level $opt: PASS"
 done
+
+echo "All memory tests passed!"
 ```
+
+#### Memory Regression Detection
+
+**Automated Memory Testing:**
+```bash
+# In CI/CD pipeline
+./memory_test.sh
+
+# Git hook to prevent memory regressions
+# Pre-commit: run memory tests on changed files
+# Pre-push: run full memory test suite
+```
+
+**Memory Profiling:**
+```bash
+# Track memory over time
+valgrind --tool=massif ./nbody_l2 1000000
+ms_print massif.out.<PID>
+
+# Heap profiling
+heaptrack ./nbody_l2 1000000
+heaptrack_print heaptrack.<PID>.<PID>.gz
+```
+
+### Metrics to Track
+
+| Metric | Description | Target |
+|--------|-------------|--------|
+| Execution time | Wall-clock time | See success criteria below |
+| Compile time | Compiler runtime | See success criteria below |
+| Binary size | Output file size | See success criteria below |
+| Peak RSS | Maximum memory used | See memory limits table |
+| Memory leaks | Allocated but unfreed bytes | **0 bytes at all levels** |
+| Allocation count | Total PyObject allocations | Decreasing with optimization |
+| Instruction count | CPU instructions executed | Decreasing with optimization |
+
+---
+
+## Benchmarking
+
+### N-Body Simulation
+
+The `tests/nbody.py` file is used as a performance benchmark. It's an N-body
+gravity simulation from the Computer Language Benchmarks Game.
+
+```bash
+# Python interpreter baseline
+python3 tests/nbody.py 5000000
+
+# Compiled binary
+./build/pyc tests/nbody.py -o nbody_compiled --opt=2
+./nbody_compiled 5000000
+```
+
+**Expected output:**
+```
+-0.169075164
+-0.169059907
+```
+
+### Profiling
+
+```bash
+perf record /tmp/nbody_compiled 5000000
+perf report
+strace -c /tmp/nbody_compiled 5000000
+```
+
+### Microbenchmarks
+
+**Simple Loop Test:**
+```bash
+echo 'for i in range(10000000): x=i' > /tmp/loop_test.py
+python3 /tmp/loop_test.py
+./build/pyc /tmp/loop_test.py -o /tmp/loop_test --opt=2
+/tmp/loop_test
+```
+
+**Arithmetic Intensive Test:**
+```bash
+echo 'x=0.0
+for i in range(1000000):
+    x += i * 0.5
+    x *= 1.000001
+print(x)' > /tmp/arithmetic_test.py
+python3 /tmp/arithmetic_test.py
+./build/pyc /tmp/arithmetic_test.py -o /tmp/arithmetic_test --opt=2
+/tmp/arithmetic_test
+```
+
+**Homogeneous List Test:**
+```bash
+echo 'lst = [i for i in range(1000000)]
+s = 0
+for x in lst:
+    s += x
+print(s)' > /tmp/list_test.py
+python3 /tmp/list_test.py
+./build/pyc /tmp/list_test.py -o /tmp/list_test --opt=2
+/tmp/list_test
+```
+
+**Function Call Test:**
+```bash
+echo 'def add(a, b):
+    return a + b
+
+s = 0
+for i in range(100000):
+    s = add(s, i)
+print(s)' > /tmp/call_test.py
+python3 /tmp/call_test.py
+./build/pyc /tmp/call_test.py -o /tmp/call_test --opt=2
+/tmp/call_test
+```
+
+### Allocation Counters (A7)
+
+The runtime tracks allocations per type via atomic counters:
+
+- `PyAlloc_GetIntCount()` — `PyInt_FromLong` allocations (excludes small int cache)
+- `PyAlloc_GetFloatCount()` — `PyFloat_FromDouble` allocations
+- `PyAlloc_GetListCount()` — `PyList_New` allocations
+- `PyAlloc_GetDictCount()` — `PyDict_New` allocations
+- `PyAlloc_GetStrCount()` — `PyUnicode_FromString` allocations
+- `PyAlloc_GetTotal()` — sum of all above
+
+These counters are exposed via `extern "C"` functions in `runtime.h` for external measurement.
+
+---
+
+## Success Criteria
+
+| Level | Speedup vs CPython | Compile Time Overhead | Binary Size Overhead | Peak RSS Limit | Memory Leaks |
+|-------|-------------------|----------------------|---------------------|----------------|--------------|
+| 0 | 1x (baseline) | 0% | 0% | 100 MB | **0 bytes** |
+| 1 | 2x | < 10% | < 5% | 100 MB | **0 bytes** |
+| 2 | 5x | < 40% | < 10% | 150 MB | **0 bytes** |
+| 3 | 10x | < 100% | < 20% | 200 MB | **0 bytes** |
+| 4 | 15x | < 200% | < 30% | 300 MB | **0 bytes** |
+| 5 | 20x | < 400% | < 50% | 500 MB | **0 bytes** |
+
+**Memory leaks are never acceptable at any optimization level.**
 
 ---
 
@@ -330,22 +562,17 @@ done
 - **Risk:** Optimizations increase binary size
 - **Mitigation:** Function splitting; measure and monitor size
 
+### Memory Risks
+- **Risk:** Memory leaks or run-away allocations
+- **Mitigation:** 
+  - Valgrind/ASan in CI for every commit
+  - Memory limits enforced in automated tests
+  - Allocation counters in runtime for leak detection
+  - Memory regression tests before merge
+
 ### Portability Risks
 - **Risk:** SIMD optimizations only work on specific CPUs
 - **Mitigation:** Runtime CPU detection; fallback paths
-
----
-
-## Success Criteria
-
-| Level | Speedup vs CPython | Compile Time Overhead | Binary Size Overhead |
-|-------|-------------------|----------------------|---------------------|
-| 0 | 1x (baseline) | 0% | 0% |
-| 1 | 2x | < 10% | < 5% |
-| 2 | 5x | < 40% | < 10% |
-| 3 | 10x | < 100% | < 20% |
-| 4 | 15x | < 200% | < 30% |
-| 5 | 20x | < 400% | < 50% |
 
 ---
 
@@ -355,3 +582,6 @@ done
 - LLVM Optimization Options: https://llvm.org/docs/CommandGuide/llvm-opt.html
 - PGO Guide: https://llvm.org/docs/LinkTimeOptimization.html
 - Auto-Vectorization: https://llvm.org/docs/Vectorizers.html
+- Valgrind: https://valgrind.org/
+- AddressSanitizer: https://github.com/google/sanitizers/wiki/AddressSanitizer
+- Massif/Heaptrack: Memory profiling tools
