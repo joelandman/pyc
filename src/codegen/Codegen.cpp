@@ -3,6 +3,9 @@
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
 #include <llvm/Transforms/Scalar.h>
+#include <llvm/Transforms/InstCombine/InstCombine.h>
+#include <llvm/Transforms/Scalar/SimplifyCFG.h>
+#include <llvm/Transforms/Scalar/DCE.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
@@ -15,10 +18,13 @@
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Linker/Linker.h>
+#include <llvm/Bitcode/BitcodeReader.h>
+#include <llvm/Support/MemoryBuffer.h>
 #include <unordered_map>
 #include <unordered_set>
 #include <fstream>
 #include <iostream>
+#include <filesystem>
 
 namespace pyc {
 
@@ -2001,9 +2007,41 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                              }
                          }
                      }
-                 }
+                  }
 
-                // Determine ownership of source. Owned temps already have refcount=1.
+                  // A6: If target is a float numeric local (proven to stay float), use native f64 storage.
+                  bool isFloatLocal = false;
+                  for (const auto& nfl : f.numericFloatLocals) {
+                      if (nfl == inst.result) { isFloatLocal = true; break; }
+                  }
+                  if (isFloatLocal && src->getType()->isDoubleTy()) {
+                      // Check if target already has an f64 alloca (from a prior f64assign or numeric float local setup)
+                      bool hasF64Alloca = false;
+                      if (tit0 != valueMap.end()) {
+                          if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit0->second)) {
+                              if (alloca->getAllocatedType()->isDoubleTy()) hasF64Alloca = true;
+                          }
+                      }
+                      if (!hasF64Alloca) {
+                          // Create a new f64 alloca in the entry block.
+                          llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                                         func->getEntryBlock().begin());
+                          llvm::AllocaInst* f64alloca = entryBuilder.CreateAlloca(llvm::Type::getDoubleTy(context), nullptr, inst.result + ".double");
+                          valueMap[inst.result] = f64alloca;
+                      }
+                      // Store the native double value.
+                      auto tit2 = valueMap.find(inst.result);
+                      if (tit2 != valueMap.end()) {
+                          if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit2->second)) {
+                              if (alloca->getAllocatedType()->isDoubleTy()) {
+                                  builder.CreateStore(src, alloca);
+                                  continue;
+                              }
+                          }
+                      }
+                  }
+
+                 // Determine ownership of source. Owned temps already have refcount=1.
                 bool srcIsOwned = ownedTemps.count(srcName) > 0;
                 if (srcIsOwned) ownedTemps.erase(srcName);
 
@@ -2215,51 +2253,56 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                           // Fall through to generic path if native functions not found.
                       }
                   }
-                 // A4: native list subscript set for proven homogeneous lists.
-                 if (funcName == "PyList_SetItemInt64" && inst.operands.size() >= 4) {
-                     std::string listName = inst.operands[1].name;
-                     std::string idxName = inst.operands[2].name;
-                     std::string valName = inst.operands[3].name;
-                     llvm::Value* listVal = getAsPyObject(listName);
-                     llvm::Value* idxVal = getOrLoad(idxName);
-                     if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
-                         idxVal = builder.CreateCast(llvm::Instruction::SExt, idxVal,
-                             llvm::Type::getInt64Ty(context), "setidx.i64");
-                     }
-                     llvm::Value* valVal = getOrLoad(valName);
-                     if (valVal->getType() != llvm::Type::getInt64Ty(context)) {
-                         valVal = builder.CreateCast(llvm::Instruction::SExt, valVal,
-                             llvm::Type::getInt64Ty(context), "setval.i64");
-                     }
-                     llvm::Function* setFn = module->getFunction("PyList_SetItemInt64");
-                     if (setFn) builder.CreateCall(setFn, {listVal, idxVal, valVal});
-                     emitDecRefIfOwnedSameBlock(listName);
-                     emitDecRefIfOwnedSameBlock(idxName);
-                     emitDecRefIfOwnedSameBlock(valName);
-                     continue;
-                 }
-                 if (funcName == "PyList_SetItemDouble" && inst.operands.size() >= 4) {
-                     std::string listName = inst.operands[1].name;
-                     std::string idxName = inst.operands[2].name;
-                     std::string valName = inst.operands[3].name;
-                     llvm::Value* listVal = getAsPyObject(listName);
-                     llvm::Value* idxVal = getOrLoad(idxName);
-                     if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
-                         idxVal = builder.CreateCast(llvm::Instruction::SExt, idxVal,
-                             llvm::Type::getInt64Ty(context), "setidx.i64");
-                     }
-                     llvm::Value* valVal = getOrLoad(valName);
-                     // Ensure double type.
-                     if (valVal->getType() != llvm::Type::getDoubleTy(context)) {
-                         valVal = builder.CreateSIToFP(valVal, llvm::Type::getDoubleTy(context), "setval.double");
-                     }
-                     llvm::Function* setFn = module->getFunction("PyList_SetItemDouble");
-                     if (setFn) builder.CreateCall(setFn, {listVal, idxVal, valVal});
-                     emitDecRefIfOwnedSameBlock(listName);
-                     emitDecRefIfOwnedSameBlock(idxName);
-                     emitDecRefIfOwnedSameBlock(valName);
-                     continue;
-                 }
+                  // A4: native list subscript set for proven homogeneous lists.
+                  if (funcName == "PyList_SetItemInt64" && inst.operands.size() >= 4) {
+                      std::string listName = inst.operands[1].name;
+                      std::string idxName = inst.operands[2].name;
+                      std::string valName = inst.operands[3].name;
+                      llvm::Value* listVal = getAsPyObject(listName);
+                      llvm::Value* idxVal = getOrLoad(idxName);
+                      // Unbox index to i64 if it's a boxed PyObject*
+                      if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
+                          idxVal = unboxToI64(idxVal);
+                      }
+                      llvm::Value* valVal = getOrLoad(valName);
+                      // Unbox value to i64 if it's a boxed PyObject*
+                      if (valVal->getType() != llvm::Type::getInt64Ty(context)) {
+                          valVal = unboxToI64(valVal);
+                      }
+                      llvm::Function* setFn = module->getFunction("PyList_SetItemInt64");
+                      if (setFn) builder.CreateCall(setFn, {listVal, idxVal, valVal});
+                      emitDecRefIfOwnedSameBlock(listName);
+                      emitDecRefIfOwnedSameBlock(idxName);
+                      emitDecRefIfOwnedSameBlock(valName);
+                      continue;
+                  }
+                  if (funcName == "PyList_SetItemDouble" && inst.operands.size() >= 4) {
+                      std::string listName = inst.operands[1].name;
+                      std::string idxName = inst.operands[2].name;
+                      std::string valName = inst.operands[3].name;
+                      llvm::Value* listVal = getAsPyObject(listName);
+                      llvm::Value* idxVal = getOrLoad(idxName);
+                      // Unbox index to i64 if it's a boxed PyObject*
+                      if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
+                          idxVal = unboxToI64(idxVal);
+                      }
+                      llvm::Value* valVal = getOrLoad(valName);
+                      // Unbox and convert value to double if it's a boxed PyObject*
+                      if (valVal->getType() != llvm::Type::getDoubleTy(context)) {
+                          if (valVal->getType() == llvm::Type::getInt64Ty(context)) {
+                              valVal = builder.CreateSIToFP(valVal, llvm::Type::getDoubleTy(context), "setval.double");
+                          } else {
+                              // Boxed value - unbox to double
+                              valVal = unboxToDouble(valVal);
+                          }
+                      }
+                      llvm::Function* setFn = module->getFunction("PyList_SetItemDouble");
+                      if (setFn) builder.CreateCall(setFn, {listVal, idxVal, valVal});
+                      emitDecRefIfOwnedSameBlock(listName);
+                      emitDecRefIfOwnedSameBlock(idxName);
+                      emitDecRefIfOwnedSameBlock(valName);
+                      continue;
+                  }
                  if (funcName == "print") {
                     // Legacy single-arg print fast-path: pyc_print covers the
                     // general case (multi-arg + kwargs) at the lowering level.
@@ -2526,7 +2569,8 @@ bool Codegen::emitObject(llvm::Module* module, const std::string& outputPath) {
 }
 
 void Codegen::optimize(llvm::Module* module, int optLevel) {
-  if (!module || optLevel <= 0) return;
+  if (!module) return;
+  
   llvm::LoopAnalysisManager LAM;
   llvm::FunctionAnalysisManager FAM;
   llvm::CGSCCAnalysisManager CGAM;
@@ -2537,11 +2581,21 @@ void Codegen::optimize(llvm::Module* module, int optLevel) {
   PB.registerFunctionAnalyses(FAM);
   PB.registerLoopAnalyses(LAM);
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-  llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(
-      optLevel == 1 ? llvm::OptimizationLevel::O1 :
-      optLevel == 2 ? llvm::OptimizationLevel::O2 :
-      llvm::OptimizationLevel::O3);
-  MPM.run(*module, MAM);
+  
+  if (optLevel == 0) {
+    // Level 0: minimal optimization - use O1 which includes basic passes
+    // This provides instcombine, DCE, simplify CFG, and basic inlining
+    llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(
+        llvm::OptimizationLevel::O1);
+    MPM.run(*module, MAM);
+  } else {
+    // Levels 1-3: standard LLVM pipelines
+    llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(
+        optLevel == 1 ? llvm::OptimizationLevel::O1 :
+        optLevel == 2 ? llvm::OptimizationLevel::O2 :
+        llvm::OptimizationLevel::O3);
+    MPM.run(*module, MAM);
+  }
 }
 
 bool Codegen::emitLLVM(llvm::Module* module, const std::string& outputPath) {
@@ -2626,6 +2680,45 @@ std::unique_ptr<llvm::Module> Codegen::mergeModules(
     result->setModuleIdentifier(outputModuleName);
     
     return result;
+}
+
+bool Codegen::linkRuntimeBitcode(
+    llvm::Module* module,
+    const std::string& bitcodePath) {
+    
+    if (bitcodePath.empty()) {
+        return true; // not fatal - continue without LTO
+    }
+    
+    // Open and read the bitcode file as a MemoryBuffer
+    auto bufferOrError = llvm::MemoryBuffer::getFile(bitcodePath);
+    if (!bufferOrError) {
+        std::cerr << "Warning: cannot open runtime bitcode: "
+                  << bufferOrError.getError().message() << "\n";
+        return true; // not fatal
+    }
+    
+    // Parse bitcode from the buffer using LLVM 22 API
+    auto result = llvm::parseBitcodeFile((*bufferOrError)->getMemBufferRef(), module->getContext());
+    if (!result) {
+        std::cerr << "Warning: failed to parse runtime bitcode\n";
+        return true; // not fatal
+    }
+    std::unique_ptr<llvm::Module> rtModule = std::move(*result);
+    
+    // Set data layout and triple to match the main module
+    rtModule->setDataLayout(module->getDataLayout());
+    rtModule->setTargetTriple(module->getTargetTriple());
+    
+    // Link runtime bitcode into the main module using LLVM's linker
+    llvm::Linker linker(*module);
+    if (linker.linkInModule(std::move(rtModule))) {
+        std::cerr << "Warning: linker failed to link runtime bitcode\n";
+        return true; // not fatal - continue without LTO
+    }
+    
+    std::cout << "Linked runtime bitcode for LTO optimization\n";
+    return true;
 }
 
 } // namespace pyc

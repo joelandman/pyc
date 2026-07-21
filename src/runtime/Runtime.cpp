@@ -21,6 +21,7 @@
 #include <pcre2.h>
 
 #include "pyc/runtime.h"
+#include "pyc/object_struct.h"
 
 // Immortal PyObject* refcount sentinel (True, False, and small ints in
 // [-5, 256] are interned; Py_INCREF / Py_DECREF skip them so they are
@@ -34,29 +35,9 @@ struct TryFrame;
 static thread_local TryFrame* g_try_stack = nullptr;
 static void pyc_raise_msg(const char* type, const char* msg);
 
-// Flat struct (no union) so we can add dvalue alongside value cleanly.
-// LLVM codegen in Codegen.cpp mirrors fields 0-3: {i32, i32, i64, double}.
-struct PyObject {
-    int refcount;
-    int type;   // 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool,
-                // 6=cell (B5 nonlocal/closure), 10=exception, 11=function,
-                // 12=exception class, 13=complex
-    long value;    // type 0
-    double dvalue; // type 4
-    std::vector<PyObject*> list;
-    std::unordered_map<PyObject*, PyObject*> dict;
-    std::string str;
-    PyObject* cell_content; // type 6
-    // A4 homogeneous numeric lists
-    int list_item_type;      // 0=general PyObject*, 1=int64, 2=double
-    std::vector<long> ilist;
-    std::vector<double> flist;
-    // Complex numbers (type 13)
-    double complex_real;
-    double complex_imag;
-};
+#define PYC_ALWAYS_INLINE __attribute__((always_inline))
 
-void Py_INCREF(PyObject* obj) {
+void PYC_ALWAYS_INLINE Py_INCREF(PyObject* obj) {
     if (obj && obj->refcount != IMMORTAL_REFCOUNT) ++obj->refcount;
 }
 

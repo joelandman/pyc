@@ -21,6 +21,11 @@ public:
         std::vector<std::unique_ptr<llvm::Module>>& modules,
         llvm::LLVMContext& context,
         const std::string& outputModuleName);
+    
+    // LTO: Load precompiled runtime bitcode and link into module
+    static bool linkRuntimeBitcode(
+        llvm::Module* module,
+        const std::string& bitcodePath);
 };
 
 } // namespace pyc

@@ -44,6 +44,9 @@ struct IRFunction {
     // A5: names that should use native i64 storage (proven numeric locals).
     // Codegen will allocate i64 alloca for these instead of PyObject* slots.
     std::vector<std::string> numericLocals;
+    // A6: names that should use native f64 storage (proven float locals).
+    // Codegen will allocate f64 alloca for these to enable native float chains.
+    std::vector<std::string> numericFloatLocals;
 };
 
  class ModuleIR {

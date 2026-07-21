@@ -760,6 +760,7 @@ class LoweringVisitor {
             // A5: record numericLocals in the IRFunction for codegen.
             for (auto& fnr : ir.functions) if (fnr.name == defIRName) {
                 fnr.numericLocals = std::vector<std::string>(numericLocals.begin(), numericLocals.end());
+                fnr.numericFloatLocals = std::vector<std::string>(numericFloatLocals.begin(), numericFloatLocals.end());
                 break;
             }
             // Restore numericLocals to outer scope
@@ -1633,6 +1634,8 @@ class LoweringVisitor {
      // A2.1: names proven to stay numeric (int/i64/float) for their live range.
      // These get native i64/double slots instead of boxed PyObject*.
      std::unordered_set<std::string> numericLocals;
+    // Native float locals - proven to stay float through computation chains
+    std::unordered_set<std::string> numericFloatLocals;
      // B16: names proven to be complex numbers (type 13).
      std::unordered_set<std::string> complexVars;
      // Map from user-level name to synthetic lambda function name for call resolution.
@@ -1973,6 +1976,10 @@ class LoweringVisitor {
         if (type == "int" || type == "i64" || type == "bool") {
             numericLocals.insert(name);
         }
+        // A6: track float provenance for native float computation chains
+        if (type == "float") {
+            numericFloatLocals.insert(name);
+        }
     }
 
     // Helper: check if a name is a global variable in the current function.
@@ -1999,6 +2006,7 @@ class LoweringVisitor {
     // (e.g. assigned a string, list, or unknown value).
     void killNumericLocal(const std::string& name) {
         numericLocals.erase(name);
+        numericFloatLocals.erase(name);
         // Don't overwrite the type here - the type was already set correctly by noteType
         // if (!name.empty()) valueTypes[name] = "boxed";
     }
@@ -2051,6 +2059,27 @@ class LoweringVisitor {
             if (lt == "float" || rt == "float") return "float";
             return "int";
         }
+        if (node->type == "Subscript") {
+            // Try to infer element type from the subscript expression.
+            // This handles patterns like bodies[i][j] in list comprehensions.
+            if (node->children.size() >= 2) {
+                const ASTNode* objNode = node->children[0].get();
+                const ASTNode* idxNode = node->children[1].get();
+                // Check if objNode is a nested subscript - recurse to infer type
+                if (objNode && objNode->type == "Subscript") {
+                    std::string innerType = detectCompElementType(objNode);
+                    if (innerType == "float" || innerType == "int") {
+                        return innerType;
+                    }
+                }
+                // Simple subscript with constant index - conservative: treat as float
+                // This handles patterns like [x, y, z] where x = container[k]
+                if (objNode && objNode->type == "Name" && idxNode && idxNode->type == "Constant") {
+                    return "float";
+                }
+            }
+            return "boxed";
+        }
         if (node->type == "UnaryOp") {
             // Unary minus/plus on a numeric operand produces the same type
             std::string st = detectCompElementType(node->children[0].get());
@@ -2077,7 +2106,6 @@ class LoweringVisitor {
         if (node->type == "Compare") return "boxed";  // bool, but not commonly used as list element
         if (node->type == "JoinedStr" || node->type == "FormattedValue") return "boxed";
         if (node->type == "BoolOp") return "boxed";  // returns actual value, could be anything
-        if (node->type == "Subscript") return "boxed";  // could be anything
         if (node->type == "Attribute") return "boxed";
         // Comprehension nested inside comprehension
         if (node->type == "ListComp") {
@@ -4288,13 +4316,13 @@ class LoweringVisitor {
     std::string lowerList(const ASTNode* node) {
         auto elems = lowerElements(node);
         size_t n = elems.size();
-        bool allInt = n > 0;
-        bool allFloat = n > 0;
-        for (const auto& e : elems) {
-            std::string t = typeOf(e);
-            if (t != "int" && t != "i64" && t != "bool") allInt = false;
-            if (t != "float") allFloat = false;
-        }
+            bool allInt = n > 0;
+            bool allFloat = n > 0;
+            for (const auto& e : elems) {
+                std::string t = typeOf(e);
+                if (t != "int" && t != "i64" && t != "bool") allInt = false;
+                if (t != "float") allFloat = false;
+            }
         std::string listRes = "t" + std::to_string(tempCounter++);
         if (allInt) {
             std::string sizeConst = "c" + std::to_string(tempCounter++);
@@ -4317,7 +4345,25 @@ class LoweringVisitor {
         for (size_t i = 0; i < n; ++i) {
             std::string idxConst = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
-            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
+            if (allInt && i < n) {
+                std::string elemType = typeOf(elems[i]);
+                bool elemIsInt = (elemType == "int" || elemType == "i64" || elemType == "bool");
+                if (elemIsInt) {
+                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64", listRes, idxConst, elems[i]}, "");
+                } else {
+                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
+                }
+            } else if (allFloat && i < n) {
+                std::string elemType = typeOf(elems[i]);
+                bool elemIsFloat = (elemType == "float");
+                if (elemIsFloat) {
+                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemDouble", listRes, idxConst, elems[i]}, "");
+                } else {
+                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
+                }
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
+            }
             if (!elems[i].empty() && (callableTokenTemps.count(elems[i]) || callableTokenToSynthetic.count(elems[i]))) {
                 containsTok = true;
             }
@@ -4694,11 +4740,44 @@ class LoweringVisitor {
         }
         std::string idx = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
         std::string res = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, res);
-        // A4: annotate element type for homogeneous lists so codegen can use native path.
+        // A4: determine element type for homogeneous lists so codegen can use native path
+        std::string elemType = "boxed";
         std::string objType = typeOf(obj);
-        if (objType == "list_int") noteType(res, "int");
-        else if (objType == "list_float") noteType(res, "float");
+        if (objType == "list_int") {
+            elemType = "int";
+            noteType(res, "int");
+        }
+        else if (objType == "list_float") {
+            elemType = "float";
+            noteType(res, "float");
+        }
+        else if (objType == "list") {
+            // Try to infer element type from the IR instruction's resultType.
+            // When obj was created from a list comprehension or list() call
+            // whose elements are known to be homogeneous (e.g., list_float),
+            // the IR resultType will reflect this even though objType is "list".
+            // We match obj against known pattern variables.
+            // Pattern: if obj is a temp created from lowerList and the IR has
+            // a list_float type for that temp, use that.
+            // Check if obj itself is a subscript result that was marked as list_float
+            if (obj.size() >= 2 && obj.substr(0, 2) == "t" && 
+                obj.size() > 2 && isdigit(obj[2])) {
+                // obj is a temp variable like t3, t4, etc.
+                // Check if its IR resultType was set to list_float via noteType
+                // We can't check IR directly here, but we can check valueTypes
+                // which is populated from noteType calls
+                std::string t = typeOf(obj);
+                if (t == "list_float") {
+                    elemType = "float";
+                    noteType(res, "float");
+                }
+                else if (t == "list_int") {
+                    elemType = "int";
+                    noteType(res, "int");
+                }
+            }
+        }
+        ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, res, elemType);
         // B4: if the container is a list we built that contained callable tokens, or the
         // container name is marked as holding tokens, mark the subscript result as a token temp.
         if (listsContainingCallableTokens.count(obj) || namesThatMayHoldCallableTokens.count(obj)) {
@@ -6366,6 +6445,10 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     auto module = Codegen::mergeModules(modules, context, "pyc_module");
     if (!module) return false;
     
+    // LTO: Link precompiled runtime bitcode before optimization
+    std::string rtBitcodePath = PYC_RUNTIME_BC;
+    codegen.linkRuntimeBitcode(module.get(), rtBitcodePath);
+    
     codegen.optimize(module.get(), optLevel);
     if (emitLLVM) {
         if (codegen.emitLLVM(module.get(), outputPath + ".ll")) {
@@ -6417,7 +6500,15 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         }
         // -x c applies to everything after it on the command line, so reset with
         // -x none or the C++ sources that follow would be compiled as C.
-        linkCmd += outputPath + ".o -x c " + b7CFile + " -x none -I" + sourceDir + "/include " + pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" + runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
+        // Use -flto=thin to enable LinkTimeOptimization.
+        // -Wl,--allow-multiple-definition allows LLVM to inline runtime functions
+        // into the generated object while still linking libpycrt.a for
+        // non-inlined symbols (PCRE2, system calls, etc.)
+        linkCmd += outputPath + ".o -flto=thin " +
+            "-Wl,--allow-multiple-definition " +
+            "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
+            pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
+            runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
         if (std::system(linkCmd.c_str()) == 0) {
             std::cout << "Linked with runtime to " << outputPath << " (static=" << useStatic << ")\n";
         } else {

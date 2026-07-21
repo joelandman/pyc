@@ -22,6 +22,32 @@ llvm_map_components_to_libnames(llvm_libs
     scalaropts instcombine aggressiveinstcombine vectorize transformutils passes
 )
 
+# === runtime.bc: Compile Runtime.cpp to LLVM bitcode for LTO ===
+set(RUNTIME_BC "${CMAKE_BINARY_DIR}/runtime.bc")
+add_custom_command(
+    OUTPUT "${RUNTIME_BC}"
+    COMMAND ${CMAKE_CXX_COMPILER} ${CMAKE_CXX_FLAGS}
+        -I ${CMAKE_SOURCE_DIR}/include
+        -I ${CMAKE_SOURCE_DIR}/runtime
+        -I /usr/include/pcre2-16
+        -DNDEBUG
+        -O2
+        -emit-llvm
+        -c ${CMAKE_SOURCE_DIR}/src/runtime/Runtime.cpp
+        -o "${RUNTIME_BC}"
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/runtime/Runtime.cpp
+            ${CMAKE_SOURCE_DIR}/include/pyc/runtime.h
+            ${CMAKE_SOURCE_DIR}/include/pyc/object_struct.h
+    COMMENT "Compiling runtime to LLVM bitcode for LTO optimization"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+add_custom_target(runtime_bc ALL DEPENDS "${RUNTIME_BC}")
+
+set(RUNTIME_HEADERS
+    ${CMAKE_SOURCE_DIR}/include/pyc/runtime.h
+    ${CMAKE_SOURCE_DIR}/include/pyc/object_struct.h
+)
+
 add_executable(pyc 
     src/main.cpp
     src/frontend/PythonParser.cpp
@@ -32,7 +58,13 @@ add_executable(pyc
 
 target_link_libraries(pyc PRIVATE ${llvm_libs} Python3::Python)
 target_include_directories(pyc PRIVATE include)
-target_compile_definitions(pyc PRIVATE PYC_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_compile_definitions(pyc PRIVATE PYC_SOURCE_DIR="${CMAKE_SOURCE_DIR}" PYC_RUNTIME_BC="${RUNTIME_BC}")
+
+target_sources(pyc PRIVATE
+    ${RUNTIME_HEADERS}
+)
+
+add_dependencies(pyc pyc_runtime runtime_bc)
 
 install(TARGETS pyc DESTINATION bin)
 
