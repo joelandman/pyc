@@ -48,6 +48,8 @@ class LoweringVisitor {
             listLiteralElemASTs.clear();
             callableTokenTemps.clear();
             listsContainingCallableTokens.clear();
+            knownFloatLists.clear();
+            knownIntLists.clear();
             currentFnReturnsCallable = false;
             funcNonlocals.clear();
             funcCells.clear();
@@ -666,6 +668,8 @@ class LoweringVisitor {
             callableTokenToSynthetic.clear();
             callableTokenTemps.clear();
             listsContainingCallableTokens.clear();
+            knownFloatLists.clear();
+            knownIntLists.clear();
             currentFnReturnsCallable = false;
             lastLambdaSynthetic.clear();
             // Save and clear numericLocals for this function scope
@@ -1679,6 +1683,8 @@ class LoweringVisitor {
     // temps. Used to mark subscript results and unpack targets as potential tokens.
     std::unordered_set<std::string> listsContainingCallableTokens;
     std::unordered_set<std::string> listsContainingBundles;
+    std::unordered_set<std::string> knownFloatLists;
+    std::unordered_set<std::string> knownIntLists;
     std::unordered_set<std::string> namesThatMayHoldListsWithBundles;
     // During lowering of a FunctionDef/lambda body, set true if any ret (or
     // implicit lambda body) produces a tracked callable token. At end of the
@@ -2012,8 +2018,8 @@ class LoweringVisitor {
     }
 
     std::string numericResultType(const std::string& op,
-                                   const std::string& left,
-                                   const std::string& right) const {
+                                    const std::string& left,
+                                    const std::string& right) const {
         std::string lt = typeOf(left);
         std::string rt = typeOf(right);
         if (op == "truediv") return "float";
@@ -4329,11 +4335,13 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
             ir.addInstruction(currentFunc, "call", {"PyList_NewIntBoxed", sizeConst}, listRes);
             noteType(listRes, "list_int");
+            knownIntLists.insert(listRes);
         } else if (allFloat) {
             std::string sizeConst = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
             ir.addInstruction(currentFunc, "call", {"PyList_NewFloatBoxed", sizeConst}, listRes);
             noteType(listRes, "list_float");
+            knownFloatLists.insert(listRes);
         } else {
             std::string sizeConst = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
@@ -4470,7 +4478,8 @@ class LoweringVisitor {
                 return;
             }
             std::string idx = lowerExpr(idxnode);
-            // A4: use native set for proven homogeneous lists with native values.
+            // A4/A7: use native set for proven homogeneous lists with native values.
+            // A7: extend float/int provenance to generic lists via Auto helpers.
             std::string objType = typeOf(obj);
             std::string valType = typeOf(val);
             std::string idxType = typeOf(idx);
@@ -4478,14 +4487,19 @@ class LoweringVisitor {
             bool isFloatList = (objType == "list_float");
             bool valIsInt = (valType == "int" || valType == "i64" || valType == "bool");
             bool valIsFloat = (valType == "float");
-            bool idxIsNative = (idxType == "int" || idxType == "i64");
             std::string dummy;
-            if (isIntList && valIsInt && idxIsNative) {
+            if (isIntList && valIsInt) {
                 dummy = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64", obj, idx, val}, dummy);
-            } else if (isFloatList && valIsFloat && idxIsNative) {
+            } else if (isFloatList && valIsFloat) {
                 dummy = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemDouble", obj, idx, val}, dummy);
+            } else if (valIsFloat) {
+                dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemDoubleAuto", obj, idx, val}, dummy);
+            } else if (valIsInt) {
+                dummy = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64Auto", obj, idx, val}, dummy);
             } else {
                 dummy = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, val}, dummy);
@@ -4752,20 +4766,20 @@ class LoweringVisitor {
             noteType(res, "float");
         }
         else if (objType == "list") {
-            // Try to infer element type from the IR instruction's resultType.
-            // When obj was created from a list comprehension or list() call
-            // whose elements are known to be homogeneous (e.g., list_float),
-            // the IR resultType will reflect this even though objType is "list".
-            // We match obj against known pattern variables.
-            // Pattern: if obj is a temp created from lowerList and the IR has
-            // a list_float type for that temp, use that.
-            // Check if obj itself is a subscript result that was marked as list_float
-            if (obj.size() >= 2 && obj.substr(0, 2) == "t" && 
-                obj.size() > 2 && isdigit(obj[2])) {
-                // obj is a temp variable like t3, t4, etc.
-                // Check if its IR resultType was set to list_float via noteType
-                // We can't check IR directly here, but we can check valueTypes
-                // which is populated from noteType calls
+            // A7: track known-float/int lists from lowerList and use them
+            // for subscript element type inference even when objType is generic.
+            if (knownFloatLists.count(obj)) {
+                elemType = "float";
+                noteType(res, "float");
+            }
+            else if (knownIntLists.count(obj)) {
+                elemType = "int";
+                noteType(res, "int");
+            }
+            // Also check if obj is a temp variable that was previously marked
+            // as list_float / list_int via noteType in lowerList or unpack.
+            else if (obj.size() >= 2 && obj.substr(0, 2) == "t" && 
+                     obj.size() > 2 && isdigit(obj[2])) {
                 std::string t = typeOf(obj);
                 if (t == "list_float") {
                     elemType = "float";

@@ -330,6 +330,33 @@ void PyList_SetItemDouble(PyObject* list, size_t index, double v) {
         list->flist[index] = v;
 }
 
+void PyList_SetItemDoubleAuto(PyObject* list, size_t index, double v) {
+    if (!list || list->type != 1) return;
+    if (list->list_item_type == 2 && index < list->flist.size()) {
+        list->flist[index] = v;
+        return;
+    }
+    if (index < list->list.size()) {
+        PyObject* old = list->list[index];
+        if (old) Py_DECREF(old);
+        list->list[index] = PyFloat_FromDouble(v);
+    }
+    // If index >= size, silently ignore (matches PyList_SetItem behavior)
+}
+
+void PyList_SetItemInt64Auto(PyObject* list, size_t index, long v) {
+    if (!list || list->type != 1) return;
+    if (list->list_item_type == 1 && index < list->ilist.size()) {
+        list->ilist[index] = v;
+        return;
+    }
+    if (index < list->list.size()) {
+        PyObject* old = list->list[index];
+        if (old) Py_DECREF(old);
+        list->list[index] = PyInt_FromLong(v);
+    }
+}
+
 PyObject* PyList_Range(int start, int end) {
     PyObject* list = PyList_New(end > start ? end - start : 0);
     for (int i = start; i < end; i++)

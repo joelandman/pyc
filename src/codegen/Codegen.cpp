@@ -2300,10 +2300,54 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                       if (setFn) builder.CreateCall(setFn, {listVal, idxVal, valVal});
                       emitDecRefIfOwnedSameBlock(listName);
                       emitDecRefIfOwnedSameBlock(idxName);
-                      emitDecRefIfOwnedSameBlock(valName);
-                      continue;
-                  }
-                 if (funcName == "print") {
+                       emitDecRefIfOwnedSameBlock(valName);
+                       continue;
+                   }
+                   if (funcName == "PyList_SetItemInt64Auto" && inst.operands.size() >= 4) {
+                       std::string listName = inst.operands[1].name;
+                       std::string idxName = inst.operands[2].name;
+                       std::string valName = inst.operands[3].name;
+                       llvm::Value* listVal = getAsPyObject(listName);
+                       llvm::Value* idxVal = getOrLoad(idxName);
+                       if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
+                           idxVal = unboxToI64(idxVal);
+                       }
+                       llvm::Value* valVal = getOrLoad(valName);
+                       if (valVal->getType() != llvm::Type::getInt64Ty(context)) {
+                           valVal = unboxToI64(valVal);
+                       }
+                       llvm::Function* setFn = module->getFunction("PyList_SetItemInt64Auto");
+                       if (setFn) builder.CreateCall(setFn, {listVal, idxVal, valVal});
+                       emitDecRefIfOwnedSameBlock(listName);
+                       emitDecRefIfOwnedSameBlock(idxName);
+                       emitDecRefIfOwnedSameBlock(valName);
+                       continue;
+                   }
+                   if (funcName == "PyList_SetItemDoubleAuto" && inst.operands.size() >= 4) {
+                       std::string listName = inst.operands[1].name;
+                       std::string idxName = inst.operands[2].name;
+                       std::string valName = inst.operands[3].name;
+                       llvm::Value* listVal = getAsPyObject(listName);
+                       llvm::Value* idxVal = getOrLoad(idxName);
+                       if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
+                           idxVal = unboxToI64(idxVal);
+                       }
+                       llvm::Value* valVal = getOrLoad(valName);
+                       if (valVal->getType() != llvm::Type::getDoubleTy(context)) {
+                           if (valVal->getType() == llvm::Type::getInt64Ty(context)) {
+                               valVal = builder.CreateSIToFP(valVal, llvm::Type::getDoubleTy(context), "setval.double");
+                           } else {
+                               valVal = unboxToDouble(valVal);
+                           }
+                       }
+                       llvm::Function* setFn = module->getFunction("PyList_SetItemDoubleAuto");
+                       if (setFn) builder.CreateCall(setFn, {listVal, idxVal, valVal});
+                       emitDecRefIfOwnedSameBlock(listName);
+                       emitDecRefIfOwnedSameBlock(idxName);
+                       emitDecRefIfOwnedSameBlock(valName);
+                       continue;
+                   }
+                  if (funcName == "print") {
                     // Legacy single-arg print fast-path: pyc_print covers the
                     // general case (multi-arg + kwargs) at the lowering level.
                     llvm::Function* pyPrint = module->getFunction("PyObject_Print");

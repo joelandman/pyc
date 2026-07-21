@@ -42,6 +42,8 @@ long      PyList_GetItemInt64(PyObject* list, size_t index);
 double    PyList_GetItemDouble(PyObject* list, size_t index);
 void      PyList_SetItemInt64(PyObject* list, size_t index, long v);
 void      PyList_SetItemDouble(PyObject* list, size_t index, double v);
+void      PyList_SetItemInt64Auto(PyObject* list, size_t index, long v);
+void      PyList_SetItemDoubleAuto(PyObject* list, size_t index, double v);
 void      PyList_SetItemBoxed(PyObject* list, PyObject* idx, PyObject* item);
 PyObject* PyList_Comprehension(int start, int end);
 PyObject* PyFloat_FromDouble(double v);
