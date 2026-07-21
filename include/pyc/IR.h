@@ -47,6 +47,9 @@ struct IRFunction {
     // A6: names that should use native f64 storage (proven float locals).
     // Codegen will allocate f64 alloca for these to enable native float chains.
     std::vector<std::string> numericFloatLocals;
+    // Param types from call-site analysis. Each entry is "int", "float", or "" (unknown).
+    // Populated by generateParamTypeAnalysis; used to allocate native param slots.
+    std::vector<std::string> paramTypes;
 };
 
  class ModuleIR {

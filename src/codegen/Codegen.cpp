@@ -835,15 +835,66 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                             entryBuilder.CreateCall(increfFn, {arg});
                         }
                     }
-                }
-            } else {
-                // Use a synthetic name if args are empty
-                std::string synthName = "arg" + std::to_string(i);
-                arg->setName(synthName);
-                valueMap[synthName] = arg;
-            }
-        }
-        // Pre-populate global variables (after params so params shadow globals).
+                 }
+             } else {
+                 // Use a synthetic name if args are empty
+                 std::string synthName = "arg" + std::to_string(i);
+                 arg->setName(synthName);
+                 valueMap[synthName] = arg;
+             }
+         }
+          // A7: For params in numericFloatLocals/numericLocals, create native f64/i64 allocas
+          // so the native chain can start from the param. Insert at end of entry block.
+          {
+              llvm::IRBuilder<> endBuilder(&func->getEntryBlock(), func->getEntryBlock().end());
+              llvm::LLVMContext& ctx = func->getContext();
+              for (size_t pi = 0; pi < f.args.size(); ++pi) {
+                  const auto& pname = f.args[pi];
+                  if (pname.empty()) continue;
+                  bool isFloat = false, isInt = false;
+                  for (const auto& nfl : f.numericFloatLocals) { if (nfl == pname) { isFloat = true; break; } }
+                  for (const auto& nl : f.numericLocals) { if (nl == pname) { isInt = true; break; } }
+                  if (!isFloat && !isInt) continue;
+                  if (pname.size() > 5 && pname.rfind("_cell") == pname.size() - 5) continue;
+                  llvm::AllocaInst* boxedSlotAlloca = nullptr;
+                  auto bsit = valueMap.find(pname);
+                  if (bsit != valueMap.end()) {
+                      if (auto* a = llvm::dyn_cast<llvm::AllocaInst>(bsit->second)) boxedSlotAlloca = a;
+                  }
+                  if (!boxedSlotAlloca || boxedSlotAlloca->getAllocatedType() != pyObjectPtrTy) continue;
+                  auto nativeTy = isFloat ? llvm::Type::getDoubleTy(ctx) : llvm::Type::getInt64Ty(ctx);
+                  auto* nativeAlloca = endBuilder.CreateAlloca(nativeTy, nullptr, pname + ".native");
+                  // Unbox from boxed slot and store to native
+                  llvm::Value* boxedPtr = endBuilder.CreateLoad(pyObjectPtrTy, boxedSlotAlloca, pname + ".boxed");
+                  if (isFloat) {
+                      llvm::Value* typeTag = endBuilder.CreateLoad(llvm::Type::getInt32Ty(ctx),
+                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 1), pname + ".type");
+                      llvm::Value* isFloatTag = endBuilder.CreateICmpEQ(typeTag,
+                          llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 4), pname + ".isfloat");
+                      llvm::Value* dval = endBuilder.CreateLoad(llvm::Type::getDoubleTy(ctx),
+                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 3), pname + ".dval");
+                      llvm::Value* ival = endBuilder.CreateLoad(nativeTy,
+                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 2), pname + ".ival");
+                      llvm::Value* i2f = endBuilder.CreateSIToFP(ival, llvm::Type::getDoubleTy(ctx), pname + ".i2f");
+                      llvm::Value* unboxed = endBuilder.CreateSelect(isFloatTag, dval, i2f, pname + ".unboxed");
+                      endBuilder.CreateStore(unboxed, nativeAlloca);
+                  } else {
+                      llvm::Value* typeTag = endBuilder.CreateLoad(llvm::Type::getInt32Ty(ctx),
+                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 1), pname + ".type");
+                      llvm::Value* isIntTag = endBuilder.CreateICmpEQ(typeTag,
+                          llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0), pname + ".isint");
+                      llvm::Value* iv = endBuilder.CreateLoad(llvm::Type::getInt64Ty(ctx),
+                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 2), pname + ".ival");
+                      llvm::Value* dv = endBuilder.CreateLoad(llvm::Type::getDoubleTy(ctx),
+                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 3), pname + ".dval");
+                      llvm::Value* f2i = endBuilder.CreateFPToSI(dv, nativeTy, pname + ".f2i");
+                      llvm::Value* sel = endBuilder.CreateSelect(isIntTag, iv, f2i, pname + ".unboxed");
+                      endBuilder.CreateStore(sel, nativeAlloca);
+                  }
+                  valueMap[pname] = nativeAlloca;
+              }
+          }
+         // Pre-populate global variables (after params so params shadow globals).
         for (const auto& gname : f.globalVars) {
             if (valueMap.count(gname)) continue;   // param with same name — skip
             llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + gname);

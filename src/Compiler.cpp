@@ -1615,6 +1615,78 @@ class LoweringVisitor {
         }
     }
 
+    // Generate per-param type info from call-site analysis.
+    // For each function that is called with numeric types at all positions,
+    // record the dominant type ("int" or "float") for each param slot.
+    // This enables native param slot allocation even when args have defaults.
+    void generateParamTypeAnalysis() {
+        for (auto& kv : callSiteTypes) {
+            const std::string& funcName = kv.first;
+            const auto& allSigs = kv.second;
+            if (allSigs.empty()) continue;
+
+            // Find the original function
+            IRFunction* func = nullptr;
+            for (auto& f : ir.functions) {
+                if (f.name == funcName) { func = &f; break; }
+            }
+            if (!func) continue;
+
+            size_t declaredArgCount = func->args.size();
+            if (declaredArgCount == 0) continue;
+
+            // For each declared param, find the dominant type across all call sites.
+            // A param is "dominant" if ALL call sites agree on the same numeric type.
+            for (size_t pi = 0; pi < declaredArgCount; ++pi) {
+                std::string dominant = "";
+                bool consistent = true;
+                bool allPositionsFilled = true;
+
+                for (const auto& sig : allSigs) {
+                    if (pi >= sig.size()) {
+                        allPositionsFilled = false;
+                        break;
+                    }
+                    const auto& t = sig[pi];
+                    if (t == "i64") {
+                        if (dominant == "" || dominant == "i64") {
+                            dominant = t;
+                        } else {
+                            consistent = false; break;
+                        }
+                    } else if (t == "int") {
+                        if (dominant == "" || dominant == "int") {
+                            dominant = t;
+                        } else {
+                            consistent = false; break;
+                        }
+                    } else if (t == "float") {
+                        if (dominant == "" || dominant == "float") {
+                            dominant = t;
+                        } else {
+                            consistent = false; break;
+                        }
+                    }
+                    // Any other type (boxed, list, etc.) means we can't track
+                }
+
+                if (!consistent || !allPositionsFilled) continue;
+
+                if (dominant == "int" || dominant == "i64") {
+                    func->paramTypes.push_back("int");
+                } else if (dominant == "float") {
+                    func->paramTypes.push_back("float");
+                } else {
+                    func->paramTypes.push_back("");  // unknown or non-numeric
+                }
+            }
+            // Pad remaining params (in case some weren't filled)
+            while ((size_t)func->paramTypes.size() < declaredArgCount) {
+                func->paramTypes.push_back("");
+            }
+        }
+    }
+
   private:
      ModuleIR& ir;
      // B7: set of module names that were successfully compiled (used to decide
@@ -6201,6 +6273,19 @@ void lowerAST(const ASTNode* node, ModuleIR& ir,
     visitor.lower(node);
     // A6: Generate specialized variants after lowering completes.
     visitor.generateSpecializedVariants();
+    // A7: Analyze param types from call-site signatures (for native param slots).
+    visitor.generateParamTypeAnalysis();
+    // A7: Update numericFloatLocals/numericLocals from paramTypes for each function.
+    // This propagates known-float params back into the IR so codegen can use native slots.
+    for (auto& fnr : ir.functions) {
+        for (size_t i = 0; i < fnr.args.size(); ++i) {
+            if (i < fnr.paramTypes.size() && fnr.paramTypes[i] == "float") {
+                fnr.numericFloatLocals.push_back(fnr.args[i]);
+            } else if (i < fnr.paramTypes.size() && fnr.paramTypes[i] == "int") {
+                fnr.numericLocals.push_back(fnr.args[i]);
+            }
+        }
+    }
 }
 
 bool Compiler::compile(const std::string& inputPath, const std::string& outputPath, bool useStatic, int optLevel, bool emitLLVM, bool emitASM, bool verbose) {
