@@ -4675,6 +4675,35 @@ class LoweringVisitor {
         ir.addInstruction(currentFunc, "label", {}, bodyLabel);
         std::string itemRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, idxVar}, itemRes);
+        // S2: Propagate container element types from iterated list to loop variable.
+        // If listVal has containerElementTypes or subscriptElementTypes, the result
+        // of PyList_GetItemObj should inherit those element types for subscript optimization.
+        for (auto& fnx : ir.functions) {
+            auto sit = fnx.subscriptElementTypes.find(listVal);
+            if (sit != fnx.subscriptElementTypes.end() && !sit->second.empty()) {
+                fnx.subscriptElementTypes[itemRes] = sit->second;
+                break;
+            }
+            auto cit = fnx.containerElementTypes.find(listVal);
+            if (cit != fnx.containerElementTypes.end() && !cit->second.empty()) {
+                // containerElementTypes maps index to container type like "float_list"
+                // The element of a float_list is "float"
+                for (const auto& [idx, ctypes] : cit->second) {
+                    if (ctypes == "float_list") {
+                        std::unordered_map<size_t, std::string> elemTypes;
+                        for (size_t i = 0; i <= 20; i++) elemTypes[i] = "float";
+                        fnx.subscriptElementTypes[itemRes] = elemTypes;
+                        break;
+                    } else if (ctypes == "int_list") {
+                        std::unordered_map<size_t, std::string> elemTypes;
+                        for (size_t i = 0; i <= 20; i++) elemTypes[i] = "int";
+                        fnx.subscriptElementTypes[itemRes] = elemTypes;
+                        break;
+                    }
+                }
+                break;
+            }
+        }
         if (node->id == "__unpack__") {
             if (iterIndex == 1) {
                 lowerUnpackTarget(node->children[0].get(), itemRes);
