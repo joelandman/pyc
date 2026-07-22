@@ -1530,85 +1530,7 @@ class LoweringVisitor {
         return result;
     }
 
-    // S1: Analyze subscript element types for variables that are known to hold
-    // typed elements (float/int/boxed) at specific indices. This enables
-    // generic list subscripts to use native element types when the variable is
-    // proven to contain such elements (from module-level literals, dicts, etc.)
-    void analyzeSubscriptElementTypes() {
-        // Step 1: Collect known-float/int list temps
-        std::unordered_set<std::string> floatListTemps(knownFloatLists.begin(), knownFloatLists.end());
-        std::unordered_set<std::string> intListTemps(knownIntLists.begin(), knownIntLists.end());
-
-        // Step 2: Build a map from module global names to their IR result temps
-        // by scanning getglobal instructions in module scope
-        std::unordered_map<std::string, std::string> globalNameToTemp;
-        for (auto& fn : ir.functions) {
-            if (fn.name != currentFunc) continue;
-            for (auto& inst : fn.body) {
-                if (inst.op == "getglobal" && !inst.operands.empty() && !inst.result.empty()) {
-                    globalNameToTemp[inst.operands[0].name] = inst.result;
-                }
-            }
-        }
-
-        // Step 3: Map module global names that are assigned known-float/int list temps.
-        // When POSITION = [0.0, 0.0, 0.0] is lowered:
-        // - It creates a temp (e.g., "t3") via lowerList → inserted into knownFloatLists
-        // - The Name "POSITION" in the AST is lowered to just the string "POSITION"
-        // - So typeOf("POSITION") will be "list_float" if the assign was processed
-        // - We need to map module global names to their element types
-        std::unordered_map<std::string, std::string> globalElemType; // name → "float"/"int"/"boxed"
-        for (const auto& gname : ir.moduleGlobals) {
-            // Check if any getglobal of this name returns a known-float-list temp
-            for (const auto& [tname, ttmp] : globalNameToTemp) {
-                if (tname == gname) {
-                    if (floatListTemps.count(ttmp)) {
-                        globalElemType[gname] = "float";
-                    } else if (intListTemps.count(ttmp)) {
-                        globalElemType[gname] = "int";
-                    }
-                }
-            }
-        }
-
-        // Step 4: For module globals with known element type, annotate all functions
-        // with subscript element types for that global name.
-        for (const auto& [gname, elemType] : globalElemType) {
-            for (auto& fn : ir.functions) {
-                for (size_t idx = 0; idx <= 10; idx++) {
-                    fn.subscriptElementTypes[gname][idx] = elemType;
-                }
-            }
-        }
-
-        // Step 5: For function parameter defaults that reference module globals
-        // pointing to known-float-list temps, propagate subscript element types.
-        for (auto& fn : ir.functions) {
-            if (!fn.defaultGlobals.empty()) {
-                for (size_t i = 0; i < fn.defaultGlobals.size() && i < fn.args.size(); ++i) {
-                    const auto& paramName = fn.args[i];
-                    std::string defaultTemp = fn.defaultGlobals[i];
-                    
-                    // Check if the default resolves to a known-float-list
-                    for (const auto& [gname, temp] : globalNameToTemp) {
-                        if (temp == defaultTemp || defaultTemp == gname) {
-                            if (floatListTemps.count(temp)) {
-                                for (size_t idx = 0; idx <= 10; idx++) {
-                                    fn.subscriptElementTypes[paramName][idx] = "float";
-                                }
-                            } else if (intListTemps.count(temp)) {
-                                for (size_t idx = 0; idx <= 10; idx++) {
-                                    fn.subscriptElementTypes[paramName][idx] = "int";
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-        // A6: Generate specialized function variants based on call-site type info.
+    // A6: Generate specialized function variants based on call-site type info.
     // For each function that is called with all-proven-numeric arguments at all
     // call sites (with consistent arg count matching declared params), create
     // a variant that takes i64/double directly instead of PyObject*.
@@ -1690,6 +1612,145 @@ class LoweringVisitor {
             variant.body = origFunc->body;
 
             ir.functions.push_back(variant);
+        }
+    }
+
+    // Type stability tracking: Infer and propagate container element types.
+    // Once a type is inferred from a source (literal, container, param default),
+    // track it through all assign/unpack operations. A variable's type is stable
+    // if it consistently receives compatible values throughout its lifetime.
+    void inferContainerElementTypes() {
+        // ============== Phase 1: Module-level type registry ==============
+        // Track temps from knownFloatLists/knownIntLists and build a map from
+        // module global names to their container types.
+        
+        // Map: global name → container element type per index
+        std::unordered_map<std::string, std::unordered_map<size_t, std::string>> globalElementTypes;
+        // Map: temp → container type ("float_list", "int_list", "boxed")
+        std::unordered_map<std::string, std::string> tempContainerType;
+        
+        // Track known float/int list temps
+        std::unordered_set<std::string> knownFloatTemps(knownFloatLists.begin(), knownFloatLists.end());
+        std::unordered_set<std::string> knownIntTemps(knownIntLists.begin(), knownIntLists.end());
+        
+        // Module-level name → temp mapping (from getglobal → result)
+        std::unordered_map<std::string, std::string> globalToTemp;
+        
+        for (auto& fn : ir.functions) {
+            if (fn.name != currentFunc) continue; // module scope only
+            
+            for (auto& inst : fn.body) {
+                if (inst.op == "getglobal" && !inst.operands.empty() && !inst.result.empty()) {
+                    globalToTemp[inst.operands[0].name] = inst.result;
+                }
+            }
+        }
+        
+        // For temps created by lowerList with all float/int elements, mark them
+        for (const auto& temp : knownFloatTemps) {
+            tempContainerType[temp] = "float_list";
+            for (size_t i = 0; i <= 20; i++) {
+                globalElementTypes[temp][i] = "float";
+            }
+        }
+        for (const auto& temp : knownIntTemps) {
+            tempContainerType[temp] = "int_list";
+            for (size_t i = 0; i <= 20; i++) {
+                globalElementTypes[temp][i] = "int";
+            }
+        }
+        
+        // ============== Phase 2: Module globals ==============
+        // For each module global, determine its container type by checking
+        // what value was assigned to it. Module globals are assigned by:
+        // 1. Direct list/tuple/dict literals (via lowerList/lowerDict)
+        // 2. Function calls that return containers (list(), combinations(), etc.)
+        
+        // Check typeOf for module globals - if typeOf("POSITION") == "list_float",
+        // then POSITION holds a float list
+        std::unordered_map<std::string, std::string> globalToValueType;
+        for (const auto& gname : ir.moduleGlobals) {
+            std::string vt = typeOf(gname);
+            globalToValueType[gname] = vt;
+            if (vt == "list_float") {
+                for (size_t i = 0; i <= 20; i++) {
+                    globalElementTypes[gname][i] = "float";
+                }
+                tempContainerType[gname] = "float_list";
+            } else if (vt == "list_int" || vt == "int" || vt == "i64" || vt == "bool") {
+                for (size_t i = 0; i <= 20; i++) {
+                    globalElementTypes[gname][i] = "int";
+                }
+                tempContainerType[gname] = "int_list";
+            } else if (vt == "list" || vt == "dict" || vt == "") {
+                // Generic container - element type is "boxed"
+                tempContainerType[gname] = "boxed";
+            }
+        }
+        
+        // ============== Phase 3: Propagate type info to all functions ==============
+        // For each function, populate containerElementTypes from the module-level registry.
+        // Also handle function parameter defaults.
+        
+        for (auto& fn : ir.functions) {
+            // Propagate module global types to all functions
+            for (const auto& [gname, elemMap] : globalElementTypes) {
+                fn.subscriptElementTypes[gname] = elemMap;
+            }
+            
+            // Check parameter defaults
+            for (size_t i = 0; i < fn.defaultGlobals.size() && i < fn.args.size(); ++i) {
+                const auto& paramName = fn.args[i];
+                std::string defaultTemp = fn.defaultGlobals[i];
+                
+                // Find what type the default resolves to
+                std::string defaultElemType = "boxed";
+                
+                // Check if default matches a global name directly
+                if (globalToValueType.count(defaultTemp)) {
+                    std::string vt = globalToValueType[defaultTemp];
+                    if (vt == "list_float") {
+                        defaultElemType = "float_list";
+                    } else if (vt == "list_int") {
+                        defaultElemType = "int_list";
+                    }
+                }
+                
+                // Check if default resolves via globalToTemp map
+                auto gtit = globalToTemp.find(defaultTemp);
+                if (gtit != globalToTemp.end()) {
+                    auto cit = tempContainerType.find(gtit->second);
+                    if (cit != tempContainerType.end()) {
+                        defaultElemType = cit->second;
+                    }
+                }
+                
+                // Also check direct global name
+                auto gvit = globalToValueType.find(defaultTemp);
+                if (gvit != globalToValueType.end()) {
+                    if (gvit->second == "list_float" && (defaultElemType == "boxed")) {
+                        defaultElemType = "float_list";
+                    } else if (gvit->second == "list_int" && (defaultElemType == "boxed")) {
+                        defaultElemType = "int_list";
+                    }
+                }
+                
+                // Propagate to this function
+                if (defaultElemType == "float_list") {
+                    for (size_t idx = 0; idx <= 20; idx++) {
+                        fn.subscriptElementTypes[paramName][idx] = "float";
+                    }
+                    fn.containerElementTypes[paramName][0] = "float_list";
+                } else if (defaultElemType == "int_list") {
+                    for (size_t idx = 0; idx <= 20; idx++) {
+                        fn.subscriptElementTypes[paramName][idx] = "int";
+                    }
+                    fn.containerElementTypes[paramName][0] = "int_list";
+                } else {
+                    // Generic container - record that subscript returns boxed
+                    fn.containerElementTypes[paramName][0] = "boxed";
+                }
+            }
         }
     }
 
@@ -4778,6 +4839,30 @@ class LoweringVisitor {
             if (!value.empty() && (callableTokenTemps.count(value) || listsContainingCallableTokens.count(value))) {
                 callableTokenTemps.insert(elem);
             }
+            // S1: Propagate container element types to unpacked elements.
+            // If value has containerElementTypes at index i, annotate elem accordingly.
+            for (auto& fn : ir.functions) {
+                if (fn.name != currentFunc) continue;
+                auto cit = fn.containerElementTypes.find(value);
+                if (cit != fn.containerElementTypes.end()) {
+                    auto iit = cit->second.find(i);
+                    if (iit != cit->second.end()) {
+                        std::string elemCType = iit->second;
+                        if (elemCType == "float_list") {
+                            // This element is a float list → annotate subscript gets on it
+                            for (size_t idx = 0; idx <= 20; idx++) {
+                                fn.subscriptElementTypes[elem][idx] = "float";
+                            }
+                        } else if (elemCType == "int_list") {
+                            for (size_t idx = 0; idx <= 20; idx++) {
+                                fn.subscriptElementTypes[elem][idx] = "int";
+                            }
+                        } else if (elemCType == "float" || elemCType == "int") {
+                            noteType(elem, elemCType);
+                        }
+                    }
+                }
+            }
             lowerUnpackTarget(target->children[i].get(), elem);
         }
     }
@@ -4926,10 +5011,80 @@ class LoweringVisitor {
                 elemType = "int";
                 noteType(res, "int");
             }
+            // S1: check containerElementTypes / subscriptElementTypes for variable names
+            // that have known element types propagated from defaults or globals.
+            // Try to match a literal integer index for exact lookup.
+            else {
+                std::string idxValue = "";
+                if (node->children.size() > 1 && node->children[1] && 
+                    node->children[1]->type == "Constant" && node->children[1]->args.size() == 1) {
+                    idxValue = node->children[1]->args[0];
+                }
+                size_t idxVal = 0;
+                bool hasLiteralIndex = !idxValue.empty();
+                if (hasLiteralIndex) {
+                    try { idxVal = std::stoull(idxValue); } catch (...) { hasLiteralIndex = false; }
+                }
+                
+                for (auto& fn : ir.functions) {
+                    if (fn.name != currentFunc) continue;
+                    
+                    // First try subscriptElementTypes (direct element type)
+                    auto sit = fn.subscriptElementTypes.find(obj);
+                    if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
+                        if (hasLiteralIndex) {
+                            auto iit = sit->second.find(idxVal);
+                            if (iit != sit->second.end()) {
+                                elemType = iit->second;
+                                if (elemType == "float") noteType(res, "float");
+                                else if (elemType == "int") noteType(res, "int");
+                                else noteType(res, "boxed");
+                            }
+                        } else {
+                            // No literal index - use first entry (wildcard or generic)
+                            auto iit = sit->second.begin();
+                            elemType = iit->second;
+                            if (elemType == "float") noteType(res, "float");
+                            else if (elemType == "int") noteType(res, "int");
+                            else noteType(res, "boxed");
+                        }
+                    }
+                    // Then try containerElementTypes for typed container elements
+                    (void)elemType; // suppress unused warning if not used below
+                }
+                
+                // Check containerElementTypes for typed element containers (float_list, etc.)
+                for (auto& fn : ir.functions) {
+                    if (fn.name != currentFunc) continue;
+                    auto cit = fn.containerElementTypes.find(obj);
+                    if (cit != fn.containerElementTypes.end() && !cit->second.empty()) {
+                        std::string matchType = "";
+                        size_t matchIdx = 0;
+                        
+                        // Look for exact index match or wildcard (0)
+                        for (const auto& [ikey, ctype] : cit->second) {
+                            if (ikey == idxVal) { matchType = ctype; matchIdx = ikey; break; }
+                        }
+                        if (matchType.empty() && !cit->second.empty()) {
+                            // Use first entry (likely wildcard)
+                            auto wit = cit->second.begin();
+                            matchType = wit->second;
+                        }
+                        
+                        // Extract element type from container type
+                        if (matchType == "float_list") { elemType = "float"; if (objType == "list") noteType(res, "float"); }
+                        else if (matchType == "int_list") { elemType = "int"; if (objType == "list") noteType(res, "int"); }
+                        else if (matchType == "boxed_tuple") { elemType = "boxed"; }
+                        else if (matchType == "boxed") { elemType = "boxed"; }
+                        break;
+                    }
+                }
+            }
             // Also check if obj is a temp variable that was previously marked
             // as list_float / list_int via noteType in lowerList or unpack.
-            else if (obj.size() >= 2 && obj.substr(0, 2) == "t" && 
-                     obj.size() > 2 && isdigit(obj[2])) {
+            // (Note: this is a fallback; the S1 checks above cover most cases)
+            if (obj.size() >= 2 && obj.substr(0, 2) == "t" && 
+                obj.size() > 2 && isdigit(obj[2])) {
                 std::string t = typeOf(obj);
                 if (t == "list_float") {
                     elemType = "float";
@@ -4938,40 +5093,6 @@ class LoweringVisitor {
                 else if (t == "list_int") {
                     elemType = "int";
                     noteType(res, "int");
-                }
-            }
-            // S1: check subscriptElementTypes for generic list subscripts where
-            // the variable is known to hold typed elements.
-            else {
-                for (auto& fn : ir.functions) {
-                    if (fn.name != currentFunc) continue;
-                    auto sit = fn.subscriptElementTypes.find(obj);
-                    if (sit != fn.subscriptElementTypes.end()) {
-                        const auto& elemMap = sit->second;
-                        if (!elemMap.empty()) {
-                            // Check if there's a literal integer index we can match
-                            std::string idxValue = "";
-                            if (node->children.size() > 1 && node->children[1]) {
-                                if (node->children[1]->type == "Constant" && node->children[1]->args.size() == 1) {
-                                    idxValue = node->children[1]->args[0];
-                                }
-                            }
-                            size_t idxVal = 0;
-                            bool hasLiteralIndex = !idxValue.empty();
-                            if (!idxValue.empty()) {
-                                try { idxVal = std::stoull(idxValue); } catch (...) { hasLiteralIndex = false; }
-                            }
-                            if (hasLiteralIndex) {
-                                auto iit = elemMap.find(idxVal);
-                                if (iit != elemMap.end()) {
-                                    elemType = iit->second;
-                                    if (elemType == "float") noteType(res, "float");
-                                    else if (elemType == "int") noteType(res, "int");
-                                    else noteType(res, "boxed");
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -6383,10 +6504,10 @@ void lowerAST(const ASTNode* node, ModuleIR& ir,
     if (!node) return;
     LoweringVisitor visitor(ir, compiledModules, importedModuleGlobals);
     visitor.lower(node);
-    // S1: Analyze subscript element types for generic list subscripts.
-    visitor.analyzeSubscriptElementTypes();
     // A6: Generate specialized variants after lowering completes.
     visitor.generateSpecializedVariants();
+    // S1: Infer container element types for type stability tracking.
+    visitor.inferContainerElementTypes();
     // A7: Analyze param types from call-site signatures (for native param slots).
     visitor.generateParamTypeAnalysis();
     // A7: Update numericFloatLocals/numericLocals from paramTypes for each function.

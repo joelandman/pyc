@@ -3,7 +3,6 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
-#include <unordered_set>
 
 namespace pyc {
 
@@ -52,9 +51,16 @@ struct IRFunction {
     // Param types from call-site analysis. Each entry is "int", "float", or "" (unknown).
     // Populated by generateParamTypeAnalysis; used to allocate native param slots.
     std::vector<std::string> paramTypes;
-    // Subscript element types: map from variable name → (index → element type).
-    // Used to infer element types for subscript get on generic lists where the
-    // variable is known to hold typed elements (e.g., POSITION, VELOCITY lists).
+    // Container element types: maps variable name → (index → element type at that index)
+    // Element types: "float", "int", "boxed", "float_list", "int_list", "boxed_tuple"
+    // - "float_list" = element is a float list (subscript returns "float")
+    // - "float" = element is a primitive float
+    // - "boxed" = element is generic/unknown
+    // Key 0 is a wildcard meaning "any index"
+    std::unordered_map<std::string, std::unordered_map<size_t, std::string>> containerElementTypes;
+    // Subscript element types: maps variable name → (index → element type)
+    // Simpler version of containerElementTypes, only tracks primitive element types
+    // Used as a fallback when containerElementTypes has no matching entry
     std::unordered_map<std::string, std::unordered_map<size_t, std::string>> subscriptElementTypes;
 };
 
