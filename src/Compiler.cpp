@@ -1530,7 +1530,85 @@ class LoweringVisitor {
         return result;
     }
 
-    // A6: Generate specialized function variants based on call-site type info.
+    // S1: Analyze subscript element types for variables that are known to hold
+    // typed elements (float/int/boxed) at specific indices. This enables
+    // generic list subscripts to use native element types when the variable is
+    // proven to contain such elements (from module-level literals, dicts, etc.)
+    void analyzeSubscriptElementTypes() {
+        // Step 1: Collect known-float/int list temps
+        std::unordered_set<std::string> floatListTemps(knownFloatLists.begin(), knownFloatLists.end());
+        std::unordered_set<std::string> intListTemps(knownIntLists.begin(), knownIntLists.end());
+
+        // Step 2: Build a map from module global names to their IR result temps
+        // by scanning getglobal instructions in module scope
+        std::unordered_map<std::string, std::string> globalNameToTemp;
+        for (auto& fn : ir.functions) {
+            if (fn.name != currentFunc) continue;
+            for (auto& inst : fn.body) {
+                if (inst.op == "getglobal" && !inst.operands.empty() && !inst.result.empty()) {
+                    globalNameToTemp[inst.operands[0].name] = inst.result;
+                }
+            }
+        }
+
+        // Step 3: Map module global names that are assigned known-float/int list temps.
+        // When POSITION = [0.0, 0.0, 0.0] is lowered:
+        // - It creates a temp (e.g., "t3") via lowerList → inserted into knownFloatLists
+        // - The Name "POSITION" in the AST is lowered to just the string "POSITION"
+        // - So typeOf("POSITION") will be "list_float" if the assign was processed
+        // - We need to map module global names to their element types
+        std::unordered_map<std::string, std::string> globalElemType; // name → "float"/"int"/"boxed"
+        for (const auto& gname : ir.moduleGlobals) {
+            // Check if any getglobal of this name returns a known-float-list temp
+            for (const auto& [tname, ttmp] : globalNameToTemp) {
+                if (tname == gname) {
+                    if (floatListTemps.count(ttmp)) {
+                        globalElemType[gname] = "float";
+                    } else if (intListTemps.count(ttmp)) {
+                        globalElemType[gname] = "int";
+                    }
+                }
+            }
+        }
+
+        // Step 4: For module globals with known element type, annotate all functions
+        // with subscript element types for that global name.
+        for (const auto& [gname, elemType] : globalElemType) {
+            for (auto& fn : ir.functions) {
+                for (size_t idx = 0; idx <= 10; idx++) {
+                    fn.subscriptElementTypes[gname][idx] = elemType;
+                }
+            }
+        }
+
+        // Step 5: For function parameter defaults that reference module globals
+        // pointing to known-float-list temps, propagate subscript element types.
+        for (auto& fn : ir.functions) {
+            if (!fn.defaultGlobals.empty()) {
+                for (size_t i = 0; i < fn.defaultGlobals.size() && i < fn.args.size(); ++i) {
+                    const auto& paramName = fn.args[i];
+                    std::string defaultTemp = fn.defaultGlobals[i];
+                    
+                    // Check if the default resolves to a known-float-list
+                    for (const auto& [gname, temp] : globalNameToTemp) {
+                        if (temp == defaultTemp || defaultTemp == gname) {
+                            if (floatListTemps.count(temp)) {
+                                for (size_t idx = 0; idx <= 10; idx++) {
+                                    fn.subscriptElementTypes[paramName][idx] = "float";
+                                }
+                            } else if (intListTemps.count(temp)) {
+                                for (size_t idx = 0; idx <= 10; idx++) {
+                                    fn.subscriptElementTypes[paramName][idx] = "int";
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+        // A6: Generate specialized function variants based on call-site type info.
     // For each function that is called with all-proven-numeric arguments at all
     // call sites (with consistent arg count matching declared params), create
     // a variant that takes i64/double directly instead of PyObject*.
@@ -4862,6 +4940,40 @@ class LoweringVisitor {
                     noteType(res, "int");
                 }
             }
+            // S1: check subscriptElementTypes for generic list subscripts where
+            // the variable is known to hold typed elements.
+            else {
+                for (auto& fn : ir.functions) {
+                    if (fn.name != currentFunc) continue;
+                    auto sit = fn.subscriptElementTypes.find(obj);
+                    if (sit != fn.subscriptElementTypes.end()) {
+                        const auto& elemMap = sit->second;
+                        if (!elemMap.empty()) {
+                            // Check if there's a literal integer index we can match
+                            std::string idxValue = "";
+                            if (node->children.size() > 1 && node->children[1]) {
+                                if (node->children[1]->type == "Constant" && node->children[1]->args.size() == 1) {
+                                    idxValue = node->children[1]->args[0];
+                                }
+                            }
+                            size_t idxVal = 0;
+                            bool hasLiteralIndex = !idxValue.empty();
+                            if (!idxValue.empty()) {
+                                try { idxVal = std::stoull(idxValue); } catch (...) { hasLiteralIndex = false; }
+                            }
+                            if (hasLiteralIndex) {
+                                auto iit = elemMap.find(idxVal);
+                                if (iit != elemMap.end()) {
+                                    elemType = iit->second;
+                                    if (elemType == "float") noteType(res, "float");
+                                    else if (elemType == "int") noteType(res, "int");
+                                    else noteType(res, "boxed");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, res, elemType);
         // B4: if the container is a list we built that contained callable tokens, or the
@@ -6271,6 +6383,8 @@ void lowerAST(const ASTNode* node, ModuleIR& ir,
     if (!node) return;
     LoweringVisitor visitor(ir, compiledModules, importedModuleGlobals);
     visitor.lower(node);
+    // S1: Analyze subscript element types for generic list subscripts.
+    visitor.analyzeSubscriptElementTypes();
     // A6: Generate specialized variants after lowering completes.
     visitor.generateSpecializedVariants();
     // A7: Analyze param types from call-site signatures (for native param slots).

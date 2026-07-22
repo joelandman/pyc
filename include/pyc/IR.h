@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace pyc {
 
@@ -50,6 +52,10 @@ struct IRFunction {
     // Param types from call-site analysis. Each entry is "int", "float", or "" (unknown).
     // Populated by generateParamTypeAnalysis; used to allocate native param slots.
     std::vector<std::string> paramTypes;
+    // Subscript element types: map from variable name → (index → element type).
+    // Used to infer element types for subscript get on generic lists where the
+    // variable is known to hold typed elements (e.g., POSITION, VELOCITY lists).
+    std::unordered_map<std::string, std::unordered_map<size_t, std::string>> subscriptElementTypes;
 };
 
  class ModuleIR {
