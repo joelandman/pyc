@@ -1670,6 +1670,21 @@ class LoweringVisitor {
                 globalElementTypes[temp][i] = "int";
             }
         }
+        // Also propagate per-index element types from listElementTypes (mixed-type containers)
+        for (auto& fnx : ir.functions) {
+            for (const auto& [cname, elemTypes] : fnx.listElementTypes) {
+                if (!elemTypes.empty()) {
+                    for (size_t i = 0; i < elemTypes.size() && i <= 20; i++) {
+                        const auto& et = elemTypes[i];
+                        if (et == "float" || et == "float_list" || et == "list_float") {
+                            globalElementTypes[cname][i] = "float";
+                        } else if (et == "int" || et == "int_list" || et == "list_int") {
+                            globalElementTypes[cname][i] = "int";
+                        }
+                    }
+                }
+            }
+        }
         
         // ============== Phase 2: Module globals ==============
         // For each module global, determine its container type by checking
@@ -1694,8 +1709,36 @@ class LoweringVisitor {
                 }
                 tempContainerType[gname] = "int_list";
             } else if (vt == "list" || vt == "dict" || vt == "") {
-                // Generic container - element type is "boxed"
-                tempContainerType[gname] = "boxed";
+                // Generic container - check if assigned temp has element type info
+                auto ttit = globalToTemp.find(gname);
+                if (ttit != globalToTemp.end()) {
+                    auto temp = ttit->second;
+                    // Propagate from knownFloat/int temps
+                    if (tempContainerType.count(temp) && tempContainerType[temp] == "float_list") {
+                        tempContainerType[gname] = "float_list";
+                        for (size_t i = 0; i <= 20; i++) globalElementTypes[gname][i] = "float";
+                    } else if (tempContainerType.count(temp) && tempContainerType[temp] == "int_list") {
+                        tempContainerType[gname] = "int_list";
+                        for (size_t i = 0; i <= 20; i++) globalElementTypes[gname][i] = "int";
+                    } else {
+                        // Check listElementTypes for per-index element types
+                        for (auto& fnx : ir.functions) {
+                            auto lit = fnx.listElementTypes.find(temp);
+                            if (lit != fnx.listElementTypes.end() && !lit->second.empty()) {
+                                for (size_t i = 0; i < lit->second.size() && i <= 20; i++) {
+                                    const auto& et = lit->second[i];
+                                    if (et == "float" || et == "float_list" || et == "list_float") {
+                                        globalElementTypes[gname][i] = "float";
+                                    }
+                                    if (et == "int" || et == "int_list" || et == "list_int") {
+                                        globalElementTypes[gname][i] = "int";
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
             }
         }
         
