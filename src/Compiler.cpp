@@ -3413,7 +3413,15 @@ class LoweringVisitor {
             } else {
                 ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", arg}, res);
             }
-            noteType(res, "list");
+            // S3: Propagate element type from argument to result for container ops
+            std::string argType = typeOf(arg);
+            if (argType == "list_int") {
+                noteType(res, "list_int");
+            } else if (argType == "list_float") {
+                noteType(res, "list_float");
+            } else {
+                noteType(res, "list");
+            }
             return res;
         }
         // reversed(seq) → PyBuiltin_Reversed(seq)
@@ -3422,6 +3430,10 @@ class LoweringVisitor {
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Reversed", arg}, res);
             noteType(res, "list");
+            // S3: Propagate element type
+            std::string argType = typeOf(arg);
+            if (argType == "list_int") noteType(res, "list_int");
+            else if (argType == "list_float") noteType(res, "list_float");
             return res;
         }
         // enumerate(iterable) → PyBuiltin_Enumerate(iterable)
@@ -3430,6 +3442,8 @@ class LoweringVisitor {
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Enumerate", arg}, res);
             noteType(res, "list");
+            // S3: enumerate returns tuples, always boxed
+            (void)typeOf(arg);
             return res;
         }
         // zip(a, b) → PyBuiltin_Zip2(a, b)
@@ -3437,6 +3451,7 @@ class LoweringVisitor {
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Zip2", argRes[0], argRes[1]}, res);
             noteType(res, "list");
+            // S3: zip returns tuples, always boxed
             return res;
         }
 
@@ -3465,6 +3480,7 @@ class LoweringVisitor {
         //   the comparator.
         if (funcName == "sorted") {
             std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string argType = typeOf(arg);
             std::string res = "t" + std::to_string(tempCounter++);
             // Find the key argument (positional or keyword).
             std::string keyName;
@@ -3502,6 +3518,9 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sorted", arg, keyArg}, res);
             }
             noteType(res, "list");
+            // S3: Propagate element type from argument to sorted result
+            if (argType == "list_int") noteType(res, "list_int");
+            else if (argType == "list_float") noteType(res, "list_float");
             return res;
         }
         // any(iterable) → PyBuiltin_Any (bool result)
