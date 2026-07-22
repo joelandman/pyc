@@ -1925,6 +1925,20 @@ class LoweringVisitor {
                     tempSource[res] = {obj, litIdx};
                 }
 
+                // Track PyList_New*Boxed results (comprehensions) as element type sources
+                if (callee == "PyList_NewIntBoxed" && inst.operands.size() >= 1) {
+                    std::unordered_map<size_t, std::string> intTypes;
+                    for (size_t i = 0; i <= 20; i++) intTypes[i] = "int";
+                    tempElemTypes[res] = intTypes;
+                    fn.subscriptElementTypes[res] = intTypes;
+                }
+                if (callee == "PyList_NewFloatBoxed" && inst.operands.size() >= 1) {
+                    std::unordered_map<size_t, std::string> floatTypes;
+                    for (size_t i = 0; i <= 20; i++) floatTypes[i] = "float";
+                    tempElemTypes[res] = floatTypes;
+                    fn.subscriptElementTypes[res] = floatTypes;
+                }
+
                 // PyList_GetItemObj(container, index) → element type inference
                 if (callee == "PyList_GetItemObj" && inst.operands.size() >= 2) {
                     std::string objName = (fn.name == currentFunc) ? inst.operands[0].name : inst.operands[1].name;
@@ -6739,6 +6753,21 @@ class LoweringVisitor {
         ir.addInstruction(currentFunc, "assign", {listVar}, listSlot);
         // Propagate the list type to the slot so downstream assignments see it.
         noteType(listSlot, elemType == "int" ? "list_int" : (elemType == "float" ? "list_float" : "list"));
+
+        // S1: Record per-index element types in subscriptElementTypes for comprehension results.
+        // This enables inferListElementTypes to optimize subscripts on comprehension temps.
+        if (elemType == "int" || elemType == "float") {
+            std::unordered_map<size_t, std::string> compElemTypes;
+            std::string etStr = (elemType == "float") ? "float" : "int";
+            for (size_t i = 0; i <= 20; i++) compElemTypes[i] = etStr;
+            for (auto& fnx : ir.functions) {
+                if (fnx.name == currentFunc) {
+                    fnx.subscriptElementTypes[listVar] = compElemTypes;
+                    fnx.subscriptElementTypes[listSlot] = compElemTypes;
+                    break;
+                }
+            }
+        }
 
         // For each generator, emit a loop that materialises the iterator,
         // iterates with an index, applies the target+condition filters, and
