@@ -2672,11 +2672,28 @@ class LoweringVisitor {
             if (c->type == "Assign") {
                 if (!c->args.empty()) {
                     for (const auto& name : c->args) ir.addModuleGlobal(name);
-                } else if (!c->id.empty() && c->id != "__subscript__" && c->id != "__unpack__") {
+                } else if (c->id == "__unpack__") {
+                    // For unpacking (e.g., x, y = DATA), extract all target names
+                    if (c->children.size() >= 1 && c->children[0]) {
+                        collectTargetNames(c->children[0].get());
+                    }
+                } else if (!c->id.empty() && c->id != "__subscript__") {
                     ir.addModuleGlobal(c->id);
                 }
             } else if (c->type == "FunctionDef") {
                 ir.addModuleGlobal(c->id);
+            }
+        }
+    }
+
+    void collectTargetNames(const ASTNode* node) {
+        if (!node) return;
+        if (node->type == "Name" && !node->id.empty()) {
+            ir.addModuleGlobal(node->id);
+        } else if ((node->type == "Tuple" || node->type == "List") && !node->id.empty()) {
+            // For nested tuples/lists, recurse into children
+            for (const auto& c : node->children) {
+                collectTargetNames(c.get());
             }
         }
     }
