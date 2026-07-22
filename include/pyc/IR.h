@@ -62,6 +62,13 @@ struct IRFunction {
     // Simpler version of containerElementTypes, only tracks primitive element types
     // Used as a fallback when containerElementTypes has no matching entry
     std::unordered_map<std::string, std::unordered_map<size_t, std::string>> subscriptElementTypes;
+    // Return types for user-defined functions: tracks what types each function returns.
+    // Used by callers to infer return value types. Contains: "float", "int", "boxed", "list", "dict", etc.
+    // If multiple different types are returned, stored as "boxed".
+    std::string returnType;
+    // Call-site type info: for each function, tracks what types its arguments have at call sites.
+    // This is populated during call-site analysis and used for return type propagation.
+    std::unordered_map<std::string, std::vector<std::vector<std::string>>> callSiteArgTypes;
 };
 
  class ModuleIR {

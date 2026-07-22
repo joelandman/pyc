@@ -51,6 +51,7 @@ class LoweringVisitor {
             knownFloatLists.clear();
             knownIntLists.clear();
             currentFnReturnsCallable = false;
+            currentFnReturnType = "boxed";
             funcNonlocals.clear();
             funcCells.clear();
             funcFreeCells.clear();
@@ -670,8 +671,9 @@ class LoweringVisitor {
             listsContainingCallableTokens.clear();
             knownFloatLists.clear();
             knownIntLists.clear();
-            currentFnReturnsCallable = false;
-            lastLambdaSynthetic.clear();
+             currentFnReturnsCallable = false;
+             currentFnReturnType = "boxed";
+             lastLambdaSynthetic.clear();
             // Save and clear numericLocals for this function scope
             std::unordered_set<std::string> savedNumericLocals = numericLocals;
             // Fresh try-scope state for the nested function's body — its
@@ -798,6 +800,14 @@ class LoweringVisitor {
             currentFnReturnsBundle = false;
             currentReturnedBundleSynthetic.clear();
             currentReturnedBundleCaps.clear();
+            // Store return type on the IRFunction for flow-sensitive type analysis
+            for (auto& fnr : ir.functions) {
+                if (fnr.name == defIRName) {
+                    fnr.returnType = currentFnReturnType.empty() ? "boxed" : currentFnReturnType;
+                    break;
+                }
+            }
+            currentFnReturnType = "boxed";
             // First-class defs: a def statement binds its name to the function
             // value in the enclosing scope (like `name = lambda ...`). Bind the
             // callable token to the name so later value references share one
@@ -1901,6 +1911,9 @@ class LoweringVisitor {
     // implicit lambda body) produces a tracked callable token. At end of the
     // function we record the function name in functionsThatReturnCallables.
     bool currentFnReturnsCallable = false;
+    // During lowering of a FunctionDef/lambda body, this accumulates the return type.
+    // If multiple different types are returned, it becomes "boxed" at the end.
+    std::string currentFnReturnType = "boxed";
     // Map from IR result temp of a string constant (emitted as the "value" of
     // a lambda expression) to the synthetic IR function name it refers to.
     // This enables treating a lambda "value" (string token) as a callable target
@@ -5131,6 +5144,16 @@ class LoweringVisitor {
         // value is evaluated first, matching Python.
         if (!activeTries.empty()) emitTryExits(0);
         ir.addInstruction(currentFunc, "ret", {val}, val);
+        // S2 (flow-sensitive types): track return types for function return type inference
+        if (!val.empty()) {
+            std::string rt = typeOf(val);
+            if (currentFnReturnType == "boxed" || currentFnReturnType.empty()) {
+                currentFnReturnType = rt;
+            } else if (currentFnReturnType != rt) {
+                // Multiple different return types -> promote to boxed
+                currentFnReturnType = "boxed";
+            }
+        }
         // B4: if this return carries a tracked callable token (or is the result of a function
         // known to return callables), mark the current function so callers can propagate tokens.
         if (!val.empty() && (callableTokenTemps.count(val) || callableTokenToSynthetic.count(val))) {
