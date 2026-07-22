@@ -1963,7 +1963,8 @@ class LoweringVisitor {
                             }
                             if (foundDirect) break;
                         }
-                        if (!sit->second.empty() || !cit->second.empty()) break;
+                        if ((sit != fnx.subscriptElementTypes.end() && !sit->second.empty()) || 
+                            (cit != fnx.containerElementTypes.end() && !cit->second.empty())) break;
                     }
                     
                     // Try: walk temp chain to find original global, then get its element types
