@@ -5532,27 +5532,41 @@ class LoweringVisitor {
                 // Check ALL functions' subscriptElementTypes - needed for module-level globals
                 // that are defined in a different function than the caller
                 
-                // First try subscriptElementTypes (direct element type)
-                auto sit = fn.subscriptElementTypes.find(obj);
-                if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
-                    if (hasLiteralIndex) {
-                        auto iit = sit->second.find(idxVal);
-                        if (iit != sit->second.end()) {
+                    // First try subscriptElementTypes (direct element type)
+                    auto sit = fn.subscriptElementTypes.find(obj);
+                    if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
+                        if (hasLiteralIndex) {
+                            auto iit = sit->second.find(idxVal);
+                            if (iit != sit->second.end()) {
+                                elemType = iit->second;
+                                // Normalize element types: "list_float", "float_list" → "float"
+                                // "list_int", "int_list" → "int"
+                                if (elemType == "float" || elemType == "float_list" || elemType == "list_float") {
+                                    noteType(res, "float");
+                                    elemType = "float";
+                                } else if (elemType == "int" || elemType == "int_list" || elemType == "list_int") {
+                                    noteType(res, "int");
+                                    elemType = "int";
+                                } else {
+                                    noteType(res, "boxed");
+                                }
+                            }
+                        } else {
+                            // No literal index - use first entry (wildcard or generic)
+                            auto iit = sit->second.begin();
                             elemType = iit->second;
-                            if (elemType == "float") noteType(res, "float");
-                            else if (elemType == "int") noteType(res, "int");
-                            else noteType(res, "boxed");
+                            if (elemType == "float" || elemType == "float_list" || elemType == "list_float") {
+                                noteType(res, "float");
+                                elemType = "float";
+                            } else if (elemType == "int" || elemType == "int_list" || elemType == "list_int") {
+                                noteType(res, "int");
+                                elemType = "int";
+                            } else {
+                                noteType(res, "boxed");
+                            }
                         }
-                    } else {
-                        // No literal index - use first entry (wildcard or generic)
-                        auto iit = sit->second.begin();
-                        elemType = iit->second;
-                        if (elemType == "float") noteType(res, "float");
-                        else if (elemType == "int") noteType(res, "int");
-                        else noteType(res, "boxed");
+                        break; // Found element types
                     }
-                    break; // Found element types
-                }
             }
             
             // S3: check listElementTypes for per-index element types from list construction
