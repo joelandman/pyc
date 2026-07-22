@@ -5511,51 +5511,52 @@ class LoweringVisitor {
                 elemType = "int";
                 noteType(res, "int");
             }
-            // S1: check containerElementTypes / subscriptElementTypes for variable names
-            // that have known element types propagated from defaults or globals.
-            // Try to match a literal integer index for exact lookup.
-            else {
-                std::string idxValue = "";
-                if (node->children.size() > 1 && node->children[1] && 
-                    node->children[1]->type == "Constant" && node->children[1]->args.size() == 1) {
-                    idxValue = node->children[1]->args[0];
-                }
-                size_t idxVal = 0;
-                bool hasLiteralIndex = !idxValue.empty();
-                if (hasLiteralIndex) {
-                    try { idxVal = std::stoull(idxValue); } catch (...) { hasLiteralIndex = false; }
-                }
+        }
+        // S1: check containerElementTypes / subscriptElementTypes for variable names
+        // that have known element types propagated from defaults or globals.
+        // This applies to ALL object types (not just "list") - e.g., "boxed" temps
+        // from unpacking nested tuples like ([x1,y1,z1], v1, m1) need subscript type info.
+        {
+            std::string idxValue = "";
+            if (node->children.size() > 1 && node->children[1] && 
+                node->children[1]->type == "Constant" && node->children[1]->args.size() == 1) {
+                idxValue = node->children[1]->args[0];
+            }
+            size_t idxVal = 0;
+            bool hasLiteralIndex = !idxValue.empty();
+            if (hasLiteralIndex) {
+                try { idxVal = std::stoull(idxValue); } catch (...) { hasLiteralIndex = false; }
+            }
+            
+            for (auto& fn : ir.functions) {
+                // Check ALL functions' subscriptElementTypes - needed for module-level globals
+                // that are defined in a different function than the caller
                 
-                for (auto& fn : ir.functions) {
-                    // Check ALL functions' subscriptElementTypes - needed for module-level globals
-                    // that are defined in a different function than the caller
-                    
-                    // First try subscriptElementTypes (direct element type)
-                    auto sit = fn.subscriptElementTypes.find(obj);
-                    if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
-                        if (hasLiteralIndex) {
-                            auto iit = sit->second.find(idxVal);
-                            if (iit != sit->second.end()) {
-                                elemType = iit->second;
-                                if (elemType == "float") noteType(res, "float");
-                                else if (elemType == "int") noteType(res, "int");
-                                else noteType(res, "boxed");
-                            }
-                        } else {
-                            // No literal index - use first entry (wildcard or generic)
-                            auto iit = sit->second.begin();
+                // First try subscriptElementTypes (direct element type)
+                auto sit = fn.subscriptElementTypes.find(obj);
+                if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
+                    if (hasLiteralIndex) {
+                        auto iit = sit->second.find(idxVal);
+                        if (iit != sit->second.end()) {
                             elemType = iit->second;
                             if (elemType == "float") noteType(res, "float");
                             else if (elemType == "int") noteType(res, "int");
                             else noteType(res, "boxed");
                         }
-                        break; // Found element types
+                    } else {
+                        // No literal index - use first entry (wildcard or generic)
+                        auto iit = sit->second.begin();
+                        elemType = iit->second;
+                        if (elemType == "float") noteType(res, "float");
+                        else if (elemType == "int") noteType(res, "int");
+                        else noteType(res, "boxed");
                     }
-                    // Then try containerElementTypes for typed container elements
-                    (void)elemType; // suppress unused warning if not used below
+                    break; // Found element types
                 }
-                
-                // S3: check listElementTypes for per-index element types from list construction
+            }
+            
+            // S3: check listElementTypes for per-index element types from list construction
+            if (elemType == "boxed") {
                 for (auto& fn : ir.functions) {
                     // Check ALL functions' listElementTypes for module-level globals
                     auto lit = fn.listElementTypes.find(obj);
@@ -5592,8 +5593,10 @@ class LoweringVisitor {
                     }
                     break;
                 }
-                
-                // Check containerElementTypes for typed element containers (float_list, etc.)
+            }
+            
+            // Check containerElementTypes for typed element containers (float_list, etc.)
+            if (elemType == "boxed") {
                 for (auto& fn : ir.functions) {
                     if (fn.name != currentFunc) continue;
                     auto cit = fn.containerElementTypes.find(obj);
@@ -5612,28 +5615,26 @@ class LoweringVisitor {
                         }
                         
                         // Extract element type from container type
-                        if (matchType == "float_list") { elemType = "float"; if (objType == "list") noteType(res, "float"); }
-                        else if (matchType == "int_list") { elemType = "int"; if (objType == "list") noteType(res, "int"); }
+                        if (matchType == "float_list") { elemType = "float"; noteType(res, "float"); }
+                        else if (matchType == "int_list") { elemType = "int"; noteType(res, "int"); }
                         else if (matchType == "boxed_tuple") { elemType = "boxed"; }
                         else if (matchType == "boxed") { elemType = "boxed"; }
                         break;
                     }
                 }
             }
-            // Also check if obj is a temp variable that was previously marked
-            // as list_float / list_int via noteType in lowerList or unpack.
-            // (Note: this is a fallback; the S1 checks above cover most cases)
-            if (obj.size() >= 2 && obj.substr(0, 2) == "t" && 
-                obj.size() > 2 && isdigit(obj[2])) {
-                std::string t = typeOf(obj);
-                if (t == "list_float") {
-                    elemType = "float";
-                    noteType(res, "float");
-                }
-                else if (t == "list_int") {
-                    elemType = "int";
-                    noteType(res, "int");
-                }
+        }
+        // Also check if obj is a temp variable that was previously marked
+        // as list_float / list_int via noteType.
+        if (elemType == "boxed") {
+            std::string t = typeOf(obj);
+            if (t == "list_float") {
+                elemType = "float";
+                noteType(res, "float");
+            }
+            else if (t == "list_int") {
+                elemType = "int";
+                noteType(res, "int");
             }
         }
         ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, res, elemType);
