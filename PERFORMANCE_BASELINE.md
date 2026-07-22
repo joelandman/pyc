@@ -276,22 +276,71 @@ print boundary (where boxing is required). This eliminates ~80% of the
 ### Test Suite Status
 All 300/300 tests pass after all phases.
 
-### Current Performance Status
+### Current Performance Status (Phases 1-20)
 
-| Benchmark | Python | pyc | Gap |
-|-----------|--------|-----|-----|
-| nbody 50K | 0.28s | 0.44s | 1.6x |
-| nbody 5M | 25.8s | 44.7s | 1.7x |
-| fibn 35 | 2.1s | 7.4s | 3.5x |
+| Benchmark | Python | pyc | Gap | Improvement |
+|-----------|--------|-----|-----|-------------|
+| nbody 50K | 0.28s | 0.44s | 1.6x | — |
+| nbody 100K | 0.50s | 0.98s | ~2x | — |
+| nbody 50K (LTO baseline) | — | 4.3s | 15x | Pre-Phase 12 |
+| nbody 50K (Float Chain, Phase 13) | — | 0.44s | 1.6x | After Phase 13 |
+| nbody 50K (Param Tracking, Phase 15) | — | 0.53s | ~1.9x | Param float tracking |
+| nbody 50K (Subscript Types, Phases 16-20) | — | 0.98s* | ~3.5x | Dict+container types |
+
+\*Performance regression from Phases 16-20 due to overhead from type tracking
+analysis passes. The infrastructure is in place but the hot loop bottleneck
+(subscript stores through boxed path for tuples containing mixed types) remains.
+
+### Test Suite Status
+All 300/300 tests pass after all phases.
 
 ### Remaining Work
 
-1. **Subscript boxing**: `bx[0] = val` still boxes the value. Native subscript
-   stores would eliminate the final boxing boundary.
+1. **Subscript boxing in hot loop**: The inner loop in `advance()` (lines 74-83 of nbody.py)
+   performs subscript loads/stores on `v1[0]`, `v1[1]`, `v1[2]`, `r[0]`, etc.
+   where `v1` and `r` come from unpacking `pairs[i]`/`bodies[i]`. These operations
+   go through the generic boxed path because tuple elements containing mixed-typed
+   containers (float-lists + scalars) get type `"list"` (generic boxed) in our
+   type system.
 
-2. **Parameter tracking**: Function parameters are currently "boxed" types.
-   Tracking proven-float parameters would extend the native chain across
-   function boundaries.
+2. **Tuple element type tracking**: Tuples with mixed-typed elements are typed as
+   `"list"` (boxed) because `lowerList` only assigns `"list_float"`/`"list_int"`
+   when ALL elements share the same primitive type. The nbody pattern of
+   `(POSITION, VELOCITY, MASS)` where POSITION/VELOCITY are float-lists and
+   MASS is a float falls through to generic `"list"` type.
 
-3. **Arena allocator**: A memory pool for PyObject allocations could further
-   reduce overhead for values that MUST be boxed (for list storage, etc.).
+3. **Container-aware type propagation**: The system needs per-index element type
+   tracking for tuples/containers, e.g., `tuple_of_(float_list, float_list, float)`
+   so that unpacking `((x1,y1,z1), v1, m1) = pairs[i]` can infer that v1 is a
+   float_list at index 1.
+
+4. **Arena allocator**: A memory pool for PyObject allocations would reduce
+   boxing/unboxing overhead for values that MUST be boxed (for list storage, etc.).
+   This is a separate improvement from type inference — even with perfect type
+   inference, subscript stores that must store into lists still require boxing.
+
+### Optimization Infrastructure (Phases 15-20)
+
+A comprehensive flow-sensitive type inference system was built:
+
+**Data structures in `IRFunction`:**
+```cpp
+containerElementTypes[var][idx]    // "float_list", "int_list", "boxed_tuple"
+subscriptElementTypes[var][idx]    // "float", "int", "boxed"
+returnType                         // "list", "dict", "float", "boxed"
+```
+
+**Propagation chain:**
+```
+Module globals (POSITION, VELOCITY, etc.)
+  → dictValueTypes[BODIES] = valueType
+  → BODIES.values() → list_with_value_type
+  → list() inherits element type
+  → function params (bodies, pairs)
+  → containerElementTypes[param][idx] → subscript type inference
+  → unpack target (v1, r) has typed element types
+  → subscript get/store uses native path
+```
+
+**Built-in tracking (Phase 19):** `list()`, `sorted()`, `reversed()` now
+propagate element types. Dict value types tracked via `tempContainerElementTypes`.
