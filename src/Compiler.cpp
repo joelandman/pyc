@@ -2705,8 +2705,9 @@ class LoweringVisitor {
         if (!node) return;
         if (node->type == "Name" && !node->id.empty()) {
             ir.addModuleGlobal(node->id);
-        } else if ((node->type == "Tuple" || node->type == "List") && !node->id.empty()) {
-            // For nested tuples/lists, recurse into children
+        } else if (node->type == "Tuple" || node->type == "List") {
+            // Recurse into children unconditionally (even if id.empty())
+            // Handles nested tuples/lists like ((a, b), c) = DATA
             for (const auto& c : node->children) {
                 collectTargetNames(c.get());
             }
