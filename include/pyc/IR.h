@@ -62,6 +62,11 @@ struct IRFunction {
     // Simpler version of containerElementTypes, only tracks primitive element types
     // Used as a fallback when containerElementTypes has no matching entry
     std::unordered_map<std::string, std::unordered_map<size_t, std::string>> subscriptElementTypes;
+    // Per-index element types for container variables from multi-element list construction
+    // Records concrete element types for each index position even when elements have different types
+    // Keys are container variable names; values map to a vector of element types at each index
+    // Used to track per-index types for mixed-type containers and propagate through unpack/subscript
+    std::unordered_map<std::string, std::vector<std::string>> listElementTypes;
     // Return types for user-defined functions: tracks what types each function returns.
     // Used by callers to infer return value types. Contains: "float", "int", "boxed", "list", "dict", etc.
     // If multiple different types are returned, stored as "boxed".

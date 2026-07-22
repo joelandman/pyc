@@ -1765,6 +1765,191 @@ class LoweringVisitor {
         }
     }
 
+    // Infer per-index element types for temps created by subscript operations.
+    // Walks the IR to find PyList_GetItem / Pyc_Subscript calls and propagates
+    // element type info from source containers to result temps.
+    void inferListElementTypes() {
+        // Build a map of module-level globals to their element types.
+        std::unordered_map<std::string, std::unordered_map<size_t, std::string>> globalElemTypes;
+        for (const auto& gname : ir.moduleGlobals) {
+            std::string vt = typeOf(gname);
+            if (vt == "list_float") {
+                for (size_t i = 0; i <= 20; i++) globalElemTypes[gname][i] = "float";
+            } else if (vt == "list_int" || vt == "int" || vt == "i64" || vt == "bool") {
+                for (size_t i = 0; i <= 20; i++) globalElemTypes[gname][i] = "int";
+            }
+            // Also check listElementTypes for globals with mixed types
+            for (auto& fn : ir.functions) {
+                if (fn.name != currentFunc) continue;
+                auto cit = fn.listElementTypes.find(gname);
+                if (cit != fn.listElementTypes.end()) {
+                    globalElemTypes[gname] = std::unordered_map<size_t, std::string>();
+                    for (size_t i = 0; i < cit->second.size(); i++) {
+                        globalElemTypes[gname][i] = cit->second[i];
+                    }
+                }
+                // Also check containerElementTypes for typed globals
+                auto cit2 = fn.containerElementTypes.find(gname);
+                if (cit2 != fn.containerElementTypes.end()) {
+                    for (const auto& [idx, ctypes] : cit2->second) {
+                        if (ctypes == "float_list") globalElemTypes[gname][idx] = "float";
+                        else if (ctypes == "int_list") globalElemTypes[gname][idx] = "int";
+                    }
+                }
+            }
+        }
+
+        for (auto& fn : ir.functions) {
+            // Track: temp name → (container name, literal index) used to create it
+            std::unordered_map<std::string, std::pair<std::string, size_t>> tempSource;
+            // Map: temp name → per-index element types
+            std::unordered_map<std::string, std::unordered_map<size_t, std::string>> tempElemTypes;
+
+            for (auto& inst : fn.body) {
+                if (inst.op != "call") continue;
+                const std::string& callee = inst.operands.empty() ? "" : inst.operands[0].name;
+                if (inst.result.empty()) continue;
+                const std::string& res = inst.result;
+
+                // PyList_GetItemObj(container, index) → element type inference
+                if (callee == "PyList_GetItemObj" && inst.operands.size() >= 2) {
+                    const std::string& container = fn.name != currentFunc ? inst.operands[1].name : inst.operands[0].name;
+                    std::string objName = (fn.name == currentFunc) ? inst.operands[0].name : inst.operands[1].name;
+                    std::string idxName = (fn.name == currentFunc) ? inst.operands[1].name : "";
+                    
+                    // Check for literal integer index
+                    size_t litIdx = 0;
+                    bool hasLitIdx = false;
+                    if (!idxName.empty()) {
+                        try { litIdx = std::stoull(idxName); hasLitIdx = true; } catch (...) { hasLitIdx = false; }
+                    }
+                    
+                    // Propagate element types from container to result temp
+                    std::unordered_map<size_t, std::string> resElemTypes;
+                    
+                    // Check fn.listElementTypes[container] first
+                    auto lit = fn.listElementTypes.find(objName);
+                    if (lit != fn.listElementTypes.end() && !lit->second.empty()) {
+                        if (hasLitIdx && litIdx < lit->second.size()) {
+                            std::string et = lit->second[litIdx];
+                            if (et == "float" || et == "float_list" || et == "list_float") {
+                                for (size_t i = 0; i <= 20; i++) resElemTypes[i] = "float";
+                            } else if (et == "int" || et == "int_list" || et == "list_int") {
+                                for (size_t i = 0; i <= 20; i++) resElemTypes[i] = "int";
+                            }
+                        }
+                    }
+                    // Check fn.subscriptElementTypes[container]
+                    if (resElemTypes.empty()) {
+                        auto sit = fn.subscriptElementTypes.find(objName);
+                        if (sit != fn.subscriptElementTypes.end()) {
+                            if (hasLitIdx) {
+                                auto iit = sit->second.find(litIdx);
+                                if (iit != sit->second.end()) {
+                                    std::string et = iit->second;
+                                    if (et == "float" || et == "float_list" || et == "list_float") {
+                                        for (size_t i = 0; i <= 20; i++) resElemTypes[i] = "float";
+                                    } else if (et == "int" || et == "int_list" || et == "list_int") {
+                                        for (size_t i = 0; i <= 20; i++) resElemTypes[i] = "int";
+                                    }
+                                }
+                            } else {
+                                // No literal index - use wildcard/first entry
+                                for (const auto& [ikey, et] : sit->second) {
+                                    if (et == "float" || et == "float_list" || et == "list_float") {
+                                        for (size_t idx = 0; idx <= 20; idx++) resElemTypes[idx] = "float";
+                                    } else if (et == "int" || et == "int_list" || et == "list_int") {
+                                        for (size_t idx = 0; idx <= 20; idx++) resElemTypes[idx] = "int";
+                                    }
+                                    break; // Use first entry
+                                }
+                            }
+                        }
+                    }
+                    // Check containerElementTypes
+                    if (resElemTypes.empty()) {
+                        auto cit = fn.containerElementTypes.find(objName);
+                        if (cit != fn.containerElementTypes.end()) {
+                            if (hasLitIdx) {
+                                auto iit = cit->second.find(litIdx);
+                                if (iit != cit->second.end()) {
+                                    std::string et = iit->second;
+                                    if (et == "float_list") { for (size_t i = 0; i <= 20; i++) resElemTypes[i] = "float"; }
+                                    else if (et == "int_list") { for (size_t i = 0; i <= 20; i++) resElemTypes[i] = "int"; }
+                                }
+                            } else {
+                                for (const auto& [ikey, et] : cit->second) {
+                                    if (et == "float_list") { for (size_t idx = 0; idx <= 20; idx++) resElemTypes[idx] = "float"; break; }
+                                    else if (et == "int_list") { for (size_t idx = 0; idx <= 20; idx++) resElemTypes[idx] = "int"; break; }
+                                }
+                            }
+                        }
+                    }
+                    // Check global element types
+                    if (resElemTypes.empty()) {
+                        auto git = globalElemTypes.find(objName);
+                        if (git != globalElemTypes.end()) {
+                            if (hasLitIdx) {
+                                auto iit = git->second.find(litIdx);
+                                if (iit != git->second.end()) {
+                                    std::string et = iit->second;
+                                    if (et == "float" || et == "float_list") { for (size_t i = 0; i <= 20; i++) resElemTypes[i] = "float"; }
+                                    else if (et == "int") { for (size_t i = 0; i <= 20; i++) resElemTypes[i] = "int"; }
+                                }
+                            }
+                        }
+                    }
+
+                    // Store the propagated element types for this temp
+                    if (!resElemTypes.empty()) {
+                        tempElemTypes[res] = resElemTypes;
+                        // Also record as subscriptElementTypes for future references
+                        fn.subscriptElementTypes[res] = resElemTypes;
+                    }
+                    
+                    // Record source for later use (unpacking)
+                    tempSource[res] = {objName, litIdx};
+                }
+                
+                // Pyc_SubscriptGet(object, index) → box
+                if (callee == "Pyc_SubscriptGet" && inst.operands.size() >= 2) {
+                    const std::string& objName = inst.operands[0].name;
+                    const std::string& idxName = inst.operands[1].name;
+                    
+                    size_t litIdx = 0;
+                    bool hasLitIdx = false;
+                    try { litIdx = std::stoull(idxName); hasLitIdx = true; } catch (...) { hasLitIdx = false; }
+                    
+                    std::unordered_map<size_t, std::string> resElemTypes;
+                    auto eit = fn.subscriptElementTypes.find(objName);
+                    if (eit != fn.subscriptElementTypes.end()) {
+                        if (hasLitIdx) {
+                            auto iit =eit->second.find(litIdx);
+                            if (iit != eit->second.end()) {
+                                std::string et = iit->second;
+                                if (et == "float") for (size_t i = 0; i <= 20; i++) resElemTypes[i] = "float";
+                                else if (et == "int") for (size_t i = 0; i <= 20; i++) resElemTypes[i] = "int";
+                            }
+                        }
+                    }
+                    if (!resElemTypes.empty()) {
+                        tempElemTypes[res] = resElemTypes;
+                        fn.subscriptElementTypes[res] = resElemTypes;
+                    }
+                }
+
+                // Assign: target = source — propagate element types
+                if (inst.op == "assign" && !inst.operands.empty() && !res.empty()) {
+                    auto src = tempElemTypes.find(inst.operands[0].name);
+                    if (src != tempElemTypes.end()) {
+                        tempElemTypes[res] = src->second;
+                        fn.subscriptElementTypes[res] = src->second;
+                    }
+                }
+            }
+        }
+    }
+
     // Generate per-param type info from call-site analysis.
     // For each function that is called with numeric types at all positions,
     // record the dominant type ("int" or "float") for each param slot.
@@ -4602,10 +4787,12 @@ class LoweringVisitor {
         size_t n = elems.size();
             bool allInt = n > 0;
             bool allFloat = n > 0;
+            std::vector<std::string> elemTypeList;
             for (const auto& e : elems) {
                 std::string t = typeOf(e);
                 if (t != "int" && t != "i64" && t != "bool") allInt = false;
                 if (t != "float") allFloat = false;
+                elemTypeList.push_back(t);
             }
         std::string listRes = "t" + std::to_string(tempCounter++);
         if (allInt) {
@@ -4625,6 +4812,17 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, listRes);
             noteType(listRes, "list");
+            for (auto& fn : ir.functions) {
+                if (fn.name == currentFunc) {
+                    std::unordered_map<size_t, std::string> idxMap;
+                    for (size_t i = 0; i < n; ++i) {
+                        idxMap[i] = elemTypeList[i];
+                    }
+                    fn.subscriptElementTypes[listRes] = idxMap;
+                    fn.listElementTypes[listRes] = elemTypeList;
+                    break;
+                }
+            }
         }
 
         bool containsTok = false;
@@ -4949,24 +5147,77 @@ class LoweringVisitor {
             }
             // S1: Propagate container element types to unpacked elements.
             // If value has containerElementTypes at index i, annotate elem accordingly.
+            // Also propagate listElementTypes and subscriptElementTypes for per-index tracking.
             for (auto& fn : ir.functions) {
                 if (fn.name != currentFunc) continue;
+                
+                // Check containerElementTypes (type-level: "float_list" → subscript elem is "float")
                 auto cit = fn.containerElementTypes.find(value);
                 if (cit != fn.containerElementTypes.end()) {
                     auto iit = cit->second.find(i);
                     if (iit != cit->second.end()) {
                         std::string elemCType = iit->second;
                         if (elemCType == "float_list") {
-                            // This element is a float list → annotate subscript gets on it
                             for (size_t idx = 0; idx <= 20; idx++) {
                                 fn.subscriptElementTypes[elem][idx] = "float";
                             }
+                            fn.containerElementTypes[elem][0] = "float_list";
                         } else if (elemCType == "int_list") {
                             for (size_t idx = 0; idx <= 20; idx++) {
                                 fn.subscriptElementTypes[elem][idx] = "int";
                             }
+                            fn.containerElementTypes[elem][0] = "int_list";
                         } else if (elemCType == "float" || elemCType == "int") {
                             noteType(elem, elemCType);
+                        }
+                    }
+                }
+                
+                // Also propagate listElementTypes as a fallback when containerElementTypes has no entry
+                // This handles mixed-type containers where each index has a concrete element type
+                auto lit = fn.listElementTypes.find(value);
+                if (lit != fn.listElementTypes.end() && !lit->second.empty() && i < lit->second.size()) {
+                    std::string elemType = lit->second[i];
+                    if (elemType == "float" || elemType == "float_list" || elemType == "list_float") {
+                        for (size_t idx = 0; idx <= 20; idx++) {
+                            fn.subscriptElementTypes[elem][idx] = "float";
+                        }
+                        if (elemType == "list_float" || elemType == "float_list") {
+                            fn.containerElementTypes[elem][0] = "float_list";
+                        } else {
+                            noteType(elem, "float");
+                        }
+                    } else if (elemType == "int" || elemType == "int_list" || elemType == "list_int") {
+                        for (size_t idx = 0; idx <= 20; idx++) {
+                            fn.subscriptElementTypes[elem][idx] = "int";
+                        }
+                        if (elemType == "list_int" || elemType == "int_list") {
+                            fn.containerElementTypes[elem][0] = "int_list";
+                        } else {
+                            noteType(elem, "int");
+                        }
+                    }
+                }
+                
+                // Propagate subscriptElementTypes from the source to the element
+                // If source has typed elements, the element at index i should inherit the type
+                auto sit = fn.subscriptElementTypes.find(value);
+                if (sit != fn.subscriptElementTypes.end()) {
+                    // Check if this is a container with typed element subscripts (like float_list)
+                    for (const auto& [idx, et] : sit->second) {
+                        if (et == "float" || et == "float_list" || et == "list_float") {
+                            // If value is itself a float_list-like container, all indices are float
+                            for (size_t eidx = 0; eidx <= 20; eidx++) {
+                                fn.subscriptElementTypes[elem][eidx] = "float";
+                            }
+                            fn.containerElementTypes[elem][0] = "float_list";
+                            break;
+                        } else if (et == "int" || et == "int_list" || et == "list_int") {
+                            for (size_t eidx = 0; eidx <= 20; eidx++) {
+                                fn.subscriptElementTypes[elem][eidx] = "int";
+                            }
+                            fn.containerElementTypes[elem][0] = "int_list";
+                            break;
                         }
                     }
                 }
@@ -5159,6 +5410,44 @@ class LoweringVisitor {
                     }
                     // Then try containerElementTypes for typed container elements
                     (void)elemType; // suppress unused warning if not used below
+                }
+                
+                // S3: check listElementTypes for per-index element types from list construction
+                for (auto& fn : ir.functions) {
+                    if (fn.name != currentFunc) continue;
+                    auto lit = fn.listElementTypes.find(obj);
+                    if (lit != fn.listElementTypes.end()) {
+                        if (!lit->second.empty()) {
+                            if (hasLiteralIndex && idxVal < lit->second.size()) {
+                                elemType = lit->second[idxVal];
+                                if (elemType == "float") noteType(res, "float");
+                                else if (elemType == "float_list" || elemType == "list_float") noteType(res, "float");
+                                else if (elemType == "int") noteType(res, "int");
+                                else if (elemType == "int_list" || elemType == "list_int") noteType(res, "int");
+                            }
+                        }
+                        break;
+                    }
+                    
+                    // Also check if any container variable has this obj as its element type
+                    // (for unpacked subscript results like v1 where v1[i] where listElementTypes[obj][i] = "list_float")
+                    if (hasLiteralIndex) {
+                        for (const auto& [cname, etypes] : fn.listElementTypes) {
+                            if (cname == obj && idxVal < etypes.size()) {
+                                std::string et = etypes[idxVal];
+                                if (et == "float" || et == "float_list" || et == "list_float") {
+                                    elemType = "float";
+                                    noteType(res, "float");
+                                    break;
+                                } else if (et == "int" || et == "int_list" || et == "list_int") {
+                                    elemType = "int";
+                                    noteType(res, "int");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    break;
                 }
                 
                 // Check containerElementTypes for typed element containers (float_list, etc.)
@@ -6646,6 +6935,8 @@ void lowerAST(const ASTNode* node, ModuleIR& ir,
     visitor.generateSpecializedVariants();
     // S1: Infer container element types for type stability tracking.
     visitor.inferContainerElementTypes();
+    // S3: Infer per-index element types for temps created by subscript.
+    visitor.inferListElementTypes();
     // A7: Analyze param types from call-site signatures (for native param slots).
     visitor.generateParamTypeAnalysis();
     // A7: Update numericFloatLocals/numericLocals from paramTypes for each function.
