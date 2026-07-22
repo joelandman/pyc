@@ -5372,4 +5372,63 @@ PyObject* Pyc_ExpandKwargs(PyObject* dict, ...) {
     return result;
 }
 
+
+// Helper: extract long from PyObject* (type 0/int)
+static long pyc_objToLong(PyObject* obj) {
+    if (!obj || obj->type != 0) return 0;
+    return (long)obj->value;
+}
+
+// Recursive helper for flattening
+// Lists/tuples (type 1) use obj->list and need recursion.
+// Primitive values (int, str, float, etc.) are added directly.
+static void pyc_flattenRecursive(PyObject* obj, std::vector<PyObject*>& flat) {
+    if (!obj) return;
+    
+    // Only lists/tuples (type 1) need recursion
+    if (obj->type != 1) {
+        Py_INCREF(obj);
+        flat.push_back(obj);
+        return;
+    }
+    
+    // List/tuple: flatten each element
+    PyObject* lenResult = PyList_SizeBoxed(obj);
+    long len = lenResult ? pyc_objToLong(lenResult) : 0;
+    
+    for (long i = 0; i < len; i++) {
+        PyObject* item = PyList_GetItemObj(obj, PyInt_FromLong(i));
+        if (item) {
+            pyc_flattenRecursive(item, flat);
+        }
+    }
+}
+
+// Flatten nested tuple/list into a single-level list for optimized subscript access
+// Input: nested structure like ((1.0, 2.0), [3.0, 4.0], 5.0)
+// Output: [1.0, 2.0, 3.0, 4.0, 5.0]
+// Used by the compiler to transform nested container unpacking into
+// single-level subscript operations for optimized element type tracking.
+PyObject* Pyc_ToFlatList(PyObject* obj) {
+    if (!obj) {
+        PyObject* none = new PyObject();
+        none->refcount = 1;
+        none->type = 5;
+        none->str = "None";
+        return none;
+    }
+    
+    std::vector<PyObject*> flat;
+    pyc_flattenRecursive(obj, flat);
+    
+    // Create result list
+    PyObject* result = PyList_NewBoxed(PyInt_FromLong((long)flat.size()));
+    for (size_t i = 0; i < flat.size(); i++) {
+        Py_INCREF(flat[i]);
+        PyList_SetItemBoxed(result, PyInt_FromLong((long)i), flat[i]);
+    }
+    
+    return result;
+}
+
 } // extern "C"

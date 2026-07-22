@@ -98,7 +98,7 @@ class LoweringVisitor {
             // still giving full lambda-as-value (B4) behavior for user callables.
             for (const char* s : {"print","len","range","min","max","sum","sorted","any","all","isinstance",
                                    "int","float","complex","abs","str","list","reversed","enumerate","zip","bool","type","id",
-                                   "repr","hex","oct","bin","ord","chr","round","cmp_to_key","open"}) {
+                                   "repr","hex","oct","bin","ord","chr","round","cmp_to_key","open","Pyc_ToFlatList"}) {
                 knownIRFunctions.insert(s);
             }
             for (const auto& c : node->children) {

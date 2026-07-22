@@ -287,6 +287,9 @@ PyObject* pyc_yield_collect(PyObject* value);
 PyObject* pyc_get_yield_buffer(void);
 void      pyc_clear_yield_buffer(void);
 
+// Flatten nested tuple/list into single-level list for optimized subscript access
+PyObject* Pyc_ToFlatList(PyObject* obj);
+
 #ifdef __cplusplus
 }
 #endif
