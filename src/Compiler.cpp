@@ -3350,6 +3350,7 @@ class LoweringVisitor {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Len", arg}, res);
+            noteType(res, "i64");
             return res;
         }
 
@@ -3375,14 +3376,17 @@ class LoweringVisitor {
             if (argRes.size() == 1) {
                 std::string res = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {fnLst, argRes[0]}, res);
+                noteType(res, "boxed");
                 return res;
             }
             std::string acc = argRes[0];
             for (size_t i = 1; i < argRes.size(); ++i) {
                 std::string res2 = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {fn2, acc, argRes[i]}, res2);
+                noteType(res2, "boxed");
                 acc = res2;
             }
+            noteType(acc, "boxed");
             return acc;
         }
         // list(x) → PyBuiltin_List(x)
@@ -3396,6 +3400,7 @@ class LoweringVisitor {
             } else {
                 ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", arg}, res);
             }
+            noteType(res, "list");
             return res;
         }
         // reversed(seq) → PyBuiltin_Reversed(seq)
@@ -3403,6 +3408,7 @@ class LoweringVisitor {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Reversed", arg}, res);
+            noteType(res, "list");
             return res;
         }
         // enumerate(iterable) → PyBuiltin_Enumerate(iterable)
@@ -3410,12 +3416,14 @@ class LoweringVisitor {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Enumerate", arg}, res);
+            noteType(res, "list");
             return res;
         }
         // zip(a, b) → PyBuiltin_Zip2(a, b)
         if (funcName == "zip" && argRes.size() >= 2) {
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Zip2", argRes[0], argRes[1]}, res);
+            noteType(res, "list");
             return res;
         }
 
@@ -3424,6 +3432,7 @@ class LoweringVisitor {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sum", arg}, res);
+            noteType(res, "boxed");
             return res;
         }
         // cmp_to_key(cmp) → PyBuiltin_CmpToKey(cmp)
@@ -3431,6 +3440,7 @@ class LoweringVisitor {
         if (funcName == "cmp_to_key" && argRes.size() >= 1) {
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_CmpToKey", argRes[0]}, res);
+            noteType(res, "dict");
             return res;
         }
         // sorted(iterable) → PyBuiltin_Sorted(iterable, null)
@@ -3478,6 +3488,7 @@ class LoweringVisitor {
                 std::string keyArg = keyName.empty() ? "" : keyName;
                 ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sorted", arg, keyArg}, res);
             }
+            noteType(res, "list");
             return res;
         }
         // any(iterable) → PyBuiltin_Any (bool result)
@@ -3669,6 +3680,7 @@ class LoweringVisitor {
             std::string n = argRes.size() > 1 ? argRes[1] : "";
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Round", x, n}, res);
+            noteType(res, "boxed");
             return res;
         }
         // pow(base, exp) → PyBuiltin_Pow(base, exp)
@@ -3677,6 +3689,7 @@ class LoweringVisitor {
             std::string b = argRes.size() > 1 ? argRes[1] : "";
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Pow", a, b}, res);
+            noteType(res, "boxed");
             return res;
         }
 
@@ -3685,10 +3698,12 @@ class LoweringVisitor {
             if (argRes.empty()) {
                 std::string res = "c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"\""}, res);
+                noteType(res, "str");
                 return res;
             }
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", argRes[0]}, res);
+            noteType(res, "str");
             return res;
         }
 
@@ -3719,6 +3734,7 @@ class LoweringVisitor {
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call",
                               {"PyBuiltin_Range", startRes, stopRes, stepRes}, res);
+            noteType(res, "range_object");
             return res;
         }
 
@@ -5643,12 +5659,16 @@ class LoweringVisitor {
             } else {
                 ir.addInstruction(currentFunc, "call", {"PyDict_GetItem", obj, keyArg}, res);
             }
+            noteType(res, "boxed");
         } else if (methodName == "keys") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Keys", obj}, res);
+            noteType(res, "list");
         } else if (methodName == "values") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Values", obj}, res);
+            noteType(res, "list");
         } else if (methodName == "items") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Items", obj}, res);
+            noteType(res, "list");
         } else if (methodName == "update") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyDict_Update", obj, arg}, res);
