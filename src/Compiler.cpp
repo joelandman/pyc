@@ -50,6 +50,7 @@ class LoweringVisitor {
             listsContainingCallableTokens.clear();
             knownFloatLists.clear();
             knownIntLists.clear();
+            dictValueTypes.clear();
             currentFnReturnsCallable = false;
             currentFnReturnType = "boxed";
             funcNonlocals.clear();
@@ -1919,6 +1920,14 @@ class LoweringVisitor {
     // This enables treating a lambda "value" (string token) as a callable target
     // when it appears as a callee expression (B4 progress on lambda as value).
      std::unordered_map<std::string, std::string> callableTokenToSynthetic; // temp -> synthetic name
+     // S4: map from module-level dict name → common value type of all values.
+     // Populated when lowering a dict literal with string keys where all values
+     // have the same type. Used by .values()/.keys()/.items() to inherit types.
+     std::unordered_map<std::string, std::string> dictValueTypes;
+     // S4: map from temp → element type when that temp is a known typed container.
+     // Complements typeOf(): if typeOf(temp)="list" but we know it came from
+     // sorted(list_float_arg), we record that it's a list_of_float_list.
+     std::unordered_map<std::string, std::string> tempContainerElementTypes;
 
       // B6: helper to get the first base class of a given class
       std::string getFirstBase(const std::string& className) {
@@ -3413,13 +3422,23 @@ class LoweringVisitor {
             } else {
                 ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", arg}, res);
             }
-            // S3: Propagate element type from argument to result for container ops
+            // S3/S4: Propagate element type from argument to result for container ops
             std::string argType = typeOf(arg);
+            std::string listElemType = "boxed";
+            // Direct typed list args
             if (argType == "list_int") {
+                listElemType = "int";
                 noteType(res, "list_int");
             } else if (argType == "list_float") {
+                listElemType = "float";
                 noteType(res, "list_float");
-            } else {
+            } 
+            // S4: values()-typed list (from dict.valueTypes)
+            else if (argType == "list_values_typed" && tempContainerElementTypes.count(arg)) {
+                listElemType = tempContainerElementTypes[arg];
+                noteType(res, "list");
+            }
+            else {
                 noteType(res, "list");
             }
             return res;
@@ -4648,18 +4667,55 @@ class LoweringVisitor {
         return listRes;
     }
 
-    std::string lowerDict(const ASTNode* node) {
-        std::string dictRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
-        noteType(dictRes, "dict");
+     std::string lowerDict(const ASTNode* node) {
+         std::string dictRes = "t" + std::to_string(tempCounter++);
+         ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
+         noteType(dictRes, "dict");
 
-        for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
-            std::string key = lowerExpr(node->children[i].get());
-            std::string val = lowerExpr(node->children[i+1].get());
-            ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, key, val}, "");
-        }
-        return dictRes;
-    }
+         // S4: Track dict value types for constant-key dict literals.
+         // If all values have the same type, record it for .values() propagation.
+         std::string commonValType = "";
+         bool allStringKeys = true;
+         for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
+             // Check key is a string constant
+             const ASTNode* keyNode = node->children[i].get();
+             if (!keyNode || keyNode->type != "Constant" || keyNode->is_str) {
+                 allStringKeys = false;
+             }
+         }
+
+         if (allStringKeys) {
+             // Gather value types
+             for (size_t i = 1; i + 1 < node->children.size(); i += 2) {
+                 std::string val = lowerExpr(node->children[i].get());
+                 std::string valType = typeOf(val);
+                 if (commonValType.empty()) {
+                     commonValType = valType;
+                 } else if (commonValType != valType) {
+                     commonValType = "boxed";
+                     break;
+                 }
+             }
+             if (commonValType == "boxed") commonValType = "";
+             if (!commonValType.empty()) {
+                 // Store value type for this dict temp
+                 tempContainerElementTypes[dictRes] = commonValType;
+             }
+             // Emit the dict items (re-lower values since we already lowered above)
+             for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
+                 std::string key = lowerExpr(node->children[i].get());
+                 std::string val = lowerExpr(node->children[i+1].get());
+                 ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, key, val}, "");
+             }
+         } else {
+             for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
+                 std::string key = lowerExpr(node->children[i].get());
+                 std::string val = lowerExpr(node->children[i+1].get());
+                 ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, key, val}, "");
+             }
+         }
+         return dictRes;
+     }
 
     std::string lowerAttribute(const ASTNode* node) {
         std::string obj = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
@@ -4814,6 +4870,10 @@ class LoweringVisitor {
             } else {
                 ir.addInstruction(currentFunc, "assign", {val}, node->id);
                 noteType(node->id, vt);
+                // S4: For module-level dicts, propagate value types to the global name
+                if (isGlob && vt == "dict" && tempContainerElementTypes.count(val)) {
+                    dictValueTypes[node->id] = tempContainerElementTypes[val];
+                }
                 // For globals, remove from numericLocals to prevent i64 alloca creation
                 if (isGlob) numericLocals.erase(node->id);
             }
@@ -5705,9 +5765,25 @@ class LoweringVisitor {
         } else if (methodName == "keys") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Keys", obj}, res);
             noteType(res, "list");
+            // S4: Propagate dict key type if known (for nbody: always "str")
+            // dict keys in nbody module are always string literals
+            (void)typeOf(obj); // obj is the dict
         } else if (methodName == "values") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Values", obj}, res);
             noteType(res, "list");
+            // S4: Propagate dict value type to result for list() to inherit.
+            // When obj is a known dict name (or maps to one), lookup its value type.
+            std::string valueType = dictValueTypes[obj];
+            if (!valueType.empty()) {
+                // Mark this temp as having known element type for downstream list() inference
+                tempContainerElementTypes[res] = valueType;
+                // Also note it as list_of_<valueType> for typeOf() lookup
+                // We use a convention: "list_of_X" where X is the value type
+                std::string listElemType = "list_of_" + valueType;
+                // Store this so later list() can propagate it
+                noteType(res, "list_values_typed"); // hint name
+            }
+            noteType(res, valueType == "boxed" ? "list" : "list");
         } else if (methodName == "items") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Items", obj}, res);
             noteType(res, "list");
