@@ -309,12 +309,23 @@ long PyList_GetItemInt64(PyObject* list, size_t index) {
         return list->ilist[index];
     if (list && list->type == 1 && list->list_item_type == 1)
         pyc_raise_msg("IndexError", "list index out of range");
+    // Fallback: boxed list (e.g. after sorted()/slice demotion) holding int/bool/float
+    if (list && list->type == 1 && list->list_item_type == 0 && index < list->list.size()) {
+        PyObject* el = list->list[index];
+        if (el && (el->type == 0 || el->type == 5)) return el->value;
+        if (el && el->type == 4) return (long)el->dvalue;
+    }
     return 0;
 }
 
 void PyList_SetItemInt64(PyObject* list, size_t index, long v) {
     if (list && list->type == 1 && list->list_item_type == 1 && index < list->ilist.size())
         list->ilist[index] = v;
+    else if (list && list->type == 1 && list->list_item_type == 0 && index < list->list.size()) {
+        PyObject* old = list->list[index];
+        if (old) Py_DECREF(old);
+        list->list[index] = PyInt_FromLong(v);
+    }
 }
 
 double PyList_GetItemDouble(PyObject* list, size_t index) {
@@ -322,12 +333,23 @@ double PyList_GetItemDouble(PyObject* list, size_t index) {
         return list->flist[index];
     if (list && list->type == 1 && list->list_item_type == 2)
         pyc_raise_msg("IndexError", "list index out of range");
+    // Fallback: boxed list holding float/int
+    if (list && list->type == 1 && list->list_item_type == 0 && index < list->list.size()) {
+        PyObject* el = list->list[index];
+        if (el && el->type == 4) return el->dvalue;
+        if (el && (el->type == 0 || el->type == 5)) return (double)el->value;
+    }
     return 0.0;
 }
 
 void PyList_SetItemDouble(PyObject* list, size_t index, double v) {
     if (list && list->type == 1 && list->list_item_type == 2 && index < list->flist.size())
         list->flist[index] = v;
+    else if (list && list->type == 1 && list->list_item_type == 0 && index < list->list.size()) {
+        PyObject* old = list->list[index];
+        if (old) Py_DECREF(old);
+        list->list[index] = PyFloat_FromDouble(v);
+    }
 }
 
 void PyList_SetItemDoubleAuto(PyObject* list, size_t index, double v) {

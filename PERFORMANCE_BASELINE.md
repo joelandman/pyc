@@ -274,73 +274,77 @@ print boundary (where boxing is required). This eliminates ~80% of the
 `PyFloat_FromDouble` allocations that dominated the original profile.
 
 ### Test Suite Status
-All 300/300 tests pass after all phases.
+All **300/300** tests pass (inline + file cases, including `nbody.py`, `hash.py`,
+`builtins.py`, `builtins2.py`, `features.py`).
 
-### Current Performance Status (Phases 1-20)
+### Current Performance Status (Phases 1–24)
 
-| Benchmark | Python | pyc | Gap | Improvement |
-|-----------|--------|-----|-----|-------------|
-| nbody 50K | 0.28s | 0.44s | 1.6x | — |
-| nbody 100K | 0.50s | 0.98s | ~2x | — |
+| Benchmark | Python | pyc | Gap | Notes |
+|-----------|--------|-----|-----|-------|
+| nbody 50K | ~0.33s | ~0.54s | ~1.6x | Correct energy output restored (Phase 24) |
+| nbody 100K | ~0.50s | ~0.87s | ~1.7x | — |
 | nbody 50K (LTO baseline) | — | 4.3s | 15x | Pre-Phase 12 |
 | nbody 50K (Float Chain, Phase 13) | — | 0.44s | 1.6x | After Phase 13 |
-| nbody 50K (Param Tracking, Phase 15) | — | 0.53s | ~1.9x | Param float tracking |
-| nbody 50K (Subscript Types, Phases 16-20) | — | 0.98s* | ~3.5x | Dict+container types |
 
-\*Performance regression from Phases 16-20 due to overhead from type tracking
-analysis passes. The infrastructure is in place but the hot loop bottleneck
-(subscript stores through boxed path for tuples containing mixed types) remains.
+nbody output matches CPython (`-0.169075164` / second energy line).
 
-### Test Suite Status
-All 300/300 tests pass after all phases.
+### Phase 24: Correctness + container type propagation
+
+Landed fixes that restored full test green and correct nbody physics:
+
+1. **Nested container element types** — Do not collapse `list_float`/`list_int` to
+   scalar `float`/`int` on subscript. Intermediate results stay containers so
+   `data[i][j]` uses the native path only on the inner list.
+
+2. **Function return element tracking** — `returnSubscriptElementTypes` /
+   `returnContainerElementTypes` propagate through calls and assigns
+   (e.g. `data = make()` where `make` returns `[[float...], ...]`).
+
+3. **Dict subscript store** — `d["k"]=99` must use `Pyc_SetItem`, not list Auto
+   setters. Auto paths only when the container is known to be a list.
+
+4. **Declare `PyList_SetItemDoubleAuto` / `Int64Auto`** in codegen (stores were
+   silently dropped when the symbol was missing from the module).
+
+5. **Native get/set fallbacks** — `PyList_GetItemInt64`/`GetItemDouble` (and sets)
+   fall back to boxed list storage after `sorted()` / slice demotion.
+
+6. **Call-site param analysis** — Native int/float params require *every* call
+   site to agree on the same numeric type. Mixed str/int sites stay boxed
+   (fixes `spaceship` on strings and sort comparators).
+
+7. **Defaulted params stay boxed** — Params with defaults (often `None`) are never
+   given native slots; avoids `x is None` constant-folding and undef phis
+   (fixes `splice` and similar).
 
 ### Remaining Work
 
-1. **Subscript boxing in hot loop**: The inner loop in `advance()` (lines 74-83 of nbody.py)
-   performs subscript loads/stores on `v1[0]`, `v1[1]`, `v1[2]`, `r[0]`, etc.
-   where `v1` and `r` come from unpacking `pairs[i]`/`bodies[i]`. These operations
-   go through the generic boxed path because tuple elements containing mixed-typed
-   containers (float-lists + scalars) get type `"list"` (generic boxed) in our
-   type system.
+1. **Hot-loop native subscripts in nbody `advance()`** — Push float-list types
+   through pair unpack so `v1[i]` / `r[i]` stay on `GetItemDouble`/`SetItemDouble`.
 
-2. **Tuple element type tracking**: Tuples with mixed-typed elements are typed as
-   `"list"` (boxed) because `lowerList` only assigns `"list_float"`/`"list_int"`
-   when ALL elements share the same primitive type. The nbody pattern of
-   `(POSITION, VELOCITY, MASS)` where POSITION/VELOCITY are float-lists and
-   MASS is a float falls through to generic `"list"` type.
+2. **Dict insertion order** — Runtime dicts use hash order; CPython 3.7+ is
+   insertion-ordered. Physics is order-independent; order-sensitive tests may care.
 
-3. **Container-aware type propagation**: The system needs per-index element type
-   tracking for tuples/containers, e.g., `tuple_of_(float_list, float_list, float)`
-   so that unpacking `((x1,y1,z1), v1, m1) = pairs[i]` can infer that v1 is a
-   float_list at index 1.
+3. **Arena allocator** — Reduce malloc traffic for values that must remain boxed.
 
-4. **Arena allocator**: A memory pool for PyObject allocations would reduce
-   boxing/unboxing overhead for values that MUST be boxed (for list storage, etc.).
-   This is a separate improvement from type inference — even with perfect type
-   inference, subscript stores that must store into lists still require boxing.
-
-### Optimization Infrastructure (Phases 15-20)
-
-A comprehensive flow-sensitive type inference system was built:
+### Optimization Infrastructure (Phases 15–24)
 
 **Data structures in `IRFunction`:**
 ```cpp
-containerElementTypes[var][idx]    // "float_list", "int_list", "boxed_tuple"
-subscriptElementTypes[var][idx]    // "float", "int", "boxed"
-returnType                         // "list", "dict", "float", "boxed"
+containerElementTypes[var][idx]       // "float_list", "int_list", "boxed_tuple"
+subscriptElementTypes[var][idx]       // "float", "int", "list_float", ...
+returnType                            // "list", "dict", "float", "boxed"
+returnContainerElementTypes[idx]      // callee → caller inheritance
+returnSubscriptElementTypes[idx]
+paramTypes[]                          // call-site native param analysis
 ```
 
 **Propagation chain:**
 ```
-Module globals (POSITION, VELOCITY, etc.)
-  → dictValueTypes[BODIES] = valueType
-  → BODIES.values() → list_with_value_type
-  → list() inherits element type
-  → function params (bodies, pairs)
-  → containerElementTypes[param][idx] → subscript type inference
-  → unpack target (v1, r) has typed element types
-  → subscript get/store uses native path
+Module globals / list literals
+  → listElementTypes / subscriptElementTypes
+  → function return maps
+  → call result temps + assigns
+  → nested subscript (list_float intermediate, float leaf)
+  → native GetItemDouble / SetItemDouble when proven
 ```
-
-**Built-in tracking (Phase 19):** `list()`, `sorted()`, `reversed()` now
-propagate element types. Dict value types tracked via `tempContainerElementTypes`.

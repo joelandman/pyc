@@ -1572,19 +1572,23 @@ class LoweringVisitor {
                 }
             }
 
-            // Check if all args across ALL call sites are proven numeric (int or float).
-            // For specialization, every call site must use numeric types at every position.
+            // Specialization requires every call site to use the same numeric type
+            // at each position. Mixed types (int+str, int+float) skip specialization;
+            // int-only sites can still be specialized via a separate consistent subset.
             bool allNumeric = true;
             std::string sig; // "i" for int, "f" for float
             for (size_t i = 0; i < declaredArgCount; ++i) {
-                // Collect all types seen at position i across all call sites.
                 std::unordered_set<std::string> typesAtPos;
                 for (const auto& s : allSigs) {
-                    if (i < s.size()) typesAtPos.insert(s[i]);
+                    if (i < s.size()) {
+                        std::string t = s[i];
+                        if (t == "i64") t = "int";
+                        typesAtPos.insert(t);
+                    }
                 }
-                if (typesAtPos.count("int") > 0 || typesAtPos.count("i64") > 0) {
+                if (typesAtPos.size() == 1 && typesAtPos.count("int")) {
                     sig += "i";
-                } else if (typesAtPos.count("float") > 0) {
+                } else if (typesAtPos.size() == 1 && typesAtPos.count("float")) {
                     sig += "f";
                 } else {
                     allNumeric = false;
@@ -2075,9 +2079,35 @@ class LoweringVisitor {
             size_t declaredArgCount = func->args.size();
             if (declaredArgCount == 0) continue;
 
+            // Fixed (non-*/* *) param count and which of those have defaults.
+            // Params with defaults must stay boxed: defaults are often None, and
+            // native-int unboxing turns `x is None` into a constant false + undef phi.
+            size_t nFixed = declaredArgCount;
+            for (size_t i = 0; i < func->paramNames.size(); ++i) {
+                const auto& pn = func->paramNames[i];
+                if (!pn.empty() && pn[0] == '*') { nFixed = i; break; }
+            }
+            size_t ndef = func->defaultGlobals.size();
+            size_t firstDefault = (ndef > 0 && ndef <= nFixed) ? (nFixed - ndef) : declaredArgCount;
+
             // For each declared param, find the dominant type across all call sites.
-            // A param is "dominant" if ALL call sites agree on the same numeric type.
+            // A param is native only if EVERY call site supplies the same numeric type.
+            // Mixed sites (e.g. f("a") and f(1)) must stay boxed on the generic function.
             for (size_t pi = 0; pi < declaredArgCount; ++pi) {
+                if (pi >= firstDefault && pi < nFixed) {
+                    // Has a default — keep boxed
+                    func->paramTypes.push_back("");
+                    continue;
+                }
+                // *args / **kwargs slots are never native
+                if (pi < func->paramNames.size()) {
+                    const auto& pn = func->paramNames[pi];
+                    if (!pn.empty() && pn[0] == '*') {
+                        func->paramTypes.push_back("");
+                        continue;
+                    }
+                }
+
                 std::string dominant = "";
                 bool consistent = true;
                 bool allPositionsFilled = true;
@@ -2087,37 +2117,28 @@ class LoweringVisitor {
                         allPositionsFilled = false;
                         break;
                     }
-                    const auto& t = sig[pi];
-                    if (t == "i64") {
-                        if (dominant == "" || dominant == "i64") {
-                            dominant = t;
-                        } else {
-                            consistent = false; break;
-                        }
-                    } else if (t == "int") {
-                        if (dominant == "" || dominant == "int") {
-                            dominant = t;
-                        } else {
-                            consistent = false; break;
-                        }
-                    } else if (t == "float") {
-                        if (dominant == "" || dominant == "float") {
-                            dominant = t;
-                        } else {
-                            consistent = false; break;
-                        }
+                    std::string t = sig[pi];
+                    if (t == "i64") t = "int";
+                    if (t == "int" || t == "float") {
+                        if (dominant.empty()) dominant = t;
+                        else if (dominant != t) { consistent = false; break; }
+                    } else {
+                        consistent = false;
+                        break;
                     }
-                    // Any other type (boxed, list, etc.) means we can't track
                 }
 
-                if (!consistent || !allPositionsFilled) continue;
+                if (!consistent || !allPositionsFilled) {
+                    func->paramTypes.push_back("");
+                    continue;
+                }
 
-                if (dominant == "int" || dominant == "i64") {
+                if (dominant == "int") {
                     func->paramTypes.push_back("int");
                 } else if (dominant == "float") {
                     func->paramTypes.push_back("float");
                 } else {
-                    func->paramTypes.push_back("");  // unknown or non-numeric
+                    func->paramTypes.push_back("");
                 }
             }
             // Pad remaining params (in case some weren't filled)
@@ -4397,25 +4418,43 @@ class LoweringVisitor {
             if (knownIRFunctions.count(funcName)) {
                 for (auto& fn : ir.functions) {
                     if (fn.name == funcName) {
-                        // Propagate subscriptElementTypes from return type to call result
-                        if (!fn.returnSubscriptElementTypes.empty()) {
+                        if (!fn.returnSubscriptElementTypes.empty() || !fn.returnContainerElementTypes.empty()) {
                             for (auto& fnx : ir.functions) {
                                 if (fnx.name == currentFunc) {
                                     for (auto& [idx, et] : fn.returnSubscriptElementTypes) {
                                         fnx.subscriptElementTypes[res][idx] = et;
                                     }
-                                    // Normalize element types and propagate containerElementTypes
                                     for (auto& [idx, et] : fn.returnContainerElementTypes) {
                                         fnx.containerElementTypes[res][idx] = et;
-                                        if (et == "float_list") {
-                                            for (size_t i = 0; i <= 20; i++) fnx.subscriptElementTypes[res][i] = "float";
-                                        } else if (et == "int_list") {
-                                            for (size_t i = 0; i <= 20; i++) fnx.subscriptElementTypes[res][i] = "int";
+                                    }
+                                    // Homogeneous scalar elements → typed list result
+                                    if (!fn.returnSubscriptElementTypes.empty()) {
+                                        bool allFloat = true, allInt = true;
+                                        bool allFloatList = true, allIntList = true;
+                                        for (const auto& [idx, et] : fn.returnSubscriptElementTypes) {
+                                            if (et != "float") allFloat = false;
+                                            if (et != "int" && et != "i64" && et != "bool") allInt = false;
+                                            if (et != "list_float" && et != "float_list") allFloatList = false;
+                                            if (et != "list_int" && et != "int_list") allIntList = false;
+                                        }
+                                        if (allFloat) {
+                                            noteType(res, "list_float");
+                                            knownFloatLists.insert(res);
+                                        } else if (allInt) {
+                                            noteType(res, "list_int");
+                                            knownIntLists.insert(res);
+                                        } else if (allFloatList || allIntList) {
+                                            noteType(res, "list");
                                         }
                                     }
                                     break;
                                 }
                             }
+                        }
+                        if (!fn.returnType.empty() && fn.returnType != "boxed") {
+                            // Only set if we didn't already set a more specific list type
+                            std::string cur = typeOf(res);
+                            if (cur.empty() || cur == "boxed") noteType(res, fn.returnType);
                         }
                         break;
                     }
@@ -5191,12 +5230,14 @@ class LoweringVisitor {
             }
             std::string idx = lowerExpr(idxnode);
             // A4/A7: use native set for proven homogeneous lists with native values.
-            // A7: extend float/int provenance to generic lists via Auto helpers.
+            // A7: Auto helpers only when the container is known to be a list — never for
+            // dict/boxed (d["k"]=99 must go through Pyc_SetItem).
             std::string objType = typeOf(obj);
             std::string valType = typeOf(val);
-            std::string idxType = typeOf(idx);
             bool isIntList = (objType == "list_int");
             bool isFloatList = (objType == "list_float");
+            bool objIsList = isIntList || isFloatList || objType == "list" ||
+                             knownFloatLists.count(obj) || knownIntLists.count(obj);
             bool valIsInt = (valType == "int" || valType == "i64" || valType == "bool");
             bool valIsFloat = (valType == "float");
             std::string dummy;
@@ -5206,10 +5247,10 @@ class LoweringVisitor {
             } else if (isFloatList && valIsFloat) {
                 dummy = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemDouble", obj, idx, val}, dummy);
-            } else if (valIsFloat) {
+            } else if (objIsList && valIsFloat) {
                 dummy = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemDoubleAuto", obj, idx, val}, dummy);
-            } else if (valIsInt) {
+            } else if (objIsList && valIsInt) {
                 dummy = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64Auto", obj, idx, val}, dummy);
             } else {
@@ -5592,140 +5633,144 @@ class LoweringVisitor {
         }
         // S1: check containerElementTypes / subscriptElementTypes for variable names
         // that have known element types propagated from defaults or globals.
-        // This applies to ALL object types (not just "list") - e.g., "boxed" temps
-        // from unpacking nested tuples like ([x1,y1,z1], v1, m1) need subscript type info.
+        // This applies to ALL object types (not just "list") - e.g., temps from
+        // unpacking nested tuples or intermediate subscripts need element type info.
+        //
+        // Critical distinction:
+        //   "float" / "int"           → scalar element (native get path)
+        //   "list_float"/"float_list" → nested float list (boxed get, then native nested)
+        //   "list_int"/"int_list"     → nested int list
+        auto applyElemType = [&](const std::string& et) {
+            if (et == "float") {
+                elemType = "float";
+                noteType(res, "float");
+            } else if (et == "int" || et == "i64" || et == "bool") {
+                elemType = "int";
+                noteType(res, "int");
+            } else if (et == "float_list" || et == "list_float") {
+                // Result is a float list container — keep boxed for codegen,
+                // but mark type so nested subscripts use the native float path.
+                elemType = "boxed";
+                noteType(res, "list_float");
+                knownFloatLists.insert(res);
+                for (auto& fn : ir.functions) {
+                    if (fn.name != currentFunc) continue;
+                    for (size_t i = 0; i <= 20; i++) fn.subscriptElementTypes[res][i] = "float";
+                    fn.containerElementTypes[res][0] = "float_list";
+                    break;
+                }
+            } else if (et == "int_list" || et == "list_int") {
+                elemType = "boxed";
+                noteType(res, "list_int");
+                knownIntLists.insert(res);
+                for (auto& fn : ir.functions) {
+                    if (fn.name != currentFunc) continue;
+                    for (size_t i = 0; i <= 20; i++) fn.subscriptElementTypes[res][i] = "int";
+                    fn.containerElementTypes[res][0] = "int_list";
+                    break;
+                }
+            } else if (et == "list" || et == "dict" || et == "str") {
+                elemType = "boxed";
+                noteType(res, et);
+            } else if (!et.empty() && et != "boxed") {
+                elemType = "boxed";
+                noteType(res, "boxed");
+            }
+        };
         {
             std::string idxValue = "";
-            if (node->children.size() > 1 && node->children[1] && 
-                node->children[1]->type == "Constant" && node->children[1]->args.size() == 1) {
-                idxValue = node->children[1]->args[0];
+            if (node->children.size() > 1 && node->children[1] &&
+                node->children[1]->type == "Constant") {
+                // Constant nodes store literal values in node->value
+                if (!node->children[1]->value.empty())
+                    idxValue = node->children[1]->value;
+                else if (node->children[1]->args.size() == 1)
+                    idxValue = node->children[1]->args[0];
             }
             size_t idxVal = 0;
             bool hasLiteralIndex = !idxValue.empty();
             if (hasLiteralIndex) {
                 try { idxVal = std::stoull(idxValue); } catch (...) { hasLiteralIndex = false; }
             }
-            
+
+            bool foundElem = false;
             for (auto& fn : ir.functions) {
-                // Check ALL functions' subscriptElementTypes - needed for module-level globals
-                // that are defined in a different function than the caller
-                
-                    // First try subscriptElementTypes (direct element type)
-                    auto sit = fn.subscriptElementTypes.find(obj);
-                    if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
-                        if (hasLiteralIndex) {
-                            auto iit = sit->second.find(idxVal);
-                            if (iit != sit->second.end()) {
-                                elemType = iit->second;
-                                if (elemType == "float" || elemType == "float_list" || elemType == "list_float") {
-                                    noteType(res, "float");
-                                    elemType = "float";
-                                } else if (elemType == "int" || elemType == "int_list" || elemType == "list_int") {
-                                    noteType(res, "int");
-                                    elemType = "int";
-                                } else if (elemType == "float_list" || elemType == "list_float") {
-                                    noteType(res, "list_float");
-                                    // Don't set elemType for codegen - result is a container, not a primitive
-                                    elemType = "boxed";
-                                } else if (elemType == "int_list" || elemType == "list_int") {
-                                    noteType(res, "list_int");
-                                    elemType = "boxed";
-                                } else {
-                                    noteType(res, "boxed");
-                                }
-                            }
-                        } else {
-                            // No literal index - use first entry (wildcard or generic)
-                            auto iit = sit->second.begin();
-                            elemType = iit->second;
-                            if (elemType == "float" || elemType == "float_list" || elemType == "list_float") {
-                                noteType(res, "float");
-                                elemType = "float";
-                            } else if (elemType == "int" || elemType == "int_list" || elemType == "list_int") {
-                                noteType(res, "int");
-                                elemType = "int";
-                            } else if (elemType == "float_list" || elemType == "list_float") {
-                                noteType(res, "list_float");
-                                elemType = "boxed";
-                            } else if (elemType == "int_list" || elemType == "list_int") {
-                                noteType(res, "list_int");
-                                elemType = "boxed";
-                            } else {
-                                noteType(res, "boxed");
-                            }
-                        }
-                        break; // Found element types
-                    }
-            }
-            
-            // S3: check listElementTypes for per-index element types from list construction
-            if (elemType == "boxed") {
-                for (auto& fn : ir.functions) {
-                    // Check ALL functions' listElementTypes for module-level globals
-                    auto lit = fn.listElementTypes.find(obj);
-                    if (lit != fn.listElementTypes.end()) {
-                        if (!lit->second.empty()) {
-                            if (hasLiteralIndex && idxVal < lit->second.size()) {
-                                elemType = lit->second[idxVal];
-                                if (elemType == "float" || elemType == "float_list" || elemType == "list_float") {
-                                    noteType(res, "float");
-                                    elemType = "float";
-                                } else if (elemType == "int" || elemType == "int_list" || elemType == "list_int") {
-                                    noteType(res, "int");
-                                    elemType = "int";
-                                }
-                            }
-                        }
-                        break;
-                    }
-                    
-                    // Also check if any container variable has this obj as its element type
-                    // (for unpacked subscript results like v1 where v1[i] where listElementTypes[obj][i] = "list_float")
+                auto sit = fn.subscriptElementTypes.find(obj);
+                if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
                     if (hasLiteralIndex) {
-                        for (const auto& [cname, etypes] : fn.listElementTypes) {
-                            if (cname == obj && idxVal < etypes.size()) {
-                                std::string et = etypes[idxVal];
-                                if (et == "float" || et == "float_list" || et == "list_float") {
-                                    elemType = "float";
-                                    noteType(res, "float");
-                                    break;
-                                } else if (et == "int" || et == "int_list" || et == "list_int") {
-                                    elemType = "int";
-                                    noteType(res, "int");
-                                    break;
-                                }
-                            }
+                        auto iit = sit->second.find(idxVal);
+                        if (iit != sit->second.end()) {
+                            applyElemType(iit->second);
+                            foundElem = true;
+                        }
+                    } else {
+                        // Homogeneous containers: all indices share one element type
+                        bool homogeneous = true;
+                        std::string firstEt;
+                        for (const auto& [ikey, et] : sit->second) {
+                            if (firstEt.empty()) firstEt = et;
+                            else if (et != firstEt) { homogeneous = false; break; }
+                        }
+                        if (homogeneous && !firstEt.empty()) {
+                            applyElemType(firstEt);
+                            foundElem = true;
                         }
                     }
-                    break;
+                    if (foundElem) break;
                 }
             }
-            
-            // Check containerElementTypes for typed element containers (float_list, etc.)
-            if (elemType == "boxed") {
+
+            // S3: check listElementTypes for per-index element types from list construction
+            if (!foundElem && elemType == "boxed") {
                 for (auto& fn : ir.functions) {
-                    if (fn.name != currentFunc) continue;
+                    auto lit = fn.listElementTypes.find(obj);
+                    if (lit != fn.listElementTypes.end() && !lit->second.empty()) {
+                        if (hasLiteralIndex && idxVal < lit->second.size()) {
+                            applyElemType(lit->second[idxVal]);
+                            foundElem = true;
+                        } else if (!hasLiteralIndex) {
+                            bool homogeneous = true;
+                            std::string firstEt = lit->second[0];
+                            for (const auto& et : lit->second) {
+                                if (et != firstEt) { homogeneous = false; break; }
+                            }
+                            if (homogeneous) {
+                                applyElemType(firstEt);
+                                foundElem = true;
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+
+            // Check containerElementTypes for typed element containers (float_list, etc.)
+            // Here the map value is the *container kind of each element*, so float_list
+            // means "element is a float list" — applyElemType handles that correctly.
+            if (!foundElem && elemType == "boxed") {
+                for (auto& fn : ir.functions) {
                     auto cit = fn.containerElementTypes.find(obj);
                     if (cit != fn.containerElementTypes.end() && !cit->second.empty()) {
-                        std::string matchType = "";
-                        size_t matchIdx = 0;
-                        
-                        // Look for exact index match or wildcard (0)
-                        for (const auto& [ikey, ctype] : cit->second) {
-                            if (ikey == idxVal) { matchType = ctype; matchIdx = ikey; break; }
+                        std::string matchType;
+                        if (hasLiteralIndex) {
+                            auto iit = cit->second.find(idxVal);
+                            if (iit != cit->second.end()) matchType = iit->second;
                         }
-                        if (matchType.empty() && !cit->second.empty()) {
-                            // Use first entry (likely wildcard)
-                            auto wit = cit->second.begin();
-                            matchType = wit->second;
+                        if (matchType.empty()) {
+                            // Homogeneous fallback
+                            bool homogeneous = true;
+                            std::string firstEt;
+                            for (const auto& [ikey, ctype] : cit->second) {
+                                if (firstEt.empty()) firstEt = ctype;
+                                else if (ctype != firstEt) { homogeneous = false; break; }
+                            }
+                            if (homogeneous) matchType = firstEt;
                         }
-                        
-                        // Extract element type from container type
-                        if (matchType == "float_list") { elemType = "float"; noteType(res, "float"); }
-                        else if (matchType == "int_list") { elemType = "int"; noteType(res, "int"); }
-                        else if (matchType == "boxed_tuple") { elemType = "boxed"; }
-                        else if (matchType == "boxed") { elemType = "boxed"; }
-                        break;
+                        if (!matchType.empty() && matchType != "boxed" && matchType != "boxed_tuple") {
+                            applyElemType(matchType);
+                            foundElem = true;
+                        }
+                        if (foundElem) break;
                     }
                 }
             }
@@ -5752,26 +5797,20 @@ class LoweringVisitor {
         if (listsContainingBundles.count(obj) || namesThatMayHoldBundles.count(obj) || namesThatMayHoldListsWithBundles.count(obj)) {
             bundleTemps.insert(res);
         }
-        // S5: Propagate element type info to result temp for function return tracking.
-        // If obj has known subscript element types (e.g., from lowerList or global tracking),
-        // propagate them to the result temp. This enables function return type inference:
-        // when a function returns a subscript result like "data[i]", the caller can inherit
-        // the element type info through the return value.
-        if (!obj.empty() && objType == "list") {
+        // S5: For scalar results only, do not copy parent container maps onto the result.
+        // Nested container results already received correct element maps in applyElemType.
+        // When returning a whole list (no nested typing applied), copy maps for return tracking.
+        if (!obj.empty() && elemType == "boxed" && typeOf(res) != "list_float" && typeOf(res) != "list_int") {
             for (auto& fn : ir.functions) {
                 if (fn.name != currentFunc) continue;
-                auto sit = fn.subscriptElementTypes.find(obj);
-                if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
-                    // Populated subscriptElementTypes from obj into the result temp
-                    fn.subscriptElementTypes[res] = sit->second;
-                }
-                auto cit = fn.containerElementTypes.find(obj);
-                if (cit != fn.containerElementTypes.end() && !cit->second.empty()) {
-                    fn.containerElementTypes[res] = cit->second;
-                }
-                auto lit = fn.listElementTypes.find(obj);
-                if (lit != fn.listElementTypes.end() && !lit->second.empty()) {
-                    fn.listElementTypes[res] = lit->second;
+                // Only copy if result has no element info yet
+                if (!fn.subscriptElementTypes.count(res) || fn.subscriptElementTypes[res].empty()) {
+                    auto sit = fn.subscriptElementTypes.find(obj);
+                    if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
+                        // Homogeneous nested container: if all parent entries agree and are
+                        // themselves containers, the result is that container type's elements.
+                        // Otherwise leave unset (mixed/unknown).
+                    }
                 }
                 break;
             }
@@ -5800,31 +5839,41 @@ class LoweringVisitor {
             // from the returned list, enabling PyList_GetItemDouble optimization.
             for (auto& fnr : ir.functions) {
                 if (fnr.name == currentFunc) {
-                    // Check if this temp has subscriptElementTypes (from lowerList or unpacking)
                     auto sit = fnr.subscriptElementTypes.find(val);
                     if (sit != fnr.subscriptElementTypes.end() && !sit->second.empty()) {
                         fnr.returnSubscriptElementTypes = sit->second;
-                        // Also populate containerElementTypes if the temp is a known type
                         for (auto& [idx, et] : sit->second) {
-                            if (et == "float" || et == "list_float" || et == "float_list") {
+                            // Preserve nested container types; only tag scalars as *list kinds
+                            if (et == "list_float" || et == "float_list") {
                                 fnr.returnContainerElementTypes[idx] = "float_list";
-                            } else if (et == "int" || et == "int_list" || et == "list_int") {
+                            } else if (et == "list_int" || et == "int_list") {
+                                fnr.returnContainerElementTypes[idx] = "int_list";
+                            } else if (et == "float") {
+                                fnr.returnContainerElementTypes[idx] = "float_list";
+                            } else if (et == "int" || et == "i64" || et == "bool") {
                                 fnr.returnContainerElementTypes[idx] = "int_list";
                             }
                         }
-                    } else if (rt == "float" || rt == "int" || rt == "boxed") {
-                        // If rt is a primitive type but the temp has no subscriptElementTypes,
-                        // the temp might be a subscript result. Check listElementTypes.
+                    } else if (rt == "list_float" || knownFloatLists.count(val)) {
+                        for (size_t i = 0; i <= 20; i++) fnr.returnSubscriptElementTypes[i] = "float";
+                        fnr.returnContainerElementTypes[0] = "float_list";
+                    } else if (rt == "list_int" || knownIntLists.count(val)) {
+                        for (size_t i = 0; i <= 20; i++) fnr.returnSubscriptElementTypes[i] = "int";
+                        fnr.returnContainerElementTypes[0] = "int_list";
+                    } else {
                         auto lit = fnr.listElementTypes.find(val);
                         if (lit != fnr.listElementTypes.end() && !lit->second.empty()) {
-                            // Copy the list element types to return tracking
-                            for (auto& et : lit->second) {
-                                if (et == "float" || et == "list_float" || et == "float_list") {
-                                    fnr.returnSubscriptElementTypes[0] = "float";
-                                    fnr.returnContainerElementTypes[0] = "float_list";
-                                } else if (et == "int" || et == "int_list" || et == "list_int") {
-                                    fnr.returnSubscriptElementTypes[0] = "int";
-                                    fnr.returnContainerElementTypes[0] = "int_list";
+                            for (size_t i = 0; i < lit->second.size(); ++i) {
+                                const auto& et = lit->second[i];
+                                fnr.returnSubscriptElementTypes[i] = et;
+                                if (et == "list_float" || et == "float_list") {
+                                    fnr.returnContainerElementTypes[i] = "float_list";
+                                } else if (et == "list_int" || et == "int_list") {
+                                    fnr.returnContainerElementTypes[i] = "int_list";
+                                } else if (et == "float") {
+                                    fnr.returnContainerElementTypes[i] = "float_list";
+                                } else if (et == "int" || et == "i64" || et == "bool") {
+                                    fnr.returnContainerElementTypes[i] = "int_list";
                                 }
                             }
                         }

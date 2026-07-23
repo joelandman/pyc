@@ -85,6 +85,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     llvm::FunctionType* listSetItemDoubleTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), llvm::Type::getDoubleTy(context)}, false);
     llvm::Function::Create(listSetItemDoubleTy, llvm::Function::ExternalLinkage, "PyList_SetItemDouble", module.get());
+    llvm::Function::Create(listSetItemDoubleTy, llvm::Function::ExternalLinkage, "PyList_SetItemDoubleAuto", module.get());
+
+    llvm::FunctionType* listSetItemInt64AutoTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(listSetItemInt64AutoTy, llvm::Function::ExternalLinkage, "PyList_SetItemInt64Auto", module.get());
 
     llvm::FunctionType* listSetItemTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), pyObjectPtrTy}, false);
     llvm::Function::Create(listSetItemTy, llvm::Function::ExternalLinkage, "PyList_SetItem", module.get());

@@ -57,23 +57,26 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 
 ### Optimization Status
 
-#### Landed (A1–A7)
+#### Landed (A1–A7 + container phases)
 - **A1**: Conservative type tracking with loop back-edge widening
 - **A2**: Native `for ... in range(...)` with unboxed i64 loop variables
 - **A3**: Native arithmetic for proven numeric `+ - * // % **` and unary minus
 - **A4**: Homogeneous numeric lists with native `int64`/`double` element storage
 - **A5**: Allocation sinking for numeric locals (native i64 alloca)
-- **A6**: Specialized function variants from proven call-site types
+- **A6**: Specialized function variants from proven call-site types (all sites must agree)
 - **A7**: Allocation counters and microbenchmark guardrails
+- **Container typing**: per-index `listElementTypes` / `subscriptElementTypes`, return
+  element maps, nested `list_float`/`list_int` intermediates
+- **Safe native params**: only when every call site agrees; defaulted params stay boxed
+- **List Auto setters**: only for known list containers (never dicts)
+- **Native get/set fallbacks** on boxed lists after slice/`sorted` demotion
 
 #### Planned (not implemented)
 - IR-level constant folding
-- LLVM aggressive inlining
 - Arena allocator for PyObject
 - Dead code elimination at IR level
-- Type-based specialization for common patterns
-- Lazy compilation for unused functions
-- LLVM `opt` with aggressive flags
+- Full insertion-ordered dicts
+- Deeper hot-loop native subscripts for mixed tuples (nbody pairs)
 
 ### Correctness Guarantees
 - Every optimization preserves a boxed fallback path
@@ -81,6 +84,8 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - Mixed types fall back to boxed `PyNumber_*` calls
 - Division by zero uses runtime call with proper Python semantics
 - `getAsPyObject()` ensures values are properly boxed when they escape native context
+- Dict item assignment uses `Pyc_SetItem` (not list Auto helpers)
+- Native param unboxing is suppressed when any call site is non-numeric or a default exists
 
 ## Architecture
 
