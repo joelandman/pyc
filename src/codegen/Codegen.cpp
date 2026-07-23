@@ -538,7 +538,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         } else {
             argTypes.assign(f.args.size(), pyObjectPtrTy);
         }
-        llvm::FunctionType* funcType = llvm::FunctionType::get(pyObjectPtrTy, argTypes, false);
+        // A6 native return: specialized variants with a proven numeric return type
+        // return i64/double directly instead of a boxed PyObject*.
+        llvm::Type* retTy = pyObjectPtrTy;
+        if (isSpecialized && f.nativeReturnType == "int") {
+            retTy = llvm::Type::getInt64Ty(context);
+        } else if (isSpecialized && f.nativeReturnType == "float") {
+            retTy = llvm::Type::getDoubleTy(context);
+        }
+        llvm::FunctionType* funcType = llvm::FunctionType::get(retTy, argTypes, false);
         llvm::Function::Create(funcType, llvm::Function::ExternalLinkage, irName, module.get());
     }
 
@@ -815,11 +823,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         bool funcIsSpecialized = (f.name.find("__specialized_") == 0);
         size_t nativeParamStart = 0;
         std::string nativeSig;
+        // A6 native return: "int" → i64, "float" → double, "" → boxed PyObject*
+        std::string nativeRetType;
         if (funcIsSpecialized) {
             nativeParamStart = f.freeCellVars.size();
             if (nativeParamStart < f.args.size() && f.name.size() > nativeParamStart) {
                 nativeSig = f.name.substr(f.name.size() - (f.args.size() - nativeParamStart));
             }
+            nativeRetType = f.nativeReturnType;
         }
         for (size_t i = 0; i < f.args.size(); ++i) {
             llvm::Value* arg = func->getArg(i);
@@ -1076,6 +1087,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 llvm::Function* fromDouble = module->getFunction("PyFloat_FromDouble");
                 if (!fromDouble) return llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 return builder.CreateCall(fromDouble, {v}, name + ".boxed");
+            }
+            if (v->getType() == llvm::Type::getInt1Ty(context)) {
+                // Native i1 (from native icmp) → box to PyBool_New
+                llvm::Function* boolNew = module->getFunction("PyBool_New");
+                if (!boolNew) return llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                llvm::Value* i32v = builder.CreateZExt(v, llvm::Type::getInt32Ty(context));
+                return builder.CreateCall(boolNew, {i32v}, name + ".bool");
             }
             return v;
         };
@@ -1394,10 +1412,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     else if (opstr == "LtE") cmpv = l64 ? builder.CreateICmpSLE(icmpLhsRaw, icmpRhsRaw) : builder.CreateFCmpOLE(icmpLhsRaw, icmpRhsRaw);
                     else if (opstr == "GtE") cmpv = l64 ? builder.CreateICmpSGE(icmpLhsRaw, icmpRhsRaw) : builder.CreateFCmpOGE(icmpLhsRaw, icmpRhsRaw);
                     else cmpv = l64 ? builder.CreateICmpNE(icmpLhsRaw, icmpRhsRaw) : builder.CreateFCmpONE(icmpLhsRaw, icmpRhsRaw);
-                    llvm::Value* i32v = builder.CreateZExt(cmpv, llvm::Type::getInt32Ty(context));
-                    llvm::Value* bcmp = builder.CreateCall(boolNew, {i32v}, inst.result);
-                    valueMap[inst.result] = bcmp;
-                    markOwned(inst.result);
+                    // Store the native i1 result directly. This lets the br handler
+                    // use it without boxing/unboxing (PyBool_New + load + compare).
+                    // When the result is used in a non-branch context (e.g. assigned
+                    // to a variable or passed as an argument), getAsPyObject boxes it
+                    // lazily via PyBool_New.
+                    valueMap[inst.result] = cmpv;
+                    // Don't markOwned — i1 is a native value with no refcount.
                     if (!icmpLhsName.empty()) emitDecRefIfOwnedSameBlock(icmpLhsName);
                     if (!icmpRhsName.empty()) emitDecRefIfOwnedSameBlock(icmpRhsName);
                     continue;
@@ -2577,11 +2598,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         std::vector<bool> argWasNative;
                         
                         // A6: Check if there's a specialized variant for this call.
-                        // If the current function is NOT a specialized variant itself,
-                        // and all args are numeric, dispatch to the specialized variant.
+                        // When all args are numeric (native i64/double), dispatch to the
+                        // specialized variant. This applies both to ordinary functions and
+                        // to specialized variants themselves — the latter enables native
+                        // self-recursion (e.g. __specialized_fib_i calling itself for
+                        // recursive fib(n-1)/fib(n-2) without boxing).
                         bool useSpecialized = false;
                         std::string specializedName;
-                        if (f.name.find("__specialized_") == std::string::npos) {
+                        {
                             // Check each possible specialized variant signature
                             size_t numArgs = inst.operands.size() - 1;
                             if (numArgs > 0) {
@@ -2621,14 +2645,22 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                             } else {
                                 llvm::Value* callRes = builder.CreateCall(callee, callArgs, inst.result);
                                 valueMap[inst.result] = callRes;
-                                bool isUserFunc = !callee->isDeclaration()
-                                                 || userFunctionNames.count(specializedName) > 0;
-                                if (!inst.result.empty() && tempUseCounts.count(inst.result) == 0
-                                    && isUserFunc) {
-                                    llvm::Function* decref2 = module->getFunction("Py_DECREF");
-                                    if (decref2) builder.CreateCall(decref2, {callRes});
+                                // A6 native return: if the variant returns i64/double,
+                                // the result is a native value with no refcount.
+                                bool retIsNative = callee->getReturnType() == llvm::Type::getInt64Ty(context)
+                                                   || callee->getReturnType()->isDoubleTy();
+                                if (retIsNative) {
+                                    // Native values have no refcount — don't DECREF or markOwned.
                                 } else {
-                                    markOwned(inst.result);
+                                    bool isUserFunc = !callee->isDeclaration()
+                                                     || userFunctionNames.count(specializedName) > 0;
+                                    if (!inst.result.empty() && tempUseCounts.count(inst.result) == 0
+                                        && isUserFunc) {
+                                        llvm::Function* decref2 = module->getFunction("Py_DECREF");
+                                        if (decref2) builder.CreateCall(decref2, {callRes});
+                                    } else {
+                                        markOwned(inst.result);
+                                    }
                                 }
                             }
                         } else {
@@ -2677,6 +2709,47 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
             } else if (inst.op == "ret") {
                 std::string retName = inst.operands.empty() ? "" : inst.operands[0].name;
+
+                // A6 native return: specialized variants with a proven numeric return
+                // type return i64/double directly. This skips all refcounting on the
+                // return value and enables fully native recursive chains.
+                if (!nativeRetType.empty()) {
+                    llvm::Value* nativeRetVal = nullptr;
+                    if (retName.empty()) {
+                        nativeRetVal = (nativeRetType == "float")
+                            ? (llvm::Value*)llvm::ConstantFP::get(context, llvm::APFloat(0.0))
+                            : (llvm::Value*)llvm::ConstantInt::get(context, llvm::APInt(64, 0));
+                    } else {
+                        llvm::Value* raw = getOrLoad(retName);
+                        if (nativeRetType == "int") {
+                            nativeRetVal = unboxToI64(raw);
+                        } else { // float
+                            nativeRetVal = unboxToDouble(raw);
+                        }
+                    }
+                    // DECREF all owned boxed slots at function exit (native return
+                    // value has no refcount, but locals still need cleanup).
+                    {
+                        llvm::Function* slotDecref = module->getFunction("Py_DECREF");
+                        if (slotDecref) {
+                            for (const auto& slotName : ownedSlots) {
+                                auto vit = valueMap.find(slotName);
+                                if (vit != valueMap.end()) {
+                                    if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(vit->second)) {
+                                        if (alloca->getAllocatedType() != pyObjectPtrTy) continue;
+                                        llvm::Value* slotVal = builder.CreateLoad(
+                                            pyObjectPtrTy, alloca, slotName + ".exit");
+                                        builder.CreateCall(slotDecref, {slotVal});
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (!curBlock->getTerminator())
+                        builder.CreateRet(nativeRetVal);
+                    continue;  // skip the boxed return path below
+                }
+
                 llvm::Value* retVal = getAsPyObject(retName);
                 bool retIsOwned = ownedTemps.count(retName) > 0;
                 if (retIsOwned) ownedTemps.erase(retName);
@@ -2725,29 +2798,55 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             }
         }
         if (!curBlock->getTerminator()) {
-            // Return a boxed 0 as a sensible default instead of null
-            llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
-            llvm::Value* zero = fromLong
-                ? (llvm::Value*)builder.CreateCall(fromLong, {llvm::ConstantInt::get(context, llvm::APInt(64, 0))})
-                : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy);
-            // DECREF all owned slots before the implicit return (skip native f64/i64)
-            {
-                llvm::Function* slotDecref = module->getFunction("Py_DECREF");
-                if (slotDecref) {
-                    for (const auto& slotName : ownedSlots) {
-                        auto vit = valueMap.find(slotName);
-                        if (vit != valueMap.end()) {
-                            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(vit->second)) {
-                                if (alloca->getAllocatedType() != pyObjectPtrTy) continue;
-                                llvm::Value* slotVal = builder.CreateLoad(
-                                    pyObjectPtrTy, alloca, slotName + ".exit");
-                                builder.CreateCall(slotDecref, {slotVal});
+            // A6 native return: implicit fall-through return for specialized variants
+            // with native return type returns 0 as the native type.
+            if (!nativeRetType.empty()) {
+                llvm::Value* zero = (nativeRetType == "float")
+                    ? (llvm::Value*)llvm::ConstantFP::get(context, llvm::APFloat(0.0))
+                    : (llvm::Value*)llvm::ConstantInt::get(context, llvm::APInt(64, 0));
+                // DECREF owned slots (skip native f64/i64)
+                {
+                    llvm::Function* slotDecref = module->getFunction("Py_DECREF");
+                    if (slotDecref) {
+                        for (const auto& slotName : ownedSlots) {
+                            auto vit = valueMap.find(slotName);
+                            if (vit != valueMap.end()) {
+                                if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(vit->second)) {
+                                    if (alloca->getAllocatedType() != pyObjectPtrTy) continue;
+                                    llvm::Value* slotVal = builder.CreateLoad(
+                                        pyObjectPtrTy, alloca, slotName + ".exit");
+                                    builder.CreateCall(slotDecref, {slotVal});
+                                }
                             }
                         }
                     }
                 }
+                builder.CreateRet(zero);
+            } else {
+                // Return a boxed 0 as a sensible default instead of null
+                llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
+                llvm::Value* zero = fromLong
+                    ? (llvm::Value*)builder.CreateCall(fromLong, {llvm::ConstantInt::get(context, llvm::APInt(64, 0))})
+                    : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                // DECREF all owned slots before the implicit return (skip native f64/i64)
+                {
+                    llvm::Function* slotDecref = module->getFunction("Py_DECREF");
+                    if (slotDecref) {
+                        for (const auto& slotName : ownedSlots) {
+                            auto vit = valueMap.find(slotName);
+                            if (vit != valueMap.end()) {
+                                if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(vit->second)) {
+                                    if (alloca->getAllocatedType() != pyObjectPtrTy) continue;
+                                    llvm::Value* slotVal = builder.CreateLoad(
+                                        pyObjectPtrTy, alloca, slotName + ".exit");
+                                    builder.CreateCall(slotDecref, {slotVal});
+                                }
+                            }
+                        }
+                    }
+                }
+                builder.CreateRet(zero);
             }
-            builder.CreateRet(zero);
         }
     }
     if (llvm::verifyModule(*module, &llvm::errs())) {

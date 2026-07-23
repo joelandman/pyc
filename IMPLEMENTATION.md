@@ -57,13 +57,15 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 
 ### Optimization Status
 
-#### Landed (A1–A7 + container + P0/P1)
+#### Landed (A1–A7 + container + P0/P1 + Phase 27)
 - **A1**: Conservative type tracking with loop back-edge widening
 - **A2**: Native `for ... in range(...)` with unboxed i64 loop variables
 - **A3**: Native arithmetic for proven numeric `+ - * // % **` and unary minus
 - **A4**: Homogeneous numeric lists with native `int64`/`double` element storage
 - **A5**: Allocation sinking for numeric locals (native i64 alloca)
-- **A6**: Specialized function variants from proven call-site types (all sites must agree)
+- **A6**: Specialized function variants from proven call-site types (all sites must agree);
+  variants with proven numeric return type return native i64/double (not boxed PyObject*);
+  variants can dispatch to other specialized variants (including self-recursion)
 - **A7**: Allocation counters and microbenchmark guardrails
 - **Container typing**: per-index `listElementTypes` / `subscriptElementTypes`, return
   element maps, nested `list_float`/`list_int` intermediates
@@ -74,6 +76,12 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - **Safe native params**: only when every call site agrees; defaulted params stay boxed
 - **List Auto setters**: only for known list containers (never dicts)
 - **Native get/set fallbacks** on boxed lists after slice/`sorted` demotion
+- **Phase 27 param type inference**: pre-scan function body AST to infer param types
+  from numeric use contexts (BinOp/Compare with numeric constants, UnaryOp)
+- **Phase 27 return type fixpoint**: infer return type from body with self-recursive
+  call propagation; enables native `add` of recursive call results
+- **Phase 27 native i1 icmp**: native numeric comparisons emit i1 directly (no PyBool_New)
+- **Phase 27 dead funcval elimination**: skip callee lowerExpr for known direct functions
 
 #### Planned (not implemented)
 - IR-level constant folding
@@ -81,6 +89,7 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - Dead code elimination at IR level
 - Full insertion-ordered dicts
 - Native `**` / rsqrt and full mass/mag float chain in nbody
+- Extend recursive specialization to mutual recursion and float-returning functions
 
 ### Correctness Guarantees
 - Every optimization preserves a boxed fallback path

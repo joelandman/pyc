@@ -797,6 +797,42 @@ class LoweringVisitor {
                 }
             }
 
+            // Param type inference: scan the function body (without lowering) to
+            // seed param types from numeric use contexts. This lets the body lowering
+            // emit native arithmetic for params and record native self-recursive
+            // call-site signatures, which in turn drives A6 specialized-variant
+            // generation (critical for recursive numeric functions like fib).
+            // Also infers a numeric return type (fixpoint through self-recursion)
+            // so that call results within the body are typed and the `add` of two
+            // recursive calls stays native instead of falling back to PyNumber_Add.
+            {
+                std::unordered_map<std::string, std::string> paramTypes;
+                std::string inferredRetType;
+                inferParamTypesFromBody(node, bareParams, paramTypes, &inferredRetType);
+                for (const auto& p : bareParams) {
+                    const std::string& t = paramTypes[p];
+                    if (t.empty()) continue;
+                    // Don't shadow cell-backed names or names already typed by defaults.
+                    if (isCellBackedHere(p)) continue;
+                    noteType(p, t);
+                    if (t == "int") numericLocals.insert(p);
+                    else if (t == "float") numericFloatLocals.insert(p);
+                }
+                // Seed the return type so that call results within this body
+                // inherit the numeric type. Without this, `fib(n-1) + fib(n-2)`
+                // sees both call results as "boxed" and the add goes through
+                // PyNumber_Add even when fib provably returns int.
+                if (inferredRetType == "int" || inferredRetType == "float") {
+                    currentFnReturnType = inferredRetType;
+                    // Pre-record on the IRFunction so call-result type lookup
+                    // (fn.returnType at lowerCall) sees the right type during
+                    // this function's body lowering.
+                    for (auto& fnr : ir.functions) {
+                        if (fnr.name == defIRName) { fnr.returnType = inferredRetType; break; }
+                    }
+                }
+            }
+
             for (const auto& c : node->children) {
                 if (c && (c->type == "Default" || c->type == "Decorator")) continue;
                 lower(c.get());
@@ -1578,6 +1614,262 @@ class LoweringVisitor {
         return result;
     }
 
+    // Param type inference: scan a function body AST (without lowering) to infer
+    // parameter types from how they are used in numeric contexts. This runs before
+    // body lowering so that noteType/numericLocals are seeded and the lowering itself
+    // produces native arithmetic + native self-recursive call-site signatures.
+    //
+    // Inference rules (conservative — any conflicting or non-numeric use cancels):
+    //   - BinOp(param, op, numeric_constant)  → param inherits constant's numeric type
+    //   - Compare(param, op, numeric_constant) → param inherits constant's numeric type
+    //   - UnaryOp(-param) / UnaryOp(+param)    → param is numeric (int if unknown)
+    //   - Return(param) where other returns are numeric → consistent
+    //   - Any non-numeric use (str.method, subscript, container literal, etc.) → cancel
+    //
+    // `params` is the set of bare parameter names to infer. Returns a map
+    // param name → "int" | "float" | "" (unknown/contradictory).
+    // `outReturnType` (optional) receives the inferred return type ("int"/"float"/"boxed")
+    // computed as a single-function fixpoint: non-recursive returns seed it, then
+    // self-recursive calls are assumed to return the current best estimate.
+    void inferParamTypesFromBody(const ASTNode* funcNode,
+                                 const std::vector<std::string>& bareParams,
+                                 std::unordered_map<std::string, std::string>& outTypes,
+                                 std::string* outReturnType = nullptr) {
+        // Collect param set (skip *args/**kwargs markers already stripped by caller).
+        std::unordered_set<std::string> paramSet(bareParams.begin(), bareParams.end());
+        for (const auto& p : bareParams) outTypes[p] = "";
+
+        // Track per-param: inferred type ("int"/"float"), and whether we've seen a
+        // non-numeric use that disqualifies it.
+        std::unordered_map<std::string, std::string> inferred;
+        std::unordered_set<std::string> disqualified;
+        for (const auto& p : bareParams) inferred[p] = "";
+
+        // Self-recursive return type estimate, updated by the fixpoint below.
+        // Used by exprNumType to type self-calls when computing return expr types.
+        std::string selfReturnType;
+
+        // Determine the numeric type of an AST expression *as seen by the caller*,
+        // WITHOUT relying on valueTypes (params aren't lowered yet). Constants and
+        // already-typed names are resolved; everything else is "boxed".
+        std::function<std::string(const ASTNode*)> exprNumType = [&](const ASTNode* n) -> std::string {
+            if (!n) return "boxed";
+            if (n->type == "Constant") {
+                if (n->is_none || n->is_str) return "boxed";
+                if (n->is_float) return "float";
+                if (n->is_bool) return "int";
+                if (n->is_complex) return "boxed";
+                return "int";
+            }
+            if (n->type == "Name") {
+                auto it = inferred.find(n->id);
+                if (it != inferred.end() && !it->second.empty()) return it->second;
+                // A name we're inferring but haven't determined yet: treat as
+                // "unknown-num" so BinOp(param, op, other_param) can still work
+                // once the other side resolves. For now return "boxed" to be safe.
+                if (paramSet.count(n->id)) return "num?";  // provisional
+                auto vit = valueTypes.find(n->id);
+                if (vit != valueTypes.end()) {
+                    const std::string& t = vit->second;
+                    if (t == "int" || t == "i64" || t == "bool") return "int";
+                    if (t == "float") return "float";
+                }
+                return "boxed";
+            }
+            if (n->type == "BinOp") {
+                std::string op = n->id;
+                std::string lt = exprNumType(n->children[0].get());
+                std::string rt = n->children.size() > 1 ? exprNumType(n->children[1].get()) : "boxed";
+                auto isNum = [](const std::string& t){ return t=="int" || t=="float" || t=="num?"; };
+                if (op == "/" || op == "truediv") {
+                    return (isNum(lt) && isNum(rt)) ? "float" : "boxed";
+                }
+                if (isNum(lt) && isNum(rt)) {
+                    return (lt == "float" || rt == "float") ? "float" : "int";
+                }
+                return "boxed";
+            }
+            if (n->type == "UnaryOp") {
+                std::string ot = exprNumType(n->children[0].get());
+                if (ot == "int" || ot == "float" || ot == "num?") return ot == "num?" ? "int" : ot;
+                return "boxed";
+            }
+            if (n->type == "Call") {
+                // Calls to numeric builtins: abs, int, round, ord, len, pow, divmod
+                if (!n->children.empty() && n->children[0] && n->children[0]->type == "Name") {
+                    const std::string& fn = n->children[0]->id;
+                    if (fn == "abs" || fn == "int" || fn == "round" || fn == "ord" ||
+                        fn == "len" || fn == "pow" || fn == "divmod") {
+                        return "int";
+                    }
+                    if (fn == "float") return "float";
+                    // Self-recursive call: assume it returns the current best estimate
+                    // of this function's return type. This enables a fixpoint where
+                    // `return fib(n-1) + fib(n-2)` sees fib's return as int once the
+                    // base case `return n` establishes int.
+                    if (outReturnType && fn == funcNode->id && !selfReturnType.empty()) {
+                        return selfReturnType;
+                    }
+                }
+                return "boxed";
+            }
+            return "boxed";
+        };
+
+        // A use of a param in a context that proves it's numeric.
+        auto noteNumericUse = [&](const std::string& pname, const std::string& t) {
+            if (disqualified.count(pname)) return;
+            if (t != "int" && t != "float") return;
+            std::string& cur = inferred[pname];
+            if (cur.empty()) cur = t;
+            else if (cur != t) {
+                // Promote mixed int/float → float (Python semantics)
+                if (cur == "int" && t == "float") cur = "float";
+                else if (cur == "float" && t == "int") { /* keep float */ }
+                else { disqualified.insert(pname); cur = ""; }
+            }
+        };
+
+        // Walk the body, not descending into nested FunctionDef/Lambda.
+        std::function<void(const ASTNode*)> walk = [&](const ASTNode* n) {
+            if (!n) return;
+            if (n->type == "FunctionDef" || n->type == "Lambda") return;
+            if (n->type == "BinOp") {
+                const ASTNode* l = n->children[0].get();
+                const ASTNode* r = n->children.size() > 1 ? n->children[1].get() : nullptr;
+                std::string lt = exprNumType(l);
+                std::string rt = exprNumType(r);
+                // If one side is a param and the other is a proven numeric constant,
+                // infer the param's type.
+                if (l && l->type == "Name" && paramSet.count(l->id) && rt != "boxed" && rt != "num?") {
+                    noteNumericUse(l->id, rt);
+                }
+                if (r && r->type == "Name" && paramSet.count(r->id) && lt != "boxed" && lt != "num?") {
+                    noteNumericUse(r->id, lt);
+                }
+                // Both sides params: if both are params and at least one is already
+                // resolved, propagate.
+                if (l && r && l->type == "Name" && r->type == "Name" &&
+                    paramSet.count(l->id) && paramSet.count(r->id)) {
+                    const std::string& lt2 = inferred[l->id];
+                    const std::string& rt2 = inferred[r->id];
+                    if (!lt2.empty() && rt2.empty()) noteNumericUse(r->id, lt2);
+                    if (!rt2.empty() && lt2.empty()) noteNumericUse(l->id, rt2);
+                }
+            } else if (n->type == "Compare") {
+                const ASTNode* l = n->children[0].get();
+                const ASTNode* r = n->children.size() > 1 ? n->children[1].get() : nullptr;
+                std::string lt = exprNumType(l);
+                std::string rt = exprNumType(r);
+                if (l && l->type == "Name" && paramSet.count(l->id) && rt != "boxed" && rt != "num?") {
+                    noteNumericUse(l->id, rt);
+                }
+                if (r && r->type == "Name" && paramSet.count(r->id) && lt != "boxed" && lt != "num?") {
+                    noteNumericUse(r->id, lt);
+                }
+            } else if (n->type == "UnaryOp") {
+                const ASTNode* operand = n->children[0].get();
+                if (operand && operand->type == "Name" && paramSet.count(operand->id)) {
+                    // -param or +param implies numeric (int unless otherwise known)
+                    std::string& cur = inferred[operand->id];
+                    if (cur.empty()) noteNumericUse(operand->id, "int");
+                }
+            } else if (n->type == "Return") {
+                // Returning a param: consistent with the function's return type.
+                // We don't use this to set the type, but it doesn't disqualify.
+                // (If the param was inferred numeric, returning it is fine.)
+                // No action needed.
+            } else if (n->type == "Call") {
+                // A param passed to a call: only disqualify if the callee is a
+                // known non-numeric builtin (str, list, dict, print, etc.) or a
+                // method call on the param. For unknown/generic calls we stay
+                // neutral (the call-site analysis handles cross-function types).
+                if (!n->children.empty() && n->children[0]) {
+                    const ASTNode* callee = n->children[0].get();
+                    if (callee->type == "Attribute") {
+                        // param.method(...) — method call on a param implies non-numeric
+                        const ASTNode* base = callee->children.empty() ? nullptr : callee->children[0].get();
+                        if (base && base->type == "Name" && paramSet.count(base->id)) {
+                            disqualified.insert(base->id);
+                            inferred[base->id] = "";
+                        }
+                    }
+                }
+            } else if (n->type == "Attribute") {
+                // param.attr — attribute access on a param implies non-numeric
+                const ASTNode* base = n->children.empty() ? nullptr : n->children[0].get();
+                if (base && base->type == "Name" && paramSet.count(base->id)) {
+                    disqualified.insert(base->id);
+                    inferred[base->id] = "";
+                }
+            } else if (n->type == "Subscript") {
+                // param[...] — subscript on a param implies non-numeric (it's a container)
+                const ASTNode* base = n->children.empty() ? nullptr : n->children[0].get();
+                if (base && base->type == "Name" && paramSet.count(base->id)) {
+                    disqualified.insert(base->id);
+                    inferred[base->id] = "";
+                }
+            }
+            // Recurse into children (except nested defs/lambdas handled above)
+            for (const auto& c : n->children) walk(c.get());
+        };
+        for (const auto& c : funcNode->children) {
+            if (c && (c->type == "Default" || c->type == "Decorator")) continue;
+            walk(c.get());
+        }
+
+        // Finalize: only emit types for params that were consistently numeric.
+        for (const auto& p : bareParams) {
+            if (disqualified.count(p)) { outTypes[p] = ""; continue; }
+            outTypes[p] = inferred[p];
+        }
+
+        // Return type fixpoint: iterate up to 5 times. Seed from non-recursive
+        // return expressions, then propagate through self-recursive calls.
+        if (outReturnType) {
+            std::string best = "boxed";
+            for (int iter = 0; iter < 5; ++iter) {
+                selfReturnType = best;
+                std::string candidate = "boxed";
+                bool first = true;
+                // Within a single iteration, update selfReturnType as soon as we
+                // find a non-recursive return, so later recursive returns in the
+                // same pass see the improved estimate. This accelerates convergence.
+                std::function<void(const ASTNode*)> collectReturns = [&](const ASTNode* n) {
+                    if (!n) return;
+                    if (n->type == "FunctionDef" || n->type == "Lambda") return;
+                    if (n->type == "Return") {
+                        const ASTNode* val = nullptr;
+                        for (const auto& c : n->children) {
+                            if (c && c->type != "Default") { val = c.get(); break; }
+                        }
+                        std::string rt = val ? exprNumType(val) : "boxed";
+                        if (rt == "num?") rt = "int";  // unresolved param → assume int
+                        if (first) { candidate = rt; first = false; }
+                        else if (candidate != rt) {
+                            // Mixed return types → promote int+float→float, else boxed
+                            auto isNum = [](const std::string& t){ return t=="int"||t=="float"; };
+                            if (isNum(candidate) && isNum(rt))
+                                candidate = (candidate=="float"||rt=="float") ? "float" : "int";
+                            else
+                                candidate = "boxed";
+                        }
+                        // Update selfReturnType for subsequent returns in this pass.
+                        selfReturnType = candidate;
+                    }
+                    for (const auto& c : n->children) collectReturns(c.get());
+                };
+                for (const auto& c : funcNode->children) {
+                    if (c && (c->type == "Default" || c->type == "Decorator")) continue;
+                    collectReturns(c.get());
+                }
+                if (candidate == best) break;  // fixpoint reached
+                best = candidate;
+            }
+            *outReturnType = best;
+        }
+    }
+
     // A6: Generate specialized function variants based on call-site type info.
     // For each function that is called with all-proven-numeric arguments at all
     // call sites (with consistent arg count matching declared params), create
@@ -1662,6 +1954,15 @@ class LoweringVisitor {
             // Copy instructions — variants have the same body as original.
             // Codegen uses the variant name to allocate native param slots.
             variant.body = origFunc->body;
+
+            // A6 native return: if the original function has a proven numeric return
+            // type, the variant returns a native i64/double instead of a boxed
+            // PyObject*. This eliminates PyInt_FromLong/PyFloat_FromDouble on every
+            // return and enables fully native recursive chains (e.g. fib(n-1)+fib(n-2)
+            // becomes a native i64 add with no boxing at any recursion level).
+            if (origFunc->returnType == "int" || origFunc->returnType == "float") {
+                variant.nativeReturnType = origFunc->returnType;
+            }
 
             ir.functions.push_back(variant);
         }
@@ -4283,7 +4584,13 @@ class LoweringVisitor {
         // Lower the callee expression to its value (important for Subscript, Name that holds a token, etc.)
         std::string calleeVal;
         if (!node->children.empty() && node->children[0]) {
-            calleeVal = lowerExpr(node->children[0].get());
+            // Skip for plain Names already resolved to a known direct IR function:
+            // lowering those would emit a dead pyc_make_func per call site (the
+            // function-value temp is never used since the call dispatches directly).
+            // This matches the early-skip at line ~3675.
+            if (!(node->children[0]->type == "Name" && knownIRFunctions.count(funcName))) {
+                calleeVal = lowerExpr(node->children[0].get());
+            }
         }
 
         if (!isIndirectCallee) {

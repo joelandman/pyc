@@ -78,6 +78,11 @@ struct IRFunction {
     // Used by callers to infer return value types. Contains: "float", "int", "boxed", "list", "dict", etc.
     // If multiple different types are returned, stored as "boxed".
     std::string returnType;
+    // A6: For specialized variants, the native return type ("int" or "float") when the
+    // variant returns a native i64/double instead of a boxed PyObject*. Empty means
+    // the variant returns a boxed PyObject* (the default for non-specialized functions
+    // and for specialized variants whose return type couldn't be proven numeric).
+    std::string nativeReturnType;
     // Return element types: maps return value index → element type when function returns a list/tuple
     // Tracks per-index types (e.g., index 0 = float_list, index 1 = float_list for a list of float lists)
     std::unordered_map<size_t, std::string> returnContainerElementTypes;

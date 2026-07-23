@@ -148,18 +148,12 @@ Based on the baseline, targets for n=50,000:
 | After LTO (Phase 12) | 0.48s | 1.7x slower |
 | After float chain (Phase 13) | **0.44s** | **1.6x slower** |
 
-For fibn (recursive), the challenge is bigger:
+For fibn (recursive), now fully native via A6 specialization:
 
-| Level | Target Speedup vs Python | Target Time (n=25) |
+| Level | Target Speedup vs Python | Target Time (n=35) |
 |-------|--------------------------|-------------------|
-| Current (all levels) | 0.5x (14x slower) | 0.51s |
-| After quick wins | 1x (parity) | 0.037s |
-| After medium priority (TCO + specialization) | 3-5x | 0.007-0.012s |
-
-**Actual progress:**
-| Achieved | Performance (n=25) |
-|----------|-------------------|
-| Current | 7.4s (3.5x slower) |
+| Before Phase 27 | 0.23× (4.3× slower) | 2.05s → 0.44s |
+| After Phase 27 (native recursion) | 44× faster | 2.05s → **0.047s** |
 
 ---
 
@@ -284,7 +278,9 @@ All **300/300** tests pass (inline + file cases, including `nbody.py`, `hash.py`
 | nbody 50K | ~0.24s | **~0.07s** | **~3.4× faster** | `--opt=1..3` (LTO); opt0 = true O0 debug |
 | nbody 500K | ~2.33s | **~0.70s** | **~3.3× faster** | — |
 | float_loop(2M) | ~0.27s | **~5 ms** | **~58× faster** | pure native float chain |
-| fibn(28) | ~0.10s | ~0.44s | ~4.3× slower | recursive boxed calls |
+| fibn(28) | ~0.10s | **~4 ms** | **~27× faster** | native recursive specialization (A6+) |
+| fibn(35) | ~2.05s | **~47 ms** | **~44× faster** | — |
+| fibn(40) | ~22.4s | **~0.54s** | **~41× faster** | — |
 | nbody 50K (Phase 24) | ~0.33s | ~0.54s | 1.6× slower | Pre-P0/P1 |
 | nbody 50K (LTO baseline) | — | 4.3s | 15× slower | Pre-Phase 12 |
 
@@ -301,6 +297,42 @@ Profile notes: `PROFILE_NBODY.md`.
 **Phase 26 native chain + spine** — `f64assign`, native pow/`m1*mag`, `Unpack2/3`,
 i64 list for-loops (`SizeI64` + `GetItemI64`). `@advance`: ~15× `fmul`, 0× `PyNumber_Multiply`.
 
+### Phase 27: native recursive specialization
+
+Turned the fibn bottleneck (4.3× slower than CPython) into a **~40× speedup** by making
+recursive numeric functions fully native through the existing A6 specialization machinery:
+
+1. **Param type inference from body** — pre-scan each function's AST to infer param types
+   from numeric use contexts (BinOp/Compare with numeric constants, UnaryOp). Seeds
+   `valueTypes` + `numericLocals` before body lowering so self-recursive call sites
+   record native arg types and `generateSpecializedVariants()` produces a variant.
+
+2. **Return type fixpoint** — infer a function's return type as a single-function fixpoint:
+   non-recursive returns seed the type, self-recursive calls assume the current estimate
+   and propagate. Enables `fn.returnType = "int"` for `fib` so call results within the body
+   are typed int and the `add` of two recursive calls is native `i64 add` (not `PyNumber_Add`).
+
+3. **Specialized variant native return** — variants with a proven numeric return type
+   return i64/double directly (`define i64 @__specialized_fib_i`) instead of boxed PyObject*.
+   Eliminates `PyInt_FromLong` on every return and enables fully native recursive chains.
+
+4. **Specialized variant self-dispatch** — relaxed the A6 codegen guard so specialized
+   variants can dispatch to specialized variants (including self-recursion), not just
+   non-specialized functions.
+
+5. **Dead funcval elimination** — skip `lowerExpr` for known direct callees in the late
+   callee lowering path, eliminating dead `pyc_make_func` + `PyUnicode_FromString` calls
+   per call site (4 string allocs + 2 func objects per recursion level removed).
+
+6. **Native i1 icmp** — native numeric comparisons emit i1 results directly instead of
+   boxing to `PyBool_New`, letting `br` use the i1 without a round-trip through
+   box → load → compare. `getAsPyObject` boxes i1 lazily on escape.
+
+**Result:** `__specialized_fib_i` is a fully native function: `icmp sle i64` → `br i1`,
+`sub i64` → `call i64 @__specialized_fib_i` → `add i64` → `ret i64`. Zero boxing,
+zero refcounting, zero runtime dispatch in the hot path. LLVM further optimizes it to
+an accumulator-style tail-recursive loop.
+
 ### Opt levels (current)
 
 - `--opt=0`: true O0 — no runtime bitcode LTO, no LLVM module passes (debug / raw IR).
@@ -312,7 +344,7 @@ i64 list for-loops (`SizeI64` + `GetItemI64`). `@advance`: ~15× `fmul`, 0× `Py
 1. Further cut `Py_DECREF` / box-unbox on coord loads
 2. Dict insertion order (hash vs insertion)
 3. Escape analysis / stack floats for ephemeral boxes
-4. fibn: specialization / less boxed recursion
+4. Extend native recursive specialization to more patterns (mutual recursion, float-returning)
 
 ### Optimization Infrastructure (Phases 15–26)
 
