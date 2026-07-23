@@ -7838,10 +7838,18 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     auto module = Codegen::mergeModules(modules, context, "pyc_module");
     if (!module) return false;
     
-    // LTO: Link precompiled runtime bitcode before optimization
-    std::string rtBitcodePath = PYC_RUNTIME_BC;
-    codegen.linkRuntimeBitcode(module.get(), rtBitcodePath);
-    
+    // LTO: link precompiled runtime bitcode before optimization at opt>=1.
+    // True --opt=0 skips bitcode LTO so IR stays raw codegen + external runtime.
+    const bool useLTO = (optLevel >= 1);
+    if (useLTO) {
+        std::string rtBitcodePath = PYC_RUNTIME_BC;
+        codegen.linkRuntimeBitcode(module.get(), rtBitcodePath);
+        if (verbose)
+            std::cout << "Linked runtime bitcode for LTO optimization\n";
+    } else if (verbose) {
+        std::cout << "opt=0: skipping runtime bitcode LTO (true O0 debug mode)\n";
+    }
+
     codegen.optimize(module.get(), optLevel);
     if (emitLLVM) {
         if (codegen.emitLLVM(module.get(), outputPath + ".ll")) {
@@ -7862,11 +7870,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         std::string linkCmd = "clang++ ";
         if (useStatic) linkCmd += "-static -s -Wl,--gc-sections ";
 
-        // Prefer prebuilt static runtime lib if available (from build or install)
-        // Otherwise fall back to compiling the small runtime source (always works during development)
         std::string sourceDir = PYC_SOURCE_DIR;
         std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
-        // Try common locations for libpycrt.a
         for (const auto& libdir : {"./build", "../build", ".", "/usr/local/lib", "/usr/lib"}) {
             std::string libpath = std::string(libdir) + "/libpycrt.a";
             if (std::ifstream(libpath).good()) {
@@ -7874,13 +7879,6 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
                 break;
             }
         }
-        // The MainWrapper.cpp provides the C `main` that calls
-        // pyc_setup_sys(argc, argv) and then dispatches to the
-        // user code's `pyc_user_main`. We always compile it from
-        // source here for simplicity (it has no other dependencies
-        // beyond the runtime header).
-        // B7: Include the generated module registry C source
-        // Also add Python include path for B7 module registry
         std::string pythonIncludes = "";
         FILE* pipe = popen("python3-config --includes 2>/dev/null | grep -o '\\-I[^ ]*' | head -1", "r");
         if (pipe) {
@@ -7891,19 +7889,20 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             }
             pclose(pipe);
         }
-        // -x c applies to everything after it on the command line, so reset with
-        // -x none or the C++ sources that follow would be compiled as C.
-        // Use -flto=thin to enable LinkTimeOptimization.
-        // -Wl,--allow-multiple-definition allows LLVM to inline runtime functions
-        // into the generated object while still linking libpycrt.a for
-        // non-inlined symbols (PCRE2, system calls, etc.)
-        linkCmd += outputPath + ".o -flto=thin " +
-            "-Wl,--allow-multiple-definition " +
-            "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
+        // opt>=1: -flto=thin so the object (with linked runtime BC) can finalize LTO.
+        // opt=0: no -flto; link libpycrt/Runtime.cpp as a normal archive/source.
+        // --allow-multiple-definition only needed when LTO may duplicate runtime symbols.
+        if (useLTO) {
+            linkCmd += outputPath + ".o -flto=thin -Wl,--allow-multiple-definition ";
+        } else {
+            linkCmd += outputPath + ".o ";
+        }
+        linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
             pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
             runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
         if (std::system(linkCmd.c_str()) == 0) {
-            std::cout << "Linked with runtime to " << outputPath << " (static=" << useStatic << ")\n";
+            std::cout << "Linked with runtime to " << outputPath
+                      << " (static=" << useStatic << ", lto=" << (useLTO ? 1 : 0) << ")\n";
         } else {
             std::cerr << "Link failed. Run manually: " << linkCmd << std::endl;
             return false;

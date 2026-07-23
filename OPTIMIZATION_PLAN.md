@@ -7,10 +7,10 @@ Each level encompasses all lower-level optimizations with additional passes.
 
 | optLevel | LLVM Level | Description |
 |----------|------------|-------------|
-| 0 | None | No optimization (debug builds) |
-| 1 | O1 | Simple optimization |
-| 2 | O2 | Standard optimization (default) |
-| 3 | O3 | Aggressive optimization |
+| 0 | None | True O0: no runtime bitcode LTO, no module passes (debug/IR) |
+| 1 | O1 + LTO | Simple optimization + runtime bitcode LTO |
+| 2 | O2 + LTO | Standard optimization (default) |
+| 3 | O3 + LTO | Aggressive optimization |
 
 **Gap:** Levels 4-5 not implemented. Level 3 needs enhancement for advanced passes.
 
@@ -21,14 +21,15 @@ Each level encompasses all lower-level optimizations with additional passes.
 ### Level 0: No Optimization (`--opt=0`)
 **Purpose:** Debug builds, correctness verification, IR inspection
 
-**Passes:**
-- None (raw LLVM IR from codegen)
+**Passes / link:**
+- No `linkRuntimeBitcode()` (runtime stays external via libpycrt)
+- No LLVM module pass pipeline
+- Final link without `-flto`, `-O0`
 
 **Characteristics:**
-- Maximum debuggability
-- Slowest execution
-- Largest binary size
-- Every IR instruction maps to runtime call
+- Maximum debuggability; raw frontend IR via `--emit-llvm`
+- Slowest execution among opt levels
+- Test runner defaults to `--opt=0` for correctness
 
 **Use cases:**
 - Debugging compiler bugs

@@ -3,9 +3,12 @@
 Measured wall-clock **execution** time (median of 3 runs; nbody 500k = 1 run).
 Compile time excluded. Host: 2026-07-23. Binary: `build/pyc`. Interpreter: system `python3`.
 
-## Results (post Phase 26)
+## Results (post Phase 26; pre true-O0)
 
-| Benchmark | Python | `--opt=0` | `--opt=1` | `--opt=2` | `--opt=3` | Best vs Python |
+> Table below was measured when `--opt=0` still ran LTO + LLVM O1. After true O0,
+> re-measure opt0 separately; opt1–3 should match these numbers.
+
+| Benchmark | Python | `--opt=0`* | `--opt=1` | `--opt=2` | `--opt=3` | Best vs Python |
 |-----------|-------:|----------:|----------:|----------:|----------:|---------------:|
 | nbody(50k) | 0.241 s | 0.071 s | 0.077 s | 0.074 s | 0.074 s | **3.39× faster** |
 | nbody(500k) | 2.326 s | 0.701 s | 0.714 s | 0.721 s | 0.716 s | **3.32× faster** |
@@ -16,9 +19,11 @@ Compile time excluded. Host: 2026-07-23. Binary: `build/pyc`. Interpreter: syste
 | list_sum(300k) | 0.063 s | 0.062 s | 0.062 s | 0.055 s | 0.060 s | **1.14× faster** |
 | nested_float_lists | 0.324 s | 0.105 s | 0.108 s | 0.100 s | 0.107 s | **3.26× faster** |
 
+\* Historical: opt0 ≈ opt1 (LTO + O1). **True O0** (current): no LTO, no LLVM passes — expect slower.
+
 ### Ratio (pyc / Python; &lt;1 = faster than CPython)
 
-| Benchmark | opt0 | opt1 | opt2 | opt3 |
+| Benchmark | opt0* | opt1 | opt2 | opt3 |
 |-----------|-----:|-----:|-----:|-----:|
 | nbody(50k) | 0.29× | 0.32× | 0.31× | 0.31× |
 | nbody(500k) | 0.30× | 0.31× | 0.31× | 0.31× |
@@ -29,45 +34,30 @@ Compile time excluded. Host: 2026-07-23. Binary: `build/pyc`. Interpreter: syste
 | list_sum(300k) | 0.98× | 0.99× | 0.88× | 0.95× |
 | nested_float_lists | 0.32× | 0.33× | 0.31× | 0.33× |
 
-## Why `--opt=0..3` barely differs
-
-Pipeline order:
+## Pipeline
 
 ```
-codegen IR → linkRuntimeBitcode() → optimize(--opt=N) → object / final link -ON
+codegen IR
+  → [opt>=1] linkRuntimeBitcode()
+  → [opt>=1] optimize(O1/O2/O3)
+  → object
+  → final link  (-flto=thin only if opt>=1; -O0 / -O1 / -O2 / -O3)
 ```
 
-### 1. LTO is always on
+| Flag | Runtime bitcode LTO | LLVM module passes | Final link |
+|------|---------------------|--------------------|------------|
+| `--opt=0` | **off** | **none** (true O0) | no `-flto`, `-O0` |
+| `--opt=1` | on | O1 | `-flto=thin -O1` |
+| `--opt=2` | on | O2 | `-flto=thin -O2` (default) |
+| `--opt=3` | on | O3 | `-flto=thin -O3` |
 
-`Compiler::compile` always calls `linkRuntimeBitcode()` **before** `optimize()`.
-Runtime helpers (`Py_DECREF`, freelist, `GetItemDouble`, …) are visible to LLVM at
-every opt level, so the big inlining win is not gated on O2/O3.
+Use **`--opt=0 --emit-llvm`** to inspect raw frontend IR (external `Py_*` calls, no inlined runtime).
 
-### 2. `--opt=0` is not LLVM O0
+### Why opt1–3 still look similar on nbody
 
-In `Codegen::optimize()`:
-
-| Flag | LLVM pipeline |
-|------|----------------|
-| `--opt=0` | **O1** (explicitly; “minimal” still runs O1) |
-| `--opt=1` | O1 |
-| `--opt=2` | O2 |
-| `--opt=3` | O3 |
-
-So **opt0 ≈ opt1** for the pass manager. Only 2/3 step up.
-
-### 3. Hot path is already frontend-native
-
-nbody’s `advance` is lowered to explicit `fmul`/`fadd`/`fsub`/`llvm.pow`,
-`Unpack2/3`, i64 for-index, `GetItemDouble`/`SetItemDouble`. O2/O3 help most when
-they must invent that shape from abstract calls; here the remaining cost is
-refcount/structure work, not “unoptimized LLVM IR.”
-
-### 4. What would make higher opt matter more
-
-- A true O0 mode (skip bitcode LTO and/or run no module passes) for debug/compare
-- Workloads still dominated by abstract `Pyc_Apply` / boxed calls (e.g. **fibn**)
-  where extra inlining can still shave a little (see slight opt3 gain on fibn)
+Hot path is already frontend-native (`fmul`/`llvm.pow`, Unpack2/3, i64 for-index,
+GetItemDouble). Remaining cost is refcount/structure; O2/O3 add little once LTO
+has inlined runtime helpers.
 
 ## Benchmark definitions
 
@@ -83,7 +73,6 @@ refcount/structure work, not “unoptimized LLVM IR.”
 
 ## Takeaways
 
-- **nbody ~3.3× faster than CPython** at all opt levels after Phases 25–26.
-- **float_loop ~58×** — pure native float chain.
-- **fibn ~4× slower** — recursive boxed `Pyc_Apply`; not fixed by O3.
-- Prefer **`--opt=2`** as default: same runtime as 0/1/3 here, standard pipeline.
+- Prefer **`--opt=2`** for release.
+- Use **`--opt=0`** for debugging and IR dumps (true O0, no LTO).
+- **fibn** remains ~4× slower (boxed recursion); not fixed by O3.

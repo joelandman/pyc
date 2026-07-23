@@ -2817,7 +2817,10 @@ bool Codegen::emitObject(llvm::Module* module, const std::string& outputPath) {
 
 void Codegen::optimize(llvm::Module* module, int optLevel) {
   if (!module) return;
-  
+  // True O0: no module passes (debug / IR inspection). Runtime bitcode LTO is
+  // also skipped by Compiler when optLevel <= 0.
+  if (optLevel <= 0) return;
+
   llvm::LoopAnalysisManager LAM;
   llvm::FunctionAnalysisManager FAM;
   llvm::CGSCCAnalysisManager CGAM;
@@ -2828,21 +2831,12 @@ void Codegen::optimize(llvm::Module* module, int optLevel) {
   PB.registerFunctionAnalyses(FAM);
   PB.registerLoopAnalyses(LAM);
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-  
-  if (optLevel == 0) {
-    // Level 0: minimal optimization - use O1 which includes basic passes
-    // This provides instcombine, DCE, simplify CFG, and basic inlining
-    llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(
-        llvm::OptimizationLevel::O1);
-    MPM.run(*module, MAM);
-  } else {
-    // Levels 1-3: standard LLVM pipelines
-    llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(
-        optLevel == 1 ? llvm::OptimizationLevel::O1 :
-        optLevel == 2 ? llvm::OptimizationLevel::O2 :
-        llvm::OptimizationLevel::O3);
-    MPM.run(*module, MAM);
-  }
+
+  llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(
+      optLevel == 1 ? llvm::OptimizationLevel::O1 :
+      optLevel == 2 ? llvm::OptimizationLevel::O2 :
+      llvm::OptimizationLevel::O3);
+  MPM.run(*module, MAM);
 }
 
 bool Codegen::emitLLVM(llvm::Module* module, const std::string& outputPath) {
@@ -2964,7 +2958,6 @@ bool Codegen::linkRuntimeBitcode(
         return true; // not fatal - continue without LTO
     }
     
-    std::cout << "Linked runtime bitcode for LTO optimization\n";
     return true;
 }
 

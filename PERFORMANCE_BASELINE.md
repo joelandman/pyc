@@ -212,7 +212,7 @@ and linking it into the compiled module before optimization passes run.
 - `Runtime.cpp` - uses shared PyObject struct (removed duplicate definition)
 - `CMakeLists.txt` - compiles Runtime.cpp to `runtime.bc` at build time, links it
 - `Codegen.cpp` - loads runtime bitcode into LLVM module, links with `--allow-multiple-definition`
-- `Compiler.cpp` - calls `linkRuntimeBitcode()` before optimization
+- `Compiler.cpp` - calls `linkRuntimeBitcode()` before optimization when `opt>=1`
 
 **Result:**
 | Benchmark | Before LTO | After LTO | Gap to Python |
@@ -281,7 +281,7 @@ All **300/300** tests pass (inline + file cases, including `nbody.py`, `hash.py`
 
 | Benchmark | Python | pyc | Gap | Notes |
 |-----------|--------|-----|-----|-------|
-| nbody 50K | ~0.24s | **~0.07s** | **~3.4× faster** | all `--opt=0..3` similar (LTO) |
+| nbody 50K | ~0.24s | **~0.07s** | **~3.4× faster** | `--opt=1..3` (LTO); opt0 = true O0 debug |
 | nbody 500K | ~2.33s | **~0.70s** | **~3.3× faster** | — |
 | float_loop(2M) | ~0.27s | **~5 ms** | **~58× faster** | pure native float chain |
 | fibn(28) | ~0.10s | ~0.44s | ~4.3× slower | recursive boxed calls |
@@ -301,10 +301,11 @@ Profile notes: `PROFILE_NBODY.md`.
 **Phase 26 native chain + spine** — `f64assign`, native pow/`m1*mag`, `Unpack2/3`,
 i64 list for-loops (`SizeI64` + `GetItemI64`). `@advance`: ~15× `fmul`, 0× `PyNumber_Multiply`.
 
-### Why higher `--opt` barely helps
+### Opt levels (current)
 
-Runtime bitcode is linked **before** LLVM passes at every level; `--opt=0` still runs
-**O1**. Hot IR is already frontend-native. See `PERFORMANCE_OPT_LEVELS.md`.
+- `--opt=0`: true O0 — no runtime bitcode LTO, no LLVM module passes (debug / raw IR).
+- `--opt=1..3`: LTO then O1/O2/O3. Hot IR is already frontend-native, so 1–3 look similar on nbody.
+  See `PERFORMANCE_OPT_LEVELS.md`.
 
 ### Remaining Work
 

@@ -4,7 +4,11 @@
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Usage: pyc <input.py> [-o output] [--static] [--opt=0|1|2|3] [--emit-llvm] [--emit-asm] [-S] [--verbose]\n";
+        std::cerr << "Usage: pyc <input.py> [-o output] [--static] [--opt=0|1|2|3] [--emit-llvm] [--emit-asm] [-S] [--verbose]\n"
+                  << "  --opt=0  true O0: no runtime bitcode LTO, no LLVM passes (debug/IR inspect)\n"
+                  << "  --opt=1  O1 + runtime LTO (default path for light opt)\n"
+                  << "  --opt=2  O2 + runtime LTO (default)\n"
+                  << "  --opt=3  O3 + runtime LTO\n";
         return 1;
     }
     std::string input = argv[1];

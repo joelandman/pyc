@@ -1,6 +1,6 @@
 # nbody Profile — Phases 25–26
 
-## Wall-clock (`--opt=2`; similar at 0/1/3)
+## Wall-clock (`--opt=2`; similar at 1/3; opt0 is true O0 debug)
 
 | Workload | Python | pyc | Speedup |
 |----------|-------:|----:|--------:|
@@ -31,10 +31,11 @@ Energy matches CPython. Opt-level sweep: `PERFORMANCE_OPT_LEVELS.md`.
 4. Native mul when either operand is already double  
 5. Bulk `Unpack2/3`; i64 for-loop index (`SizeI64` + `i64add`)  
 
-## Why O0–O3 look the same
+## Why O1–O3 look the same
 
-LTO bitcode link always runs before opt; `--opt=0` uses LLVM O1; frontend already
-emits the native kernel. Higher opt cannot remove remaining refcount/structure cost.
+`--opt>=1`: runtime bitcode LTO then LLVM O1/O2/O3. `--opt=0`: true O0 (no LTO,
+no module passes) for debug/IR dumps. Frontend already emits the native kernel;
+higher opt cannot remove remaining refcount/structure cost once LTO is on.
 
 ## Remaining (optional)
 

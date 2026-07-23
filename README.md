@@ -32,10 +32,10 @@ pyc hello.py --opt=2 -o hello  # with O2 optimisation
 |------|-------------|
 | `-o output` | Output file path (default: `a.out`) |
 | `--static` | Produce fully static binary (no dynamic libs) |
-| `--opt=0` | No optimization |
-| `--opt=1` | O1 optimization |
-| `--opt=2` | O2 optimization (default) |
-| `--opt=3` | O3 optimization |
+| `--opt=0` | True O0: **no** runtime bitcode LTO, **no** LLVM passes (debug / raw IR) |
+| `--opt=1` | LLVM O1 + runtime bitcode LTO |
+| `--opt=2` | LLVM O2 + runtime bitcode LTO (default) |
+| `--opt=3` | LLVM O3 + runtime bitcode LTO |
 | `--emit-llvm` | Emit LLVM IR to `output.ll` instead of binary |
 | `--emit-asm` / `-S` | Emit assembly to `output.s` instead of binary |
 | `--verbose` | Print verbose compilation information |
