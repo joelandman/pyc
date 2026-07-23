@@ -118,14 +118,65 @@ static std::atomic<long> alloc_list_count{0};
 static std::atomic<long> alloc_dict_count{0};
 static std::atomic<long> alloc_str_count{0};
 
-PyObject* PyInt_FromLong(long v) {
-    if (PyObject* cached = getSmallInt(v)) {
-        return cached;                          // immortal: caller "owns" but cannot free
+// P1: thread-local free-lists for short-lived boxed ints/floats (nbody hot path).
+// Caps keep memory bounded; overflow falls back to delete/new.
+static constexpr int PYC_FREELIST_CAP = 256;
+static thread_local PyObject* g_float_freelist[PYC_FREELIST_CAP];
+static thread_local int g_float_freelist_n = 0;
+static thread_local PyObject* g_int_freelist[PYC_FREELIST_CAP];
+static thread_local int g_int_freelist_n = 0;
+
+static PyObject* allocFloatObj() {
+    if (g_float_freelist_n > 0) {
+        PyObject* obj = g_float_freelist[--g_float_freelist_n];
+        obj->refcount = 1;
+        obj->type = 4;
+        return obj;
+    }
+    alloc_float_count++;
+    PyObject* obj = new PyObject();
+    obj->refcount = 1;
+    obj->type = 4;
+    return obj;
+}
+
+static PyObject* allocIntObj() {
+    if (g_int_freelist_n > 0) {
+        PyObject* obj = g_int_freelist[--g_int_freelist_n];
+        obj->refcount = 1;
+        obj->type = 0;
+        return obj;
     }
     alloc_int_count++;
     PyObject* obj = new PyObject();
     obj->refcount = 1;
     obj->type = 0;
+    return obj;
+}
+
+static void freeScalarObj(PyObject* obj) {
+    if (!obj) return;
+    // P1 freelist: recycle plain int/float boxes
+    if (obj->type == 4 && g_float_freelist_n < PYC_FREELIST_CAP &&
+        obj->list.empty() && obj->flist.empty() && obj->ilist.empty() &&
+        obj->dict.empty() && obj->str.empty() && !obj->cell_content) {
+        g_float_freelist[g_float_freelist_n++] = obj;
+        return;
+    }
+    if (obj->type == 0 && g_int_freelist_n < PYC_FREELIST_CAP &&
+        obj->list.empty() && obj->flist.empty() && obj->ilist.empty() &&
+        obj->dict.empty() && obj->str.empty() && !obj->cell_content) {
+        g_int_freelist[g_int_freelist_n++] = obj;
+        return;
+    }
+    delete obj;
+}
+
+PyObject* PyInt_FromLong(long v) {
+    if (PyObject* cached = getSmallInt(v)) {
+        return cached;                          // immortal: caller "owns" but cannot free
+    }
+    PyObject* obj = allocIntObj();
     obj->value = v;
     return obj;
 }
@@ -146,10 +197,7 @@ PyObject* PyBool_New(int v) {
 }
 
 PyObject* PyFloat_FromDouble(double v) {
-    alloc_float_count++;
-    PyObject* obj = new PyObject();
-    obj->refcount = 1;
-    obj->type = 4;
+    PyObject* obj = allocFloatObj();
     obj->dvalue = v;
     return obj;
 }
@@ -553,6 +601,11 @@ extern "C" PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj);
 
 void Py_DECREF(PyObject* obj) {
     if (obj && obj->refcount != IMMORTAL_REFCOUNT && --obj->refcount == 0) {
+        if (obj->type == 0 || obj->type == 4) {
+            // P1: recycle plain int/float boxes (no owned children)
+            freeScalarObj(obj);
+            return;
+        }
         if (obj->type == 1) {
             if (obj->list_item_type == 0) {
                 for (PyObject* item : obj->list) if (item) Py_DECREF(item);

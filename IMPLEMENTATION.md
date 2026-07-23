@@ -57,7 +57,7 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 
 ### Optimization Status
 
-#### Landed (A1–A7 + container phases)
+#### Landed (A1–A7 + container + P0/P1)
 - **A1**: Conservative type tracking with loop back-edge widening
 - **A2**: Native `for ... in range(...)` with unboxed i64 loop variables
 - **A3**: Native arithmetic for proven numeric `+ - * // % **` and unary minus
@@ -67,16 +67,20 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - **A7**: Allocation counters and microbenchmark guardrails
 - **Container typing**: per-index `listElementTypes` / `subscriptElementTypes`, return
   element maps, nested `list_float`/`list_int` intermediates
+- **P0 structured unpack**: `structuredElementLayout` / `pairOfStructuredLayout` for
+  nbody-shaped `List[(list_float, list_float, float)]` and pairs thereof; for-loop and
+  default-param layout propagation; safe unpack (handles only on mixed tuples)
+- **P1 scalar freelist**: thread-local free-lists for plain int/float boxes
 - **Safe native params**: only when every call site agrees; defaulted params stay boxed
 - **List Auto setters**: only for known list containers (never dicts)
 - **Native get/set fallbacks** on boxed lists after slice/`sorted` demotion
 
 #### Planned (not implemented)
 - IR-level constant folding
-- Arena allocator for PyObject
+- Full arena allocator beyond scalar freelist
 - Dead code elimination at IR level
 - Full insertion-ordered dicts
-- Deeper hot-loop native subscripts for mixed tuples (nbody pairs)
+- Native `**` / rsqrt and full mass/mag float chain in nbody
 
 ### Correctness Guarantees
 - Every optimization preserves a boxed fallback path
@@ -86,6 +90,8 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - `getAsPyObject()` ensures values are properly boxed when they escape native context
 - Dict item assignment uses `Pyc_SetItem` (not list Auto helpers)
 - Native param unboxing is suppressed when any call site is non-numeric or a default exists
+- `GetItemDouble` only on homogeneous float lists — never on mixed body tuples
+- Boxed unpack scalars are not placed in `numericFloatLocals`
 
 ## Architecture
 

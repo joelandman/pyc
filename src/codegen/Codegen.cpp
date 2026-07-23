@@ -2272,10 +2272,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                      if (inst.resultType == "int" || inst.resultType == "float") {
                          llvm::Value* listVal = getAsPyObject(listName);
                          llvm::Value* idxVal = getOrLoad(idxName);
-                         // Ensure index is i64.
+                         // Index may be native i64 or a boxed PyObject* — always unbox properly.
                          if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
-                             idxVal = builder.CreateCast(llvm::Instruction::SExt, idxVal,
-                                 llvm::Type::getInt64Ty(context), "idx.i64");
+                             idxVal = unboxToI64(idxVal);
                          }
                          llvm::Value* nativeVal = nullptr;
                          if (inst.resultType == "int") {
@@ -2290,13 +2289,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                              }
                          }
                          if (nativeVal) {
-                             // Box the native value.
-                             llvm::Value* boxed = nullptr;
-                             if (inst.resultType == "int") {
-                                 boxed = boxI64(nativeVal, inst.result + ".boxed");
-                             } else {
-                                 boxed = boxDouble(nativeVal, inst.result + ".boxed");
-                             }
+                             // Box into valueMap; native arithmetic still unboxes via resultType.
+                             llvm::Value* boxed = (inst.resultType == "int")
+                                 ? boxI64(nativeVal, inst.result + ".boxed")
+                                 : boxDouble(nativeVal, inst.result + ".boxed");
                              if (!inst.result.empty()) {
                                  valueMap[inst.result] = boxed;
                                  markOwned(inst.result);

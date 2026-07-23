@@ -277,74 +277,61 @@ print boundary (where boxing is required). This eliminates ~80% of the
 All **300/300** tests pass (inline + file cases, including `nbody.py`, `hash.py`,
 `builtins.py`, `builtins2.py`, `features.py`).
 
-### Current Performance Status (Phases 1–24)
+### Current Performance Status (Phases 1–25)
 
 | Benchmark | Python | pyc | Gap | Notes |
 |-----------|--------|-----|-----|-------|
-| nbody 50K | ~0.33s | ~0.54s | ~1.6x | Correct energy output restored (Phase 24) |
-| nbody 100K | ~0.50s | ~0.87s | ~1.7x | — |
-| nbody 50K (LTO baseline) | — | 4.3s | 15x | Pre-Phase 12 |
-| nbody 50K (Float Chain, Phase 13) | — | 0.44s | 1.6x | After Phase 13 |
+| nbody 50K | ~0.27s | **~0.15s** | **~1.8× faster** | P0 unpack + P1 freelist |
+| nbody 500K | ~2.38s | **~1.42s** | **~1.7× faster** | — |
+| nbody 50K (Phase 24) | ~0.33s | ~0.54s | 1.6× slower | Pre-P0/P1 |
+| nbody 50K (LTO baseline) | — | 4.3s | 15× slower | Pre-Phase 12 |
 
-nbody output matches CPython (`-0.169075164` / second energy line).
+nbody output matches CPython. See also `PERFORMANCE_OPT_LEVELS.md` and `PROFILE_NBODY.md`.
 
-### Phase 24: Correctness + container type propagation
+### Phase 25: P0 structured unpack + P1 scalar freelist
 
-Landed fixes that restored full test green and correct nbody physics:
+**P1 — thread-local freelist for boxed int/float** (`Runtime.cpp`):
+- Cap-256 freelists recycle plain type-0/4 objects on `Py_DECREF`
+- Removes `malloc`/`free` from the nbody hot profile
 
-1. **Nested container element types** — Do not collapse `list_float`/`list_int` to
-   scalar `float`/`int` on subscript. Intermediate results stay containers so
-   `data[i][j]` uses the native path only on the inner list.
+**P0 — safe structured unpack for nbody-shaped data** (`Compiler.cpp`, `IR.h`):
+1. Body layout `[list_float, list_float, float]` from dict values / list literals
+2. `SYSTEM` → `structuredElementLayout`; `PAIRS`/`combinations` → `pairOfStructuredLayout`
+3. Default params (`bodies=SYSTEM`, `pairs=PAIRS`) bind layouts **before** body lower
+4. For-loop `PyBuiltin_List` + iter slot **copy layouts** (previously dropped)
+5. Unpack marks `v1`/`r` as `list_float` handles; mass stays boxed
+6. Nested `[x1,y1,z1]` from float lists → float-typed temps (binops unbox)
+7. Never `GetItemDouble` on mixed body tuples; never boxed unpack → `numericFloatLocals`
+8. Aug-assign on `list_float` → `GetItemDouble` + native op + `SetItemDouble`
 
-2. **Function return element tracking** — `returnSubscriptElementTypes` /
-   `returnContainerElementTypes` propagate through calls and assigns
-   (e.g. `data = make()` where `make` returns `[[float...], ...]`).
-
-3. **Dict subscript store** — `d["k"]=99` must use `Pyc_SetItem`, not list Auto
-   setters. Auto paths only when the container is known to be a list.
-
-4. **Declare `PyList_SetItemDoubleAuto` / `Int64Auto`** in codegen (stores were
-   silently dropped when the symbol was missing from the module).
-
-5. **Native get/set fallbacks** — `PyList_GetItemInt64`/`GetItemDouble` (and sets)
-   fall back to boxed list storage after `sorted()` / slice demotion.
-
-6. **Call-site param analysis** — Native int/float params require *every* call
-   site to agree on the same numeric type. Mixed str/int sites stay boxed
-   (fixes `spaceship` on strings and sort comparators).
-
-7. **Defaulted params stay boxed** — Params with defaults (often `None`) are never
-   given native slots; avoids `x is None` constant-folding and undef phis
-   (fixes `splice` and similar).
+**`@advance` IR evidence:** `fadd`/`fsub`/`fmul` present; `GetItemDouble`×9, `SetItemDouble`×9.
 
 ### Remaining Work
 
-1. **Hot-loop native subscripts in nbody `advance()`** — Push float-list types
-   through pair unpack so `v1[i]` / `r[i]` stay on `GetItemDouble`/`SetItemDouble`.
+1. More native multiplies (`m1 * mag`, `** -1.5` → llvm pow/rsqrt)
+2. Cut remaining `GetItemObj` on pair/body spine
+3. Dict insertion order (hash vs insertion)
+4. Broader escape analysis / stack floats for ephemeral boxes
 
-2. **Dict insertion order** — Runtime dicts use hash order; CPython 3.7+ is
-   insertion-ordered. Physics is order-independent; order-sensitive tests may care.
-
-3. **Arena allocator** — Reduce malloc traffic for values that must remain boxed.
-
-### Optimization Infrastructure (Phases 15–24)
+### Optimization Infrastructure (Phases 15–25)
 
 **Data structures in `IRFunction`:**
 ```cpp
-containerElementTypes[var][idx]       // "float_list", "int_list", "boxed_tuple"
+containerElementTypes[var][idx]       // "float_list", "int_list", ...
 subscriptElementTypes[var][idx]       // "float", "int", "list_float", ...
-returnType                            // "list", "dict", "float", "boxed"
-returnContainerElementTypes[idx]      // callee → caller inheritance
-returnSubscriptElementTypes[idx]
-paramTypes[]                          // call-site native param analysis
+listElementTypes[var]                 // per-index mixed tuple layouts
+structuredElementLayout[var]          // List[bodyLayout]
+pairOfStructuredLayout[var]           // List[(body, body)]
+returnContainerElementTypes / returnSubscriptElementTypes
+paramTypes[]
 ```
 
-**Propagation chain:**
+**Propagation chain (nbody):**
 ```
-Module globals / list literals
-  → listElementTypes / subscriptElementTypes
-  → function return maps
-  → call result temps + assigns
-  → nested subscript (list_float intermediate, float leaf)
-  → native GetItemDouble / SetItemDouble when proven
+BODIES dict values → body layout
+  → .values() / list() → SYSTEM structuredElementLayout
+  → combinations(SYSTEM) → PAIRS pairOfStructuredLayout
+  → default params on advance
+  → for-loop item → unpack → list_float handles + float scalars
+  → GetItemDouble / SetItemDouble / fadd/fmul
 ```

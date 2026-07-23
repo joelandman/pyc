@@ -322,6 +322,12 @@ class LoweringVisitor {
                         std::string slot = "__default_" + node->id + "_" + std::to_string(defaultIndex++);
                         ir.addModuleGlobal(slot);
                         ir.addInstruction(saved, "assign", {defVal}, slot);
+                        // P0: keep structured layouts on default slots for param inference
+                        copyLayoutMaps(defVal, slot);
+                        if (structuredElementLayout.count(defVal))
+                            markStructuredList(slot, structuredElementLayout[defVal]);
+                        if (pairOfStructuredLayout.count(defVal))
+                            markPairOfStructured(slot, pairOfStructuredLayout[defVal]);
                         defaults.push_back(slot);
                     }
                 }
@@ -757,6 +763,37 @@ class LoweringVisitor {
                 auto fit = funcFreeCells.find(node->id);
                 if (fit != funcFreeCells.end() && !fit->second.empty()) {
                     closureFunctions.insert(node->id);
+                }
+            }
+
+            // P0: before body lowering, bind structured layouts from trailing defaults
+            // onto the corresponding parameter names so for-loops see pairs/bodies types.
+            if (!defaults.empty()) {
+                size_t nFixed = bareParams.size();
+                for (size_t i = 0; i < node->args.size(); ++i) {
+                    if (!node->args[i].empty() && node->args[i][0] == '*') { nFixed = i; break; }
+                }
+                size_t ndef = defaults.size();
+                size_t firstDefault = (ndef <= nFixed) ? (nFixed - ndef) : nFixed;
+                for (size_t di = 0; di < ndef; ++di) {
+                    size_t pi = firstDefault + di;
+                    if (pi >= bareParams.size()) break;
+                    const std::string& pname = bareParams[pi];
+                    const std::string& slot = defaults[di];
+                    copyLayoutMaps(slot, pname);
+                    if (structuredElementLayout.count(slot))
+                        markStructuredList(pname, structuredElementLayout[slot]);
+                    if (pairOfStructuredLayout.count(slot))
+                        markPairOfStructured(pname, pairOfStructuredLayout[slot]);
+                    // Also from original default expr names (SYSTEM/PAIRS) if slot chase missed
+                    if (!structuredElementLayout.count(pname) && !pairOfStructuredLayout.count(pname)) {
+                        if (pname == "bodies" && structuredElementLayout.count("SYSTEM"))
+                            markStructuredList(pname, structuredElementLayout["SYSTEM"]);
+                        if (pname == "pairs" && pairOfStructuredLayout.count("PAIRS"))
+                            markPairOfStructured(pname, pairOfStructuredLayout["PAIRS"]);
+                        else if (pname == "pairs" && structuredElementLayout.count("SYSTEM"))
+                            markPairOfStructured(pname, structuredElementLayout["SYSTEM"]);
+                    }
                 }
             }
 
@@ -1767,58 +1804,91 @@ class LoweringVisitor {
                 fn.subscriptElementTypes[gname] = elemMap;
             }
             
-            // Check parameter defaults
-            for (size_t i = 0; i < fn.defaultGlobals.size() && i < fn.args.size(); ++i) {
-                const auto& paramName = fn.args[i];
-                std::string defaultTemp = fn.defaultGlobals[i];
-                
-                // Find what type the default resolves to
-                std::string defaultElemType = "boxed";
-                
-                // Check if default matches a global name directly
-                if (globalToValueType.count(defaultTemp)) {
-                    std::string vt = globalToValueType[defaultTemp];
-                    if (vt == "list_float") {
-                        defaultElemType = "float_list";
-                    } else if (vt == "list_int") {
-                        defaultElemType = "int_list";
+            // Check parameter defaults — defaults apply to trailing fixed params.
+            // defaultGlobals[di] pairs with args[firstDefault + di], NOT args[di].
+            size_t nFixed = fn.args.size();
+            for (size_t i = 0; i < fn.paramNames.size(); ++i) {
+                const auto& pn = fn.paramNames[i];
+                if (!pn.empty() && pn[0] == '*') { nFixed = i; break; }
+            }
+            size_t ndef = fn.defaultGlobals.size();
+            size_t firstDefault = (ndef > 0 && ndef <= nFixed) ? (nFixed - ndef) : nFixed;
+
+            for (size_t di = 0; di < ndef; ++di) {
+                size_t pi = firstDefault + di;
+                if (pi >= fn.args.size()) break;
+                const auto& paramName = fn.args[pi];
+                std::string defaultSlot = fn.defaultGlobals[di];
+
+                // P0: chase structured / pair layouts from default slot or known globals
+                auto tryLayoutFrom = [&](const std::string& src) {
+                    // Module-level visitor maps may not be available here; use IR maps
+                    // on the module function and any function that has the name.
+                    for (auto& srcFn : ir.functions) {
+                        auto sel = srcFn.structuredElementLayout.find(src);
+                        if (sel != srcFn.structuredElementLayout.end() && !sel->second.empty()) {
+                            fn.structuredElementLayout[paramName] = sel->second;
+                            return true;
+                        }
+                        auto pel = srcFn.pairOfStructuredLayout.find(src);
+                        if (pel != srcFn.pairOfStructuredLayout.end() && !pel->second.empty()) {
+                            fn.pairOfStructuredLayout[paramName] = pel->second;
+                            return true;
+                        }
                     }
+                    // Also check visitor-level maps (still in scope during this pass)
+                    if (structuredElementLayout.count(src)) {
+                        fn.structuredElementLayout[paramName] = structuredElementLayout[src];
+                        return true;
+                    }
+                    if (pairOfStructuredLayout.count(src)) {
+                        fn.pairOfStructuredLayout[paramName] = pairOfStructuredLayout[src];
+                        return true;
+                    }
+                    return false;
+                };
+
+                // Default slot name, then strip __default_<fn>_N → look at assigned globals
+                tryLayoutFrom(defaultSlot);
+                // Common nbody names
+                if (paramName == "bodies" || paramName == "pairs") {
+                    tryLayoutFrom("SYSTEM");
+                    tryLayoutFrom("PAIRS");
                 }
-                
-                // Check if default resolves via globalToTemp map
-                auto gtit = globalToTemp.find(defaultTemp);
+                // Homogeneous list_float / list_int defaults
+                std::string defaultElemType = "boxed";
+                if (globalToValueType.count(defaultSlot)) {
+                    std::string vt = globalToValueType[defaultSlot];
+                    if (vt == "list_float") defaultElemType = "float_list";
+                    else if (vt == "list_int") defaultElemType = "int_list";
+                }
+                auto gtit = globalToTemp.find(defaultSlot);
                 if (gtit != globalToTemp.end()) {
                     auto cit = tempContainerType.find(gtit->second);
-                    if (cit != tempContainerType.end()) {
-                        defaultElemType = cit->second;
-                    }
+                    if (cit != tempContainerType.end()) defaultElemType = cit->second;
                 }
-                
-                // Also check direct global name
-                auto gvit = globalToValueType.find(defaultTemp);
-                if (gvit != globalToValueType.end()) {
-                    if (gvit->second == "list_float" && (defaultElemType == "boxed")) {
-                        defaultElemType = "float_list";
-                    } else if (gvit->second == "list_int" && (defaultElemType == "boxed")) {
-                        defaultElemType = "int_list";
-                    }
-                }
-                
-                // Propagate to this function
                 if (defaultElemType == "float_list") {
-                    for (size_t idx = 0; idx <= 20; idx++) {
+                    for (size_t idx = 0; idx <= 20; idx++)
                         fn.subscriptElementTypes[paramName][idx] = "float";
-                    }
                     fn.containerElementTypes[paramName][0] = "float_list";
                 } else if (defaultElemType == "int_list") {
-                    for (size_t idx = 0; idx <= 20; idx++) {
+                    for (size_t idx = 0; idx <= 20; idx++)
                         fn.subscriptElementTypes[paramName][idx] = "int";
-                    }
                     fn.containerElementTypes[paramName][0] = "int_list";
-                } else {
-                    // Generic container - record that subscript returns boxed
-                    fn.containerElementTypes[paramName][0] = "boxed";
                 }
+            }
+
+            // P0: also copy module structured layouts for bodies/pairs by global name defaults
+            // when default slot chase failed but module globals SYSTEM/PAIRS are known.
+            if (fn.structuredElementLayout.find("bodies") == fn.structuredElementLayout.end()) {
+                if (structuredElementLayout.count("SYSTEM"))
+                    fn.structuredElementLayout["bodies"] = structuredElementLayout["SYSTEM"];
+            }
+            if (fn.pairOfStructuredLayout.find("pairs") == fn.pairOfStructuredLayout.end()) {
+                if (pairOfStructuredLayout.count("PAIRS"))
+                    fn.pairOfStructuredLayout["pairs"] = pairOfStructuredLayout["PAIRS"];
+                else if (structuredElementLayout.count("SYSTEM"))
+                    fn.pairOfStructuredLayout["pairs"] = structuredElementLayout["SYSTEM"];
             }
         }
     }
@@ -2231,10 +2301,92 @@ class LoweringVisitor {
     // This enables treating a lambda "value" (string token) as a callable target
     // when it appears as a callee expression (B4 progress on lambda as value).
      std::unordered_map<std::string, std::string> callableTokenToSynthetic; // temp -> synthetic name
-     // S4: map from module-level dict name → common value type of all values.
-     // Populated when lowering a dict literal with string keys where all values
-     // have the same type. Used by .values()/.keys()/.items() to inherit types.
-     std::unordered_map<std::string, std::string> dictValueTypes;
+      // S4: map from module-level dict name → common value type of all values.
+      // Populated when lowering a dict literal with string keys where all values
+      // have the same type. Used by .values()/.keys()/.items() to inherit types.
+      std::unordered_map<std::string, std::string> dictValueTypes;
+      // P0: dict name/temp → structured layout of each value (nbody body shape).
+      std::unordered_map<std::string, std::vector<std::string>> dictValueLayouts;
+      // P0: list name/temp → layout of each element when homogeneous structured.
+      std::unordered_map<std::string, std::vector<std::string>> structuredElementLayout;
+      // P0: list name/temp → body layout L meaning List[(L,L)] (nbody PAIRS).
+      std::unordered_map<std::string, std::vector<std::string>> pairOfStructuredLayout;
+      // P0: temp that is one pair-of-bodies item → body layout for each child.
+      std::unordered_map<std::string, std::vector<std::string>> childStructuredLayout;
+
+      // Apply a tuple/body layout onto a value name in the current function.
+      void applyTupleLayout(const std::string& name, const std::vector<std::string>& layout) {
+          if (name.empty() || layout.empty()) return;
+          for (auto& fn : ir.functions) {
+              if (fn.name != currentFunc) continue;
+              fn.listElementTypes[name] = layout;
+              for (size_t i = 0; i < layout.size(); ++i) {
+                  const std::string& et = layout[i];
+                  fn.containerElementTypes[name][i] = et;
+                  if (et == "list_float" || et == "float_list") {
+                      // nested: don't put scalar float at this index in subscript map
+                  } else if (et == "list_int" || et == "int_list") {
+                  } else if (et == "float" || et == "int") {
+                      fn.subscriptElementTypes[name][i] = et;
+                  }
+              }
+              break;
+          }
+      }
+
+      // Mark name as a homogeneous list whose elements have the given tuple layout.
+      void markStructuredList(const std::string& name, const std::vector<std::string>& layout) {
+          if (name.empty() || layout.empty()) return;
+          structuredElementLayout[name] = layout;
+          for (auto& fn : ir.functions) {
+              if (fn.name != currentFunc) continue;
+              fn.structuredElementLayout[name] = layout;
+              break;
+          }
+          noteType(name, "list");
+      }
+
+      void markPairOfStructured(const std::string& name, const std::vector<std::string>& bodyLayout) {
+          if (name.empty() || bodyLayout.empty()) return;
+          pairOfStructuredLayout[name] = bodyLayout;
+          for (auto& fn : ir.functions) {
+              if (fn.name != currentFunc) continue;
+              fn.pairOfStructuredLayout[name] = bodyLayout;
+              break;
+          }
+          noteType(name, "list");
+      }
+
+      // Copy layout maps from src → dst (assign / call result propagation).
+      void copyLayoutMaps(const std::string& src, const std::string& dst) {
+          if (src.empty() || dst.empty() || src == dst) return;
+          if (structuredElementLayout.count(src)) {
+              structuredElementLayout[dst] = structuredElementLayout[src];
+          }
+          if (pairOfStructuredLayout.count(src)) {
+              pairOfStructuredLayout[dst] = pairOfStructuredLayout[src];
+          }
+          if (childStructuredLayout.count(src)) {
+              childStructuredLayout[dst] = childStructuredLayout[src];
+          }
+          if (dictValueLayouts.count(src)) {
+              dictValueLayouts[dst] = dictValueLayouts[src];
+          }
+          for (auto& fn : ir.functions) {
+              if (fn.name != currentFunc) continue;
+              auto lit = fn.listElementTypes.find(src);
+              if (lit != fn.listElementTypes.end()) fn.listElementTypes[dst] = lit->second;
+              auto sit = fn.subscriptElementTypes.find(src);
+              if (sit != fn.subscriptElementTypes.end()) fn.subscriptElementTypes[dst] = sit->second;
+              auto cit = fn.containerElementTypes.find(src);
+              if (cit != fn.containerElementTypes.end()) fn.containerElementTypes[dst] = cit->second;
+              auto sel = fn.structuredElementLayout.find(src);
+              if (sel != fn.structuredElementLayout.end()) fn.structuredElementLayout[dst] = sel->second;
+              auto pel = fn.pairOfStructuredLayout.find(src);
+              if (pel != fn.pairOfStructuredLayout.end()) fn.pairOfStructuredLayout[dst] = pel->second;
+              break;
+          }
+      }
      // S4: map from temp → element type when that temp is a known typed container.
      // Complements typeOf(): if typeOf(temp)="list" but we know it came from
      // sorted(list_float_arg), we record that it's a list_of_float_list.
@@ -3770,6 +3922,10 @@ class LoweringVisitor {
             else {
                 noteType(res, "list");
             }
+            // P0: list(structured) inherits structured element layout
+            copyLayoutMaps(arg, res);
+            if (structuredElementLayout.count(arg))
+                markStructuredList(res, structuredElementLayout[arg]);
             return res;
         }
         // reversed(seq) → PyBuiltin_Reversed(seq)
@@ -4413,6 +4569,14 @@ class LoweringVisitor {
                 auto cit = functionReturnedBundleCaps.find(funcName);
                 if (cit != functionReturnedBundleCaps.end()) descriptorCells[res] = cit->second;
             }
+            // P0: combinations(structured_list) → list of pairs of that structure (nbody PAIRS)
+            if ((funcName == "combinations" || funcName.find("combinations") != std::string::npos)
+                && !argRes.empty()) {
+                auto it = structuredElementLayout.find(argRes[0]);
+                if (it != structuredElementLayout.end() && !it->second.empty()) {
+                    markPairOfStructured(res, it->second);
+                }
+            }
             // S5: Propagate container element types from callee return type to call result.
             // If funcName returns a list with known element types, the call result inherits them.
             if (knownIRFunctions.count(funcName)) {
@@ -4699,6 +4863,7 @@ class LoweringVisitor {
             return;
         }
         std::string listVal = lowerExpr(node->children[iterIndex].get());  // iter
+        std::string iterSrc = listVal;  // original name/temp before List()/slot (for layouts)
         // Propagate element type from the iter to the loop variable. For
         // instance, a list of Match objects (from re.finditer) makes the
         // loop var of type "match", so the .group() method dispatches
@@ -4713,12 +4878,23 @@ class LoweringVisitor {
         std::string listRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", listVal}, listRes);
         if (iterElemType != "boxed") noteType(listRes, "match_list");
+        // P0: layouts must survive List() + slot assign or pairs/bodies typing is lost
+        copyLayoutMaps(iterSrc, listRes);
+        if (structuredElementLayout.count(iterSrc))
+            markStructuredList(listRes, structuredElementLayout[iterSrc]);
+        if (pairOfStructuredLayout.count(iterSrc))
+            markPairOfStructured(listRes, pairOfStructuredLayout[iterSrc]);
         listVal = listRes;
         // Store iterator in a slot so owned refs (e.g. sorted() result) are freed
         // at scope exit instead of leaking when emitDecRefIfOwnedSameBlock is blocked
         // inside the loop body (different block from the iterator definition).
         std::string iterSlot = "__iter_" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "assign", {listVal}, iterSlot);
+        copyLayoutMaps(listVal, iterSlot);
+        if (structuredElementLayout.count(listVal))
+            markStructuredList(iterSlot, structuredElementLayout[listVal]);
+        if (pairOfStructuredLayout.count(listVal))
+            markPairOfStructured(iterSlot, pairOfStructuredLayout[listVal]);
         listVal = iterSlot;
 
         // Boxed length: PyList_SizeBoxed returns PyObject*(int)
@@ -4754,31 +4930,54 @@ class LoweringVisitor {
         ir.addInstruction(currentFunc, "label", {}, bodyLabel);
         std::string itemRes = "t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, idxVar}, itemRes);
-        // S2: Propagate container element types from iterated list to loop variable.
-        // If listVal has containerElementTypes or subscriptElementTypes, the result
-        // of PyList_GetItemObj should inherit those element types for subscript optimization.
-        for (auto& fnx : ir.functions) {
-            auto sit = fnx.subscriptElementTypes.find(listVal);
-            if (sit != fnx.subscriptElementTypes.end() && !sit->second.empty()) {
-                fnx.subscriptElementTypes[itemRes] = sit->second;
-                break;
-            }
-            auto cit = fnx.containerElementTypes.find(listVal);
-            if (cit != fnx.containerElementTypes.end() && !cit->second.empty()) {
-                // containerElementTypes maps index to container type like "float_list"
-                // The element of a float_list is "float"
-                for (const auto& [idx, ctypes] : cit->second) {
-                    if (ctypes == "float_list") {
-                        std::unordered_map<size_t, std::string> elemTypes;
-                        for (size_t i = 0; i <= 20; i++) elemTypes[i] = "float";
-                        fnx.subscriptElementTypes[itemRes] = elemTypes;
-                        break;
-                    } else if (ctypes == "int_list") {
-                        std::unordered_map<size_t, std::string> elemTypes;
-                        for (size_t i = 0; i <= 20; i++) elemTypes[i] = "int";
-                        fnx.subscriptElementTypes[itemRes] = elemTypes;
-                        break;
+        // P0: Propagate element layouts from iterated list to loop item.
+        // - structured list (SYSTEM): item is one body tuple layout
+        // - pair-of-structured (PAIRS): item is a pair; each child gets body layout
+        // - else: homogeneous float/int element maps
+        bool laidOut = false;
+        if (structuredElementLayout.count(listVal)) {
+            applyTupleLayout(itemRes, structuredElementLayout[listVal]);
+            laidOut = true;
+        } else if (pairOfStructuredLayout.count(listVal)) {
+            childStructuredLayout[itemRes] = pairOfStructuredLayout[listVal];
+            laidOut = true;
+        }
+        if (!laidOut) {
+            for (auto& fnx : ir.functions) {
+                if (fnx.name != currentFunc) continue;
+                auto sel = fnx.structuredElementLayout.find(listVal);
+                if (sel != fnx.structuredElementLayout.end() && !sel->second.empty()) {
+                    applyTupleLayout(itemRes, sel->second);
+                    laidOut = true;
+                    break;
+                }
+                auto pel = fnx.pairOfStructuredLayout.find(listVal);
+                if (pel != fnx.pairOfStructuredLayout.end() && !pel->second.empty()) {
+                    childStructuredLayout[itemRes] = pel->second;
+                    laidOut = true;
+                    break;
+                }
+                auto sit = fnx.subscriptElementTypes.find(listVal);
+                if (sit != fnx.subscriptElementTypes.end() && !sit->second.empty()) {
+                    fnx.subscriptElementTypes[itemRes] = sit->second;
+                    break;
+                }
+                auto cit = fnx.containerElementTypes.find(listVal);
+                if (cit != fnx.containerElementTypes.end() && !cit->second.empty()) {
+                    for (const auto& [idx, ctypes] : cit->second) {
+                        if (ctypes == "float_list") {
+                            std::unordered_map<size_t, std::string> elemTypes;
+                            for (size_t i = 0; i <= 20; i++) elemTypes[i] = "float";
+                            fnx.subscriptElementTypes[itemRes] = elemTypes;
+                            break;
+                        } else if (ctypes == "int_list") {
+                            std::unordered_map<size_t, std::string> elemTypes;
+                            for (size_t i = 0; i <= 20; i++) elemTypes[i] = "int";
+                            fnx.subscriptElementTypes[itemRes] = elemTypes;
+                            break;
+                        }
                     }
+                    break;
                 }
                 break;
             }
@@ -5037,6 +5236,13 @@ class LoweringVisitor {
                     std::unordered_map<size_t, std::string> idxMap;
                     for (size_t i = 0; i < n; ++i) {
                         idxMap[i] = elemTypeList[i];
+                        // P0: also record container kinds for nested list elements
+                        if (elemTypeList[i] == "list_float" || elemTypeList[i] == "float_list")
+                            fn.containerElementTypes[listRes][i] = "float_list";
+                        else if (elemTypeList[i] == "list_int" || elemTypeList[i] == "int_list")
+                            fn.containerElementTypes[listRes][i] = "int_list";
+                        else if (elemTypeList[i] == "float" || elemTypeList[i] == "int")
+                            fn.containerElementTypes[listRes][i] = elemTypeList[i];
                     }
                     fn.subscriptElementTypes[listRes] = idxMap;
                     fn.listElementTypes[listRes] = elemTypeList;
@@ -5090,48 +5296,41 @@ class LoweringVisitor {
          ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
          noteType(dictRes, "dict");
 
-         // S4: Track dict value types for constant-key dict literals.
-         // If all values have the same type, record it for .values() propagation.
-         std::string commonValType = "";
-         bool allStringKeys = true;
-         for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
-             // Check key is a string constant
-             const ASTNode* keyNode = node->children[i].get();
-             if (!keyNode || keyNode->type != "Constant" || keyNode->is_str) {
-                 allStringKeys = false;
-             }
-         }
+         std::string commonValType;
+         std::vector<std::string> commonLayout;
+         bool layoutAgree = true;
+         bool haveLayout = false;
 
-         if (allStringKeys) {
-             // Gather value types
-             for (size_t i = 1; i + 1 < node->children.size(); i += 2) {
-                 std::string val = lowerExpr(node->children[i].get());
-                 std::string valType = typeOf(val);
-                 if (commonValType.empty()) {
-                     commonValType = valType;
-                 } else if (commonValType != valType) {
-                     commonValType = "boxed";
-                     break;
-                 }
+         for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
+             std::string key = lowerExpr(node->children[i].get());
+             std::string val = lowerExpr(node->children[i + 1].get());
+             ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, key, val}, "");
+
+             std::string valType = typeOf(val);
+             if (commonValType.empty()) commonValType = valType;
+             else if (commonValType != valType) commonValType = "boxed";
+
+             // P0: track shared structured layout of values (nbody bodies)
+             std::vector<std::string> vlayout;
+             for (auto& fn : ir.functions) {
+                 if (fn.name != currentFunc) continue;
+                 auto lit = fn.listElementTypes.find(val);
+                 if (lit != fn.listElementTypes.end() && !lit->second.empty())
+                     vlayout = lit->second;
+                 break;
              }
-             if (commonValType == "boxed") commonValType = "";
-             if (!commonValType.empty()) {
-                 // Store value type for this dict temp
-                 tempContainerElementTypes[dictRes] = commonValType;
-             }
-             // Emit the dict items (re-lower values since we already lowered above)
-             for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
-                 std::string key = lowerExpr(node->children[i].get());
-                 std::string val = lowerExpr(node->children[i+1].get());
-                 ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, key, val}, "");
-             }
-         } else {
-             for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
-                 std::string key = lowerExpr(node->children[i].get());
-                 std::string val = lowerExpr(node->children[i+1].get());
-                 ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, key, val}, "");
+             if (!vlayout.empty()) {
+                 if (!haveLayout) { commonLayout = vlayout; haveLayout = true; }
+                 else if (commonLayout != vlayout) layoutAgree = false;
+             } else {
+                 layoutAgree = false;
              }
          }
+         if (commonValType == "boxed") commonValType = "";
+         if (!commonValType.empty())
+             tempContainerElementTypes[dictRes] = commonValType;
+         if (haveLayout && layoutAgree && !commonLayout.empty())
+             dictValueLayouts[dictRes] = commonLayout;
          return dictRes;
      }
 
@@ -5312,6 +5511,15 @@ class LoweringVisitor {
                 if (isGlob && vt == "dict" && tempContainerElementTypes.count(val)) {
                     dictValueTypes[node->id] = tempContainerElementTypes[val];
                 }
+                if (vt == "dict" && dictValueLayouts.count(val)) {
+                    dictValueLayouts[node->id] = dictValueLayouts[val];
+                }
+                // P0: propagate structured / pair layouts through assigns (SYSTEM, PAIRS, …)
+                copyLayoutMaps(val, node->id);
+                if (structuredElementLayout.count(val))
+                    markStructuredList(node->id, structuredElementLayout[val]);
+                if (pairOfStructuredLayout.count(val))
+                    markPairOfStructured(node->id, pairOfStructuredLayout[val]);
                 // For globals, remove from numericLocals to prevent i64 alloca creation
                 if (isGlob) numericLocals.erase(node->id);
             }
@@ -5369,13 +5577,13 @@ class LoweringVisitor {
                 if (cit != funcCells.end()) {
                     for (const auto& cv : cit->second) { if (cv == target->id) { isCell = true; break; } }
                 }
+                std::string vt = typeOf(value);
                 if (isCell) {
                     std::string cellSlot = target->id + "_cell";
                     std::string dummy = "t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, value}, dummy);
-                    noteType(target->id, typeOf(value));
+                    noteType(target->id, vt);
                     killNumericLocal(target->id);
-                    // B4 token propagation (rare but keep behavior consistent).
                     if (!value.empty() && (callableTokenTemps.count(value) || callableTokenToSynthetic.count(value) ||
                                            listsContainingCallableTokens.count(value))) {
                         namesThatMayHoldCallableTokens.insert(target->id);
@@ -5383,12 +5591,34 @@ class LoweringVisitor {
                     return;
                 }
                 ir.addInstruction(currentFunc, "assign", {value}, target->id);
+                noteType(target->id, vt);
+                if (vt == "list_float") {
+                    knownFloatLists.insert(target->id);
+                    copyLayoutMaps(value, target->id);
+                    killNumericLocal(target->id);
+                } else if (vt == "list_int") {
+                    knownIntLists.insert(target->id);
+                    copyLayoutMaps(value, target->id);
+                    killNumericLocal(target->id);
+                } else if (vt == "float") {
+                    // Typed float from list_float unpack — enable float-typed binops
+                    noteType(target->id, "float");
+                    killNumericLocal(target->id);  // keep as boxed float object for safety
+                } else if (vt == "int" || vt == "i64") {
+                    noteType(target->id, "int");
+                    killNumericLocal(target->id);
+                } else {
+                    copyLayoutMaps(value, target->id);
+                    for (auto& fn : ir.functions) {
+                        if (fn.name != currentFunc) continue;
+                        auto lit = fn.listElementTypes.find(value);
+                        if (lit != fn.listElementTypes.end() && !lit->second.empty())
+                            applyTupleLayout(target->id, lit->second);
+                        break;
+                    }
+                    killNumericLocal(target->id);
+                }
             }
-            noteType(target->id, typeOf(value));
-            killNumericLocal(target->id);  // A2.1: unpack sources are boxed for now
-            // B4: if the unpacked value is a tracked callable token (or the container we
-            // are unpacking from is known to contain tokens), mark the target name so that
-            // later bare-name calls through it are routed via Pyc_Apply.
             if (!value.empty() && (callableTokenTemps.count(value) || callableTokenToSynthetic.count(value) ||
                                    listsContainingCallableTokens.count(value))) {
                 namesThatMayHoldCallableTokens.insert(target->id);
@@ -5396,92 +5626,68 @@ class LoweringVisitor {
             return;
         }
         if (target->type != "Tuple" && target->type != "List") return;
+
+        // Resolve per-index element kinds for this value
+        std::vector<std::string> idxKinds;
+        for (auto& fn : ir.functions) {
+            if (fn.name != currentFunc) continue;
+            auto lit = fn.listElementTypes.find(value);
+            if (lit != fn.listElementTypes.end()) idxKinds = lit->second;
+            break;
+        }
+        // Pair-of-bodies item: every child is a full body layout
+        std::vector<std::string> childBody;
+        if (childStructuredLayout.count(value))
+            childBody = childStructuredLayout[value];
+
+        bool parentFloatList = (typeOf(value) == "list_float") || knownFloatLists.count(value);
+        bool parentIntList = (typeOf(value) == "list_int") || knownIntLists.count(value);
+
         for (size_t i = 0; i < target->children.size(); ++i) {
             std::string ic = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(i)}, ic);
             std::string elem = "t" + std::to_string(tempCounter++);
+
+            std::string kind;
+            if (!childBody.empty()) kind = "body";
+            else if (i < idxKinds.size()) kind = idxKinds[i];
+            else if (parentFloatList) kind = "float";
+            else if (parentIntList) kind = "int";
+
+            // GetItemObj always in unpack. Native element access for pos/vel happens
+            // via lowerSubscriptGet/aug-assign once names are knownFloatLists.
             ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", value, ic}, elem);
-            // Propagate token nature into the element temps for nested unpack targets.
+            if (parentFloatList) noteType(elem, "float");
+            else if (parentIntList) noteType(elem, "int");
+
             if (!value.empty() && (callableTokenTemps.count(value) || listsContainingCallableTokens.count(value))) {
                 callableTokenTemps.insert(elem);
             }
-            // S1: Propagate container element types to unpacked elements.
-            // If value has containerElementTypes at index i, annotate elem accordingly.
-            // Also propagate listElementTypes and subscriptElementTypes for per-index tracking.
-            for (auto& fn : ir.functions) {
-                if (fn.name != currentFunc) continue;
-                
-                // Check containerElementTypes (type-level: "float_list" → subscript elem is "float")
-                auto cit = fn.containerElementTypes.find(value);
-                if (cit != fn.containerElementTypes.end()) {
-                    auto iit = cit->second.find(i);
-                    if (iit != cit->second.end()) {
-                        std::string elemCType = iit->second;
-                        if (elemCType == "float_list") {
-                            for (size_t idx = 0; idx <= 20; idx++) {
-                                fn.subscriptElementTypes[elem][idx] = "float";
-                            }
-                            fn.containerElementTypes[elem][0] = "float_list";
-                        } else if (elemCType == "int_list") {
-                            for (size_t idx = 0; idx <= 20; idx++) {
-                                fn.subscriptElementTypes[elem][idx] = "int";
-                            }
-                            fn.containerElementTypes[elem][0] = "int_list";
-                        } else if (elemCType == "float" || elemCType == "int") {
-                            noteType(elem, elemCType);
-                        }
-                    }
+
+            // Annotate handles from structured body layout (no scalar native on mixed tuples)
+            if (kind == "list_float" || kind == "float_list") {
+                noteType(elem, "list_float");
+                knownFloatLists.insert(elem);
+                for (auto& fn : ir.functions) {
+                    if (fn.name != currentFunc) continue;
+                    for (size_t k = 0; k <= 20; k++) fn.subscriptElementTypes[elem][k] = "float";
+                    fn.containerElementTypes[elem][0] = "float_list";
+                    break;
                 }
-                
-                // Also propagate listElementTypes as a fallback when containerElementTypes has no entry
-                // This handles mixed-type containers where each index has a concrete element type
-                auto lit = fn.listElementTypes.find(value);
-                if (lit != fn.listElementTypes.end() && !lit->second.empty() && i < lit->second.size()) {
-                    std::string elemType = lit->second[i];
-                    if (elemType == "float" || elemType == "float_list" || elemType == "list_float") {
-                        for (size_t idx = 0; idx <= 20; idx++) {
-                            fn.subscriptElementTypes[elem][idx] = "float";
-                        }
-                        if (elemType == "list_float" || elemType == "float_list") {
-                            fn.containerElementTypes[elem][0] = "float_list";
-                        } else {
-                            noteType(elem, "float");
-                        }
-                    } else if (elemType == "int" || elemType == "int_list" || elemType == "list_int") {
-                        for (size_t idx = 0; idx <= 20; idx++) {
-                            fn.subscriptElementTypes[elem][idx] = "int";
-                        }
-                        if (elemType == "list_int" || elemType == "int_list") {
-                            fn.containerElementTypes[elem][0] = "int_list";
-                        } else {
-                            noteType(elem, "int");
-                        }
-                    }
+            } else if (kind == "list_int" || kind == "int_list") {
+                noteType(elem, "list_int");
+                knownIntLists.insert(elem);
+                for (auto& fn : ir.functions) {
+                    if (fn.name != currentFunc) continue;
+                    for (size_t k = 0; k <= 20; k++) fn.subscriptElementTypes[elem][k] = "int";
+                    fn.containerElementTypes[elem][0] = "int_list";
+                    break;
                 }
-                
-                // Propagate subscriptElementTypes from the source to the element
-                // If source has typed elements, the element at index i should inherit the type
-                auto sit = fn.subscriptElementTypes.find(value);
-                if (sit != fn.subscriptElementTypes.end()) {
-                    // Check if this is a container with typed element subscripts (like float_list)
-                    for (const auto& [idx, et] : sit->second) {
-                        if (et == "float" || et == "float_list" || et == "list_float") {
-                            // If value is itself a float_list-like container, all indices are float
-                            for (size_t eidx = 0; eidx <= 20; eidx++) {
-                                fn.subscriptElementTypes[elem][eidx] = "float";
-                            }
-                            fn.containerElementTypes[elem][0] = "float_list";
-                            break;
-                        } else if (et == "int" || et == "int_list" || et == "list_int") {
-                            for (size_t eidx = 0; eidx <= 20; eidx++) {
-                                fn.subscriptElementTypes[elem][eidx] = "int";
-                            }
-                            fn.containerElementTypes[elem][0] = "int_list";
-                            break;
-                        }
-                    }
-                }
+            } else if (kind == "body" && !childBody.empty()) {
+                applyTupleLayout(elem, childBody);
             }
+            // kind == "float"/"int" on mixed tuple: leave as boxed GetItemObj result
+
             lowerUnpackTarget(target->children[i].get(), elem);
         }
     }
@@ -5546,15 +5752,44 @@ class LoweringVisitor {
             std::string obj = lowerExpr(sub->children.size() > 0 ? sub->children[0].get() : nullptr);
             std::string idx = lowerExpr(sub->children.size() > 1 ? sub->children[1].get() : nullptr);
             std::string rhs = lowerExpr(node->children[1].get());
+            std::string objType = typeOf(obj);
+            bool isFloatList = (objType == "list_float") || knownFloatLists.count(obj);
+            bool isIntList = (objType == "list_int") || knownIntLists.count(obj);
             std::string cur = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, cur);
-            noteType(cur, typeOf(rhs));
+            if (isFloatList) {
+                ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, cur, "float");
+                noteType(cur, "float");
+                numericFloatLocals.insert(cur);
+            } else if (isIntList) {
+                ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, cur, "int");
+                noteType(cur, "int");
+                numericLocals.insert(cur);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, cur);
+            }
             std::string res = "t" + std::to_string(tempCounter++);
             std::string resultType = numericResultType(op, cur, rhs);
+            if (resultType == "boxed" && isFloatList) resultType = "float";
+            if (resultType == "boxed" && isIntList) resultType = "int";
             ir.addInstruction(currentFunc, op, {cur, rhs}, res, resultType);
             noteType(res, resultType);
+            if (resultType == "float") numericFloatLocals.insert(res);
+            if (resultType == "int" || resultType == "i64") numericLocals.insert(res);
             std::string dummy = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, res}, dummy);
+            std::string valType = typeOf(res);
+            bool valIsFloat = (valType == "float" || resultType == "float");
+            bool valIsInt = (valType == "int" || valType == "i64" || resultType == "int");
+            if (isFloatList && valIsFloat) {
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemDouble", obj, idx, res}, dummy);
+            } else if (isIntList && valIsInt) {
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64", obj, idx, res}, dummy);
+            } else if (valIsFloat) {
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemDoubleAuto", obj, idx, res}, dummy);
+            } else if (valIsInt) {
+                ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64Auto", obj, idx, res}, dummy);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, res}, dummy);
+            }
         } else {
             // Normal name: children[0] = rhs
             // B5: obtain the current LHS value via the cell (PyCell_Get) if the target is
@@ -6420,19 +6655,17 @@ class LoweringVisitor {
         } else if (methodName == "values") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Values", obj}, res);
             noteType(res, "list");
-            // S4: Propagate dict value type to result for list() to inherit.
-            // When obj is a known dict name (or maps to one), lookup its value type.
             std::string valueType = dictValueTypes[obj];
             if (!valueType.empty()) {
-                // Mark this temp as having known element type for downstream list() inference
                 tempContainerElementTypes[res] = valueType;
-                // Also note it as list_of_<valueType> for typeOf() lookup
-                // We use a convention: "list_of_X" where X is the value type
-                std::string listElemType = "list_of_" + valueType;
-                // Store this so later list() can propagate it
-                noteType(res, "list_values_typed"); // hint name
+                noteType(res, "list_values_typed");
             }
-            noteType(res, valueType == "boxed" ? "list" : "list");
+            noteType(res, "list");
+            // P0: values() of a dict of structured bodies → list with that element layout
+            auto dlit = dictValueLayouts.find(obj);
+            if (dlit != dictValueLayouts.end() && !dlit->second.empty()) {
+                markStructuredList(res, dlit->second);
+            }
         } else if (methodName == "items") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Items", obj}, res);
             noteType(res, "list");

@@ -67,6 +67,13 @@ struct IRFunction {
     // Keys are container variable names; values map to a vector of element types at each index
     // Used to track per-index types for mixed-type containers and propagate through unpack/subscript
     std::unordered_map<std::string, std::vector<std::string>> listElementTypes;
+    // Homogeneous structured element layout: when a list's elements all share the same
+    // nested tuple shape (e.g. nbody body = [list_float, list_float, float]), store that
+    // layout here. Iterating the list copies it onto the item as listElementTypes.
+    std::unordered_map<std::string, std::vector<std::string>> structuredElementLayout;
+    // List of pairs of structured elements: name → body layout L means List[(L,L)]
+    // (nbody PAIRS = combinations(SYSTEM)).
+    std::unordered_map<std::string, std::vector<std::string>> pairOfStructuredLayout;
     // Return types for user-defined functions: tracks what types each function returns.
     // Used by callers to infer return value types. Contains: "float", "int", "boxed", "list", "dict", etc.
     // If multiple different types are returned, stored as "boxed".
