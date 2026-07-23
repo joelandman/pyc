@@ -1,37 +1,43 @@
-# nbody Profile — bulk unpack + native for-index
+# nbody Profile — Phases 25–26
 
-## Wall-clock (`--opt=2`)
+## Wall-clock (`--opt=2`; similar at 0/1/3)
 
 | Workload | Python | pyc | Speedup |
 |----------|-------:|----:|--------:|
-| nbody 50k | ~0.28 s | **~0.07 s** | **~4.0×** |
-| nbody 500k | ~2.53 s | **~0.71 s** | **~3.6×** |
+| nbody 50k | ~0.24 s | **~0.07 s** | **~3.4×** |
+| nbody 500k | ~2.33 s | **~0.70 s** | **~3.3×** |
 
-Energy matches CPython.
+Energy matches CPython. Opt-level sweep: `PERFORMANCE_OPT_LEVELS.md`.
 
-## `@advance` IR
+## `@advance` IR (representative)
 
 | Kind | Count | Notes |
 |------|------:|-------|
-| `fmul` / `fadd` / `fsub` | 15 / 8 / 6 | full hot arithmetic |
-| `llvm.pow.f64` | 1 | `** -1.5` |
-| `PyNumber_*` | **0** | |
-| `PyList_Unpack3` | 6 | body triples |
-| `PyList_Unpack2` | 1 | pair |
+| `fmul` / `fadd` / `fsub` | ~15 / 8 / 6 | hot arithmetic |
+| `llvm.pow.f64` | 1 | `** -1.5` into native `dt*mag` |
+| `PyNumber_Multiply` | **0** | |
+| `PyList_Unpack3` / `Unpack2` | 6 / 1 | body / pair |
 | `PyList_GetItemI64` | 2 | for-loop item only |
-| `GetItemDouble` / `SetItemDouble` | 9 / 9 | |
-| `PyList_SizeI64` | 2 | native for bounds |
-| `Py_DECREF` | 45 | was ~140 at Phase 24 |
-| `PyInt_FromLong` | 1 | was 25+ |
+| `GetItemDouble` / `SetItemDouble` | 9 / 9 | vel/pos updates |
+| `PyList_SizeI64` | 2 | native bounds |
+| `Py_DECREF` | ~45–60 | was ~140 pre-P0 |
+| `PyInt_FromLong` | ~1 | was 25+ |
 
-## This pass
+## Landed techniques
 
-1. **Native i64 for-loops** over lists: `PyList_SizeI64` + `i64` index + `i64add` + `GetItemI64(list, idx)` — eliminates boxed `idx+1`.
-2. **`PyList_Unpack2` / `Unpack3`** — one call unpacks pair/body instead of 2–3 indexed gets.
-3. Prior: f64 locals, native pow/mul chain, freelist, list_float aug-assign.
+1. Structured body/pair layouts + default/for-loop propagation  
+2. Scalar int/float freelist (P1)  
+3. `f64assign` / native double RHS → float locals  
+4. Native mul when either operand is already double  
+5. Bulk `Unpack2/3`; i64 for-loop index (`SizeI64` + `i64add`)  
+
+## Why O0–O3 look the same
+
+LTO bitcode link always runs before opt; `--opt=0` uses LLVM O1; frontend already
+emits the native kernel. Higher opt cannot remove remaining refcount/structure cost.
 
 ## Remaining (optional)
 
-- Further cut `Py_DECREF` / `PyFloat_FromDouble` on coord loads (still boxed then unboxed)
-- Dict insertion order
-- Profile-guided / SIMD on the double kernel
+- Fewer box/unbox round-trips on coord loads  
+- Dict insertion order  
+- SIMD / PGO on the double kernel  

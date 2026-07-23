@@ -277,43 +277,43 @@ print boundary (where boxing is required). This eliminates ~80% of the
 All **300/300** tests pass (inline + file cases, including `nbody.py`, `hash.py`,
 `builtins.py`, `builtins2.py`, `features.py`).
 
-### Current Performance Status (Phases 1–25)
+### Current Performance Status (Phases 1–26)
 
 | Benchmark | Python | pyc | Gap | Notes |
 |-----------|--------|-----|-----|-------|
-| nbody 50K | ~0.28s | **~0.07s** | **~4.0× faster** | bulk unpack + i64 for-index + native float chain |
-| nbody 500K | ~2.53s | **~0.71s** | **~3.6× faster** | — |
+| nbody 50K | ~0.24s | **~0.07s** | **~3.4× faster** | all `--opt=0..3` similar (LTO) |
+| nbody 500K | ~2.33s | **~0.70s** | **~3.3× faster** | — |
+| float_loop(2M) | ~0.27s | **~5 ms** | **~58× faster** | pure native float chain |
+| fibn(28) | ~0.10s | ~0.44s | ~4.3× slower | recursive boxed calls |
 | nbody 50K (Phase 24) | ~0.33s | ~0.54s | 1.6× slower | Pre-P0/P1 |
 | nbody 50K (LTO baseline) | — | 4.3s | 15× slower | Pre-Phase 12 |
 
-nbody output matches CPython. See also `PERFORMANCE_OPT_LEVELS.md` and `PROFILE_NBODY.md`.
+nbody energy matches CPython. Full opt-level tables: `PERFORMANCE_OPT_LEVELS.md`.
+Profile notes: `PROFILE_NBODY.md`.
 
-### Phase 25: P0 structured unpack + P1 scalar freelist
+### Phase 25–26 summary
 
-**P1 — thread-local freelist for boxed int/float** (`Runtime.cpp`):
-- Cap-256 freelists recycle plain type-0/4 objects on `Py_DECREF`
-- Removes `malloc`/`free` from the nbody hot profile
+**P1 freelist** — thread-local recycle of plain int/float boxes (no malloc in hot profile).
 
-**P0 — safe structured unpack for nbody-shaped data** (`Compiler.cpp`, `IR.h`):
-1. Body layout `[list_float, list_float, float]` from dict values / list literals
-2. `SYSTEM` → `structuredElementLayout`; `PAIRS`/`combinations` → `pairOfStructuredLayout`
-3. Default params (`bodies=SYSTEM`, `pairs=PAIRS`) bind layouts **before** body lower
-4. For-loop `PyBuiltin_List` + iter slot **copy layouts** (previously dropped)
-5. Unpack marks `v1`/`r` as `list_float` handles; mass stays boxed
-6. Nested `[x1,y1,z1]` from float lists → float-typed temps (binops unbox)
-7. Never `GetItemDouble` on mixed body tuples; never boxed unpack → `numericFloatLocals`
-8. Aug-assign on `list_float` → `GetItemDouble` + native op + `SetItemDouble`
+**P0 structured unpack** — body/pair layouts through SYSTEM/PAIRS/defaults; safe
+`list_float` handles; aug-assign native get/set.
 
-**`@advance` IR evidence:** `fadd`/`fsub`/`fmul` present; `GetItemDouble`×9, `SetItemDouble`×9.
+**Phase 26 native chain + spine** — `f64assign`, native pow/`m1*mag`, `Unpack2/3`,
+i64 list for-loops (`SizeI64` + `GetItemI64`). `@advance`: ~15× `fmul`, 0× `PyNumber_Multiply`.
+
+### Why higher `--opt` barely helps
+
+Runtime bitcode is linked **before** LLVM passes at every level; `--opt=0` still runs
+**O1**. Hot IR is already frontend-native. See `PERFORMANCE_OPT_LEVELS.md`.
 
 ### Remaining Work
 
-1. More native multiplies (`m1 * mag`, `** -1.5` → llvm pow/rsqrt)
-2. Cut remaining `GetItemObj` on pair/body spine
-3. Dict insertion order (hash vs insertion)
-4. Broader escape analysis / stack floats for ephemeral boxes
+1. Further cut `Py_DECREF` / box-unbox on coord loads
+2. Dict insertion order (hash vs insertion)
+3. Escape analysis / stack floats for ephemeral boxes
+4. fibn: specialization / less boxed recursion
 
-### Optimization Infrastructure (Phases 15–25)
+### Optimization Infrastructure (Phases 15–26)
 
 **Data structures in `IRFunction`:**
 ```cpp
