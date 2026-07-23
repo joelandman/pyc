@@ -3,6 +3,8 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
+#include <llvm/IR/DIBuilder.h>
+#include <llvm/IR/DebugInfoMetadata.h>
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
@@ -29,9 +31,45 @@
 
 namespace pyc {
 
-std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext& context, const std::string& moduleName) {
+std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext& context, const std::string& moduleName, bool debugInfo) {
     auto module = std::make_unique<llvm::Module>(moduleName, context);
     llvm::IRBuilder<> builder(context);
+
+    // Debug info setup
+    std::unique_ptr<llvm::DIBuilder> diBuilder;
+    llvm::DICompileUnit* diCU = nullptr;
+    llvm::DIFile* diFile = nullptr;
+    llvm::DISubroutineType* diSubroutineType = nullptr;
+    if (debugInfo) {
+        diBuilder = std::make_unique<llvm::DIBuilder>(*module);
+        // Derive source file from the first function that has a sourceFile,
+        // or from the module name.
+        std::string srcFile = "pyc_input.py";
+        std::string srcDir = ".";
+        for (const auto& f : ir.functions) {
+            if (!f.sourceFile.empty()) {
+                std::filesystem::path p(f.sourceFile);
+                srcFile = p.filename().string();
+                srcDir = p.parent_path().empty() ? "." : p.parent_path().string();
+                break;
+            }
+        }
+        diFile = diBuilder->createFile(srcFile, srcDir);
+        diCU = diBuilder->createCompileUnit(
+            llvm::dwarf::DW_LANG_C_plus_plus,
+            diFile,
+            "pyc",
+            false,       // isOptimized
+            "",          // flags
+            0);          // runtime version
+        // Subroutine type: void() — used as a generic type for all functions.
+        // The actual parameter types are not reflected in debug info (the
+        // debugger sees PyObject* / i64 / double, not Python types).
+        diSubroutineType = diBuilder->createSubroutineType(
+            diBuilder->getOrCreateTypeArray({nullptr}));
+        module->addModuleFlag(llvm::Module::Error, "Dwarf Version", 5);
+        module->addModuleFlag(llvm::Module::Error, "Debug Info Version", 3);
+    }
 
     // PyObject struct layout (must match Runtime.cpp flat struct)
     // Fields: refcount(i32), type(i32), value(i64), dvalue(double)
@@ -783,10 +821,54 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         }
     }
 
+    // Debug info: per-function DISubprogram and DILexicalBlock.
+    std::unordered_map<std::string, llvm::DISubprogram*> diSubprograms;
+    std::unordered_map<std::string, llvm::DILexicalBlock*> diBlocks;
+
     for (const auto& f : ir.functions) {
         std::string irName = llvmFunctionName(f.name);
         llvm::Function* func = module->getFunction(irName);
         if (!func) continue;
+
+        // Debug info: create DISubprogram for this function
+        llvm::DISubprogram* subprog = nullptr;
+        llvm::DILexicalBlock* lexBlock = nullptr;
+        if (debugInfo && diBuilder && diCU) {
+            // Use the function's source file if available, otherwise the module-level file
+            llvm::DIFile* funcDiFile = diFile;
+            if (!f.sourceFile.empty()) {
+                std::filesystem::path p(f.sourceFile);
+                funcDiFile = diBuilder->createFile(p.filename().string(),
+                    p.parent_path().empty() ? "." : p.parent_path().string());
+            }
+            int defLine = f.defLineno > 0 ? f.defLineno : 1;
+            // For specialized variants, use the original function name for debugging
+            std::string displayName = f.name;
+            if (displayName.find("__specialized_") == 0) {
+                // Extract original function name: __specialized_<name>_<sig>
+                size_t prefixLen = 14; // "__specialized_"
+                size_t sigStart = displayName.rfind('_');
+                if (sigStart != std::string::npos && sigStart > prefixLen) {
+                    displayName = displayName.substr(prefixLen, sigStart - prefixLen);
+                }
+            }
+            subprog = diBuilder->createFunction(
+                diCU,
+                displayName,       // display name (Python function name)
+                irName,            // linkage name (LLVM function name)
+                funcDiFile,
+                defLine,
+                diSubroutineType,
+                defLine,           // scope line
+                llvm::DINode::FlagPrototyped,
+                llvm::DISubprogram::SPFlagDefinition
+            );
+            func->setSubprogram(subprog);
+            lexBlock = diBuilder->createLexicalBlock(subprog, funcDiFile, defLine, 0);
+            diSubprograms[f.name] = subprog;
+            diBlocks[f.name] = lexBlock;
+        }
+
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", func);
         builder.SetInsertPoint(entry);
 
@@ -981,6 +1063,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // entry block so its address is stable across longjmps).
         std::unordered_map<std::string, llvm::AllocaInst*> jmpBufAllocas;
         for (const auto& inst : f.body) {
+            // Debug info: set the current debug location from the IR instruction's lineno.
+            // The builder will attach this DebugLoc to every LLVM instruction it creates.
+            if (debugInfo && lexBlock && inst.lineno > 0) {
+                builder.SetCurrentDebugLocation(
+                    llvm::DILocation::get(context, inst.lineno, 0, lexBlock));
+            } else if (debugInfo && lexBlock) {
+                builder.SetCurrentDebugLocation(nullptr);
+            }
             if (inst.op == "label") {
                 const std::string& ln = inst.result;
                 if (blockMap.find(ln) == blockMap.end()) {
@@ -2869,6 +2959,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 std::cerr << "=== __module__ IR ===\n" << s << "\n=== END ===\n";
             }
         }
+    }
+
+    // Debug info: finalize the DIBuilder before returning the module.
+    if (diBuilder) {
+        diBuilder->finalize();
     }
     return module;
 }

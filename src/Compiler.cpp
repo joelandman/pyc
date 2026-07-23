@@ -29,9 +29,13 @@ class LoweringVisitor {
                      const std::unordered_map<std::string, std::vector<std::string>>& importedModuleGlobals = {})
          : ir(moduleIR), compiledModules(compiledModules), importedModuleGlobals(importedModuleGlobals) {}
 
+    // Debug info: source file path for the module being compiled.
+    std::string currentSourceFile;
+
     void lower(const ASTNode* node, const std::string& funcName = "") {
         if (!node) return;
         if (!funcName.empty()) currentFunc = funcName;
+        if (node->lineno > 0) currentLineno = node->lineno;
 
          if (node->type == "Module") {
              ir.addFunction("__module__", {});
@@ -254,7 +258,12 @@ class LoweringVisitor {
             ir.addFunction(defIRName, bareParams);
             knownIRFunctions.insert(defIRName);
             userDefFunctions.insert(defIRName);
-            for (auto& fnr : ir.functions) if (fnr.name == defIRName) { fnr.paramNames = node->args; break; }
+            for (auto& fnr : ir.functions) if (fnr.name == defIRName) {
+                fnr.paramNames = node->args;
+                fnr.defLineno = node->lineno;
+                fnr.sourceFile = currentSourceFile;
+                break;
+            }
             for (auto& fnr : ir.functions) if (fnr.name == defIRName) { /* freeCellVars set later */ break; }
 
             // Switch currentFunc to the (possibly unique) IR name so that all cell analysis,
@@ -1259,6 +1268,7 @@ class LoweringVisitor {
     std::string lowerExpr(const ASTNode* node) {
         if (!node || currentFunc.empty()) return "";
         if (node->type == "FunctionDef") return "";
+        if (node->lineno > 0) currentLineno = node->lineno;
 
         if (node->type == "Constant") {
             std::string res = "c" + std::to_string(tempCounter++);
@@ -2531,6 +2541,18 @@ class LoweringVisitor {
     std::string currentFunc;
     std::string currentClass;
     int tempCounter = 0;
+    // Debug info: current source line being lowered (from ASTNode::lineno).
+    // Updated at the start of lower()/lowerExpr(). Injected into every
+    // IRInstruction via the emit() wrapper.
+    int currentLineno = 0;
+
+    // Wrapper for ir.addInstruction that injects the current source line.
+    // This avoids changing ~100 call sites — every lowering helper calls
+    // emit() instead of ir.addInstruction() and gets line tracking for free.
+    inline void emit(const std::string& op, const std::vector<std::string>& operands,
+                     const std::string& result = "", const std::string& resultType = "boxed") {
+        ir.addInstruction(currentFunc, op, operands, result, resultType, currentLineno);
+    }
     // Current innermost loop labels — updated by lowerFor/lowerWhile so
     // break/continue target the right blocks even with nested loops.
     std::string loopContinueLabel;
@@ -7864,9 +7886,11 @@ class LoweringVisitor {
 
 void lowerAST(const ASTNode* node, ModuleIR& ir,
                const std::unordered_set<std::string>& compiledModules = {},
-               const std::unordered_map<std::string, std::vector<std::string>>& importedModuleGlobals = {}) {
+               const std::unordered_map<std::string, std::vector<std::string>>& importedModuleGlobals = {},
+               const std::string& sourceFile = "") {
     if (!node) return;
     LoweringVisitor visitor(ir, compiledModules, importedModuleGlobals);
+    if (!sourceFile.empty()) visitor.currentSourceFile = sourceFile;
     visitor.lower(node);
     // A6: Generate specialized variants after lowering completes.
     visitor.generateSpecializedVariants();
@@ -7889,7 +7913,7 @@ void lowerAST(const ASTNode* node, ModuleIR& ir,
     }
 }
 
-bool Compiler::compile(const std::string& inputPath, const std::string& outputPath, bool useStatic, int optLevel, bool emitLLVM, bool emitASM, bool verbose) {
+bool Compiler::compile(const std::string& inputPath, const std::string& outputPath, bool useStatic, int optLevel, bool emitLLVM, bool emitASM, bool verbose, bool debugInfo) {
     // B7: First parse the main file to find imports, then scan for those modules
     PythonParser mainParser;
     auto mainAst = mainParser.parseFile(inputPath);
@@ -8024,9 +8048,9 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         // Pass importedModuleGlobals only to the main module so its
         // `from X import *` can be expanded statically.
         if (pyFile == inputPath) {
-            lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals);
+            lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals, pyFile);
         } else {
-            lowerAST(ast.get(), ir, std::unordered_set<std::string>{}, std::unordered_map<std::string, std::vector<std::string>>{});
+            lowerAST(ast.get(), ir, std::unordered_set<std::string>{}, std::unordered_map<std::string, std::vector<std::string>>{}, pyFile);
         }
         
         Codegen codegen;
@@ -8036,7 +8060,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             moduleNames.push_back(moduleName);
         }
         
-        auto module = codegen.generate(ir, context, "pyc_" + moduleName);
+        auto module = codegen.generate(ir, context, "pyc_" + moduleName, debugInfo);
         if (!module) {
             std::cerr << "Warning: Codegen failed for " << pyFile << ", skipping\n";
             continue;
@@ -8207,6 +8231,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
             pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
             runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
+        if (debugInfo) linkCmd += " -g";
         if (std::system(linkCmd.c_str()) == 0) {
             std::cout << "Linked with runtime to " << outputPath
                       << " (static=" << useStatic << ", lto=" << (useLTO ? 1 : 0) << ")\n";

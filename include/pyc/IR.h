@@ -18,6 +18,7 @@ struct IRInstruction {
     // Conservative compiler-known type for result values. Current codegen
     // still treats values as boxed unless it explicitly opts into a native path.
     std::string resultType;
+    int lineno = 0;  // Source line from ASTNode (0 = unknown)
 };
 
 struct IRFunction {
@@ -91,6 +92,10 @@ struct IRFunction {
     // Call-site type info: for each function, tracks what types its arguments have at call sites.
     // This is populated during call-site analysis and used for return type propagation.
     std::unordered_map<std::string, std::vector<std::vector<std::string>>> callSiteArgTypes;
+    // Debug info: source line of the `def` keyword (0 = unknown).
+    int defLineno = 0;
+    // Debug info: source file path for this function (empty = unknown).
+    std::string sourceFile;
 };
 
  class ModuleIR {
@@ -101,9 +106,9 @@ struct IRFunction {
      // Module name for B7 import system (e.g., "utils", "main")
      std::string moduleName;
 
-     void addFunction(const std::string& name, const std::vector<std::string>& args = {});
-     void addInstruction(const std::string& funcName, const std::string& op, const std::vector<std::string>& operands, const std::string& result = "", const std::string& resultType = "boxed");
-     void addInstructionRaw(const std::string& funcName, const std::string& op, const std::vector<IRValue>& operands, const std::string& result = "", const std::string& resultType = "boxed");
+    void addFunction(const std::string& name, const std::vector<std::string>& args = {});
+    void addInstruction(const std::string& funcName, const std::string& op, const std::vector<std::string>& operands, const std::string& result = "", const std::string& resultType = "boxed", int lineno = 0);
+    void addInstructionRaw(const std::string& funcName, const std::string& op, const std::vector<IRValue>& operands, const std::string& result = "", const std::string& resultType = "boxed", int lineno = 0);
      void setFunctionGlobals(const std::string& funcName, const std::vector<std::string>& globals);
      void addModuleGlobal(const std::string& name);
 };
