@@ -71,6 +71,11 @@ struct IRFunction {
     // Used by callers to infer return value types. Contains: "float", "int", "boxed", "list", "dict", etc.
     // If multiple different types are returned, stored as "boxed".
     std::string returnType;
+    // Return element types: maps return value index → element type when function returns a list/tuple
+    // Tracks per-index types (e.g., index 0 = float_list, index 1 = float_list for a list of float lists)
+    std::unordered_map<size_t, std::string> returnContainerElementTypes;
+    // Return subscript element types: maps return value index → element type for lists of known-type elements
+    std::unordered_map<size_t, std::string> returnSubscriptElementTypes;
     // Call-site type info: for each function, tracks what types its arguments have at call sites.
     // This is populated during call-site analysis and used for return type propagation.
     std::unordered_map<std::string, std::vector<std::vector<std::string>>> callSiteArgTypes;

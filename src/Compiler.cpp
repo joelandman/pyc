@@ -1735,6 +1735,17 @@ class LoweringVisitor {
                                     }
                                 }
                             }
+                            // Also check subscriptElementTypes for elements returned by function calls
+                            auto sit = fnx.subscriptElementTypes.find(temp);
+                            if (sit != fnx.subscriptElementTypes.end() && !sit->second.empty()) {
+                                for (const auto& [idx, et] : sit->second) {
+                                    if (et == "float" || et == "float_list" || et == "list_float") {
+                                        globalElementTypes[gname][idx] = "float";
+                                    } else if (et == "int" || et == "int_list" || et == "list_int") {
+                                        globalElementTypes[gname][idx] = "int";
+                                    }
+                                }
+                            }
                             break;
                         }
                     }
@@ -4381,6 +4392,35 @@ class LoweringVisitor {
                 auto cit = functionReturnedBundleCaps.find(funcName);
                 if (cit != functionReturnedBundleCaps.end()) descriptorCells[res] = cit->second;
             }
+            // S5: Propagate container element types from callee return type to call result.
+            // If funcName returns a list with known element types, the call result inherits them.
+            if (knownIRFunctions.count(funcName)) {
+                for (auto& fn : ir.functions) {
+                    if (fn.name == funcName) {
+                        // Propagate subscriptElementTypes from return type to call result
+                        if (!fn.returnSubscriptElementTypes.empty()) {
+                            for (auto& fnx : ir.functions) {
+                                if (fnx.name == currentFunc) {
+                                    for (auto& [idx, et] : fn.returnSubscriptElementTypes) {
+                                        fnx.subscriptElementTypes[res][idx] = et;
+                                    }
+                                    // Normalize element types and propagate containerElementTypes
+                                    for (auto& [idx, et] : fn.returnContainerElementTypes) {
+                                        fnx.containerElementTypes[res][idx] = et;
+                                        if (et == "float_list") {
+                                            for (size_t i = 0; i <= 20; i++) fnx.subscriptElementTypes[res][i] = "float";
+                                        } else if (et == "int_list") {
+                                            for (size_t i = 0; i <= 20; i++) fnx.subscriptElementTypes[res][i] = "int";
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
             return res;
         }
     }
@@ -5091,6 +5131,24 @@ class LoweringVisitor {
                 if (!val.empty() && (callableTokenTemps.count(val) || callableTokenToSynthetic.count(val))) {
                     namesThatMayHoldCallableTokens.insert(name);
                 }
+                // S5: Propagate container element types from assigned value (e.g., function call results)
+                // to the target name, so that subscriptElementTypes from the value is inherited by the name.
+                if (!val.empty()) {
+                    for (auto& fn : ir.functions) {
+                        auto sit = fn.subscriptElementTypes.find(val);
+                        if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
+                            fn.subscriptElementTypes[name] = sit->second;
+                        }
+                        auto cit = fn.containerElementTypes.find(val);
+                        if (cit != fn.containerElementTypes.end() && !cit->second.empty()) {
+                            fn.containerElementTypes[name] = cit->second;
+                        }
+                        auto lit = fn.listElementTypes.find(val);
+                        if (lit != fn.listElementTypes.end() && !lit->second.empty()) {
+                            fn.listElementTypes[name] = lit->second;
+                        }
+                    }
+                }
             }
             return;
         }
@@ -5218,6 +5276,26 @@ class LoweringVisitor {
             }
             if (vt != "int" && vt != "i64" && vt != "bool") {
                 killNumericLocal(node->id);
+            }
+            // S5: Propagate container element types from assigned value to target name.
+            // Propagates subscriptElementTypes, containerElementTypes, and listElementTypes
+            // so that names assigned from function call results (e.g., PAIRS = combinations(SYSTEM))
+            // inherit the element type information for downstream subscript optimization.
+            if (!val.empty() && vt != "int" && vt != "i64" && vt != "bool") {
+                for (auto& fn : ir.functions) {
+                    auto sit = fn.subscriptElementTypes.find(val);
+                    if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
+                        fn.subscriptElementTypes[node->id] = sit->second;
+                    }
+                    auto cit = fn.containerElementTypes.find(val);
+                    if (cit != fn.containerElementTypes.end() && !cit->second.empty()) {
+                        fn.containerElementTypes[node->id] = cit->second;
+                    }
+                    auto lit = fn.listElementTypes.find(val);
+                    if (lit != fn.listElementTypes.end() && !lit->second.empty()) {
+                        fn.listElementTypes[node->id] = lit->second;
+                    }
+                }
             }
             // If the RHS value is a synthetic lambda name (or we just lowered a lambda
             // expression and captured its synthetic), remember the alias so future
@@ -5539,14 +5617,19 @@ class LoweringVisitor {
                             auto iit = sit->second.find(idxVal);
                             if (iit != sit->second.end()) {
                                 elemType = iit->second;
-                                // Normalize element types: "list_float", "float_list" → "float"
-                                // "list_int", "int_list" → "int"
                                 if (elemType == "float" || elemType == "float_list" || elemType == "list_float") {
                                     noteType(res, "float");
                                     elemType = "float";
                                 } else if (elemType == "int" || elemType == "int_list" || elemType == "list_int") {
                                     noteType(res, "int");
                                     elemType = "int";
+                                } else if (elemType == "float_list" || elemType == "list_float") {
+                                    noteType(res, "list_float");
+                                    // Don't set elemType for codegen - result is a container, not a primitive
+                                    elemType = "boxed";
+                                } else if (elemType == "int_list" || elemType == "list_int") {
+                                    noteType(res, "list_int");
+                                    elemType = "boxed";
                                 } else {
                                     noteType(res, "boxed");
                                 }
@@ -5561,6 +5644,12 @@ class LoweringVisitor {
                             } else if (elemType == "int" || elemType == "int_list" || elemType == "list_int") {
                                 noteType(res, "int");
                                 elemType = "int";
+                            } else if (elemType == "float_list" || elemType == "list_float") {
+                                noteType(res, "list_float");
+                                elemType = "boxed";
+                            } else if (elemType == "int_list" || elemType == "list_int") {
+                                noteType(res, "list_int");
+                                elemType = "boxed";
                             } else {
                                 noteType(res, "boxed");
                             }
@@ -5578,10 +5667,13 @@ class LoweringVisitor {
                         if (!lit->second.empty()) {
                             if (hasLiteralIndex && idxVal < lit->second.size()) {
                                 elemType = lit->second[idxVal];
-                                if (elemType == "float") noteType(res, "float");
-                                else if (elemType == "float_list" || elemType == "list_float") noteType(res, "float");
-                                else if (elemType == "int") noteType(res, "int");
-                                else if (elemType == "int_list" || elemType == "list_int") noteType(res, "int");
+                                if (elemType == "float" || elemType == "float_list" || elemType == "list_float") {
+                                    noteType(res, "float");
+                                    elemType = "float";
+                                } else if (elemType == "int" || elemType == "int_list" || elemType == "list_int") {
+                                    noteType(res, "int");
+                                    elemType = "int";
+                                }
                             }
                         }
                         break;
@@ -5660,6 +5752,30 @@ class LoweringVisitor {
         if (listsContainingBundles.count(obj) || namesThatMayHoldBundles.count(obj) || namesThatMayHoldListsWithBundles.count(obj)) {
             bundleTemps.insert(res);
         }
+        // S5: Propagate element type info to result temp for function return tracking.
+        // If obj has known subscript element types (e.g., from lowerList or global tracking),
+        // propagate them to the result temp. This enables function return type inference:
+        // when a function returns a subscript result like "data[i]", the caller can inherit
+        // the element type info through the return value.
+        if (!obj.empty() && objType == "list") {
+            for (auto& fn : ir.functions) {
+                if (fn.name != currentFunc) continue;
+                auto sit = fn.subscriptElementTypes.find(obj);
+                if (sit != fn.subscriptElementTypes.end() && !sit->second.empty()) {
+                    // Populated subscriptElementTypes from obj into the result temp
+                    fn.subscriptElementTypes[res] = sit->second;
+                }
+                auto cit = fn.containerElementTypes.find(obj);
+                if (cit != fn.containerElementTypes.end() && !cit->second.empty()) {
+                    fn.containerElementTypes[res] = cit->second;
+                }
+                auto lit = fn.listElementTypes.find(obj);
+                if (lit != fn.listElementTypes.end() && !lit->second.empty()) {
+                    fn.listElementTypes[res] = lit->second;
+                }
+                break;
+            }
+        }
         return res;
     }
 
@@ -5678,6 +5794,43 @@ class LoweringVisitor {
             } else if (currentFnReturnType != rt) {
                 // Multiple different return types -> promote to boxed
                 currentFnReturnType = "boxed";
+            }
+            // S4: track return element types when returning a list container.
+            // This enables callers to inherit subscriptElementTypes/listElementTypes
+            // from the returned list, enabling PyList_GetItemDouble optimization.
+            for (auto& fnr : ir.functions) {
+                if (fnr.name == currentFunc) {
+                    // Check if this temp has subscriptElementTypes (from lowerList or unpacking)
+                    auto sit = fnr.subscriptElementTypes.find(val);
+                    if (sit != fnr.subscriptElementTypes.end() && !sit->second.empty()) {
+                        fnr.returnSubscriptElementTypes = sit->second;
+                        // Also populate containerElementTypes if the temp is a known type
+                        for (auto& [idx, et] : sit->second) {
+                            if (et == "float" || et == "list_float" || et == "float_list") {
+                                fnr.returnContainerElementTypes[idx] = "float_list";
+                            } else if (et == "int" || et == "int_list" || et == "list_int") {
+                                fnr.returnContainerElementTypes[idx] = "int_list";
+                            }
+                        }
+                    } else if (rt == "float" || rt == "int" || rt == "boxed") {
+                        // If rt is a primitive type but the temp has no subscriptElementTypes,
+                        // the temp might be a subscript result. Check listElementTypes.
+                        auto lit = fnr.listElementTypes.find(val);
+                        if (lit != fnr.listElementTypes.end() && !lit->second.empty()) {
+                            // Copy the list element types to return tracking
+                            for (auto& et : lit->second) {
+                                if (et == "float" || et == "list_float" || et == "float_list") {
+                                    fnr.returnSubscriptElementTypes[0] = "float";
+                                    fnr.returnContainerElementTypes[0] = "float_list";
+                                } else if (et == "int" || et == "int_list" || et == "list_int") {
+                                    fnr.returnSubscriptElementTypes[0] = "int";
+                                    fnr.returnContainerElementTypes[0] = "int_list";
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
             }
         }
         // B4: if this return carries a tracked callable token (or is the result of a function
