@@ -19,10 +19,10 @@ The benchmark is deliberately excluded from the test runner (see runner.py comme
 | Configuration | Time | vs Python |
 |---------------|------|-----------|
 | Python interpreter | 0.24s | baseline |
-| pyc --opt=0 | 3.63s | 15.1x slower |
-| pyc --opt=1 | 3.86s | 16.1x slower |
-| pyc --opt=2 | 3.54s | 14.7x slower |
-| pyc --opt=3 | 3.61s | 14.9x slower |
+| pyc -O0 | 3.63s | 15.1x slower |
+| pyc -O1 | 3.86s | 16.1x slower |
+| pyc -O2 | 3.54s | 14.7x slower |
+| pyc -O3 | 3.61s | 14.9x slower |
 
 **Finding:** All optimization levels perform similarly. LLVM optimizations (O1-O3)
 have minimal impact because the bottleneck is inboxed runtime function calls
@@ -35,8 +35,8 @@ have minimal impact because the bottleneck is inboxed runtime function calls
 | Configuration | n=20 | n=25 |
 |---------------|------|------|
 | Python interpreter | 0.024s | 0.037s |
-| pyc --opt=0 | 0.047s | 0.514s |
-| pyc --opt=3 | 0.050s | 0.572s |
+| pyc -O0 | 0.047s | 0.514s |
+| pyc -O3 | 0.050s | 0.572s |
 
 **Finding:** Recursive function calls show massive overhead. At n=25, compiled
 binary is ~14x slower than Python. The issue is that each recursive call to `fib()`
@@ -45,7 +45,7 @@ allocation/deallocation for arguments and return values.
 
 ---
 
-## Profile Hotspots (nbody.py, opt=2, n=50,000)
+## Profile Hotspots (nbody.py, -O2, n=50,000)
 
 Top runtime functions by sample count:
 
@@ -84,7 +84,7 @@ Every arithmetic operation (`+`, `*`, `-`) goes through C function calls:
 Every boxed value requires:
 - `Py_INCREF` when copied/stored
 - `Py_DECREF` when discarded
-- At opt=0/1/2/3, the runtime is not inlined, so each is an indirect function call
+- At -O0/1/2/3, the runtime is not inlined, so each is an indirect function call
 
 ### 4. LLVM Can't Optimize Away Runtime Calls
 Even at O3, LLVM cannot inline runtime calls because they're in the separate
@@ -97,7 +97,7 @@ optimization pass.
 
 ### Low-Hanging Fruit (Quick wins):
 
-1. **Enable LLVM optimization at opt=0**: Currently `if (optLevel <= 0) return;`
+1. **Enable LLVM optimization at -O0**: Currently `if (optLevel <= 0) return;`
    runs ZERO passes. Even a minimal instcombine + simplifycfg would help.
 
 2. **Mark runtime functions as `inline`**: Add `__attribute__((always_inline))`
@@ -162,9 +162,9 @@ For fibn (recursive), now fully native via A6 specialization:
 | Benchmark | Configuration | Peak RSS | Allocations (approx) |
 |-----------|--------------|----------|---------------------|
 | nbody(50,000) | Python | ~10 MB | Many (CPython free-list) |
-| nbody(50,000) | pyc opt=2 | ~8 MB | ~2M+ (every value boxed) |
+| nbody(50,000) | pyc -O2 | ~8 MB | ~2M+ (every value boxed) |
 | fibn(25) | Python | ~11 MB | Recursive stack |
-| fibn(25) | pyc opt=0 | ~12 MB | ~1M+ per call level |
+| fibn(25) | pyc -O0 | ~12 MB | ~1M+ per call level |
 
 ---
 
@@ -191,7 +191,7 @@ optimization improves performance. Start with smaller values for development:
 ## Optimization Progress
 
 ### Phase 1-11: Previous work
-- Phase 1: Enable basic LLVM passes at opt=0
+- Phase 1: Enable basic LLVM passes at -O0
 - Phase 2: Mark runtime functions as inline  
 - Phase 3: Native list element storage and subscript path
 - Phase 4-11: Various optimizations
@@ -275,7 +275,7 @@ All **300/300** tests pass (inline + file cases, including `nbody.py`, `hash.py`
 
 | Benchmark | Python | pyc | Gap | Notes |
 |-----------|--------|-----|-----|-------|
-| nbody 50K | ~0.24s | **~0.07s** | **~3.4× faster** | `--opt=1..3` (LTO); opt0 = true O0 debug |
+| nbody 50K | ~0.24s | **~0.07s** | **~3.4× faster** | `-O1..3` (LTO); opt0 = true O0 debug |
 | nbody 500K | ~2.33s | **~0.70s** | **~3.3× faster** | — |
 | float_loop(2M) | ~0.27s | **~5 ms** | **~58× faster** | pure native float chain |
 | fibn(28) | ~0.10s | **~4 ms** | **~27× faster** | native recursive specialization (A6+) |
@@ -335,8 +335,8 @@ an accumulator-style tail-recursive loop.
 
 ### Opt levels (current)
 
-- `--opt=0`: true O0 — no runtime bitcode LTO, no LLVM module passes (debug / raw IR).
-- `--opt=1..3`: LTO then O1/O2/O3. Hot IR is already frontend-native, so 1–3 look similar on nbody.
+- `-O0`: true O0 — no runtime bitcode LTO, no LLVM module passes (debug / raw IR).
+- `-O1..3`: LTO then O1/O2/O3. Hot IR is already frontend-native, so 1–3 look similar on nbody.
   See `PERFORMANCE_OPT_LEVELS.md`.
 
 ### Remaining Work

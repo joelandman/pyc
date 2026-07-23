@@ -11,7 +11,7 @@ cmake ..
 make -j
 
 # Compile an example
-./pyc ../examples/simple.py -o simple --opt=2
+./pyc ../examples/simple.py -o simple -O2
 
 # Run it
 ./simple

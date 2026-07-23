@@ -212,7 +212,7 @@ PYC_BINARY=./build/pyc python3 tests/runner.py
 ```bash
 # N-Body benchmark
 python3 tests/nbody.py 5000000
-./build/pyc tests/nbody.py -o nbody_compiled --opt=2
+./build/pyc tests/nbody.py -o nbody_compiled -O2
 ./nbody_compiled 5000000
 
 # Profiling
@@ -241,7 +241,7 @@ gravity simulation from the Computer Language Benchmarks Game.
 python3 tests/nbody.py 5000000
 
 # Compiled binary
-./build/pyc tests/nbody.py -o nbody_compiled --opt=2
+./build/pyc tests/nbody.py -o nbody_compiled -O2
 ./nbody_compiled 5000000
 ```
 
@@ -265,7 +265,7 @@ strace -c /tmp/nbody_compiled 5000000
 ```bash
 echo 'for i in range(10000000): x=i' > /tmp/loop_test.py
 python3 /tmp/loop_test.py
-./build/pyc /tmp/loop_test.py -o /tmp/loop_test --opt=2
+./build/pyc /tmp/loop_test.py -o /tmp/loop_test -O2
 /tmp/loop_test
 ```
 
@@ -277,7 +277,7 @@ for i in range(1000000):
     x *= 1.000001
 print(x)' > /tmp/arithmetic_test.py
 python3 /tmp/arithmetic_test.py
-./build/pyc /tmp/arithmetic_test.py -o /tmp/arithmetic_test --opt=2
+./build/pyc /tmp/arithmetic_test.py -o /tmp/arithmetic_test -O2
 /tmp/arithmetic_test
 ```
 
@@ -289,7 +289,7 @@ for x in lst:
     s += x
 print(s)' > /tmp/list_test.py
 python3 /tmp/list_test.py
-./build/pyc /tmp/list_test.py -o /tmp/list_test --opt=2
+./build/pyc /tmp/list_test.py -o /tmp/list_test -O2
 /tmp/list_test
 ```
 
@@ -303,7 +303,7 @@ for i in range(100000):
     s = add(s, i)
 print(s)' > /tmp/call_test.py
 python3 /tmp/call_test.py
-./build/pyc /tmp/call_test.py -o /tmp/call_test --opt=2
+./build/pyc /tmp/call_test.py -o /tmp/call_test -O2
 /tmp/call_test
 ```
 

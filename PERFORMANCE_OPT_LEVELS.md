@@ -5,10 +5,10 @@ Compile time excluded. Host: 2026-07-23. Binary: `build/pyc`. Interpreter: syste
 
 ## Results (post Phase 26; pre true-O0)
 
-> Table below was measured when `--opt=0` still ran LTO + LLVM O1. After true O0,
+> Table below was measured when `-O0` still ran LTO + LLVM O1. After true O0,
 > re-measure opt0 separately; opt1–3 should match these numbers.
 
-| Benchmark | Python | `--opt=0`* | `--opt=1` | `--opt=2` | `--opt=3` | Best vs Python |
+| Benchmark | Python | `-O0`* | `-O1` | `-O2` | `-O3` | Best vs Python |
 |-----------|-------:|----------:|----------:|----------:|----------:|---------------:|
 | nbody(50k) | 0.241 s | 0.071 s | 0.077 s | 0.074 s | 0.074 s | **3.39× faster** |
 | nbody(500k) | 2.326 s | 0.701 s | 0.714 s | 0.721 s | 0.716 s | **3.32× faster** |
@@ -49,12 +49,12 @@ codegen IR
 
 | Flag | Runtime bitcode LTO | LLVM module passes | Final link |
 |------|---------------------|--------------------|------------|
-| `--opt=0` | **off** | **none** (true O0) | no `-flto`, `-O0` |
-| `--opt=1` | on | O1 | `-flto=thin -O1` |
-| `--opt=2` | on | O2 | `-flto=thin -O2` (default) |
-| `--opt=3` | on | O3 | `-flto=thin -O3` |
+| `-O0` | **off** | **none** (true O0) | no `-flto`, `-O0` |
+| `-O1` | on | O1 | `-flto=thin -O1` |
+| `-O2` | on | O2 | `-flto=thin -O2` (default) |
+| `-O3` | on | O3 | `-flto=thin -O3` |
 
-Use **`--opt=0 --emit-llvm`** to inspect raw frontend IR (external `Py_*` calls, no inlined runtime).
+Use **`-O0 --emit-llvm`** to inspect raw frontend IR (external `Py_*` calls, no inlined runtime).
 
 ### Why opt1–3 still look similar on nbody
 
@@ -78,7 +78,7 @@ has inlined runtime helpers.
 
 ## Takeaways
 
-- Prefer **`--opt=2`** for release.
-- Use **`--opt=0`** for debugging and IR dumps (true O0, no LTO).
+- Prefer **`-O2`** for release.
+- Use **`-O0`** for debugging and IR dumps (true O0, no LTO).
 - **fibn** is now **~40× faster** than CPython after native recursive specialization
   (A6 variant with i64 params, native i64 return, native i1 icmp, dead-funcval elimination).

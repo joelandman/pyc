@@ -18,7 +18,7 @@ Each level encompasses all lower-level optimizations with additional passes.
 
 ## Optimization Levels
 
-### Level 0: No Optimization (`--opt=0`)
+### Level 0: No Optimization (`-O0`)
 **Purpose:** Debug builds, correctness verification, IR inspection
 
 **Passes / link:**
@@ -29,7 +29,7 @@ Each level encompasses all lower-level optimizations with additional passes.
 **Characteristics:**
 - Maximum debuggability; raw frontend IR via `--emit-llvm`
 - Slowest execution among opt levels
-- Test runner defaults to `--opt=0` for correctness
+- Test runner defaults to `-O0` for correctness
 
 **Use cases:**
 - Debugging compiler bugs
@@ -38,7 +38,7 @@ Each level encompasses all lower-level optimizations with additional passes.
 
 ---
 
-### Level 1: Simple Optimization (`--opt=1`)
+### Level 1: Simple Optimization (`-O1`)
 **Purpose:** Basic performance improvement with minimal compile time
 
 **Encompasses:** Level 0 +
@@ -71,7 +71,7 @@ Each level encompasses all lower-level optimizations with additional passes.
 
 ---
 
-### Level 2: Standard Optimization (`--opt=2`) — DEFAULT
+### Level 2: Standard Optimization (`-O2`) — DEFAULT
 **Purpose:** Good performance with reasonable compile time
 
 **Encompasses:** Level 1 +
@@ -112,7 +112,7 @@ Each level encompasses all lower-level optimizations with additional passes.
 
 ---
 
-### Level 3: Advanced Optimization (`--opt=3`)
+### Level 3: Advanced Optimization (`-O3`)
 **Purpose:** Maximum performance for compute-intensive workloads
 
 **Encompasses:** Level 2 +
@@ -159,7 +159,7 @@ Each level encompasses all lower-level optimizations with additional passes.
 
 ---
 
-### Level 4: Intensive Optimization (`--opt=4`)
+### Level 4: Intensive Optimization (`-O4`)
 **Purpose:** Maximum performance for production deployments
 
 **Encompasses:** Level 3 +
@@ -202,7 +202,7 @@ Each level encompasses all lower-level optimizations with additional passes.
 
 ---
 
-### Level 5: Maximum Optimization (`--opt=5`)
+### Level 5: Maximum Optimization (`-O5`)
 **Purpose:** Maximum possible performance, production releases
 
 **Encompasses:** Level 4 +
@@ -289,7 +289,7 @@ Each level encompasses all lower-level optimizations with additional passes.
 ### Correctness Tests
 - All 300 existing tests must pass at ALL optimization levels
 - No correctness regressions allowed
-- Test with `--opt=0` through `--opt=5`
+- Test with `-O0` through `-O5`
 
 ### Performance Benchmarks
 - N-Body simulation (`tests/nbody.py`)
@@ -312,7 +312,7 @@ Memory usage and leaks are treated as a first-class problem. No run-away allocat
 **Tool 1: Valgrind (Development)**
 ```bash
 valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes \
-    ./build/pyc tests/nbody.py -o nbody_test --opt=2
+    ./build/pyc tests/nbody.py -o nbody_test -O2
 ./nbody_test 10000
 ```
 
@@ -323,7 +323,7 @@ cmake .. -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
 make -j$(nproc)
 
 # Run with ASan
-./build/pyc tests/nbody.py -o nbody_asan --opt=2
+./build/pyc tests/nbody.py -o nbody_asan -O2
 ./nbody_asan 10000
 ```
 
@@ -376,7 +376,7 @@ for opt in 0 1 2 3 4 5; do
     echo "=== Testing Level $opt ==="
     
     # Compile
-    ./build/pyc "$TEST_FILE" -o nbody_l${opt} --opt=$opt
+    ./build/pyc "$TEST_FILE" -o nbody_l${opt} -O$opt
     
     # Run with memory tracking
     /usr/bin/time -v ./nbody_l${opt} $ITERATIONS 2> memory_stats.txt
@@ -453,7 +453,7 @@ gravity simulation from the Computer Language Benchmarks Game.
 python3 tests/nbody.py 5000000
 
 # Compiled binary
-./build/pyc tests/nbody.py -o nbody_compiled --opt=2
+./build/pyc tests/nbody.py -o nbody_compiled -O2
 ./nbody_compiled 5000000
 ```
 
@@ -477,7 +477,7 @@ strace -c /tmp/nbody_compiled 5000000
 ```bash
 echo 'for i in range(10000000): x=i' > /tmp/loop_test.py
 python3 /tmp/loop_test.py
-./build/pyc /tmp/loop_test.py -o /tmp/loop_test --opt=2
+./build/pyc /tmp/loop_test.py -o /tmp/loop_test -O2
 /tmp/loop_test
 ```
 
@@ -489,7 +489,7 @@ for i in range(1000000):
     x *= 1.000001
 print(x)' > /tmp/arithmetic_test.py
 python3 /tmp/arithmetic_test.py
-./build/pyc /tmp/arithmetic_test.py -o /tmp/arithmetic_test --opt=2
+./build/pyc /tmp/arithmetic_test.py -o /tmp/arithmetic_test -O2
 /tmp/arithmetic_test
 ```
 
@@ -501,7 +501,7 @@ for x in lst:
     s += x
 print(s)' > /tmp/list_test.py
 python3 /tmp/list_test.py
-./build/pyc /tmp/list_test.py -o /tmp/list_test --opt=2
+./build/pyc /tmp/list_test.py -o /tmp/list_test -O2
 /tmp/list_test
 ```
 
@@ -515,7 +515,7 @@ for i in range(100000):
     s = add(s, i)
 print(s)' > /tmp/call_test.py
 python3 /tmp/call_test.py
-./build/pyc /tmp/call_test.py -o /tmp/call_test --opt=2
+./build/pyc /tmp/call_test.py -o /tmp/call_test -O2
 /tmp/call_test
 ```
 

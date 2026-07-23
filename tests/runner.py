@@ -1007,8 +1007,8 @@ FILE_CASES = [
     ("hash.py", []),
     ("sprintf.py", []),
     ("range.py", []),
-    # modifiers.py has a loop bug at --opt=0 (the runner's default);
-    # works fine at --opt=2 but times out otherwise
+    # modifiers.py has a loop bug at -O0 (the runner's default);
+    # works fine at -O2 but times out otherwise
     # ("modifiers.py", []),
     # mbs.py is too slow for the 5s runner timeout
     # ("mbs.py", []),
@@ -1130,7 +1130,7 @@ def main():
                 exp = out.strip()
             else:
                 exp = expected.strip()
-            o, rc = run(f"{pyc} {name} -o /tmp/t.bin --opt=0 >/dev/null 2>&1 && /tmp/t.bin")
+            o, rc = run(f"{pyc} {name} -o /tmp/t.bin -O0 >/dev/null 2>&1 && /tmp/t.bin")
             actual = o.strip()
             if actual == exp.strip():
                 print("PASS")
@@ -1152,7 +1152,7 @@ def main():
         quoted_args = " ".join(shlex.quote(a) for a in args)
         out, _ = run(f"python3 {quoted_src} {quoted_args}")
         exp = out.strip()
-        o, rc = run(f"{pyc} {quoted_src} -o /tmp/t.bin --opt=0 >/dev/null 2>&1 && /tmp/t.bin {quoted_args}")
+        o, rc = run(f"{pyc} {quoted_src} -o /tmp/t.bin -O0 >/dev/null 2>&1 && /tmp/t.bin {quoted_args}")
         actual = o.strip()
         if actual == exp:
             print("PASS")

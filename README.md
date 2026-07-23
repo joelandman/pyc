@@ -22,7 +22,7 @@ make -j$(nproc)
 pyc hello.py -o hello          # compile
 pyc hello.py -o hello --static # fully static binary
 pyc hello.py --emit-llvm       # dump LLVM IR
-pyc hello.py --opt=2 -o hello  # with O2 optimisation
+pyc hello.py -O2 -o hello      # with O2 optimisation
 ./hello
 ```
 
@@ -32,10 +32,11 @@ pyc hello.py --opt=2 -o hello  # with O2 optimisation
 |------|-------------|
 | `-o output` | Output file path (default: `a.out`) |
 | `--static` | Produce fully static binary (no dynamic libs) |
-| `--opt=0` | True O0: **no** runtime bitcode LTO, **no** LLVM passes (debug / raw IR) |
-| `--opt=1` | LLVM O1 + runtime bitcode LTO |
-| `--opt=2` | LLVM O2 + runtime bitcode LTO (default) |
-| `--opt=3` | LLVM O3 + runtime bitcode LTO |
+| `-O0` | True O0: **no** runtime bitcode LTO, **no** LLVM passes (debug / raw IR) |
+| `-O1` | LLVM O1 + runtime bitcode LTO |
+| `-O2` | LLVM O2 + runtime bitcode LTO (default) |
+| `-O3` | LLVM O3 + runtime bitcode LTO |
+| `--opt=N` | Alias for `-ON` (deprecated) |
 | `--emit-llvm` | Emit LLVM IR to `output.ll` instead of binary |
 | `--emit-asm` / `-S` | Emit assembly to `output.s` instead of binary |
 | `--verbose` | Print verbose compilation information |

@@ -8145,8 +8145,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     auto module = Codegen::mergeModules(modules, context, "pyc_module");
     if (!module) return false;
     
-    // LTO: link precompiled runtime bitcode before optimization at opt>=1.
-    // True --opt=0 skips bitcode LTO so IR stays raw codegen + external runtime.
+    // LTO: link precompiled runtime bitcode before optimization at -O1 and above.
+    // True -O0 skips bitcode LTO so IR stays raw codegen + external runtime.
     const bool useLTO = (optLevel >= 1);
     if (useLTO) {
         std::string rtBitcodePath = PYC_RUNTIME_BC;
@@ -8154,26 +8154,26 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         if (verbose)
             std::cout << "Linked runtime bitcode for LTO optimization\n";
     } else if (verbose) {
-        std::cout << "opt=0: skipping runtime bitcode LTO (true O0 debug mode)\n";
+        std::cout << "-O0: skipping runtime bitcode LTO (true O0 debug mode)\n";
     }
 
     codegen.optimize(module.get(), optLevel);
     if (emitLLVM) {
         if (codegen.emitLLVM(module.get(), outputPath + ".ll")) {
-            std::cout << "Emitted LLVM IR " << outputPath << ".ll (opt=" << optLevel << ")\n";
+            std::cout << "Emitted LLVM IR " << outputPath << ".ll (-O" << optLevel << ")\n";
             return true;
         }
         return false;
     }
     if (emitASM) {
         if (codegen.emitAssembly(module.get(), outputPath + ".s")) {
-            std::cout << "Emitted assembly " << outputPath << ".s (opt=" << optLevel << ")\n";
+            std::cout << "Emitted assembly " << outputPath << ".s (-O" << optLevel << ")\n";
             return true;
         }
         return false;
     }
     if (codegen.emitObject(module.get(), outputPath + ".o")) {
-        std::cout << "Generated object " << outputPath << ".o (opt=" << optLevel << ")\n";
+        std::cout << "Generated object " << outputPath << ".o (-O" << optLevel << ")\n";
         std::string linkCmd = "clang++ ";
         if (useStatic) linkCmd += "-static -s -Wl,--gc-sections ";
 
@@ -8196,8 +8196,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             }
             pclose(pipe);
         }
-        // opt>=1: -flto=thin so the object (with linked runtime BC) can finalize LTO.
-        // opt=0: no -flto; link libpycrt/Runtime.cpp as a normal archive/source.
+        // -O1 and above: -flto=thin so the object (with linked runtime BC) can finalize LTO.
+        // -O0: no -flto; link libpycrt/Runtime.cpp as a normal archive/source.
         // --allow-multiple-definition only needed when LTO may duplicate runtime symbols.
         if (useLTO) {
             linkCmd += outputPath + ".o -flto=thin -Wl,--allow-multiple-definition ";
