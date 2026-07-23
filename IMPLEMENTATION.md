@@ -20,6 +20,14 @@ Functions have identity (`is`, `==`) and repr (`<function f at 0x...>`), but ful
 first-class object protocol (`__call__`, `__name__`, `__doc__` attributes) is not
 implemented.
 
+### Function Specialization — Single-Variant (A6)
+The A6 specialization generates a native variant for a function only when **all**
+call sites agree on the same numeric type signature. If a function is called with
+`(int, int)` at one site and `(float, float)` at another, no variant is generated
+and both sites use the boxed path. Generalized multi-dispatch (one variant per
+distinct signature) is planned but requires speculative unboxing at call sites
+(see "Planned" section below).
+
 ### Tail Call Optimization — Not Implemented
 Recursive functions use O(n) stack space. No plan to implement TCO.
 
@@ -90,6 +98,48 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - Full insertion-ordered dicts
 - Native `**` / rsqrt and full mass/mag float chain in nbody
 - Extend recursive specialization to mutual recursion and float-returning functions
+- **Generalized multi-dispatch specialization**: generate one specialized variant
+  per distinct call-site type signature (e.g. `__specialized_add_ii` and
+  `__specialized_add_ff` for a function called with both `(int, int)` and
+  `(float, float)`). The current A6 specialization only generates a variant when
+  *all* call sites agree on the same signature, so a function called with mixed
+  int and float args gets no variant at all.
+
+  Multi-variant generation was prototyped and works (variants are correctly
+  created with per-sig native params and per-sig native return types). However,
+  **non-recursive call sites can't dispatch to the variants** due to a
+  chicken-and-egg problem: the A6 codegen dispatch checks whether call-site
+  arguments are *already native* (i64/double in LLVM IR) before routing to a
+  variant. But a variable like `s = add(s, i)` receives a boxed `PyObject*`
+  result from the first call, so on the next loop iteration `s` is still boxed
+  and the dispatch check fails. The variant never fires.
+
+  This cycle does not affect self-recursive functions like `fib` because the
+  param `n` is typed as int from body-level inference (`n <= 1`, `n - 1` with
+  int constants), so recursive calls within the variant have native args.
+
+  **What would be needed to make it work:**
+  1. **Speculative unboxing at call sites**: the codegen dispatch should check
+     whether a variant exists for the *declared/inferred types* of the arguments
+     (not whether the args are already native), and unbox them at the call site
+     if a matching variant exists. This requires knowing the variant exists at
+     the call site and inserting unbox calls.
+  2. **Native return value propagation to the receiver slot**: when a variant
+     returns i64/double, the call result should be stored in a native alloca
+     (not boxed), so the receiver variable stays native across loop iterations.
+     This requires the call-site code to know the variant's return type and
+     allocate a native slot for the result.
+  3. **Per-variant return type inference**: each variant's return type must be
+     computed from its own signature (an all-int variant returns i64, an
+     all-float variant returns double), not from the original function's merged
+     return type. This was implemented in the prototype via per-sig
+     `inferParamTypesFromBody` re-invocation.
+
+  The infrastructure for (3) and the multi-variant generation itself are
+  straightforward. The speculative unboxing in (1) and native-slot propagation
+  in (2) are the deeper changes that require modifying the codegen call-site
+  dispatch to look up variants by inferred type rather than by runtime LLVM IR
+  type.
 
 ### Correctness Guarantees
 - Every optimization preserves a boxed fallback path
