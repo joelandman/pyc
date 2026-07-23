@@ -35,6 +35,11 @@ PyObject* PyList_FromArray(PyObject** items, size_t size);
 PyObject* PyList_Range(int start, int end);
 PyObject* PyList_SizeBoxed(PyObject* list);
 PyObject* PyList_GetItemObj(PyObject* list, PyObject* idx);
+PyObject* PyList_GetItemI64(PyObject* list, int64_t index);
+int64_t   PyList_SizeI64(PyObject* list);
+// Unpack 2/3 elements (new refs each). Returns 1 on success, 0 on failure.
+int PyList_Unpack2(PyObject* list, PyObject** out0, PyObject** out1);
+int PyList_Unpack3(PyObject* list, PyObject** out0, PyObject** out1, PyObject** out2);
 PyObject* PyList_NewBoxed(PyObject* n);
 PyObject* PyList_NewIntBoxed(PyObject* n);
 PyObject* PyList_NewFloatBoxed(PyObject* n);

@@ -281,8 +281,8 @@ All **300/300** tests pass (inline + file cases, including `nbody.py`, `hash.py`
 
 | Benchmark | Python | pyc | Gap | Notes |
 |-----------|--------|-----|-----|-------|
-| nbody 50K | ~0.27s | **~0.15s** | **~1.8× faster** | P0 unpack + P1 freelist |
-| nbody 500K | ~2.38s | **~1.42s** | **~1.7× faster** | — |
+| nbody 50K | ~0.28s | **~0.07s** | **~4.0× faster** | bulk unpack + i64 for-index + native float chain |
+| nbody 500K | ~2.53s | **~0.71s** | **~3.6× faster** | — |
 | nbody 50K (Phase 24) | ~0.33s | ~0.54s | 1.6× slower | Pre-P0/P1 |
 | nbody 50K (LTO baseline) | — | 4.3s | 15× slower | Pre-Phase 12 |
 

@@ -1,88 +1,37 @@
-# nbody Profile Analysis (P0 unpack + P1 freelist)
+# nbody Profile — bulk unpack + native for-index
 
-**Setup:** `tests/nbody.py` `--opt=2`, energy matches CPython.
+## Wall-clock (`--opt=2`)
 
-**Flamegraph:** [`nbody_flamegraph.svg`](nbody_flamegraph.svg)
+| Workload | Python | pyc | Speedup |
+|----------|-------:|----:|--------:|
+| nbody 50k | ~0.28 s | **~0.07 s** | **~4.0×** |
+| nbody 500k | ~2.53 s | **~0.71 s** | **~3.6×** |
 
----
+Energy matches CPython.
 
-## Wall-clock (execution only)
+## `@advance` IR
 
-| Workload | Python | pyc `--opt=2` | Ratio |
-|----------|-------:|--------------:|------:|
-| nbody 50k | ~0.27 s | **~0.15 s** | **~1.8× faster** |
-| nbody 500k | ~2.38 s | **~1.42 s** | **~1.7× faster** |
+| Kind | Count | Notes |
+|------|------:|-------|
+| `fmul` / `fadd` / `fsub` | 15 / 8 / 6 | full hot arithmetic |
+| `llvm.pow.f64` | 1 | `** -1.5` |
+| `PyNumber_*` | **0** | |
+| `PyList_Unpack3` | 6 | body triples |
+| `PyList_Unpack2` | 1 | pair |
+| `PyList_GetItemI64` | 2 | for-loop item only |
+| `GetItemDouble` / `SetItemDouble` | 9 / 9 | |
+| `PyList_SizeI64` | 2 | native for bounds |
+| `Py_DECREF` | 45 | was ~140 at Phase 24 |
+| `PyInt_FromLong` | 1 | was 25+ |
 
----
+## This pass
 
-## `@advance` IR (after P0 unpack)
+1. **Native i64 for-loops** over lists: `PyList_SizeI64` + `i64` index + `i64add` + `GetItemI64(list, idx)` — eliminates boxed `idx+1`.
+2. **`PyList_Unpack2` / `Unpack3`** — one call unpacks pair/body instead of 2–3 indexed gets.
+3. Prior: f64 locals, native pow/mul chain, freelist, list_float aug-assign.
 
-| Kind | Count |
-|------|------:|
-| `fadd` | 8 |
-| `fsub` | 6 |
-| `fmul` | 3 |
-| `PyList_GetItemDouble` | 9 |
-| `PyList_SetItemDouble` | 9 |
-| `PyNumber_Multiply` | 12 |
-| `PyList_GetItemObj` | 22 |
-| `Py_DECREF` | 107 |
+## Remaining (optional)
 
-Native float ops and homogeneous list get/set are live on the velocity/position path.
-
----
-
-## Profile hotspots (n=200k)
-
-| Symbol | ~% |
-|--------|---:|
-| `Py_DECREF` | ~33% |
-| `PyList_GetItemObj` | ~18% |
-| `advance` leaf | ~rest of loop |
-| `PyNumber_*` | reduced vs pre-P0 |
-| **`malloc`/`free`** | **~0%** (P1 freelist) |
-
----
-
-## What P0 unpack does (safe model)
-
-1. **Layout tracking**
-   - BODIES values → shared body layout `[list_float, list_float, float]`
-   - `list(BODIES.values())` / `SYSTEM` → `structuredElementLayout`
-   - `combinations(SYSTEM)` / `PAIRS` → `pairOfStructuredLayout`
-   - Defaults `bodies=SYSTEM`, `pairs=PAIRS` bind layouts onto params **before** body lower
-   - For-loop `PyBuiltin_List` + iter slot **copy layouts** (was dropping them)
-
-2. **Unpack rules**
-   - Pair item → each child gets body layout via `childStructuredLayout`
-   - Body unpack: `pos`/`vel` → `list_float` + `knownFloatLists`; `mass` stays boxed
-   - Nested `[x1,y1,z1]` from `list_float`: `GetItemObj` + `noteType(float)` so binops unbox
-   - **Never** `GetItemDouble` on mixed body tuples (segfault / wrong physics)
-   - **Never** put boxed unpack scalars into `numericFloatLocals` (refcount corruption)
-
-3. **Stores**
-   - `v1[i] op= …` / `r[i] op= …` use `GetItemDouble` + native op + `SetItemDouble` when handle is `list_float`
-
----
-
-## P1 freelist
-
-Thread-local freelists (cap 256) for plain int/float boxes in `Runtime.cpp`.  
-Recycle only objects with empty container fields.
-
----
-
-## Remaining headroom
-
-1. More `fmul` — keep mass/mag on native float chain (`m1 * mag` still often `PyNumber_Multiply`).
-2. Cut remaining `GetItemObj` on pair/body spine (still boxed structure walk).
-3. Reduce `Py_DECREF` via fewer ephemeral boxes (escape analysis / stack floats).
-4. Native `** -1.5` → `llvm.pow` / rsqrt on doubles.
-
-### Regenerate flamegraph
-
-```bash
-./build/pyc tests/nbody.py -o /tmp/nbody_prof --opt=2
-perf record -F 999 -g --call-graph dwarf,8192 -o /tmp/perf.data -- /tmp/nbody_prof 200000
-perf script -i /tmp/perf.data | stackcollapse-perf.pl --all | flamegraph.pl > nbody_flamegraph.svg
-```
+- Further cut `Py_DECREF` / `PyFloat_FromDouble` on coord loads (still boxed then unboxed)
+- Dict insertion order
+- Profile-guided / SIMD on the double kernel

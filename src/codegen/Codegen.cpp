@@ -1,4 +1,5 @@
 #include "pyc/Codegen.h"
+#include <cctype>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/IR/Verifier.h>
@@ -62,6 +63,20 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     llvm::FunctionType* listGetItemObjTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(listGetItemObjTy, llvm::Function::ExternalLinkage, "PyList_GetItemObj", module.get());
+    llvm::FunctionType* listGetItemI64Ty = llvm::FunctionType::get(
+        pyObjectPtrTy, {pyObjectPtrTy, llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(listGetItemI64Ty, llvm::Function::ExternalLinkage, "PyList_GetItemI64", module.get());
+    llvm::FunctionType* listSizeI64Ty = llvm::FunctionType::get(
+        llvm::Type::getInt64Ty(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(listSizeI64Ty, llvm::Function::ExternalLinkage, "PyList_SizeI64", module.get());
+    // Unpack2/3: (list, out0*, out1*[, out2*]) -> i32
+    llvm::Type* ptrPtrTy = llvm::PointerType::get(context, 0);
+    llvm::FunctionType* unpack2Ty = llvm::FunctionType::get(
+        llvm::Type::getInt32Ty(context), {pyObjectPtrTy, ptrPtrTy, ptrPtrTy}, false);
+    llvm::Function::Create(unpack2Ty, llvm::Function::ExternalLinkage, "PyList_Unpack2", module.get());
+    llvm::FunctionType* unpack3Ty = llvm::FunctionType::get(
+        llvm::Type::getInt32Ty(context), {pyObjectPtrTy, ptrPtrTy, ptrPtrTy, ptrPtrTy}, false);
+    llvm::Function::Create(unpack3Ty, llvm::Function::ExternalLinkage, "PyList_Unpack3", module.get());
 
     llvm::FunctionType* listAppendTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(listAppendTy, llvm::Function::ExternalLinkage, "PyList_Append", module.get());
@@ -1175,7 +1190,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
                 return true;
             }
-            if (inst.resultType == "float" || (bothNative && rawL->getType()->isDoubleTy() && rawR->getType()->isDoubleTy())) {
+            // Native float if result is float, both sides native doubles, OR either
+            // side is already a native double (e.g. mag from pow/fmul chain × boxed m1).
+            bool eitherNativeDbl =
+                (lhsIsNative && rawL->getType()->isDoubleTy()) ||
+                (rhsIsNative && rawR->getType()->isDoubleTy());
+            if (inst.resultType == "float" ||
+                (bothNative && rawL->getType()->isDoubleTy() && rawR->getType()->isDoubleTy()) ||
+                (eitherNativeDbl && (op == "add" || op == "sub" || op == "mul"))) {
                 llvm::Value* lhs = unboxToDouble(getOrLoad(inst.operands[0].name));
                 llvm::Value* rhs = unboxToDouble(getOrLoad(inst.operands[1].name));
                 llvm::Value* native = nullptr;
@@ -1189,10 +1211,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     return false;
                 }
                 valueMap[inst.result] = native;
-                if (!bothNative) {
-                    emitDecRefIfOwned(inst.operands[0].name);
-                    emitDecRefIfOwned(inst.operands[1].name);
-                }
+                if (!lhsIsNative) emitDecRefIfOwned(inst.operands[0].name);
+                if (!rhsIsNative) emitDecRefIfOwned(inst.operands[1].name);
                 return true;
             }
             return false;
@@ -1707,19 +1727,26 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 bool bothNativeI64 = lhsNativeI64 && rhsNativeI64;
                 bool bothNative = (lhsNativeI64 || lhsNativeDbl) && (rhsNativeI64 || rhsNativeDbl);
                 // Native path: both operands are numeric (i64 or double)
-                if (bothNativeI64) {
+                if (bothNativeI64 && inst.resultType != "float") {
                     // Integer power: exp >= 0 yields int, exp < 0 yields float
-                    // (Python semantics); the runtime helper handles the sign.
                     llvm::Function* powInt64Obj = module->getFunction("Pyc_PowInt64Obj");
                     valueMap[inst.result] = builder.CreateCall(powInt64Obj, {lhsRaw, rhsRaw}, inst.result);
                     markOwned(inst.result);
-                } else if (bothNative) {
-                    // Float power: LLVM pow intrinsic on native doubles, box result
-                    llvm::Value* lhsUnboxed = lhsNativeDbl ? lhsRaw : builder.CreateSIToFP(lhsRaw, dblTy, "pow.lhs.dbl");
-                    llvm::Value* rhsUnboxed = rhsNativeDbl ? rhsRaw : builder.CreateSIToFP(rhsRaw, dblTy, "pow.rhs.dbl");
-                    llvm::Value* powResult = builder.CreateBinaryIntrinsic(llvm::Intrinsic::pow, lhsUnboxed, rhsUnboxed, nullptr, "pow.result");
-                    valueMap[inst.result] = boxDouble(powResult, inst.result);
-                    markOwned(inst.result);
+                } else if (bothNative || inst.resultType == "float") {
+                    // Float power: LLVM pow on doubles; keep native when result is float
+                    // so mag = r ** -1.5 feeds native m1*mag / dt*mag chains.
+                    llvm::Value* lhsUnboxed = unboxToDouble(lhsRaw ? lhsRaw : getOrLoad(lhsName));
+                    llvm::Value* rhsUnboxed = unboxToDouble(rhsRaw ? rhsRaw : getOrLoad(rhsName));
+                    llvm::Value* powResult = builder.CreateBinaryIntrinsic(
+                        llvm::Intrinsic::pow, lhsUnboxed, rhsUnboxed, nullptr, "pow.result");
+                    if (inst.resultType == "float") {
+                        valueMap[inst.result] = powResult;
+                    } else {
+                        valueMap[inst.result] = boxDouble(powResult, inst.result);
+                        markOwned(inst.result);
+                    }
+                    if (!lhsNativeDbl && !lhsNativeI64) emitDecRefIfOwned(lhsName);
+                    if (!rhsNativeDbl && !rhsNativeI64) emitDecRefIfOwned(rhsName);
                 } else {
                     // Boxed path: call Pyc_Pow
                     llvm::Function* fn = module->getFunction("Pyc_Pow");
@@ -1990,6 +2017,33 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 } else {
                     valueMap[inst.result] = llvm::ConstantPointerNull::get(pyObjectPtrTy);
                 }
+            } else if (inst.op == "f64assign") {
+                // Dedicated native float store — always f64 alloca, never PyObject*.
+                std::string srcName = inst.operands.empty() ? "" : inst.operands[0].name;
+                llvm::Value* src = getOrLoad(srcName);
+                llvm::Value* dsrc = src && src->getType()->isDoubleTy() ? src : unboxToDouble(src);
+                if (src && !src->getType()->isDoubleTy() && ownedTemps.count(srcName))
+                    emitDecRefIfOwned(srcName);
+                llvm::AllocaInst* f64a = nullptr;
+                auto tit = valueMap.find(inst.result);
+                if (tit != valueMap.end()) {
+                    if (auto* a = llvm::dyn_cast<llvm::AllocaInst>(tit->second)) {
+                        if (a->getAllocatedType()->isDoubleTy()) f64a = a;
+                        else if (a->getAllocatedType() == pyObjectPtrTy) {
+                            // Demote PyObject* slot: DECREF current, keep null for safety
+                            llvm::Value* oldV = builder.CreateLoad(pyObjectPtrTy, a, inst.result + ".old");
+                            if (auto* d = module->getFunction("Py_DECREF")) builder.CreateCall(d, {oldV});
+                            builder.CreateStore(llvm::ConstantPointerNull::get(pyObjectPtrTy), a);
+                        }
+                    }
+                }
+                if (!f64a) {
+                    llvm::IRBuilder<> eb(&func->getEntryBlock(), func->getEntryBlock().begin());
+                    f64a = eb.CreateAlloca(llvm::Type::getDoubleTy(context), nullptr, inst.result + ".f64");
+                    valueMap[inst.result] = f64a;
+                }
+                builder.CreateStore(dsrc, f64a);
+                continue;
             } else if (inst.op == "assign") {
                 // If the source is a Python name AND it's a module global, load
                 // the global directly (don't go through valueMap, which may have
@@ -2009,6 +2063,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
                 llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
                 std::string srcName = srcNameAssign;
+                // If RHS is already a native double (e.g. dt*pow chain), store as f64 local
+                // even when lowering typed the temp "boxed" (param types known only post-pass).
+                bool forceF64 = (inst.resultType == "float") ||
+                    (src && src->getType()->isDoubleTy() &&
+                     !inst.result.empty() && inst.result[0] != 't' && inst.result[0] != 'c' &&
+                     inst.result.rfind("__", 0) != 0);
 
                  // If target currently has an i64 slot (A2.1 numeric local or range var), handle separately.
                  auto tit0 = valueMap.find(inst.result);
@@ -2064,37 +2124,57 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                      }
                   }
 
-                  // A6: If target is a float numeric local (proven to stay float), use native f64 storage.
-                  bool isFloatLocal = false;
-                  for (const auto& nfl : f.numericFloatLocals) {
-                      if (nfl == inst.result) { isFloatLocal = true; break; }
-                  }
-                  if (isFloatLocal && src->getType()->isDoubleTy()) {
-                      // Check if target already has an f64 alloca (from a prior f64assign or numeric float local setup)
-                      bool hasF64Alloca = false;
-                      if (tit0 != valueMap.end()) {
-                          if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit0->second)) {
-                              if (alloca->getAllocatedType()->isDoubleTy()) hasF64Alloca = true;
-                          }
-                      }
-                      if (!hasF64Alloca) {
-                          // Create a new f64 alloca in the entry block.
-                          llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
-                                                         func->getEntryBlock().begin());
-                          llvm::AllocaInst* f64alloca = entryBuilder.CreateAlloca(llvm::Type::getDoubleTy(context), nullptr, inst.result + ".double");
-                          valueMap[inst.result] = f64alloca;
-                      }
-                      // Store the native double value.
-                      auto tit2 = valueMap.find(inst.result);
-                      if (tit2 != valueMap.end()) {
-                          if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit2->second)) {
-                              if (alloca->getAllocatedType()->isDoubleTy()) {
-                                  builder.CreateStore(src, alloca);
-                                  continue;
-                              }
-                          }
-                      }
-                  }
+                   // A6 / f64assign: native f64 storage for proven float locals
+                   bool isFloatLocal = forceF64;
+                   if (!isFloatLocal) {
+                       for (const auto& nfl : f.numericFloatLocals) {
+                           if (nfl == inst.result) { isFloatLocal = true; break; }
+                       }
+                   }
+                   if (isFloatLocal) {
+                       llvm::Value* dsrc = src;
+                       if (!dsrc->getType()->isDoubleTy()) {
+                           dsrc = unboxToDouble(dsrc);
+                           if (ownedTemps.count(srcName)) {
+                               emitDecRefIfOwned(srcName);
+                           }
+                       }
+                       bool hasF64Alloca = false;
+                       if (tit0 != valueMap.end()) {
+                           if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit0->second)) {
+                               if (alloca->getAllocatedType()->isDoubleTy()) hasF64Alloca = true;
+                           }
+                       }
+                       if (!hasF64Alloca) {
+                           // If a PyObject* slot already exists, DECREF its current value once
+                           // then replace the slot with an f64 alloca for the rest of the function.
+                           if (tit0 != valueMap.end()) {
+                               if (auto* oldA = llvm::dyn_cast<llvm::AllocaInst>(tit0->second)) {
+                                   if (oldA->getAllocatedType() == pyObjectPtrTy) {
+                                       llvm::Value* oldV = builder.CreateLoad(pyObjectPtrTy, oldA, inst.result + ".old");
+                                       llvm::Function* decref = module->getFunction("Py_DECREF");
+                                       if (decref) builder.CreateCall(decref, {oldV});
+                                       // Keep null in old slot so exit cleanup is harmless if still referenced
+                                       builder.CreateStore(llvm::ConstantPointerNull::get(pyObjectPtrTy), oldA);
+                                   }
+                               }
+                           }
+                           llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
+                                                          func->getEntryBlock().begin());
+                           llvm::AllocaInst* f64alloca = entryBuilder.CreateAlloca(
+                               llvm::Type::getDoubleTy(context), nullptr, inst.result + ".f64");
+                           valueMap[inst.result] = f64alloca;
+                       }
+                       auto tit2 = valueMap.find(inst.result);
+                       if (tit2 != valueMap.end()) {
+                           if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(tit2->second)) {
+                               if (alloca->getAllocatedType()->isDoubleTy()) {
+                                   builder.CreateStore(dsrc, alloca);
+                                   continue;
+                               }
+                           }
+                       }
+                   }
 
                  // Determine ownership of source. Owned temps already have refcount=1.
                 bool srcIsOwned = ownedTemps.count(srcName) > 0;
@@ -2264,6 +2344,75 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         emitDecRefIfOwned(rhsName);
                         continue;
                     }
+                  // i64-index list get: constant digit string or i64 SSA/local name
+                  if (funcName == "PyList_GetItemI64" && inst.operands.size() >= 3) {
+                      std::string listName = inst.operands[1].name;
+                      std::string idxStr = inst.operands[2].name;
+                      llvm::Value* listVal = getAsPyObject(listName);
+                      llvm::Value* idxVal = nullptr;
+                      bool isDigits = !idxStr.empty() && (isdigit(idxStr[0]) || idxStr[0]=='-');
+                      if (isDigits) {
+                          for (size_t k = 1; k < idxStr.size() && isDigits; ++k)
+                              if (!isdigit(idxStr[k])) isDigits = false;
+                      }
+                      if (isDigits) {
+                          long idx = 0;
+                          try { idx = std::stol(idxStr); } catch (...) { idx = 0; }
+                          idxVal = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), idx);
+                      } else {
+                          idxVal = getOrLoad(idxStr);
+                          if (idxVal && idxVal->getType() != llvm::Type::getInt64Ty(context))
+                              idxVal = unboxToI64(idxVal);
+                      }
+                      llvm::Function* getFn = module->getFunction("PyList_GetItemI64");
+                      if (getFn && idxVal) {
+                          llvm::Value* item = builder.CreateCall(getFn, {listVal, idxVal}, inst.result);
+                          if (!inst.result.empty()) {
+                              valueMap[inst.result] = item;
+                              markOwned(inst.result);
+                          }
+                          emitDecRefIfOwnedSameBlock(listName);
+                          continue;
+                      }
+                  }
+                  if ((funcName == "PyList_SizeI64") && inst.operands.size() >= 2) {
+                      llvm::Value* listVal = getAsPyObject(inst.operands[1].name);
+                      llvm::Function* sz = module->getFunction("PyList_SizeI64");
+                      if (sz) {
+                          llvm::Value* n = builder.CreateCall(sz, {listVal}, inst.result);
+                          if (!inst.result.empty()) valueMap[inst.result] = n;
+                          emitDecRefIfOwnedSameBlock(inst.operands[1].name);
+                          continue;
+                      }
+                  }
+                  // unpack2/3: operands = [func, list, e0, e1, (e2)]
+                  if ((funcName == "PyList_Unpack2" || funcName == "PyList_Unpack3") &&
+                      inst.operands.size() >= 4) {
+                      std::string listName = inst.operands[1].name;
+                      llvm::Value* listVal = getAsPyObject(listName);
+                      size_t nOut = (funcName == "PyList_Unpack3") ? 3 : 2;
+                      llvm::IRBuilder<> eb(&func->getEntryBlock(), func->getEntryBlock().begin());
+                      std::vector<llvm::AllocaInst*> slots;
+                      std::vector<std::string> outNames;
+                      for (size_t k = 0; k < nOut; ++k) {
+                          outNames.push_back(inst.operands[2 + k].name);
+                          slots.push_back(eb.CreateAlloca(pyObjectPtrTy, nullptr, outNames.back() + ".uslot"));
+                          eb.CreateStore(llvm::ConstantPointerNull::get(pyObjectPtrTy), slots.back());
+                      }
+                      llvm::Function* ufn = module->getFunction(funcName);
+                      if (ufn) {
+                          std::vector<llvm::Value*> args = {listVal};
+                          for (auto* s : slots) args.push_back(s);
+                          builder.CreateCall(ufn, args);
+                          for (size_t k = 0; k < nOut; ++k) {
+                              llvm::Value* v = builder.CreateLoad(pyObjectPtrTy, slots[k], outNames[k]);
+                              valueMap[outNames[k]] = v;
+                              markOwned(outNames[k]);
+                          }
+                          emitDecRefIfOwnedSameBlock(listName);
+                          continue;
+                      }
+                  }
                   // A4: native list subscript get for proven homogeneous lists.
                  if ((funcName == "Pyc_GetItem" || funcName == "Pyc_Subscript") && inst.operands.size() >= 3) {
                      std::string listName = inst.operands[1].name;
@@ -2552,6 +2701,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 // INCREFd if it came from a slot, so slot cleanup is safe.
                 // Slots null-initialized at alloca creation make cross-path cleanup
                 // a no-op (DECREF(null) is safe in our runtime).
+                // Skip native f64/i64 allocas (not PyObject*).
                 {
                     llvm::Function* slotDecref = module->getFunction("Py_DECREF");
                     if (slotDecref) {
@@ -2559,6 +2709,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                             auto vit = valueMap.find(slotName);
                             if (vit != valueMap.end()) {
                                 if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(vit->second)) {
+                                    if (alloca->getAllocatedType() != pyObjectPtrTy) continue;
                                     llvm::Value* slotVal = builder.CreateLoad(
                                         pyObjectPtrTy, alloca, slotName + ".exit");
                                     builder.CreateCall(slotDecref, {slotVal});
@@ -2579,7 +2730,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             llvm::Value* zero = fromLong
                 ? (llvm::Value*)builder.CreateCall(fromLong, {llvm::ConstantInt::get(context, llvm::APInt(64, 0))})
                 : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy);
-            // DECREF all owned slots before the implicit return
+            // DECREF all owned slots before the implicit return (skip native f64/i64)
             {
                 llvm::Function* slotDecref = module->getFunction("Py_DECREF");
                 if (slotDecref) {
@@ -2587,6 +2738,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         auto vit = valueMap.find(slotName);
                         if (vit != valueMap.end()) {
                             if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(vit->second)) {
+                                if (alloca->getAllocatedType() != pyObjectPtrTy) continue;
                                 llvm::Value* slotVal = builder.CreateLoad(
                                     pyObjectPtrTy, alloca, slotName + ".exit");
                                 builder.CreateCall(slotDecref, {slotVal});

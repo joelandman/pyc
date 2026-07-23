@@ -2720,11 +2720,10 @@ class LoweringVisitor {
         std::string rt = typeOf(right);
         if (op == "truediv") return "float";
         if (op == "pow") {
-            auto isNum = [](const std::string& t){ return t=="int" || t=="bool" || t=="float" || t=="i64"; };
-            if (isNum(lt) && isNum(rt)) {
-                if (lt == "float" || rt == "float") return "float";
-                return "boxed";
-            }
+            // float ** anything or anything ** float → float (covers ** -1.5)
+            if (lt == "float" || rt == "float") return "float";
+            auto isNum = [](const std::string& t){ return t=="int" || t=="bool" || t=="i64"; };
+            if (isNum(lt) && isNum(rt)) return "boxed"; // int**int via runtime / expand
             return "boxed";
         }
         auto isNum = [](const std::string& t){ return t=="int" || t=="bool" || t=="float" || t=="i64"; };
@@ -4897,19 +4896,19 @@ class LoweringVisitor {
             markPairOfStructured(iterSlot, pairOfStructuredLayout[listVal]);
         listVal = iterSlot;
 
-        // Boxed length: PyList_SizeBoxed returns PyObject*(int)
-        std::string lenRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", listVal}, lenRes);
-        // Store sentinel in a slot so null-init + DECREF-on-reassign + slot-exit-cleanup
-        // handle it automatically (avoids leak when this code is inside an outer loop).
-        std::string lenSlot = "__sl_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
+        // Native i64 length + index (avoids boxed PyNumber_Add on idx+1)
+        std::string lenI64 = "__len_i64_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_SizeI64", listVal}, lenI64, "i64");
+        noteType(lenI64, "i64");
+        numericLocals.insert(lenI64);
 
-        // Use a fresh temp for the initial 0 to avoid name collision with the alloca.
-        std::string idxVar  = node->id + "__idx";     // alloca variable name
-        std::string idxInit = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
-        ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
+        std::string idxVar = node->id + "__idx";
+        std::string idxInit = "i" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "i64const", {"0"}, idxInit, "i64");
+        noteType(idxInit, "i64");
+        ir.addInstruction(currentFunc, "i64assign", {idxInit}, idxVar, "i64");
+        noteType(idxVar, "i64");
+        numericLocals.insert(idxVar);
 
         std::string loopLabel = "for_loop_" + std::to_string(tempCounter);
         std::string bodyLabel = "for_body_" + std::to_string(tempCounter);
@@ -4924,12 +4923,12 @@ class LoweringVisitor {
         ir.addInstruction(currentFunc, "label", {}, loopLabel);
         auto loopEntryTypes = valueTypes;
         std::string cmpRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenSlot}, cmpRes);
+        ir.addInstruction(currentFunc, "i64icmp", {"Lt", idxVar, lenI64}, cmpRes, "bool");
         ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
 
         ir.addInstruction(currentFunc, "label", {}, bodyLabel);
         std::string itemRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, idxVar}, itemRes);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItemI64", listVal, idxVar}, itemRes);
         // P0: Propagate element layouts from iterated list to loop item.
         // - structured list (SYSTEM): item is one body tuple layout
         // - pair-of-structured (PAIRS): item is a pair; each child gets body layout
@@ -5019,12 +5018,14 @@ class LoweringVisitor {
         for (size_t i = iterIndex + 1; i < node->children.size(); ++i)
             lower(node->children[i].get());
 
-        // idxVar = idxVar + 1
-        std::string oneRes = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "const", {"1"}, oneRes);
-        std::string nextIdx = "t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "add", {idxVar, oneRes}, nextIdx);
-        ir.addInstruction(currentFunc, "assign", {nextIdx}, idxVar);
+        // idxVar = idxVar + 1 (native i64)
+        std::string oneRes = "i" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "i64const", {"1"}, oneRes, "i64");
+        noteType(oneRes, "i64");
+        std::string nextIdx = "i" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "i64add", {idxVar, oneRes}, nextIdx, "i64");
+        noteType(nextIdx, "i64");
+        ir.addInstruction(currentFunc, "i64assign", {nextIdx}, idxVar, "i64");
 
         widenLoopTypes(loopEntryTypes);
         ir.addInstruction(currentFunc, "br", {}, loopLabel);
@@ -5503,7 +5504,14 @@ class LoweringVisitor {
                 // A2.1: use native i64assign for proven int/bool/i64 local
                 ir.addInstruction(currentFunc, "i64assign", {val}, node->id, "i64");
                 numericLocals.insert(node->id);
+                numericFloatLocals.erase(node->id);
                 noteType(node->id, "i64");
+            } else if (!isGlob && (numericFloatLocals.count(node->id) || vt == "float")) {
+                // Keep mag/b1m/dx/… as native f64 locals for float chains (m1*mag, dt*mag)
+                ir.addInstruction(currentFunc, "f64assign", {val}, node->id, "float");
+                noteType(node->id, "float");
+                numericFloatLocals.insert(node->id);
+                numericLocals.erase(node->id);
             } else {
                 ir.addInstruction(currentFunc, "assign", {val}, node->id);
                 noteType(node->id, vt);
@@ -5520,11 +5528,12 @@ class LoweringVisitor {
                     markStructuredList(node->id, structuredElementLayout[val]);
                 if (pairOfStructuredLayout.count(val))
                     markPairOfStructured(node->id, pairOfStructuredLayout[val]);
-                // For globals, remove from numericLocals to prevent i64 alloca creation
-                if (isGlob) numericLocals.erase(node->id);
-            }
-            if (vt != "int" && vt != "i64" && vt != "bool") {
+                // Non-numeric assign: drop native slots
                 killNumericLocal(node->id);
+                if (isGlob) {
+                    numericLocals.erase(node->id);
+                    numericFloatLocals.erase(node->id);
+                }
             }
             // S5: Propagate container element types from assigned value to target name.
             // Propagates subscriptElementTypes, containerElementTypes, and listElementTypes
@@ -5601,9 +5610,10 @@ class LoweringVisitor {
                     copyLayoutMaps(value, target->id);
                     killNumericLocal(target->id);
                 } else if (vt == "float") {
-                    // Typed float from list_float unpack — enable float-typed binops
+                    // Typed float for binop resultType; keep boxed storage for unpack
+                    // sources (GetItemObj) to avoid breaking offset_momentum / energy.
                     noteType(target->id, "float");
-                    killNumericLocal(target->id);  // keep as boxed float object for safety
+                    killNumericLocal(target->id);
                 } else if (vt == "int" || vt == "i64") {
                     noteType(target->id, "int");
                     killNumericLocal(target->id);
@@ -5635,7 +5645,6 @@ class LoweringVisitor {
             if (lit != fn.listElementTypes.end()) idxKinds = lit->second;
             break;
         }
-        // Pair-of-bodies item: every child is a full body layout
         std::vector<std::string> childBody;
         if (childStructuredLayout.count(value))
             childBody = childStructuredLayout[value];
@@ -5643,28 +5652,38 @@ class LoweringVisitor {
         bool parentFloatList = (typeOf(value) == "list_float") || knownFloatLists.count(value);
         bool parentIntList = (typeOf(value) == "list_int") || knownIntLists.count(value);
 
-        for (size_t i = 0; i < target->children.size(); ++i) {
-            std::string ic = "c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {std::to_string(i)}, ic);
-            std::string elem = "t" + std::to_string(tempCounter++);
+        const size_t n = target->children.size();
+        std::vector<std::string> elems(n);
 
+        // Bulk unpack 2/3-element tuples (nbody pair/body spine) — one runtime call
+        if (n == 2 || n == 3) {
+            for (size_t i = 0; i < n; ++i)
+                elems[i] = "t" + std::to_string(tempCounter++);
+            std::vector<std::string> ops;
+            ops.push_back(n == 3 ? "PyList_Unpack3" : "PyList_Unpack2");
+            ops.push_back(value);
+            for (size_t i = 0; i < n; ++i) ops.push_back(elems[i]);
+            ir.addInstruction(currentFunc, "call", ops, "");
+        } else {
+            for (size_t i = 0; i < n; ++i) {
+                elems[i] = "t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call",
+                    {"PyList_GetItemI64", value, std::to_string((long long)i)}, elems[i]);
+            }
+        }
+
+        for (size_t i = 0; i < n; ++i) {
+            const std::string& elem = elems[i];
             std::string kind;
             if (!childBody.empty()) kind = "body";
             else if (i < idxKinds.size()) kind = idxKinds[i];
             else if (parentFloatList) kind = "float";
             else if (parentIntList) kind = "int";
 
-            // GetItemObj always in unpack. Native element access for pos/vel happens
-            // via lowerSubscriptGet/aug-assign once names are knownFloatLists.
-            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", value, ic}, elem);
-            if (parentFloatList) noteType(elem, "float");
-            else if (parentIntList) noteType(elem, "int");
-
             if (!value.empty() && (callableTokenTemps.count(value) || listsContainingCallableTokens.count(value))) {
                 callableTokenTemps.insert(elem);
             }
 
-            // Annotate handles from structured body layout (no scalar native on mixed tuples)
             if (kind == "list_float" || kind == "float_list") {
                 noteType(elem, "list_float");
                 knownFloatLists.insert(elem);
@@ -5685,8 +5704,11 @@ class LoweringVisitor {
                 }
             } else if (kind == "body" && !childBody.empty()) {
                 applyTupleLayout(elem, childBody);
+            } else if (kind == "float" || parentFloatList) {
+                noteType(elem, "float");
+            } else if (kind == "int" || parentIntList) {
+                noteType(elem, "int");
             }
-            // kind == "float"/"int" on mixed tuple: leave as boxed GetItemObj result
 
             lowerUnpackTarget(target->children[i].get(), elem);
         }

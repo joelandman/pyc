@@ -156,7 +156,6 @@ static PyObject* allocIntObj() {
 
 static void freeScalarObj(PyObject* obj) {
     if (!obj) return;
-    // P1 freelist: recycle plain int/float boxes
     if (obj->type == 4 && g_float_freelist_n < PYC_FREELIST_CAP &&
         obj->list.empty() && obj->flist.empty() && obj->ilist.empty() &&
         obj->dict.empty() && obj->str.empty() && !obj->cell_content) {
@@ -311,6 +310,49 @@ PyObject* PyList_GetItemObj(PyObject* list, PyObject* idx) {
     PyObject* item = list->list[i];
     if (item) Py_INCREF(item);
     return item;
+}
+
+// Constant-index get: avoids boxing the index (nbody unpack spine).
+PyObject* PyList_GetItemI64(PyObject* list, int64_t index) {
+    if (!list || list->type != 1) return nullptr;
+    size_t n = PyList_Size(list);
+    long i = (long)index;
+    if (i < 0) i += (long)n;
+    if (i < 0 || (size_t)i >= n) return nullptr;
+    if (list->list_item_type == 1) return PyInt_FromLong(list->ilist[i]);
+    if (list->list_item_type == 2) return PyFloat_FromDouble(list->flist[i]);
+    PyObject* item = list->list[i];
+    if (item) Py_INCREF(item);
+    return item;
+}
+
+int64_t PyList_SizeI64(PyObject* list) {
+    return (int64_t)PyList_Size(list);
+}
+
+static PyObject* listGetNewRef(PyObject* list, size_t i) {
+    if (list->list_item_type == 1) return PyInt_FromLong(list->ilist[i]);
+    if (list->list_item_type == 2) return PyFloat_FromDouble(list->flist[i]);
+    PyObject* item = list->list[i];
+    if (item) Py_INCREF(item);
+    return item;
+}
+
+int PyList_Unpack2(PyObject* list, PyObject** out0, PyObject** out1) {
+    if (!list || list->type != 1 || !out0 || !out1) return 0;
+    if (PyList_Size(list) < 2) return 0;
+    *out0 = listGetNewRef(list, 0);
+    *out1 = listGetNewRef(list, 1);
+    return 1;
+}
+
+int PyList_Unpack3(PyObject* list, PyObject** out0, PyObject** out1, PyObject** out2) {
+    if (!list || list->type != 1 || !out0 || !out1 || !out2) return 0;
+    if (PyList_Size(list) < 3) return 0;
+    *out0 = listGetNewRef(list, 0);
+    *out1 = listGetNewRef(list, 1);
+    *out2 = listGetNewRef(list, 2);
+    return 1;
 }
 
 PyObject* PyList_NewBoxed(PyObject* n) {
