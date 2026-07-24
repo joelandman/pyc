@@ -363,7 +363,7 @@ pyc myapp.py --pgo-use=myapp.profdata -o myapp_optimized -O4 -mcpu=znver3
 - Example: `fib(30)` with O2: ~0.5s, with O2 + specialization: ~0.01s (50x faster)
 
 **Not yet implemented:**
-- [ ] Speculative specialization with runtime type guards (for mixed-type call sites where args are boxed) — deferred due to LLVM IR block management complexity
+- [ ] Speculative specialization with runtime type guards (for mixed-type call sites where args are boxed) — deferred, requires careful LLVM IR basic block management
 - [ ] Runtime type checking for non-numeric types (str/list/dict) — infrastructure added, dispatch pending
 
 ### Level 5: Maximum Optimization (`-O5`) — IMPLEMENTED
