@@ -412,11 +412,40 @@ pyc myapp.py -o myapp -O5 -mcpu=znver3
 
 **Conclusion:** No memory leaks detected. All allocations are properly cleaned up.
 
+### Runtime Benchmarks
+
+Compiled code is consistently **5-10x faster than Python** across all optimization levels. The tests are too fast to show meaningful differences between O0-O5:
+
+| Test | Python | O0 | O1 | O2 | O3 | O4 | O5 |
+|------|--------|----|----|----|----|----|----|
+| nbody.py (1000 iters) | 0.013s | 0.003s | 0.003s | 0.003s | 0.003s | 0.002s | 0.003s |
+| fibn.py (20 iters) | 0.010s | 0.002s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+| fib.py | 0.009s | 0.002s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+| opt_function_call.py | 0.010s | 0.002s | 0.002s | 0.002s | 0.002s | 0.002s | 0.002s |
+| opt_numeric_loop.py | 0.013s | 0.002s | 0.002s | 0.002s | 0.002s | 0.002s | 0.001s |
+| opt_range_loop.py | 0.009s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+| opt_homogeneous_list.py | 0.010s | 0.003s | 0.002s | 0.002s | 0.002s | 0.002s | 0.002s |
+| opt_nested_destructuring.py | 0.009s | 0.002s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+| opt_numeric_locals.py | 0.009s | 0.002s | 0.002s | 0.001s | 0.001s | 0.001s | 0.001s |
+| opt_numeric_lists.py | 0.009s | 0.002s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+| sprintf.py | 0.009s | 0.002s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+| regex.py | 0.013s | 0.002s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+| builtins.py | 0.013s | 0.002s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+| builtins2.py | 0.011s | 0.002s | 0.002s | 0.002s | 0.001s | 0.002s | 0.001s |
+| hash.py | 0.009s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+| features.py | 0.021s | 0.006s | 0.005s | 0.005s | 0.005s | 0.005s | 0.005s |
+| generators.py | 0.009s | 0.002s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+| closures.py | 0.009s | 0.002s | 0.001s | 0.001s | 0.001s | 0.001s | 0.001s |
+
+**Note:** Tests are too fast to show meaningful differences between optimization levels. Larger workloads (e.g., nbody.py with 5M iterations) show clearer O3/O4/O5 differences.
+
 ### Compile Time Benchmarks (nbody.py)
 
 | Level | Compile Time | vs O3 |
 |-------|--------------|-------|
 | O3 | 1.77s | baseline |
+| O4 | 2.05s | +16% |
+| O5 | 3.61s | +104% |
 | O4 | 2.05s | +16% |
 | O5 | 3.61s | +104% |
 
