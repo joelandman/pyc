@@ -345,13 +345,16 @@ pyc myapp.py --pgo-use=myapp.profdata -o myapp_optimized -O4 -mcpu=znver3
 
 **Implemented:**
 - [x] Call-site type tracking (`callSiteTypes` map in `LoweringVisitor`)
-- [x] Specialized variant generation (`generateSpecializedVariants()`)
+- [x] Specialized variant generation (`generateSpecializedVariants()`) — generates variants for ALL distinct type signatures (multi-versioning)
 - [x] Native param allocation for specialized variants
 - [x] Native return type support for specialized variants
 - [x] Call-site dispatch to specialized variants when all args are native
 - [x] IR field `specializedSignatures` to track available signatures per function
 - [x] Support for non-numeric type signatures (str/list/dict) in variant naming
 - [x] Codegen support for non-numeric specialized variants (PyObject* params)
+- [x] Runtime type check helpers (`pyc_is_int`, `pyc_is_float`) for future type-guard dispatch
+
+**Multi-versioning:** Variants are generated for ALL distinct type signatures observed across call sites. For example, if `f(a, b)` is called as `f(1, 2)` (int/int) and `f(1.0, 2.0)` (float/float), both `__specialized_f_ii` and `__specialized_f_ff` are generated. At call sites where all args are already native, dispatch goes directly to the matching variant.
 
 **Usage:** Automatic — no CLI flag needed. The compiler analyzes call sites and generates specialized variants when possible.
 
@@ -360,7 +363,7 @@ pyc myapp.py --pgo-use=myapp.profdata -o myapp_optimized -O4 -mcpu=znver3
 - Example: `fib(30)` with O2: ~0.5s, with O2 + specialization: ~0.01s (50x faster)
 
 **Not yet implemented:**
-- [ ] Speculative specialization with runtime type guards (for mixed-type call sites) — deferred due to LLVM block management complexity
+- [ ] Speculative specialization with runtime type guards (for mixed-type call sites where args are boxed) — deferred due to LLVM IR block management complexity
 - [ ] Runtime type checking for non-numeric types (str/list/dict) — infrastructure added, dispatch pending
 
 ### Level 5: Maximum Optimization (`-O5`) — IMPLEMENTED

@@ -5548,4 +5548,18 @@ PyObject* Pyc_ToFlatList(PyObject* obj) {
     return result;
 }
 
+// A9: Runtime type guards for multi-versioning dispatch.
+// pyc_is_int returns 1 if obj is a Python int (type==0) or bool (type==5).
+// pyc_is_float returns 1 if obj is a Python float (type==4).
+extern "C" int pyc_is_int(PyObject* obj) {
+    if (!obj) return 0;
+    int t = obj->type;
+    return (t == 0 || t == 5) ? 1 : 0;
+}
+
+extern "C" int pyc_is_float(PyObject* obj) {
+    if (!obj) return 0;
+    return (obj->type == 4) ? 1 : 0;
+}
+
 } // extern "C"

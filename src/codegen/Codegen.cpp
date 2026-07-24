@@ -216,6 +216,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         {pyObjectPtrTy, pyObjectPtrTy, llvm::Type::getInt32Ty(context)}, false);
     llvm::Function::Create(cmpBoolTy, llvm::Function::ExternalLinkage, "PyObject_CompareBool", module.get());
 
+    // A9: Runtime type guards for multi-versioning dispatch
+    llvm::FunctionType* isIntTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(isIntTy, llvm::Function::ExternalLinkage, "pyc_is_int", module.get());
+
+    llvm::FunctionType* isFloatTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(isFloatTy, llvm::Function::ExternalLinkage, "pyc_is_float", module.get());
+
     // String operations
     llvm::FunctionType* strFromAnyTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(strFromAnyTy, llvm::Function::ExternalLinkage, "PyStr_FromAny", module.get());

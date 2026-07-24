@@ -263,6 +263,10 @@ PyObject* PyCell_Set(PyObject* cell, PyObject* val);
 // B5 helper: return 1 if obj is a cell (type==6), else 0.
 int PyCell_Check(PyObject* obj);
 
+// A9: Runtime type guards for multi-versioning dispatch
+int pyc_is_int(PyObject* obj);
+int pyc_is_float(PyObject* obj);
+
 // A7: Allocation counters for measurement and guardrails.
 // Returns the current count of allocations for each type.
 long PyAlloc_GetIntCount();
