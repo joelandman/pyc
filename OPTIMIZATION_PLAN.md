@@ -335,9 +335,19 @@ pyc myapp.py --pgo-use=myapp.profdata -o myapp_optimized -O4 -mcpu=znver3
 
 **Not yet implemented:**
 - [ ] Custom loop passes (LoopVectorizePass, SLPVectorizerPass cannot be added to ModulePassManager directly)
-- [ ] Profile-guided inlining (requires sample profile format, not available in LLVM 22)
-- [ ] Multi-versioning (CPU dispatch) — deferred, requires runtime CPUID detection + multiple code paths
+- [ ] Profile-guided inlining — deferred, requires LLVM 23+ or custom profile converter
 - [ ] Function splitting (thin-static-LTO)
+
+#### CPU Multi-Versioning (A7)
+
+**Approach:** Accept multiple `-mcpu=NAME` flags (e.g., `-mcpu=znver3 -mcpu=haswell`). For each, compile the user code separately, then generate a runtime CPU dispatcher that detects the CPU and calls the best-fit version.
+
+**Can we use existing flags?** Yes — we already pass `-mcpu` to clang for each compilation. The missing piece is the runtime CPU detection + dispatch wrapper, which we'd implement ourselves:
+- Add `cpuid` detection in the runtime library (x86 `CPUID` instruction)
+- Generate a `main` wrapper that calls the best-matching compiled variant
+- Each variant is compiled with its own `-mcpu` flag via existing infrastructure
+
+**Status:** Not yet implemented. Requires runtime CPUID detection + dispatch wrapper generation.
 
 ### Level 4.5: Type-Based Specialization (A6) — IMPLEMENTED (numeric types only)
 
