@@ -8125,7 +8125,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
 
         if (codegen.emitObject(module.get(), instrOutput + ".o", mcpu, march)) {
             std::string linkCmd = "clang++ ";
-            if (useStatic) linkCmd += "-static -s -Wl,--gc-sections ";
+            if (useStatic) linkCmd += "-static ";
+            linkCmd += "-s -Wl,--gc-sections -Wl,--strip-all ";
 
             std::string sourceDir = PYC_SOURCE_DIR;
             std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
@@ -8494,7 +8495,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         if (codegen.emitBitcode(module.get(), bitcodePath)) {
             std::cout << "Emitted bitcode " << bitcodePath << " (-O5 full LTO)\n";
             std::string linkCmd = "clang++-22 ";
-            if (useStatic) linkCmd += "-static -s -Wl,--gc-sections ";
+            if (useStatic) linkCmd += "-static ";
+            linkCmd += "-s -Wl,--gc-sections -Wl,--strip-all ";
 
             std::string sourceDir = PYC_SOURCE_DIR;
             std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
@@ -8518,7 +8520,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             // Full LTO: -flto (not -flto=thin), link bitcode directly
             // -flto-partitions=0 enables parallel full LTO codegen (ld.lld only, auto-detect CPU count)
             // Use ld.lld-22 for proper LTO support
-            linkCmd = "clang++-22 -fuse-ld=lld-22 ";
+            linkCmd = "clang++-22 -fuse-ld=lld-22 -s -Wl,--gc-sections -Wl,--strip-all ";
             linkCmd += bitcodePath + " -flto -flto-partitions=0 -Wl,--allow-multiple-definition ";
             linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
                 pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
@@ -8551,7 +8553,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     if (codegen.emitObject(module.get(), outputPath + ".o", mcpu, march)) {
         std::cout << "Generated object " << outputPath << ".o (-O" << optLevel << ")\n";
         std::string linkCmd = "clang++ ";
-        if (useStatic) linkCmd += "-static -s -Wl,--gc-sections ";
+        if (useStatic) linkCmd += "-static ";
+        linkCmd += "-s -Wl,--gc-sections -Wl,--strip-all ";
 
         std::string sourceDir = PYC_SOURCE_DIR;
         std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
