@@ -1914,9 +1914,10 @@ class LoweringVisitor {
                 }
             }
 
-            // Collect unique type signatures. For each unique signature, generate
-            // a specialized variant. Supports both numeric types (int/float) and
-            // non-numeric types (str/list/dict).
+            // Collect unique type signatures. Generate specialized variants only for
+            // numeric types (int/float) where native i64/double params eliminate
+            // boxing/unboxing overhead. Non-numeric types (str/list/dict) use PyObject*
+            // params — same as generic — so no benefit from separate variants.
             std::set<std::string> uniqueSigs;
             for (const auto& sig : allSigs) {
                 std::string normalized;
@@ -1926,10 +1927,7 @@ class LoweringVisitor {
                     if (nt == "i64") nt = "int";
                     if (nt == "int") normalized += "i";
                     else if (nt == "float") normalized += "f";
-                    else if (nt == "str") normalized += "s";
-                    else if (nt == "list" || nt == "list_int" || nt == "list_float") normalized += "l";
-                    else if (nt == "dict") normalized += "d";
-                    else { allValid = false; break; }
+                    else { allValid = false; break; }  // Non-numeric types skipped
                 }
                 if (allValid && !normalized.empty()) {
                     uniqueSigs.insert(normalized);

@@ -569,10 +569,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         std::string irName = llvmFunctionName(f.name);
         
         // A6: Detect specialized variants (name starts with "__specialized_").
-        // Format: __specialized_<funcName>_<sig> where sig = "i"/"f"/"s"/"l"/"d" per param.
+        // Format: __specialized_<funcName>_<sig> where sig = "i"/"f" per param.
         // Params: [cell params...] + [original param names].
         // The sig length = number of user params (f.args.size() - f.freeCellVars.size()).
-        // Native types: i=int(i64), f=float(double). Boxed types: s=str, l=list, d=dict (all PyObject*).
+        // Native types: i=int(i64), f=float(double). Non-numeric types are not
+        // specialized (params would be PyObject* — same as generic — no benefit).
         bool isSpecialized = (f.name.find("__specialized_") == 0);
         std::vector<llvm::Type*> argTypes;
         if (isSpecialized) {
@@ -589,7 +590,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     // Cell params are always PyObject*
                     argTypes.push_back(pyObjectPtrTy);
                 } else {
-                    // User params: native type (i64/double) for numeric, PyObject* for non-numeric
+                    // User params: native type (i64/double) for numeric
                     size_t sigIdx = i - ncells;
                     if (sigIdx < sig.size()) {
                         char t = sig[sigIdx];
@@ -597,9 +598,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                             argTypes.push_back(llvm::Type::getDoubleTy(context));
                         } else if (t == 'i') {
                             argTypes.push_back(llvm::Type::getInt64Ty(context));
-                        } else {
-                            // Non-numeric types (str/list/dict) use PyObject*
-                            argTypes.push_back(pyObjectPtrTy);
                         }
                     } else {
                         argTypes.push_back(pyObjectPtrTy);
