@@ -1885,6 +1885,8 @@ class LoweringVisitor {
     // a specialized variant for EACH unique type signature observed. This enables
     // speculative optimization: at call sites, runtime type guards dispatch to the
     // specialized variant when types match, falling back to the generic boxed path.
+    // Handles both numeric types (int/float -> native i64/double) and non-numeric types
+    // (str/list/dict -> PyObject*) for comprehensive type-based specialization.
     void generateSpecializedVariants() {
         for (auto& kv : callSiteTypes) {
             const std::string& funcName = kv.first;
@@ -1913,20 +1915,23 @@ class LoweringVisitor {
             }
 
             // Collect unique type signatures. For each unique signature, generate
-            // a specialized variant. Only generate variants where every position
-            // has a numeric type (int or float).
+            // a specialized variant. Supports both numeric types (int/float) and
+            // non-numeric types (str/list/dict).
             std::set<std::string> uniqueSigs;
             for (const auto& sig : allSigs) {
                 std::string normalized;
-                bool allNumeric = true;
+                bool allValid = true;
                 for (const auto& t : sig) {
                     std::string nt = t;
                     if (nt == "i64") nt = "int";
                     if (nt == "int") normalized += "i";
                     else if (nt == "float") normalized += "f";
-                    else { allNumeric = false; break; }
+                    else if (nt == "str") normalized += "s";
+                    else if (nt == "list" || nt == "list_int" || nt == "list_float") normalized += "l";
+                    else if (nt == "dict") normalized += "d";
+                    else { allValid = false; break; }
                 }
-                if (allNumeric && !normalized.empty()) {
+                if (allValid && !normalized.empty()) {
                     uniqueSigs.insert(normalized);
                 }
             }

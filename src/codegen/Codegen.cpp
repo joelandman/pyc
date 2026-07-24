@@ -562,9 +562,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         std::string irName = llvmFunctionName(f.name);
         
         // A6: Detect specialized variants (name starts with "__specialized_").
-        // Format: __specialized_<funcName>_<sig> where sig = "i"/"f" per param.
+        // Format: __specialized_<funcName>_<sig> where sig = "i"/"f"/"s"/"l"/"d" per param.
         // Params: [cell params...] + [original param names].
         // The sig length = number of user params (f.args.size() - f.freeCellVars.size()).
+        // Native types: i=int(i64), f=float(double). Boxed types: s=str, l=list, d=dict (all PyObject*).
         bool isSpecialized = (f.name.find("__specialized_") == 0);
         std::vector<llvm::Type*> argTypes;
         if (isSpecialized) {
@@ -581,12 +582,20 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     // Cell params are always PyObject*
                     argTypes.push_back(pyObjectPtrTy);
                 } else {
-                    // User params: native type based on sig position
+                    // User params: native type (i64/double) for numeric, PyObject* for non-numeric
                     size_t sigIdx = i - ncells;
-                    if (sigIdx < sig.size() && sig[sigIdx] == 'f') {
-                        argTypes.push_back(llvm::Type::getDoubleTy(context));
+                    if (sigIdx < sig.size()) {
+                        char t = sig[sigIdx];
+                        if (t == 'f') {
+                            argTypes.push_back(llvm::Type::getDoubleTy(context));
+                        } else if (t == 'i') {
+                            argTypes.push_back(llvm::Type::getInt64Ty(context));
+                        } else {
+                            // Non-numeric types (str/list/dict) use PyObject*
+                            argTypes.push_back(pyObjectPtrTy);
+                        }
                     } else {
-                        argTypes.push_back(llvm::Type::getInt64Ty(context));
+                        argTypes.push_back(pyObjectPtrTy);
                     }
                 }
             }
@@ -935,14 +944,19 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             llvm::Value* arg = func->getArg(i);
             if (!f.args[i].empty()) {
                 arg->setName(f.args[i]);
-                // A6: For specialized variants, user params get native-typed allocas.
+                // A6: For specialized variants, user params get native-typed allocas for numeric types,
+                // PyObject* allocas for non-numeric types (str/list/dict).
                 llvm::Type* slotType = pyObjectPtrTy;
                 if (funcIsSpecialized && i >= nativeParamStart) {
                     size_t sigIdx = i - nativeParamStart;
-                    if (sigIdx < nativeSig.size() && nativeSig[sigIdx] == 'f') {
-                        slotType = llvm::Type::getDoubleTy(context);
-                    } else {
-                        slotType = llvm::Type::getInt64Ty(context);
+                    if (sigIdx < nativeSig.size()) {
+                        char t = nativeSig[sigIdx];
+                        if (t == 'f') {
+                            slotType = llvm::Type::getDoubleTy(context);
+                        } else if (t == 'i') {
+                            slotType = llvm::Type::getInt64Ty(context);
+                        }
+                        // Non-numeric types (s/l/d) keep slotType as pyObjectPtrTy
                     }
                 }
                 // For parameters, create an entry-block alloca that shadows
@@ -2713,25 +2727,37 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         bool useSpecialized = false;
                         std::string specializedName;
                         {
-                            // Check each possible specialized variant signature
                             size_t numArgs = inst.operands.size() - 1;
                             if (numArgs > 0) {
-                                // Check if all args are numeric
-                                bool allNumeric = true;
-                                std::string sig;
+                                // Collect compile-time types of all arguments
+                                std::vector<std::string> argTypes; // "i64", "double", or "boxed"
                                 for (size_t i = 1; i < inst.operands.size(); ++i) {
                                     llvm::Value* raw = getOrLoad(inst.operands[i].name);
                                     if (raw && raw->getType() == llvm::Type::getInt64Ty(context)) {
-                                        sig += "i";
+                                        argTypes.push_back("i64");
                                     } else if (raw && raw->getType()->isDoubleTy()) {
-                                        sig += "f";
+                                        argTypes.push_back("double");
                                     } else {
-                                        allNumeric = false;
+                                        argTypes.push_back("boxed");
+                                    }
+                                }
+
+                                // Fast path: all args are already native (i64/double) — dispatch directly.
+                                // This handles self-recursion in specialized variants.
+                                bool allNative = true;
+                                std::string nativeSig;
+                                for (size_t i = 0; i < argTypes.size(); ++i) {
+                                    if (argTypes[i] == "i64") {
+                                        nativeSig += "i";
+                                    } else if (argTypes[i] == "double") {
+                                        nativeSig += "f";
+                                    } else {
+                                        allNative = false;
                                         break;
                                     }
                                 }
-                                if (allNumeric && !sig.empty()) {
-                                    std::string candidate = "__specialized_" + funcName + "_" + sig;
+                                if (allNative) {
+                                    std::string candidate = "__specialized_" + funcName + "_" + nativeSig;
                                     llvm::Function* spec = module->getFunction(candidate);
                                     if (spec) {
                                         useSpecialized = true;

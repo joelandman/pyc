@@ -339,7 +339,7 @@ pyc myapp.py --pgo-use=myapp.profdata -o myapp_optimized -O4 -mcpu=znver3
 - [ ] Multi-versioning (CPU dispatch) — deferred, requires runtime CPUID detection + multiple code paths
 - [ ] Function splitting (thin-static-LTO)
 
-### Level 4.5: Type-Based Specialization (A6) — IMPLEMENTED
+### Level 4.5: Type-Based Specialization (A6) — IMPLEMENTED (numeric types only)
 
 **Actual behavior:** Generates specialized variants for functions called with consistent numeric argument types. At call sites, if all arguments are native (i64/double), dispatches to the specialized variant directly without boxing/unboxing.
 
@@ -350,6 +350,8 @@ pyc myapp.py --pgo-use=myapp.profdata -o myapp_optimized -O4 -mcpu=znver3
 - [x] Native return type support for specialized variants
 - [x] Call-site dispatch to specialized variants when all args are native
 - [x] IR field `specializedSignatures` to track available signatures per function
+- [x] Support for non-numeric type signatures (str/list/dict) in variant naming
+- [x] Codegen support for non-numeric specialized variants (PyObject* params)
 
 **Usage:** Automatic — no CLI flag needed. The compiler analyzes call sites and generates specialized variants when possible.
 
@@ -359,7 +361,7 @@ pyc myapp.py --pgo-use=myapp.profdata -o myapp_optimized -O4 -mcpu=znver3
 
 **Not yet implemented:**
 - [ ] Speculative specialization with runtime type guards (for mixed-type call sites) — deferred due to LLVM block management complexity
-- [ ] Specialization for non-numeric types (str, list, dict)
+- [ ] Runtime type checking for non-numeric types (str/list/dict) — infrastructure added, dispatch pending
 
 ### Level 5: Maximum Optimization (`-O5`) — IMPLEMENTED
 
