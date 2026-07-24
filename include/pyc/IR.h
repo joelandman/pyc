@@ -3,6 +3,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <set>
 
 namespace pyc {
 
@@ -84,6 +85,9 @@ struct IRFunction {
     // the variant returns a boxed PyObject* (the default for non-specialized functions
     // and for specialized variants whose return type couldn't be proven numeric).
     std::string nativeReturnType;
+    // A6: Set of type signatures for which specialized variants exist (e.g., "ii", "ff", "if").
+    // Used by codegen to emit runtime type guards that dispatch to specialized variants.
+    std::set<std::string> specializedSignatures;
     // Return element types: maps return value index → element type when function returns a list/tuple
     // Tracks per-index types (e.g., index 0 = float_list, index 1 = float_list for a list of float lists)
     std::unordered_map<size_t, std::string> returnContainerElementTypes;

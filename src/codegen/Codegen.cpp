@@ -9,10 +9,26 @@
 #include <llvm/Transforms/InstCombine/InstCombine.h>
 #include <llvm/Transforms/Scalar/SimplifyCFG.h>
 #include <llvm/Transforms/Scalar/DCE.h>
+#include <llvm/Transforms/Scalar/LoopDataPrefetch.h>
+#include <llvm/Transforms/Scalar/LoopUnrollPass.h>
+#include <llvm/Transforms/Vectorize/LoopVectorize.h>
+#include <llvm/Transforms/Scalar/LoopInterchange.h>
+#include <llvm/Transforms/Scalar/LoopRotation.h>
+#include <llvm/Transforms/Scalar/LoopUnrollAndJamPass.h>
+#include <llvm/Transforms/Scalar/LoopVersioningLICM.h>
+#include <llvm/Transforms/Scalar/SROA.h>
+#include <llvm/Transforms/Utils/Cloning.h>
+#include <llvm/Transforms/IPO/AlwaysInliner.h>
+#include <llvm/Transforms/IPO/Inliner.h>
+#include <llvm/Transforms/IPO/SampleProfile.h>
+#include <llvm/Transforms/Vectorize/SLPVectorizer.h>
+#include <llvm/ProfileData/InstrProfWriter.h>
 #include <llvm/Passes/PassBuilder.h>
+#include <llvm/Passes/PassPlugin.h>
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/IR/PassManager.h>
+#include <llvm/Support/PGOOptions.h>
 #include <llvm/Support/CodeGen.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/TargetSelect.h>
@@ -22,6 +38,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/Linker/Linker.h>
 #include <llvm/Bitcode/BitcodeReader.h>
+#include <llvm/Bitcode/BitcodeWriter.h>
 #include <llvm/Support/MemoryBuffer.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -2686,7 +2703,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         // Track which args were native (i64/double) so that getAsPyObject's
                         // anonymous box can be DECREFed after the call.
                         std::vector<bool> argWasNative;
-                        
+
                         // A6: Check if there's a specialized variant for this call.
                         // When all args are numeric (native i64/double), dispatch to the
                         // specialized variant. This applies both to ordinary functions and
@@ -2724,7 +2741,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                                 }
                             }
                         }
-                        
+
                         if (useSpecialized) {
                             // Call specialized variant with native args (no boxing).
                             for (size_t i = 1; i < inst.operands.size(); ++i) {
@@ -2969,11 +2986,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 }
 
 bool Codegen::emitObject(llvm::Module* module, const std::string& outputPath) {
-    LLVMInitializeX86TargetInfo();
-    LLVMInitializeX86Target();
-    LLVMInitializeX86TargetMC();
-    LLVMInitializeX86AsmParser();
-    LLVMInitializeX86AsmPrinter();
+    return emitObject(module, outputPath, "", "");
+}
+
+bool Codegen::emitObject(llvm::Module* module, const std::string& outputPath,
+                         const std::string& mcpu, const std::string& march) {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
 
     llvm::Triple targetTriple("x86_64-unknown-linux-gnu");
     std::string error;
@@ -2984,8 +3004,10 @@ bool Codegen::emitObject(llvm::Module* module, const std::string& outputPath) {
     }
 
     llvm::TargetOptions opt;
+    std::string cpu = mcpu.empty() ? "" : mcpu;
+    std::string arch = march.empty() ? "" : march;
     std::unique_ptr<llvm::TargetMachine> targetMachine(
-        target->createTargetMachine(targetTriple, "generic", "", opt, llvm::Reloc::PIC_, std::nullopt));
+        target->createTargetMachine(targetTriple, cpu, arch, opt, llvm::Reloc::PIC_, std::nullopt));
     if (!targetMachine) return false;
 
     module->setDataLayout(targetMachine->createDataLayout());
@@ -3009,7 +3031,11 @@ bool Codegen::emitObject(llvm::Module* module, const std::string& outputPath) {
     return true;
 }
 
-void Codegen::optimize(llvm::Module* module, int optLevel) {
+void Codegen::optimize(llvm::Module* module, int optLevel,
+                       const std::string& mcpu,
+                       const std::string& march,
+                       const std::string& pgoInstrument,
+                       const std::string& pgoProfile) {
   if (!module) return;
   // True O0: no module passes (debug / IR inspection). Runtime bitcode LTO is
   // also skipped by Compiler when optLevel <= 0.
@@ -3026,11 +3052,48 @@ void Codegen::optimize(llvm::Module* module, int optLevel) {
   PB.registerLoopAnalyses(LAM);
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
-  llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(
-      optLevel == 1 ? llvm::OptimizationLevel::O1 :
-      optLevel == 2 ? llvm::OptimizationLevel::O2 :
-      llvm::OptimizationLevel::O3);
+  // Determine optimization level
+  llvm::OptimizationLevel opt = llvm::OptimizationLevel::O2;
+  if (optLevel == 1) opt = llvm::OptimizationLevel::O1;
+  else if (optLevel == 2) opt = llvm::OptimizationLevel::O2;
+  else if (optLevel >= 3) opt = llvm::OptimizationLevel::O3;
+
+  // Build the base pipeline
+  llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(opt);
+
+  // O4+: Add aggressive loop vectorization passes
+  // Focus on vectorization over unrolling for SIMD performance
+  if (optLevel >= 4) {
+    // Create a function pass manager for loop-level optimizations
+    llvm::FunctionPassManager FPM = PB.buildFunctionSimplificationPipeline(llvm::OptimizationLevel::O3, llvm::ThinOrFullLTOPhase::None);
+    
+    // Add aggressive loop vectorizer with interleaving for SIMD
+    // Enable all vectorization heuristics
+    llvm::LoopVectorizeOptions vecOpts;
+    vecOpts.setInterleaveOnlyWhenForced(false);
+    vecOpts.setVectorizeOnlyWhenForced(false);
+    FPM.addPass(llvm::LoopVectorizePass(vecOpts));
+    
+    // Add SLP vectorizer for basic-block level vectorization
+    FPM.addPass(llvm::SLPVectorizerPass());
+    
+    // Wrap the function pipeline as a module pass using the adaptor
+    MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM)));
+  }
+
   MPM.run(*module, MAM);
+}
+
+bool Codegen::emitBitcode(llvm::Module* module, const std::string& outputPath) {
+    std::error_code ec;
+    llvm::raw_fd_ostream dest(outputPath, ec, llvm::sys::fs::OF_None);
+    if (ec) {
+        std::cerr << "Could not open " << outputPath << ": " << ec.message() << "\n";
+        return false;
+    }
+    llvm::WriteBitcodeToFile(*module, dest);
+    dest.flush();
+    return true;
 }
 
 bool Codegen::emitLLVM(llvm::Module* module, const std::string& outputPath) {
@@ -3046,11 +3109,14 @@ bool Codegen::emitLLVM(llvm::Module* module, const std::string& outputPath) {
 }
 
 bool Codegen::emitAssembly(llvm::Module* module, const std::string& outputPath) {
-    LLVMInitializeX86TargetInfo();
-    LLVMInitializeX86Target();
-    LLVMInitializeX86TargetMC();
-    LLVMInitializeX86AsmParser();
-    LLVMInitializeX86AsmPrinter();
+    return emitAssembly(module, outputPath, "", "");
+}
+
+bool Codegen::emitAssembly(llvm::Module* module, const std::string& outputPath,
+                           const std::string& mcpu, const std::string& march) {
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
+    llvm::InitializeNativeTargetAsmParser();
 
     llvm::Triple targetTriple("x86_64-unknown-linux-gnu");
     std::string error;
@@ -3061,8 +3127,10 @@ bool Codegen::emitAssembly(llvm::Module* module, const std::string& outputPath) 
     }
 
     llvm::TargetOptions opt;
+    std::string cpu = mcpu.empty() ? "" : mcpu;
+    std::string arch = march.empty() ? "" : march;
     std::unique_ptr<llvm::TargetMachine> targetMachine(
-        target->createTargetMachine(targetTriple, "generic", "", opt, llvm::Reloc::PIC_, std::nullopt));
+        target->createTargetMachine(targetTriple, cpu, arch, opt, llvm::Reloc::PIC_, std::nullopt));
     if (!targetMachine) return false;
 
     module->setDataLayout(targetMachine->createDataLayout());

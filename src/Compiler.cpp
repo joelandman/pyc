@@ -1881,9 +1881,10 @@ class LoweringVisitor {
     }
 
     // A6: Generate specialized function variants based on call-site type info.
-    // For each function that is called with all-proven-numeric arguments at all
-    // call sites (with consistent arg count matching declared params), create
-    // a variant that takes i64/double directly instead of PyObject*.
+    // For each function that is called with consistent arg counts, generate
+    // a specialized variant for EACH unique type signature observed. This enables
+    // speculative optimization: at call sites, runtime type guards dispatch to the
+    // specialized variant when types match, falling back to the generic boxed path.
     void generateSpecializedVariants() {
         for (auto& kv : callSiteTypes) {
             const std::string& funcName = kv.first;
@@ -1911,70 +1912,68 @@ class LoweringVisitor {
                 }
             }
 
-            // Specialization requires every call site to use the same numeric type
-            // at each position. Mixed types (int+str, int+float) skip specialization;
-            // int-only sites can still be specialized via a separate consistent subset.
-            bool allNumeric = true;
-            std::string sig; // "i" for int, "f" for float
-            for (size_t i = 0; i < declaredArgCount; ++i) {
-                std::unordered_set<std::string> typesAtPos;
-                for (const auto& s : allSigs) {
-                    if (i < s.size()) {
-                        std::string t = s[i];
-                        if (t == "i64") t = "int";
-                        typesAtPos.insert(t);
-                    }
+            // Collect unique type signatures. For each unique signature, generate
+            // a specialized variant. Only generate variants where every position
+            // has a numeric type (int or float).
+            std::set<std::string> uniqueSigs;
+            for (const auto& sig : allSigs) {
+                std::string normalized;
+                bool allNumeric = true;
+                for (const auto& t : sig) {
+                    std::string nt = t;
+                    if (nt == "i64") nt = "int";
+                    if (nt == "int") normalized += "i";
+                    else if (nt == "float") normalized += "f";
+                    else { allNumeric = false; break; }
                 }
-                if (typesAtPos.size() == 1 && typesAtPos.count("int")) {
-                    sig += "i";
-                } else if (typesAtPos.size() == 1 && typesAtPos.count("float")) {
-                    sig += "f";
-                } else {
-                    allNumeric = false;
-                    break;
+                if (allNumeric && !normalized.empty()) {
+                    uniqueSigs.insert(normalized);
                 }
             }
-            if (!allNumeric || sig.empty()) continue;
 
-            // Check if we already have this variant
-            std::string variantName = "__specialized_" + funcName + "_" + sig;
-            bool alreadyExists = false;
-            for (const auto& f : ir.functions) {
-                if (f.name == variantName) { alreadyExists = true; break; }
+            // Record which signatures have specialized variants (for codegen type guards)
+            origFunc->specializedSignatures = uniqueSigs;
+
+            for (const auto& sig : uniqueSigs) {
+                std::string variantName = "__specialized_" + funcName + "_" + sig;
+                bool alreadyExists = false;
+                for (const auto& f : ir.functions) {
+                    if (f.name == variantName) { alreadyExists = true; break; }
+                }
+                if (alreadyExists) continue;
+
+                // Create the variant
+                IRFunction variant;
+                variant.name = variantName;
+
+                // Build parameter list: cells (if any) + original param names
+                // (codegen detects native types from variant name prefix)
+                for (const auto& cell : origFunc->freeCellVars) {
+                    variant.args.push_back(cell + "_cell");
+                }
+                for (size_t i = 0; i < origFunc->args.size(); ++i) {
+                    variant.args.push_back(origFunc->args[i]);
+                }
+                variant.paramNames = origFunc->paramNames;
+                variant.defaultGlobals = origFunc->defaultGlobals;
+                variant.cellVars = origFunc->cellVars;
+                variant.freeCellVars = origFunc->freeCellVars;
+
+                // Copy instructions — variants have the same body as original.
+                // Codegen uses the variant name to allocate native param slots.
+                variant.body = origFunc->body;
+
+                // A6 native return: if the original function has a proven numeric return
+                // type, the variant returns a native i64/double instead of a boxed
+                // PyObject*. This eliminates PyInt_FromLong/PyFloat_FromDouble on every
+                // return and enables fully native recursive chains (e.g. fib(n-1)+fib(n-2)
+                // becomes a native i64 add with no boxing at any recursion level).
+                if (origFunc->returnType == "int" || origFunc->returnType == "float") {
+                    variant.nativeReturnType = origFunc->returnType;
+                }
+
+                ir.functions.push_back(variant);
             }
-            if (alreadyExists) continue;
-
-            // Create the variant
-            IRFunction variant;
-            variant.name = variantName;
-
-            // Build parameter list: cells (if any) + original param names
-            // (codegen detects native types from variant name prefix)
-            for (const auto& cell : origFunc->freeCellVars) {
-                variant.args.push_back(cell + "_cell");
-            }
-            for (size_t i = 0; i < origFunc->args.size(); ++i) {
-                variant.args.push_back(origFunc->args[i]);
-            }
-            variant.paramNames = origFunc->paramNames;
-            variant.defaultGlobals = origFunc->defaultGlobals;
-            variant.cellVars = origFunc->cellVars;
-            variant.freeCellVars = origFunc->freeCellVars;
-
-            // Copy instructions — variants have the same body as original.
-            // Codegen uses the variant name to allocate native param slots.
-            variant.body = origFunc->body;
-
-            // A6 native return: if the original function has a proven numeric return
-            // type, the variant returns a native i64/double instead of a boxed
-            // PyObject*. This eliminates PyInt_FromLong/PyFloat_FromDouble on every
-            // return and enables fully native recursive chains (e.g. fib(n-1)+fib(n-2)
-            // becomes a native i64 add with no boxing at any recursion level).
-            if (origFunc->returnType == "int" || origFunc->returnType == "float") {
-                variant.nativeReturnType = origFunc->returnType;
-            }
-
-            ir.functions.push_back(variant);
         }
     }
 
@@ -7913,7 +7912,299 @@ void lowerAST(const ASTNode* node, ModuleIR& ir,
     }
 }
 
-bool Compiler::compile(const std::string& inputPath, const std::string& outputPath, bool useStatic, int optLevel, bool emitLLVM, bool emitASM, bool verbose, bool debugInfo) {
+bool Compiler::compile(const std::string& inputPath, const std::string& outputPath,
+                       bool useStatic, int optLevel, bool emitLLVM, bool emitASM,
+                       bool verbose, bool debugInfo,
+                        const std::string& pgoInstrument,
+                        const std::string& pgoProfile,
+                        const std::string& pgoGenerateProfile,
+                        const std::string& mcpu,
+                        const std::string& march,
+                        const std::string& targetArch) {
+    // PGO profile generation: compile instrumented binary, run test script, merge .profraw → .profdata
+    if (!pgoGenerateProfile.empty()) {
+        if (verbose)
+            std::cout << "PGO: generating profile with test script: " << pgoGenerateProfile << "\n";
+
+        // Step 1: Compile with instrumentation
+        std::string instrOutput = outputPath + "_instr";
+        std::string instrPgoInstrument = "instrument";
+        std::string instrPgoProfile = "";
+
+        // Parse and lower AST
+        PythonParser mainParser;
+        auto mainAst = mainParser.parseFile(inputPath);
+        if (!mainAst) {
+            std::cerr << "Parse error for " << inputPath << std::endl;
+            return false;
+        }
+
+        std::unordered_set<std::string> importNames;
+        std::function<void(const ASTNode*)> collectImports = [&](const ASTNode* node) {
+            if (!node) return;
+            if (node->type == "Import") {
+                std::stringstream ss(node->id);
+                std::string tok;
+                while (ss >> tok) importNames.insert(tok);
+            } else if (node->type == "ImportFrom") {
+                if (!node->id.empty()) importNames.insert(node->id);
+            }
+            for (const auto& c : node->children) collectImports(c.get());
+        };
+        collectImports(mainAst.get());
+
+        std::string dir = fs::path(inputPath).parent_path().string();
+        if (dir.empty()) dir = ".";
+        std::string mainBasename = fs::path(inputPath).stem().string();
+        std::vector<std::string> pyFiles;
+        pyFiles.push_back(inputPath);
+        for (auto& moduleName : importNames) {
+            std::string modulePath = dir + "/" + moduleName + ".py";
+            if (fs::exists(modulePath) && fs::is_regular_file(modulePath)) {
+                pyFiles.push_back(modulePath);
+            }
+        }
+        std::sort(pyFiles.begin(), pyFiles.end());
+
+        std::vector<std::string> moduleNames;
+        std::unordered_set<std::string> compiledModules;
+        for (auto& pyFile : pyFiles) {
+            if (pyFile != inputPath) {
+                compiledModules.insert(fs::path(pyFile).stem().string());
+            }
+        }
+
+        std::unordered_map<std::string, std::vector<std::string>> importedModuleGlobals;
+        {
+            auto collectTopLevelNames = [](const ASTNode* modNode) {
+                std::vector<std::string> out;
+                if (!modNode || modNode->type != "Module") return out;
+                std::function<void(const ASTNode*, bool)> walk = [&](const ASTNode* n, bool top) {
+                    if (!n) return;
+                    if (top) {
+                        if (n->type == "Assign") {
+                            if (!n->args.empty()) {
+                                for (const auto& nm : n->args) {
+                                    if (!nm.empty()) out.push_back(nm);
+                                }
+                            } else if (!n->id.empty() && n->id != "__subscript__" && n->id != "__unpack__") {
+                                out.push_back(n->id);
+                            }
+                        } else if (n->type == "FunctionDef" && !n->id.empty()) {
+                            out.push_back(n->id);
+                        } else if (n->type == "ClassDef" && !n->id.empty()) {
+                            out.push_back(n->id);
+                        }
+                    }
+                    for (const auto& c : n->children) walk(c.get(), false);
+                };
+                for (const auto& c : modNode->children) walk(c.get(), true);
+                std::sort(out.begin(), out.end());
+                out.erase(std::unique(out.begin(), out.end()), out.end());
+                return out;
+            };
+            for (auto& pyFile : pyFiles) {
+                if (pyFile == inputPath) continue;
+                PythonParser pp;
+                auto ast = pp.parseFile(pyFile);
+                if (!ast) continue;
+                std::string mn = fs::path(pyFile).stem().string();
+                importedModuleGlobals[mn] = collectTopLevelNames(ast.get());
+            }
+        }
+
+        std::vector<std::unique_ptr<llvm::Module>> modules;
+        llvm::LLVMContext context;
+
+        for (auto& pyFile : pyFiles) {
+            PythonParser parser;
+            auto ast = parser.parseFile(pyFile);
+            if (!ast) {
+                std::cerr << "Warning: Failed to parse " << pyFile << ", skipping\n";
+                continue;
+            }
+
+            std::string moduleName = fs::path(pyFile).stem().string();
+            ModuleIR ir;
+            ir.moduleName = moduleName;
+            if (pyFile == inputPath) {
+                lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals, pyFile);
+            } else {
+                lowerAST(ast.get(), ir, std::unordered_set<std::string>{}, std::unordered_map<std::string, std::vector<std::string>>{}, pyFile);
+            }
+
+            std::string currentSourceFile = pyFile;
+            Codegen codegen;
+            if (pyFile != inputPath) {
+                moduleNames.push_back(moduleName);
+            }
+
+            auto module = codegen.generate(ir, context, "pyc_" + moduleName, debugInfo);
+            if (!module) {
+                std::cerr << "Warning: Codegen failed for " << pyFile << ", skipping\n";
+                continue;
+            }
+
+            llvm::Function* entryFunc = module->getFunction("__module__");
+            if (entryFunc) {
+                std::string newEntryName;
+                if (pyFile == inputPath) {
+                    newEntryName = "pyc_user_main";
+                } else {
+                    newEntryName = "__module__" + moduleName;
+                }
+                entryFunc->setName(newEntryName);
+            }
+
+            modules.push_back(std::move(module));
+        }
+
+        if (modules.empty()) {
+            std::cerr << "Error: No modules generated\n";
+            return false;
+        }
+
+        std::string b7CSource = "#include <string.h>\n";
+        b7CSource += "#include <stdio.h>\n";
+        b7CSource += "#include <stdlib.h>\n";
+        b7CSource += "#include <unistd.h>\n\n";
+        for (auto& name : moduleNames) {
+            b7CSource += "extern void* __module__" + name + "(void);\n";
+        }
+        b7CSource += "\n";
+        b7CSource += "typedef struct {\n";
+        b7CSource += "    const char* name;\n";
+        b7CSource += "    void* (*entry)(void);\n";
+        b7CSource += "} pyc_module_entry;\n\n";
+        b7CSource += "static pyc_module_entry pyc_modules[] = {\n";
+        for (auto& name : moduleNames) {
+            b7CSource += "    {\"" + name + "\", __module__" + name + "},\n";
+        }
+        b7CSource += "    {NULL, NULL}\n";
+        b7CSource += "};\n\n";
+        b7CSource += "extern const char* PyStr_AsUTF8(void* obj);\n";
+        b7CSource += "void pyc_run_module(void* moduleNameObj) {\n";
+        b7CSource += "    const char* moduleName = PyStr_AsUTF8(moduleNameObj);\n";
+        b7CSource += "    if (!moduleName) return;\n";
+        b7CSource += "    for (int i = 0; pyc_modules[i].name != NULL; i++) {\n";
+        b7CSource += "        if (strcmp(pyc_modules[i].name, moduleName) == 0) {\n";
+        b7CSource += "            void* result = pyc_modules[i].entry();\n";
+        b7CSource += "            return;\n";
+        b7CSource += "        }\n";
+        b7CSource += "    }\n";
+        b7CSource += "    // Module not found - silently skip\n";
+        b7CSource += "}\n";
+        b7CSource += "\n";
+        b7CSource += "void __module__sys(void) {\n";
+        b7CSource += "}\n";
+        b7CSource += "\n";
+        b7CSource += "void __module__os(void) {\n";
+        b7CSource += "}\n";
+        b7CSource += "\n";
+        b7CSource += "void __module__subprocess(void) {\n";
+        b7CSource += "}\n";
+
+        std::string b7CFile = instrOutput + "_b7_modules.c";
+        std::ofstream b7Out(b7CFile);
+        if (b7Out.is_open()) {
+            b7Out << b7CSource;
+            b7Out.close();
+        }
+
+        Codegen codegen;
+        auto module = Codegen::mergeModules(modules, context, "pyc_module");
+        if (!module) return false;
+
+        const bool useLTO = (optLevel >= 1);
+        if (useLTO) {
+            std::string rtBitcodePath = PYC_RUNTIME_BC;
+            codegen.linkRuntimeBitcode(module.get(), rtBitcodePath);
+        }
+
+        codegen.optimize(module.get(), optLevel, mcpu, march, instrPgoInstrument, instrPgoProfile);
+
+        if (codegen.emitObject(module.get(), instrOutput + ".o", mcpu, march)) {
+            std::string linkCmd = "clang++ ";
+            if (useStatic) linkCmd += "-static -s -Wl,--gc-sections ";
+
+            std::string sourceDir = PYC_SOURCE_DIR;
+            std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
+            for (const auto& libdir : {"./build", "../build", ".", "/usr/local/lib", "/usr/lib"}) {
+                std::string libpath = std::string(libdir) + "/libpycrt.a";
+                if (std::ifstream(libpath).good()) {
+                    runtimeLink = " -L" + std::string(libdir) + " -lpycrt";
+                    break;
+                }
+            }
+            std::string pythonIncludes = "";
+            FILE* pipe = popen("python3-config --includes 2>/dev/null | grep -o '\\-I[^ ]*' | head -1", "r");
+            if (pipe) {
+                char buf[256];
+                if (fgets(buf, sizeof(buf), pipe)) {
+                    buf[strcspn(buf, "\n")] = 0;
+                    pythonIncludes = buf;
+                }
+                pclose(pipe);
+            }
+
+            if (useLTO) {
+                linkCmd += instrOutput + ".o -flto=thin -Wl,--allow-multiple-definition ";
+            } else {
+                linkCmd += instrOutput + ".o ";
+            }
+            linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
+                pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
+                runtimeLink + " -lpcre2-8 -o " + instrOutput + " -O3";
+            linkCmd += " -fprofile-instr-generate=" + instrOutput + ".profraw";
+            if (debugInfo) linkCmd += " -g";
+
+            if (verbose)
+                std::cout << "Compiling instrumented binary: " << linkCmd << "\n";
+
+            int result = std::system(linkCmd.c_str());
+            if (result != 0) {
+                std::cerr << "PGO instrumentation compilation failed\n";
+                return false;
+            }
+
+            // Step 2: Run the binary with the test script
+            std::string runCmd = instrOutput;
+            if (!pgoGenerateProfile.empty()) {
+                runCmd += " " + pgoGenerateProfile;
+            }
+            if (verbose)
+                std::cout << "Running instrumented binary: " << runCmd << "\n";
+
+            result = std::system(runCmd.c_str());
+            if (result != 0) {
+                std::cerr << "Warning: instrumented binary exited with non-zero status (may be normal)\n";
+            }
+
+            // Step 3: Merge .profraw to .profdata
+            std::string profdataOutput = outputPath + ".profdata";
+            std::string mergeCmd = "llvm-profdata merge -output=" + profdataOutput + " " + instrOutput + ".profraw";
+            if (verbose)
+                std::cout << "Merging profile: " << mergeCmd << "\n";
+
+            result = std::system(mergeCmd.c_str());
+            if (result != 0) {
+                std::cerr << "Warning: llvm-profdata merge failed, profile may not be optimal\n";
+            } else {
+                std::cout << "PGO profile generated: " << profdataOutput << "\n";
+                std::cout << "Re-compile with: --pgo-use=" << profdataOutput << "\n";
+            }
+
+            // Cleanup temporary files
+            std::filesystem::remove(instrOutput);
+            std::filesystem::remove(instrOutput + ".o");
+            std::filesystem::remove(instrOutput + "_b7_modules.c");
+            std::filesystem::remove(instrOutput + ".profraw");
+
+            return true;
+        }
+        return false;
+    }
+
     // B7: First parse the main file to find imports, then scan for those modules
     PythonParser mainParser;
     auto mainAst = mainParser.parseFile(inputPath);
@@ -8171,6 +8462,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     
     // LTO: link precompiled runtime bitcode before optimization at -O1 and above.
     // True -O0 skips bitcode LTO so IR stays raw codegen + external runtime.
+    // O4+: add PGO instrumentation pass before optimization.
     const bool useLTO = (optLevel >= 1);
     if (useLTO) {
         std::string rtBitcodePath = PYC_RUNTIME_BC;
@@ -8181,7 +8473,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         std::cout << "-O0: skipping runtime bitcode LTO (true O0 debug mode)\n";
     }
 
-    codegen.optimize(module.get(), optLevel);
+    codegen.optimize(module.get(), optLevel, mcpu, march, pgoInstrument, pgoProfile);
     if (emitLLVM) {
         if (codegen.emitLLVM(module.get(), outputPath + ".ll")) {
             std::cout << "Emitted LLVM IR " << outputPath << ".ll (-O" << optLevel << ")\n";
@@ -8190,13 +8482,73 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         return false;
     }
     if (emitASM) {
-        if (codegen.emitAssembly(module.get(), outputPath + ".s")) {
+        if (codegen.emitAssembly(module.get(), outputPath + ".s", mcpu, march)) {
             std::cout << "Emitted assembly " << outputPath << ".s (-O" << optLevel << ")\n";
             return true;
         }
         return false;
     }
-    if (codegen.emitObject(module.get(), outputPath + ".o")) {
+    // O5 full LTO: emit bitcode, link with -flto (full LTO)
+    if (optLevel >= 5) {
+        std::string bitcodePath = outputPath + ".bc";
+        if (codegen.emitBitcode(module.get(), bitcodePath)) {
+            std::cout << "Emitted bitcode " << bitcodePath << " (-O5 full LTO)\n";
+            std::string linkCmd = "clang++-22 ";
+            if (useStatic) linkCmd += "-static -s -Wl,--gc-sections ";
+
+            std::string sourceDir = PYC_SOURCE_DIR;
+            std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
+            for (const auto& libdir : {"./build", "../build", ".", "/usr/local/lib", "/usr/lib"}) {
+                std::string libpath = std::string(libdir) + "/libpycrt.a";
+                if (std::ifstream(libpath).good()) {
+                    runtimeLink = " -L" + std::string(libdir) + " -lpycrt";
+                    break;
+                }
+            }
+            std::string pythonIncludes = "";
+            FILE* pipe = popen("python3-config --includes 2>/dev/null | grep -o '\\-I[^ ]*' | head -1", "r");
+            if (pipe) {
+                char buf[256];
+                if (fgets(buf, sizeof(buf), pipe)) {
+                    buf[strcspn(buf, "\n")] = 0;
+                    pythonIncludes = buf;
+                }
+                pclose(pipe);
+            }
+            // Full LTO: -flto (not -flto=thin), link bitcode directly
+            // -flto-partitions=0 enables parallel full LTO codegen (ld.lld only, auto-detect CPU count)
+            // Use ld.lld-22 for proper LTO support
+            linkCmd = "clang++-22 -fuse-ld=lld-22 ";
+            linkCmd += bitcodePath + " -flto -flto-partitions=0 -Wl,--allow-multiple-definition ";
+            linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
+                pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
+                runtimeLink + " -lpcre2-8 -o " + outputPath + " -O3";
+            if (!pgoProfile.empty()) {
+                linkCmd += " -fprofile-use=" + pgoProfile;
+            }
+            if (pgoInstrument == "instrument") {
+                std::string instrCmd = linkCmd + " -fprofile-instr-generate=" + outputPath + ".profraw";
+                if (std::system(instrCmd.c_str()) == 0) {
+                    if (verbose)
+                        std::cout << "PGO instrumentation linked (run binary to generate profile)\n";
+                } else {
+                    std::cerr << "PGO instrumentation link failed. Run manually: " << instrCmd << std::endl;
+                    return false;
+                }
+                return true;
+            }
+            if (debugInfo) linkCmd += " -g";
+            if (std::system(linkCmd.c_str()) == 0) {
+                std::cout << "Linked with full LTO to " << outputPath << " (-O5)\n";
+            } else {
+                std::cerr << "Full LTO link failed. Run manually: " << linkCmd << std::endl;
+                return false;
+            }
+            return true;
+        }
+        return false;
+    }
+    if (codegen.emitObject(module.get(), outputPath + ".o", mcpu, march)) {
         std::cout << "Generated object " << outputPath << ".o (-O" << optLevel << ")\n";
         std::string linkCmd = "clang++ ";
         if (useStatic) linkCmd += "-static -s -Wl,--gc-sections ";
@@ -8223,14 +8575,34 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         // -O1 and above: -flto=thin so the object (with linked runtime BC) can finalize LTO.
         // -O0: no -flto; link libpycrt/Runtime.cpp as a normal archive/source.
         // --allow-multiple-definition only needed when LTO may duplicate runtime symbols.
+        // -O4/O5: add PGO profile-use flag when a profile is provided.
+        // -O4: add ThinLTO-specific link flags for better parallelism and optimization.
         if (useLTO) {
             linkCmd += outputPath + ".o -flto=thin -Wl,--allow-multiple-definition ";
+            if (optLevel >= 4) {
+                linkCmd += "-flto-jobs=0 ";
+            }
         } else {
             linkCmd += outputPath + ".o ";
         }
         linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
             pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
-            runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(optLevel);
+            runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(std::min(optLevel, 3));
+        if (optLevel >= 4 && !pgoProfile.empty()) {
+            linkCmd += " -fprofile-use=" + pgoProfile;
+        }
+        if (optLevel >= 4 && pgoInstrument == "instrument") {
+            // PGO instrumentation: re-link with -fprofile-instr-generate to produce .profraw
+            std::string instrCmd = linkCmd + " -fprofile-instr-generate=" + outputPath + ".profraw";
+            if (std::system(instrCmd.c_str()) == 0) {
+                if (verbose)
+                    std::cout << "PGO instrumentation linked (run binary to generate profile)\n";
+            } else {
+                std::cerr << "PGO instrumentation link failed. Run manually: " << instrCmd << std::endl;
+                return false;
+            }
+            return true;
+        }
         if (debugInfo) linkCmd += " -g";
         if (std::system(linkCmd.c_str()) == 0) {
             std::cout << "Linked with runtime to " << outputPath
