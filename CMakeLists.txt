@@ -53,6 +53,7 @@ add_executable(pyc
     src/frontend/PythonParser.cpp
     src/Compiler.cpp
     src/ir/IR.cpp
+    src/ir/LLVMDCE.cpp
     src/codegen/Codegen.cpp
 )
 

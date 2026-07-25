@@ -2,6 +2,7 @@
 #include "pyc/PythonParser.h"
 #include "pyc/IR.h"
 #include "pyc/Codegen.h"
+#include "pyc/LLVMDCE.h"
 #include <llvm/IR/LLVMContext.h>
 #include <fstream>
 #include <iostream>
