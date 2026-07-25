@@ -1012,33 +1012,33 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                   if (!boxedSlotAlloca || boxedSlotAlloca->getAllocatedType() != pyObjectPtrTy) continue;
                   auto nativeTy = isFloat ? llvm::Type::getDoubleTy(ctx) : llvm::Type::getInt64Ty(ctx);
                   auto* nativeAlloca = endBuilder.CreateAlloca(nativeTy, nullptr, pname + ".native");
-                  // Unbox from boxed slot and store to native
-                  llvm::Value* boxedPtr = endBuilder.CreateLoad(pyObjectPtrTy, boxedSlotAlloca, pname + ".boxed");
-                  if (isFloat) {
-                      llvm::Value* typeTag = endBuilder.CreateLoad(llvm::Type::getInt32Ty(ctx),
-                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 1), pname + ".type");
-                      llvm::Value* isFloatTag = endBuilder.CreateICmpEQ(typeTag,
-                          llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 4), pname + ".isfloat");
-                      llvm::Value* dval = endBuilder.CreateLoad(llvm::Type::getDoubleTy(ctx),
-                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 3), pname + ".dval");
-                      llvm::Value* ival = endBuilder.CreateLoad(nativeTy,
-                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 2), pname + ".ival");
-                      llvm::Value* i2f = endBuilder.CreateSIToFP(ival, llvm::Type::getDoubleTy(ctx), pname + ".i2f");
-                      llvm::Value* unboxed = endBuilder.CreateSelect(isFloatTag, dval, i2f, pname + ".unboxed");
-                      endBuilder.CreateStore(unboxed, nativeAlloca);
-                  } else {
-                      llvm::Value* typeTag = endBuilder.CreateLoad(llvm::Type::getInt32Ty(ctx),
-                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 1), pname + ".type");
-                      llvm::Value* isIntTag = endBuilder.CreateICmpEQ(typeTag,
-                          llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0), pname + ".isint");
-                      llvm::Value* iv = endBuilder.CreateLoad(llvm::Type::getInt64Ty(ctx),
-                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 2), pname + ".ival");
-                      llvm::Value* dv = endBuilder.CreateLoad(llvm::Type::getDoubleTy(ctx),
-                          endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 3), pname + ".dval");
-                      llvm::Value* f2i = endBuilder.CreateFPToSI(dv, nativeTy, pname + ".f2i");
-                      llvm::Value* sel = endBuilder.CreateSelect(isIntTag, iv, f2i, pname + ".unboxed");
-                      endBuilder.CreateStore(sel, nativeAlloca);
-                  }
+                   // Unbox from boxed slot and store to native
+                   llvm::Value* boxedPtr = endBuilder.CreateLoad(pyObjectPtrTy, boxedSlotAlloca, pname + ".boxed");
+                   if (isFloat) {
+                       llvm::Value* typeTag = endBuilder.CreateAlignedLoad(llvm::Type::getInt32Ty(ctx),
+                           endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 1), llvm::Align(4), pname + ".type");
+                       llvm::Value* isFloatTag = endBuilder.CreateICmpEQ(typeTag,
+                           llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 4), pname + ".isfloat");
+                       llvm::Value* dval = endBuilder.CreateAlignedLoad(llvm::Type::getDoubleTy(ctx),
+                           endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 3), llvm::Align(8), pname + ".dval");
+                       llvm::Value* ival = endBuilder.CreateAlignedLoad(nativeTy,
+                           endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 2), llvm::Align(8), pname + ".ival");
+                       llvm::Value* i2f = endBuilder.CreateSIToFP(ival, llvm::Type::getDoubleTy(ctx), pname + ".i2f");
+                       llvm::Value* unboxed = endBuilder.CreateSelect(isFloatTag, dval, i2f, pname + ".unboxed");
+                       endBuilder.CreateStore(unboxed, nativeAlloca);
+                   } else {
+                       llvm::Value* typeTag = endBuilder.CreateAlignedLoad(llvm::Type::getInt32Ty(ctx),
+                           endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 1), llvm::Align(4), pname + ".type");
+                       llvm::Value* isIntTag = endBuilder.CreateICmpEQ(typeTag,
+                           llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0), pname + ".isint");
+                       llvm::Value* iv = endBuilder.CreateAlignedLoad(llvm::Type::getInt64Ty(ctx),
+                           endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 2), llvm::Align(8), pname + ".ival");
+                       llvm::Value* dv = endBuilder.CreateAlignedLoad(llvm::Type::getDoubleTy(ctx),
+                           endBuilder.CreateStructGEP(pyObjectTy, boxedPtr, 3), llvm::Align(8), pname + ".dval");
+                       llvm::Value* f2i = endBuilder.CreateFPToSI(dv, nativeTy, pname + ".f2i");
+                       llvm::Value* sel = endBuilder.CreateSelect(isIntTag, iv, f2i, pname + ".unboxed");
+                       endBuilder.CreateStore(sel, nativeAlloca);
+                   }
                   valueMap[pname] = nativeAlloca;
               }
           }
@@ -1191,7 +1191,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             llvm::Value* safeBoxed = builder.CreateSelect(builder.CreateIsNull(boxed, "isnull"),
                 zeroObjPtr, boxed, "safe.boxed");
             llvm::Value* fieldPtr = builder.CreateStructGEP(pyObjectTy, safeBoxed, 2);
-            return builder.CreateLoad(llvm::Type::getInt64Ty(context), fieldPtr, "unboxed");
+            return builder.CreateAlignedLoad(llvm::Type::getInt64Ty(context), fieldPtr, llvm::Align(8), "unboxed");
         };
 
         auto boxI64 = [&](llvm::Value* val, const std::string& name = "") -> llvm::Value* {
@@ -1231,13 +1231,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 return builder.CreateSIToFP(boxed, doubleTy, "i64.to.double");
             }
 
-            llvm::Value* typeVal = builder.CreateLoad(llvm::Type::getInt32Ty(context),
-                builder.CreateStructGEP(pyObjectTy, boxed, 1), "boxed.type");
-            llvm::Value* intVal = builder.CreateLoad(llvm::Type::getInt64Ty(context),
-                builder.CreateStructGEP(pyObjectTy, boxed, 2), "boxed.int");
+            llvm::Value* typeVal = builder.CreateAlignedLoad(llvm::Type::getInt32Ty(context),
+                builder.CreateStructGEP(pyObjectTy, boxed, 1), llvm::Align(4), "boxed.type");
+            llvm::Value* intVal = builder.CreateAlignedLoad(llvm::Type::getInt64Ty(context),
+                builder.CreateStructGEP(pyObjectTy, boxed, 2), llvm::Align(8), "boxed.int");
             llvm::Value* intAsDouble = builder.CreateSIToFP(intVal, doubleTy, "boxed.int.double");
-            llvm::Value* doubleVal = builder.CreateLoad(doubleTy,
-                builder.CreateStructGEP(pyObjectTy, boxed, 3), "boxed.double");
+            llvm::Value* doubleVal = builder.CreateAlignedLoad(doubleTy,
+                builder.CreateStructGEP(pyObjectTy, boxed, 3), llvm::Align(8), "boxed.double");
             llvm::Value* isFloat = builder.CreateICmpEQ(typeVal,
                 llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 4), "boxed.isfloat");
             return builder.CreateSelect(isFloat, doubleVal, intAsDouble, "unboxed.double");

@@ -152,6 +152,18 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - `GetItemDouble` only on homogeneous float lists — never on mixed body tuples
 - Boxed unpack scalars are not placed in `numericFloatLocals`
 
+### Code Alignment Requirements
+All `CreateLoad` calls that read from `PyObject` struct fields must use explicit alignment
+specifiers via `CreateAlignedLoad`. The `PyObject` struct layout is:
+- `refcount` (i32) at offset 0 — requires `Align(4)`
+- `type` (i32) at offset 4 — requires `Align(4)`
+- `value` (i64) at offset 8 — requires `Align(8)`
+- `dvalue` (double) at offset 16 — requires `Align(8)`
+
+Missing alignment specifiers cause LLVM to generate incorrect machine code for values
+exceeding 32 bits, resulting in silent truncation. This was fixed by replacing all
+`CreateLoad` calls on struct fields with `CreateAlignedLoad` with appropriate alignment.
+
 ## Architecture
 
 ```
