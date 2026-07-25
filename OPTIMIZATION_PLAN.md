@@ -439,6 +439,19 @@ Compiled code is consistently **5-10x faster than Python** across all optimizati
 
 **Note:** Tests are too fast to show meaningful differences between optimization levels. Larger workloads (e.g., nbody.py with 5M iterations) show clearer O3/O4/O5 differences.
 
+### Large Workload Benchmark Parameters
+
+Tests designed to run 60-300s in Python for meaningful optimization level comparison:
+
+| Test | Python Code | Iterations | Target Python Time |
+|------|-------------|------------|-------------------|
+| bench_function_call.py | `def add(a,b): return a+b; s=0; for i in range(ITER): s=add(s,i)` | 2,000,000,000 | ~87s |
+| bench_numeric_loop.py | `s=0; for i in range(ITER): s=s+i*2-1` | 3,000,000,000 | ~166s |
+| bench_nested_loop.py | `s=0; for i in range(ITER): for j in range(10): s=s+i+j` | 500,000,000 | ~241s |
+| bench_list_ops.py | `lst=list(range(100)); s=0; for i in range(ITER): s=s+lst[i%100]` | 2,000,000,000 | ~94s |
+
+**Note:** bench_dict_ops.py skipped due to OOM in both Python and compiled versions. These parameters can be reused by copying the test code and replacing `ITER` with the iteration count.
+
 ### Compile Time Benchmarks (nbody.py)
 
 | Level | Compile Time | vs O3 |
