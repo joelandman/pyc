@@ -918,24 +918,25 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             }
         }
         Py_XDECREF(names);
-    } else if (node->type == "ImportFrom") {
-        // ImportFrom(module='math', names=[alias(name='sqrt')], level=0)
-        node->id = getPyString(pyNode, "module");
-        PyObject* names = PyObject_GetAttrString(pyNode, "names");
-        if (names && PyList_Check(names)) {
-            for (Py_ssize_t i = 0; i < PyList_Size(names); ++i) {
-                PyObject* alias = PyList_GetItem(names, i);
-                std::string name = getPyString(alias, "name");
-                std::string asname = getPyString(alias, "asname");
-                if (!asname.empty()) {
-                    node->args.push_back(asname);
-                } else {
-                    node->args.push_back(name);
-                }
-                Py_XDECREF(alias);
-            }
-        }
-        Py_XDECREF(names);
+      } else if (node->type == "ImportFrom") {
+          // ImportFrom(module='math', names=[alias(name='sqrt', asname=None)], level=0)
+          node->id = getPyString(pyNode, "module");
+          PyObject* names = PyObject_GetAttrString(pyNode, "names");
+          if (names && PyList_Check(names)) {
+              for (Py_ssize_t i = 0; i < PyList_Size(names); ++i) {
+                  PyObject* alias = PyList_GetItem(names, i);
+                  std::string name = getPyString(alias, "name");
+                  // Use the alias if present, otherwise use the original name
+                  std::string asname = getPyString(alias, "asname");
+                  std::string targetName = asname.empty() ? name : asname;
+                  // Store both original name and target name for ImportFrom lowering
+                  node->importNames.push_back(name);
+                  node->importNames.push_back(targetName);
+                  node->args.push_back(targetName);
+                  Py_XDECREF(alias);
+              }
+          }
+          Py_XDECREF(names);
     } else if (node->type == "ClassDef") {
         // ClassDef(name, bases, body) — capture class name and base classes
         node->id = getPyString(pyNode, "name");

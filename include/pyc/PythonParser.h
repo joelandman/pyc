@@ -27,6 +27,10 @@ struct ASTNode {
     double complex_real = 0.0;
     double complex_imag = 0.0;
     std::vector<std::string> args;
+    // For ImportFrom: pairs of (original_name, target_name) alternating
+    // e.g., "from time import perf_counter as time" -> ["perf_counter", "time"]
+    // e.g., "from math import sqrt" -> ["sqrt", "sqrt"]
+    std::vector<std::string> importNames;
     std::vector<std::unique_ptr<ASTNode>> children;
 };
 

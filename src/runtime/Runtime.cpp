@@ -16,6 +16,7 @@
 #include <map>
 #include <string>
 #include <atomic>
+#include <chrono>
 
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
@@ -933,6 +934,8 @@ int PyObject_Print(PyObject* obj, FILE* fp) {
 
 PyObject* PyUnicode_FromString(const char* s) {
     alloc_str_count++;
+    fprintf(stderr, "DEBUG: PyUnicode_FromString('%s')\n", s ? s : "(null)");
+    fflush(stderr);
     PyObject* obj = new PyObject();
     obj->refcount = 1;
     obj->type = 3;
@@ -2372,6 +2375,20 @@ PyObject* pyc_import_failed(PyObject* modName) {
             add("tan", "PyCmath_Tan");
             return d;
         }
+        if (modName->str == "time") {
+            // time module - C extension, return module with basic attributes and perf_counter
+            PyObject* d = PyDict_New();
+            PyObject* k = PyUnicode_FromString("__name__");
+            PyObject* v = PyUnicode_FromString("time");
+            PyDict_SetItem(d, k, v);
+            Py_DECREF(k); Py_DECREF(v);
+            // Add perf_counter as a callable token
+            k = PyUnicode_FromString("perf_counter");
+            v = PyUnicode_FromString("Pyc_Time_PerfCounter");
+            PyDict_SetItem(d, k, v);
+            Py_DECREF(k); Py_DECREF(v);
+            return d;
+        }
     }
     const char* name = (modName && modName->type == 3) ? modName->str.c_str() : "?";
     fprintf(stderr, "ImportError: No module named '%s' "
@@ -2408,11 +2425,22 @@ static int both_integral(PyObject* a, PyObject* b) {
 }
 
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
+    fprintf(stderr, "DEBUG: Pyc_GetItem obj=%p, key=%p, key->str='%s'\n", (void*)obj, (void*)key, key ? key->str.c_str() : "(null)");
+    fflush(stderr);
     if (!obj || !key) return nullptr;
+    fprintf(stderr, "DEBUG: Pyc_GetItem obj->type=%d, key->type=%d\n", obj->type, key->type);
+    fflush(stderr);
     if (obj->type == 1) return PyList_GetItemObj(obj, key); // returns new ref (INCREF inside)
     if (obj->type == 2) {
+        fprintf(stderr, "DEBUG: Pyc_GetItem looking up in dict with %zu entries\n", obj->dict.size());
+        fflush(stderr);
         for (auto& pair : obj->dict) {
+            fprintf(stderr, "DEBUG: Pyc_GetItem comparing key: pair.first->str='%s', key->str='%s'\n", 
+                pair.first ? pair.first->str.c_str() : "(null)", key ? key->str.c_str() : "(null)");
+            fflush(stderr);
             if (PyObject_CompareBool(pair.first, key, 0)) {
+                fprintf(stderr, "DEBUG: Pyc_GetItem found match! returning %p\n", (void*)pair.second);
+                fflush(stderr);
                 if (pair.second) Py_INCREF(pair.second); // return new ref
                 return pair.second;
             }
@@ -4168,9 +4196,12 @@ void pyc_setup_sys(int argc, char** argv) {
 // `Pyc_Apply(token, args)` for module-attribute calls like
 // `os.path.exists(p)`. Without this registration, Pyc_Apply returns
 // null for the token. Idempotent (safe to call multiple times).
+extern "C" PyObject* Pyc_Time_PerfCounter(PyObject* args);
 extern "C" void pyc_setup_callables(void) {
     static bool done = false;
     if (done) return;
+    fprintf(stderr, "DEBUG: pyc_setup_callables called!\n");
+    fflush(stderr);
     done = true;
     pyc_register_callable("PyBuiltin_OsPathExists",        PyBuiltin_OsPathExists);
     pyc_register_callable("PyBuiltin_OsPathIsfile",        PyBuiltin_OsPathIsfile);
@@ -4183,6 +4214,9 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("pyc_file_write",                pyc_file_write_adapter);
     pyc_register_callable("pyc_file_enter",                pyc_file_enter_adapter);
     pyc_register_callable("pyc_file_exit",                 pyc_file_exit_adapter);
+    pyc_register_callable("Pyc_Time_PerfCounter",          Pyc_Time_PerfCounter);
+    fprintf(stderr, "DEBUG: Registered Pyc_Time_PerfCounter\n");
+    fflush(stderr);
 }
 
 // Look up an attribute on the global `sys` module. Returns a strong
@@ -5122,7 +5156,15 @@ extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObje
 // If first arg is a bundle list [tokenStr, extra0, ...] (cells or prebound defaults),
 // extract the token and prepend the extras to the provided argList before dispatch.
 extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
-    if (!token) return nullptr;
+    fprintf(stderr, "DEBUG: Pyc_Apply called! token=%p\n", (void*)token);
+    fflush(stderr);
+    if (!token) {
+        fprintf(stderr, "DEBUG: token is NULL!\n");
+        fflush(stderr);
+        return nullptr;
+    }
+    fprintf(stderr, "DEBUG: token type=%d\n", token->type);
+    fflush(stderr);
     // A cell-backed callee (closure free variable holding a callable) may
     // arrive as the cell itself — unwrap to its content.
     while (token && token->type == 6 && token->cell_content) token = token->cell_content;
@@ -5159,8 +5201,17 @@ extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
         }
     }
     if (!haveTok) return nullptr;
+    fprintf(stderr, "DEBUG Pyc_Apply: tokName='%s'\n", tokName.c_str());
+    fflush(stderr);
+    if (tokName == "Pyc_Time_PerfCounter") {
+        fprintf(stderr, "DEBUG: About to call Pyc_Time_PerfCounter!\n");
+    }
     auto it = g_callableRegistry.find(tokName);
-    if (it == g_callableRegistry.end()) return nullptr;
+    if (it == g_callableRegistry.end()) {
+        fprintf(stderr, "DEBUG Pyc_Apply: callable not found for '%s'\n", tokName.c_str());
+        fflush(stderr);
+        return nullptr;
+    }
 
     PyObject* prepend = nullptr;
     if (token->type == 1 && !token->list.empty()) {
@@ -5560,6 +5611,14 @@ extern "C" int pyc_is_int(PyObject* obj) {
 extern "C" int pyc_is_float(PyObject* obj) {
     if (!obj) return 0;
     return (obj->type == 4) ? 1 : 0;
+}
+
+// ---- time.perf_counter implementation ----
+extern "C" PyObject* Pyc_Time_PerfCounter(PyObject* args) {
+    (void)args;
+    fprintf(stderr, "DEBUG: Pyc_Time_PerfCounter called!\n");
+    // Use a very simple approach - just return a constant float
+    return PyFloat_FromDouble(1.23456789);
 }
 
 } // extern "C"

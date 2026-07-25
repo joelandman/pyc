@@ -144,18 +144,26 @@ std::shared_ptr<ast::Stmt> Parser::parse_stmt() {
         if (has_more() && current().kind == pyc::lexer::TokenType::NAME && current().value == "import") {
             advance();
         }
-        auto imp = std::make_shared<ast::ImportFrom>(module, level);
-        // Capture imported names
-        while (has_more() && current().kind != pyc::lexer::TokenType::NEWLINE && current().kind != pyc::lexer::TokenType::DECREMENT) {
-            if (current().kind == pyc::lexer::TokenType::NAME) {
-                imp->names_.push_back(current().value);
-                advance();
-            } else {
-                advance();
-            }
-            if (has_more() && current().kind == pyc::lexer::TokenType::COMMA) advance();
-        }
-        return std::make_shared<ast::ImportStmt>(imp);
+         auto imp = std::make_shared<ast::ImportFrom>(module, level);
+         // Capture imported names (skip "as" aliases)
+         while (has_more() && current().kind != pyc::lexer::TokenType::NEWLINE && current().kind != pyc::lexer::TokenType::DECREMENT) {
+             if (current().kind == pyc::lexer::TokenType::NAME) {
+                 // Check if this is an "as" keyword
+                 if (current().value == "as") {
+                     advance();  // skip "as"
+                     if (has_more() && current().kind == pyc::lexer::TokenType::NAME) {
+                         advance();  // skip the alias name
+                     }
+                     continue;
+                 }
+                 imp->names_.push_back(current().value);
+                 advance();
+             } else {
+                 advance();
+             }
+             if (has_more() && current().kind == pyc::lexer::TokenType::COMMA) advance();
+         }
+         return std::make_shared<ast::ImportStmt>(imp);
     }
 
     // global

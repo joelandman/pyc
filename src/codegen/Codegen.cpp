@@ -1126,46 +1126,46 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
              }
          }
 
-         auto getOrLoad = [&](const std::string& name) -> llvm::Value* {
-            // Special-case `sys` so user code can do `sys.argv` etc. The
-            // runtime provides a `pyc_get_sys_module()` accessor that
-            // returns the same global `sys` object every call.
-            if (name == "__name__") {
-                // Return cached value if still owned; otherwise create fresh and track it.
-                if (ownedTemps.count("__name__") && valueMap.count("__name__"))
-                    return valueMap.at("__name__");
-                llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
-                llvm::Value* strConst = builder.CreateGlobalStringPtr("__main__", "str");
-                llvm::Value* val = builder.CreateCall(fromStr, {strConst}, name + ".name");
-                valueMap["__name__"] = val;
-                ownedTemps.insert("__name__");
-                tempDefBlock["__name__"] = builder.GetInsertBlock();
-                return val;
-            }
-            if (name == "sys") {
-                llvm::Function* getSys = module->getFunction("pyc_get_sys_module");
-                if (!getSys) {
-                    llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
-                    getSys = llvm::Function::Create(ty, llvm::Function::ExternalLinkage,
-                                                    "pyc_get_sys_module", module.get());
-                }
-                return builder.CreateCall(getSys, {}, name + ".sys");
-            }
-            auto it = valueMap.find(name);
-            if (it == valueMap.end()) {
-                llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + name);
-                if (gv) {
-                    valueMap[name] = gv;
-                    return builder.CreateLoad(pyObjectPtrTy, gv, name + ".load");
-                }
-                return llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0));
-            }
-            if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(it->second))
-                return builder.CreateLoad(alloca->getAllocatedType(), alloca, name + ".load");
-            if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(it->second))
-                return builder.CreateLoad(pyObjectPtrTy, gv, name + ".load");
-            return it->second;
-        };
+                 auto getOrLoad = [&](const std::string& name) -> llvm::Value* {
+                    // Special-case `sys` so user code can do `sys.argv` etc. The
+                    // runtime provides a `pyc_get_sys_module()` accessor that
+                    // returns the same global `sys` object every call.
+                    if (name == "__name__") {
+                        // Return cached value if still owned; otherwise create fresh and track it.
+                        if (ownedTemps.count("__name__") && valueMap.count("__name__"))
+                            return valueMap.at("__name__");
+                        llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
+                        llvm::Value* strConst = builder.CreateGlobalStringPtr("__main__", "str");
+                        llvm::Value* val = builder.CreateCall(fromStr, {strConst}, name + ".name");
+                        valueMap["__name__"] = val;
+                        ownedTemps.insert("__name__");
+                        tempDefBlock["__name__"] = builder.GetInsertBlock();
+                        return val;
+                    }
+                    if (name == "sys") {
+                        llvm::Function* getSys = module->getFunction("pyc_get_sys_module");
+                        if (!getSys) {
+                            llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
+                            getSys = llvm::Function::Create(ty, llvm::Function::ExternalLinkage,
+                                                            "pyc_get_sys_module", module.get());
+                        }
+                        return builder.CreateCall(getSys, {}, name + ".sys");
+                    }
+                    auto it = valueMap.find(name);
+                    if (it == valueMap.end()) {
+                        llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + name);
+                        if (gv) {
+                            valueMap[name] = gv;
+                            return builder.CreateLoad(pyObjectPtrTy, gv, name + ".load");
+                        }
+                        return llvm::ConstantPointerNull::get(llvm::PointerType::get(context, 0));
+                    }
+                    if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(it->second))
+                        return builder.CreateLoad(alloca->getAllocatedType(), alloca, name + ".load");
+                    if (auto* gv = llvm::dyn_cast<llvm::GlobalVariable>(it->second))
+                        return builder.CreateLoad(pyObjectPtrTy, gv, name + ".load");
+                    return it->second;
+                };
 
         // Helper: unbox a PyObject* (assumed to be int) to i64.
         // A null boxed pointer (e.g. from a function that returned None
@@ -1670,6 +1670,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 builder.CreateStore(newVal, i64alloca);
             } else if (inst.op == "const") {
                 std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
+                fprintf(stderr, "DEBUG Codegen const: val='%s', inst.result='%s'\n", val.c_str(), inst.result.c_str());
+                fflush(stderr);
                 if (!val.empty() && (val[0] == '"' || val[0] == '\'')) {
                     llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
                     if (fromStr) {
@@ -2340,64 +2342,66 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 llvm::Function* incref = module->getFunction("Py_INCREF");
                 llvm::Function* decref = module->getFunction("Py_DECREF");
 
-                auto tit = valueMap.find(inst.result);
-                if (tit != valueMap.end()) {
-                    if (llvm::GlobalVariable* gv = llvm::dyn_cast<llvm::GlobalVariable>(tit->second)) {
-                        // Global reassignment: DECREF old value (null-safe), take/transfer ownership.
-                        llvm::Value* oldVal = builder.CreateLoad(pyObjectPtrTy, gv, inst.result + ".old");
-                        if (decref) builder.CreateCall(decref, {oldVal});
-                        if (!srcIsOwned && incref) builder.CreateCall(incref, {newVal});
-                        builder.CreateStore(newVal, gv);
+                 auto tit = valueMap.find(inst.result);
+                 if (tit != valueMap.end()) {
+                     if (llvm::GlobalVariable* gv = llvm::dyn_cast<llvm::GlobalVariable>(tit->second)) {
+                         // Global reassignment: DECREF old value (null-safe), INCREF new value.
+                         // Module globals always own their values, so always INCREF unless source is null.
+                         llvm::Value* oldVal = builder.CreateLoad(pyObjectPtrTy, gv, inst.result + ".old");
+                         if (decref) builder.CreateCall(decref, {oldVal});
+                         if (newVal && incref) builder.CreateCall(incref, {newVal});
+                         builder.CreateStore(newVal, gv);
                     } else if (ownedSlots.count(inst.result)) {
                         // Owned slot: DECREF old value, store new.
                         llvm::Value* oldVal = builder.CreateLoad(pyObjectPtrTy, tit->second, inst.result + ".old");
                         if (decref) builder.CreateCall(decref, {oldVal});
                         if (!srcIsOwned && incref) builder.CreateCall(incref, {newVal});
                         builder.CreateStore(newVal, tit->second);
-                    } else if (auto* paramAlloca = llvm::dyn_cast<llvm::AllocaInst>(tit->second)) {
-                        // Borrowed slot (param): INCREF the initial value right after the
-                        // parameter setup store so the slot owns a ref from function entry.
-                        // This makes every subsequent reassignment (including loop iterations)
-                        // safe to use the owned-slot pattern (DECREF old, store new).
-                        if (incref) {
-                            // Find the store that initializes this alloca (the param setup store
-                            // emitted in the entry block during parameter setup) and insert the
-                            // INCREF immediately after it.
-                            llvm::Instruction* setupStore = nullptr;
-                            for (auto& I : func->getEntryBlock()) {
-                                if (auto* SI = llvm::dyn_cast<llvm::StoreInst>(&I)) {
-                                    if (SI->getPointerOperand() == paramAlloca) {
-                                        setupStore = SI;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (setupStore) {
-                                llvm::IRBuilder<> initBuilder(setupStore->getNextNode()
-                                    ? setupStore->getNextNode()
-                                    : &func->getEntryBlock().back());
-                                if (!setupStore->getNextNode())
-                                    initBuilder.SetInsertPoint(
-                                        &func->getEntryBlock(), func->getEntryBlock().end());
-                                else
-                                    initBuilder.SetInsertPoint(setupStore->getNextNode());
-                                llvm::Value* initVal = initBuilder.CreateLoad(
-                                    pyObjectPtrTy, paramAlloca, inst.result + ".init");
-                                initBuilder.CreateCall(incref, {initVal});
-                            }
-                        }
-                        llvm::Value* oldVal = builder.CreateLoad(
-                            pyObjectPtrTy, paramAlloca, inst.result + ".old");
-                        if (decref) builder.CreateCall(decref, {oldVal});
-                        if (!srcIsOwned && incref) builder.CreateCall(incref, {newVal});
-                        builder.CreateStore(newVal, paramAlloca);
-                        ownedSlots.insert(inst.result);
-                    } else {
-                        // Borrowed slot (cell or other non-alloca): simple take-ownership.
-                        if (!srcIsOwned && incref) builder.CreateCall(incref, {newVal});
-                        builder.CreateStore(newVal, tit->second);
-                        ownedSlots.insert(inst.result);
-                    }
+                     } else if (auto* paramAlloca = llvm::dyn_cast<llvm::AllocaInst>(tit->second)) {
+                         // Borrowed slot (param): INCREF the initial value right after the
+                         // parameter setup store so the slot owns a ref from function entry.
+                         // This makes every subsequent reassignment (including loop iterations)
+                         // safe to use the owned-slot pattern (DECREF old, store new).
+                         if (incref) {
+                             // Find the store that initializes this alloca (the param setup store
+                             // emitted in the entry block during parameter setup) and insert the
+                             // INCREF immediately after it.
+                             llvm::Instruction* setupStore = nullptr;
+                             for (auto& I : func->getEntryBlock()) {
+                                 if (auto* SI = llvm::dyn_cast<llvm::StoreInst>(&I)) {
+                                     if (SI->getPointerOperand() == paramAlloca) {
+                                         setupStore = SI;
+                                         break;
+                                     }
+                                 }
+                             }
+                             if (setupStore) {
+                                 llvm::IRBuilder<> initBuilder(setupStore->getNextNode()
+                                     ? setupStore->getNextNode()
+                                     : &func->getEntryBlock().back());
+                                 if (!setupStore->getNextNode())
+                                     initBuilder.SetInsertPoint(
+                                         &func->getEntryBlock(), func->getEntryBlock().end());
+                                 else
+                                     initBuilder.SetInsertPoint(setupStore->getNextNode());
+                                 llvm::Value* initVal = initBuilder.CreateLoad(
+                                     pyObjectPtrTy, paramAlloca, inst.result + ".init");
+                                 initBuilder.CreateCall(incref, {initVal});
+                             }
+                         }
+                         llvm::Value* oldVal = builder.CreateLoad(
+                             pyObjectPtrTy, paramAlloca, inst.result + ".old");
+                         if (decref) builder.CreateCall(decref, {oldVal});
+                         // Always INCREF new value so the target owns its own reference
+                         if (newVal && incref) builder.CreateCall(incref, {newVal});
+                         builder.CreateStore(newVal, paramAlloca);
+                         ownedSlots.insert(inst.result);
+                     } else {
+                         // Borrowed slot (cell or other non-alloca): simple take-ownership.
+                         if (!srcIsOwned && incref) builder.CreateCall(incref, {newVal});
+                         builder.CreateStore(newVal, tit->second);
+                         ownedSlots.insert(inst.result);
+                     }
                 } else {
                     if (llvm::GlobalVariable* gv = module->getNamedGlobal("pyc_global_" + inst.result)) {
                         valueMap[inst.result] = gv;

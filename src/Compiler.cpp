@@ -1011,13 +1011,15 @@ class LoweringVisitor {
                 }
             }
             return;
-        } else if (node->type == "ImportFrom") {
-            // from math import sqrt
-            // from utils import *
-            // B7: If the module was compiled, call __module__<mod> and look up names.
-            // Otherwise emit pyc_import_failed.
-            const std::string& mod = node->id;
-            if (!mod.empty()) {
+         } else if (node->type == "ImportFrom") {
+             // from math import sqrt
+             // from utils import *
+             // B7: If the module was compiled, call __module__<mod> and look up names.
+             // Otherwise emit pyc_import_failed.
+             const std::string& mod = node->id;
+             fprintf(stderr, "DEBUG ImportFrom: mod='%s', args.size=%zu\n", mod.c_str(), node->args.size());
+             fflush(stderr);
+             if (!mod.empty()) {
                 if (compiledModules.count(mod) > 0) {
                     // Module was compiled
                     std::string modConst = "c" + std::to_string(tempCounter++);
@@ -1063,13 +1065,46 @@ class LoweringVisitor {
                     // Module not found — call pyc_import_failed for each imported name
                     std::string modName = "c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modName, "str");
-                    for (const auto& name : node->args) {
-                        if (name == "*") continue;  // nothing to bind for star on a missing module
-                        ir.addModuleGlobal(name);
-                        std::string failResult = "t" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modName}, failResult);
-                        ir.addInstruction(currentFunc, "assign", {failResult}, name);
-                    }
+                     std::string moduleDict = "t" + std::to_string(tempCounter++);
+                     ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modName}, moduleDict);
+                     
+                     // For ImportFrom, importNames contains pairs: [orig1, target1, orig2, target2, ...]
+                     size_t importIdx = 0;
+                     for (const auto& name : node->args) {
+                         if (name == "*") continue;  // nothing to bind for star on a missing module
+                         
+                         fprintf(stderr, "DEBUG ImportFrom: mod='%s', name='%s'\n", mod.c_str(), name.c_str());
+                         fflush(stderr);
+                         
+                         ir.addModuleGlobal(name);
+                         
+                         // Get the original name for lookup (importNames has pairs: orig, target)
+                         std::string origName = name;
+                         if (importIdx + 1 < node->importNames.size()) {
+                             origName = node->importNames[importIdx];
+                         }
+                         importIdx += 2;
+                         
+                           // Special case: time.perf_counter - directly use the callable token
+                           if (mod == "time" && origName == "perf_counter") {
+                               std::string tokenVal = "t" + std::to_string(tempCounter++);
+                               ir.addInstruction(currentFunc, "const", {"\"Pyc_Time_PerfCounter\""}, tokenVal, "str");
+                               callableTokenTemps.insert(tokenVal);
+                               fprintf(stderr, "DEBUG ImportFrom: assigning %s to global %s\n", tokenVal.c_str(), name.c_str());
+                               fflush(stderr);
+                               ir.addInstruction(currentFunc, "assign", {tokenVal}, name);
+                               continue;
+                           }
+                         
+                          std::string attrKey = "c" + std::to_string(tempCounter++);
+                          ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
+                          std::string attrVal = "t" + std::to_string(tempCounter++);
+                          ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", moduleDict, attrKey}, attrVal);
+                          // Mark attrVal as a callable token temp and as owned (Pyc_GetItem returns new ref)
+                          callableTokenTemps.insert(attrVal);
+                          // Note: markOwned is called by codegen for call instructions
+                          ir.addInstruction(currentFunc, "assign", {attrVal}, name);
+                      }
                 }
             }
             return;
@@ -4809,6 +4844,11 @@ class LoweringVisitor {
             } else if (tok.empty() && !funcName.empty()) {
                 tok = "c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + funcName + "\""}, tok, "str");
+            } else if (!tok.empty() && (namesThatMayHoldCallableTokens.count(tok) || callableTokenTemps.count(tok))) {
+                // tok is a temp that may hold a callable token string. Get its value.
+                // The value should be the callable token string itself.
+                // We need to pass this temp directly to Pyc_Apply since it contains the token string.
+                // No additional handling needed - the temp holds the string token.
             }
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_Apply", tok, argList}, res);
@@ -7917,14 +7957,66 @@ void lowerAST(const ASTNode* node, ModuleIR& ir,
 }
 
 bool Compiler::compile(const std::string& inputPath, const std::string& outputPath,
-                       bool useStatic, int optLevel, bool emitLLVM, bool emitASM,
-                       bool verbose, bool debugInfo,
-                        const std::string& pgoInstrument,
-                        const std::string& pgoProfile,
-                        const std::string& pgoGenerateProfile,
-                        const std::string& mcpu,
-                        const std::string& march,
-                        const std::string& targetArch) {
+                        bool useStatic, int optLevel, bool emitLLVM, bool emitASM,
+                        bool verbose, bool debugInfo,
+                         const std::string& pgoInstrument,
+                         const std::string& pgoProfile,
+                         const std::string& pgoGenerateProfile,
+                         const std::string& mcpu,
+                         const std::string& march,
+                         const std::string& targetArch,
+                          const std::string& venvPath,
+                          bool dynamicLink,
+                          const std::string& pythonPath) {
+    if (verbose) std::cout << "DEBUG: compile called with pythonPath=" << pythonPath << "\n";
+    
+    // Handle virtual environment path
+    std::string venvLib = "";
+    if (!venvPath.empty()) {
+        if (verbose) {
+            std::cout << "Using virtual environment: " << venvPath << "\n";
+        }
+        
+        // Construct path to site-packages or dist-packages
+        fs::path venvDir(venvPath);
+        if (fs::exists(venvDir / "lib")) {
+            // Unix-style venv
+            fs::path libDir = venvDir / "lib";
+            fs::path pythonDir;
+            
+            // Find the Python version directory (e.g., python3.11)
+            if (fs::is_directory(libDir)) {
+                for (const auto& entry : fs::directory_iterator(libDir)) {
+                    if (entry.is_directory() && entry.path().filename().string().find("python") != std::string::npos) {
+                        pythonDir = entry.path();
+                        break;
+                    }
+                }
+            }
+            
+            // Look for site-packages
+            if (!pythonDir.empty()) {
+                if (fs::exists(pythonDir / "site-packages")) {
+                    venvLib = (pythonDir / "site-packages").string();
+                } else if (fs::exists(pythonDir / "dist-packages")) {
+                    venvLib = (pythonDir / "dist-packages").string();
+                }
+            }
+        } else if (fs::exists(venvDir / "Lib")) {
+            // Windows-style venv
+            fs::path libDir = venvDir / "Lib";
+            if (fs::exists(libDir / "site-packages")) {
+                venvLib = (libDir / "site-packages").string();
+            }
+        }
+        
+        if (venvLib.empty()) {
+            std::cerr << "Warning: Could not find site-packages in venv: " << venvPath << "\n";
+        } else if (verbose) {
+            std::cout << "Venv site-packages: " << venvLib << "\n";
+        }
+    }
+    
     // PGO profile generation: compile instrumented binary, run test script, merge .profraw → .profdata
     if (!pgoGenerateProfile.empty()) {
         if (verbose)
@@ -7956,10 +8048,169 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             for (const auto& c : node->children) collectImports(c.get());
         };
         collectImports(mainAst.get());
-
+        
+        // Install missing modules from venv if specified
+        std::vector<std::string> missingModules;
+        for (auto& moduleName : importNames) {
+            bool found = false;
+            
+            // Check if module exists in venv site-packages
+            if (!venvLib.empty()) {
+                fs::path modulePath = fs::path(venvLib) / moduleName;
+                if (fs::exists(modulePath) && 
+                    (fs::is_directory(modulePath) || 
+                     (fs::is_regular_file(modulePath) && modulePath.extension() == ".py"))) {
+                    found = true;
+                }
+            }
+            
+            // Check if module exists in source directory
+            std::string dir = fs::path(inputPath).parent_path().string();
+            if (dir.empty()) dir = ".";
+            std::string modulePath = dir + "/" + moduleName + ".py";
+            if (fs::exists(modulePath) && fs::is_regular_file(modulePath)) {
+                found = true;
+            }
+            
+            if (!found) {
+                missingModules.push_back(moduleName);
+            }
+        }
+        
+        // Install missing modules using pip or uv
+        if (!missingModules.empty() && !venvLib.empty()) {
+            if (verbose) {
+                std::cout << "Installing missing modules: ";
+                for (size_t i = 0; i < missingModules.size(); ++i) {
+                    if (i > 0) std::cout << ", ";
+                    std::cout << missingModules[i];
+                }
+                std::cout << "\n";
+            }
+            
+            // Try uv first, then pip
+            std::string installer = "uv";
+            std::string installCmd;
+            
+            // Check if uv is available
+            FILE* check = popen("which uv 2>/dev/null", "r");
+            if (check) {
+                char buffer[256];
+                if (fgets(buffer, sizeof(buffer), check) != nullptr) {
+                    // uv found
+                } else {
+                    installer = "pip";
+                }
+                pclose(check);
+            } else {
+                installer = "pip";
+            }
+            
+            if (installer == "uv") {
+                installCmd = "uv pip install --no-index --find-links=" + venvLib + " -t " + venvLib + " ";
+                for (auto& mod : missingModules) {
+                    installCmd += mod + " ";
+                }
+            } else {
+                installCmd = "pip install -t " + venvLib + " ";
+                for (auto& mod : missingModules) {
+                    installCmd += mod + " ";
+                }
+            }
+            
+            if (verbose) {
+                std::cout << "Running: " << installCmd << "\n";
+            }
+            
+            int ret = system(installCmd.c_str());
+            if (ret != 0) {
+                std::cerr << "Warning: Module installation failed (exit code: " << ret << ")\n";
+            }
+        }
+        
         std::string dir = fs::path(inputPath).parent_path().string();
-        if (dir.empty()) dir = ".";
-        std::string mainBasename = fs::path(inputPath).stem().string();
+         if (dir.empty()) dir = ".";
+         
+         // Get Python version for standard library path
+         std::string pythonVersion;
+         if (!pythonPath.empty()) {
+             // Try to detect version from pythonPath/include directory
+             fs::path includeDir = fs::path(pythonPath) / "include";
+             if (fs::exists(includeDir)) {
+                 for (const auto& entry : fs::directory_iterator(includeDir)) {
+                     std::string filename = entry.path().filename().string();
+                     if (filename.find("python") != std::string::npos) {
+                         // Extract version from directory name like "python3.11"
+                         size_t pos = filename.find("python");
+                         if (pos != std::string::npos) {
+                             pythonVersion = filename.substr(pos + 6);
+                             // Remove any trailing non-numeric characters
+                             while (!pythonVersion.empty() && !isdigit(pythonVersion.back())) {
+                                 pythonVersion.pop_back();
+                             }
+                             break;
+                         }
+                     }
+                 }
+             }
+             // Fallback: try python3-config if available
+             if (pythonVersion.empty()) {
+                 std::string configCmd = pythonPath + "/bin/python3-config --version 2>/dev/null";
+                 FILE* pipe = popen(configCmd.c_str(), "r");
+                 if (pipe) {
+                     char buf[64];
+                     if (fgets(buf, sizeof(buf), pipe)) {
+                         // Parse version like "Python 3.11.5"
+                         for (size_t i = 0; i < strlen(buf); ++i) {
+                             if (isdigit(buf[i])) {
+                                 pythonVersion = buf + i;
+                                 // Keep only major.minor
+                                 size_t dotCount = 0;
+                                 for (size_t j = 0; j < pythonVersion.length(); ++j) {
+                                     if (pythonVersion[j] == '.') {
+                                         dotCount++;
+                                         if (dotCount > 1) {
+                                             pythonVersion = pythonVersion.substr(0, j);
+                                             break;
+                                         }
+                                     } else if (!isdigit(pythonVersion[j]) && pythonVersion[j] != '.') {
+                                         pythonVersion = pythonVersion.substr(0, j);
+                                         break;
+                                     }
+                                 }
+                                 break;
+                             }
+                         }
+                     }
+                     pclose(pipe);
+                 }
+             }
+         } else {
+             FILE* pipe = popen("python3 -c 'import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")' 2>/dev/null", "r");
+             if (pipe) {
+                 char buf[64];
+                 if (fgets(buf, sizeof(buf), pipe)) {
+                     pythonVersion = buf;
+                     pythonVersion.erase(std::remove(pythonVersion.begin(), pythonVersion.end(), '\n'), pythonVersion.end());
+                  }
+                  pclose(pipe);
+              }
+          }
+          
+        // Use provided pythonPath if specified, otherwise use default location
+        std::string stdlibPath = "";
+        if (!pythonPath.empty()) {
+            if (!pythonVersion.empty()) {
+                stdlibPath = pythonPath + "/lib/python" + pythonVersion;
+                if (verbose) std::cout << "DEBUG: stdlibPath=" << stdlibPath << "\n";
+            } else {
+                stdlibPath = pythonPath;
+                if (verbose) std::cout << "DEBUG: stdlibPath (fallback)=" << stdlibPath << "\n";
+            }
+          } else if (!pythonVersion.empty()) {
+              stdlibPath = "/usr/lib/python" + pythonVersion;
+          }
+         std::string mainBasename = fs::path(inputPath).stem().string();
         std::vector<std::string> pyFiles;
         pyFiles.push_back(inputPath);
         for (auto& moduleName : importNames) {
@@ -8132,34 +8383,61 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             if (useStatic) linkCmd += "-static ";
             linkCmd += "-s -Wl,--gc-sections -Wl,--strip-all ";
 
-            std::string sourceDir = PYC_SOURCE_DIR;
-            std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
-            for (const auto& libdir : {"./build", "../build", ".", "/usr/local/lib", "/usr/lib"}) {
-                std::string libpath = std::string(libdir) + "/libpycrt.a";
-                if (std::ifstream(libpath).good()) {
-                    runtimeLink = " -L" + std::string(libdir) + " -lpycrt";
-                    break;
-                }
-            }
-            std::string pythonIncludes = "";
-            FILE* pipe = popen("python3-config --includes 2>/dev/null | grep -o '\\-I[^ ]*' | head -1", "r");
-            if (pipe) {
-                char buf[256];
-                if (fgets(buf, sizeof(buf), pipe)) {
-                    buf[strcspn(buf, "\n")] = 0;
-                    pythonIncludes = buf;
-                }
-                pclose(pipe);
-            }
+             std::string sourceDir = PYC_SOURCE_DIR;
+             std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
+             for (const auto& libdir : {"./build", "../build", ".", "/usr/local/lib", "/usr/lib"}) {
+                 std::string libpath = std::string(libdir) + "/libpycrt.a";
+                 if (std::ifstream(libpath).good()) {
+                     runtimeLink = " -L" + std::string(libdir) + " -lpycrt";
+                     break;
+                 }
+             }
+             std::string pythonIncludes = "";
+             std::string pythonLibLink = "";
+             
+             if (!pythonPath.empty()) {
+                 if (!pythonVersion.empty()) {
+                     pythonIncludes = "-I" + pythonPath + "/include/python" + pythonVersion;
+                     std::string libDir = pythonPath + "/lib";
+                     if (fs::exists(libDir)) {
+                         pythonLibLink = "-L" + libDir + " -lpython" + pythonVersion;
+                     }
+                 } else {
+                     pythonIncludes = "-I" + pythonPath + "/include";
+                     std::string libDir = pythonPath + "/lib";
+                     if (fs::exists(libDir)) {
+                         pythonLibLink = "-L" + libDir + " -lpython";
+                     }
+                 }
+             } else {
+                 FILE* pipe = popen("python3-config --includes 2>/dev/null | grep -o '\\-I[^ ]*' | head -1", "r");
+                 if (pipe) {
+                     char buf[256];
+                     if (fgets(buf, sizeof(buf), pipe)) {
+                         buf[strcspn(buf, "\n")] = 0;
+                         pythonIncludes = buf;
+                     }
+                     pclose(pipe);
+                 }
+                 FILE* pipe2 = popen("python3-config --ldflags 2>/dev/null | grep -o '\\-lpython[^ ]*' | head -1", "r");
+                 if (pipe2) {
+                     char buf[256];
+                     if (fgets(buf, sizeof(buf), pipe2)) {
+                         buf[strcspn(buf, "\n")] = 0;
+                         pythonLibLink = buf;
+                     }
+                     pclose(pipe2);
+                 }
+             }
 
-            if (useLTO) {
-                linkCmd += instrOutput + ".o -flto=thin -Wl,--allow-multiple-definition ";
-            } else {
-                linkCmd += instrOutput + ".o ";
-            }
-            linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
-                pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
-                runtimeLink + " -lpcre2-8 -o " + instrOutput + " -O3";
+             if (useLTO) {
+                 linkCmd += instrOutput + ".o -flto=thin -Wl,--allow-multiple-definition ";
+             } else {
+                 linkCmd += instrOutput + ".o ";
+             }
+             linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
+                 pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
+                 runtimeLink + " " + pythonLibLink + " -lpcre2-8 -o " + instrOutput + " -O3";
             linkCmd += " -fprofile-instr-generate=" + instrOutput + ".profraw";
             if (debugInfo) linkCmd += " -g";
 
@@ -8241,6 +8519,90 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         }
         std::cout << "\n";
     }
+      
+      // Get Python version for standard library path
+      std::string pythonVersion;
+      if (!pythonPath.empty()) {
+          // Try to detect version from pythonPath/include directory
+          fs::path includeDir = fs::path(pythonPath) / "include";
+          if (fs::exists(includeDir)) {
+              for (const auto& entry : fs::directory_iterator(includeDir)) {
+                  std::string filename = entry.path().filename().string();
+                  if (filename.find("python") != std::string::npos) {
+                      // Extract version from directory name like "python3.11"
+                      size_t pos = filename.find("python");
+                      if (pos != std::string::npos) {
+                          pythonVersion = filename.substr(pos + 6);
+                          // Remove any trailing non-numeric characters
+                          while (!pythonVersion.empty() && !isdigit(pythonVersion.back())) {
+                              pythonVersion.pop_back();
+                          }
+                          break;
+                      }
+                  }
+              }
+          }
+          // Fallback: try python3-config if available
+          if (pythonVersion.empty()) {
+              std::string configCmd = pythonPath + "/bin/python3-config --version 2>/dev/null";
+              FILE* pipe = popen(configCmd.c_str(), "r");
+              if (pipe) {
+                  char buf[64];
+                  if (fgets(buf, sizeof(buf), pipe)) {
+                      // Parse version like "Python 3.11.5"
+                      for (size_t i = 0; i < strlen(buf); ++i) {
+                          if (isdigit(buf[i])) {
+                              pythonVersion = buf + i;
+                              // Keep only major.minor
+                              size_t dotCount = 0;
+                              for (size_t j = 0; j < pythonVersion.length(); ++j) {
+                                  if (pythonVersion[j] == '.') {
+                                      dotCount++;
+                                      if (dotCount > 1) {
+                                          pythonVersion = pythonVersion.substr(0, j);
+                                          break;
+                                      }
+                                  } else if (!isdigit(pythonVersion[j]) && pythonVersion[j] != '.') {
+                                      pythonVersion = pythonVersion.substr(0, j);
+                                      break;
+                                  }
+                              }
+                              break;
+                          }
+                      }
+                  }
+                  pclose(pipe);
+              }
+          }
+      } else {
+          FILE* pipe = popen("python3 -c 'import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")' 2>/dev/null", "r");
+          if (pipe) {
+              char buf[64];
+              if (fgets(buf, sizeof(buf), pipe)) {
+                  pythonVersion = buf;
+                   pythonVersion.erase(std::remove(pythonVersion.begin(), pythonVersion.end(), '\n'), pythonVersion.end());
+               }
+               pclose(pipe);
+           }
+       }
+       
+        // Use provided pythonPath if specified, otherwise use default location
+        std::string stdlibPath = "";
+        if (verbose) std::cout << "DEBUG: pythonPath=" << pythonPath << ", pythonVersion=" << pythonVersion << "\n";
+        if (!pythonPath.empty()) {
+            if (!pythonVersion.empty()) {
+                stdlibPath = pythonPath + "/lib/python" + pythonVersion;
+                if (verbose) std::cout << "DEBUG: stdlibPath from pythonPath=" << stdlibPath << "\n";
+            } else {
+                stdlibPath = pythonPath;
+                if (verbose) std::cout << "DEBUG: stdlibPath fallback=" << stdlibPath << "\n";
+            }
+        } else if (!pythonVersion.empty()) {
+            stdlibPath = "/usr/lib/python" + pythonVersion;
+            if (verbose) std::cout << "DEBUG: stdlibPath from config=" << stdlibPath << "\n";
+        }
+        
+        if (verbose) std::cout << "DEBUG: Final stdlibPath=" << stdlibPath << "\n";
     
     // Build list of files to compile: main file + imported modules
     std::string dir = fs::path(inputPath).parent_path().string();
@@ -8250,11 +8612,48 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     std::vector<std::string> pyFiles;
     pyFiles.push_back(inputPath); // Main file first
     
-    // Add imported modules if they exist as .py files in the same directory
+    // Add imported modules from venv if specified
+    std::string venvModuleDir = "";
+    if (!venvPath.empty()) {
+        // Use the same venvLib path computed earlier
+        // We'll search in site-packages for modules
+        venvModuleDir = venvLib;
+    }
+    
+    // Add imported modules if they exist as .py files in the same directory, venv, or standard library
     for (auto& moduleName : importNames) {
         std::string modulePath = dir + "/" + moduleName + ".py";
+        
+        // First check source directory
         if (fs::exists(modulePath) && fs::is_regular_file(modulePath)) {
             pyFiles.push_back(modulePath);
+        } else if (!venvModuleDir.empty()) {
+            // Check venv site-packages
+            fs::path venvModulePath = fs::path(venvModuleDir) / moduleName;
+            
+            // Check if it's a directory (package) or .py file
+            if (fs::exists(venvModulePath)) {
+                if (fs::is_directory(venvModulePath) && fs::exists(venvModulePath / "__init__.py")) {
+                    // Package with __init__.py
+                    pyFiles.push_back(venvModulePath / "__init__.py");
+                } else if (fs::is_regular_file(venvModulePath) && venvModulePath.extension() == ".py") {
+                    // Single .py file module
+                    pyFiles.push_back(venvModulePath.string());
+                }
+            }
+        } else if (!stdlibPath.empty()) {
+            // Check standard library
+            fs::path stdlibModulePath = fs::path(stdlibPath) / moduleName;
+            
+            if (fs::exists(stdlibModulePath)) {
+                if (fs::is_directory(stdlibModulePath) && fs::exists(stdlibModulePath / "__init__.py")) {
+                    // Package with __init__.py
+                    pyFiles.push_back(stdlibModulePath / "__init__.py");
+                } else if (fs::is_regular_file(stdlibModulePath) && stdlibModulePath.extension() == ".py") {
+                    // Single .py file module
+                    pyFiles.push_back(stdlibModulePath.string());
+                }
+            }
         }
     }
     std::sort(pyFiles.begin(), pyFiles.end());
@@ -8337,6 +8736,14 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         }
 
         std::string moduleName = fs::path(pyFile).stem().string();
+        
+        // For venv modules, use the full path stem to avoid conflicts
+        if (!venvModuleDir.empty() && pyFile.find(venvModuleDir) != std::string::npos) {
+            // Extract relative path from venvLib for unique naming
+            std::string relPath = pyFile.substr(venvModuleDir.length() + 1);
+            moduleName = "venv_" + fs::path(relPath).stem().string();
+        }
+        
         ModuleIR ir;
         ir.moduleName = moduleName;
         // Pass compiledModules only when lowering the main module so that
@@ -8502,33 +8909,60 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             if (useStatic) linkCmd += "-static ";
             linkCmd += "-s -Wl,--gc-sections -Wl,--strip-all ";
 
-            std::string sourceDir = PYC_SOURCE_DIR;
-            std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
-            for (const auto& libdir : {"./build", "../build", ".", "/usr/local/lib", "/usr/lib"}) {
-                std::string libpath = std::string(libdir) + "/libpycrt.a";
-                if (std::ifstream(libpath).good()) {
-                    runtimeLink = " -L" + std::string(libdir) + " -lpycrt";
-                    break;
-                }
-            }
-            std::string pythonIncludes = "";
-            FILE* pipe = popen("python3-config --includes 2>/dev/null | grep -o '\\-I[^ ]*' | head -1", "r");
-            if (pipe) {
-                char buf[256];
-                if (fgets(buf, sizeof(buf), pipe)) {
-                    buf[strcspn(buf, "\n")] = 0;
-                    pythonIncludes = buf;
-                }
-                pclose(pipe);
-            }
-            // Full LTO: -flto (not -flto=thin), link bitcode directly
-            // -flto-partitions=0 enables parallel full LTO codegen (ld.lld only, auto-detect CPU count)
-            // Use ld.lld-22 for proper LTO support
-            linkCmd = "clang++-22 -fuse-ld=lld-22 -s -Wl,--gc-sections -Wl,--strip-all ";
-            linkCmd += bitcodePath + " -flto -flto-partitions=0 -Wl,--allow-multiple-definition ";
-            linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
-                pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
-                runtimeLink + " -lpcre2-8 -o " + outputPath + " -O3";
+             std::string sourceDir = PYC_SOURCE_DIR;
+             std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
+             for (const auto& libdir : {"./build", "../build", ".", "/usr/local/lib", "/usr/lib"}) {
+                 std::string libpath = std::string(libdir) + "/libpycrt.a";
+                 if (std::ifstream(libpath).good()) {
+                     runtimeLink = " -L" + std::string(libdir) + " -lpycrt";
+                     break;
+                 }
+             }
+             std::string pythonIncludes = "";
+             std::string pythonLibLink = "";
+             
+             if (!pythonPath.empty()) {
+                 if (!pythonVersion.empty()) {
+                     pythonIncludes = "-I" + pythonPath + "/include/python" + pythonVersion;
+                     std::string libDir = pythonPath + "/lib";
+                     if (fs::exists(libDir)) {
+                         pythonLibLink = "-L" + libDir + " -lpython" + pythonVersion;
+                     }
+                 } else {
+                     pythonIncludes = "-I" + pythonPath + "/include";
+                     std::string libDir = pythonPath + "/lib";
+                     if (fs::exists(libDir)) {
+                         pythonLibLink = "-L" + libDir + " -lpython";
+                     }
+                 }
+             } else {
+                 FILE* pipe = popen("python3-config --includes 2>/dev/null | grep -o '\\-I[^ ]*' | head -1", "r");
+                 if (pipe) {
+                     char buf[256];
+                     if (fgets(buf, sizeof(buf), pipe)) {
+                         buf[strcspn(buf, "\n")] = 0;
+                         pythonIncludes = buf;
+                     }
+                     pclose(pipe);
+                 }
+                 FILE* pipe2 = popen("python3-config --ldflags 2>/dev/null | grep -o '\\-lpython[^ ]*' | head -1", "r");
+                 if (pipe2) {
+                     char buf[256];
+                     if (fgets(buf, sizeof(buf), pipe2)) {
+                         buf[strcspn(buf, "\n")] = 0;
+                         pythonLibLink = buf;
+                     }
+                     pclose(pipe2);
+                 }
+             }
+             // Full LTO: -flto (not -flto=thin), link bitcode directly
+             // -flto-partitions=0 enables parallel full LTO codegen (ld.lld only, auto-detect CPU count)
+             // Use ld.lld-22 for proper LTO support
+             linkCmd = "clang++-22 -fuse-ld=lld-22 -s -Wl,--gc-sections -Wl,--strip-all ";
+             linkCmd += bitcodePath + " -flto -flto-partitions=0 -Wl,--allow-multiple-definition ";
+             linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
+                 pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
+                 runtimeLink + " " + pythonLibLink + " -lpcre2-8 -o " + outputPath + " -O3";
             if (!pgoProfile.empty()) {
                 linkCmd += " -fprofile-use=" + pgoProfile;
             }
@@ -8570,15 +9004,116 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             }
         }
         std::string pythonIncludes = "";
-        FILE* pipe = popen("python3-config --includes 2>/dev/null | grep -o '\\-I[^ ]*' | head -1", "r");
-        if (pipe) {
-            char buf[256];
-            if (fgets(buf, sizeof(buf), pipe)) {
-                buf[strcspn(buf, "\n")] = 0;
-                pythonIncludes = buf;
+        std::string pythonLibPath = "";
+        std::string pythonLibName = "-lpython";
+        
+        // Compute Python version if pythonPath is specified
+        std::string pythonVersion;
+        if (!pythonPath.empty()) {
+            fs::path includeDir = fs::path(pythonPath) / "include";
+            if (fs::exists(includeDir)) {
+                for (const auto& entry : fs::directory_iterator(includeDir)) {
+                    std::string filename = entry.path().filename().string();
+                    if (filename.find("python") != std::string::npos) {
+                        size_t pos = filename.find("python");
+                        if (pos != std::string::npos) {
+                            pythonVersion = filename.substr(pos + 6);
+                            while (!pythonVersion.empty() && !isdigit(pythonVersion.back())) {
+                                pythonVersion.pop_back();
+                            }
+                            break;
+                        }
+                    }
+                }
             }
-            pclose(pipe);
+            if (pythonVersion.empty()) {
+                std::string configCmd = pythonPath + "/bin/python3-config --version 2>/dev/null";
+                FILE* pipe = popen(configCmd.c_str(), "r");
+                if (pipe) {
+                    char buf[64];
+                    if (fgets(buf, sizeof(buf), pipe)) {
+                        for (size_t i = 0; i < strlen(buf); ++i) {
+                            if (isdigit(buf[i])) {
+                                pythonVersion = buf + i;
+                                size_t dotCount = 0;
+                                for (size_t j = 0; j < pythonVersion.length(); ++j) {
+                                    if (pythonVersion[j] == '.') {
+                                        dotCount++;
+                                        if (dotCount > 1) {
+                                            pythonVersion = pythonVersion.substr(0, j);
+                                            break;
+                                        }
+                                    } else if (!isdigit(pythonVersion[j]) && pythonVersion[j] != '.') {
+                                        pythonVersion = pythonVersion.substr(0, j);
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    pclose(pipe);
+                }
+            }
         }
+        
+        if (!pythonPath.empty()) {
+            if (!pythonVersion.empty()) {
+                pythonIncludes = "-I" + pythonPath + "/include/python" + pythonVersion;
+                std::string libDir = pythonPath + "/lib";
+                if (fs::exists(libDir)) {
+                    pythonLibPath = "-L" + libDir;
+                    pythonLibName = "-lpython" + pythonVersion;
+                }
+            } else {
+                pythonIncludes = "-I" + pythonPath + "/include";
+                std::string libDir = pythonPath + "/lib";
+                if (fs::exists(libDir)) {
+                    pythonLibPath = "-L" + libDir;
+                }
+            }
+        } else {
+            FILE* pipe = popen("python3-config --includes 2>/dev/null | grep -o '\\-I[^ ]*' | head -1", "r");
+            if (pipe) {
+                char buf[256];
+                if (fgets(buf, sizeof(buf), pipe)) {
+                    buf[strcspn(buf, "\n")] = 0;
+                    pythonIncludes = buf;
+                }
+                pclose(pipe);
+            }
+        }
+        
+        std::string pythonLibLink = "";
+        if (verbose) std::cout << "DEBUG: pythonLibPath=" << pythonLibPath << ", pythonLibName=" << pythonLibName << "\n";
+        if (!pythonLibPath.empty()) {
+            pythonLibLink = pythonLibPath + " " + pythonLibName;
+            if (verbose) std::cout << "DEBUG: pythonLibLink from path=" << pythonLibLink << "\n";
+        } else {
+            FILE* pipe2 = popen("python3-config --ldflags 2>/dev/null | grep -o '\\-lpython[^ ]*' | head -1", "r");
+            if (pipe2) {
+                char buf[256];
+                if (fgets(buf, sizeof(buf), pipe2)) {
+                    buf[strcspn(buf, "\n")] = 0;
+                    pythonLibLink = buf;
+                }
+                pclose(pipe2);
+            }
+        }
+        
+        // Handle dynamic linking if requested
+        std::string moduleObjects;
+        if (dynamicLink && !moduleNames.empty()) {
+            // Create shared objects for each module
+            for (const auto& modName : moduleNames) {
+                std::string soPath = outputPath + "_" + modName + ".so";
+                std::string soCmd = "clang++ -shared -fPIC " + outputPath + ".o -o " + soPath;
+                if (std::system(soCmd.c_str()) == 0) {
+                    moduleObjects += soPath + " ";
+                }
+            }
+        }
+        
         // -O1 and above: -flto=thin so the object (with linked runtime BC) can finalize LTO.
         // -O0: no -flto; link libpycrt/Runtime.cpp as a normal archive/source.
         // --allow-multiple-definition only needed when LTO may duplicate runtime symbols.
@@ -8594,7 +9129,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         }
         linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
             pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
-            runtimeLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(std::min(optLevel, 3));
+            runtimeLink + " " + moduleObjects + " " + pythonLibLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(std::min(optLevel, 3));
         if (optLevel >= 4 && !pgoProfile.empty()) {
             linkCmd += " -fprofile-use=" + pgoProfile;
         }
