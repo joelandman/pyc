@@ -137,6 +137,12 @@ cd relative_imports/child
 run_smoke_test "Relative import parent" "test_relative_parent.py"
 cd ../..
 
+# Test 9: Relative import used from within a package, reached via a normal
+# absolute import from the main script — unlike Tests 7/8, this is valid
+# Python: relative_imports/child/child_module.py does `from .. import
+# sibling` internally, which is legal because it's never run directly.
+run_test "Relative import from package" "test_relative_from_package.py" "from child module: from sibling"
+
 echo "========================================="
 echo "Results: $PASS passed, $FAIL failed, $TOTAL total"
 echo "========================================="

@@ -48,19 +48,28 @@ for (int i = 1; i < argc; ++i) {
 }
 ```
 
-## Known Issues
+## Known Issues (Resolved)
 
-### Pyc_Apply Dispatch for main()
-The `mbs.py` test still has issues with calling the user's `main()` function. The branch condition checking `__name__ == "__main__"` is not evaluating correctly, preventing `pyc_py_main()` from being executed.
+### ~~Pyc_Apply Dispatch for main()~~ — Fixed
+The `mbs.py` test used to segfault before ever reaching `main()`. The root
+cause turned out to be unrelated to `__name__ == "__main__"` comparison
+(that path worked correctly once `__name__` was fixed above): module-level
+float globals with a literal or negation right-hand side (e.g.
+`xmin = -1.5`) were being misclassified as native-local doubles by codegen
+and never actually stored into their boxed `pyc_global_*` slot, so `fill_z`
+dereferenced a null pointer. Fixed by gating the native-local fast paths in
+`Codegen.cpp`'s `"assign"` handling on whether the target is actually a
+declared module global, and by fixing a related leak where a nested
+function's float-typed parameter names could persist into the enclosing
+scope's `numericFloatLocals` set. See commit `16548be`.
 
-**Root Cause:** The comparison `PyObject_CompareBool` is returning 0 (false) even when comparing identical strings `"__main__"`. This suggests either:
-1. String comparison in the runtime has an issue
-2. The values being compared are not actually equal
-3. There's a mismatch between the LLVM IR and runtime expectations
-
-**Next Steps:** Need to investigate the string comparison logic in `PyObject_CompareBool` and verify that the strings being compared are correctly set to `"__main__"`.
+### Import/module system — substantially expanded since this commit
+The import handling described above (same-directory modules and `time.perf_counter`)
+has since grown into a much fuller system: dotted package imports, nested and
+namespace packages, and relative imports (`from . import x`) are all now
+supported. See `FEATURES.md`'s Import System section and commits `be832b3`
+and the relative-imports work that followed it.
 
 ## Testing
 - Simple tests with `print()` statements work correctly
-- The `mbs.py` test runs but exits before executing user code
 - Import handling for standard library modules is improved

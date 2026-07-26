@@ -19,6 +19,8 @@ struct ASTNode {
     std::string op;
     std::string id;
     int lineno = 0;
+    // ImportFrom only: number of leading dots (0=absolute, 1=".", 2="..", ...).
+    int level = 0;
     bool is_float = false;
     bool is_str   = false;
     bool is_bool  = false;

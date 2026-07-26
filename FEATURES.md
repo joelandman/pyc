@@ -154,12 +154,31 @@ d[k] = v       # dict subscript
 
 ## Import System
 
-- `import X` — loads same-directory `.py` module, binds module dict to name
-- `from X import Y` — loads module, extracts attribute, binds to name
-- `from X import *` — loads module, exports all non-underscore names as module globals
-- `import X as Y` — loads module, binds module dict to alias name
-- External modules (`re`, `math`, etc.) report clear ImportError
-- Cross-module globals via `__module__` function returning module dict pointer
+- `import X` / `import X.Y.Z` — resolves same-directory modules and packages
+  (recursively discovering every intermediate package level); binds the
+  top-level name. `import X.Y.Z as w` binds `w` directly to the deepest
+  submodule
+- `from X import Y` / `from X.Y import Z` — loads the module or package,
+  extracts `Y`/`Z` (an attribute or a submodule), binds to name
+- `from X import *` — exports all non-underscore top-level names as module globals
+- `import X as Y` / `from X import Y as Z` — binds to the given alias
+- Relative imports (`from . import x`, `from .. import y`, `from .rel import z`)
+  — resolved against the importing module's own package; valid anywhere
+  except a directly-executed main script (matches CPython, which also
+  rejects relative imports in `__main__`)
+- Namespace packages (PEP 420 — a directory with no `__init__.py`) are supported
+- Packages: nested packages, transitive discovery of a package's own imports
+  (absolute or relative), and submodules are wired onto their parent
+  package as attributes on load (`import pkg.mod` makes `pkg.mod`
+  attribute-accessible after importing just the leaf)
+- A module's top-level code runs at most once per process — imports are
+  cached via a `sys.modules`-backed registry
+- External/stdlib modules pyc doesn't implement natively report a clear
+  ImportError rather than attempting to compile real CPython stdlib
+  source (see the synthetic modules listed above: `sys`, `re`, `os`,
+  `subprocess`, `functools`, `cmath`, `time.perf_counter`)
+- Cross-module globals via a `__module__<name>` function returning the
+  module's dict
 
 ## Optimization Status
 

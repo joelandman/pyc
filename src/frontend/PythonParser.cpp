@@ -928,6 +928,7 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
       } else if (node->type == "ImportFrom") {
           // ImportFrom(module='math', names=[alias(name='sqrt', asname=None)], level=0)
           node->id = getPyString(pyNode, "module");
+          node->level = getPyInt(pyNode, "level");
           PyObject* names = PyObject_GetAttrString(pyNode, "names");
           if (names && PyList_Check(names)) {
               for (Py_ssize_t i = 0; i < PyList_Size(names); ++i) {

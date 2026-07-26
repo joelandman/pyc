@@ -53,6 +53,11 @@ cover optimization-sensitive behavior such as native `range` loops, numeric
 locals, numeric list mutation and aliasing, command-line arguments, default
 arguments, nested destructuring, and `tests/nbody.py`.
 
+The import/package system (dotted imports, nested and namespace packages,
+relative imports) has its own suite, `test/import_tests/run_import_tests.sh`
+(not yet wired into `make check`), which asserts real output against CPython
+for each case.
+
 ### Running Tests Directly
 
 ```bash

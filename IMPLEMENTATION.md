@@ -7,9 +7,16 @@ Design choices, known limitations, optimization status, and implementation notes
 ### `exec()` / `eval()` — Intentionally Unsupported
 Security implications. No plan to implement.
 
-### Full Import/Module System — Partial
-Only same-directory `.py` modules are supported. External modules (`re`, `math`, etc.)
-report clear ImportError. Real module loading would require a full Python runtime.
+### Full Import/Module System — Mostly Complete
+Package imports (dotted paths, nested packages, namespace packages) and relative
+imports (`from . import x`, `from .. import y`) are supported, including
+transitive discovery of a package's own imports (a package's source is scanned
+for further imports, not just the main script). Modules are cached — top-level
+code runs at most once per process, matching CPython's `sys.modules` semantics.
+Real CPython stdlib modules beyond the synthetic implementations (`sys`, `re`,
+`os`, `subprocess`, `functools`, `cmath`, `time.perf_counter`) are not
+compiled — pyc can't compile arbitrary CPython stdlib source — and always
+report a clear ImportError instead of attempting to.
 
 ### `**kwargs` — Not Yet Implemented
 Function calls support `*args` collection and call-site unpacking, but `**kwargs`
@@ -45,7 +52,12 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - **Mixed-type code falls back to boxed runtime path**: Native paths only trigger when `resultType` is proven numeric
 - **Division by zero handling requires runtime call**: Native would produce inf/nan
 - **`**` (power) for non-constant exponents uses boxed `Pyc_Pow`**
-- **Runtime provides only a synthetic `sys` module**: Not a full import/module system
+- **Only a handful of stdlib modules are implemented, synthetically**: `sys`,
+  `re` (PCRE2-backed), `os`, `subprocess`, `functools`, `cmath`,
+  `time.perf_counter` — everything else reports ImportError rather than
+  compiling real CPython stdlib source. A function named `get` called via
+  `module.get()` collides with the dict `.get()` method shim and silently
+  returns `None` — a pre-existing naming collision, not package-specific.
 
 ### Type System
 - **Conservative type tracking**: `widenLoopTypes()` widens to "boxed" on any type divergence at loop back-edges

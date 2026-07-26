@@ -14,6 +14,7 @@
 #include <functional>
 #include <filesystem>
 #include <algorithm>
+#include <optional>
 
 #ifndef PYC_SOURCE_DIR
 #define PYC_SOURCE_DIR "."
@@ -22,6 +23,12 @@
 namespace fs = std::filesystem;
 
 namespace pyc {
+
+// Forward declaration: defined near DiscoveredModule/discoverDottedModule
+// below, but used by LoweringVisitor::lower's ImportFrom handling above
+// that point in the file. See the definition for full documentation.
+static std::optional<std::string> resolveRelativeImport(
+    const std::string& packageContext, int level, const std::string& module);
 
 class LoweringVisitor {
  public:
@@ -32,6 +39,11 @@ class LoweringVisitor {
 
     // Debug info: source file path for the module being compiled.
     std::string currentSourceFile;
+    // The dotted package this module resolves its own relative imports
+    // against (its __package__ equivalent) — see packageContextOf. Empty
+    // for the main script (which has no package; relative imports there
+    // are invalid, matching CPython).
+    std::string currentModulePackage;
 
     void lower(const ASTNode* node, const std::string& funcName = "") {
         if (!node) return;
@@ -1043,9 +1055,22 @@ class LoweringVisitor {
          } else if (node->type == "ImportFrom") {
              // from math import sqrt
              // from utils import *
+             // from . import sibling / from .. import x / from .rel import y —
+             // relative, resolved against this module's own package context
+             // (currentModulePackage, its __package__ equivalent).
              // B7: If the module was compiled, call __module__<mod> and look up names.
              // Otherwise emit pyc_import_failed.
-             const std::string& mod = node->id;
+             std::string mod;
+             if (node->level > 0) {
+                 // Unresolvable (relative import with no package context —
+                 // e.g. a directly-run main script — or beyond the
+                 // top-level package) leaves mod empty, same as it always
+                 // has: falls through the `!mod.empty()` guard below with
+                 // no binding, matching CPython raising ImportError here.
+                 mod = resolveRelativeImport(currentModulePackage, node->level, node->id).value_or("");
+             } else {
+                 mod = node->id;
+             }
              fprintf(stderr, "DEBUG ImportFrom: mod='%s', args.size=%zu\n", mod.c_str(), node->args.size());
              fflush(stderr);
              if (!mod.empty()) {
@@ -7983,10 +8008,12 @@ class LoweringVisitor {
 void lowerAST(const ASTNode* node, ModuleIR& ir,
                const std::unordered_set<std::string>& compiledModules = {},
                const std::unordered_map<std::string, std::vector<std::string>>& importedModuleGlobals = {},
-               const std::string& sourceFile = "") {
+               const std::string& sourceFile = "",
+               const std::string& currentModulePackage = "") {
     if (!node) return;
     LoweringVisitor visitor(ir, compiledModules, importedModuleGlobals);
     if (!sourceFile.empty()) visitor.currentSourceFile = sourceFile;
+    visitor.currentModulePackage = currentModulePackage;
     visitor.lower(node);
     // A6: Generate specialized variants after lowering completes.
     visitor.generateSpecializedVariants();
@@ -8018,7 +8045,51 @@ struct DiscoveredModule {
     std::string filePath;           // .py source, or empty for a namespace package
     std::string parentDottedName;   // dottedName minus its last component, or "" for top-level
     bool isNamespacePackage = false;
+    // True when this compile unit is a package's own __init__.py (as
+    // opposed to a plain leaf submodule). A package's own __init__.py has
+    // __package__ == its own dottedName; a leaf submodule's __package__ is
+    // its parentDottedName. Needed to resolve *this module's own* relative
+    // imports (see resolveRelativeImport / packageContextOf below).
+    bool isPackageInit = false;
 };
+
+// The package context used to resolve a module's own relative imports
+// (its __package__ equivalent): a package's own __init__.py resolves
+// relative to itself; a leaf submodule resolves relative to its parent.
+static std::string packageContextOf(const DiscoveredModule& dm) {
+    return dm.isPackageInit ? dm.dottedName : dm.parentDottedName;
+}
+
+// Resolve a relative ImportFrom (level >= 1) to an absolute dotted name,
+// given the importing module's own package context. Mirrors CPython's
+// importlib._bootstrap._resolve_name. Returns nullopt when level exceeds
+// the available package depth ("attempted relative import beyond
+// top-level package") or packageContext is empty (a directly-executed
+// main script has no package — matches CPython raising ImportError for
+// relative imports in __main__).
+static std::optional<std::string> resolveRelativeImport(
+        const std::string& packageContext, int level, const std::string& module) {
+    if (level <= 0) return module;  // not actually relative
+    if (packageContext.empty()) return std::nullopt;
+
+    std::vector<std::string> parts;
+    {
+        std::stringstream ss(packageContext);
+        std::string tok;
+        while (std::getline(ss, tok, '.')) if (!tok.empty()) parts.push_back(tok);
+    }
+    if (static_cast<size_t>(level) > parts.size()) return std::nullopt;
+
+    parts.resize(parts.size() - (level - 1));
+    std::string base;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i) base += ".";
+        base += parts[i];
+    }
+    if (module.empty()) return base;
+    if (base.empty()) return module;
+    return base + "." + module;
+}
 
 // Dots aren't valid in C/LLVM identifiers. Used only for the generated
 // __module__<ident> function symbol — the registry's string lookup key
@@ -8097,15 +8168,17 @@ static void discoverDottedModule(const std::string& dottedName,
         fs::path initPy = curPath / "__init__.py";
         fs::path leafPy = curPath; leafPy += ".py";
         if (isLeaf && fs::exists(leafPy) && fs::is_regular_file(leafPy)) {
-            out.push_back({curDotted, leafPy.string(), parentDotted, false});
+            out.push_back({curDotted, leafPy.string(), parentDotted, false, false});
             seen.insert(curDotted);
         } else if (fs::exists(initPy) && fs::is_regular_file(initPy)) {
-            out.push_back({curDotted, initPy.string(), parentDotted, false});
+            out.push_back({curDotted, initPy.string(), parentDotted, false, true});
             seen.insert(curDotted);
         } else if (fs::is_directory(curPath)) {
             // Namespace package (PEP 420): no __init__.py, synthesize an
             // empty module dict for this level (see namespace synthesis).
-            out.push_back({curDotted, "", parentDotted, true});
+            // It's still package-like (a submodule beneath it resolves
+            // relative imports against it), so isPackageInit=true too.
+            out.push_back({curDotted, "", parentDotted, true, true});
             seen.insert(curDotted);
         } else {
             return; // this component doesn't exist — stop, leave unresolved
@@ -8381,11 +8454,77 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         if (!venvPath.empty()) venvModuleDir = venvLib;
 
         std::vector<DiscoveredModule> discovered;
-        {
-            std::unordered_set<std::string> seenModules;
-            for (auto& name : importNames) {
-                discoverDottedModule(name, dir, venvModuleDir, stdlibPath, discovered, seenModules);
-            }
+        std::unordered_set<std::string> seenModules;
+        for (auto& name : importNames) {
+            discoverDottedModule(name, dir, venvModuleDir, stdlibPath, discovered, seenModules);
+        }
+
+        // B7: pre-parse each discovered module, both to collect its exported
+        // globals and to transitively discover the imports *it* makes —
+        // absolute or relative. See the default (non-PGO) compile path for
+        // the full explanation; kept in sync here.
+        std::unordered_map<std::string, std::vector<std::string>> importedModuleGlobals;
+        auto collectTopLevelNames = [](const ASTNode* modNode) {
+            std::vector<std::string> out;
+            if (!modNode || modNode->type != "Module") return out;
+            std::function<void(const ASTNode*, bool)> walk = [&](const ASTNode* n, bool top) {
+                if (!n) return;
+                if (top) {
+                    if (n->type == "Assign") {
+                        if (!n->args.empty()) {
+                            for (const auto& nm : n->args) {
+                                if (!nm.empty()) out.push_back(nm);
+                            }
+                        } else if (!n->id.empty() && n->id != "__subscript__" && n->id != "__unpack__") {
+                            out.push_back(n->id);
+                        }
+                    } else if (n->type == "FunctionDef" && !n->id.empty()) {
+                        out.push_back(n->id);
+                    } else if (n->type == "ClassDef" && !n->id.empty()) {
+                        out.push_back(n->id);
+                    }
+                }
+                for (const auto& c : n->children) walk(c.get(), false);
+            };
+            for (const auto& c : modNode->children) walk(c.get(), true);
+            std::sort(out.begin(), out.end());
+            out.erase(std::unique(out.begin(), out.end()), out.end());
+            return out;
+        };
+        auto scanModuleImports = [&](const ASTNode* modNode, const std::string& packageContext) {
+            std::function<void(const ASTNode*)> walk = [&](const ASTNode* n) {
+                if (!n) return;
+                if (n->type == "Import") {
+                    std::stringstream ss(n->id);
+                    std::string tok;
+                    while (ss >> tok) discoverDottedModule(tok, dir, venvModuleDir, stdlibPath, discovered, seenModules);
+                } else if (n->type == "ImportFrom") {
+                    auto resolved = resolveRelativeImport(packageContext, n->level, n->id);
+                    if (resolved) {
+                        if (!resolved->empty())
+                            discoverDottedModule(*resolved, dir, venvModuleDir, stdlibPath, discovered, seenModules);
+                        for (size_t i = 0; i + 1 < n->importNames.size(); i += 2) {
+                            const std::string& orig = n->importNames[i];
+                            if (orig.empty() || orig == "*") continue;
+                            std::string sub = resolved->empty() ? orig : (*resolved + "." + orig);
+                            discoverDottedModule(sub, dir, venvModuleDir, stdlibPath, discovered, seenModules);
+                        }
+                    }
+                }
+                for (const auto& c : n->children) walk(c.get());
+            };
+            walk(modNode);
+        };
+        for (size_t i = 0; i < discovered.size(); ++i) {
+            std::string filePath = discovered[i].filePath;
+            std::string dottedName = discovered[i].dottedName;
+            std::string packageContext = packageContextOf(discovered[i]);
+            if (filePath.empty()) continue;
+            PythonParser pp;
+            auto ast = pp.parseFile(filePath);
+            if (!ast) continue;
+            importedModuleGlobals[dottedName] = collectTopLevelNames(ast.get());
+            scanModuleImports(ast.get(), packageContext);
         }
 
         std::vector<std::string> moduleNames;
@@ -8393,44 +8532,6 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         for (auto& dm : discovered) {
             moduleNames.push_back(dm.dottedName);
             compiledModules.insert(dm.dottedName);
-        }
-
-        std::unordered_map<std::string, std::vector<std::string>> importedModuleGlobals;
-        {
-            auto collectTopLevelNames = [](const ASTNode* modNode) {
-                std::vector<std::string> out;
-                if (!modNode || modNode->type != "Module") return out;
-                std::function<void(const ASTNode*, bool)> walk = [&](const ASTNode* n, bool top) {
-                    if (!n) return;
-                    if (top) {
-                        if (n->type == "Assign") {
-                            if (!n->args.empty()) {
-                                for (const auto& nm : n->args) {
-                                    if (!nm.empty()) out.push_back(nm);
-                                }
-                            } else if (!n->id.empty() && n->id != "__subscript__" && n->id != "__unpack__") {
-                                out.push_back(n->id);
-                            }
-                        } else if (n->type == "FunctionDef" && !n->id.empty()) {
-                            out.push_back(n->id);
-                        } else if (n->type == "ClassDef" && !n->id.empty()) {
-                            out.push_back(n->id);
-                        }
-                    }
-                    for (const auto& c : n->children) walk(c.get(), false);
-                };
-                for (const auto& c : modNode->children) walk(c.get(), true);
-                std::sort(out.begin(), out.end());
-                out.erase(std::unique(out.begin(), out.end()), out.end());
-                return out;
-            };
-            for (auto& dm : discovered) {
-                if (dm.filePath.empty()) continue;
-                PythonParser pp;
-                auto ast = pp.parseFile(dm.filePath);
-                if (!ast) continue;
-                importedModuleGlobals[dm.dottedName] = collectTopLevelNames(ast.get());
-            }
         }
 
         std::vector<std::unique_ptr<llvm::Module>> modules;
@@ -8483,7 +8584,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
                 }
                 ModuleIR ir;
                 ir.moduleName = sanitized;
-                lowerAST(ast.get(), ir, std::unordered_set<std::string>{}, std::unordered_map<std::string, std::vector<std::string>>{}, dm.filePath);
+                lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals, dm.filePath, packageContextOf(dm));
                 Codegen codegen;
                 module = codegen.generate(ir, context, "pyc_" + sanitized, debugInfo);
                 if (!module) {
@@ -8515,13 +8616,14 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         b7CSource += "    const char* name;\n";
         b7CSource += "    const char* parent;\n";
         b7CSource += "    void* (*entry)(void);\n";
+        b7CSource += "    int loading;\n";
         b7CSource += "} pyc_module_entry;\n\n";
         b7CSource += "static pyc_module_entry pyc_modules[] = {\n";
         for (auto& dm : discovered) {
             b7CSource += "    {\"" + dm.dottedName + "\", \"" + dm.parentDottedName + "\", __module__" +
-                          sanitizeModuleIdent(dm.dottedName) + "},\n";
+                          sanitizeModuleIdent(dm.dottedName) + ", 0},\n";
         }
-        b7CSource += "    {NULL, NULL, NULL}\n";
+        b7CSource += "    {NULL, NULL, NULL, 0}\n";
         b7CSource += "};\n\n";
         b7CSource += "extern const char* PyStr_AsUTF8(void* obj);\n";
         b7CSource += "extern void* PyUnicode_FromString(const char* s);\n";
@@ -8545,7 +8647,10 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         b7CSource += "    }\n";
         b7CSource += "    for (int i = 0; pyc_modules[i].name != NULL; i++) {\n";
         b7CSource += "        if (strcmp(pyc_modules[i].name, moduleName) == 0) {\n";
+        b7CSource += "            if (pyc_modules[i].loading) return NULL;\n";
+        b7CSource += "            pyc_modules[i].loading = 1;\n";
         b7CSource += "            void* result = pyc_modules[i].entry();\n";
+        b7CSource += "            pyc_modules[i].loading = 0;\n";
         b7CSource += "            pyc_register_module(moduleName, result);\n";
         b7CSource += "            if (pyc_modules[i].parent[0] != '\\0') {\n";
         b7CSource += "                void* parentNameObj = PyUnicode_FromString(pyc_modules[i].parent);\n";
@@ -8845,11 +8950,81 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     // found above — every intermediate package level plus the leaf module,
     // for each dotted import name (see discoverDottedModule / DiscoveredModule).
     std::vector<DiscoveredModule> discovered;
-    {
-        std::unordered_set<std::string> seenModules;
-        for (auto& name : importNames) {
-            discoverDottedModule(name, dir, venvModuleDir, stdlibPath, discovered, seenModules);
-        }
+    std::unordered_set<std::string> seenModules;
+    for (auto& name : importNames) {
+        discoverDottedModule(name, dir, venvModuleDir, stdlibPath, discovered, seenModules);
+    }
+
+    // B7: pre-parse each discovered module, both to collect its exported
+    // globals (so `from X import *` can be expanded statically) and to
+    // transitively discover the imports *it* makes — absolute or relative
+    // (e.g. a package's __init__.py doing `from .helper import value`).
+    // Newly-discovered modules are appended to `discovered`, which this
+    // loop keeps scanning (index-based, not range-for, so appends made
+    // during iteration are picked up — `discoverDottedModule`'s `seen` set
+    // guarantees termination even with circular relative imports).
+    std::unordered_map<std::string, std::vector<std::string>> importedModuleGlobals;
+    auto collectTopLevelNames = [](const ASTNode* modNode) {
+        std::vector<std::string> out;
+        if (!modNode || modNode->type != "Module") return out;
+        std::function<void(const ASTNode*, bool)> walk = [&](const ASTNode* n, bool top) {
+            if (!n) return;
+            if (top) {
+                if (n->type == "Assign") {
+                    if (!n->args.empty()) {
+                        for (const auto& nm : n->args) {
+                            if (!nm.empty()) out.push_back(nm);
+                        }
+                    } else if (!n->id.empty() && n->id != "__subscript__" && n->id != "__unpack__") {
+                        out.push_back(n->id);
+                    }
+                } else if (n->type == "FunctionDef" && !n->id.empty()) {
+                    out.push_back(n->id);
+                } else if (n->type == "ClassDef" && !n->id.empty()) {
+                    out.push_back(n->id);
+                }
+            }
+            for (const auto& c : n->children) walk(c.get(), false);
+        };
+        for (const auto& c : modNode->children) walk(c.get(), true);
+        std::sort(out.begin(), out.end());
+        out.erase(std::unique(out.begin(), out.end()), out.end());
+        return out;
+    };
+    auto scanModuleImports = [&](const ASTNode* modNode, const std::string& packageContext) {
+        std::function<void(const ASTNode*)> walk = [&](const ASTNode* n) {
+            if (!n) return;
+            if (n->type == "Import") {
+                std::stringstream ss(n->id);
+                std::string tok;
+                while (ss >> tok) discoverDottedModule(tok, dir, venvModuleDir, stdlibPath, discovered, seenModules);
+            } else if (n->type == "ImportFrom") {
+                auto resolved = resolveRelativeImport(packageContext, n->level, n->id);
+                if (resolved) {
+                    if (!resolved->empty())
+                        discoverDottedModule(*resolved, dir, venvModuleDir, stdlibPath, discovered, seenModules);
+                    for (size_t i = 0; i + 1 < n->importNames.size(); i += 2) {
+                        const std::string& orig = n->importNames[i];
+                        if (orig.empty() || orig == "*") continue;
+                        std::string sub = resolved->empty() ? orig : (*resolved + "." + orig);
+                        discoverDottedModule(sub, dir, venvModuleDir, stdlibPath, discovered, seenModules);
+                    }
+                }
+            }
+            for (const auto& c : n->children) walk(c.get());
+        };
+        walk(modNode);
+    };
+    for (size_t i = 0; i < discovered.size(); ++i) {
+        std::string filePath = discovered[i].filePath;
+        std::string dottedName = discovered[i].dottedName;
+        std::string packageContext = packageContextOf(discovered[i]);
+        if (filePath.empty()) continue; // namespace package: no source to scan
+        PythonParser pp;
+        auto ast = pp.parseFile(filePath);
+        if (!ast) continue;
+        importedModuleGlobals[dottedName] = collectTopLevelNames(ast.get());
+        scanModuleImports(ast.get(), packageContext);
     }
 
     if (verbose) {
@@ -8862,56 +9037,14 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
 
     // Collect module names for B7 runtime support (true dotted Python names,
     // not lossy filesystem stems — package_a/__init__.py and
-    // package_a/subpkg/__init__.py must stay distinct).
+    // package_a/subpkg/__init__.py must stay distinct). Built after the
+    // transitive-scan loop above so it reflects every discovered module,
+    // not just the ones directly imported by the main script.
     std::vector<std::string> moduleNames;
     std::unordered_set<std::string> compiledModules;
     for (auto& dm : discovered) {
         moduleNames.push_back(dm.dottedName);
         compiledModules.insert(dm.dottedName);
-    }
-
-    // B7: pre-parse each imported module and collect its exported globals so
-    // that `from X import *` in the main module can be expanded statically
-    // (each exported name becomes a real module global in the main module).
-    // The parser is the same one we use for full compilation; this is just
-    // a light pass that walks top-level Assign/FunctionDef children and
-    // records the bound names.
-    std::unordered_map<std::string, std::vector<std::string>> importedModuleGlobals;
-    {
-        auto collectTopLevelNames = [](const ASTNode* modNode) {
-            std::vector<std::string> out;
-            if (!modNode || modNode->type != "Module") return out;
-            std::function<void(const ASTNode*, bool)> walk = [&](const ASTNode* n, bool top) {
-                if (!n) return;
-                if (top) {
-                    if (n->type == "Assign") {
-                        if (!n->args.empty()) {
-                            for (const auto& nm : n->args) {
-                                if (!nm.empty()) out.push_back(nm);
-                            }
-                        } else if (!n->id.empty() && n->id != "__subscript__" && n->id != "__unpack__") {
-                            out.push_back(n->id);
-                        }
-                    } else if (n->type == "FunctionDef" && !n->id.empty()) {
-                        out.push_back(n->id);
-                    } else if (n->type == "ClassDef" && !n->id.empty()) {
-                        out.push_back(n->id);
-                    }
-                }
-                for (const auto& c : n->children) walk(c.get(), false);
-            };
-            for (const auto& c : modNode->children) walk(c.get(), true);
-            std::sort(out.begin(), out.end());
-            out.erase(std::unique(out.begin(), out.end()), out.end());
-            return out;
-        };
-        for (auto& dm : discovered) {
-            if (dm.filePath.empty()) continue; // namespace package: no source to scan
-            PythonParser pp;
-            auto ast = pp.parseFile(dm.filePath);
-            if (!ast) continue;
-            importedModuleGlobals[dm.dottedName] = collectTopLevelNames(ast.get());
-        }
     }
 
     // Compile each .py file to an LLVM module: main module first, then every
@@ -8973,7 +9106,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             }
             ModuleIR ir;
             ir.moduleName = sanitized;
-            lowerAST(ast.get(), ir, std::unordered_set<std::string>{}, std::unordered_map<std::string, std::vector<std::string>>{}, dm.filePath);
+            lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals, dm.filePath, packageContextOf(dm));
 
             Codegen codegen;
             module = codegen.generate(ir, context, "pyc_" + sanitized, debugInfo);
@@ -9020,14 +9153,15 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     b7CSource += "    const char* name;\n";
     b7CSource += "    const char* parent;\n";
     b7CSource += "    void* (*entry)(void);\n";
+    b7CSource += "    int loading;\n";
     b7CSource += "} pyc_module_entry;\n\n";
 
     b7CSource += "static pyc_module_entry pyc_modules[] = {\n";
     for (auto& dm : discovered) {
         b7CSource += "    {\"" + dm.dottedName + "\", \"" + dm.parentDottedName + "\", __module__" +
-                      sanitizeModuleIdent(dm.dottedName) + "},\n";
+                      sanitizeModuleIdent(dm.dottedName) + ", 0},\n";
     }
-    b7CSource += "    {NULL, NULL, NULL}\n";
+    b7CSource += "    {NULL, NULL, NULL, 0}\n";
     b7CSource += "};\n\n";
     
     // Generate the pyc_run_module function - accepts PyObject* (Python string)
@@ -9053,7 +9187,20 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
     b7CSource += "    }\n";
     b7CSource += "    for (int i = 0; pyc_modules[i].name != NULL; i++) {\n";
     b7CSource += "        if (strcmp(pyc_modules[i].name, moduleName) == 0) {\n";
+    b7CSource += "            // A package's __init__.py importing its own submodule\n";
+    b7CSource += "            // (directly or via `from .sub import x`) makes the\n";
+    b7CSource += "            // submodule's parent-wiring below recurse back into this\n";
+    b7CSource += "            // same module while it's still running its own top-level\n";
+    b7CSource += "            // code (not yet cached). Without this guard that would\n";
+    b7CSource += "            // re-run entry() and execute the module's body twice. On\n";
+    b7CSource += "            // the reentrant call, skip straight to returning NULL —\n";
+    b7CSource += "            // the parent/child attribute wiring is just skipped for\n";
+    b7CSource += "            // this one (rare) case; the outer, original call still\n";
+    b7CSource += "            // completes and registers the module normally.\n";
+    b7CSource += "            if (pyc_modules[i].loading) return NULL;\n";
+    b7CSource += "            pyc_modules[i].loading = 1;\n";
     b7CSource += "            void* result = pyc_modules[i].entry();\n";
+    b7CSource += "            pyc_modules[i].loading = 0;\n";
     b7CSource += "            pyc_register_module(moduleName, result);\n";
     b7CSource += "            // Wire this module onto its parent package as an\n";
     b7CSource += "            // attribute (loading \"package_a.mod_a1\" sets\n";
