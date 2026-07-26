@@ -1217,6 +1217,10 @@ class LoweringVisitor {
                             (origName == "date" || origName == "datetime" || origName == "timedelta")) {
                             datetimeCtorAliases[name] = origName;
                         }
+                        // `from pathlib import Path [as X]` — same rationale.
+                        if (mod == "pathlib" && origName == "Path") {
+                            pathCtorAliases.insert(name);
+                        }
 
                         std::string attrKey = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
@@ -2775,6 +2779,10 @@ class LoweringVisitor {
     // as dt` the same way it already recognizes the unaliased `datetime`
     // name.
     std::unordered_map<std::string, std::string> moduleNameAliases;
+    // Local names bound via `from pathlib import Path [as X]` — same
+    // rationale as datetimeCtorAliases, but a plain set since Path has
+    // only one constructor (no date/datetime/timedelta-style variants).
+    std::unordered_set<std::string> pathCtorAliases;
     // User functions (defs or synthetic lambdas) that contain a return of a
     // callable token value. Calls to them have their result temp marked so
     // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
@@ -3624,6 +3632,32 @@ class LoweringVisitor {
         std::string resultType = numericResultType(op, left, right);
         ir.addInstruction(currentFunc, op, {left, right}, res, resultType);
         noteType(res, resultType);
+        // pathlib.Path "/" joining and date/datetime/timedelta arithmetic:
+        // the runtime dispatch (PyNumber_TrueDivide/Add/Subtract, gated on
+        // the runtime type tag) already produces the correct *value*
+        // regardless of compiler tracking — this additionally tags the
+        // *result temp* so a chained method call in the same expression
+        // (e.g. `(base / "x").is_dir()`, or `(d + delta).isoformat()`)
+        // can dispatch without the value needing to round-trip through an
+        // explicit variable first. Overrides the generic noteType above.
+        if (op == "truediv" && typeOf(left) == "path") {
+            noteType(res, "path");
+        } else if (op == "add" || op == "sub") {
+            std::string lt = typeOf(left), rt = typeOf(right);
+            bool lDate = (lt == "date" || lt == "datetime");
+            bool rDate = (rt == "date" || rt == "datetime");
+            if (op == "add") {
+                if (lDate && rt == "timedelta") noteType(res, lt);
+                else if (lt == "timedelta" && rDate) noteType(res, rt);
+                else if (lt == "timedelta" && rt == "timedelta") noteType(res, "timedelta");
+            } else {
+                if (lDate && rt == "timedelta") noteType(res, lt);
+                else if (lDate && rDate && lt == rt) noteType(res, "timedelta");
+                else if (lt == "timedelta" && rt == "timedelta") noteType(res, "timedelta");
+            }
+        } else if (op == "mul" && (typeOf(left) == "timedelta" || typeOf(right) == "timedelta")) {
+            noteType(res, "timedelta");
+        }
         return res;
     }
 
@@ -3760,6 +3794,28 @@ class LoweringVisitor {
         return res;
     }
 
+    // Shared by both `pathlib.Path(...)`-qualified construction
+    // (lowerMethodCall) and bare `Path(...)` construction after a
+    // from-import (lowerCall, via pathCtorAliases). Single positional or
+    // keyword `path=`/first-arg; anything else is dropped (real
+    // pathlib.Path also accepts multiple path segments to join, e.g.
+    // `Path("a", "b")` — not supported here, single-argument only).
+    std::string lowerPathConstruct(const ASTNode* node, const std::vector<std::string>& posArgs) {
+        std::string arg;
+        for (size_t i = 1; i < node->children.size(); ++i) {
+            const auto* ch = node->children[i].get();
+            if (ch && ch->type == "Keyword" && ch->id == "path" && !ch->children.empty()) {
+                arg = lowerExpr(ch->children[0].get());
+                break;
+            }
+        }
+        if (arg.empty() && !posArgs.empty()) arg = posArgs[0];
+        std::string res = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyPathlib_Path", arg}, res);
+        noteType(res, "path");
+        return res;
+    }
+
     std::string lowerCall(const ASTNode* node) {
         // Method call: obj.method(args) — func is an Attribute node
          if (!node->children.empty() && node->children[0] &&
@@ -3779,6 +3835,20 @@ class LoweringVisitor {
                 if (ch && ch->type != "Keyword") posArgs.push_back(lowerExpr(ch));
             }
             return lowerDatetimeConstruct(datetimeCtorAliases[node->children[0]->id], node, posArgs);
+        }
+        // pathlib.Path bound to a bare name via `from pathlib import Path`
+        // — construct directly, same as the `pathlib.Path(...)`-qualified
+        // form in lowerMethodCall.
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Name" &&
+            pathCtorAliases.count(node->children[0]->id) &&
+            !isShadowedLocal(node->children[0]->id)) {
+            std::vector<std::string> posArgs;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type != "Keyword") posArgs.push_back(lowerExpr(ch));
+            }
+            return lowerPathConstruct(node, posArgs);
         }
         // super() call — returns a proxy that looks up methods on the parent class
         if (!node->children.empty() && node->children[0] &&
@@ -7142,6 +7212,62 @@ class LoweringVisitor {
                 }
             }
         }
+        // pathlib.Path(...) construction — literal "pathlib" name or any
+        // `import pathlib as X` alias of it (no isShadowedLocal check,
+        // same reasoning as isDatetimeModuleName above: `import pathlib`
+        // itself sets valueTypes["pathlib"]="dict", which would always
+        // look "shadowed").
+        if (attr->children.size() >= 1 && attr->children[0] &&
+            attr->children[0]->type == "Name" && methodName == "Path") {
+            const std::string& baseId = attr->children[0]->id;
+            bool isPathlib = (baseId == "pathlib");
+            if (!isPathlib) {
+                auto it = moduleNameAliases.find(baseId);
+                isPathlib = (it != moduleNameAliases.end() && it->second == "pathlib");
+            }
+            if (isPathlib) return lowerPathConstruct(node, args);
+        }
+        // Path.exists()/.is_file()/.is_dir()/.mkdir()/.joinpath(*parts) —
+        // typeOf-gated, same fast-path-only limitation as datetime's
+        // methods just below (works after construction/assignment/return,
+        // not through an untyped function parameter — str()/attribute
+        // access remain robust for a Path in that case).
+        if (typeOf(obj) == "path") {
+            if (methodName == "exists") {
+                ir.addInstruction(currentFunc, "call", {"PyPathlib_Exists", obj}, res, "bool");
+                noteType(res, "bool");
+                return res;
+            }
+            if (methodName == "is_file") {
+                ir.addInstruction(currentFunc, "call", {"PyPathlib_IsFile", obj}, res, "bool");
+                noteType(res, "bool");
+                return res;
+            }
+            if (methodName == "is_dir") {
+                ir.addInstruction(currentFunc, "call", {"PyPathlib_IsDir", obj}, res, "bool");
+                noteType(res, "bool");
+                return res;
+            }
+            if (methodName == "mkdir") {
+                ir.addInstruction(currentFunc, "call", {"PyPathlib_Mkdir", obj}, res);
+                return res;
+            }
+            if (methodName == "joinpath") {
+                std::string partsList = "t" + std::to_string(tempCounter++);
+                std::string countConst = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(args.size())}, countConst);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", countConst}, partsList);
+                for (size_t i = 0; i < args.size(); ++i) {
+                    std::string idxConst = "c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+                    std::string setRes = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", partsList, idxConst, args[i]}, setRes);
+                }
+                ir.addInstruction(currentFunc, "call", {"PyPathlib_Joinpath", obj, partsList}, res);
+                noteType(res, "path");
+                return res;
+            }
+        }
         // .isoformat()/.weekday()/.isoweekday()/.total_seconds() — dispatch
         // when the inferred type of obj is a date/datetime/timedelta
         // (tagged by noteType at construction above). Same fast-path-only
@@ -7194,7 +7320,7 @@ class LoweringVisitor {
             std::string idx = args.size() > 0 ? args[0] : "";
             std::string item = args.size() > 1 ? args[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyList_Insert", obj, idx, item}, res);
-        } else if (methodName == "remove") {
+        } else if (methodName == "remove" && typeOf(obj) != "dict") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyList_Remove", obj, arg}, res);
         } else if (methodName == "index") {
@@ -7272,7 +7398,7 @@ class LoweringVisitor {
             } else {
                 ir.addInstruction(currentFunc, "call", {"PyString_Split", obj, args[0]}, res);
             }
-        } else if (methodName == "join") {
+        } else if (methodName == "join" && typeOf(obj) != "dict") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyString_Join", obj, arg}, res);
         } else if (methodName == "find") {
@@ -8312,7 +8438,8 @@ static std::string sanitizeModuleIdent(const std::string& dottedName) {
 static const std::unordered_map<std::string, std::vector<std::string>>& syntheticModuleExports() {
     static const std::unordered_map<std::string, std::vector<std::string>> table = {
         {"re",         {"finditer", "findall", "compile", "match", "search", "sub"}},
-        {"os",         {"environ", "path", "unlink"}},
+        {"os",         {"environ", "path", "unlink", "remove", "rename", "getcwd",
+                        "listdir", "makedirs"}},
         {"subprocess", {"call", "check_output"}},
         {"functools",  {"cmp_to_key"}},
         {"cmath",      {"sqrt", "log", "exp", "sin", "cos", "tan"}},
@@ -8327,6 +8454,7 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
                          "islice", "zip_longest"}},
         {"collections", {"Counter", "most_common"}},
         {"datetime",   {"date", "datetime", "timedelta"}},
+        {"pathlib",    {"Path"}},
     };
     return table;
 }

@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <dirent.h>
 #include <cstdint>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +24,8 @@
 
 #include "pyc/runtime.h"
 #include "pyc/object_struct.h"
+
+extern char** environ;
 
 // Immortal PyObject* refcount sentinel (True, False, and small ints in
 // [-5, 256] are interned; Py_INCREF / Py_DECREF skip them so they are
@@ -885,6 +888,11 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
         pyc_format_timedelta_into(pyc_as_timedelta(obj), s);
         return fprintf(fp, "%s", s.c_str());
     }
+    if (obj->type == 16) {
+        // Matches CPython's PosixPath repr when nested inside a container
+        // (e.g. `print([Path("a/b")])` -> `[PosixPath('a/b')]`).
+        return fprintf(fp, "PosixPath('%s')", obj->str.c_str());
+    }
     return fprintf(fp, "<object>");
 }
 
@@ -907,6 +915,11 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         std::string s;
         pyc_format_timedelta_into(pyc_as_timedelta(obj), s);
         int r = fprintf(fp, "%s\n", s.c_str()); fflush(fp); return r;
+    }
+    if (obj->type == 16) {
+        // Top-level print()/str(): raw path text, no PosixPath(...) wrapper
+        // (matches CPython: str(Path("a/b")) == "a/b").
+        int r = fprintf(fp, "%s\n", obj->str.c_str()); fflush(fp); return r;
     }
     if (obj->type == 13) {
         char rbuf[64], ibuf[64];
@@ -2543,6 +2556,14 @@ PyObject* pyc_import_failed(PyObject* modName) {
         if (modName->str == "datetime") {
             return makeDatetimeModuleDict();
         }
+        if (modName->str == "pathlib") {
+            // Empty: pathlib.Path(...) construction and Path.today()-style
+            // calls are never needed (unlike datetime's date.today()/
+            // datetime.now()) — Path has exactly one constructor, always
+            // intercepted structurally in Compiler.cpp. This dict exists
+            // only so `import pathlib` doesn't report ImportError.
+            return PyDict_New();
+        }
         if (modName->str == "cmath") {
             PyObject* d = PyDict_New();
             auto add = [&](const char* name, const char* token) {
@@ -2623,6 +2644,45 @@ static int both_integral(PyObject* a, PyObject* b) {
     return a->type != 4 && b->type != 4;
 }
 
+// Shared path-string helpers, used by both os.path.basename/dirname/
+// splitext (PyBuiltin_OsPath*, token-dispatched functions further down)
+// and pathlib.Path's attribute reads (Pyc_GetItem's type==16 branch,
+// right below) so the two stay consistent by construction.
+static std::string pyc_path_basename(const std::string& s) {
+    size_t slash = s.find_last_of('/');
+    return slash == std::string::npos ? s : s.substr(slash + 1);
+}
+static std::string pyc_path_dirname(const std::string& s) {
+    size_t slash = s.find_last_of('/');
+    if (slash == std::string::npos) return "";
+    if (slash == 0) return "/";
+    return s.substr(0, slash);
+}
+// Splits into (root, ext) the way CPython's os.path.splitext does: a dot
+// in the last path component that isn't a leading dot splits at the last
+// dot (so "a.tar.gz" -> "a.tar"/".gz", ".bashrc" -> ".bashrc"/"").
+static void pyc_path_splitext(const std::string& s, std::string& root, std::string& ext) {
+    size_t slash = s.find_last_of('/');
+    size_t dot = s.find_last_of('.');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash) ||
+        dot == (slash == std::string::npos ? 0 : slash + 1)) {
+        root = s; ext.clear();
+    } else {
+        root = s.substr(0, dot);
+        ext = s.substr(dot);
+    }
+}
+// True for a plain str (type 3) or a pathlib.Path (type 16) — both store
+// their text in the `str` field, so path-related helpers accept either.
+static bool pyc_is_path_like(PyObject* o) { return o && (o->type == 3 || o->type == 16); }
+static PyObject* pyc_new_path(const std::string& s) {
+    PyObject* o = new PyObject();
+    o->refcount = 1;
+    o->type = 16;
+    o->str = s;
+    return o;
+}
+
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
     if (!obj || !key) return nullptr;
     // date/datetime/timedelta attribute reads: handled directly here
@@ -2648,6 +2708,21 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
         if (k == "days") return PyInt_FromLong((long)td->days);
         if (k == "seconds") return PyInt_FromLong((long)td->seconds);
         if (k == "microseconds") return PyInt_FromLong((long)td->microseconds);
+        return nullptr;
+    }
+    // pathlib.Path attribute reads — same robustness rationale as
+    // date/datetime/timedelta above: works even for a Path received as an
+    // untyped function parameter, since lowerAttribute always calls
+    // Pyc_GetItem unconditionally.
+    if (obj->type == 16 && key->type == 3) {
+        const std::string& k = key->str;
+        if (k == "name") return PyUnicode_FromString(pyc_path_basename(obj->str).c_str());
+        if (k == "parent") return pyc_new_path(pyc_path_dirname(obj->str));
+        if (k == "suffix" || k == "stem") {
+            std::string root, ext;
+            pyc_path_splitext(pyc_path_basename(obj->str), root, ext);
+            return PyUnicode_FromString((k == "suffix" ? ext : root).c_str());
+        }
         return nullptr;
     }
     if (obj->type == 1) return PyList_GetItemObj(obj, key); // returns new ref (INCREF inside)
@@ -4033,6 +4108,232 @@ extern "C" PyObject* PyBuiltin_GetEnviron() {
     return PyDict_New();
 }
 
+// os.path.join(*parts) -> str : joins path components with "/", matching
+// CPython's behavior of discarding everything to the left of the last
+// absolute (leading-"/") component.
+extern "C" PyObject* PyBuiltin_OsPathJoin(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    std::string out;
+    for (PyObject* p : args->list) {
+        if (!p || p->type != 3) continue;
+        if (p->str.empty()) continue;
+        if (!p->str.empty() && p->str[0] == '/') {
+            out = p->str; // absolute component resets the accumulated path
+            continue;
+        }
+        if (!out.empty() && out.back() != '/') out += '/';
+        out += p->str;
+    }
+    return PyUnicode_FromString(out.c_str());
+}
+
+// os.path.basename(p) -> str : text after the last "/"
+extern "C" PyObject* PyBuiltin_OsPathBasename(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    PyObject* p = args->list[0];
+    if (!p || p->type != 3) return PyUnicode_FromString("");
+    size_t slash = p->str.find_last_of('/');
+    return PyUnicode_FromString(slash == std::string::npos ? p->str.c_str() : p->str.c_str() + slash + 1);
+}
+
+// os.path.dirname(p) -> str : text before the last "/" (matching CPython's
+// exact edge cases: no "/" -> "", trailing "/" kept as a single "/" if root).
+extern "C" PyObject* PyBuiltin_OsPathDirname(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    PyObject* p = args->list[0];
+    if (!p || p->type != 3) return PyUnicode_FromString("");
+    size_t slash = p->str.find_last_of('/');
+    if (slash == std::string::npos) return PyUnicode_FromString("");
+    if (slash == 0) return PyUnicode_FromString("/");
+    return PyUnicode_FromString(p->str.substr(0, slash).c_str());
+}
+
+// os.path.splitext(p) -> [root, ext] : pyc has no tuple type, so this
+// returns a 2-element list instead of CPython's 2-tuple (documented gap,
+// same as itertools' tuple-shaped results).
+extern "C" PyObject* PyBuiltin_OsPathSplitext(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.empty()) return out;
+    PyObject* p = args->list[0];
+    if (!p || p->type != 3) return out;
+    const std::string& s = p->str;
+    size_t slash = s.find_last_of('/');
+    size_t dot = s.find_last_of('.');
+    // A dot in the last path component that isn't a leading dot (matches
+    // CPython: ".bashrc" has no extension, "a.tar.gz" splits at the last dot).
+    std::string root, ext;
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash) ||
+        dot == (slash == std::string::npos ? 0 : slash + 1)) {
+        root = s;
+    } else {
+        root = s.substr(0, dot);
+        ext = s.substr(dot);
+    }
+    PyObject* rootObj = PyUnicode_FromString(root.c_str());
+    PyObject* extObj = PyUnicode_FromString(ext.c_str());
+    PyList_Append(out, rootObj);
+    PyList_Append(out, extObj);
+    Py_DECREF(rootObj); Py_DECREF(extObj);
+    return out;
+}
+
+// os.path.abspath(p) -> str : joins with the real cwd if relative; does not
+// resolve symlinks or ".."/"." components (unlike realpath(3)) since
+// CPython's abspath is a pure string operation, not a filesystem call.
+extern "C" PyObject* PyBuiltin_OsPathAbspath(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    PyObject* p = args->list[0];
+    if (!p || p->type != 3) return PyUnicode_FromString("");
+    if (!p->str.empty() && p->str[0] == '/') return PyUnicode_FromString(p->str.c_str());
+    char cwd[4096];
+    if (!::getcwd(cwd, sizeof(cwd))) return PyUnicode_FromString(p->str.c_str());
+    std::string out = cwd;
+    if (!p->str.empty()) {
+        if (out.back() != '/') out += '/';
+        out += p->str;
+    }
+    return PyUnicode_FromString(out.c_str());
+}
+
+// os.getcwd() -> str
+extern "C" PyObject* PyBuiltin_OsGetcwd(PyObject* args) {
+    (void)args;
+    char cwd[4096];
+    if (!::getcwd(cwd, sizeof(cwd))) return PyUnicode_FromString("");
+    return PyUnicode_FromString(cwd);
+}
+
+// os.listdir(p=".") -> list[str] : directory entries excluding "." and "..",
+// in whatever order readdir(3) yields them (not guaranteed to match
+// CPython's order, which itself is filesystem-dependent).
+extern "C" PyObject* PyBuiltin_OsListdir(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    std::string path = ".";
+    if (args && args->type == 1 && !args->list.empty() && args->list[0] && args->list[0]->type == 3) {
+        path = args->list[0]->str;
+    }
+    DIR* d = ::opendir(path.c_str());
+    if (!d) return out;
+    struct dirent* ent;
+    while ((ent = ::readdir(d)) != nullptr) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+        PyObject* nameObj = PyUnicode_FromString(ent->d_name);
+        PyList_Append(out, nameObj);
+        Py_DECREF(nameObj);
+    }
+    ::closedir(d);
+    return out;
+}
+
+// os.makedirs(p, exist_ok=...) -> None : creates every missing path
+// component. `exist_ok` isn't read (token+registry calls don't carry
+// keyword arguments through generically, same limitation as other
+// synthetic-module functions) — behaves as if exist_ok=True always,
+// i.e. mkdir -p semantics, never raises FileExistsError.
+extern "C" PyObject* PyBuiltin_OsMakedirs(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* p = args->list[0];
+    if (!p || p->type != 3 || p->str.empty()) return nullptr;
+    std::string cur;
+    size_t i = 0;
+    const std::string& s = p->str;
+    if (s[0] == '/') { cur = "/"; i = 1; }
+    while (i <= s.size()) {
+        size_t next = s.find('/', i);
+        std::string comp = (next == std::string::npos) ? s.substr(i) : s.substr(i, next - i);
+        if (!comp.empty()) {
+            if (!cur.empty() && cur.back() != '/') cur += '/';
+            cur += comp;
+            ::mkdir(cur.c_str(), 0777);
+        }
+        if (next == std::string::npos) break;
+        i = next + 1;
+    }
+    return nullptr;
+}
+
+// os.remove(path) -> None : alias for os.unlink
+extern "C" PyObject* PyBuiltin_OsRemove(PyObject* args) {
+    return PyBuiltin_OsUnlink(args);
+}
+
+// os.rename(src, dst) -> None
+extern "C" PyObject* PyBuiltin_OsRename(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* src = args->list[0];
+    PyObject* dst = args->list[1];
+    if (!src || src->type != 3 || !dst || dst->type != 3) return nullptr;
+    ::rename(src->str.c_str(), dst->str.c_str());
+    return nullptr;
+}
+
+// pathlib.Path(...) construction — direct-call convention (matching
+// datetime's construction functions), since the result must carry the
+// type-16 tag for `/`/attribute/comparison dispatch, unlike a plain
+// token+registry function whose result is just a generic boxed value.
+extern "C" PyObject* PyPathlib_Path(PyObject* arg) {
+    return pyc_new_path(pyc_is_path_like(arg) ? arg->str : std::string());
+}
+
+// Path.exists()/.is_file()/.is_dir() — typeOf-gated method calls (see the
+// dispatch note in Compiler.cpp's lowerMethodCall); reuse the same
+// stat(2) logic as os.path.exists/isfile/isdir.
+extern "C" PyObject* PyPathlib_Exists(PyObject* obj) {
+    if (!pyc_is_path_like(obj)) return PyBool_New(0);
+    struct stat st;
+    return PyBool_New(::stat(obj->str.c_str(), &st) == 0 ? 1 : 0);
+}
+extern "C" PyObject* PyPathlib_IsFile(PyObject* obj) {
+    if (!pyc_is_path_like(obj)) return PyBool_New(0);
+    struct stat st;
+    if (::stat(obj->str.c_str(), &st) != 0) return PyBool_New(0);
+    return PyBool_New(S_ISREG(st.st_mode) ? 1 : 0);
+}
+extern "C" PyObject* PyPathlib_IsDir(PyObject* obj) {
+    if (!pyc_is_path_like(obj)) return PyBool_New(0);
+    struct stat st;
+    if (::stat(obj->str.c_str(), &st) != 0) return PyBool_New(0);
+    return PyBool_New(S_ISDIR(st.st_mode) ? 1 : 0);
+}
+
+// Path.mkdir(parents=..., exist_ok=...) — kwargs aren't read (same
+// limitation as os.makedirs), always behaves as parents=True,
+// exist_ok=True (mkdir -p semantics), never raises.
+extern "C" PyObject* PyPathlib_Mkdir(PyObject* obj) {
+    if (!pyc_is_path_like(obj) || obj->str.empty()) return nullptr;
+    std::string cur;
+    size_t i = 0;
+    const std::string& s = obj->str;
+    if (s[0] == '/') { cur = "/"; i = 1; }
+    while (i <= s.size()) {
+        size_t next = s.find('/', i);
+        std::string comp = (next == std::string::npos) ? s.substr(i) : s.substr(i, next - i);
+        if (!comp.empty()) {
+            if (!cur.empty() && cur.back() != '/') cur += '/';
+            cur += comp;
+            ::mkdir(cur.c_str(), 0777);
+        }
+        if (next == std::string::npos) break;
+        i = next + 1;
+    }
+    return nullptr;
+}
+
+// Path.joinpath(*parts) — equivalent to repeated "/". `parts` is a boxed
+// list built by the compiler from the call's positional arguments.
+extern "C" PyObject* PyPathlib_Joinpath(PyObject* obj, PyObject* parts) {
+    std::string out = pyc_is_path_like(obj) ? obj->str : std::string();
+    if (parts && parts->type == 1) {
+        for (PyObject* p : parts->list) {
+            if (!pyc_is_path_like(p) || p->str.empty()) continue;
+            if (p->str[0] == '/') { out = p->str; continue; }
+            if (!out.empty() && out.back() != '/') out += '/';
+            out += p->str;
+        }
+    }
+    return pyc_new_path(out);
+}
+
 // open(path, mode) — open a file. The path/mode are extracted from the
 // args list. Returns a synthetic "file" dict with __enter__ / __exit__
 // / write / close keys (all string tokens naming runtime adapters that
@@ -5184,17 +5485,31 @@ static PyObject* makeDatetimeModuleDict() {
 }
 
 // makeOsModuleDict: builds a dict that emulates the os module. The
-// `os.environ` entry is itself a dict; `os.path` is a dict whose
-// `exists` / `isfile` / `isdir` entries are string tokens naming
-// runtime helpers; `os.unlink` is also a token.
+// `os.environ` entry is a real dict populated from the process
+// environment (`environ(7)`); `os.path` is a dict whose entries are
+// string tokens naming runtime helpers; `os.unlink`/`os.remove`/etc. are
+// also top-level tokens.
 static PyObject* makeOsModuleDict() {
     PyObject* d = PyDict_New();
-    // os.environ -> dict (empty)
+    // os.environ -> real dict populated from the process environment.
+    // Values set/mutated by user code afterward don't propagate back to
+    // the actual process environment (no os.putenv/os.environ[k]=v write
+    // path) — read-only snapshot at import time, matching the scope of
+    // every other os.* stub here.
     PyObject* env_key = PyUnicode_FromString("environ");
     PyObject* env_val = PyDict_New();
+    for (char** e = environ; *e; ++e) {
+        const char* eq = strchr(*e, '=');
+        if (!eq) continue;
+        PyObject* k = PyUnicode_FromString(std::string(*e, eq - *e).c_str());
+        PyObject* v = PyUnicode_FromString(eq + 1);
+        PyDict_SetItem(env_val, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    }
     PyDict_SetItem(d, env_key, env_val);
     Py_DECREF(env_key); Py_DECREF(env_val);
-    // os.path -> dict with exists/isfile/isdir/unlink tokens
+    // os.path -> dict with exists/isfile/isdir/unlink/join/basename/
+    // dirname/splitext/abspath tokens
     PyObject* path_key = PyUnicode_FromString("path");
     PyObject* path_val = PyDict_New();
     auto addTok = [&](const char* name, const char* token) {
@@ -5203,17 +5518,30 @@ static PyObject* makeOsModuleDict() {
         PyDict_SetItem(path_val, k, v);
         Py_DECREF(k); Py_DECREF(v);
     };
-    addTok("exists", "PyBuiltin_OsPathExists");
-    addTok("isfile", "PyBuiltin_OsPathIsfile");
-    addTok("isdir",  "PyBuiltin_OsPathIsdir");
-    addTok("unlink", "PyBuiltin_OsUnlink");
+    addTok("exists",   "PyBuiltin_OsPathExists");
+    addTok("isfile",   "PyBuiltin_OsPathIsfile");
+    addTok("isdir",    "PyBuiltin_OsPathIsdir");
+    addTok("unlink",   "PyBuiltin_OsUnlink");
+    addTok("join",     "PyBuiltin_OsPathJoin");
+    addTok("basename", "PyBuiltin_OsPathBasename");
+    addTok("dirname",  "PyBuiltin_OsPathDirname");
+    addTok("splitext", "PyBuiltin_OsPathSplitext");
+    addTok("abspath",  "PyBuiltin_OsPathAbspath");
     PyDict_SetItem(d, path_key, path_val);
     Py_DECREF(path_key); Py_DECREF(path_val);
-    // os.unlink (top-level, not on os.path) -> token
-    PyObject* unlink_key = PyUnicode_FromString("unlink");
-    PyObject* unlink_val = PyUnicode_FromString("PyBuiltin_OsUnlink");
-    PyDict_SetItem(d, unlink_key, unlink_val);
-    Py_DECREF(unlink_key); Py_DECREF(unlink_val);
+    // Top-level os.* tokens (not on os.path)
+    auto addTopTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTopTok("unlink",   "PyBuiltin_OsUnlink");
+    addTopTok("remove",   "PyBuiltin_OsRemove");
+    addTopTok("rename",   "PyBuiltin_OsRename");
+    addTopTok("getcwd",   "PyBuiltin_OsGetcwd");
+    addTopTok("listdir",  "PyBuiltin_OsListdir");
+    addTopTok("makedirs", "PyBuiltin_OsMakedirs");
     return d;
 }
 
@@ -5495,6 +5823,16 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyBuiltin_OsPathIsfile",        PyBuiltin_OsPathIsfile);
     pyc_register_callable("PyBuiltin_OsPathIsdir",         PyBuiltin_OsPathIsdir);
     pyc_register_callable("PyBuiltin_OsUnlink",            PyBuiltin_OsUnlink);
+    pyc_register_callable("PyBuiltin_OsPathJoin",          PyBuiltin_OsPathJoin);
+    pyc_register_callable("PyBuiltin_OsPathBasename",      PyBuiltin_OsPathBasename);
+    pyc_register_callable("PyBuiltin_OsPathDirname",       PyBuiltin_OsPathDirname);
+    pyc_register_callable("PyBuiltin_OsPathSplitext",      PyBuiltin_OsPathSplitext);
+    pyc_register_callable("PyBuiltin_OsPathAbspath",       PyBuiltin_OsPathAbspath);
+    pyc_register_callable("PyBuiltin_OsGetcwd",            PyBuiltin_OsGetcwd);
+    pyc_register_callable("PyBuiltin_OsListdir",           PyBuiltin_OsListdir);
+    pyc_register_callable("PyBuiltin_OsMakedirs",          PyBuiltin_OsMakedirs);
+    pyc_register_callable("PyBuiltin_OsRemove",            PyBuiltin_OsRemove);
+    pyc_register_callable("PyBuiltin_OsRename",            PyBuiltin_OsRename);
     pyc_register_callable("PyBuiltin_SubprocessCall",      PyBuiltin_SubprocessCall);
     pyc_register_callable("PyBuiltin_SubprocessCheckOutput", PyBuiltin_SubprocessCheckOutput);
     pyc_register_callable("pyc_stderr_write",              stderr_write_adapter);
@@ -5625,6 +5963,22 @@ PyObject* PyNumber_Divide(PyObject* a, PyObject* b) {
 
 // True division (/)
 PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b) {
+    // pathlib.Path joining: Path / (str or Path) -> new Path, matching
+    // CPython's PurePath.__truediv__. Robust regardless of typeOf
+    // tracking, same rationale as the date/datetime/timedelta arithmetic
+    // above — the "/" IR op always calls this function for non-numeric
+    // operands.
+    if (a && a->type == 16 && b && pyc_is_path_like(b)) {
+        std::string out = a->str;
+        const std::string& rhs = b->str;
+        if (!rhs.empty() && rhs[0] == '/') {
+            out = rhs; // absolute component resets the accumulated path
+        } else if (!rhs.empty()) {
+            if (!out.empty() && out.back() != '/') out += '/';
+            out += rhs;
+        }
+        return pyc_new_path(out);
+    }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     double bv = numeric_val(b);
     if (bv == 0.0) {
@@ -5829,6 +6183,22 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
         int cmp = (ta->days != tb->days) ? (ta->days < tb->days ? -1 : 1)
                 : (ta->seconds != tb->seconds) ? (ta->seconds < tb->seconds ? -1 : 1)
                 : (ta->microseconds != tb->microseconds) ? (ta->microseconds < tb->microseconds ? -1 : 1) : 0;
+        switch (op) {
+            case 0: return cmp == 0;
+            case 1: return cmp != 0;
+            case 2: return cmp < 0;
+            case 3: return cmp > 0;
+            case 4: return cmp <= 0;
+            case 5: return cmp >= 0;
+        }
+    }
+    // pathlib.Path compares like a plain string of its path text
+    // (matching real CPython: PurePath defines __eq__/__lt__ etc. on the
+    // normalized path string). Also accepts a Path compared against a
+    // plain str, which real Path does not support (TypeError there) —
+    // a deliberate, documented looseness rather than a strict match.
+    if (pyc_is_path_like(a) && pyc_is_path_like(b) && (a->type == 16 || b->type == 16)) {
+        int cmp = a->str.compare(b->str);
         switch (op) {
             case 0: return cmp == 0;
             case 1: return cmp != 0;

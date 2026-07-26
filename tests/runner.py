@@ -1254,6 +1254,59 @@ def show(x):
 print(year_of(d))
 print(show(dt))
 """, "2024-03-15\n2024 3 15\n2024-03-15\n4\n5\n2024-03-15 09:30:45\n2024-03-15T09:30:45\n9 30 45\n5 days, 3:00:00\n5 10800\n93.0\n2024-03-25\n10 days, 0:00:00\n<class 'datetime.timedelta'>\nTrue\nTrue\nTrue\n2024-01-08\n2024\n2024-03-15 09:30:45\n"),
+    # os / pathlib (synthetic; os.path.* are token-dispatched functions,
+    # pathlib.Path is a new runtime type — tag 16, see IMPLEMENTATION.md).
+    # os.path.splitext is wrapped in list(...) because it returns a real
+    # tuple in CPython but a plain list in pyc (no tuple type — same
+    # documented gap as itertools' tuple-shaped results); list(...)
+    # normalizes both sides to the same printed form so the comparison
+    # stays meaningful. Uses a fixed /tmp scratch dir (not the repo
+    # directory) and exist_ok=True/explicit os.remove so the test is
+    # idempotent across repeated runs. os.getcwd()/os.environ are checked
+    # structurally (isinstance/len), not by exact value, since those are
+    # environment-dependent.
+    ("""
+import os
+import pathlib
+from pathlib import Path
+
+scratch = "/tmp/pyc_test_os_pathlib_scratch"
+
+print(os.path.join("a", "b", "c"))
+print(os.path.basename("/x/y/z.txt"))
+print(os.path.dirname("/x/y/z.txt"))
+print(list(os.path.splitext("/x/y/z.tar.gz")))
+
+p = pathlib.Path(scratch)
+sub = p / "nested" / "dir"
+sub.mkdir(parents=True, exist_ok=True)
+print(sub.is_dir())
+
+f = sub / "hello.txt"
+with open(str(f), "w") as fh:
+    fh.write("hi")
+print(f.exists(), f.is_file(), f.is_dir())
+print(f.name, f.suffix, f.stem)
+print(f.parent == sub)
+
+os.remove(str(f))
+print(f.exists())
+
+names = sorted(os.listdir(str(sub.parent)))
+print(names)
+
+q = Path("x").joinpath("y", "z")
+print(q)
+
+def name_of(x):
+    return x.name
+def show(x):
+    return str(x)
+print(name_of(p), show(p))
+
+print(isinstance(os.getcwd(), str))
+print(len(os.environ) >= 0)
+""", "a/b/c\nz.txt\n/x/y\n['/x/y/z.tar', '.gz']\nTrue\nTrue True False\nhello.txt .txt hello\nTrue\nFalse\n['dir']\nx/y/z\npyc_test_os_pathlib_scratch /tmp/pyc_test_os_pathlib_scratch\nTrue\nTrue\n"),
     # B7: Import / module system tests
      # These require utils.py to be in the same directory
      ("b7_import.py", []),

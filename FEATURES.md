@@ -99,8 +99,19 @@ f(b=3, a=4)                    keyword call arguments
 
 ## Standard Library Stubs
 
-- `os.path.exists()`, `os.path.isfile()`, `os.path.isdir()` — real POSIX implementations
-- `os.unlink()` — deletes files
+- `os.path.exists()`, `os.path.isfile()`, `os.path.isdir()`, `os.path.join()`,
+  `os.path.basename()`, `os.path.dirname()`, `os.path.splitext()` (returns a
+  2-element list, not a tuple — see the tuple-type gap below),
+  `os.path.abspath()` — real POSIX implementations
+- `os.unlink()` / `os.remove()` — deletes files
+- `os.rename()`, `os.getcwd()`, `os.listdir()` (entry order isn't guaranteed
+  to match CPython's, matching real `readdir(3)` order), `os.makedirs()`
+  (always behaves as `exist_ok=True`, i.e. `mkdir -p` — keyword arguments
+  aren't read by synthetic-module functions, same limitation as
+  `time.perf_counter`'s siblings)
+- `os.environ` — a real dict populated from the process environment at
+  import time (read-only snapshot; writes to it don't propagate back to
+  the actual process environment)
 - `subprocess.call()` — executes commands via fork/exec/pipe
 - `subprocess.check_output()` — captures command output
 - `sys` module (argv, stderr)
@@ -243,6 +254,52 @@ f(b=3, a=4)                    keyword call arguments
   → `"1e+02"`. This is not specific to datetime (a bare `print(20.0)`
   reproduces it) but surfaces easily via `timedelta.total_seconds()`,
   since most human-chosen durations round evenly. See IMPLEMENTATION.md.
+
+## Pathlib
+
+- `pathlib.Path(path)` — a new runtime type (tag 16, see IMPLEMENTATION.md)
+  that stores its text directly in the existing `PyObject.str` field
+  (simpler than datetime's heap-allocated struct — a `Path` really is just
+  a string with different dispatch). Works via `import pathlib`
+  (`pathlib.Path(...)`, and `import pathlib as X`), and via
+  `from pathlib import Path` (bare name, including `as` aliasing) — both
+  forms construct through the same code path. Single-argument
+  construction only (real `Path("a", "b")` multi-segment joining isn't
+  supported — use `/` or `.joinpath()` instead).
+- `/` (path joining): `Path / (str or Path)` → new `Path`, matching
+  CPython's `PurePath.__truediv__`. Robust to untyped function parameters
+  (routes through `PyNumber_TrueDivide`, gated on the runtime type tag).
+- Attributes (robust — via `Pyc_GetItem`): `.name`, `.parent`, `.suffix`,
+  `.stem`. Not implemented: `.parts`, `.anchor`, `.drive` (no tuple type,
+  low value for an AOT-compiled subset).
+- Comparisons (`==`, `!=`, `<`, etc.) and `str()`/`print()` compare/print
+  the underlying path text — both robust to untyped parameters. Printing a
+  `Path` nested inside a list/dict shows `PosixPath('...')` (matching
+  CPython's repr); a top-level `print()`/`str()` shows the raw path text
+  with no wrapper, also matching CPython.
+- Methods (typeOf-gated — same param-passing limitation as datetime's
+  methods, see below): `.exists()`, `.is_file()`, `.is_dir()`,
+  `.joinpath(*parts)`, `.mkdir(parents=..., exist_ok=...)` (keyword
+  arguments aren't read; always behaves as `parents=True, exist_ok=True`,
+  same simplification as `os.makedirs`).
+- `type()` on a `Path` value is not specialized (reports `<class
+  'object'>` rather than `<class 'pathlib.PosixPath'>`) — lower priority
+  than datetime's `type()` support since `isinstance`/`type()` checks on
+  paths are rare in practice; not implemented.
+- **Chained `/`/arithmetic results are now typeOf-tracked, fixing a gap
+  found while building this**: `Compiler.cpp`'s `lowerBinOp` previously
+  never tagged a binop's *result* with a special type string, so
+  `(Path(x) / "y").is_dir()` — extremely common for `Path`, since `/`
+  chaining is the primary way to build nested paths — fell through to the
+  untyped-parameter-style `None` result despite the value being fully
+  known at compile time (only a longer explicit-variable chain like
+  `p = Path(x) / "y"; p.is_dir()` worked, since plain assignment already
+  propagated typeOf). This same gap silently affected datetime too
+  (`(d + delta).isoformat()`), just never surfaced there because the
+  datetime test suite happened to always assign arithmetic results to a
+  variable before calling a method. Fixed for both `pathlib` and
+  `datetime`/`timedelta` arithmetic result temps in the same `lowerBinOp`
+  change.
 
 ## Assignment Forms
 

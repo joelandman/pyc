@@ -60,6 +60,21 @@ subclassing does) — `isinstance(some_datetime, date)`-style checks aren't
 supported. See Known Limitations below for the separate, more consequential
 method-call/parameter-passing caveat.
 
+### `pathlib.Path` — Single-Argument Construction, No `PurePath`/`WindowsPath`, No `.parts`
+`Path` is a new runtime type (tag 16), simpler than `datetime`'s: it stores
+its text directly in `PyObject.str` (no heap-allocated side struct — a
+`Path` is just a string with different dispatch on `/`, attribute reads,
+comparisons, and a handful of methods). Only `Path(single_arg)` construction
+is supported — real Python's `Path("a", "b", "c")` multi-segment form isn't
+(use `/` or `.joinpath()` instead). No `PurePath`/`WindowsPath`/`PosixPath`
+class distinction, no `.parts`/`.anchor`/`.drive`/`.suffixes`, no
+`.resolve()`/`.glob()`/`.rglob()`/`.with_name()`/`.with_suffix()`, no
+`os.PathLike` protocol (a `Path` can't be passed to `open()` — use
+`open(str(p))`). `type()` isn't specialized for `Path` (unlike `datetime`,
+which does report the right class name) — lower priority since
+`isinstance`/`type()` checks on paths are rare. See Known Limitations below
+for the same method-call/parameter-passing caveat as `datetime`.
+
 ## Known Limitations
 
 ### Performance
@@ -71,10 +86,29 @@ method-call/parameter-passing caveat.
   `re` (PCRE2-backed), `os`, `subprocess`, `functools`, `cmath`,
   `time.perf_counter`, `math`, `json`, `random`, `itertools` (subset),
   `collections` (subset), `datetime` (`date`/`datetime`/`timedelta`, see
-  below) — everything else reports ImportError rather than compiling real
-  CPython stdlib source. A function named `get` called via `module.get()`
-  collides with the dict `.get()` method shim and silently returns `None`
-  — a pre-existing naming collision, not package-specific.
+  below), `pathlib` (`Path`, see below) — everything else reports
+  ImportError rather than compiling real CPython stdlib source. A function
+  named `get` called via `module.get()` collides with the dict `.get()`
+  method shim and silently returns `None` — a pre-existing naming
+  collision, not package-specific.
+- **The generic method-call dispatch chain in `Compiler.cpp`'s
+  `lowerMethodCall` matches on method *name* only for several branches**
+  (`append`/`insert`/`remove`/`index`/`join`/`split`/etc. — the built-in
+  list/string method shims), with no check on the receiver's type. This is
+  a **real, general naming-collision hazard**: any synthetic module that
+  picks a dict key matching one of these names breaks silently. Two
+  concrete instances found and fixed while adding `os.path.join`/
+  `os.remove`: `os.path.join(...)` was being routed to `PyString_Join`
+  (treating the `os.path` dict as a string separator) instead of the
+  intended token dispatch, and `os.remove(...)` was similarly routed to
+  `PyList_Remove`. Fixed by adding `&& typeOf(obj) != "dict"` guards to
+  those two specific branches (`Compiler.cpp`, the `"join"`/`"remove"`
+  `methodName` checks) — **not** a general fix; any *future* module using
+  another colliding name (`"index"`, `"split"`, `"count"`, `"insert"`,
+  ...) will hit the same silent-wrong-dispatch failure mode until it's
+  individually discovered and guarded the same way. Always smoke-test a
+  new synthetic module's every dict key name against this dispatch chain,
+  not just against ImportError/basic call success.
 - **`datetime` method calls are not robust to untyped function parameters**:
   unlike `date`/`datetime`/`timedelta`'s attribute reads, arithmetic,
   comparisons, and `str()`, which are dispatched purely on the runtime
@@ -90,6 +124,30 @@ method-call/parameter-passing caveat.
   `def f(d): return str(d)` and `def f(d): return d.year` both work
   correctly on the same value. Prefer `str()`/attribute access over method
   calls when a datetime value crosses a function boundary.
+- **`pathlib.Path` method calls have the identical limitation**:
+  `.exists()`/`.is_file()`/`.is_dir()`/`.mkdir()`/`.joinpath()` are
+  `typeOf`-gated the same way as `datetime`'s methods, and don't survive
+  an untyped function parameter (`.name`/`.parent`/`.suffix`/`.stem`, `/`,
+  comparisons, and `str()` all do, since they route through the universal
+  runtime-tag dispatch points).
+- **Fixed while adding `pathlib`**: `Compiler.cpp`'s `lowerBinOp` never
+  tagged a binary operation's *result temp* with a non-numeric type string
+  — so `typeOf` lost track of a value the instant it passed through a
+  binop, even when the operand types made the result type statically
+  obvious. This didn't matter for `datetime`'s `+`/`-` at the time (nothing
+  in that work chained a method call directly onto an arithmetic result),
+  but it's a hard blocker for `pathlib.Path`, since `/`-chaining
+  (`Path(x) / "sub" / "file.txt"`) is the primary way any real code
+  constructs a nested path, and immediately calling `.is_dir()`/`.exists()`
+  on the chained result is equally common. Fixed by having `lowerBinOp`
+  additionally call `noteType` on the result temp when the operator is
+  `truediv` and the left operand is a `"path"`, or when the operator is
+  `add`/`sub`/`mul` and an operand is a `"date"`/`"datetime"`/`"timedelta"`
+  — this also retroactively fixes the same latent gap for datetime
+  arithmetic (`(d + delta).isoformat()` now works without an intermediate
+  variable). Purely a compile-time bookkeeping fix — the runtime *values*
+  were already correct either way, since arithmetic dispatch itself never
+  depended on `typeOf` (see the "robust primitives" design above).
 - **A pyc-level class cannot reliably back a stdlib-shaped container
   type**: confirmed by direct experiment while scoping `collections`.
   Subclassing `dict` (`class Counter(dict): ...`) does not behave as a

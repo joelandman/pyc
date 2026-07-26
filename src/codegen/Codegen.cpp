@@ -331,6 +331,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, name, module.get());
     }
+    // pathlib.Path: same AST-recognized direct-call convention as datetime
+    // above. PyPathlib_Path/Exists/IsFile/IsDir/Mkdir take one ptr arg;
+    // PyPathlib_Joinpath takes the receiver plus a boxed list of parts.
+    for (const char* name : {"PyPathlib_Path", "PyPathlib_Exists", "PyPathlib_IsFile",
+                              "PyPathlib_IsDir", "PyPathlib_Mkdir"}) {
+        llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    llvm::FunctionType* joinpathTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(joinpathTy, llvm::Function::ExternalLinkage, "PyPathlib_Joinpath", module.get());
     // setjmp is special: declaration with the ReturnsTwice attribute.
     {
         llvm::FunctionType* setjmpTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {int8PtrTy}, false);
