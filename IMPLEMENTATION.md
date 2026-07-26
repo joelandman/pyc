@@ -45,6 +45,21 @@ scales with program size.
 ### JIT Compilation — Not Implemented
 pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 
+### `datetime` — No Microseconds, No Timezones, No `date`/`datetime` Subclassing
+`date`/`datetime`/`timedelta` are implemented as two new opaque runtime types
+(tags 14/15 — `PycDateTime` with a `hasTime` flag distinguishing `date` from
+`datetime`, and `PycTimedelta`), heap-allocated via `new PyObject()` rather
+than the existing `allocObject()` (see Runtime notes below for why).
+`timedelta.microseconds` doesn't exist as a field and always reads back as 0
+— sub-second precision was out of scope. There is no `tzinfo` support at all
+(naive datetimes only, matching what most compiled-AOT use cases need) and no
+`date.fromisoformat()`/`strptime`/`strftime`. `datetime` isn't modeled as a
+subclass of `date` (pyc's class system can't reliably back a value with two
+different C++ payload shapes depending on a flag the way real CPython's
+subclassing does) — `isinstance(some_datetime, date)`-style checks aren't
+supported. See Known Limitations below for the separate, more consequential
+method-call/parameter-passing caveat.
+
 ## Known Limitations
 
 ### Performance
@@ -55,10 +70,26 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - **Only a handful of stdlib modules are implemented, synthetically**: `sys`,
   `re` (PCRE2-backed), `os`, `subprocess`, `functools`, `cmath`,
   `time.perf_counter`, `math`, `json`, `random`, `itertools` (subset),
-  `collections` (subset) — everything else reports ImportError rather than
-  compiling real CPython stdlib source. A function named `get` called via
-  `module.get()` collides with the dict `.get()` method shim and silently
-  returns `None` — a pre-existing naming collision, not package-specific.
+  `collections` (subset), `datetime` (`date`/`datetime`/`timedelta`, see
+  below) — everything else reports ImportError rather than compiling real
+  CPython stdlib source. A function named `get` called via `module.get()`
+  collides with the dict `.get()` method shim and silently returns `None`
+  — a pre-existing naming collision, not package-specific.
+- **`datetime` method calls are not robust to untyped function parameters**:
+  unlike `date`/`datetime`/`timedelta`'s attribute reads, arithmetic,
+  comparisons, and `str()`, which are dispatched purely on the runtime
+  type tag (14/15) and so work regardless of what the compiler could infer
+  — method-call *syntax* (`.isoformat()`, `.weekday()`, `.isoweekday()`,
+  `.total_seconds()`) is gated on `typeOf(obj)` in `Compiler.cpp`'s
+  `lowerMethodCall`, the same dispatch class as the pre-existing
+  `Match.group()`. `typeOf` tracking follows construction, plain
+  assignment, and function return values, but **not** function parameters
+  (confirmed by reading `inferParamTypesFromBody`, which only ever infers
+  `int`/`float`/`boxed`) — so `def f(d): return d.isoformat()` returns
+  `None` for a `date`/`datetime` `d` passed in as a parameter, even though
+  `def f(d): return str(d)` and `def f(d): return d.year` both work
+  correctly on the same value. Prefer `str()`/attribute access over method
+  calls when a datetime value crosses a function boundary.
 - **A pyc-level class cannot reliably back a stdlib-shaped container
   type**: confirmed by direct experiment while scoping `collections`.
   Subclassing `dict` (`class Counter(dict): ...`) does not behave as a
@@ -95,9 +126,16 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - **Float formatting sometimes uses scientific notation where CPython
   wouldn't**: e.g. `print(180.0)` prints `1.8e+02` instead of `180.0` —
   reproducible with a bare float literal, so it's a general `str()`/`print()`
-  formatting bug, not specific to any particular computation. Not yet
-  investigated in depth; avoid exact-multiples-of-10 float values in new
-  CPython-output-comparison tests until this is root-caused.
+  formatting bug, not specific to any particular computation. **Narrowed
+  while adding `datetime`** (`timedelta.total_seconds()` kept tripping it):
+  the trigger is exactly "whole-valued float whose integer part is evenly
+  divisible by 10" — `10.0`, `20.0`, `50.0`, `100.0`, `9900.0`, `100000.0`
+  all print in scientific notation, while `11.0`, `15.0`, `99.0`, `9999.0`,
+  and any float with a nonzero fractional part (`50.5`) print correctly.
+  Root cause not yet investigated (likely a trailing-zero-stripping
+  heuristic in the printer that misfires into choosing `%g`-style output);
+  avoid float values divisible by 10 in new CPython-output-comparison
+  tests until this is root-caused.
 
 ### Type System
 - **Conservative type tracking**: `widenLoopTypes()` widens to "boxed" on any type divergence at loop back-edges
@@ -109,6 +147,20 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - **Most values flow as boxed `PyObject*`**: Native paths are optimizations, not the default
 - **Exceptions use setjmp/longjmp**: Raise pops the frame before the jump; handler dispatch happens in generated code
 - **Callables dispatch through a registry**: `Pyc_Apply(token, list)` with `__apply__` adapters
+- **Newly discovered while designing `datetime`**: the existing opaque-handle
+  allocator `allocObject()` (`Runtime.cpp`, used by `CompiledRegex`/
+  `MatchObj`, types 8/9) allocates the `PyObject` via `calloc()`, which is
+  undefined behavior for a struct whose `dict` member is a non-trivial
+  `std::unordered_map` (`calloc` never runs the map's constructor — any
+  code path that later touches `obj->dict` on such an object relies on
+  zeroed memory happening to look like a valid empty map, which isn't
+  guaranteed by the standard even if it works in practice with current
+  libstdc++). Not fixed — out of scope for the datetime work that found
+  it, and `CompiledRegex`/`MatchObj` don't appear to read `.dict` in
+  practice, so this is latent rather than an observed failure. The new
+  datetime types (14/15) deliberately avoid `allocObject()`, using
+  `new PyObject()` instead — the same safe pattern `PyDict_New`/
+  `PyList_New`/`PyUnicode_FromString` already use.
 
 ### IR
 - **Linear instruction list per function**: No CFG in IR; control flow is represented via labels and branches

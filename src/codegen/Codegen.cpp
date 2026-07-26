@@ -316,6 +316,21 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* cmathTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(cmathTy, llvm::Function::ExternalLinkage, name, module.get());
     }
+    // datetime module: AST-recognized construction and method calls
+    // (Compiler.cpp lowerMethodCall), dispatched as direct calls like
+    // cmath above rather than through the generic token+registry path.
+    llvm::FunctionType* dateNewTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(dateNewTy, llvm::Function::ExternalLinkage, "PyDateTime_Date", module.get());
+    llvm::FunctionType* datetimeNewTy = llvm::FunctionType::get(pyObjectPtrTy,
+        {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(datetimeNewTy, llvm::Function::ExternalLinkage, "PyDateTime_Datetime", module.get());
+    llvm::FunctionType* timedeltaNewTy = llvm::FunctionType::get(pyObjectPtrTy,
+        {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(timedeltaNewTy, llvm::Function::ExternalLinkage, "PyTimedelta_New", module.get());
+    for (const char* name : {"PyDateTime_Isoformat", "PyDateTime_Weekday", "PyDateTime_Isoweekday", "PyTimedelta_TotalSeconds"}) {
+        llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, name, module.get());
+    }
     // setjmp is special: declaration with the ReturnsTwice attribute.
     {
         llvm::FunctionType* setjmpTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {int8PtrTy}, false);

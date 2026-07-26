@@ -642,6 +642,106 @@ extern "C" PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject);
 extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern);
 extern "C" PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj);
 
+// datetime support: two more opaque-handle types, same pattern as
+// CompiledRegex/MatchObj above (type 14 = date/datetime, type 15 =
+// timedelta, payload reached via the `value` field). One C++ struct
+// covers both `datetime.date` and `datetime.datetime` (via `hasTime`)
+// since pyc's class system can't reliably model `datetime` as a
+// subclass of `date` (confirmed in an earlier session's collections/
+// Counter investigation: dict subclassing doesn't behave as a real
+// dict, so a similar "date subclasses datetime" pyc-level relationship
+// isn't attempted here either).
+struct PycDateTime {
+    int year = 1, month = 1, day = 1;
+    int hour = 0, minute = 0, second = 0;
+    bool hasTime = false;
+};
+struct PycTimedelta {
+    int64_t days = 0, seconds = 0, microseconds = 0;
+};
+
+// Floor division/modulo (C++'s / and % truncate toward zero for negative
+// operands; calendar math needs floor semantics throughout).
+static int64_t pyc_floordiv(int64_t a, int64_t b) {
+    int64_t q = a / b, r = a % b;
+    if (r != 0 && ((r < 0) != (b < 0))) --q;
+    return q;
+}
+
+// Howard Hinnant's proleptic-Gregorian civil calendar conversion
+// (http://howardhinnant.github.io/date_algorithms.html) — days_from_civil
+// returns days since 1970-01-01 (may be negative); civil_from_days is its
+// inverse. Used for all date/datetime/timedelta arithmetic, comparison,
+// and weekday computation below.
+static int64_t pyc_days_from_civil(int y, int m, int d) {
+    y -= (m <= 2) ? 1 : 0;
+    int64_t era = (y >= 0 ? y : y - 399) / 400;
+    unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153u * (unsigned)(m + (m > 2 ? -3 : 9)) + 2u) / 5u + (unsigned)d - 1u;
+    unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+    return era * 146097 + (int64_t)doe - 719468;
+}
+static void pyc_civil_from_days(int64_t z, int& y, int& m, int& d) {
+    z += 719468;
+    int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+    unsigned doe = (unsigned)(z - era * 146097);
+    unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    int64_t yr = (int64_t)yoe + era * 400;
+    unsigned doy = doe - (365u * yoe + yoe / 4u - yoe / 100u);
+    unsigned mp = (5u * doy + 2u) / 153u;
+    d = (int)(doy - (153u * mp + 2u) / 5u + 1u);
+    m = (int)(mp + (mp < 10 ? 3 : (unsigned)-9));
+    y = (int)(yr + (m <= 2 ? 1 : 0));
+}
+// 1970-01-01 (day 0) was a Thursday; Python's weekday() is Monday=0.
+static int pyc_weekday_from_days(int64_t days) {
+    return (int)(((days + 3) % 7 + 7) % 7);
+}
+
+// Normalize a timedelta's fields the way CPython does: 0 <= seconds < 86400,
+// 0 <= microseconds < 1000000, with the overall sign folded entirely into days.
+static void pyc_normalize_timedelta(int64_t& days, int64_t& seconds, int64_t& microseconds) {
+    int64_t dus = pyc_floordiv(microseconds, 1000000);
+    microseconds -= dus * 1000000;
+    seconds += dus;
+    int64_t dsec = pyc_floordiv(seconds, 86400);
+    seconds -= dsec * 86400;
+    days += dsec;
+}
+
+static PycDateTime* pyc_as_datetime(PyObject* o) {
+    return (o && o->type == 14) ? reinterpret_cast<PycDateTime*>(o->value) : nullptr;
+}
+static PycTimedelta* pyc_as_timedelta(PyObject* o) {
+    return (o && o->type == 15) ? reinterpret_cast<PycTimedelta*>(o->value) : nullptr;
+}
+// Constructors use `new PyObject()` (not the calloc-based allocObject()
+// used by CompiledRegex/MatchObj below) so PyObject's std::unordered_map
+// `dict` member is validly constructed — safe to read (always empty, so
+// generic dict-fallback code paths that touch it see "not found" rather
+// than undefined behavior from a calloc'd non-trivial C++ member.
+static PyObject* pyc_new_datetime(int y, int mo, int d, int h, int mi, int s, bool hasTime) {
+    PyObject* o = new PyObject();
+    o->refcount = 1;
+    o->type = 14;
+    PycDateTime* dt = new PycDateTime();
+    dt->year = y; dt->month = mo; dt->day = d;
+    dt->hour = h; dt->minute = mi; dt->second = s;
+    dt->hasTime = hasTime;
+    o->value = (int64_t)(intptr_t)dt;
+    return o;
+}
+static PyObject* pyc_new_timedelta(int64_t days, int64_t seconds, int64_t microseconds) {
+    pyc_normalize_timedelta(days, seconds, microseconds);
+    PyObject* o = new PyObject();
+    o->refcount = 1;
+    o->type = 15;
+    PycTimedelta* td = new PycTimedelta();
+    td->days = days; td->seconds = seconds; td->microseconds = microseconds;
+    o->value = (int64_t)(intptr_t)td;
+    return o;
+}
+
 void Py_DECREF(PyObject* obj) {
     if (obj && obj->refcount != IMMORTAL_REFCOUNT && --obj->refcount == 0) {
         if (obj->type == 0 || obj->type == 4) {
@@ -664,6 +764,10 @@ void Py_DECREF(PyObject* obj) {
         } else if (obj->type == 9) {
             MatchObj* mo = reinterpret_cast<MatchObj*>(obj->value);
             delete mo;
+        } else if (obj->type == 14) {
+            delete reinterpret_cast<PycDateTime*>(obj->value);
+        } else if (obj->type == 15) {
+            delete reinterpret_cast<PycTimedelta*>(obj->value);
         } else if (obj->type == 10 || obj->type == 11) {
             if (obj->cell_content) { Py_DECREF(obj->cell_content); obj->cell_content = nullptr; }
         }
@@ -673,6 +777,40 @@ void Py_DECREF(PyObject* obj) {
 
 static int PyObject_PrintBase(PyObject* obj, FILE* fp);
 static std::string pyc_exc_message(PyObject* exc);
+
+// Shared date/timedelta -> string formatting, used by both PrintElement
+// (no trailing newline, for nested container repr) and PrintBase (adds
+// one), and by str()/PyStr_FromAny (which both funnel through these).
+static void pyc_format_datetime_into(const PycDateTime* dt, std::string& out) {
+    char buf[64];
+    if (dt->hasTime) {
+        snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                 dt->year, dt->month, dt->day, dt->hour, dt->minute, dt->second);
+    } else {
+        snprintf(buf, sizeof(buf), "%04d-%02d-%02d", dt->year, dt->month, dt->day);
+    }
+    out += buf;
+}
+static void pyc_format_timedelta_into(const PycTimedelta* td, std::string& out) {
+    int64_t h = td->seconds / 3600;
+    int64_t m = (td->seconds % 3600) / 60;
+    int64_t s = td->seconds % 60;
+    char buf[96];
+    if (td->days != 0) {
+        snprintf(buf, sizeof(buf), "%lld day%s, %lld:%02lld:%02lld",
+                 (long long)td->days, (td->days == 1 || td->days == -1) ? "" : "s",
+                 (long long)h, (long long)m, (long long)s);
+    } else {
+        snprintf(buf, sizeof(buf), "%lld:%02lld:%02lld", (long long)h, (long long)m, (long long)s);
+    }
+    out += buf;
+    if (td->microseconds != 0) {
+        char mbuf[16];
+        snprintf(mbuf, sizeof(mbuf), ".%06lld", (long long)td->microseconds);
+        out += mbuf;
+    }
+}
+
 static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
     // Like PyObject_PrintBase but writes NO trailing newline. Used by
     // container printers (list/dict) so we get "[1, 2, 3]" instead of
@@ -737,6 +875,16 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
         return fprintf(fp, "'%s'", obj->str.c_str());
     }
     if (obj->type == 6) return fprintf(fp, "<cell>");
+    if (obj->type == 14) {
+        std::string s;
+        pyc_format_datetime_into(pyc_as_datetime(obj), s);
+        return fprintf(fp, "%s", s.c_str());
+    }
+    if (obj->type == 15) {
+        std::string s;
+        pyc_format_timedelta_into(pyc_as_timedelta(obj), s);
+        return fprintf(fp, "%s", s.c_str());
+    }
     return fprintf(fp, "<object>");
 }
 
@@ -749,6 +897,16 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         char buf[64];
         format_double(buf, sizeof(buf), obj->dvalue);
         int r = fprintf(fp, "%s\n", buf); fflush(fp); return r;
+    }
+    if (obj->type == 14) {
+        std::string s;
+        pyc_format_datetime_into(pyc_as_datetime(obj), s);
+        int r = fprintf(fp, "%s\n", s.c_str()); fflush(fp); return r;
+    }
+    if (obj->type == 15) {
+        std::string s;
+        pyc_format_timedelta_into(pyc_as_timedelta(obj), s);
+        int r = fprintf(fp, "%s\n", s.c_str()); fflush(fp); return r;
     }
     if (obj->type == 13) {
         char rbuf[64], ibuf[64];
@@ -1435,6 +1593,10 @@ PyObject* PyBuiltin_Type(PyObject* obj) {
         case 4: return PyUnicode_FromString("<class 'float'>");
         case 5: return PyUnicode_FromString("<class 'bool'>");
         case 6: return PyUnicode_FromString("<class 'cell'>");
+        case 13: return PyUnicode_FromString("<class 'complex'>");
+        case 14: return PyUnicode_FromString(pyc_as_datetime(obj)->hasTime
+                     ? "<class 'datetime.datetime'>" : "<class 'datetime.date'>");
+        case 15: return PyUnicode_FromString("<class 'datetime.timedelta'>");
         default: return PyUnicode_FromString("<class 'object'>");
     }
 }
@@ -2320,7 +2482,7 @@ static PyObject* g_sys_module = nullptr;
 static PyObject* g_sys_modules = nullptr;
 
 // Forward declarations for the os / subprocess / math / json / random /
-// itertools / collections module dict builders.
+// itertools / collections / datetime module dict builders.
 static PyObject* makeOsModuleDict();
 static PyObject* makeSubprocessModuleDict();
 static PyObject* makeMathModuleDict();
@@ -2328,6 +2490,7 @@ static PyObject* makeJsonModuleDict();
 static PyObject* makeRandomModuleDict();
 static PyObject* makeItertoolsModuleDict();
 static PyObject* makeCollectionsModuleDict();
+static PyObject* makeDatetimeModuleDict();
 
 PyObject* pyc_import_failed(PyObject* modName) {
     if (modName && modName->type == 3) {
@@ -2377,6 +2540,9 @@ PyObject* pyc_import_failed(PyObject* modName) {
         if (modName->str == "collections") {
             return makeCollectionsModuleDict();
         }
+        if (modName->str == "datetime") {
+            return makeDatetimeModuleDict();
+        }
         if (modName->str == "cmath") {
             PyObject* d = PyDict_New();
             auto add = [&](const char* name, const char* token) {
@@ -2413,7 +2579,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
     fprintf(stderr, "ImportError: No module named '%s' "
                     "(pyc supports only synthetic 'sys', 're', 'functools', 'os', "
                     "'subprocess', 'cmath', 'time', 'math', 'json', 'random', 'itertools', "
-                    "and 'collections' modules; "
+                    "'collections', and 'datetime' modules; "
                     "real module loading is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;
@@ -2459,6 +2625,31 @@ static int both_integral(PyObject* a, PyObject* b) {
 
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
     if (!obj || !key) return nullptr;
+    // date/datetime/timedelta attribute reads: handled directly here
+    // (rather than requiring the compiler to have inferred the value's
+    // type via typeOf) so `.year`/`.days`/etc. work even when the value
+    // arrives as an untyped function parameter — lowerAttribute always
+    // calls Pyc_GetItem unconditionally for a bare (non-called) attribute
+    // read, with no typeOf gate, so this is reached from every call site.
+    if (obj->type == 14 && key->type == 3) {
+        PycDateTime* dt = pyc_as_datetime(obj);
+        const std::string& k = key->str;
+        if (k == "year") return PyInt_FromLong(dt->year);
+        if (k == "month") return PyInt_FromLong(dt->month);
+        if (k == "day") return PyInt_FromLong(dt->day);
+        if (k == "hour") return PyInt_FromLong(dt->hasTime ? dt->hour : 0);
+        if (k == "minute") return PyInt_FromLong(dt->hasTime ? dt->minute : 0);
+        if (k == "second") return PyInt_FromLong(dt->hasTime ? dt->second : 0);
+        return nullptr;
+    }
+    if (obj->type == 15 && key->type == 3) {
+        PycTimedelta* td = pyc_as_timedelta(obj);
+        const std::string& k = key->str;
+        if (k == "days") return PyInt_FromLong((long)td->days);
+        if (k == "seconds") return PyInt_FromLong((long)td->seconds);
+        if (k == "microseconds") return PyInt_FromLong((long)td->microseconds);
+        return nullptr;
+    }
     if (obj->type == 1) return PyList_GetItemObj(obj, key); // returns new ref (INCREF inside)
     if (obj->type == 2) {
         for (auto& pair : obj->dict) {
@@ -3443,15 +3634,70 @@ PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
     return PyUnicode_FromString(result.c_str());
 }
 
+// date/datetime/timedelta arithmetic helpers. Implemented via the shared
+// runtime primitives (PyNumber_Add/Subtract/Multiply below) rather than
+// gated on compiler-inferred typeOf, so they work correctly even when a
+// date/timedelta value arrives as an untyped function parameter — Codegen
+// already falls back to calling these functions for any binop the
+// compiler didn't specialize, so making them type-14/15-aware here is
+// what actually makes arithmetic robust across function boundaries.
+static PyObject* pyc_datetime_add_timedelta(const PycDateTime* dt, const PycTimedelta* td, bool negate) {
+    int64_t sign = negate ? -1 : 1;
+    int64_t days = pyc_days_from_civil(dt->year, dt->month, dt->day);
+    if (!dt->hasTime) {
+        // A plain date only cares about the day component of a timedelta
+        // (matches CPython's date.__add__ — a date can't hold a partial day).
+        days += sign * td->days;
+        int y, mo, da;
+        pyc_civil_from_days(days, y, mo, da);
+        return pyc_new_datetime(y, mo, da, 0, 0, 0, false);
+    }
+    int64_t secs = dt->hour * 3600LL + dt->minute * 60LL + dt->second;
+    days += sign * td->days;
+    secs += sign * td->seconds;
+    int64_t extraDay = pyc_floordiv(secs, 86400);
+    days += extraDay;
+    secs -= extraDay * 86400;
+    int y, mo, da;
+    pyc_civil_from_days(days, y, mo, da);
+    int hh = (int)(secs / 3600), mi = (int)((secs % 3600) / 60), ss = (int)(secs % 60);
+    return pyc_new_datetime(y, mo, da, hh, mi, ss, true);
+}
+static PyObject* pyc_datetime_diff(const PycDateTime* a, const PycDateTime* b) {
+    int64_t daysA = pyc_days_from_civil(a->year, a->month, a->day);
+    int64_t daysB = pyc_days_from_civil(b->year, b->month, b->day);
+    if (!a->hasTime && !b->hasTime) return pyc_new_timedelta(daysA - daysB, 0, 0);
+    int64_t secsA = a->hasTime ? (a->hour * 3600LL + a->minute * 60LL + a->second) : 0;
+    int64_t secsB = b->hasTime ? (b->hour * 3600LL + b->minute * 60LL + b->second) : 0;
+    int64_t totalSecs = (daysA - daysB) * 86400 + (secsA - secsB);
+    int64_t days = pyc_floordiv(totalSecs, 86400);
+    int64_t secs = totalSecs - days * 86400;
+    return pyc_new_timedelta(days, secs, 0);
+}
+static PyObject* pyc_timedelta_add(const PycTimedelta* a, const PycTimedelta* b, bool negate) {
+    int64_t sign = negate ? -1 : 1;
+    return pyc_new_timedelta(a->days + sign * b->days, a->seconds + sign * b->seconds,
+                              a->microseconds + sign * b->microseconds);
+}
+static PyObject* pyc_timedelta_mul(const PycTimedelta* a, int64_t n) {
+    return pyc_new_timedelta(a->days * n, a->seconds * n, a->microseconds * n);
+}
+
 PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
     if (!a || !b) return NULL;
     if (a->type == 3 && b->type == 3) return PyString_Concat(a, b);
+    if (a->type == 14 && b->type == 15) return pyc_datetime_add_timedelta(pyc_as_datetime(a), pyc_as_timedelta(b), false);
+    if (a->type == 15 && b->type == 14) return pyc_datetime_add_timedelta(pyc_as_datetime(b), pyc_as_timedelta(a), false);
+    if (a->type == 15 && b->type == 15) return pyc_timedelta_add(pyc_as_timedelta(a), pyc_as_timedelta(b), false);
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) return PyInt_FromLong(a->value + b->value);
     return PyFloat_FromDouble(numeric_val(a) + numeric_val(b));
 }
 
 PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
+    if (a && b && a->type == 14 && b->type == 15) return pyc_datetime_add_timedelta(pyc_as_datetime(a), pyc_as_timedelta(b), true);
+    if (a && b && a->type == 14 && b->type == 14) return pyc_datetime_diff(pyc_as_datetime(a), pyc_as_datetime(b));
+    if (a && b && a->type == 15 && b->type == 15) return pyc_timedelta_add(pyc_as_timedelta(a), pyc_as_timedelta(b), true);
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) return PyInt_FromLong(a->value - b->value);
     return PyFloat_FromDouble(numeric_val(a) - numeric_val(b));
@@ -4831,6 +5077,112 @@ static PyObject* makeCollectionsModuleDict() {
     return d;
 }
 
+// ---- datetime module ----
+// Construction (`datetime.date(...)`/`datetime.datetime(...)`/
+// `datetime.timedelta(...)`) is intercepted at the AST level in
+// Compiler.cpp (mirroring the cmath/re Name-based dispatch pattern) and
+// routed directly to these constructors — not through the generic
+// token+registry/Pyc_Apply path used by math/json/random, since these
+// calls also need to tag the result's compiler-inferred type (via
+// noteType) for the method-call fast path (see IMPLEMENTATION.md for the
+// robust-vs-fast-path distinction: attribute reads, arithmetic, and
+// comparisons work regardless of typeOf tracking via Pyc_GetItem/
+// PyNumber_*/PyObject_CompareBool above; these method-call-syntax
+// functions below only fire when typeOf tracking succeeds).
+static long pyc_arg_int(PyObject* o, long defaultVal) {
+    return is_numeric(o) ? (long)numeric_val(o) : defaultVal;
+}
+
+extern "C" PyObject* PyDateTime_Date(PyObject* y, PyObject* m, PyObject* d) {
+    return pyc_new_datetime((int)pyc_arg_int(y, 1), (int)pyc_arg_int(m, 1), (int)pyc_arg_int(d, 1), 0, 0, 0, false);
+}
+extern "C" PyObject* PyDateTime_Datetime(PyObject* y, PyObject* m, PyObject* d, PyObject* h, PyObject* mi, PyObject* s) {
+    return pyc_new_datetime((int)pyc_arg_int(y, 1), (int)pyc_arg_int(m, 1), (int)pyc_arg_int(d, 1),
+                             (int)pyc_arg_int(h, 0), (int)pyc_arg_int(mi, 0), (int)pyc_arg_int(s, 0), true);
+}
+extern "C" PyObject* PyTimedelta_New(PyObject* days, PyObject* seconds, PyObject* minutes, PyObject* hours, PyObject* weeks) {
+    int64_t d = pyc_arg_int(days, 0), s = pyc_arg_int(seconds, 0);
+    int64_t mi = pyc_arg_int(minutes, 0), h = pyc_arg_int(hours, 0), w = pyc_arg_int(weeks, 0);
+    return pyc_new_timedelta(d + w * 7, s + mi * 60 + h * 3600, 0);
+}
+
+extern "C" PyObject* PyDateTime_Isoformat(PyObject* obj) {
+    PycDateTime* dt = pyc_as_datetime(obj);
+    if (!dt) return PyUnicode_FromString("");
+    char buf[64];
+    if (dt->hasTime) {
+        snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d",
+                 dt->year, dt->month, dt->day, dt->hour, dt->minute, dt->second);
+    } else {
+        snprintf(buf, sizeof(buf), "%04d-%02d-%02d", dt->year, dt->month, dt->day);
+    }
+    return PyUnicode_FromString(buf);
+}
+extern "C" PyObject* PyDateTime_Weekday(PyObject* obj) {
+    PycDateTime* dt = pyc_as_datetime(obj);
+    if (!dt) return PyInt_FromLong(0);
+    return PyInt_FromLong(pyc_weekday_from_days(pyc_days_from_civil(dt->year, dt->month, dt->day)));
+}
+extern "C" PyObject* PyDateTime_Isoweekday(PyObject* obj) {
+    PycDateTime* dt = pyc_as_datetime(obj);
+    if (!dt) return PyInt_FromLong(1);
+    return PyInt_FromLong(pyc_weekday_from_days(pyc_days_from_civil(dt->year, dt->month, dt->day)) + 1);
+}
+extern "C" PyObject* PyTimedelta_TotalSeconds(PyObject* obj) {
+    PycTimedelta* td = pyc_as_timedelta(obj);
+    if (!td) return PyFloat_FromDouble(0.0);
+    return PyFloat_FromDouble((double)td->days * 86400.0 + (double)td->seconds + (double)td->microseconds / 1000000.0);
+}
+
+// date.today() / datetime.now(): a real wall-clock read, unlike
+// time.perf_counter's fixed-constant stub — but for the same reason that
+// stub exists, calls to these are excluded from CPython-exact-match test
+// assertions (there's no way to make "the current date" deterministic).
+extern "C" PyObject* PyDateTime_Today(PyObject* args) {
+    (void)args;
+    time_t t = time(nullptr);
+    struct tm lt;
+    localtime_r(&t, &lt);
+    return pyc_new_datetime(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, 0, 0, 0, false);
+}
+extern "C" PyObject* PyDateTime_Now(PyObject* args) {
+    (void)args;
+    time_t t = time(nullptr);
+    struct tm lt;
+    localtime_r(&t, &lt);
+    return pyc_new_datetime(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday,
+                             lt.tm_hour, lt.tm_min, lt.tm_sec, true);
+}
+
+// makeDatetimeModuleDict: `date`/`datetime`/`timedelta` constructors are
+// intercepted at the AST level and never actually looked up in this dict
+// (see the comment above) — it exists so `import datetime` binds a real
+// dict rather than erroring, and so `datetime.date.today()` /
+// `datetime.datetime.now()` (token+registry, not AST-intercepted, since
+// they take no constructor-shaped arguments) resolve normally. Nested
+// under `date`/`datetime` sub-dicts to match the real attribute path.
+static PyObject* makeDatetimeModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](PyObject* target, const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(target, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    PyObject* dateSub = PyDict_New();
+    addTok(dateSub, "today", "PyDateTime_Today");
+    PyObject* dateKey = PyUnicode_FromString("date");
+    PyDict_SetItem(d, dateKey, dateSub);
+    Py_DECREF(dateKey); Py_DECREF(dateSub);
+
+    PyObject* datetimeSub = PyDict_New();
+    addTok(datetimeSub, "now", "PyDateTime_Now");
+    PyObject* datetimeKey = PyUnicode_FromString("datetime");
+    PyDict_SetItem(d, datetimeKey, datetimeSub);
+    Py_DECREF(datetimeKey); Py_DECREF(datetimeSub);
+    return d;
+}
+
 // makeOsModuleDict: builds a dict that emulates the os module. The
 // `os.environ` entry is itself a dict; `os.path` is a dict whose
 // `exists` / `isfile` / `isdir` entries are string tokens naming
@@ -5195,6 +5547,8 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyItertools_ZipLongest",   PyItertools_ZipLongest);
     pyc_register_callable("PyCollections_Counter",    PyCollections_Counter);
     pyc_register_callable("PyCollections_MostCommon", PyCollections_MostCommon);
+    pyc_register_callable("PyDateTime_Today", PyDateTime_Today);
+    pyc_register_callable("PyDateTime_Now",   PyDateTime_Now);
 }
 
 // Look up an attribute on the global `sys` module. Returns a strong
@@ -5238,6 +5592,8 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
     if (a->type == 0 && b->type == 3) return PyString_Repeat(b, a);
     if (a->type == 1 && b->type == 0) return PyList_Repeat(a, b->value);
     if (a->type == 0 && b->type == 1) return PyList_Repeat(b, a->value);
+    if (a->type == 15 && (b->type == 0 || b->type == 5)) return pyc_timedelta_mul(pyc_as_timedelta(a), b->value);
+    if ((a->type == 0 || a->type == 5) && b->type == 15) return pyc_timedelta_mul(pyc_as_timedelta(b), a->value);
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) return PyInt_FromLong(a->value * b->value);
     return PyFloat_FromDouble(numeric_val(a) * numeric_val(b));
@@ -5442,6 +5798,42 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
             case 1: return cmp != 0;
             case 2: return cmp <  0;
             case 3: return cmp >  0;
+            case 4: return cmp <= 0;
+            case 5: return cmp >= 0;
+        }
+    }
+    // date/datetime/timedelta comparison. Robust regardless of
+    // compiler-inferred typeOf: icmp always routes through this one
+    // function, so this works even for values arriving as untyped
+    // function parameters.
+    if (a->type == 14 && b->type == 14) {
+        PycDateTime* da = pyc_as_datetime(a);
+        PycDateTime* db = pyc_as_datetime(b);
+        int64_t daysA = pyc_days_from_civil(da->year, da->month, da->day);
+        int64_t daysB = pyc_days_from_civil(db->year, db->month, db->day);
+        int64_t secsA = da->hasTime ? (da->hour * 3600LL + da->minute * 60LL + da->second) : 0;
+        int64_t secsB = db->hasTime ? (db->hour * 3600LL + db->minute * 60LL + db->second) : 0;
+        int cmp = (daysA != daysB) ? (daysA < daysB ? -1 : 1) : (secsA != secsB ? (secsA < secsB ? -1 : 1) : 0);
+        switch (op) {
+            case 0: return cmp == 0;
+            case 1: return cmp != 0;
+            case 2: return cmp < 0;
+            case 3: return cmp > 0;
+            case 4: return cmp <= 0;
+            case 5: return cmp >= 0;
+        }
+    }
+    if (a->type == 15 && b->type == 15) {
+        PycTimedelta* ta = pyc_as_timedelta(a);
+        PycTimedelta* tb = pyc_as_timedelta(b);
+        int cmp = (ta->days != tb->days) ? (ta->days < tb->days ? -1 : 1)
+                : (ta->seconds != tb->seconds) ? (ta->seconds < tb->seconds ? -1 : 1)
+                : (ta->microseconds != tb->microseconds) ? (ta->microseconds < tb->microseconds ? -1 : 1) : 0;
+        switch (op) {
+            case 0: return cmp == 0;
+            case 1: return cmp != 0;
+            case 2: return cmp < 0;
+            case 3: return cmp > 0;
             case 4: return cmp <= 0;
             case 5: return cmp >= 0;
         }

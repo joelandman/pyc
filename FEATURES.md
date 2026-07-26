@@ -190,6 +190,60 @@ f(b=3, a=4)                    keyword call arguments
   itertools results that would be tuples in real Python (`product`,
   `combinations`, `permutations`, `zip_longest` entries) are plain lists.
 
+## Datetime
+
+- `datetime` module: `date(year, month, day)`, `datetime(year, month, day,
+  hour=0, minute=0, second=0)`, `timedelta(days=0, seconds=0, minutes=0,
+  hours=0, weeks=0)` — two new runtime types (tags 14/15, see
+  IMPLEMENTATION.md), not eagerly-materialized generic values like most
+  other stdlib stubs. Works via `import datetime` (both
+  `datetime.date(...)` and `datetime.date.today()` qualified forms, and
+  `import datetime as dt`), and via `from datetime import date, datetime,
+  timedelta` (bare names, including `as` aliasing) — both import styles
+  construct through the same code path.
+- Attributes: `.year`/`.month`/`.day` (date and datetime),
+  `.hour`/`.minute`/`.second` (datetime only), `.days`/`.seconds` (note:
+  **not** `.microseconds` — always 0, no sub-second precision) on
+  timedelta.
+- Arithmetic: `date/datetime + timedelta`, `date/datetime - timedelta` →
+  same type; `date - date` / `datetime - datetime` → `timedelta`;
+  `timedelta +/- timedelta`; `timedelta * int` (either operand order).
+- Comparisons: `==`, `!=`, `<`, `>`, `<=`, `>=` between two values of the
+  same type.
+- `str()`/`print()`: `date` → `"YYYY-MM-DD"`; `datetime` →
+  `"YYYY-MM-DD HH:MM:SS"` (space separator, matching CPython's `str()`);
+  `timedelta` → CPython's own text form (`"H:MM:SS"` or `"N day(s),
+  H:MM:SS"`).
+- Methods: `.isoformat()` (datetime uses `"T"` as the date/time separator,
+  differing from `str()`'s space), `.weekday()`, `.isoweekday()`,
+  `.total_seconds()` (returns float; see the float-formatting caveat
+  below).
+- `datetime.date.today()` / `datetime.datetime.now()` — real wall-clock
+  reads (`time()`/`localtime_r()`), not seeded/fixed like `random`, so not
+  suitable for exact-match testing against a fixed CPython run.
+- **Method calls require the compiler to statically see the value's type**
+  (construction, a plain assignment, or a function's return value — all
+  confirmed to propagate) — the same known limitation class as
+  `Match.group()`. This does **not** hold for a value received as a plain
+  function parameter: `def f(d): return d.isoformat()` returns `None`
+  instead of raising or working, because pyc's `typeOf` type-tracking
+  doesn't flow through parameters at all (see IMPLEMENTATION.md). By
+  contrast, attribute reads (`.year`), arithmetic (`+`/`-`/`*`),
+  comparisons, and `str()`/`print()` are all robust to this and work
+  correctly even on an untyped parameter, because they route through
+  runtime-tag dispatch (`Pyc_GetItem`, `PyNumber_Add`/etc.,
+  `PyObject_CompareBool`, `PyObject_PrintBase`) rather than compile-time
+  type inference.
+- `type()` on a datetime value correctly reports `<class 'datetime.date'>`
+  / `<class 'datetime.datetime'>` / `<class 'datetime.timedelta'>`.
+- **Newly discovered, pre-existing, unrelated bug**: pyc's float formatter
+  prints any whole-valued float whose integer part is evenly divisible by
+  10 in scientific notation instead of matching CPython's fixed-point
+  form — e.g. `print(20.0)` → `"2e+01"` instead of `"20.0"`; `print(100.0)`
+  → `"1e+02"`. This is not specific to datetime (a bare `print(20.0)`
+  reproduces it) but surfaces easily via `timedelta.total_seconds()`,
+  since most human-chosen durations round evenly. See IMPLEMENTATION.md.
+
 ## Assignment Forms
 
 ```python

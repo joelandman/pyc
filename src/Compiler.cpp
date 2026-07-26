@@ -1020,7 +1020,8 @@ class LoweringVisitor {
                 const std::string& name = node->args[i];
                 const std::string& orig = (i < origNames.size()) ? origNames[i] : name;
                 ir.addModuleGlobal(name);
-                
+                moduleNameAliases[name] = orig;
+
                 if (compiledModules.count(orig) > 0) {
                     // Module was compiled — pyc_run_module runs it (once,
                     // cached via sys.modules) and returns its dict directly.
@@ -1199,6 +1200,22 @@ class LoweringVisitor {
                             callableTokenTemps.insert(tokenVal);
                             ir.addInstruction(currentFunc, "assign", {tokenVal}, name);
                             continue;
+                        }
+
+                        // `from datetime import date/datetime/timedelta [as X]` —
+                        // record the alias so bare `X(...)` calls (lowerCall)
+                        // and `X.today()`/`X.now()` (lowerMethodCall) route to
+                        // the same direct-call construction as the
+                        // `datetime.date(...)`-qualified form. The module dict
+                        // has no real "date"/"datetime"/"timedelta" entries
+                        // (only nested `today`/`now` tokens under
+                        // makeDatetimeModuleDict()), so the fallback
+                        // Pyc_GetItem binding below is a harmless None — real
+                        // code always calls the alias directly, which is
+                        // intercepted before that binding is ever read.
+                        if (mod == "datetime" &&
+                            (origName == "date" || origName == "datetime" || origName == "timedelta")) {
+                            datetimeCtorAliases[name] = origName;
                         }
 
                         std::string attrKey = "c" + std::to_string(tempCounter++);
@@ -2744,6 +2761,20 @@ class LoweringVisitor {
     std::unordered_set<std::string> superProxyTemps;
     // B6: map from class name to its list of base class names (for multiple inheritance)
     std::unordered_map<std::string, std::vector<std::string>> classBases;
+    // Local names bound via `from datetime import date/datetime/timedelta [as X]`,
+    // mapping the local name to which constructor it refers to ("date"/
+    // "datetime"/"timedelta"). `datetime.date(...)`-qualified calls are
+    // recognized structurally in lowerMethodCall regardless of this map;
+    // this map exists only to make the equally-common bare-name form
+    // (`date(...)` after a from-import) route to the same construction
+    // path in lowerCall, since that's a plain Name-callee Call node.
+    std::unordered_map<std::string, std::string> datetimeCtorAliases;
+    // Local name -> original module name for every `import X [as Y]`
+    // (Y -> X; identity for `import X` with no asname). Lets datetime's
+    // `X.date(...)`/`X.date.today()` dispatch recognize `import datetime
+    // as dt` the same way it already recognizes the unaliased `datetime`
+    // name.
+    std::unordered_map<std::string, std::string> moduleNameAliases;
     // User functions (defs or synthetic lambdas) that contain a return of a
     // callable token value. Calls to them have their result temp marked so
     // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
@@ -3689,11 +3720,65 @@ class LoweringVisitor {
         tempCounter = savedTemp;
     }
 
+    // Shared by both `datetime.date(...)`-qualified construction
+    // (lowerMethodCall) and bare `date(...)` construction after a
+    // from-import (lowerCall, via datetimeCtorAliases). `posArgs` must
+    // already be lowered positional args (Keyword children excluded);
+    // keyword args are read directly from `node` by name.
+    std::string lowerDatetimeConstruct(const std::string& which, const ASTNode* node,
+                                        const std::vector<std::string>& posArgs) {
+        auto kwArg = [&](const char* name) -> std::string {
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type == "Keyword" && ch->id == name && !ch->children.empty()) {
+                    return lowerExpr(ch->children[0].get());
+                }
+            }
+            return "";
+        };
+        auto posOrKw = [&](size_t posIdx, const char* kwName) -> std::string {
+            std::string kw = kwArg(kwName);
+            if (!kw.empty()) return kw;
+            return posIdx < posArgs.size() ? posArgs[posIdx] : "";
+        };
+        std::string res = "t" + std::to_string(tempCounter++);
+        if (which == "date") {
+            ir.addInstruction(currentFunc, "call",
+                {"PyDateTime_Date", posOrKw(0, "year"), posOrKw(1, "month"), posOrKw(2, "day")}, res);
+            noteType(res, "date");
+        } else if (which == "datetime") {
+            ir.addInstruction(currentFunc, "call",
+                {"PyDateTime_Datetime", posOrKw(0, "year"), posOrKw(1, "month"), posOrKw(2, "day"),
+                 posOrKw(3, "hour"), posOrKw(4, "minute"), posOrKw(5, "second")}, res);
+            noteType(res, "datetime");
+        } else { // "timedelta"
+            ir.addInstruction(currentFunc, "call",
+                {"PyTimedelta_New", posOrKw(0, "days"), posOrKw(1, "seconds"),
+                 kwArg("minutes"), kwArg("hours"), kwArg("weeks")}, res);
+            noteType(res, "timedelta");
+        }
+        return res;
+    }
+
     std::string lowerCall(const ASTNode* node) {
         // Method call: obj.method(args) — func is an Attribute node
          if (!node->children.empty() && node->children[0] &&
             node->children[0]->type == "Attribute") {
             return lowerMethodCall(node);
+        }
+        // datetime.date/datetime/timedelta bound to a bare name via
+        // `from datetime import date` (etc.) — construct directly, same
+        // as the `datetime.date(...)`-qualified form in lowerMethodCall.
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Name" &&
+            datetimeCtorAliases.count(node->children[0]->id) &&
+            !isShadowedLocal(node->children[0]->id)) {
+            std::vector<std::string> posArgs;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type != "Keyword") posArgs.push_back(lowerExpr(ch));
+            }
+            return lowerDatetimeConstruct(datetimeCtorAliases[node->children[0]->id], node, posArgs);
         }
         // super() call — returns a proxy that looks up methods on the parent class
         if (!node->children.empty() && node->children[0] &&
@@ -6998,6 +7083,94 @@ class LoweringVisitor {
             // Other cmath.* methods fall through to default lookup.
         }
 
+        // datetime module dispatch. Two AST shapes, both recognized
+        // structurally (like re/cmath above) rather than via typeOf,
+        // since the receiver at construction time is always the bare
+        // module name:
+        //   datetime.date(y, m, d) / datetime.datetime(y, m, d, ...) /
+        //   datetime.timedelta(...)   -- attr's base is Name("datetime")
+        //   datetime.date.today() / datetime.datetime.now()
+        //                              -- attr's base is itself an
+        //                                 Attribute(Name("datetime"), "date"/"datetime")
+        // noteType(res, ...) after construction drives the typeOf-gated
+        // method-call dispatch further below (.isoformat()/.weekday()/
+        // .total_seconds()) — see IMPLEMENTATION.md for why attribute
+        // reads/arithmetic/comparisons/str() don't need this (they're
+        // robust to untyped values via runtime-tag dispatch in
+        // Runtime.cpp) while these method calls do.
+        {
+            // True for the literal name "datetime" or any `import datetime
+            // as X` alias of it. Unlike datetimeCtorAliases below, no
+            // isShadowedLocal check here: `import datetime [as X]` itself
+            // calls noteType(X, "dict"), so valueTypes.count(X) is always
+            // true right after a legitimate import — isShadowedLocal can't
+            // distinguish that from real shadowing for this name.
+            auto isDatetimeModuleName = [&](const ASTNode* n) -> bool {
+                if (!n || n->type != "Name") return false;
+                if (n->id == "datetime") return true;
+                auto it = moduleNameAliases.find(n->id);
+                return it != moduleNameAliases.end() && it->second == "datetime";
+            };
+            if (attr->children.size() >= 1 && attr->children[0] &&
+                isDatetimeModuleName(attr->children[0].get()) &&
+                (methodName == "date" || methodName == "datetime" || methodName == "timedelta")) {
+                return lowerDatetimeConstruct(methodName, node, args);
+            }
+            // `datetime.date.today()` / `datetime.datetime.now()` (including
+            // `import datetime as dt; dt.date.today()`), and the equally
+            // valid bare-alias form after `from datetime import
+            // date`/`datetime`: `date.today()` / `datetime.now()`.
+            if (attr->children.size() >= 1 && attr->children[0]) {
+                const ASTNode* base = attr->children[0].get();
+                std::string innerKind; // "date" or "datetime", if recognized
+                if (base->type == "Attribute" && !base->children.empty() && base->children[0] &&
+                    isDatetimeModuleName(base->children[0].get())) {
+                    innerKind = base->id;
+                } else if (base->type == "Name" && datetimeCtorAliases.count(base->id) &&
+                           !isShadowedLocal(base->id)) {
+                    innerKind = datetimeCtorAliases.at(base->id);
+                }
+                if (innerKind == "date" && methodName == "today") {
+                    ir.addInstruction(currentFunc, "call", {"PyDateTime_Today"}, res);
+                    noteType(res, "date");
+                    return res;
+                }
+                if (innerKind == "datetime" && methodName == "now") {
+                    ir.addInstruction(currentFunc, "call", {"PyDateTime_Now"}, res);
+                    noteType(res, "datetime");
+                    return res;
+                }
+            }
+        }
+        // .isoformat()/.weekday()/.isoweekday()/.total_seconds() — dispatch
+        // when the inferred type of obj is a date/datetime/timedelta
+        // (tagged by noteType at construction above). Same fast-path-only
+        // limitation as Match.group() below: requires typeOf tracking to
+        // have followed the value to this call site (works right after
+        // construction, through simple assignment, and as a return value;
+        // not guaranteed for an untyped function parameter — use
+        // str()/attribute access instead in that case, both robust).
+        if (methodName == "isoformat" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
+            ir.addInstruction(currentFunc, "call", {"PyDateTime_Isoformat", obj}, res, "str");
+            noteType(res, "str");
+            return res;
+        }
+        if (methodName == "weekday" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
+            ir.addInstruction(currentFunc, "call", {"PyDateTime_Weekday", obj}, res, "int");
+            noteType(res, "int");
+            return res;
+        }
+        if (methodName == "isoweekday" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
+            ir.addInstruction(currentFunc, "call", {"PyDateTime_Isoweekday", obj}, res, "int");
+            noteType(res, "int");
+            return res;
+        }
+        if (methodName == "total_seconds" && typeOf(obj) == "timedelta") {
+            ir.addInstruction(currentFunc, "call", {"PyTimedelta_TotalSeconds", obj}, res, "float");
+            noteType(res, "float");
+            return res;
+        }
+
         // Match.group(i) — dispatch when the inferred type of obj is a
         // Match (which we'll tag with "match" when we construct it).
         if (methodName == "group" && typeOf(obj) == "match") {
@@ -8153,6 +8326,7 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
         {"itertools",  {"chain", "product", "combinations", "permutations", "starmap",
                          "islice", "zip_longest"}},
         {"collections", {"Counter", "most_common"}},
+        {"datetime",   {"date", "datetime", "timedelta"}},
     };
     return table;
 }

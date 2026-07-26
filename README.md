@@ -6,7 +6,7 @@ LLVM IR, optimizes it, and produces standalone native executables via a minimal
 `PyObject*`-based boxed runtime with refcounting.
 
 Written in C++ with Clang++ and LLVM 18. No C/C++ intermediate language for
-the normal compiler path. **300/300 tests passing** (runner reports 300/300, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
+the normal compiler path. **305/305 tests passing** (runner reports 305/305, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
 
 ## Build
 
@@ -78,7 +78,7 @@ See [FEATURES.md](FEATURES.md) for a complete list of supported features.
 - **Exceptions**: `try/except/finally/else`, structured exceptions, exception classes
 - **Statements**: `with`, `match/case`, `assert`, `del`, walrus `:=`, `import`
 - **Builtins**: `print`, `range`, `len`, `str`, `int`, `float`, `complex`, `abs`, `min`, `max`, `list`, `enumerate`, `zip`, `sum`, `sorted`, `any`, `all`, `isinstance`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`, `round`, `divmod`, `pow`, `reversed`, `cmp_to_key`
-- **Standard library stubs**: `os.path` (exists, isfile, isdir), `subprocess` (call, check_output), `sys`, `cmath`, `math` (~25 functions wrapping libm), `json` (dumps/loads), `random` (CPython-exact MT19937), `itertools`/`collections` (eager-list subset — see FEATURES.md)
+- **Standard library stubs**: `os.path` (exists, isfile, isdir), `subprocess` (call, check_output), `sys`, `cmath`, `math` (~25 functions wrapping libm), `json` (dumps/loads), `random` (CPython-exact MT19937), `itertools`/`collections` (eager-list subset), `datetime` (`date`/`datetime`/`timedelta` — see FEATURES.md)
 
 ## Architecture
 
@@ -105,7 +105,8 @@ native executable
 dependency. Provides `PyObject` (flat struct: `refcount`, `type`, `value`/`dvalue`/
 `list`/`dict`/`str`/`cell_content`), refcounting, arithmetic, comparison, print,
 and all builtins. Types: int, list, dict, str, float, bool/None, cell, super
-proxy, compiled regex, match object, exception, function, exception class, complex.
+proxy, compiled regex, match object, exception, function, exception class,
+complex, date/datetime, timedelta.
 Exceptions use setjmp/longjmp frames. Callables dispatch through a registry of
 `__apply__` adapters (`Pyc_Apply`). Linked into every compiled binary.
 

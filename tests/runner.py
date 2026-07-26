@@ -1197,6 +1197,63 @@ c = collections.Counter(["a", "a", "a", "a", "b", "b", "c"])
 print(collections.most_common(c))
 print(collections.most_common(c, 2))
 """, "[1, 2, 3, 4, 5]\n[[1, 3], [1, 4], [2, 3], [2, 4]]\n[[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]]\n[[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]]\n[[1, 2], [1, 3], [2, 1], [2, 3], [3, 1], [3, 2]]\n[1, 2, 3]\n[3, 7, 11]\n[[1, 10], [2, 20], [3, None]]\n[['a', 4], ['b', 2], ['c', 1]]\n[['a', 4], ['b', 2]]\n"),
+    # datetime module (synthetic types, tags 14/15 — see IMPLEMENTATION.md).
+    # Covers both `import datetime` / `datetime.date(...)`-qualified and
+    # `from datetime import date, timedelta` bare-name construction, plus
+    # attribute reads, arithmetic, comparisons, str()/isoformat(), and the
+    # parameter-passing-robust primitives (year_of/show below take an
+    # untyped parameter and still work via Pyc_GetItem/PyObject_PrintBase,
+    # unlike .isoformat()/.weekday()/.total_seconds() which require typeOf
+    # to see the construction — see the method-call dispatch note in
+    # Compiler.cpp's lowerMethodCall). total_seconds() uses 93 seconds
+    # (not evenly divisible by 10) to sidestep a separate, pre-existing,
+    # unrelated float-formatting bug where whole floats divisible by 10
+    # print in scientific notation (e.g. `print(20.0)` -> "2e+01" instead
+    # of "20.0" — see IMPLEMENTATION.md).
+    ("""
+import datetime
+from datetime import date, timedelta
+
+d = datetime.date(2024, 3, 15)
+print(d)
+print(d.year, d.month, d.day)
+print(d.isoformat())
+print(d.weekday())
+print(d.isoweekday())
+
+dt = datetime.datetime(2024, 3, 15, 9, 30, 45)
+print(dt)
+print(dt.isoformat())
+print(dt.hour, dt.minute, dt.second)
+
+td = datetime.timedelta(days=5, hours=3)
+print(td)
+print(td.days, td.seconds)
+
+td_small = datetime.timedelta(minutes=1, seconds=33)
+print(td_small.total_seconds())
+
+d2 = d + datetime.timedelta(days=10)
+print(d2)
+d3 = d2 - d
+print(d3)
+print(type(d3))
+
+print(d < d2)
+print(d == d)
+print(d != d2)
+
+d4 = date(2024, 1, 1)
+td2 = timedelta(weeks=1)
+print(d4 + td2)
+
+def year_of(x):
+    return x.year
+def show(x):
+    return str(x)
+print(year_of(d))
+print(show(dt))
+""", "2024-03-15\n2024 3 15\n2024-03-15\n4\n5\n2024-03-15 09:30:45\n2024-03-15T09:30:45\n9 30 45\n5 days, 3:00:00\n5 10800\n93.0\n2024-03-25\n10 days, 0:00:00\n<class 'datetime.timedelta'>\nTrue\nTrue\nTrue\n2024-01-08\n2024\n2024-03-15 09:30:45\n"),
     # B7: Import / module system tests
      # These require utils.py to be in the same directory
      ("b7_import.py", []),
