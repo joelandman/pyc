@@ -910,9 +910,16 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 if (i > 0) node->id += " ";
                 node->id += name;
                 if (!asname.empty()) {
+                    // `import a.b.c as x` binds `x` directly to the deepest
+                    // submodule.
                     node->args.push_back(asname);
                 } else {
-                    node->args.push_back(name);
+                    // `import a.b.c` (no asname) binds only the top-level
+                    // component `a` in the current scope — `a.b` and `a.b.c`
+                    // are then reached via attribute access on `a`, not as
+                    // separate bound names.
+                    auto dot = name.find('.');
+                    node->args.push_back(dot == std::string::npos ? name : name.substr(0, dot));
                 }
                 Py_XDECREF(alias);
             }

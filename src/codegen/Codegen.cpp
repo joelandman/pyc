@@ -258,7 +258,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::Function::Create(pycImportModuleTy, llvm::Function::ExternalLinkage, "pyc_import_module", module.get());
     llvm::FunctionType* pycImportFromTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(pycImportFromTy, llvm::Function::ExternalLinkage, "pyc_import_from_module", module.get());
-    llvm::FunctionType* pycRunModuleTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy}, false);
+    llvm::FunctionType* pycRunModuleTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(pycRunModuleTy, llvm::Function::ExternalLinkage, "pyc_run_module", module.get());
     
     // os.path stub functions

@@ -241,8 +241,11 @@ PyObject* pyc_import_module(const char* module_name);
 PyObject* pyc_import_from_module(const char* module_name, const char* name);
 // Clear the module registry (for testing/cleanup)
 void pyc_clear_modules(void);
-// B7: Run a module's entry point by name (called by import handling)
-void pyc_run_module(PyObject* module_name);
+// B7: Run a module's entry point by name (called by import handling).
+// Cached via sys.modules: a module's top-level code runs at most once.
+// Returns the module's dict (a new/owned reference), or NULL if the name
+// isn't a known compiled module.
+PyObject* pyc_run_module(PyObject* module_name);
 
 void* pyc_alloc(size_t size);
 void  pyc_free(void* obj);
