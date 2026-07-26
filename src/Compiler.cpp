@@ -694,11 +694,20 @@ class LoweringVisitor {
              lastLambdaSynthetic.clear();
             // Save and clear numericLocals for this function scope
             std::unordered_set<std::string> savedNumericLocals = numericLocals;
+            // Save and clear numericFloatLocals for this function scope (mirrors
+            // numericLocals above). Without this, float-typed parameter names
+            // inferred for a nested def (e.g. "xmin" in fill_z(z, N, xmin, dx, ...))
+            // leak into the enclosing/module scope's numericFloatLocals and cause
+            // later module-level globals with the same name to be misclassified
+            // as native float locals in codegen (their boxed global store is
+            // skipped, leaving the global permanently null).
+            std::unordered_set<std::string> savedNumericFloatLocals = numericFloatLocals;
             // Fresh try-scope state for the nested function's body — its
             // returns must not run the enclosing scope's try exits.
             std::vector<ActiveTry> savedActiveTries = activeTries; activeTries.clear();
             std::vector<size_t> savedLoopTryDepths = loopTryDepths; loopTryDepths.clear();
             numericLocals.clear();
+            numericFloatLocals.clear();
             complexVars.clear();
 
             // B5: allocate owned cells (for names we assign here that inner scopes close over via nonlocal).
@@ -854,8 +863,9 @@ class LoweringVisitor {
                 fnr.numericFloatLocals = std::vector<std::string>(numericFloatLocals.begin(), numericFloatLocals.end());
                 break;
             }
-            // Restore numericLocals to outer scope
+            // Restore numericLocals/numericFloatLocals to outer scope
             numericLocals = savedNumericLocals;
+            numericFloatLocals = savedNumericFloatLocals;
             activeTries = savedActiveTries;
             loopTryDepths = savedLoopTryDepths;
             currentFunc = saved;   // restore context for siblings (important for top-level code after defs)

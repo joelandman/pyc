@@ -2212,12 +2212,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
                 llvm::Type* i64Ty = llvm::Type::getInt64Ty(context);
                 std::string srcName = srcNameAssign;
+                // A module-level global must always end up boxed in its pyc_global_*
+                // slot, never diverted into a function-local native i64/f64 alloca —
+                // otherwise other functions that read the global (e.g. via a call
+                // argument) see it as permanently null. Check this once up front and
+                // use it to gate the native-local fast paths below.
+                bool isModuleGlobal = module->getNamedGlobal("pyc_global_" + inst.result) != nullptr;
                 // If RHS is already a native double (e.g. dt*pow chain), store as f64 local
                 // even when lowering typed the temp "boxed" (param types known only post-pass).
-                bool forceF64 = (inst.resultType == "float") ||
+                bool forceF64 = !isModuleGlobal && ((inst.resultType == "float") ||
                     (src && src->getType()->isDoubleTy() &&
                      !inst.result.empty() && inst.result[0] != 't' && inst.result[0] != 'c' &&
-                     inst.result.rfind("__", 0) != 0);
+                     inst.result.rfind("__", 0) != 0));
 
                  // If target currently has an i64 slot (A2.1 numeric local or range var), handle separately.
                  auto tit0 = valueMap.find(inst.result);
@@ -2243,8 +2249,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
                   // A5: If target is a numeric local (proven to stay numeric), use native i64 storage.
                   bool isNumericLocal = false;
-                  for (const auto& nl : f.numericLocals) {
-                      if (nl == inst.result) { isNumericLocal = true; break; }
+                  if (!isModuleGlobal) {
+                      for (const auto& nl : f.numericLocals) {
+                          if (nl == inst.result) { isNumericLocal = true; break; }
+                      }
                   }
                  if (isNumericLocal && src->getType() == i64Ty) {
                      // Check if target already has an i64 alloca (from a prior i64assign or numeric local setup)
@@ -2275,7 +2283,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
                    // A6 / f64assign: native f64 storage for proven float locals
                    bool isFloatLocal = forceF64;
-                   if (!isFloatLocal) {
+                   if (!isFloatLocal && !isModuleGlobal) {
                        for (const auto& nfl : f.numericFloatLocals) {
                            if (nfl == inst.result) { isFloatLocal = true; break; }
                        }
