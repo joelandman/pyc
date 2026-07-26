@@ -2447,8 +2447,26 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                                valueMap[inst.result] = res;
                            }
                        }
-                       emitDecRefIfOwned(aName);
-                       emitDecRefIfOwned(bName);
+                        emitDecRefIfOwned(aName);
+                        emitDecRefIfOwned(bName);
+                        continue;
+                    }
+                   // Pyc_Apply(token, argList) — dynamic dispatch via callable registry
+                   if (funcName == "Pyc_Apply" && inst.operands.size() >= 3) {
+                       std::string tokenName = inst.operands[1].name;
+                       std::string argListName = inst.operands[2].name;
+                       llvm::Value* tokenVal = getAsPyObject(tokenName);
+                       llvm::Value* argListVal = getAsPyObject(argListName);
+                       llvm::Function* applyFn = module->getFunction("Pyc_Apply");
+                       if (applyFn) {
+                           llvm::Value* res = builder.CreateCall(applyFn, {tokenVal, argListVal}, inst.result);
+                           if (!inst.result.empty()) {
+                               valueMap[inst.result] = res;
+                               markOwned(inst.result);
+                           }
+                       }
+                       emitDecRefIfOwned(tokenName);
+                       emitDecRefIfOwned(argListName);
                        continue;
                    }
                     // PyComplex_New(real: double, imag: double) — takes native doubles, not boxed ptrs

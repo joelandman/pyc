@@ -117,11 +117,12 @@ class LoweringVisitor {
                 std::string modDict = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyDict_New"}, modDict);
                 
-                // Add __name__ to the module dict
+                // Add __name__ to the module dict - always "__main__" for top-level module
                 std::string nameKey = "c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"__name__\""}, nameKey, "str");
+                std::string moduleName = "__main__";
                 std::string nameVal = "c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"\"" + currentFunc + "\""}, nameVal, "str");
+                ir.addInstruction(currentFunc, "const", {"\"" + moduleName + "\""}, nameVal, "str");
                 ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, nameKey, nameVal}, "set_name");
                 
                 // Add each global to the module dict

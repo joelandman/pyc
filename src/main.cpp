@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
                    << "  --dynamic-link  link modules dynamically instead of statically\n";
         return 1;
     }
-    std::string input = argv[1];
+    std::string input;
     std::string output = "a.out";
     bool useStatic = false;
     int optLevel = 2;
@@ -69,7 +69,7 @@ int main(int argc, char** argv) {
     std::string pythonPath;
     std::string pystdlibPath;
     bool dynamicLink = false;
-    for (int i = 2; i < argc; ++i) {
+    for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         std::cerr << "DEBUG: Processing arg[" << i << "]=" << arg << "\n";
         if (arg == "-o" && i + 1 < argc) output = argv[++i];
@@ -99,6 +99,7 @@ int main(int argc, char** argv) {
         else if (arg == "--python" && i + 1 < argc) pythonPath = argv[++i];
         else if (arg.rfind("--pystdlib=", 0) == 0) pystdlibPath = arg.substr(11);
         else if (arg == "--pystdlib" && i + 1 < argc) pystdlibPath = argv[++i];
+        else if (input.empty()) input = arg;
     }
     pyc::Compiler c;
     std::cerr << "DEBUG: Main entry point called with argc=" << argc << "\n";
