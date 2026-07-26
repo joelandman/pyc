@@ -142,6 +142,54 @@ f(b=3, a=4)                    keyword call arguments
 - Builtin: `complex()`, `complex(3)`, `complex(3, 4)`, `complex("3+4j")`
 - cmath module: `sqrt`, `log`, `exp`, `sin`, `cos`, `tan`
 
+## Math
+
+- `math` module: `sqrt`, `floor`, `ceil`, `trunc`, `pow`, `log` (natural or
+  with a base), `log2`, `log10`, `exp`, `sin`/`cos`/`tan`,
+  `asin`/`acos`/`atan`/`atan2`, `hypot`, `fabs`, `fmod`, `degrees`,
+  `radians`, `isnan`/`isinf`/`isfinite`, `gcd`, `factorial`, and the
+  constants `pi`, `e`, `tau`, `inf`, `nan` — wraps libm, works via
+  `import math`, `from math import ...` (including `*`), and aliasing
+
+## JSON
+
+- `json` module: `dumps(obj)` / `loads(s)` — operates on the generic boxed
+  value tree (dict/list/str/int/float/bool/None), no new types. Supports
+  nested structures, string escaping, and JSON `null`/`true`/`false`. No
+  `indent`/`sort_keys`/custom-encoder keyword arguments. Multi-key dict
+  `dumps()` output is not guaranteed to match CPython's key order (see the
+  dict-ordering limitation in IMPLEMENTATION.md)
+
+## Random
+
+- `random` module: `seed(n)`, `random()`, `randrange(stop)` /
+  `randrange(start, stop)`, `randint(a, b)`, `uniform(a, b)`, `choice(seq)`,
+  `shuffle(list)` — a from-scratch MT19937 generator replicating CPython's
+  `_randommodule.c` bit-for-bit (same state, tempering, and integer-seeding
+  algorithm), so `random.seed(n)` followed by any of these produces output
+  identical to real CPython for the same `n`. One process-global generator
+  instance, matching CPython's shared default `Random()` instance.
+
+## Itertools / Collections (subset)
+
+- `itertools` module: `chain(*iterables)`, `product(*iterables)`,
+  `combinations(iterable, r)`, `permutations(iterable, r=None)`,
+  `starmap(fn, iterable)`, `islice(iterable, stop)` (bounded 2-arg form
+  only), `zip_longest(*iterables)` — all eager, returning a real new list.
+  `count`/`cycle`/unbounded `repeat` are **not implemented**: pyc has no
+  lazy iterator/`__next__`/`StopIteration` protocol (generator expressions
+  are already eagerly materialized), so infinite iterators can't be
+  represented at all — a hard architectural limit, not a scoping choice.
+- `collections` module: `Counter(iterable)` returns a plain real dict
+  pre-populated with counts (not a custom class instance — see
+  IMPLEMENTATION.md for why). `most_common(counter, n=None)` is a plain
+  function, **not** `counter.most_common(n)` method syntax. `defaultdict`,
+  `namedtuple`, and `deque` are not implemented.
+- Tuples aren't a distinct pyc type (pre-existing, unrelated limitation —
+  `(1, 2, 3)` prints as `[1, 2, 3]` and `type()` reports `list`), so
+  itertools results that would be tuples in real Python (`product`,
+  `combinations`, `permutations`, `zip_longest` entries) are plain lists.
+
 ## Assignment Forms
 
 ```python
@@ -160,7 +208,9 @@ d[k] = v       # dict subscript
   submodule
 - `from X import Y` / `from X.Y import Z` — loads the module or package,
   extracts `Y`/`Z` (an attribute or a submodule), binds to name
-- `from X import *` — exports all non-underscore top-level names as module globals
+- `from X import *` — exports all non-underscore top-level names as module
+  globals, for real compiled modules and for synthetic/built-in modules
+  alike (each synthetic module declares its own exported-name list)
 - `import X as Y` / `from X import Y as Z` — binds to the given alias
 - Relative imports (`from . import x`, `from .. import y`, `from .rel import z`)
   — resolved against the importing module's own package; valid anywhere

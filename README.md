@@ -78,7 +78,7 @@ See [FEATURES.md](FEATURES.md) for a complete list of supported features.
 - **Exceptions**: `try/except/finally/else`, structured exceptions, exception classes
 - **Statements**: `with`, `match/case`, `assert`, `del`, walrus `:=`, `import`
 - **Builtins**: `print`, `range`, `len`, `str`, `int`, `float`, `complex`, `abs`, `min`, `max`, `list`, `enumerate`, `zip`, `sum`, `sorted`, `any`, `all`, `isinstance`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`, `round`, `divmod`, `pow`, `reversed`, `cmp_to_key`
-- **Standard library stubs**: `os.path` (exists, isfile, isdir), `subprocess` (call, check_output), `sys`, `cmath`
+- **Standard library stubs**: `os.path` (exists, isfile, isdir), `subprocess` (call, check_output), `sys`, `cmath`, `math` (~25 functions wrapping libm), `json` (dumps/loads), `random` (CPython-exact MT19937), `itertools`/`collections` (eager-list subset — see FEATURES.md)
 
 ## Architecture
 

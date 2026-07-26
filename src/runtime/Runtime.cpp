@@ -934,8 +934,6 @@ int PyObject_Print(PyObject* obj, FILE* fp) {
 
 PyObject* PyUnicode_FromString(const char* s) {
     alloc_str_count++;
-    fprintf(stderr, "DEBUG: PyUnicode_FromString('%s')\n", s ? s : "(null)");
-    fflush(stderr);
     PyObject* obj = new PyObject();
     obj->refcount = 1;
     obj->type = 3;
@@ -2321,9 +2319,15 @@ static PyObject* g_sys_module = nullptr;
 // B7: Global reference to sys.modules dict
 static PyObject* g_sys_modules = nullptr;
 
-// Forward declarations for the os / subprocess module dict builders.
+// Forward declarations for the os / subprocess / math / json / random /
+// itertools / collections module dict builders.
 static PyObject* makeOsModuleDict();
 static PyObject* makeSubprocessModuleDict();
+static PyObject* makeMathModuleDict();
+static PyObject* makeJsonModuleDict();
+static PyObject* makeRandomModuleDict();
+static PyObject* makeItertoolsModuleDict();
+static PyObject* makeCollectionsModuleDict();
 
 PyObject* pyc_import_failed(PyObject* modName) {
     if (modName && modName->type == 3) {
@@ -2357,6 +2361,21 @@ PyObject* pyc_import_failed(PyObject* modName) {
         }
         if (modName->str == "subprocess") {
             return makeSubprocessModuleDict();
+        }
+        if (modName->str == "math") {
+            return makeMathModuleDict();
+        }
+        if (modName->str == "json") {
+            return makeJsonModuleDict();
+        }
+        if (modName->str == "random") {
+            return makeRandomModuleDict();
+        }
+        if (modName->str == "itertools") {
+            return makeItertoolsModuleDict();
+        }
+        if (modName->str == "collections") {
+            return makeCollectionsModuleDict();
         }
         if (modName->str == "cmath") {
             PyObject* d = PyDict_New();
@@ -2393,7 +2412,8 @@ PyObject* pyc_import_failed(PyObject* modName) {
     const char* name = (modName && modName->type == 3) ? modName->str.c_str() : "?";
     fprintf(stderr, "ImportError: No module named '%s' "
                     "(pyc supports only synthetic 'sys', 're', 'functools', 'os', "
-                    "and 'subprocess' modules; "
+                    "'subprocess', 'cmath', 'time', 'math', 'json', 'random', 'itertools', "
+                    "and 'collections' modules; "
                     "real module loading is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;
@@ -2419,28 +2439,30 @@ static int is_numeric(PyObject* o) {
     return o && (o->type == 0 || o->type == 4 || o->type == 5);
 }
 
+// Unbox the i-th element of a token+registry `args` list (see Pyc_Apply)
+// as a double, treating int/bool/float uniformly via numeric_val. Used by
+// modules like math whose functions take numeric arguments through the
+// generic single-args-list calling convention (as opposed to cmath's
+// direct-call convention, where each function takes its argument as a
+// bare PyObject* already). Returns `defaultVal` if the list is too short
+// or the element isn't numeric.
+static double arg_numeric(PyObject* args, size_t i, double defaultVal = 0.0) {
+    if (!args || args->type != 1 || i >= args->list.size()) return defaultVal;
+    PyObject* v = args->list[i];
+    return is_numeric(v) ? numeric_val(v) : defaultVal;
+}
+
 // True when neither operand is a float — result stays integer.
 static int both_integral(PyObject* a, PyObject* b) {
     return a->type != 4 && b->type != 4;
 }
 
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
-    fprintf(stderr, "DEBUG: Pyc_GetItem obj=%p, key=%p, key->str='%s'\n", (void*)obj, (void*)key, key ? key->str.c_str() : "(null)");
-    fflush(stderr);
     if (!obj || !key) return nullptr;
-    fprintf(stderr, "DEBUG: Pyc_GetItem obj->type=%d, key->type=%d\n", obj->type, key->type);
-    fflush(stderr);
     if (obj->type == 1) return PyList_GetItemObj(obj, key); // returns new ref (INCREF inside)
     if (obj->type == 2) {
-        fprintf(stderr, "DEBUG: Pyc_GetItem looking up in dict with %zu entries\n", obj->dict.size());
-        fflush(stderr);
         for (auto& pair : obj->dict) {
-            fprintf(stderr, "DEBUG: Pyc_GetItem comparing key: pair.first->str='%s', key->str='%s'\n", 
-                pair.first ? pair.first->str.c_str() : "(null)", key ? key->str.c_str() : "(null)");
-            fflush(stderr);
             if (PyObject_CompareBool(pair.first, key, 0)) {
-                fprintf(stderr, "DEBUG: Pyc_GetItem found match! returning %p\n", (void*)pair.second);
-                fflush(stderr);
                 if (pair.second) Py_INCREF(pair.second); // return new ref
                 return pair.second;
             }
@@ -2477,9 +2499,18 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
 // KeyError on a miss, Python-style. Internal probes (method lookup, module
 // attributes, with-statement dunders) keep using the non-raising Pyc_GetItem.
 PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
-    PyObject* r = Pyc_GetItem(obj, key);
-    if (r) return r;
     if (obj && obj->type == 2) {
+        // Dict: scan directly rather than going through Pyc_GetItem, which
+        // returns a null PyObject* both when the key is absent AND when
+        // the key is present with a None value — indistinguishable to the
+        // caller. A dict genuinely mapping a key to None (e.g. from
+        // json.loads('{"k": null}')) must return None, not raise KeyError.
+        for (auto& pair : obj->dict) {
+            if (PyObject_CompareBool(pair.first, key, 0)) {
+                if (pair.second) Py_INCREF(pair.second);
+                return pair.second;
+            }
+        }
         // Raw key as the message; pyc_exc_message adds the repr quoting for
         // string keys (str(KeyError('k')) is "'k'").
         PyObject* t = PyUnicode_FromString("KeyError");
@@ -2488,6 +2519,8 @@ PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
         pyc_raise(e);
         return nullptr;
     }
+    PyObject* r = Pyc_GetItem(obj, key);
+    if (r) return r;
     if (obj && obj->type == 1) { pyc_raise_msg("IndexError", "list index out of range"); return nullptr; }
     if (obj && obj->type == 3) { pyc_raise_msg("IndexError", "string index out of range"); return nullptr; }
     return nullptr;
@@ -3893,6 +3926,911 @@ extern "C" PyObject* PyBuiltin_SubprocessCheckOutput(PyObject* args) {
     return PyUnicode_FromString(out.c_str());
 }
 
+// ---- math module ----
+// Real-valued math functions wrapping libm (<math.h>, included above),
+// using the token+registry calling convention (like os/subprocess) rather
+// than cmath's AST-direct-call convention, so `import math`,
+// `from math import sqrt`, and `import math as m` all work uniformly via
+// the generic Pyc_Apply dispatch. Arguments are unboxed via arg_numeric
+// (defined above, alongside numeric_val/is_numeric).
+static const double kPyMathPi  = 3.14159265358979323846;
+static const double kPyMathE   = 2.71828182845904523536;
+static const double kPyMathTau = 6.28318530717958647692;
+
+extern "C" PyObject* PyMath_Sqrt(PyObject* args)  { return PyFloat_FromDouble(::sqrt(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Floor(PyObject* args) { return PyInt_FromLong((long)::floor(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Ceil(PyObject* args)  { return PyInt_FromLong((long)::ceil(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Trunc(PyObject* args) { return PyInt_FromLong((long)::trunc(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Pow(PyObject* args)   { return PyFloat_FromDouble(::pow(arg_numeric(args, 0), arg_numeric(args, 1))); }
+extern "C" PyObject* PyMath_Log(PyObject* args) {
+    // math.log(x) is natural log; math.log(x, base) uses the given base.
+    if (args && args->type == 1 && args->list.size() >= 2) {
+        return PyFloat_FromDouble(::log(arg_numeric(args, 0)) / ::log(arg_numeric(args, 1)));
+    }
+    return PyFloat_FromDouble(::log(arg_numeric(args, 0)));
+}
+extern "C" PyObject* PyMath_Log2(PyObject* args)    { return PyFloat_FromDouble(::log2(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Log10(PyObject* args)   { return PyFloat_FromDouble(::log10(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Exp(PyObject* args)     { return PyFloat_FromDouble(::exp(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Sin(PyObject* args)     { return PyFloat_FromDouble(::sin(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Cos(PyObject* args)     { return PyFloat_FromDouble(::cos(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Tan(PyObject* args)     { return PyFloat_FromDouble(::tan(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Asin(PyObject* args)    { return PyFloat_FromDouble(::asin(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Acos(PyObject* args)    { return PyFloat_FromDouble(::acos(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Atan(PyObject* args)    { return PyFloat_FromDouble(::atan(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Atan2(PyObject* args)   { return PyFloat_FromDouble(::atan2(arg_numeric(args, 0), arg_numeric(args, 1))); }
+extern "C" PyObject* PyMath_Hypot(PyObject* args)   { return PyFloat_FromDouble(::hypot(arg_numeric(args, 0), arg_numeric(args, 1))); }
+extern "C" PyObject* PyMath_Fabs(PyObject* args)    { return PyFloat_FromDouble(::fabs(arg_numeric(args, 0))); }
+extern "C" PyObject* PyMath_Fmod(PyObject* args)    { return PyFloat_FromDouble(::fmod(arg_numeric(args, 0), arg_numeric(args, 1))); }
+extern "C" PyObject* PyMath_Degrees(PyObject* args) { return PyFloat_FromDouble(arg_numeric(args, 0) * (180.0 / kPyMathPi)); }
+extern "C" PyObject* PyMath_Radians(PyObject* args) { return PyFloat_FromDouble(arg_numeric(args, 0) * (kPyMathPi / 180.0)); }
+extern "C" PyObject* PyMath_Isnan(PyObject* args)    { return PyBool_New(::isnan(arg_numeric(args, 0)) ? 1 : 0); }
+extern "C" PyObject* PyMath_Isinf(PyObject* args)    { return PyBool_New(::isinf(arg_numeric(args, 0)) ? 1 : 0); }
+extern "C" PyObject* PyMath_Isfinite(PyObject* args) { return PyBool_New(::isfinite(arg_numeric(args, 0)) ? 1 : 0); }
+
+extern "C" PyObject* PyMath_Gcd(PyObject* args) {
+    long a = (long)arg_numeric(args, 0);
+    long b = (long)arg_numeric(args, 1);
+    if (a < 0) a = -a;
+    if (b < 0) b = -b;
+    while (b) { long t = b; b = a % b; a = t; }
+    return PyInt_FromLong(a);
+}
+
+extern "C" PyObject* PyMath_Factorial(PyObject* args) {
+    long n = (long)arg_numeric(args, 0);
+    if (n < 0) {
+        pyc_raise_msg("ValueError", "factorial() not defined for negative values");
+        return nullptr;
+    }
+    long result = 1;
+    for (long i = 2; i <= n; ++i) result *= i;
+    return PyInt_FromLong(result);
+}
+
+// makeMathModuleDict: builds a dict emulating the math module. Functions
+// are string tokens (dispatched via Pyc_Apply/g_callableRegistry, see
+// pyc_register_callable below); pi/e/tau are plain float values.
+static PyObject* makeMathModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    auto addFloat = [&](const char* name, double v) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* val = PyFloat_FromDouble(v);
+        PyDict_SetItem(d, k, val);
+        Py_DECREF(k); Py_DECREF(val);
+    };
+    addTok("sqrt", "PyMath_Sqrt");
+    addTok("floor", "PyMath_Floor");
+    addTok("ceil", "PyMath_Ceil");
+    addTok("trunc", "PyMath_Trunc");
+    addTok("pow", "PyMath_Pow");
+    addTok("log", "PyMath_Log");
+    addTok("log2", "PyMath_Log2");
+    addTok("log10", "PyMath_Log10");
+    addTok("exp", "PyMath_Exp");
+    addTok("sin", "PyMath_Sin");
+    addTok("cos", "PyMath_Cos");
+    addTok("tan", "PyMath_Tan");
+    addTok("asin", "PyMath_Asin");
+    addTok("acos", "PyMath_Acos");
+    addTok("atan", "PyMath_Atan");
+    addTok("atan2", "PyMath_Atan2");
+    addTok("hypot", "PyMath_Hypot");
+    addTok("fabs", "PyMath_Fabs");
+    addTok("fmod", "PyMath_Fmod");
+    addTok("degrees", "PyMath_Degrees");
+    addTok("radians", "PyMath_Radians");
+    addTok("isnan", "PyMath_Isnan");
+    addTok("isinf", "PyMath_Isinf");
+    addTok("isfinite", "PyMath_Isfinite");
+    addTok("gcd", "PyMath_Gcd");
+    addTok("factorial", "PyMath_Factorial");
+    addFloat("pi", kPyMathPi);
+    addFloat("e", kPyMathE);
+    addFloat("tau", kPyMathTau);
+    addFloat("inf", HUGE_VAL);
+    addFloat("nan", NAN);
+    return d;
+}
+
+// ---- json module ----
+// json.dumps(obj) / json.loads(s), operating directly on the generic boxed
+// value tree (dict/list/str/int/float/bool/None) — no new PyObject types,
+// no dependency on pyc's class system. Token+registry convention, same as
+// math. Floats are formatted via the same format_double() every other
+// float-printing path uses (see PyObject_PrintBase), for consistency.
+static void jsonEscapeStringInto(const std::string& s, std::string& out) {
+    out += '"';
+    for (unsigned char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out += buf;
+                } else {
+                    out += (char)c;
+                }
+        }
+    }
+    out += '"';
+}
+
+static void jsonDumpValueInto(PyObject* obj, std::string& out) {
+    if (!obj) { out += "null"; return; }
+    switch (obj->type) {
+        case 0: out += std::to_string(obj->value); break;
+        case 5: out += (obj->value ? "true" : "false"); break;
+        case 4: {
+            char buf[64];
+            format_double(buf, sizeof(buf), obj->dvalue);
+            out += buf;
+            break;
+        }
+        case 3:
+            jsonEscapeStringInto(obj->str, out);
+            break;
+        case 1: {
+            out += '[';
+            // Read internal storage directly (rather than via
+            // PyList_GetItem, which allocates a fresh int/float PyObject
+            // per element for homogeneous lists) to avoid extra
+            // alloc/refcount churn during serialization.
+            if (obj->list_item_type == 1) {
+                for (size_t i = 0; i < obj->ilist.size(); ++i) {
+                    if (i) out += ", ";
+                    out += std::to_string(obj->ilist[i]);
+                }
+            } else if (obj->list_item_type == 2) {
+                for (size_t i = 0; i < obj->flist.size(); ++i) {
+                    if (i) out += ", ";
+                    char buf[64];
+                    format_double(buf, sizeof(buf), obj->flist[i]);
+                    out += buf;
+                }
+            } else {
+                for (size_t i = 0; i < obj->list.size(); ++i) {
+                    if (i) out += ", ";
+                    jsonDumpValueInto(obj->list[i], out);
+                }
+            }
+            out += ']';
+            break;
+        }
+        case 2: {
+            out += '{';
+            bool first = true;
+            for (auto& pair : obj->dict) {
+                if (!first) out += ", ";
+                first = false;
+                if (pair.first && pair.first->type == 3) {
+                    jsonEscapeStringInto(pair.first->str, out);
+                } else {
+                    out += "\"\"";
+                }
+                out += ": ";
+                jsonDumpValueInto(pair.second, out);
+            }
+            out += '}';
+            break;
+        }
+        default:
+            out += "null";
+    }
+}
+
+extern "C" PyObject* PyJson_Dumps(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("null");
+    std::string out;
+    jsonDumpValueInto(args->list[0], out);
+    return PyUnicode_FromString(out.c_str());
+}
+
+// Small recursive-descent JSON parser producing real boxed values via the
+// existing constructors (PyDict_New/PyList_New/PyUnicode_FromString/
+// PyInt_FromLong/PyFloat_FromDouble/PyBool_New, null PyObject* for JSON
+// null). Best-effort: malformed input stops parsing early rather than
+// raising a structured exception (matches the general "don't crash"
+// posture of the other synthetic modules; not a full json.JSONDecodeError
+// implementation).
+namespace {
+struct PycJsonParser {
+    const char* p;
+    const char* end;
+
+    void skipWs() { while (p < end && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r')) ++p; }
+
+    PyObject* parseValue() {
+        skipWs();
+        if (p >= end) return nullptr;
+        char c = *p;
+        if (c == '{') return parseObject();
+        if (c == '[') return parseArray();
+        if (c == '"') return parseString();
+        if (c == 't' && end - p >= 4 && strncmp(p, "true", 4) == 0)  { p += 4; return PyBool_New(1); }
+        if (c == 'f' && end - p >= 5 && strncmp(p, "false", 5) == 0) { p += 5; return PyBool_New(0); }
+        if (c == 'n' && end - p >= 4 && strncmp(p, "null", 4) == 0)  { p += 4; return nullptr; }
+        if (c == '-' || (c >= '0' && c <= '9')) return parseNumber();
+        return nullptr;
+    }
+
+    PyObject* parseObject() {
+        PyObject* d = PyDict_New();
+        ++p; // consume '{'
+        skipWs();
+        if (p < end && *p == '}') { ++p; return d; }
+        while (true) {
+            skipWs();
+            if (p >= end || *p != '"') break;
+            PyObject* key = parseString();
+            skipWs();
+            if (p >= end || *p != ':') { Py_DECREF(key); break; }
+            ++p; // consume ':'
+            PyObject* val = parseValue();
+            PyDict_SetItem(d, key, val);
+            Py_DECREF(key);
+            if (val) Py_DECREF(val);
+            skipWs();
+            if (p >= end) break;
+            if (*p == ',') { ++p; continue; }
+            if (*p == '}') { ++p; break; }
+            break;
+        }
+        return d;
+    }
+
+    PyObject* parseArray() {
+        PyObject* lst = PyList_New(0);
+        ++p; // consume '['
+        skipWs();
+        if (p < end && *p == ']') { ++p; return lst; }
+        while (true) {
+            PyObject* val = parseValue();
+            PyList_Append(lst, val);
+            if (val) Py_DECREF(val);
+            skipWs();
+            if (p >= end) break;
+            if (*p == ',') { ++p; continue; }
+            if (*p == ']') { ++p; break; }
+            break;
+        }
+        return lst;
+    }
+
+    PyObject* parseString() {
+        ++p; // consume opening quote
+        std::string s;
+        while (p < end && *p != '"') {
+            if (*p == '\\' && p + 1 < end) {
+                ++p;
+                switch (*p) {
+                    case '"':  s += '"'; break;
+                    case '\\': s += '\\'; break;
+                    case '/':  s += '/'; break;
+                    case 'n':  s += '\n'; break;
+                    case 't':  s += '\t'; break;
+                    case 'r':  s += '\r'; break;
+                    case 'b':  s += '\b'; break;
+                    case 'f':  s += '\f'; break;
+                    case 'u': {
+                        if (p + 4 < end) {
+                            char hex[5] = {p[1], p[2], p[3], p[4], 0};
+                            unsigned int cp = (unsigned int)strtoul(hex, nullptr, 16);
+                            p += 4;
+                            // Basic BMP-only UTF-8 encoding (no surrogate
+                            // pair handling for values outside the BMP).
+                            if (cp < 0x80) {
+                                s += (char)cp;
+                            } else if (cp < 0x800) {
+                                s += (char)(0xC0 | (cp >> 6));
+                                s += (char)(0x80 | (cp & 0x3F));
+                            } else {
+                                s += (char)(0xE0 | (cp >> 12));
+                                s += (char)(0x80 | ((cp >> 6) & 0x3F));
+                                s += (char)(0x80 | (cp & 0x3F));
+                            }
+                        }
+                        break;
+                    }
+                    default: s += *p; break;
+                }
+                ++p;
+            } else {
+                s += *p;
+                ++p;
+            }
+        }
+        if (p < end && *p == '"') ++p; // consume closing quote
+        return PyUnicode_FromString(s.c_str());
+    }
+
+    PyObject* parseNumber() {
+        const char* start = p;
+        bool isFloat = false;
+        if (*p == '-') ++p;
+        while (p < end && *p >= '0' && *p <= '9') ++p;
+        if (p < end && *p == '.') {
+            isFloat = true; ++p;
+            while (p < end && *p >= '0' && *p <= '9') ++p;
+        }
+        if (p < end && (*p == 'e' || *p == 'E')) {
+            isFloat = true; ++p;
+            if (p < end && (*p == '+' || *p == '-')) ++p;
+            while (p < end && *p >= '0' && *p <= '9') ++p;
+        }
+        std::string numStr(start, (size_t)(p - start));
+        if (isFloat) return PyFloat_FromDouble(strtod(numStr.c_str(), nullptr));
+        return PyInt_FromLong(strtol(numStr.c_str(), nullptr, 10));
+    }
+};
+} // namespace
+
+extern "C" PyObject* PyJson_Loads(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* s = args->list[0];
+    if (!s || s->type != 3) return nullptr;
+    PycJsonParser parser{s->str.c_str(), s->str.c_str() + s->str.size()};
+    return parser.parseValue();
+}
+
+// makeJsonModuleDict: builds a dict emulating the json module (dumps/loads
+// only — no indent/sort_keys/separators kwargs, no custom encoders).
+static PyObject* makeJsonModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("dumps", "PyJson_Dumps");
+    addTok("loads", "PyJson_Loads");
+    return d;
+}
+
+// ---- random module ----
+// A from-scratch MT19937 generator replicating CPython's _randommodule.c
+// exactly (same 624-word state, same tempering transform, same
+// init_genrand/init_by_array seeding procedure) — so `random.seed(n)`
+// followed by any of these functions produces bit-identical output to
+// real CPython for the same `n`, verified against real Python output
+// during development. One process-global generator instance, matching
+// the single default `random.Random()` instance CPython's random module
+// functions (random.seed/random.random/...) implicitly share.
+class PycMT19937 {
+public:
+    static const int N = 624;
+    static const int M = 397;
+    static const uint32_t MATRIX_A = 0x9908b0dfUL;
+    static const uint32_t UPPER_MASK = 0x80000000UL;
+    static const uint32_t LOWER_MASK = 0x7fffffffUL;
+
+    uint32_t mt[N];
+    int mti = N + 1;
+
+    void initGenrand(uint32_t s) {
+        mt[0] = s;
+        for (int i = 1; i < N; ++i) {
+            mt[i] = (uint32_t)(1812433253UL * (mt[i - 1] ^ (mt[i - 1] >> 30)) + (uint32_t)i);
+        }
+        mti = N;
+    }
+
+    void initByArray(const uint32_t* key, int keyLen) {
+        initGenrand(19650218UL);
+        int i = 1, j = 0;
+        int k = (N > keyLen) ? N : keyLen;
+        for (; k; --k) {
+            mt[i] = (mt[i] ^ ((mt[i - 1] ^ (mt[i - 1] >> 30)) * 1664525UL)) + key[j] + (uint32_t)j;
+            ++i; ++j;
+            if (i >= N) { mt[0] = mt[N - 1]; i = 1; }
+            if (j >= keyLen) j = 0;
+        }
+        for (k = N - 1; k; --k) {
+            mt[i] = (mt[i] ^ ((mt[i - 1] ^ (mt[i - 1] >> 30)) * 1566083941UL)) - (uint32_t)i;
+            ++i;
+            if (i >= N) { mt[0] = mt[N - 1]; i = 1; }
+        }
+        mt[0] = 0x80000000UL;
+    }
+
+    // Matches CPython's random_seed(): seed from the absolute value of an
+    // integer, split into little-endian 32-bit words.
+    void seedFromInt(long long seedVal) {
+        unsigned long long v = seedVal < 0 ? (unsigned long long)(-seedVal) : (unsigned long long)seedVal;
+        uint32_t key[2];
+        int keyLen = 0;
+        do {
+            key[keyLen++] = (uint32_t)(v & 0xffffffffULL);
+            v >>= 32;
+        } while (v != 0 && keyLen < 2);
+        initByArray(key, keyLen);
+    }
+
+    uint32_t genrandUint32() {
+        static const uint32_t mag01[2] = {0x0UL, MATRIX_A};
+        uint32_t y;
+        if (mti >= N) {
+            int kk;
+            if (mti == N + 1) initGenrand(5489UL); // default seed if seed() never called
+            for (kk = 0; kk < N - M; ++kk) {
+                y = (mt[kk] & UPPER_MASK) | (mt[kk + 1] & LOWER_MASK);
+                mt[kk] = mt[kk + M] ^ (y >> 1) ^ mag01[y & 0x1UL];
+            }
+            for (; kk < N - 1; ++kk) {
+                y = (mt[kk] & UPPER_MASK) | (mt[kk + 1] & LOWER_MASK);
+                mt[kk] = mt[kk + (M - N)] ^ (y >> 1) ^ mag01[y & 0x1UL];
+            }
+            y = (mt[N - 1] & UPPER_MASK) | (mt[0] & LOWER_MASK);
+            mt[N - 1] = mt[M - 1] ^ (y >> 1) ^ mag01[y & 0x1UL];
+            mti = 0;
+        }
+        y = mt[mti++];
+        y ^= (y >> 11);
+        y ^= (y << 7) & 0x9d2c5680UL;
+        y ^= (y << 15) & 0xefc60000UL;
+        y ^= (y >> 18);
+        return y;
+    }
+
+    // Matches CPython's random_random(): 53 bits of precision in [0, 1).
+    double randomDouble() {
+        uint32_t a = genrandUint32() >> 5;
+        uint32_t b = genrandUint32() >> 6;
+        return (a * 67108864.0 + b) * (1.0 / 9007199254740992.0);
+    }
+
+    // getrandbits(k) for k <= 32, matching CPython's random_getrandbits.
+    uint32_t getrandbits(int k) {
+        return genrandUint32() >> (32 - k);
+    }
+
+    // Matches CPython's Random._randbelow_with_getrandbits: uniform in [0, n).
+    uint64_t randbelow(uint64_t n) {
+        if (n == 0) return 0;
+        int k = 0;
+        for (uint64_t t = n; t; t >>= 1) ++k;
+        uint64_t r;
+        do {
+            if (k <= 32) {
+                r = getrandbits(k);
+            } else {
+                // k up to 64: combine two 32-bit draws, low bits first,
+                // matching CPython's getrandbits() word order for k>32.
+                r = (uint64_t)getrandbits(32) | ((uint64_t)getrandbits(k - 32) << 32);
+            }
+        } while (r >= n);
+        return r;
+    }
+};
+
+static PycMT19937 g_pycRandom;
+
+extern "C" PyObject* PyRandom_Seed(PyObject* args) {
+    long long seedVal = 0;
+    if (args && args->type == 1 && !args->list.empty()) seedVal = (long long)arg_numeric(args, 0);
+    g_pycRandom.seedFromInt(seedVal);
+    return nullptr;
+}
+
+extern "C" PyObject* PyRandom_Random(PyObject* args) {
+    (void)args;
+    return PyFloat_FromDouble(g_pycRandom.randomDouble());
+}
+
+extern "C" PyObject* PyRandom_Randrange(PyObject* args) {
+    // randrange(stop) or randrange(start, stop)
+    if (!args || args->type != 1 || args->list.empty()) return PyInt_FromLong(0);
+    long long start = 0, stop;
+    if (args->list.size() >= 2) {
+        start = (long long)arg_numeric(args, 0);
+        stop = (long long)arg_numeric(args, 1);
+    } else {
+        stop = (long long)arg_numeric(args, 0);
+    }
+    long long width = stop - start;
+    if (width <= 0) return PyInt_FromLong(start);
+    return PyInt_FromLong(start + (long long)g_pycRandom.randbelow((uint64_t)width));
+}
+
+extern "C" PyObject* PyRandom_Randint(PyObject* args) {
+    // randint(a, b) == randrange(a, b + 1)
+    if (!args || args->type != 1 || args->list.size() < 2) return PyInt_FromLong(0);
+    long long a = (long long)arg_numeric(args, 0);
+    long long b = (long long)arg_numeric(args, 1);
+    long long width = b - a + 1;
+    if (width <= 0) return PyInt_FromLong(a);
+    return PyInt_FromLong(a + (long long)g_pycRandom.randbelow((uint64_t)width));
+}
+
+extern "C" PyObject* PyRandom_Uniform(PyObject* args) {
+    double a = arg_numeric(args, 0);
+    double b = arg_numeric(args, 1);
+    return PyFloat_FromDouble(a + (b - a) * g_pycRandom.randomDouble());
+}
+
+extern "C" PyObject* PyRandom_Choice(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* seq = args->list[0];
+    if (!seq || seq->type != 1) return nullptr;
+    size_t n = PyList_Size(seq);
+    if (n == 0) {
+        pyc_raise_msg("IndexError", "list index out of range");
+        return nullptr;
+    }
+    size_t idx = (size_t)g_pycRandom.randbelow((uint64_t)n);
+    return PyList_GetItem(seq, idx);
+}
+
+extern "C" PyObject* PyRandom_Shuffle(PyObject* args) {
+    // In-place Fisher-Yates from the end, matching CPython's
+    // Random.shuffle exactly (both the algorithm and the draw order).
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* lst = args->list[0];
+    if (!lst || lst->type != 1) return nullptr;
+    size_t n = PyList_Size(lst);
+    for (size_t i = n; i-- > 1;) {
+        size_t j = (size_t)g_pycRandom.randbelow((uint64_t)(i + 1));
+        if (i == j) continue;
+        if (lst->list_item_type == 0) {
+            std::swap(lst->list[i], lst->list[j]);
+        } else if (lst->list_item_type == 1) {
+            std::swap(lst->ilist[i], lst->ilist[j]);
+        } else if (lst->list_item_type == 2) {
+            std::swap(lst->flist[i], lst->flist[j]);
+        }
+    }
+    return nullptr;
+}
+
+static PyObject* makeRandomModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("seed", "PyRandom_Seed");
+    addTok("random", "PyRandom_Random");
+    addTok("randrange", "PyRandom_Randrange");
+    addTok("randint", "PyRandom_Randint");
+    addTok("uniform", "PyRandom_Uniform");
+    addTok("choice", "PyRandom_Choice");
+    addTok("shuffle", "PyRandom_Shuffle");
+    return d;
+}
+
+// ---- itertools module (subset) ----
+// Eager, list-returning implementations only — pyc has no lazy
+// iterator/__next__/StopIteration protocol (generator expressions are
+// already eagerly materialized, see FEATURES.md), so infinite iterators
+// (count, cycle, unbounded repeat) cannot be represented at all and are
+// deliberately not implemented. Every "iterable" argument must already be
+// a real, materialized pyc list. Tuples aren't a distinct pyc type (they
+// print/behave as lists — a pre-existing limitation, not new here), so
+// results that would be tuples in real Python (product/combinations/
+// permutations/zip_longest entries) are plain lists instead.
+
+// Read element i of a list uniformly regardless of homogeneous/boxed
+// storage, returning a NEW reference (caller must Py_DECREF it).
+static PyObject* pycListItemNewRef(PyObject* lst, size_t i) {
+    if (!lst || lst->type != 1) return nullptr;
+    if (lst->list_item_type == 1 && i < lst->ilist.size()) return PyInt_FromLong(lst->ilist[i]);
+    if (lst->list_item_type == 2 && i < lst->flist.size()) return PyFloat_FromDouble(lst->flist[i]);
+    if (lst->list_item_type == 0 && i < lst->list.size()) {
+        PyObject* v = lst->list[i];
+        if (v) Py_INCREF(v);
+        return v;
+    }
+    return nullptr;
+}
+
+extern "C" PyObject* PyItertools_Chain(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (args && args->type == 1) {
+        for (PyObject* it : args->list) {
+            if (!it || it->type != 1) continue;
+            size_t n = PyList_Size(it);
+            for (size_t i = 0; i < n; ++i) {
+                PyObject* v = pycListItemNewRef(it, i);
+                PyList_Append(out, v);
+                if (v) Py_DECREF(v);
+            }
+        }
+    }
+    return out;
+}
+
+extern "C" PyObject* PyItertools_Product(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.empty()) return out;
+    const std::vector<PyObject*>& lists = args->list;
+    size_t nLists = lists.size();
+    std::vector<size_t> sizes(nLists);
+    for (size_t i = 0; i < nLists; ++i) {
+        sizes[i] = (lists[i] && lists[i]->type == 1) ? PyList_Size(lists[i]) : 0;
+        if (sizes[i] == 0) return out; // any empty input -> empty product
+    }
+    std::vector<size_t> idx(nLists, 0);
+    while (true) {
+        PyObject* combo = PyList_New(0);
+        for (size_t i = 0; i < nLists; ++i) {
+            PyObject* v = pycListItemNewRef(lists[i], idx[i]);
+            PyList_Append(combo, v);
+            if (v) Py_DECREF(v);
+        }
+        PyList_Append(out, combo);
+        Py_DECREF(combo);
+        // Odometer increment, rightmost fastest — matches itertools.product order.
+        long pos = (long)nLists - 1;
+        for (; pos >= 0; --pos) {
+            if (++idx[pos] < sizes[pos]) break;
+            idx[pos] = 0;
+        }
+        if (pos < 0) break;
+    }
+    return out;
+}
+
+extern "C" PyObject* PyItertools_Combinations(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    PyObject* iterable = args->list[0];
+    long r = (long)arg_numeric(args, 1);
+    if (!iterable || iterable->type != 1 || r < 0) return out;
+    size_t n = PyList_Size(iterable);
+    if ((size_t)r > n) return out;
+    if (r == 0) {
+        PyObject* combo = PyList_New(0);
+        PyList_Append(out, combo);
+        Py_DECREF(combo);
+        return out;
+    }
+    std::vector<size_t> idx((size_t)r);
+    for (long i = 0; i < r; ++i) idx[(size_t)i] = (size_t)i;
+    while (true) {
+        PyObject* combo = PyList_New(0);
+        for (long i = 0; i < r; ++i) {
+            PyObject* v = pycListItemNewRef(iterable, idx[(size_t)i]);
+            PyList_Append(combo, v);
+            if (v) Py_DECREF(v);
+        }
+        PyList_Append(out, combo);
+        Py_DECREF(combo);
+        long i = r - 1;
+        while (i >= 0 && idx[(size_t)i] == n - (size_t)(r - i)) --i;
+        if (i < 0) break;
+        idx[(size_t)i]++;
+        for (long j = i + 1; j < r; ++j) idx[(size_t)j] = idx[(size_t)(j - 1)] + 1;
+    }
+    return out;
+}
+
+extern "C" PyObject* PyItertools_Permutations(PyObject* args) {
+    // Direct translation of the itertools.permutations pure-Python
+    // reference implementation from the CPython docs (same algorithm,
+    // same iteration order), adapted to pyc's list storage.
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.empty()) return out;
+    PyObject* iterable = args->list[0];
+    if (!iterable || iterable->type != 1) return out;
+    size_t n = PyList_Size(iterable);
+    long r = (long)n;
+    if (args->list.size() >= 2) r = (long)arg_numeric(args, 1);
+    if (r < 0 || (size_t)r > n) return out;
+
+    std::vector<size_t> indices(n);
+    for (size_t i = 0; i < n; ++i) indices[i] = i;
+    std::vector<long> cycles((size_t)r);
+    for (long i = 0; i < r; ++i) cycles[(size_t)i] = (long)n - i;
+
+    auto emit = [&]() {
+        PyObject* combo = PyList_New(0);
+        for (long i = 0; i < r; ++i) {
+            PyObject* v = pycListItemNewRef(iterable, indices[(size_t)i]);
+            PyList_Append(combo, v);
+            if (v) Py_DECREF(v);
+        }
+        PyList_Append(out, combo);
+        Py_DECREF(combo);
+    };
+
+    if (r == 0) { emit(); return out; }
+    emit();
+    while (n) {
+        bool advanced = false;
+        for (long i = r - 1; i >= 0; --i) {
+            if (--cycles[(size_t)i] == 0) {
+                // Rotate indices[i:] left by one.
+                size_t tmp = indices[(size_t)i];
+                for (size_t k = (size_t)i; k + 1 < n; ++k) indices[k] = indices[k + 1];
+                indices[n - 1] = tmp;
+                cycles[(size_t)i] = (long)n - i;
+            } else {
+                size_t j = (size_t)cycles[(size_t)i];
+                std::swap(indices[(size_t)i], indices[n - j]);
+                emit();
+                advanced = true;
+                break;
+            }
+        }
+        if (!advanced) break;
+    }
+    return out;
+}
+
+extern "C" PyObject* PyItertools_Islice(PyObject* args) {
+    // Bounded 2-arg form only: islice(iterable, stop) -> first `stop`
+    // elements. (Not the full start/stop/step signature.)
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    PyObject* iterable = args->list[0];
+    long stop = (long)arg_numeric(args, 1);
+    if (!iterable || iterable->type != 1) return out;
+    size_t n = PyList_Size(iterable);
+    long lim = stop < 0 ? 0 : stop;
+    for (long i = 0; i < lim && (size_t)i < n; ++i) {
+        PyObject* v = pycListItemNewRef(iterable, (size_t)i);
+        PyList_Append(out, v);
+        if (v) Py_DECREF(v);
+    }
+    return out;
+}
+
+extern "C" PyObject* PyItertools_Starmap(PyObject* args) {
+    // starmap(fn, iterable): iterable's elements are themselves argument
+    // lists, applied as fn(*args_list) via the same Pyc_Apply dispatch
+    // every other callable-token call goes through.
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    PyObject* fn = args->list[0];
+    PyObject* iterable = args->list[1];
+    if (!iterable || iterable->type != 1) return out;
+    size_t n = PyList_Size(iterable);
+    for (size_t i = 0; i < n; ++i) {
+        PyObject* argList = pycListItemNewRef(iterable, i);
+        PyObject* result = Pyc_Apply(fn, argList);
+        PyList_Append(out, result);
+        if (argList) Py_DECREF(argList);
+        if (result) Py_DECREF(result);
+    }
+    return out;
+}
+
+extern "C" PyObject* PyItertools_ZipLongest(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.empty()) return out;
+    size_t nLists = args->list.size();
+    size_t maxLen = 0;
+    for (auto* lst : args->list) {
+        size_t sz = (lst && lst->type == 1) ? PyList_Size(lst) : 0;
+        if (sz > maxLen) maxLen = sz;
+    }
+    for (size_t i = 0; i < maxLen; ++i) {
+        PyObject* row = PyList_New(0);
+        for (size_t j = 0; j < nLists; ++j) {
+            PyObject* lst = args->list[j];
+            size_t sz = (lst && lst->type == 1) ? PyList_Size(lst) : 0;
+            if (i < sz) {
+                PyObject* v = pycListItemNewRef(lst, i);
+                PyList_Append(row, v);
+                if (v) Py_DECREF(v);
+            } else {
+                PyList_Append(row, nullptr); // None for the exhausted iterable(s)
+            }
+        }
+        PyList_Append(out, row);
+        Py_DECREF(row);
+    }
+    return out;
+}
+
+static PyObject* makeItertoolsModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("chain", "PyItertools_Chain");
+    addTok("product", "PyItertools_Product");
+    addTok("combinations", "PyItertools_Combinations");
+    addTok("permutations", "PyItertools_Permutations");
+    addTok("starmap", "PyItertools_Starmap");
+    addTok("islice", "PyItertools_Islice");
+    addTok("zip_longest", "PyItertools_ZipLongest");
+    return d;
+}
+
+// ---- collections module (subset) ----
+// Counter(iterable) returns a plain real dict (type 2) pre-populated with
+// counts — not a custom class instance (subclassing dict or backing a
+// stdlib-shaped container with a pyc-level class was confirmed unreliable
+// during development: dict subclassing doesn't behave as a real dict, and
+// __getitem__/__setitem__ dunders silently dropped output in at least one
+// tested path). most_common(counter, n) is a plain companion function,
+// not counter.most_common(n) method syntax, for the same reason.
+// defaultdict/namedtuple/deque are not implemented (see IMPLEMENTATION.md).
+extern "C" PyObject* PyCollections_Counter(PyObject* args) {
+    PyObject* d = PyDict_New();
+    if (!args || args->type != 1 || args->list.empty()) return d;
+    PyObject* iterable = args->list[0];
+    if (!iterable || iterable->type != 1) return d;
+    size_t n = PyList_Size(iterable);
+    for (size_t i = 0; i < n; ++i) {
+        PyObject* item = pycListItemNewRef(iterable, i);
+        PyObject* cur = Pyc_GetItem(d, item);
+        long count = (cur && cur->type == 0) ? cur->value + 1 : 1;
+        if (cur) Py_DECREF(cur);
+        PyObject* newCount = PyInt_FromLong(count);
+        PyDict_SetItem(d, item, newCount);
+        Py_DECREF(newCount);
+        if (item) Py_DECREF(item);
+    }
+    return d;
+}
+
+extern "C" PyObject* PyCollections_MostCommon(PyObject* args) {
+    // most_common(counter) or most_common(counter, n). Ties (equal counts)
+    // are broken by the counter dict's iteration order, which — like
+    // real Python dicts — should be insertion order, but pyc's dict
+    // iteration order is not currently insertion-order-preserving (see
+    // IMPLEMENTATION.md); tie-breaking may not match CPython exactly.
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.empty()) return out;
+    PyObject* counter = args->list[0];
+    if (!counter || counter->type != 2) return out;
+    long limit = -1;
+    if (args->list.size() >= 2) limit = (long)arg_numeric(args, 1);
+    std::vector<std::pair<PyObject*, long>> items;
+    for (auto& pair : counter->dict) {
+        long cnt = (pair.second && pair.second->type == 0) ? pair.second->value : 0;
+        items.push_back({pair.first, cnt});
+    }
+    std::stable_sort(items.begin(), items.end(),
+                      [](const std::pair<PyObject*, long>& a, const std::pair<PyObject*, long>& b) {
+                          return a.second > b.second;
+                      });
+    size_t lim = (limit < 0) ? items.size() : std::min((size_t)limit, items.size());
+    for (size_t i = 0; i < lim; ++i) {
+        PyObject* pairList = PyList_New(0);
+        PyObject* key = items[i].first;
+        PyList_Append(pairList, key);
+        PyObject* cntObj = PyInt_FromLong(items[i].second);
+        PyList_Append(pairList, cntObj);
+        Py_DECREF(cntObj);
+        PyList_Append(out, pairList);
+        Py_DECREF(pairList);
+    }
+    return out;
+}
+
+static PyObject* makeCollectionsModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("Counter", "PyCollections_Counter");
+    addTok("most_common", "PyCollections_MostCommon");
+    return d;
+}
+
 // makeOsModuleDict: builds a dict that emulates the os module. The
 // `os.environ` entry is itself a dict; `os.path` is a dict whose
 // `exists` / `isfile` / `isdir` entries are string tokens naming
@@ -4200,8 +5138,6 @@ extern "C" PyObject* Pyc_Time_PerfCounter(PyObject* args);
 extern "C" void pyc_setup_callables(void) {
     static bool done = false;
     if (done) return;
-    fprintf(stderr, "DEBUG: pyc_setup_callables called!\n");
-    fflush(stderr);
     done = true;
     pyc_register_callable("PyBuiltin_OsPathExists",        PyBuiltin_OsPathExists);
     pyc_register_callable("PyBuiltin_OsPathIsfile",        PyBuiltin_OsPathIsfile);
@@ -4215,8 +5151,50 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("pyc_file_enter",                pyc_file_enter_adapter);
     pyc_register_callable("pyc_file_exit",                 pyc_file_exit_adapter);
     pyc_register_callable("Pyc_Time_PerfCounter",          Pyc_Time_PerfCounter);
-    fprintf(stderr, "DEBUG: Registered Pyc_Time_PerfCounter\n");
-    fflush(stderr);
+    pyc_register_callable("PyMath_Sqrt",     PyMath_Sqrt);
+    pyc_register_callable("PyMath_Floor",    PyMath_Floor);
+    pyc_register_callable("PyMath_Ceil",     PyMath_Ceil);
+    pyc_register_callable("PyMath_Trunc",    PyMath_Trunc);
+    pyc_register_callable("PyMath_Pow",      PyMath_Pow);
+    pyc_register_callable("PyMath_Log",      PyMath_Log);
+    pyc_register_callable("PyMath_Log2",     PyMath_Log2);
+    pyc_register_callable("PyMath_Log10",    PyMath_Log10);
+    pyc_register_callable("PyMath_Exp",      PyMath_Exp);
+    pyc_register_callable("PyMath_Sin",      PyMath_Sin);
+    pyc_register_callable("PyMath_Cos",      PyMath_Cos);
+    pyc_register_callable("PyMath_Tan",      PyMath_Tan);
+    pyc_register_callable("PyMath_Asin",     PyMath_Asin);
+    pyc_register_callable("PyMath_Acos",     PyMath_Acos);
+    pyc_register_callable("PyMath_Atan",     PyMath_Atan);
+    pyc_register_callable("PyMath_Atan2",    PyMath_Atan2);
+    pyc_register_callable("PyMath_Hypot",    PyMath_Hypot);
+    pyc_register_callable("PyMath_Fabs",     PyMath_Fabs);
+    pyc_register_callable("PyMath_Fmod",     PyMath_Fmod);
+    pyc_register_callable("PyMath_Degrees",  PyMath_Degrees);
+    pyc_register_callable("PyMath_Radians",  PyMath_Radians);
+    pyc_register_callable("PyMath_Isnan",    PyMath_Isnan);
+    pyc_register_callable("PyMath_Isinf",    PyMath_Isinf);
+    pyc_register_callable("PyMath_Isfinite", PyMath_Isfinite);
+    pyc_register_callable("PyMath_Gcd",      PyMath_Gcd);
+    pyc_register_callable("PyMath_Factorial", PyMath_Factorial);
+    pyc_register_callable("PyJson_Dumps", PyJson_Dumps);
+    pyc_register_callable("PyJson_Loads", PyJson_Loads);
+    pyc_register_callable("PyRandom_Seed",      PyRandom_Seed);
+    pyc_register_callable("PyRandom_Random",    PyRandom_Random);
+    pyc_register_callable("PyRandom_Randrange", PyRandom_Randrange);
+    pyc_register_callable("PyRandom_Randint",   PyRandom_Randint);
+    pyc_register_callable("PyRandom_Uniform",   PyRandom_Uniform);
+    pyc_register_callable("PyRandom_Choice",    PyRandom_Choice);
+    pyc_register_callable("PyRandom_Shuffle",   PyRandom_Shuffle);
+    pyc_register_callable("PyItertools_Chain",        PyItertools_Chain);
+    pyc_register_callable("PyItertools_Product",      PyItertools_Product);
+    pyc_register_callable("PyItertools_Combinations", PyItertools_Combinations);
+    pyc_register_callable("PyItertools_Permutations", PyItertools_Permutations);
+    pyc_register_callable("PyItertools_Starmap",      PyItertools_Starmap);
+    pyc_register_callable("PyItertools_Islice",       PyItertools_Islice);
+    pyc_register_callable("PyItertools_ZipLongest",   PyItertools_ZipLongest);
+    pyc_register_callable("PyCollections_Counter",    PyCollections_Counter);
+    pyc_register_callable("PyCollections_MostCommon", PyCollections_MostCommon);
 }
 
 // Look up an attribute on the global `sys` module. Returns a strong
@@ -5156,15 +6134,7 @@ extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObje
 // If first arg is a bundle list [tokenStr, extra0, ...] (cells or prebound defaults),
 // extract the token and prepend the extras to the provided argList before dispatch.
 extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
-    fprintf(stderr, "DEBUG: Pyc_Apply called! token=%p\n", (void*)token);
-    fflush(stderr);
-    if (!token) {
-        fprintf(stderr, "DEBUG: token is NULL!\n");
-        fflush(stderr);
-        return nullptr;
-    }
-    fprintf(stderr, "DEBUG: token type=%d\n", token->type);
-    fflush(stderr);
+    if (!token) return nullptr;
     // A cell-backed callee (closure free variable holding a callable) may
     // arrive as the cell itself — unwrap to its content.
     while (token && token->type == 6 && token->cell_content) token = token->cell_content;
@@ -5201,17 +6171,8 @@ extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
         }
     }
     if (!haveTok) return nullptr;
-    fprintf(stderr, "DEBUG Pyc_Apply: tokName='%s'\n", tokName.c_str());
-    fflush(stderr);
-    if (tokName == "Pyc_Time_PerfCounter") {
-        fprintf(stderr, "DEBUG: About to call Pyc_Time_PerfCounter!\n");
-    }
     auto it = g_callableRegistry.find(tokName);
-    if (it == g_callableRegistry.end()) {
-        fprintf(stderr, "DEBUG Pyc_Apply: callable not found for '%s'\n", tokName.c_str());
-        fflush(stderr);
-        return nullptr;
-    }
+    if (it == g_callableRegistry.end()) return nullptr;
 
     PyObject* prepend = nullptr;
     if (token->type == 1 && !token->list.empty()) {
@@ -5616,7 +6577,6 @@ extern "C" int pyc_is_float(PyObject* obj) {
 // ---- time.perf_counter implementation ----
 extern "C" PyObject* Pyc_Time_PerfCounter(PyObject* args) {
     (void)args;
-    fprintf(stderr, "DEBUG: Pyc_Time_PerfCounter called!\n");
     // Use a very simple approach - just return a constant float
     return PyFloat_FromDouble(1.23456789);
 }

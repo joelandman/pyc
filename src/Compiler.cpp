@@ -30,6 +30,15 @@ namespace pyc {
 static std::optional<std::string> resolveRelativeImport(
     const std::string& packageContext, int level, const std::string& module);
 
+// Forward declaration: the exported (non-underscore, top-level) names for
+// each synthetic/built-in module pyc implements in the runtime (see
+// pyc_import_failed in src/runtime/Runtime.cpp). Used to expand
+// `from X import *` for a module that was never "compiled" as a real file
+// — mirrors what importedModuleGlobals does for real compiled modules.
+// Defined near kSyntheticModules below; kept in sync with each module's
+// dict-building code by hand.
+static const std::unordered_map<std::string, std::vector<std::string>>& syntheticModuleExports();
+
 class LoweringVisitor {
  public:
      LoweringVisitor(ModuleIR& moduleIR,
@@ -1042,13 +1051,23 @@ class LoweringVisitor {
                     }
                     noteType(name, "dict");
                 } else {
-                    // Module not found — call pyc_import_failed and store None
+                    // Module not found as a real compiled file — either a
+                    // synthetic/built-in module (os, math, ...), which
+                    // pyc_import_failed returns a real dict for, or a
+                    // genuinely unresolvable name, which it reports as an
+                    // ImportError and returns null for. Either way the
+                    // static type is "dict" so that `X.attr(...)` call
+                    // chains on a bare `import X` route through the
+                    // generic dict-dispatch path below (see lowerCall's
+                    // method-call handling) instead of silently mis-typing
+                    // as "boxed" and never dispatching at all.
                     std::string modName = "c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, modName, "str");
                     std::string failResult = "t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modName}, failResult);
-                    
+
                     ir.addInstruction(currentFunc, "assign", {failResult}, name);
+                    noteType(name, "dict");
                 }
             }
             return;
@@ -1071,8 +1090,6 @@ class LoweringVisitor {
              } else {
                  mod = node->id;
              }
-             fprintf(stderr, "DEBUG ImportFrom: mod='%s', args.size=%zu\n", mod.c_str(), node->args.size());
-             fflush(stderr);
              if (!mod.empty()) {
                 if (compiledModules.count(mod) > 0) {
                     // Module was compiled — pyc_run_module runs it (once,
@@ -1140,49 +1157,59 @@ class LoweringVisitor {
                         }
                     }
                 } else {
-                    // Module not found — call pyc_import_failed for each imported name
+                    // Module not found as a real compiled file — it's either
+                    // a synthetic/built-in module (re, os, math, json, ...)
+                    // or genuinely unresolvable; either way pyc_import_failed
+                    // returns the right thing (a synthetic dict, or an
+                    // ImportError-reporting empty result) for each imported
+                    // name to be looked up against.
                     std::string modName = "c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modName, "str");
-                     std::string moduleDict = "t" + std::to_string(tempCounter++);
-                     ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modName}, moduleDict);
-                     
-                     // For ImportFrom, importNames contains pairs: [orig1, target1, orig2, target2, ...]
-                     size_t importIdx = 0;
-                     for (const auto& name : node->args) {
-                         if (name == "*") continue;  // nothing to bind for star on a missing module
-                         
-                         fprintf(stderr, "DEBUG ImportFrom: mod='%s', name='%s'\n", mod.c_str(), name.c_str());
-                         fflush(stderr);
-                         
-                         ir.addModuleGlobal(name);
-                         
-                         // Get the original name for lookup (importNames has pairs: orig, target)
-                         std::string origName = name;
-                         if (importIdx + 1 < node->importNames.size()) {
-                             origName = node->importNames[importIdx];
-                         }
-                         importIdx += 2;
-                         
-                           // Special case: time.perf_counter - directly use the callable token
-                           if (mod == "time" && origName == "perf_counter") {
-                               std::string tokenVal = "t" + std::to_string(tempCounter++);
-                               ir.addInstruction(currentFunc, "const", {"\"Pyc_Time_PerfCounter\""}, tokenVal, "str");
-                               callableTokenTemps.insert(tokenVal);
-                               fprintf(stderr, "DEBUG ImportFrom: assigning %s to global %s\n", tokenVal.c_str(), name.c_str());
-                               fflush(stderr);
-                               ir.addInstruction(currentFunc, "assign", {tokenVal}, name);
-                               continue;
-                           }
-                         
-                          std::string attrKey = "c" + std::to_string(tempCounter++);
-                          ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
-                          std::string attrVal = "t" + std::to_string(tempCounter++);
-                          ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", moduleDict, attrKey}, attrVal);
-                          // Mark attrVal as a callable token temp and as owned (Pyc_GetItem returns new ref)
-                          callableTokenTemps.insert(attrVal);
-                          // Note: markOwned is called by codegen for call instructions
-                          ir.addInstruction(currentFunc, "assign", {attrVal}, name);
-                      }
+                    std::string moduleDict = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modName}, moduleDict);
+
+                    // `from X import *` on a synthetic module: expand to its
+                    // known exported names, mirroring how importedModuleGlobals
+                    // expands `*` for real compiled modules above. An unknown
+                    // module's `*` still binds nothing (no export list to
+                    // expand from), matching prior behavior.
+                    bool isStar = false;
+                    for (const auto& n : node->args) if (n == "*") { isStar = true; break; }
+                    std::vector<std::pair<std::string, std::string>> exportPairs; // (orig, target)
+                    if (isStar) {
+                        auto expIt = syntheticModuleExports().find(mod);
+                        if (expIt != syntheticModuleExports().end()) {
+                            for (const auto& nm : expIt->second) exportPairs.push_back({nm, nm});
+                        }
+                    } else {
+                        for (size_t i = 0; i + 1 < node->importNames.size(); i += 2) {
+                            exportPairs.push_back({node->importNames[i], node->importNames[i + 1]});
+                        }
+                    }
+
+                    for (const auto& pr : exportPairs) {
+                        const std::string& origName = pr.first;
+                        const std::string& name = pr.second;
+                        ir.addModuleGlobal(name);
+
+                        // Special case: time.perf_counter - directly use the callable token
+                        if (mod == "time" && origName == "perf_counter") {
+                            std::string tokenVal = "t" + std::to_string(tempCounter++);
+                            ir.addInstruction(currentFunc, "const", {"\"Pyc_Time_PerfCounter\""}, tokenVal, "str");
+                            callableTokenTemps.insert(tokenVal);
+                            ir.addInstruction(currentFunc, "assign", {tokenVal}, name);
+                            continue;
+                        }
+
+                        std::string attrKey = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
+                        std::string attrVal = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", moduleDict, attrKey}, attrVal);
+                        // Mark attrVal as a callable token temp and as owned (Pyc_GetItem returns new ref)
+                        callableTokenTemps.insert(attrVal);
+                        // Note: markOwned is called by codegen for call instructions
+                        ir.addInstruction(currentFunc, "assign", {attrVal}, name);
+                    }
                 }
             }
             return;
@@ -8100,6 +8127,36 @@ static std::string sanitizeModuleIdent(const std::string& dottedName) {
     return s;
 }
 
+// The exported (non-underscore, top-level) names for each synthetic/
+// built-in module pyc implements in the runtime — see the corresponding
+// dict-building code in pyc_import_failed (src/runtime/Runtime.cpp). Used
+// to (a) expand `from X import *` for these modules (LoweringVisitor's
+// ImportFrom handling, the not-found/synthetic branch) and (b) derive
+// kSyntheticModules below, so the two never drift apart. `sys` is
+// deliberately absent — `from sys import *` isn't meaningful (argv/stderr/
+// stdout aren't typically star-imported) and sys is handled outside
+// pyc_import_failed's normal dict-building path.
+static const std::unordered_map<std::string, std::vector<std::string>>& syntheticModuleExports() {
+    static const std::unordered_map<std::string, std::vector<std::string>> table = {
+        {"re",         {"finditer", "findall", "compile", "match", "search", "sub"}},
+        {"os",         {"environ", "path", "unlink"}},
+        {"subprocess", {"call", "check_output"}},
+        {"functools",  {"cmp_to_key"}},
+        {"cmath",      {"sqrt", "log", "exp", "sin", "cos", "tan"}},
+        {"time",       {"perf_counter"}},
+        {"math",       {"sqrt", "floor", "ceil", "trunc", "pow", "log", "log2", "log10",
+                         "exp", "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
+                         "hypot", "fabs", "fmod", "degrees", "radians", "isnan", "isinf",
+                         "isfinite", "gcd", "factorial", "pi", "e", "tau", "inf", "nan"}},
+        {"json",       {"dumps", "loads"}},
+        {"random",     {"seed", "random", "randrange", "randint", "uniform", "choice", "shuffle"}},
+        {"itertools",  {"chain", "product", "combinations", "permutations", "starmap",
+                         "islice", "zip_longest"}},
+        {"collections", {"Counter", "most_common"}},
+    };
+    return table;
+}
+
 // Resolve one dotted import name (e.g. "package_a.subpkg.mod_b1") to its
 // full chain of compile units — every intermediate package level plus the
 // leaf — searching the local source directory, then venv site-packages,
@@ -8133,10 +8190,14 @@ static void discoverDottedModule(const std::string& dottedName,
     // can't compile arbitrary real CPython stdlib source (it uses language
     // features and C extensions outside pyc's supported subset), so
     // `import re` etc. always needs to fall through to the hand-written
-    // PCRE2-backed (etc.) runtime implementation instead.
-    static const std::unordered_set<std::string> kSyntheticModules = {
-        "re", "sys", "functools", "os", "subprocess", "cmath", "time",
-    };
+    // PCRE2-backed (etc.) runtime implementation instead. Derived from
+    // syntheticModuleExports() plus "sys" (which has no star-import
+    // exports but is still a synthetic module name).
+    static const std::unordered_set<std::string> kSyntheticModules = [] {
+        std::unordered_set<std::string> s{"sys"};
+        for (const auto& kv : syntheticModuleExports()) s.insert(kv.first);
+        return s;
+    }();
     if (kSyntheticModules.count(parts[0])) return;
 
     std::vector<std::string> roots;

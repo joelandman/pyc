@@ -54,10 +54,50 @@ pyc is strictly AOT (Ahead-Of-Time). No runtime compilation or caching.
 - **`**` (power) for non-constant exponents uses boxed `Pyc_Pow`**
 - **Only a handful of stdlib modules are implemented, synthetically**: `sys`,
   `re` (PCRE2-backed), `os`, `subprocess`, `functools`, `cmath`,
-  `time.perf_counter` — everything else reports ImportError rather than
+  `time.perf_counter`, `math`, `json`, `random`, `itertools` (subset),
+  `collections` (subset) — everything else reports ImportError rather than
   compiling real CPython stdlib source. A function named `get` called via
   `module.get()` collides with the dict `.get()` method shim and silently
   returns `None` — a pre-existing naming collision, not package-specific.
+- **A pyc-level class cannot reliably back a stdlib-shaped container
+  type**: confirmed by direct experiment while scoping `collections`.
+  Subclassing `dict` (`class Counter(dict): ...`) does not behave as a
+  real dict — `.items()` returned the instance's own attribute/method
+  metadata instead of stored data. A plain class using
+  `__getitem__`/`__setitem__` partially worked but silently dropped output
+  on at least one path (`print(x[missing_key])` produced nothing at all).
+  This is why `collections.Counter` returns a plain dict instead of a
+  custom class instance, and why `defaultdict`/`namedtuple`/`deque` aren't
+  implemented — `defaultdict` needs a per-instance "factory" slot dicts
+  don't have, and `namedtuple` needs either attribute-style field access
+  on a raw dict (unverified whether pyc supports this at all) or a new
+  type, neither investigated in depth yet.
+- **Dict iteration order is not insertion-order-preserving**: `PyObject`'s
+  dict payload is `std::unordered_map<PyObject*, PyObject*>` keyed by raw
+  pointer (not value — lookups are a linear scan comparing values, the hash
+  map's own O(1) lookup is unused), and iterating it yields whatever order
+  the hash buckets happen to produce. Real Python dicts guarantee
+  insertion order (a language guarantee since 3.7); pyc's don't. This
+  affects any code that iterates a dict with 2+ keys expecting insertion
+  order (`for k in d`, `d.items()`, `json.dumps()` on a multi-key dict,
+  dict `repr()`/`print()`), not just json — discovered while testing the
+  json module (`from tests/runner.py`'s json test case deliberately avoids
+  multi-key dicts because of this). A real fix means changing the dict
+  storage to something order-preserving, which touches every dict
+  operation in the runtime — out of scope for the stdlib-modules work that
+  surfaced it; flagged here as a significant follow-up.
+- **Fixed while adding json**: `Pyc_Subscript` (`d[key]`) used to raise
+  `KeyError` for a key that legitimately maps to `None`, because it
+  couldn't distinguish "key not found" from "key found, value is null"
+  (both looked like a null `PyObject*` from `Pyc_GetItem`). Now scans the
+  dict directly so a `None` value is returned correctly — needed for
+  `json.loads('{"k": null}')["k"]` to work.
+- **Float formatting sometimes uses scientific notation where CPython
+  wouldn't**: e.g. `print(180.0)` prints `1.8e+02` instead of `180.0` —
+  reproducible with a bare float literal, so it's a general `str()`/`print()`
+  formatting bug, not specific to any particular computation. Not yet
+  investigated in depth; avoid exact-multiples-of-10 float values in new
+  CPython-output-comparison tests until this is root-caused.
 
 ### Type System
 - **Conservative type tracking**: `widenLoopTypes()` widens to "boxed" on any type divergence at loop back-edges

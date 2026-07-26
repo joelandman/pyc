@@ -1670,8 +1670,6 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 builder.CreateStore(newVal, i64alloca);
             } else if (inst.op == "const") {
                 std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
-                fprintf(stderr, "DEBUG Codegen const: val='%s', inst.result='%s'\n", val.c_str(), inst.result.c_str());
-                fflush(stderr);
                 if (!val.empty() && (val[0] == '"' || val[0] == '\'')) {
                     llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
                     if (fromStr) {

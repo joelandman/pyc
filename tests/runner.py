@@ -1075,6 +1075,128 @@ print(cmath.sin(0))
 print(cmath.cos(0))
 print(cmath.tan(0))
 """, "(0.0+1.0j)\n(0.0+3.0j)\n(0.0+2.5j)\n(0.0+3.0j)\n(0.0-1.0j)\n(-2.0+0.0j)\n(0.5+0.0j)\n(-1.0+0.0j)\n3.0\n(0.0+0.0j)\n(3.0+0.0j)\n(3.5+0.0j)\n(3.0+4.0j)\n(0.0+1.0j)\n(0.0+1.0j)\n(1.0+0.0j)\n(0.0+0.0j)\n(0.0+0.0j)\n(1.0+0.0j)\n(0.0+0.0j)\n"),
+    # math module (synthetic, wraps libm)
+    ("""
+import math
+print(math.sqrt(2))
+print(math.floor(3.7))
+print(math.ceil(3.2))
+print(math.trunc(-3.7))
+print(math.pow(2, 10))
+print(math.log(math.e))
+print(math.log(8, 2))
+print(math.log2(8))
+print(math.log10(1000))
+print(math.exp(1))
+print(math.sin(1))
+print(math.cos(1))
+print(math.tan(1))
+print(math.asin(0.5))
+print(math.acos(0.5))
+print(math.atan(1))
+print(math.atan2(1, 1))
+print(math.hypot(3, 4))
+print(math.fabs(-5.5))
+print(math.fmod(7, 3))
+print(math.degrees(1))
+print(math.radians(1))
+print(math.isnan(math.nan))
+print(math.isinf(math.inf))
+print(math.isfinite(1.0))
+print(math.gcd(48, 18))
+print(math.factorial(10))
+print(math.pi)
+print(math.e)
+print(math.tau)
+from math import sqrt, pi as PI
+print(sqrt(16), PI)
+from math import *
+print(cos(0), sin(0))
+""", "1.4142135623730951\n3\n4\n-3\n1024.0\n1.0\n3.0\n3.0\n3.0\n2.718281828459045\n0.8414709848078965\n0.5403023058681398\n1.5574077246549023\n0.5235987755982989\n1.0471975511965979\n0.7853981633974483\n0.7853981633974483\n5.0\n5.5\n1.0\n57.29577951308232\n0.017453292519943295\nTrue\nTrue\nTrue\n6\n3628800\n3.141592653589793\n2.718281828459045\n6.283185307179586\n4.0 3.141592653589793\n1.0 0.0\n"),
+    # json module (dumps/loads, synthetic — operates on the generic boxed
+    # value tree). Dict test cases here are deliberately single-key: pyc's
+    # dict iteration order is not currently insertion-order-preserving
+    # (a separate, pre-existing limitation — see IMPLEMENTATION.md), so a
+    # multi-key dict's json.dumps() key order isn't guaranteed to match
+    # CPython's even though every individual value is correct.
+    ("""
+import json
+print(json.dumps([1, 2, 3]))
+print(json.dumps("hi"))
+print(json.dumps(42))
+print(json.dumps(3.5))
+print(json.dumps(True))
+print(json.dumps(None))
+print(json.dumps({"a": 1}))
+d = json.loads('{"x": 1, "y": [1, 2, 3], "z": "hi", "w": true, "v": null, "u": 2.5}')
+print(d["x"])
+print(d["y"])
+print(d["z"])
+print(d["w"])
+print(d["v"])
+print(d["u"])
+s = json.dumps({"nested": {"a": 1}})
+print(s)
+print(json.loads(s)["nested"]["a"])
+""", '[1, 2, 3]\n"hi"\n42\n3.5\ntrue\nnull\n{"a": 1}\n1\n[1, 2, 3]\nhi\nTrue\nNone\n2.5\n{"nested": {"a": 1}}\n1\n'),
+    # random module (synthetic, from-scratch MT19937 replicating CPython's
+    # _randommodule.c bit-for-bit — random.seed(N) then any of these
+    # functions produces identical output to real CPython for the same N).
+    ("""
+import random
+
+random.seed(42)
+print(random.random())
+print(random.random())
+
+random.seed(42)
+print(random.randint(1, 100))
+print(random.randint(1, 100))
+
+random.seed(42)
+print(random.randrange(10))
+
+random.seed(42)
+print(random.uniform(1.0, 2.0))
+
+random.seed(42)
+print(random.choice([10, 20, 30, 40, 50]))
+
+random.seed(42)
+lst = [1, 2, 3, 4, 5]
+random.shuffle(lst)
+print(lst)
+""", "0.6394267984578837\n0.025010755222666936\n82\n15\n1\n1.6394267984578836\n10\n[4, 2, 3, 5, 1]\n"),
+    # itertools/collections subset (synthetic, eager list-returning — no
+    # lazy iterator protocol, so count/cycle/unbounded repeat aren't
+    # implemented; see IMPLEMENTATION.md). Tuples aren't a distinct pyc
+    # type (pre-existing, unrelated to this work) so results that would be
+    # tuples in real Python are plain lists here — expected output below
+    # reflects that. The Counter test uses distinct counts (4/2/1) to
+    # avoid tie-breaking order, which depends on pyc's dict iteration
+    # order (not currently insertion-order-preserving — see
+    # IMPLEMENTATION.md) and so isn't guaranteed to match CPython's.
+    ("""
+import itertools
+import collections
+
+print(itertools.chain([1, 2], [3, 4], [5]))
+print(itertools.product([1, 2], [3, 4]))
+print(itertools.combinations([1, 2, 3, 4], 2))
+print(itertools.permutations([1, 2, 3]))
+print(itertools.permutations([1, 2, 3], 2))
+print(itertools.islice([1, 2, 3, 4, 5], 3))
+
+def add(a, b):
+    return a + b
+print(itertools.starmap(add, [[1, 2], [3, 4], [5, 6]]))
+
+print(itertools.zip_longest([1, 2, 3], [10, 20]))
+
+c = collections.Counter(["a", "a", "a", "a", "b", "b", "c"])
+print(collections.most_common(c))
+print(collections.most_common(c, 2))
+""", "[1, 2, 3, 4, 5]\n[[1, 3], [1, 4], [2, 3], [2, 4]]\n[[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]]\n[[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]]\n[[1, 2], [1, 3], [2, 1], [2, 3], [3, 1], [3, 2]]\n[1, 2, 3]\n[3, 7, 11]\n[[1, 10], [2, 20], [3, None]]\n[['a', 4], ['b', 2], ['c', 1]]\n[['a', 4], ['b', 2]]\n"),
     # B7: Import / module system tests
      # These require utils.py to be in the same directory
      ("b7_import.py", []),

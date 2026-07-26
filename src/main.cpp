@@ -71,7 +71,6 @@ int main(int argc, char** argv) {
     bool dynamicLink = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        std::cerr << "DEBUG: Processing arg[" << i << "]=" << arg << "\n";
         if (arg == "-o" && i + 1 < argc) output = argv[++i];
         else if (arg == "--static") useStatic = true;
         else if (arg.rfind("-O", 0) == 0 && arg.size() > 2) optLevel = std::stoi(arg.substr(2));
@@ -79,7 +78,6 @@ int main(int argc, char** argv) {
         else if (arg == "--emit-llvm") emitLLVM = true;
         else if (arg == "--emit-asm" || arg == "-S") emitASM = true;
         else if (arg == "--verbose" || arg == "-v") {
-            std::cerr << "DEBUG: Setting verbose=true\n";
             verbose = true;
         }
         else if (arg == "-g") debugInfo = true;
@@ -102,9 +100,6 @@ int main(int argc, char** argv) {
         else if (input.empty()) input = arg;
     }
     pyc::Compiler c;
-    std::cerr << "DEBUG: Main entry point called with argc=" << argc << "\n";
-    std::cerr << "DEBUG: verbose=" << (verbose ? "true" : "false") << "\n";
-    if (verbose) std::cerr << "DEBUG: About to call compile with pythonPath=" << pythonPath << "\n";
     if (c.compile(input, output, useStatic, optLevel, emitLLVM, emitASM, verbose, debugInfo,
                   pgoInstrument, pgoProfile, pgoGenerateProfile, mcpu, march, targetArch, venvPath, dynamicLink, pythonPath)) return 0;
     return 1;
