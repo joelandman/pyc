@@ -1,4 +1,5 @@
 build/
+build_debug/
 /pyc
 build_asan/
 
@@ -10,6 +11,8 @@ a.out.*
 *.s
 *_dbg.py
 *.dbg.py
+# B7 module-registry C source generated alongside every compiled binary
+*_b7_modules.c
 
 # Python bytecode caches (created by Python3 imports during build/test)
 __pycache__/

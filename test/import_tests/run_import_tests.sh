@@ -38,7 +38,7 @@ run_test() {
     echo ""
     
     # Clean up
-    rm -f "$binary_name"
+    rm -f "$binary_name" "$binary_name.o" "$binary_name"_b7_modules.c
 }
 
 cd "$TEST_DIR"
