@@ -342,8 +342,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* joinpathTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(joinpathTy, llvm::Function::ExternalLinkage, "PyPathlib_Joinpath", module.get());
     // hashlib: same direct-call convention. PyHashlib_Md5/Sha1/Sha256 take
-    // the data string; PyHashlib_Hexdigest takes the hash-object receiver.
-    for (const char* name : {"PyHashlib_Md5", "PyHashlib_Sha1", "PyHashlib_Sha256", "PyHashlib_Hexdigest"}) {
+    // the data string; PyHashlib_Hexdigest/Digest take the hash-object receiver.
+    for (const char* name : {"PyHashlib_Md5", "PyHashlib_Sha1", "PyHashlib_Sha256",
+                              "PyHashlib_Hexdigest", "PyHashlib_Digest"}) {
         llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, name, module.get());
     }
@@ -387,6 +388,32 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyDeque_Appendleft", module.get());
         llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyDeque_Rotate", module.get());
+    }
+    // bytes/bytearray: PyBytes_FromStringAndSize/PyByteArray_FromStringAndSize
+    // take (ptr, i64 length) — the length-aware construction "bytesconst"'s
+    // Codegen handler needs (see that handler's comment for why "const"'s
+    // NUL-terminated PyUnicode_FromString path can't be reused for bytes).
+    {
+        llvm::FunctionType* bytesFromSizeTy = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, llvm::Type::getInt64Ty(context)}, false);
+        llvm::Function::Create(bytesFromSizeTy, llvm::Function::ExternalLinkage, "PyBytes_FromStringAndSize", module.get());
+        llvm::Function::Create(bytesFromSizeTy, llvm::Function::ExternalLinkage, "PyByteArray_FromStringAndSize", module.get());
+    }
+    // bytes()/bytearray() construction (2-arg: value, encoding — either
+    // may be null) and bytes/str methods: .hex()/.fromhex()/.decode()/
+    // .encode() (1 or 2-arg direct-call convention, matching hashobj's
+    // .hexdigest() pattern). twoArg isn't declared yet at this point in
+    // the function, so declare the FunctionType inline instead.
+    {
+        llvm::FunctionType* twoArgTy2 = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        for (const char* n : {"PyBuiltin_Bytes", "PyBuiltin_Bytearray", "PyBytes_Decode", "PyStr_Encode",
+                              "PyByteArray_Append", "PyByteArray_ExtendOp"}) {
+            llvm::Function::Create(twoArgTy2, llvm::Function::ExternalLinkage, n, module.get());
+        }
+        llvm::FunctionType* oneArgTy2 = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        for (const char* n : {"PyBytes_Hex", "PyBytes_Fromhex"}) {
+            llvm::Function::Create(oneArgTy2, llvm::Function::ExternalLinkage, n, module.get());
+        }
     }
     // setjmp is special: declaration with the ReturnsTwice attribute.
     {
@@ -1745,6 +1772,23 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
                 valueMap[inst.result] = i64alloca;
                 builder.CreateStore(newVal, i64alloca);
+            } else if (inst.op == "bytesconst") {
+                // b"..." literal. Unlike "const"'s str path, this passes an
+                // explicit length (computed from the in-memory operand
+                // std::string, which is not NUL-terminated-assumption-based)
+                // to PyBytes_FromStringAndSize, so embedded \x00 bytes
+                // survive correctly — "const" can't be reused here because
+                // it hands the global string pointer to PyUnicode_FromString,
+                // which truncates at the first NUL via strlen semantics.
+                const std::string& s = inst.operands.empty() ? std::string() : inst.operands[0].name;
+                llvm::Function* fromBytes = module->getFunction("PyBytes_FromStringAndSize");
+                if (fromBytes) {
+                    llvm::Value* ptr = builder.CreateGlobalStringPtr(s, "bytes");
+                    llvm::Value* lenConst = llvm::ConstantInt::get(context, llvm::APInt(64, (uint64_t)s.size()));
+                    llvm::Value* boxed = builder.CreateCall(fromBytes, {ptr, lenConst}, inst.result);
+                    valueMap[inst.result] = boxed;
+                    markOwned(inst.result);
+                }
             } else if (inst.op == "const") {
                 std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
                 if (!val.empty() && (val[0] == '"' || val[0] == '\'')) {

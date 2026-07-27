@@ -191,7 +191,7 @@ static int PyObject_TruthValue(PyObject* obj) {
     if (!obj) return 0;
     if (obj->type == 0 || obj->type == 5) return obj->value != 0;
     if (obj->type == 4) return obj->dvalue != 0.0;
-    if (obj->type == 3) return !obj->str.empty();
+    if (obj->type == 3 || obj->type == 17 || obj->type == 18) return !obj->str.empty();
     if (obj->type == 1) return !obj->list.empty();
     if (obj->type == 2) return !obj->dict.empty();
     return 1;
@@ -816,6 +816,34 @@ static void pyc_format_timedelta_into(const PycTimedelta* td, std::string& out) 
     }
 }
 
+// Formats a bytes/bytearray object's raw content as CPython-style repr
+// text: b'...' (bytearray wraps that in bytearray(...)). Escapes
+// non-printable/non-ASCII bytes as \xHH, plus \\/\n/\t/\r shorthand.
+// Simplification vs real CPython: always single-quotes and escapes an
+// embedded "'" as \' — CPython instead switches to double-quotes when
+// the content has a "'" but no '"' (avoiding the escape). Both are valid
+// Python source for the same bytes value; not byte-for-byte identical to
+// CPython's own repr choice when a lone single-quote is present.
+static std::string pyc_format_bytes_repr(const std::string& s, bool isBytearray) {
+    std::string out = "b'";
+    for (unsigned char c : s) {
+        if (c == '\\') out += "\\\\";
+        else if (c == '\'') out += "\\'";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\t') out += "\\t";
+        else if (c == '\r') out += "\\r";
+        else if (c >= 0x20 && c < 0x7f) out += (char)c;
+        else {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "\\x%02x", (unsigned)c);
+            out += buf;
+        }
+    }
+    out += "'";
+    if (isBytearray) out = "bytearray(" + out + ")";
+    return out;
+}
+
 static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
     // Like PyObject_PrintBase but writes NO trailing newline. Used by
     // container printers (list/dict) so we get "[1, 2, 3]" instead of
@@ -878,6 +906,10 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
     if (obj->type == 3) {
         // String element inside a container: use repr-style quotes.
         return fprintf(fp, "'%s'", obj->str.c_str());
+    }
+    if (obj->type == 17 || obj->type == 18) {
+        std::string r = pyc_format_bytes_repr(obj->str, obj->type == 18);
+        return fprintf(fp, "%s", r.c_str());
     }
     if (obj->type == 6) return fprintf(fp, "<cell>");
     if (obj->type == 14) {
@@ -1036,6 +1068,12 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         return 0;
     }
     if (obj->type == 3) { int r = fprintf(fp, "%s\n", obj->str.c_str()); fflush(fp); return r; }
+    if (obj->type == 17 || obj->type == 18) {
+        // Unlike str/Path, bytes has no bare __str__ — print() shows the
+        // same b'...' repr form CPython does (print(b"hi") -> b'hi').
+        std::string r = pyc_format_bytes_repr(obj->str, obj->type == 18);
+        int rc = fprintf(fp, "%s\n", r.c_str()); fflush(fp); return rc;
+    }
     if (obj->type == 6) { int r = fprintf(fp, "<cell>\n"); fflush(fp); return r; }
     { int r = fprintf(fp, "<object>\n"); fflush(fp); return r; }
 }
@@ -1128,6 +1166,33 @@ PyObject* PyUnicode_FromStringAndSize(const char* s, size_t n) {
     obj->str.assign(s, n);
     return obj;
 }
+
+// bytes (type 17) / bytearray (type 18) — reuse the `str` field for
+// storage exactly like pathlib.Path (type 16) reuses it for path text:
+// no Codegen.cpp struct-layout changes needed (Codegen only touches
+// fields 0-3: refcount/type/value/dvalue), no Py_DECREF branch needed
+// (plain `delete obj` already runs std::string's destructor). Both
+// constructors are explicit-length (not C-string-based) so embedded NUL
+// bytes survive, mirroring PyUnicode_FromStringAndSize just above.
+PyObject* PyBytes_FromStringAndSize(const char* s, size_t n) {
+    PyObject* obj = new PyObject();
+    obj->refcount = 1;
+    obj->type = 17;
+    obj->str.assign(s, n);
+    return obj;
+}
+PyObject* PyByteArray_FromStringAndSize(const char* s, size_t n) {
+    PyObject* obj = new PyObject();
+    obj->refcount = 1;
+    obj->type = 18;
+    obj->str.assign(s, n);
+    return obj;
+}
+// True for a plain str (type 3), bytes (17), or bytearray (18) — all
+// three store their content in the `str` field. Used by helpers (e.g.
+// hashlib) that should accept any of the three as raw byte-ish input,
+// same rationale as pyc_is_path_like allowing str/Path interop.
+static bool pyc_is_bytes_like(PyObject* o) { return o && (o->type == 3 || o->type == 17 || o->type == 18); }
 
 // Convert any PyObject to its string representation (no trailing newline).
 // Named PyStr_FromAny to avoid conflict with CPython's PyObject_Str.
@@ -1627,6 +1692,8 @@ PyObject* PyBuiltin_Type(PyObject* obj) {
         case 14: return PyUnicode_FromString(pyc_as_datetime(obj)->hasTime
                      ? "<class 'datetime.datetime'>" : "<class 'datetime.date'>");
         case 15: return PyUnicode_FromString("<class 'datetime.timedelta'>");
+        case 17: return PyUnicode_FromString("<class 'bytes'>");
+        case 18: return PyUnicode_FromString("<class 'bytearray'>");
         default: return PyUnicode_FromString("<class 'object'>");
     }
 }
@@ -1747,6 +1814,10 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
         // String: wrap in single quotes (simplified — no escaping).
         std::string r = "'" + obj->str + "'";
         return PyUnicode_FromString(r.c_str());
+    }
+    if (obj->type == 17 || obj->type == 18) {
+        std::string r = pyc_format_bytes_repr(obj->str, obj->type == 18);
+        return PyUnicode_FromStringAndSize(r.data(), r.size());
     }
     if (obj->type == 1) {
         // Descriptor bundle: first element is a function object or a string
@@ -2769,7 +2840,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
 PyObject* PyBuiltin_Len(PyObject* obj) {
     if (!obj) return PyInt_FromLong(0);
     if (obj->type == 1) return PyInt_FromLong((long)PyList_Size(obj));
-    if (obj->type == 3) return PyInt_FromLong((long)obj->str.size());
+    if (obj->type == 3 || obj->type == 17 || obj->type == 18) return PyInt_FromLong((long)obj->str.size());
     if (obj->type == 2) return PyInt_FromLong((long)obj->dict.size());
     return PyInt_FromLong(0);
 }
@@ -2918,6 +2989,17 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
             return PyUnicode_FromString(buf);
         }
     }
+    // bytes/bytearray indexing returns an int (0-255) — real Python
+    // semantics differ from str indexing here (str[i] is a length-1 str);
+    // this is the one place bytes genuinely diverges from str, not
+    // reusable from the branch above.
+    if ((obj->type == 17 || obj->type == 18) && (key->type == 0 || key->type == 5)) {
+        long idx = key->value;
+        if (idx < 0) idx += (long)obj->str.size();
+        if (idx >= 0 && (size_t)idx < obj->str.size()) {
+            return PyInt_FromLong((unsigned char)obj->str[(size_t)idx]);
+        }
+    }
     return nullptr;
 }
 
@@ -2980,6 +3062,7 @@ PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
     if (r) return r;
     if (obj && obj->type == 1) { pyc_raise_msg("IndexError", "list index out of range"); return nullptr; }
     if (obj && obj->type == 3) { pyc_raise_msg("IndexError", "string index out of range"); return nullptr; }
+    if (obj && (obj->type == 17 || obj->type == 18)) { pyc_raise_msg("IndexError", "index out of range"); return nullptr; }
     return nullptr;
 }
 
@@ -2987,6 +3070,18 @@ PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
     if (!obj || !key) return nullptr;
     if (obj->type == 1) { PyList_SetItemBoxed(obj, key, val); return nullptr; }
     if (obj->type == 2) { PyDict_SetItem(obj, key, val); return nullptr; }
+    // bytearray index assignment: ba[i] = x, x an int 0-255 (bytes, type
+    // 17, is immutable — real Python raises TypeError on `b"x"[0]=1`,
+    // not reachable here since only bytearray's typeOf tag routes
+    // through this path — see Compiler.cpp's assignment lowering).
+    if (obj->type == 18 && (key->type == 0 || key->type == 5) && val && (val->type == 0 || val->type == 5)) {
+        long idx = key->value;
+        if (idx < 0) idx += (long)obj->str.size();
+        if (idx >= 0 && (size_t)idx < obj->str.size()) {
+            obj->str[(size_t)idx] = (char)(unsigned char)(val->value & 0xFF);
+        }
+        return nullptr;
+    }
     return nullptr;
 }
 
@@ -3020,6 +3115,18 @@ PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
     }
     if (container->type == 3) {
         if (item->type == 3)
+            return PyBool_New(container->str.find(item->str) != std::string::npos);
+        return PyBool_New(0);
+    }
+    if (container->type == 17 || container->type == 18) {
+        // `in` on bytes/bytearray: an int operand (0-255) checks for that
+        // single byte value; a bytes/bytearray/str operand checks for a
+        // substring, matching real Python's dual `x in b"..."` behavior.
+        if (item->type == 0 || item->type == 5) {
+            unsigned char b = (unsigned char)(item->value & 0xFF);
+            return PyBool_New(container->str.find((char)b) != std::string::npos);
+        }
+        if (item->type == 3 || item->type == 17 || item->type == 18)
             return PyBool_New(container->str.find(item->str) != std::string::npos);
         return PyBool_New(0);
     }
@@ -3369,14 +3476,17 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
         } else {
             n = (long)obj->list.size();
         }
-    } else if (obj->type == 3) {
+    } else if (obj->type == 3 || obj->type == 17 || obj->type == 18) {
         n = (long)obj->str.size();
     } else {
         n = 0;
     }
     long stp = (step && (step->type==0||step->type==5)) ? step->value : 1;
     if (stp == 0) {
-        return (obj->type == 3) ? PyUnicode_FromString("") : PyList_New(0);
+        if (obj->type == 3) return PyUnicode_FromString("");
+        if (obj->type == 17) return PyBytes_FromStringAndSize("", 0);
+        if (obj->type == 18) return PyByteArray_FromStringAndSize("", 0);
+        return PyList_New(0);
     }
     long s = (start && (start->type==0||start->type==5)) ? start->value : (stp > 0 ? 0 : n - 1);
     long e = (stop  && (stop->type ==0||stop->type ==5)) ? stop->value : (stp > 0 ? n : -1);
@@ -3430,12 +3540,14 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
         }
         return r;
     }
-    if (obj->type == 3) {
+    if (obj->type == 3 || obj->type == 17 || obj->type == 18) {
         std::string r;
         for (long i : idxs) {
             if (i >= 0 && (size_t)i < obj->str.size()) r += obj->str[(size_t)i];
         }
-        return PyUnicode_FromString(r.c_str());
+        if (obj->type == 17) return PyBytes_FromStringAndSize(r.data(), r.size());
+        if (obj->type == 18) return PyByteArray_FromStringAndSize(r.data(), r.size());
+        return PyUnicode_FromStringAndSize(r.data(), r.size());
     }
     return PyList_New(0);
 }
@@ -3623,6 +3735,14 @@ PyObject* PyBuiltin_List(PyObject* obj) {
         for (auto& pair : obj->dict) {
             if (pair.first) Py_INCREF(pair.first);
             PyList_SetItem(r, i++, pair.first);
+        }
+        return r;
+    }
+    if (obj->type == 17 || obj->type == 18) {
+        // bytes/bytearray iterate as ints (0-255), same as indexing.
+        PyObject* r = PyList_New(obj->str.size());
+        for (size_t i = 0; i < obj->str.size(); ++i) {
+            PyList_SetItem(r, i, PyInt_FromLong((unsigned char)obj->str[i]));
         }
         return r;
     }
@@ -3952,6 +4072,14 @@ static PyObject* pyc_timedelta_mul(const PycTimedelta* a, int64_t n) {
 PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
     if (!a || !b) return NULL;
     if (a->type == 3 && b->type == 3) return PyString_Concat(a, b);
+    // bytes/bytearray concatenation. Result type follows the left
+    // operand (matches real Python: bytearray + bytes -> bytearray,
+    // bytes + bytearray -> bytes).
+    if ((a->type == 17 || a->type == 18) && (b->type == 17 || b->type == 18)) {
+        std::string combined = a->str + b->str;
+        return (a->type == 18) ? PyByteArray_FromStringAndSize(combined.data(), combined.size())
+                                : PyBytes_FromStringAndSize(combined.data(), combined.size());
+    }
     if (a->type == 14 && b->type == 15) return pyc_datetime_add_timedelta(pyc_as_datetime(a), pyc_as_timedelta(b), false);
     if (a->type == 15 && b->type == 14) return pyc_datetime_add_timedelta(pyc_as_datetime(b), pyc_as_timedelta(a), false);
     if (a->type == 15 && b->type == 15) return pyc_timedelta_add(pyc_as_timedelta(a), pyc_as_timedelta(b), false);
@@ -4545,14 +4673,17 @@ extern "C" PyObject* PyPathlib_Joinpath(PyObject* obj, PyObject* parts) {
 // ---------------------------------------------------------------------
 // hashlib / base64 / struct
 //
-// pyc has no distinct `bytes` type (confirmed: zero references anywhere
-// in the codebase prior to this). Binary data throughout this section is
-// represented as a plain `str` (type 3) whose characters hold byte values
-// 0-255 — correct for ASCII/text input (the overwhelming common case:
-// hashing strings, base64-encoding tokens) but does NOT match CPython's
-// `bytes` object identity, repr (`b'...'`), or semantics for arbitrary
-// non-ASCII/binary content. This is a deliberate, permanent scoping
-// choice (not a bug to fix quietly later) — see IMPLEMENTATION.md.
+// pyc now has a real `bytes`/`bytearray` type (types 17/18, added
+// alongside this comment's update — see PyBytes_FromStringAndSize near
+// PyUnicode_FromStringAndSize, and pyc_is_bytes_like just below it).
+// hashlib/base64/struct accept str, bytes, or bytearray input
+// indiscriminately via pyc_is_bytes_like (more permissive than real
+// CPython, which requires actual bytes for these — a deliberate,
+// documented simplification, not an oversight). base64.b64encode and
+// struct.pack now return real bytes (type 17), matching CPython, since
+// a real bytes type makes that the natural/correct choice — this is a
+// deliberate behavior change from the prior str-returning versions (see
+// IMPLEMENTATION.md).
 //
 // MD5/SHA-1/SHA-256 are implemented from scratch here (compact, standard
 // reference algorithms) rather than linking OpenSSL/libcrypto, matching
@@ -4570,6 +4701,103 @@ static std::string pyc_bytes_to_hex(const uint8_t* data, size_t n) {
         out += hexd[data[i] & 0xF];
     }
     return out;
+}
+
+// bytes.fromhex(s) inverse of the helper above. Ignores whitespace
+// between byte pairs (matching real bytes.fromhex, which allows spaces
+// as separators); raises ValueError on a malformed hex string.
+static bool pyc_hex_to_bytes(const std::string& hex, std::string& out) {
+    out.clear();
+    int hi = -1;
+    for (char c : hex) {
+        if (c == ' ') { if (hi != -1) return false; continue; }
+        int v;
+        if (c >= '0' && c <= '9') v = c - '0';
+        else if (c >= 'a' && c <= 'f') v = c - 'a' + 10;
+        else if (c >= 'A' && c <= 'F') v = c - 'A' + 10;
+        else return false;
+        if (hi == -1) hi = v;
+        else { out += (char)((hi << 4) | v); hi = -1; }
+    }
+    return hi == -1;
+}
+
+// bytes(x)/bytearray(x) construction. `arg0` may be: null (empty),
+// int/bool (zero-filled of that length), str (raw content copy — arg1,
+// the encoding, is accepted but not used for transcoding beyond that,
+// same permissive-str-as-bytes stance as hashlib/base64 above), a list
+// (iterable of ints 0-255), or bytes/bytearray (content copy).
+static PyObject* pyc_bytes_construct(PyObject* arg0, PyObject* arg1, bool wantBytearray) {
+    (void)arg1;
+    std::string content;
+    if (arg0) {
+        if (arg0->type == 0 || arg0->type == 5) {
+            long n = arg0->value;
+            if (n > 0) content.assign((size_t)n, '\0');
+        } else if (arg0->type == 3 || arg0->type == 17 || arg0->type == 18) {
+            content = arg0->str;
+        } else if (arg0->type == 1) {
+            pyc_ensure_boxed_list(arg0);
+            content.reserve(arg0->list.size());
+            for (PyObject* item : arg0->list) {
+                long v = (item && (item->type == 0 || item->type == 5)) ? item->value : 0;
+                content += (char)(unsigned char)(v & 0xFF);
+            }
+        }
+    }
+    return wantBytearray ? PyByteArray_FromStringAndSize(content.data(), content.size())
+                          : PyBytes_FromStringAndSize(content.data(), content.size());
+}
+extern "C" PyObject* PyBuiltin_Bytes(PyObject* arg0, PyObject* arg1) {
+    return pyc_bytes_construct(arg0, arg1, false);
+}
+extern "C" PyObject* PyBuiltin_Bytearray(PyObject* arg0, PyObject* arg1) {
+    return pyc_bytes_construct(arg0, arg1, true);
+}
+extern "C" PyObject* PyBytes_Hex(PyObject* self) {
+    if (!self || (self->type != 17 && self->type != 18)) return PyUnicode_FromString("");
+    std::string h = pyc_bytes_to_hex((const uint8_t*)self->str.data(), self->str.size());
+    return PyUnicode_FromStringAndSize(h.data(), h.size());
+}
+extern "C" PyObject* PyBytes_Fromhex(PyObject* s) {
+    if (!s || s->type != 3) return PyBytes_FromStringAndSize("", 0);
+    std::string out;
+    if (!pyc_hex_to_bytes(s->str, out)) {
+        pyc_raise_msg("ValueError", "non-hexadecimal number found in fromhex() arg");
+        return nullptr;
+    }
+    return PyBytes_FromStringAndSize(out.data(), out.size());
+}
+extern "C" PyObject* PyBytes_Decode(PyObject* self, PyObject* /*encoding*/) {
+    if (!self || (self->type != 17 && self->type != 18)) return PyUnicode_FromString("");
+    return PyUnicode_FromStringAndSize(self->str.data(), self->str.size());
+}
+extern "C" PyObject* PyStr_Encode(PyObject* self, PyObject* /*encoding*/) {
+    if (!self || self->type != 3) return PyBytes_FromStringAndSize("", 0);
+    return PyBytes_FromStringAndSize(self->str.data(), self->str.size());
+}
+
+// bytearray mutability — .append(int)/.extend(iterable). bytearray (type
+// 18) stores its content directly in `str`, so mutation is a plain
+// std::string append, not PyList_Append's vector-of-PyObject* logic.
+extern "C" PyObject* PyByteArray_Append(PyObject* self, PyObject* item) {
+    if (!self || self->type != 18) return nullptr;
+    long v = (item && (item->type == 0 || item->type == 5)) ? item->value : 0;
+    self->str += (char)(unsigned char)(v & 0xFF);
+    return nullptr;
+}
+extern "C" PyObject* PyByteArray_ExtendOp(PyObject* self, PyObject* other) {
+    if (!self || self->type != 18 || !other) return nullptr;
+    if (other->type == 3 || other->type == 17 || other->type == 18) {
+        self->str += other->str;
+    } else if (other->type == 1) {
+        pyc_ensure_boxed_list(other);
+        for (PyObject* item : other->list) {
+            long v = (item && (item->type == 0 || item->type == 5)) ? item->value : 0;
+            self->str += (char)(unsigned char)(v & 0xFF);
+        }
+    }
+    return nullptr;
 }
 
 // --- MD5 (RFC 1321) ---
@@ -4719,28 +4947,35 @@ static void pyc_sha256(const std::string& msg, uint8_t out[32]) {
 // "hashobj" in Compiler.cpp) reads that key directly rather than going
 // through the generic dict/Pyc_Apply dispatch, sidestepping the
 // receiver-prepending pitfall found and fixed in open()/.write() above.
-static PyObject* pyc_make_hashobj(const std::string& hexHash) {
+// Stashes both the hex digest (str) and the raw digest (real bytes, type
+// 17) under reserved keys — .hexdigest() reads the former, .digest() (new
+// alongside the bytes type) reads the latter.
+static PyObject* pyc_make_hashobj(const std::string& hexHash, const uint8_t* raw, size_t rawLen) {
     PyObject* d = PyDict_New();
     PyObject* k = PyUnicode_FromString("__pyc_hexdigest__");
     PyObject* v = PyUnicode_FromString(hexHash.c_str());
     PyDict_SetItem(d, k, v);
     Py_DECREF(k); Py_DECREF(v);
+    PyObject* k2 = PyUnicode_FromString("__pyc_digest__");
+    PyObject* v2 = PyBytes_FromStringAndSize((const char*)raw, rawLen);
+    PyDict_SetItem(d, k2, v2);
+    Py_DECREF(k2); Py_DECREF(v2);
     return d;
 }
 extern "C" PyObject* PyHashlib_Md5(PyObject* data) {
     uint8_t digest[16];
-    pyc_md5(data && data->type == 3 ? data->str : std::string(), digest);
-    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 16));
+    pyc_md5(pyc_is_bytes_like(data) ? data->str : std::string(), digest);
+    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 16), digest, 16);
 }
 extern "C" PyObject* PyHashlib_Sha1(PyObject* data) {
     uint8_t digest[20];
-    pyc_sha1(data && data->type == 3 ? data->str : std::string(), digest);
-    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 20));
+    pyc_sha1(pyc_is_bytes_like(data) ? data->str : std::string(), digest);
+    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 20), digest, 20);
 }
 extern "C" PyObject* PyHashlib_Sha256(PyObject* data) {
     uint8_t digest[32];
-    pyc_sha256(data && data->type == 3 ? data->str : std::string(), digest);
-    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 32));
+    pyc_sha256(pyc_is_bytes_like(data) ? data->str : std::string(), digest);
+    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 32), digest, 32);
 }
 extern "C" PyObject* PyHashlib_Hexdigest(PyObject* self) {
     if (!self || self->type != 2) return PyUnicode_FromString("");
@@ -4750,14 +4985,24 @@ extern "C" PyObject* PyHashlib_Hexdigest(PyObject* self) {
     if (v) return v; // Pyc_GetItem already returns a new ref
     return PyUnicode_FromString("");
 }
+extern "C" PyObject* PyHashlib_Digest(PyObject* self) {
+    if (!self || self->type != 2) return PyBytes_FromStringAndSize("", 0);
+    PyObject* key = PyUnicode_FromString("__pyc_digest__");
+    PyObject* v = Pyc_GetItem(self, key);
+    Py_DECREF(key);
+    if (v) return v;
+    return PyBytes_FromStringAndSize("", 0);
+}
 
-// base64 (RFC 4648), operating on the str-as-byte-buffer convention.
+// base64 (RFC 4648). b64encode accepts str/bytes/bytearray input and
+// returns real bytes (type 17), matching CPython exactly — previously
+// returned str, since there was no bytes type to return.
 static const char* kB64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 extern "C" PyObject* PyBase64_B64Encode(PyObject* args) {
-    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    if (!args || args->type != 1 || args->list.empty()) return PyBytes_FromStringAndSize("", 0);
     PyObject* s = args->list[0];
-    if (!s || s->type != 3) return PyUnicode_FromString("");
+    if (!pyc_is_bytes_like(s)) return PyBytes_FromStringAndSize("", 0);
     const std::string& in = s->str;
     std::string out;
     out.reserve(((in.size() + 2) / 3) * 4);
@@ -4782,7 +5027,7 @@ extern "C" PyObject* PyBase64_B64Encode(PyObject* args) {
         out += kB64Alphabet[(n >> 6) & 0x3F];
         out += '=';
     }
-    return PyUnicode_FromString(out.c_str());
+    return PyBytes_FromStringAndSize(out.data(), out.size());
 }
 
 static int pyc_b64_val(char c) {
@@ -4793,10 +5038,12 @@ static int pyc_b64_val(char c) {
     if (c == '/') return 63;
     return -1;
 }
+// b64decode accepts str/bytes/bytearray input and returns real bytes
+// (previously str) — same rationale as b64encode above.
 extern "C" PyObject* PyBase64_B64Decode(PyObject* args) {
-    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    if (!args || args->type != 1 || args->list.empty()) return PyBytes_FromStringAndSize("", 0);
     PyObject* s = args->list[0];
-    if (!s || s->type != 3) return PyUnicode_FromString("");
+    if (!pyc_is_bytes_like(s)) return PyBytes_FromStringAndSize("", 0);
     const std::string& in = s->str;
     std::string out;
     int buf = 0, bits = 0;
@@ -4811,9 +5058,7 @@ extern "C" PyObject* PyBase64_B64Decode(PyObject* args) {
             out += (char)((buf >> bits) & 0xFF);
         }
     }
-    // Decoded content is arbitrary bytes and may contain embedded NULs —
-    // PyUnicode_FromString's char* + strlen() would silently truncate.
-    return PyUnicode_FromStringAndSize(out.data(), out.size());
+    return PyBytes_FromStringAndSize(out.data(), out.size());
 }
 
 // struct.pack/unpack: common format codes (b/B/h/H/i/I/q/Q/f/d/s) with an
@@ -4855,9 +5100,9 @@ static uint64_t pyc_struct_unpack_int(const std::string& s, size_t pos, int nbyt
     return v;
 }
 extern "C" PyObject* PyStruct_Pack(PyObject* args) {
-    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    if (!args || args->type != 1 || args->list.empty()) return PyBytes_FromStringAndSize("", 0);
     PyObject* fmtObj = args->list[0];
-    if (!fmtObj || fmtObj->type != 3) return PyUnicode_FromString("");
+    if (!fmtObj || fmtObj->type != 3) return PyBytes_FromStringAndSize("", 0);
     auto codes = pyc_parse_struct_fmt(fmtObj->str);
     std::string out;
     size_t argi = 1;
@@ -4883,23 +5128,24 @@ extern "C" PyObject* PyStruct_Pack(PyObject* args) {
                 pyc_struct_pack_int(out, bits, 8, fc.bigEndian); ++argi; break;
             }
             case 's': {
-                std::string s = (v && v->type == 3) ? v->str : std::string();
+                std::string s = pyc_is_bytes_like(v) ? v->str : std::string();
                 out += s; ++argi; break;
             }
             default: break; // unsupported code: skip
         }
     }
     // Packed binary output routinely contains embedded NULs (e.g. any
-    // little-endian integer field with a zero high byte) —
-    // PyUnicode_FromString's char* + strlen() would silently truncate.
-    return PyUnicode_FromStringAndSize(out.data(), out.size());
+    // little-endian integer field with a zero high byte) — bytes storage
+    // (like PyUnicode_FromStringAndSize before it) is explicit-length,
+    // not NUL-terminated-assumption-based.
+    return PyBytes_FromStringAndSize(out.data(), out.size());
 }
 extern "C" PyObject* PyStruct_Unpack(PyObject* args) {
     PyObject* out = PyList_New(0);
     if (!args || args->type != 1 || args->list.size() < 2) return out;
     PyObject* fmtObj = args->list[0];
     PyObject* dataObj = args->list[1];
-    if (!fmtObj || fmtObj->type != 3 || !dataObj || dataObj->type != 3) return out;
+    if (!fmtObj || fmtObj->type != 3 || !pyc_is_bytes_like(dataObj)) return out;
     auto codes = pyc_parse_struct_fmt(fmtObj->str);
     const std::string& s = dataObj->str;
     size_t pos = 0;
@@ -8398,6 +8644,20 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
     }
     // String comparison
     if (a->type == 3 && b->type == 3) {
+        int cmp = a->str.compare(b->str);
+        switch (op) {
+            case 0: return cmp == 0;
+            case 1: return cmp != 0;
+            case 2: return cmp <  0;
+            case 3: return cmp >  0;
+            case 4: return cmp <= 0;
+            case 5: return cmp >= 0;
+        }
+    }
+    // bytes/bytearray comparison — lexicographic byte comparison, same
+    // as str above. bytes and bytearray compare equal/ordered by content
+    // across the two types (matches real Python: b'ab' == bytearray(b'ab')).
+    if ((a->type == 17 || a->type == 18) && (b->type == 17 || b->type == 18)) {
         int cmp = a->str.compare(b->str);
         switch (op) {
             case 0: return cmp == 0;

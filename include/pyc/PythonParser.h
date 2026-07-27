@@ -26,6 +26,12 @@ struct ASTNode {
     bool is_bool  = false;
     bool is_none  = false;
     bool is_complex = false;
+    // Constant holds a real bytes literal (b"..."). `value` carries the
+    // raw byte content directly (via std::string::assign(ptr,len), not a
+    // C-string) — safe for embedded NUL bytes throughout this pipeline
+    // since ASTNode/IR operands are in-memory C++ std::string objects,
+    // never re-parsed as text.
+    bool is_bytes = false;
     double complex_real = 0.0;
     double complex_imag = 0.0;
     std::vector<std::string> args;

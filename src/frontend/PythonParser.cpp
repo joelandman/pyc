@@ -69,6 +69,19 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 const char* utf8 = PyUnicode_AsUTF8(v);
                 node->value = utf8 ? utf8 : "";
                 node->is_str = true;
+            } else if (PyBytes_Check(v)) {
+                // b"..." literal. Must check before falling through to the
+                // generic "else" branch below — previously bytes literals
+                // matched none of the specific checks and silently became
+                // an empty str literal (b"hello" compiled to ""). Use
+                // AsStringAndSize + std::string::assign(ptr,len), not a
+                // C-string, so embedded NUL bytes (b"\x00\x01") survive.
+                char* buf = nullptr;
+                Py_ssize_t len = 0;
+                if (PyBytes_AsStringAndSize(v, &buf, &len) == 0) {
+                    node->value.assign(buf, (size_t)len);
+                }
+                node->is_bytes = true;
             } else if (v == Py_None) {
                 node->value = "None";
                 node->is_none = true;

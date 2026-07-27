@@ -70,7 +70,7 @@ See [FEATURES.md](FEATURES.md) for a complete list of supported features.
 
 ### Quick Summary
 
-- **Types**: int, float, bool, str, list, dict, tuple, None, complex
+- **Types**: int, float, bool, str, list, dict, tuple, None, complex, bytes, bytearray
 - **Operators**: `+ - * / // % **`, `== != < > <= >=`, `is`, `in`, `and`, `or`, `not`, unary `-`
 - **Control flow**: `if/elif/else`, `while`, `for`, `break`, `continue`, ternary
 - **Functions**: `def`, `lambda`, nested functions, closures (`nonlocal`), decorators

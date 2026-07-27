@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **300/300** (runner shows 300/300, file_case_failures=0).
+Current test count: **317/317** (runner shows 317/317, file_case_failures=0).
 
 ## Types and Literals
 
@@ -15,6 +15,7 @@ Current test count: **300/300** (runner shows 300/300, file_case_failures=0).
 | `tuple` | Literals and unpacking (mapped to list internally) |
 | `None` | Constant, comparison, printing; singleton identity |
 | `complex` | Literals (`1j`, `3.5j`), arithmetic (`+ - * /`), pow, abs, `complex()` builtin |
+| `bytes` / `bytearray` | Literals (`b"..."`), indexing (→ int), slicing, concatenation, comparison, `.hex()`/`.decode()`/`str.encode()`; `bytearray` adds `.append()`/`.extend()`/item assignment |
 
 ## Operators
 
@@ -269,6 +270,56 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
 - Absolute value: `abs()` (via `PyComplex_Abs`)
 - Builtin: `complex()`, `complex(3)`, `complex(3, 4)`, `complex("3+4j")`
 - cmath module: `sqrt`, `log`, `exp`, `sin`, `cos`, `tan`
+- **Known real bugs, found while restoring a stranded test case (see
+  IMPLEMENTATION.md's test-infrastructure section), not fixed here (out
+  of scope for the session that found them)**: arithmetic between two
+  plain variables holding complex values (`a = 1j; b = 2j; a + b`) prints
+  `None` instead of a complex result. Complex `repr`/`print` never
+  suppresses a zero real part the way CPython's does — `print(1j)` shows
+  `(0.0+1.0j)` in pyc vs. CPython's `1j`, always. `==`/`!=` and unary `-`
+  on complex values are also unimplemented in the shared comparison/
+  negation runtime functions.
+
+## Bytes / Bytearray
+
+A real `bytes`/`bytearray` type — previously an explicitly-declined scope
+decision (see IMPLEMENTATION.md), reopened on request. Reuses
+`pathlib.Path`'s "same storage, new type tag" pattern (types 17/18,
+backed by the existing `str` field), not a new value shape like
+`complex` needed.
+
+- `b"..."` literals, including embedded non-printable/binary bytes
+  (`b"\x00\x01\xff"`) — previously silently miscompiled to an empty str
+  literal (a real bug, not just "unsupported"), now fixed.
+- Construction: `bytes()`, `bytes(n)` (zero-filled), `bytes([ints])`,
+  `bytes(str, encoding)`, `bytes(bytes_or_bytearray)` — and the same
+  forms for `bytearray(...)`.
+- Indexing (`b[i]` → **int** 0-255, not a length-1 bytes object — the one
+  place this genuinely diverges from `str[i]`), slicing (`b[i:j]` →
+  same type as the receiver), `len()`, iteration (each element an int),
+  `in`/`not in` (accepts either a single int 0-255 or a bytes-like
+  substring), `+` concatenation (result type follows the left operand:
+  `bytearray + bytes -> bytearray`, `bytes + bytearray -> bytes`,
+  matching CPython exactly), `==`/`!=`/ordering (lexicographic, and
+  bytes/bytearray compare equal across the two types by content).
+- `bytearray` mutability: `ba[i] = x`, `.append(int)`, `.extend(iterable)`.
+- `.hex()` / `bytes.fromhex(s)`, `bytes.decode(encoding='utf-8')` /
+  `str.encode(encoding='utf-8')`.
+- `repr()`/`print()` show CPython's `b'...'` form with `\xHH` escaping
+  for non-printable bytes and `\n`/`\t`/`\r`/`\\` shorthand — verified
+  byte-for-byte against real CPython, with one simplification: always
+  single-quotes with an escaped `\'`, rather than CPython's
+  quote-switching to `"..."` when the content has a `'` but no `"`.
+  `bytearray` wraps the same form in `bytearray(...)`.
+- `isinstance(x, bytes)` / `isinstance(x, bytearray)`, `type()`.
+- `hashlib.md5/sha1/sha256` now accept `str`/`bytes`/`bytearray`
+  interchangeably; `hashlib.*().digest()` (raw bytes) is new alongside
+  the existing `.hexdigest()`. `base64.b64encode`/`b64decode` and
+  `struct.pack` now **return real bytes** (previously str) — see
+  IMPLEMENTATION.md for the details of this behavior change.
+- **Not implemented**: `bytes % formatting`, `memoryview`, `.join()`/
+  full `.split()` parity, the buffer protocol, `open(path, "rb")`
+  returning real bytes (no binary-mode file reading exists at all yet).
 
 ## Math
 
@@ -423,33 +474,28 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
 - `hashlib.md5(data)` / `.sha1(data)` / `.sha256(data)` — digests computed
   immediately at construction (no `.update()` streaming; data is always
   fully known upfront in practice). `.hexdigest()` returns the lowercase
-  hex string. MD5/SHA-1/SHA-256 are implemented from scratch (standard
-  algorithms, no OpenSSL/libcrypto dependency — matches `random`'s
-  from-scratch MT19937 precedent), verified byte-for-byte against real
-  `hashlib` output. Works via `import hashlib` and
-  `from hashlib import md5, sha1, sha256` (including aliasing). No
-  `.digest()` (raw bytes — see below), `.update()`, or `.copy()`.
+  hex string; `.digest()` returns the raw digest as real bytes. MD5/SHA-1/
+  SHA-256 are implemented from scratch (standard algorithms, no OpenSSL/
+  libcrypto dependency — matches `random`'s from-scratch MT19937
+  precedent), verified byte-for-byte against real `hashlib` output. Works
+  via `import hashlib` and `from hashlib import md5, sha1, sha256`
+  (including aliasing). Accepts `str`, `bytes`, or `bytearray`
+  interchangeably as input (still more permissive than real CPython,
+  which requires actual `bytes`). No `.update()` or `.copy()`.
 - `base64.b64encode(s)` / `base64.b64decode(s)` — standard RFC 4648
-  alphabet, implemented from scratch, operating directly on/returning
-  `str` (no `.encode()`/`.decode()` step first, since pyc doesn't have
-  those either — real CPython's `base64.b64encode()` requires an actual
-  `bytes` object and raises `TypeError` on a plain `str`, so pyc's
-  signature is deliberately more permissive here, not identical).
+  alphabet, implemented from scratch. Accepts `str`/`bytes`/`bytearray`
+  input and **returns real bytes** (matching CPython exactly — this
+  changed from returning `str` when the `bytes` type was added; see
+  IMPLEMENTATION.md).
 - `struct.pack(fmt, *values)` / `struct.unpack(fmt, data)` — common format
   codes (`b`/`B`/`h`/`H`/`i`/`I`/`l`/`L`/`q`/`Q`/`f`/`d`/`s`) and
   endianness prefixes (`<`/`>`/`!`/`=`, all treated explicitly —
   `=`/no-prefix defaults to little-endian, matching every platform pyc
   targets). Unsupported codes (`n`/`N`, native alignment padding) are
-  silently skipped rather than erroring. `struct.unpack` returns a plain
-  list, not a tuple (same documented gap as `os.path.splitext`/itertools).
-- **No `bytes` type**: all three modules represent binary data as a plain
-  `str` (type 3) whose characters hold byte values 0-255. Correct for
-  ASCII/text content (the overwhelming common case — hashing strings,
-  base64-encoding tokens, packing/unpacking numeric fields) but does
-  **not** match CPython's `bytes` object identity, repr (`b'...'`), or
-  encoding semantics for arbitrary non-ASCII/binary content. This is a
-  deliberate, permanent scoping decision (user-confirmed), not a bug to
-  fix quietly later — see IMPLEMENTATION.md.
+  silently skipped rather than erroring. `struct.pack` returns real bytes
+  (see above); `struct.unpack` accepts `str`/`bytes`/`bytearray` input
+  and still returns a plain list, not a tuple (same documented gap as
+  `os.path.splitext`/itertools).
 - **Newly discovered, fixed while adding this**: `PyUnicode_FromString`
   (the runtime's primary string constructor, used almost everywhere)
   takes a `const char*` and relies on `strlen()`/implicit-length

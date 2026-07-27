@@ -1516,6 +1516,14 @@ class LoweringVisitor {
                 complexVars.insert(complexRes);
                 noteType(res, "boxed");
                 return complexRes;
+            } else if (node->is_bytes) {
+                // Dedicated opcode (not the generic "const" str-literal
+                // path) so codegen can pass an explicit length rather than
+                // relying on a NUL-terminated C-string — the whole point
+                // being that b"\x00\x01" round-trips correctly. See
+                // Codegen.cpp's "bytesconst" handler.
+                ir.addInstruction(currentFunc, "bytesconst", {val}, res, "bytes");
+                noteType(res, "bytes");
             } else if (node->is_str) {
                 // Wrap in quotes so codegen detects it as a string.
                 // Embedded quotes are not escaped in this MVP.
@@ -4244,7 +4252,8 @@ class LoweringVisitor {
         static const std::unordered_set<std::string> specialBuiltinNames = {
             "print", "len", "range", "min", "max", "sum", "sorted", "any", "all", "isinstance",
             "int", "float", "abs", "str", "list", "enumerate", "zip",
-            "bool", "type", "id", "repr", "hex", "oct", "bin", "ord", "chr", "round"
+            "bool", "type", "id", "repr", "hex", "oct", "bin", "ord", "chr", "round",
+            "bytes", "bytearray"
         };
 
         if (!knownDirect0) {
@@ -4256,7 +4265,7 @@ class LoweringVisitor {
                 static const std::unordered_set<std::string> neverDynamic = {
                     "print","len","range","min","max","sum","sorted","any","all","isinstance",
                     "int","float","complex","abs","str","list","enumerate","zip","bool","type","id",
-                    "repr","hex","oct","bin","ord","chr","round","open"
+                    "repr","hex","oct","bin","ord","chr","round","open","bytes","bytearray"
                 };
                 if (!theName.empty() && neverDynamic.count(theName) == 0) {
                     // B4 complete: any bare name that is not a known direct IR function *and*
@@ -4766,6 +4775,21 @@ class LoweringVisitor {
                 markStructuredList(res, structuredElementLayout[arg]);
             return res;
         }
+        // bytes(...)/bytearray(...) construction. arg0 (value) and arg1
+        // (encoding, only meaningful when arg0 is a str) are both
+        // optional — missing ones pass through as empty operands, which
+        // Codegen's getAsPyObject resolves to a null PyObject* (the same
+        // "optional PyObject* argument" convention re's flags= extraction
+        // uses).
+        if (funcName == "bytes" || funcName == "bytearray") {
+            std::string arg0 = argRes.size() > 0 ? argRes[0] : "";
+            std::string arg1 = argRes.size() > 1 ? argRes[1] : "";
+            std::string fn = (funcName == "bytes") ? "PyBuiltin_Bytes" : "PyBuiltin_Bytearray";
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {fn, arg0, arg1}, res);
+            noteType(res, funcName == "bytes" ? "bytes" : "bytearray");
+            return res;
+        }
         // reversed(seq) → PyBuiltin_Reversed(seq)
         if (funcName == "reversed") {
             std::string arg = argRes.empty() ? "" : argRes[0];
@@ -4902,6 +4926,8 @@ class LoweringVisitor {
                     else if (n == "dict") typecode = 2;
                     else if (n == "bool") typecode = 5;
                     else if (n == "NoneType" || n == "type") typecode = 6;
+                    else if (n == "bytes") typecode = 17;
+                    else if (n == "bytearray") typecode = 18;
                 } else if (childType == "Call" && node->children[2]->children.size() >= 2) {
                     // type(None) → typecode 6
                     const auto* func = node->children[2]->children[0].get();
@@ -7612,6 +7638,18 @@ class LoweringVisitor {
             }
             if (isCollectionsMod) return lowerDequeConstruct(args);
         }
+        // bytes.fromhex(s) — a classmethod-style call on the bare type
+        // name (not an instance), same structural-recognition shape as
+        // collections.deque(...) above (literal "bytes" name as the
+        // Attribute's base).
+        if (attr->children.size() >= 1 && attr->children[0] &&
+            attr->children[0]->type == "Name" && attr->children[0]->id == "bytes" &&
+            methodName == "fromhex") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyBytes_Fromhex", arg}, res);
+            noteType(res, "bytes");
+            return res;
+        }
         // deque.appendleft(x)/.popleft()/.rotate(n) — typeOf-gated direct
         // calls (deque is a plain list at runtime with no dedicated type
         // tag — see PyCollections_Deque's comment in Runtime.cpp).
@@ -7639,6 +7677,13 @@ class LoweringVisitor {
         if (methodName == "hexdigest" && typeOf(obj) == "hashobj") {
             ir.addInstruction(currentFunc, "call", {"PyHashlib_Hexdigest", obj}, res, "str");
             noteType(res, "str");
+            return res;
+        }
+        // hashobj.digest() — the raw-bytes form, newly possible now that
+        // pyc has a real bytes type (previously documented as missing).
+        if (methodName == "digest" && typeOf(obj) == "hashobj") {
+            ir.addInstruction(currentFunc, "call", {"PyHashlib_Digest", obj}, res);
+            noteType(res, "bytes");
             return res;
         }
         // file.write(x) — pre-existing bug found while investigating this
@@ -7773,6 +7818,27 @@ class LoweringVisitor {
             std::string fn = (typeOf(obj) == "str") ? "PyString_Count" : "PyList_Count";
             ir.addInstruction(currentFunc, "call", {fn, obj, arg}, res, "int");
             noteType(res, "int");
+        // bytearray.append(int)/.extend(iterable) — must come before the
+        // unconditional list .append()/.extend() branches below, since
+        // bytearray (type 18) stores content in `str`, not `list`/`ilist`/
+        // `flist`; PyList_Append would corrupt it.
+        } else if (methodName == "append" && typeOf(obj) == "bytearray") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyByteArray_Append", obj, arg}, res);
+        } else if (methodName == "extend" && typeOf(obj) == "bytearray") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyByteArray_ExtendOp", obj, arg}, res);
+        } else if (methodName == "hex" && (typeOf(obj) == "bytes" || typeOf(obj) == "bytearray")) {
+            ir.addInstruction(currentFunc, "call", {"PyBytes_Hex", obj}, res, "str");
+            noteType(res, "str");
+        } else if (methodName == "decode" && (typeOf(obj) == "bytes" || typeOf(obj) == "bytearray")) {
+            std::string enc = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyBytes_Decode", obj, enc}, res, "str");
+            noteType(res, "str");
+        } else if (methodName == "encode" && typeOf(obj) == "str") {
+            std::string enc = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyStr_Encode", obj, enc}, res);
+            noteType(res, "bytes");
         // Known list methods
         } else if (methodName == "append") {
             std::string arg = args.empty() ? "" : args[0];
