@@ -130,6 +130,69 @@ reached. `from copy import copy, deepcopy` (bare-name, including `as`
 aliasing) is handled the same way as `datetimeCtorAliases`/
 `hashlibCtorAliases`, via a `copyFuncAliases` map.
 
+### `functools.partial`/`lru_cache`, `operator.itemgetter`/`attrgetter` — Reuse the Existing "Descriptor Bundle" Mechanism
+pyc already represents a closure's captured free variables as a plain
+boxed list `[funcTokenOrObj, cell0, cell1, ...]` — a "descriptor bundle".
+`Pyc_Apply` (`Runtime.cpp`) already knows how to call one: it extracts
+`funcTokenOrObj`, **prepends** the remaining list elements to whatever
+argument list the caller supplies, and dispatches. This session's
+`functools.partial`/`lru_cache` and `operator.itemgetter`/`attrgetter`
+all reuse this *unmodified* — "a callable that remembers some captured
+state" is just a list literal built by a small runtime function
+(`PyFunctools_Partial`, `PyOperator_Itemgetter`, etc.), with **no new
+type, no new dispatch machinery, and no Compiler.cpp changes for the
+call side** — only construction needed new code. This is why these
+features are robust to being passed through function parameters,
+stored in variables, etc. (verified directly) — they go through the
+same, already-general indirect-call path every closure already uses.
+
+### Two Real Compiler Bugs Found While Building `functools`/`operator`
+Both in `Compiler.cpp`, both pre-existing (not introduced by this
+session's earlier phases), both would affect **any** code hitting the
+same shape, not specifically `functools`/`operator`:
+
+1. **A value returned from the generic dict-dispatch method-call path
+   was never marked as "may hold a callable token"**, so assigning it
+   to a variable and later calling that variable could miscompile.
+   Concretely: `add5 = functools.partial(operator.add, 5); add5(10)` —
+   `functools.partial(...)`'s call goes through the same generic
+   `typeOf(obj)=="dict"` → `Pyc_GetItem` + `Pyc_Apply` dispatch as every
+   other synthetic-module function call (`os.path.exists(...)`, etc.,
+   `Compiler.cpp`'s `lowerMethodCall`, the branch just before the
+   class-instance-method fallback). That dispatch's result temp was
+   never added to `callableTokenTemps`, so `lowerAssign`'s existing
+   propagation (`callableTokenTemps.count(val)` → mark the target name in
+   `namesThatMayHoldCallableTokens`) never fired for `add5`, and a later
+   `add5(10)` call fell through to being treated as a plain, unresolved
+   direct-call name instead of a dynamic `Pyc_Apply` dispatch. Fixed by
+   unconditionally marking that dispatch's result as a callable-token
+   temp — safe because the generic dict-dispatch path's return value is
+   *always* statically unknown (could be anything, including a callable
+   bundle), so treating it as "might be callable" can't be wrong, only
+   occasionally unnecessary.
+2. **A single shared `lastLambdaSynthetic` flag, used to let
+   `f = lambda: ...; f()` resolve as a fast direct call to the lambda's
+   IR function (skipping the dynamic-dispatch machinery), leaked across
+   unrelated statements.** The flag is set whenever *any* lambda
+   expression is lowered, anywhere — including as another call's
+   argument, e.g. `functools.reduce(lambda a, b: a + b, [1,2,3,4])` —
+   and was only ever cleared by being consumed inside `lowerAssign`
+   (`Compiler.cpp`). Since a lambda-as-call-argument isn't consumed by
+   any assignment, the flag stayed set after that statement, and the
+   *next*, completely unrelated simple assignment
+   (`add5 = functools.partial(...)`) picked it up via `lowerAssign`'s
+   `else if (!lastLambdaSynthetic.empty())` fallback, aliasing `add5`
+   directly to the earlier, unrelated lambda's IR function. Calling
+   `add5(10)` (1 argument) against a lambda expecting 2 then failed
+   LLVM's IR verifier with an argument-count mismatch — a hard compile
+   failure, not a silent wrong answer, but a real bug regardless (and a
+   silent-wrong-answer variant is plausible for a lambda with a
+   *compatible* arity that just happens to be the wrong one). Fixed by
+   clearing `lastLambdaSynthetic` at the very top of `lowerAssign`,
+   before lowering the current statement's own RHS — so the flag can
+   only ever reflect a lambda freshly produced by *this* statement's own
+   RHS expression, never a leftover from an earlier one.
+
 ## Known Limitations
 
 ### Performance
@@ -138,14 +201,15 @@ aliasing) is handled the same way as `datetimeCtorAliases`/
 - **Division by zero handling requires runtime call**: Native would produce inf/nan
 - **`**` (power) for non-constant exponents uses boxed `Pyc_Pow`**
 - **Only a handful of stdlib modules are implemented, synthetically**: `sys`,
-  `re` (PCRE2-backed), `os`, `subprocess`, `functools`, `cmath`,
+  `re` (PCRE2-backed), `os`, `subprocess`, `functools`, `operator`, `cmath`,
   `time.perf_counter`, `math`, `json`, `random`, `itertools` (subset),
   `collections` (subset), `datetime` (`date`/`datetime`/`timedelta`, see
-  below), `pathlib` (`Path`, see below) — everything else reports
-  ImportError rather than compiling real CPython stdlib source. A function
-  named `get` called via `module.get()` collides with the dict `.get()`
-  method shim and silently returns `None` — a pre-existing naming
-  collision, not package-specific.
+  below), `pathlib` (`Path`, see below), `hashlib`, `base64`, `struct`,
+  `heapq`, `bisect`, `statistics`, `string`, `textwrap`, `copy`, `uuid` —
+  everything else reports ImportError rather than compiling real CPython
+  stdlib source. A function named `get` called via `module.get()`
+  collides with the dict `.get()` method shim and silently returns
+  `None` — a pre-existing naming collision, not package-specific.
 - **The generic method-call dispatch chain in `Compiler.cpp`'s
   `lowerMethodCall` matches on method *name* only for several branches**
   (`append`/`insert`/`remove`/`index`/`join`/`split`/etc. — the built-in

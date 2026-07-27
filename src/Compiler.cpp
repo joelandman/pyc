@@ -6198,6 +6198,21 @@ class LoweringVisitor {
             return;
         }
         if (!node->children.empty() && node->children[0]) {
+            // Real pre-existing bug, found via functools.partial(): a
+            // lambda lowered anywhere (e.g. as another call's argument,
+            // `foo(lambda x: x+1)`) sets lastLambdaSynthetic without it
+            // being cleared unless the *very next* thing lowered happens
+            // to be a plain assignment — so an unrelated later statement
+            // like `add5 = functools.partial(...)` could pick up the
+            // stale flag and alias `add5` directly to that earlier,
+            // unrelated lambda's IR function (an LLVM arity-mismatch
+            // verifier error when later called with a different argument
+            // count, not a silent wrong answer, but a real compiler bug
+            // regardless). Clearing here, before lowering this
+            // assignment's own RHS, means the check below (~15 lines
+            // down) only ever sees a value freshly set by *this*
+            // statement's own RHS lowering.
+            lastLambdaSynthetic.clear();
             std::string val = lowerExpr(node->children[0].get());
             // B5: if the target is cell-backed *in this function* (we own or receive the cell here),
             // emit PyCell_Set instead of a plain assign. A name that is only a nonlocal target in a
@@ -7746,6 +7761,26 @@ class LoweringVisitor {
                     ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
                 }
                 ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
+                // The generic dict-dispatch call's return value is
+                // statically unknown — could be a plain value, or a
+                // callable bundle (e.g. functools.partial/lru_cache,
+                // operator.itemgetter/attrgetter). Marking it as a
+                // callable-token temp lets lowerAssign's existing
+                // propagation (`callableTokenTemps.count(val) -> mark the
+                // assigned name in namesThatMayHoldCallableTokens`,
+                // Compiler.cpp's lowerAssign) correctly route a later
+                // `name(...)` call through the dynamic Pyc_Apply path
+                // instead of miscompiling it as a direct call to an
+                // unrelated same-shaped IR function. Found and fixed via
+                // `add5 = functools.partial(...); add5(10)` in a file
+                // that also happened to define a lambda: without this,
+                // codegen emitted a direct call to the file's first
+                // lambda (whatever function name conflict resolution
+                // fell back to) instead of dispatching through add5's
+                // actual bundle — an LLVM arity-mismatch verifier error,
+                // not a silent wrong-answer, but still a real compiler
+                // bug, not specific to functools.
+                callableTokenTemps.insert(res);
                 return res;
             }
             // Try to call as user-defined method
@@ -8626,7 +8661,9 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
         {"os",         {"environ", "path", "unlink", "remove", "rename", "getcwd",
                         "listdir", "makedirs"}},
         {"subprocess", {"call", "check_output"}},
-        {"functools",  {"cmp_to_key"}},
+        {"functools",  {"cmp_to_key", "reduce", "partial", "wraps", "lru_cache"}},
+        {"operator",   {"add", "sub", "mul", "truediv", "mod", "eq", "ne", "lt", "gt",
+                        "le", "ge", "not_", "neg", "itemgetter", "attrgetter"}},
         {"cmath",      {"sqrt", "log", "exp", "sin", "cos", "tan"}},
         {"time",       {"perf_counter"}},
         {"math",       {"sqrt", "floor", "ceil", "trunc", "pow", "log", "log2", "log10",

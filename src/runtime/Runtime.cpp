@@ -2584,15 +2584,53 @@ PyObject* pyc_import_failed(PyObject* modName) {
             return PyDict_New();
         }
         if (modName->str == "functools") {
-            // functools isn't fully supported, but cmp_to_key is needed
-            // by the sorted-with-comparator idiom (handled at the AST
-            // level). Return a dict with a cmp_to_key token so attribute
-            // access doesn't crash.
+            // cmp_to_key is needed by the sorted-with-comparator idiom
+            // and is handled structurally at the AST level (Compiler.cpp,
+            // funcName=="cmp_to_key") for the bare-name form; the token
+            // stored here only prevents attribute access from crashing —
+            // note this means `functools.cmp_to_key(...)` (the qualified
+            // form, going through the generic dict dispatch below) is
+            // NOT actually wired to a real callable and silently fails; a
+            // pre-existing gap, not touched here. reduce/partial/wraps/
+            // lru_cache are real, working tokens (both qualified and
+            // bare-name-via-from-import forms).
             PyObject* d = PyDict_New();
-            PyObject* k = PyUnicode_FromString("cmp_to_key");
-            PyObject* v = PyUnicode_FromString("cmp_to_key");
-            PyDict_SetItem(d, k, v);
-            Py_DECREF(k); Py_DECREF(v);
+            auto addTok = [&](const char* name, const char* token) {
+                PyObject* k = PyUnicode_FromString(name);
+                PyObject* v = PyUnicode_FromString(token);
+                PyDict_SetItem(d, k, v);
+                Py_DECREF(k); Py_DECREF(v);
+            };
+            addTok("cmp_to_key", "cmp_to_key");
+            addTok("reduce",     "PyFunctools_Reduce");
+            addTok("partial",    "PyFunctools_Partial");
+            addTok("wraps",      "PyFunctools_Wraps");
+            addTok("lru_cache",  "PyFunctools_LruCache");
+            return d;
+        }
+        if (modName->str == "operator") {
+            PyObject* d = PyDict_New();
+            auto addTok = [&](const char* name, const char* token) {
+                PyObject* k = PyUnicode_FromString(name);
+                PyObject* v = PyUnicode_FromString(token);
+                PyDict_SetItem(d, k, v);
+                Py_DECREF(k); Py_DECREF(v);
+            };
+            addTok("add",        "PyOperator_Add");
+            addTok("sub",        "PyOperator_Sub");
+            addTok("mul",        "PyOperator_Mul");
+            addTok("truediv",    "PyOperator_Truediv");
+            addTok("mod",        "PyOperator_Mod");
+            addTok("eq",         "PyOperator_Eq");
+            addTok("ne",         "PyOperator_Ne");
+            addTok("lt",         "PyOperator_Lt");
+            addTok("gt",         "PyOperator_Gt");
+            addTok("le",         "PyOperator_Le");
+            addTok("ge",         "PyOperator_Ge");
+            addTok("not_",       "PyOperator_Not");
+            addTok("neg",        "PyOperator_Neg");
+            addTok("itemgetter", "PyOperator_Itemgetter");
+            addTok("attrgetter", "PyOperator_Attrgetter");
             return d;
         }
         if (modName->str == "os") {
@@ -2694,8 +2732,8 @@ PyObject* pyc_import_failed(PyObject* modName) {
                     "(pyc supports only synthetic 'sys', 're', 'functools', 'os', "
                     "'subprocess', 'cmath', 'time', 'math', 'json', 'random', 'itertools', "
                     "'collections', 'datetime', 'pathlib', 'hashlib', 'base64', 'struct', "
-                    "'heapq', 'bisect', 'statistics', 'string', 'textwrap', 'uuid', and "
-                    "'copy' modules; real module loading is not yet implemented)\n", name);
+                    "'heapq', 'bisect', 'statistics', 'string', 'textwrap', 'uuid', 'copy', "
+                    "and 'operator' modules; real module loading is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;
 }
@@ -5328,6 +5366,278 @@ extern "C" PyObject* PyCopy_Deepcopy(PyObject* x) {
     return x;
 }
 
+// ---------------------------------------------------------------------
+// functools / operator
+//
+// Several of these return a "descriptor bundle" — a plain boxed list
+// [tokenOrFuncObj, extra0, extra1, ...] — the same mechanism closures
+// already use (see Pyc_Apply, further down: calling a bundle extracts
+// the token and prepends extra0.. to the caller's own args before
+// dispatch). This lets "a callable that remembers captured state" be a
+// plain list literal with no new type and no change to the indirect-call
+// machinery — only construction needs new code.
+// ---------------------------------------------------------------------
+
+// functools.reduce(func, iterable, initializer=None)
+extern "C" PyObject* PyFunctools_Reduce(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* func = args->list[0];
+    PyObject* iterable = args->list[1];
+    if (!iterable || iterable->type != 1) return nullptr;
+    pyc_ensure_boxed_list(iterable);
+    PyObject* initializer = args->list.size() > 2 ? args->list[2] : nullptr;
+    size_t i = 0;
+    PyObject* acc;
+    if (initializer) {
+        Py_INCREF(initializer);
+        acc = initializer;
+    } else {
+        if (iterable->list.empty()) { pyc_raise_msg("TypeError", "reduce() of empty iterable with no initial value"); return nullptr; }
+        acc = iterable->list[0];
+        Py_INCREF(acc);
+        i = 1;
+    }
+    for (; i < iterable->list.size(); ++i) {
+        PyObject* argList = PyList_New(2);
+        if (acc) Py_INCREF(acc);
+        PyList_SetItem(argList, 0, acc);
+        PyObject* item = iterable->list[i];
+        if (item) Py_INCREF(item);
+        PyList_SetItem(argList, 1, item);
+        PyObject* next = Pyc_Apply(func, argList);
+        Py_DECREF(argList);
+        Py_DECREF(acc);
+        acc = next;
+    }
+    return acc;
+}
+
+// functools.partial(func, *args) -> bundle [func, arg0, arg1, ...].
+// `args->list` already has exactly this shape (func first, then the
+// user's extra args), so this just copies it into a fresh owned list.
+extern "C" PyObject* PyFunctools_Partial(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* bundle = PyList_New(args->list.size());
+    for (size_t i = 0; i < args->list.size(); ++i) {
+        PyObject* v = args->list[i];
+        if (v) Py_INCREF(v);
+        PyList_SetItem(bundle, i, v);
+    }
+    return bundle;
+}
+
+// functools.wraps(original) -> decorator that returns its wrapper
+// argument unchanged. True no-op: only the calling-convention shape
+// (decorator receives [wrapper], returns the new bound value) matters
+// for `@functools.wraps(x)` to compile and run — cosmetic __name__/
+// __doc__ copying is skipped (pyc functions don't carry __doc__ at all;
+// low value for the implementation cost here, documented).
+extern "C" PyObject* PyFunctools_Wraps(PyObject* args) {
+    (void)args; // original is captured but intentionally unused (no-op)
+    PyObject* bundle = PyList_New(1);
+    PyObject* tok = PyUnicode_FromString("PyFunctools_WrapsIdentity");
+    PyList_SetItem(bundle, 0, tok);
+    Py_DECREF(tok);
+    return bundle;
+}
+extern "C" PyObject* PyFunctools_WrapsIdentity(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* r = args->list[0];
+    if (r) Py_INCREF(r);
+    return r;
+}
+
+// functools.lru_cache — supports both `@functools.lru_cache` (bare) and
+// `@functools.lru_cache(maxsize=...)` (parenthesized) via one function
+// that branches on its argument's runtime shape: a callable-looking
+// value (str/function token, or a bundle list) means this call IS the
+// decorator application (bare form) — build and return the caching
+// bundle. A non-callable value (int/None, i.e. maxsize) means this call
+// is the factory stage — return the same token again unchanged, so the
+// *next* Pyc_Apply (with the real function) re-enters this function and
+// takes the callable branch. Unbounded cache only (no maxsize eviction
+// — documented gap, same spirit as os.makedirs ignoring exist_ok).
+static bool pyc_looks_callable(PyObject* v) {
+    if (!v) return false;
+    if (v->type == 3 || v->type == 11) return true;
+    if (v->type == 1 && !v->list.empty()) {
+        PyObject* first = v->list[0];
+        return first && (first->type == 3 || first->type == 11);
+    }
+    return false;
+}
+extern "C" PyObject* PyFunctools_LruCacheCall(PyObject* args) {
+    // args = [func, cacheDict, ...userArgs]
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* func = args->list[0];
+    PyObject* cache = args->list[1];
+    if (!cache || cache->type != 2) return nullptr;
+    std::string key;
+    for (size_t i = 2; i < args->list.size(); ++i) {
+        PyObject* s = PyStr_FromAny(args->list[i]);
+        key += s ? s->str : std::string("None");
+        key += '\x1f';
+        if (s) Py_DECREF(s);
+    }
+    PyObject* keyObj = PyUnicode_FromString(key.c_str());
+    PyObject* cached = Pyc_GetItem(cache, keyObj);
+    if (cached) { Py_DECREF(keyObj); return cached; }
+    PyObject* callArgs = PyList_New(args->list.size() - 2);
+    for (size_t i = 2; i < args->list.size(); ++i) {
+        PyObject* v = args->list[i];
+        if (v) Py_INCREF(v);
+        PyList_SetItem(callArgs, i - 2, v);
+    }
+    PyObject* result = Pyc_Apply(func, callArgs);
+    Py_DECREF(callArgs);
+    PyDict_SetItem(cache, keyObj, result);
+    Py_DECREF(keyObj);
+    return result;
+}
+extern "C" PyObject* PyFunctools_LruCache(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) {
+        PyObject* tok = PyUnicode_FromString("PyFunctools_LruCache");
+        return tok;
+    }
+    PyObject* first = args->list[0];
+    if (!pyc_looks_callable(first)) {
+        // Factory stage (maxsize=...) — return this same token so the
+        // next application re-enters the callable branch below.
+        PyObject* tok = PyUnicode_FromString("PyFunctools_LruCache");
+        return tok;
+    }
+    // Bare-decorator stage: build the caching bundle.
+    PyObject* cacheDict = PyDict_New();
+    PyObject* bundle = PyList_New(3);
+    PyObject* callTok = PyUnicode_FromString("PyFunctools_LruCacheCall");
+    Py_INCREF(first);
+    PyList_SetItem(bundle, 0, callTok);
+    PyList_SetItem(bundle, 1, first);
+    PyList_SetItem(bundle, 2, cacheDict);
+    Py_DECREF(callTok);
+    return bundle;
+}
+
+// operator: thin wrappers over existing runtime primitives.
+extern "C" PyObject* PyOperator_Add(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    return PyNumber_Add(args->list[0], args->list[1]);
+}
+extern "C" PyObject* PyOperator_Sub(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    return PyNumber_Subtract(args->list[0], args->list[1]);
+}
+extern "C" PyObject* PyOperator_Mul(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    return PyNumber_Multiply(args->list[0], args->list[1]);
+}
+extern "C" PyObject* PyOperator_Truediv(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    return PyNumber_TrueDivide(args->list[0], args->list[1]);
+}
+extern "C" PyObject* PyOperator_Mod(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    return PyNumber_Remainder(args->list[0], args->list[1]);
+}
+extern "C" PyObject* PyOperator_Eq(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyBool_New(0);
+    return PyBool_New(PyObject_CompareBool(args->list[0], args->list[1], 0));
+}
+extern "C" PyObject* PyOperator_Ne(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyBool_New(0);
+    return PyBool_New(PyObject_CompareBool(args->list[0], args->list[1], 1));
+}
+extern "C" PyObject* PyOperator_Lt(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyBool_New(0);
+    return PyBool_New(PyObject_CompareBool(args->list[0], args->list[1], 2));
+}
+extern "C" PyObject* PyOperator_Gt(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyBool_New(0);
+    return PyBool_New(PyObject_CompareBool(args->list[0], args->list[1], 3));
+}
+extern "C" PyObject* PyOperator_Le(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyBool_New(0);
+    return PyBool_New(PyObject_CompareBool(args->list[0], args->list[1], 4));
+}
+extern "C" PyObject* PyOperator_Ge(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyBool_New(0);
+    return PyBool_New(PyObject_CompareBool(args->list[0], args->list[1], 5));
+}
+extern "C" PyObject* PyOperator_Not(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyBool_New(1);
+    PyObject* truthy = PyBuiltin_Bool(args->list[0]);
+    PyObject* r = PyBool_New(truthy->value == 0);
+    Py_DECREF(truthy);
+    return r;
+}
+extern "C" PyObject* PyOperator_Neg(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* v = args->list[0];
+    if (!v) return nullptr;
+    if (v->type == 4) return PyFloat_FromDouble(-v->dvalue);
+    return PyInt_FromLong(-v->value);
+}
+
+// operator.itemgetter(key0, key1, ...) / attrgetter(name0, name1, ...) ->
+// bundle [callTok, key0, key1, ...]; when the bundle is later called as
+// getter(x), Pyc_Apply prepends key0, key1, ... before `x`, giving
+// [key0, key1, ..., x] to the call target below. Single-key form
+// returns the single result directly (matches real operator); multi-key
+// form returns a list of results (real operator returns a tuple — no
+// tuple type in pyc, same documented gap as elsewhere this session).
+extern "C" PyObject* PyOperator_Itemgetter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* bundle = PyList_New(args->list.size() + 1);
+    PyObject* tok = PyUnicode_FromString("PyOperator_ItemgetterCall");
+    PyList_SetItem(bundle, 0, tok);
+    Py_DECREF(tok);
+    for (size_t i = 0; i < args->list.size(); ++i) {
+        PyObject* key = args->list[i];
+        if (key) Py_INCREF(key);
+        PyList_SetItem(bundle, i + 1, key);
+    }
+    return bundle;
+}
+extern "C" PyObject* PyOperator_ItemgetterCall(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    size_t nKeys = args->list.size() - 1;
+    PyObject* obj = args->list[nKeys];
+    if (nKeys == 1) return Pyc_Subscript(obj, args->list[0]);
+    PyObject* out = PyList_New(0);
+    for (size_t i = 0; i < nKeys; ++i) {
+        PyObject* v = Pyc_Subscript(obj, args->list[i]);
+        PyList_Append(out, v);
+        if (v) Py_DECREF(v);
+    }
+    return out;
+}
+extern "C" PyObject* PyOperator_Attrgetter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* bundle = PyList_New(args->list.size() + 1);
+    PyObject* tok = PyUnicode_FromString("PyOperator_AttrgetterCall");
+    PyList_SetItem(bundle, 0, tok);
+    Py_DECREF(tok);
+    for (size_t i = 0; i < args->list.size(); ++i) {
+        PyObject* name = args->list[i];
+        if (name) Py_INCREF(name);
+        PyList_SetItem(bundle, i + 1, name);
+    }
+    return bundle;
+}
+extern "C" PyObject* PyOperator_AttrgetterCall(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    size_t nNames = args->list.size() - 1;
+    PyObject* obj = args->list[nNames];
+    if (nNames == 1) return Pyc_GetItem(obj, args->list[0]);
+    PyObject* out = PyList_New(0);
+    for (size_t i = 0; i < nNames; ++i) {
+        PyObject* v = Pyc_GetItem(obj, args->list[i]);
+        PyList_Append(out, v);
+        if (v) Py_DECREF(v);
+    }
+    return out;
+}
+
 // open(path, mode) — open a file. The path/mode are extracted from the
 // args list. Returns a synthetic "file" dict with __enter__ / __exit__
 // / write / close keys (all string tokens naming runtime adapters that
@@ -6997,6 +7307,29 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyTextwrap_Wrap",                PyTextwrap_Wrap);
     pyc_register_callable("PyTextwrap_Fill",                PyTextwrap_Fill);
     pyc_register_callable("PyUuid_Uuid4",                   PyUuid_Uuid4);
+    pyc_register_callable("PyFunctools_Reduce",             PyFunctools_Reduce);
+    pyc_register_callable("PyFunctools_Partial",            PyFunctools_Partial);
+    pyc_register_callable("PyFunctools_Wraps",              PyFunctools_Wraps);
+    pyc_register_callable("PyFunctools_WrapsIdentity",      PyFunctools_WrapsIdentity);
+    pyc_register_callable("PyFunctools_LruCache",           PyFunctools_LruCache);
+    pyc_register_callable("PyFunctools_LruCacheCall",       PyFunctools_LruCacheCall);
+    pyc_register_callable("PyOperator_Add",                 PyOperator_Add);
+    pyc_register_callable("PyOperator_Sub",                 PyOperator_Sub);
+    pyc_register_callable("PyOperator_Mul",                 PyOperator_Mul);
+    pyc_register_callable("PyOperator_Truediv",             PyOperator_Truediv);
+    pyc_register_callable("PyOperator_Mod",                 PyOperator_Mod);
+    pyc_register_callable("PyOperator_Eq",                  PyOperator_Eq);
+    pyc_register_callable("PyOperator_Ne",                  PyOperator_Ne);
+    pyc_register_callable("PyOperator_Lt",                  PyOperator_Lt);
+    pyc_register_callable("PyOperator_Gt",                  PyOperator_Gt);
+    pyc_register_callable("PyOperator_Le",                  PyOperator_Le);
+    pyc_register_callable("PyOperator_Ge",                  PyOperator_Ge);
+    pyc_register_callable("PyOperator_Not",                 PyOperator_Not);
+    pyc_register_callable("PyOperator_Neg",                 PyOperator_Neg);
+    pyc_register_callable("PyOperator_Itemgetter",          PyOperator_Itemgetter);
+    pyc_register_callable("PyOperator_ItemgetterCall",      PyOperator_ItemgetterCall);
+    pyc_register_callable("PyOperator_Attrgetter",          PyOperator_Attrgetter);
+    pyc_register_callable("PyOperator_AttrgetterCall",      PyOperator_AttrgetterCall);
     pyc_register_callable("PyBuiltin_SubprocessCall",      PyBuiltin_SubprocessCall);
     pyc_register_callable("PyBuiltin_SubprocessCheckOutput", PyBuiltin_SubprocessCheckOutput);
     pyc_register_callable("pyc_stderr_write",              stderr_write_adapter);

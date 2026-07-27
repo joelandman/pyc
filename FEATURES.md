@@ -413,6 +413,57 @@ f(b=3, a=4)                    keyword call arguments
   doesn't help when the receiver genuinely *is* a `"dict"`). See
   IMPLEMENTATION.md.
 
+## Functools / Operator
+
+- `functools.reduce(func, iterable, initializer=None)` — standard
+  left-fold, calling `func` via the existing generic callable-apply
+  primitive (the same one `sorted(key=...)` already uses internally).
+- `functools.partial(func, *args)` — returns a real, robust partial
+  application: `functools.partial(operator.add, 5)(10) == 15`. Works
+  through function parameters, stored in variables/lists, etc. — it's
+  implemented as a plain "descriptor bundle" (the mechanism closures
+  already use internally: a list `[func, arg0, arg1, ...]`; calling it
+  prepends the captured args to the caller's own), not a special type.
+- `functools.wraps(original)` — a **true no-op** decorator: applying it
+  to a wrapper function returns the wrapper unchanged. `@functools.wraps`
+  compiles and runs correctly, but doesn't copy `__name__`/`__doc__`
+  (pyc functions don't carry `__doc__` at all; low value for the
+  implementation cost — documented simplification).
+- `functools.lru_cache` — supports both the bare `@functools.lru_cache`
+  and parenthesized `@functools.lru_cache(maxsize=...)` forms.
+  **Unbounded cache only** — `maxsize` is accepted but not enforced
+  (no eviction), documented gap matching `os.makedirs`'s ignored
+  `exist_ok` for the same "keyword args aren't read by synthetic
+  functions" reason.
+- `operator.add/sub/mul/truediv/mod/eq/ne/lt/gt/le/ge/not_/neg` — thin
+  wrappers over the existing arithmetic/comparison runtime primitives.
+- `operator.itemgetter(key, ...)` / `operator.attrgetter(name, ...)` —
+  also descriptor bundles, so they work directly as
+  `sorted(items, key=operator.itemgetter("x"))` (the primary real-world
+  use) and through function parameters/variables like `partial`. Support
+  multiple keys/names (`itemgetter(0, 2)`), returning a list of results
+  for the multi-key case (real `operator` returns a tuple — no tuple
+  type in pyc, same documented gap as elsewhere).
+- **Two real, previously-undiscovered compiler bugs found and fixed
+  while building this** (both in `Compiler.cpp`, not specific to
+  functools/operator — any code hitting the same shapes would have
+  been affected): (1) a value returned from the generic
+  dict-dispatch method-call path (used by every synthetic module
+  function call like `os.path.exists(...)`) was never marked as
+  "may hold a callable token", so assigning it to a variable and later
+  calling that variable — `x = functools.partial(...); x(10)` — could
+  miscompile into a direct call to an unrelated function instead of
+  dispatching through `x`'s actual value. (2) A single shared
+  "last lambda defined" compiler flag, used to let `f = lambda: ...; f()`
+  resolve as a fast direct call, leaked across unrelated statements
+  when a lambda was used as *another* call's argument
+  (`functools.reduce(lambda a, b: a+b, ...)`) instead of a direct
+  assignment RHS — the next, completely unrelated assignment
+  (`add5 = functools.partial(...)`) could pick up the stale flag and
+  alias itself directly to that earlier lambda, crashing at LLVM
+  verification with an argument-count mismatch when later called with a
+  different arity. See IMPLEMENTATION.md.
+
 ## Assignment Forms
 
 ```python

@@ -1528,6 +1528,86 @@ parts = u.split("-")
 print([len(p) for p in parts])
 print(parts[2][0])
 """, "abcdefghijklmnopqrstuvwxyz\nABCDEFGHIJKLMNOPQRSTUVWXYZ\n0123456789\n!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\n['This is a long piece', 'of text that should', 'wrap across multiple', 'lines when given a', 'narrow width.']\nThis is a long piece\nof text that should\nwrap across multiple\nlines when given a\nnarrow width.\n['short text']\n[1, 2, [3, 4, 999]]\n[1, 2, [3, 4, 999]]\nTrue\n[1, 2, [3, 4, 999]] [1, 2, [3, 4, 999, 100]]\n{'x': [1, 2]} {'x': [1, 2, 3]}\n36\n4\n[8, 4, 4, 4, 12]\n4\n"),
+    # functools / operator (synthetic; functools already had a partial
+    # cmp_to_key stub, extended here with real reduce/partial/wraps/
+    # lru_cache tokens). Both use pyc's existing "descriptor bundle"
+    # mechanism (a plain list [token, ...captured]; calling it via
+    # Pyc_Apply prepends the captured values) for partial/lru_cache/
+    # itemgetter/attrgetter — the same mechanism closures already use, so
+    # no new type or dispatch machinery was needed, only construction.
+    # Multi-key itemgetter/attrgetter results are lists, not tuples (no
+    # tuple type in pyc — same documented gap as elsewhere this session).
+    #
+    # Found and fixed two real compiler bugs while building this (see
+    # IMPLEMENTATION.md): (1) a value returned from the generic
+    # dict-dispatch method-call path was never marked as "may hold a
+    # callable token", so `add5 = functools.partial(...); add5(10)`
+    # could miscompile; (2) `lastLambdaSynthetic` (a single flag used to
+    # alias `f = lambda: ...; f()` to a direct call) leaked across
+    # statements when a lambda was used as another call's argument
+    # (`functools.reduce(lambda a,b: a+b, ...)`) rather than a direct
+    # assignment RHS, causing a LATER, unrelated assignment to alias
+    # itself to that lambda and crash at LLVM verification with an arity
+    # mismatch. Both fixed in Compiler.cpp.
+    ("""
+import functools
+import operator
+
+print(functools.reduce(lambda a, b: a + b, [1, 2, 3, 4]))
+print(functools.reduce(operator.add, [1, 2, 3, 4], 10))
+
+add5 = functools.partial(operator.add, 5)
+print(add5(10))
+
+def greet(greeting, name):
+    return greeting + ", " + name + "!"
+hello = functools.partial(greet, "Hello")
+print(hello("World"))
+
+@functools.wraps(greet)
+def wrapper(a, b):
+    return greet(a, b)
+print(wrapper("Hi", "There"))
+
+calls = []
+@functools.lru_cache
+def slow_square(x):
+    calls.append(x)
+    return x * x
+print(slow_square(4))
+print(slow_square(4))
+print(slow_square(5))
+print(calls)
+
+@functools.lru_cache(maxsize=None)
+def slow_cube(x):
+    return x * x * x
+print(slow_cube(3))
+print(slow_cube(3))
+
+print(operator.add(2, 3))
+print(operator.sub(5, 2))
+print(operator.mul(4, 3))
+print(operator.truediv(10, 4))
+print(operator.mod(10, 3))
+print(operator.eq(1, 1))
+print(operator.lt(2, 3))
+print(operator.not_(True))
+print(operator.neg(5))
+
+pts = [{"x": 3}, {"x": 1}, {"x": 2}]
+print(sorted(pts, key=operator.itemgetter("x")))
+print(sorted([[3, "c"], [1, "a"], [2, "b"]], key=operator.itemgetter(0)))
+
+f = operator.itemgetter(0, 2)
+print(list(f([10, 20, 30, 40])))
+
+def apply_fn(fn, x):
+    return fn(x)
+print(apply_fn(add5, 10))
+getter = operator.itemgetter(1)
+print(apply_fn(getter, [7, 8, 9]))
+""", "10\n20\n15\nHello, World!\nHi, There!\n16\n16\n25\n[4, 5]\n27\n27\n5\n3\n12\n2.5\n1\nTrue\nTrue\nFalse\n-5\n[{'x': 1}, {'x': 2}, {'x': 3}]\n[[1, 'a'], [2, 'b'], [3, 'c']]\n[10, 30]\n15\n8\n"),
     # B7: Import / module system tests
      # These require utils.py to be in the same directory
      ("b7_import.py", []),
