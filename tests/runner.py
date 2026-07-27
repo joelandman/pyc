@@ -1307,6 +1307,37 @@ print(name_of(p), show(p))
 print(isinstance(os.getcwd(), str))
 print(len(os.environ) >= 0)
 """, "a/b/c\nz.txt\n/x/y\n['/x/y/z.tar', '.gz']\nTrue\nTrue True False\nhello.txt .txt hello\nTrue\nFalse\n['dir']\nx/y/z\npyc_test_os_pathlib_scratch /tmp/pyc_test_os_pathlib_scratch\nTrue\nTrue\n"),
+    # Regression for a severe pre-existing bug found while investigating
+    # hashlib's calling conventions: `with open(p, "w") as f: f.write(x)`
+    # created the file but silently never wrote any content — the
+    # with-statement's __enter__/__exit__ dispatch (and every other
+    # bound-method-style dict call built the same way) passed its arg-list
+    # *count* to PyList_NewBoxed as a bare literal string instead of a
+    # properly-declared IR const, which resolves to a null pointer at
+    # codegen (see Codegen.cpp's getOrLoad), silently producing a
+    # zero-length list — so `self` never actually reached __enter__, and
+    # __enter__ returned None instead of the file object. Fixed in
+    # Compiler.cpp's With-statement lowering and documented in
+    # IMPLEMENTATION.md. Verifies actual written byte count (via `wc -c`,
+    # not just file existence, which the bug didn't affect) across two
+    # separate writes to the same path to also catch the write path being
+    # somehow only-works-once.
+    ("""
+import subprocess
+
+path = "/tmp/pyc_test_file_write_scratch.txt"
+with open(path, "w") as f:
+    f.write("line1\\n")
+    f.write("line2\\n")
+
+out = subprocess.check_output(["wc", "-c", path])
+print(int(out.split()[0]))
+
+with open(path, "w") as f:
+    f.write("replaced")
+out2 = subprocess.check_output(["wc", "-c", path])
+print(int(out2.split()[0]))
+""", "12\n8\n"),
     # B7: Import / module system tests
      # These require utils.py to be in the same directory
      ("b7_import.py", []),

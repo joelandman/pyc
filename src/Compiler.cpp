@@ -1276,19 +1276,38 @@ class LoweringVisitor {
             std::string enterMethodToken = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"__enter__\""}, enterMethodToken, "str");
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, enterMethodToken}, enterMethod);
-            // Build args list: [self]
+            // Build args list: [self]. The count operand must be a
+            // properly-declared const, not a bare literal string — an
+            // undeclared operand name resolves to a null pointer at
+            // codegen (see getOrLoad's fallback in Codegen.cpp), which
+            // made PyList_NewBoxed allocate a *zero-length* list here
+            // (this was a real, previously undiscovered bug: __enter__/
+            // __exit__ never actually received `self`, since
+            // PyList_SetItemBoxed's boxed-list path only writes when the
+            // index is already within the list's current size).
+            std::string enterCountConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, enterCountConst);
             std::string enterArgs = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "1"}, enterArgs);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", enterCountConst}, enterArgs);
             std::string enterIdx = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, enterIdx);
             ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", enterArgs, enterIdx, ctxExpr}, "");
             // Call __enter__(self) via Pyc_Apply
             std::string enterResult = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_Apply", enterMethod, enterArgs}, enterResult);
-            // Bind to target variable if present
+            // Bind to target variable if present. This "assign" is emitted
+            // directly (not via lowerAssign), so it doesn't get
+            // lowerAssign's generic noteType(target, typeOf(val))
+            // propagation for free — done explicitly here so the body's
+            // method calls (e.g. `f.write(...)`, typeOf-gated below) can
+            // see the target's type. __enter__ conventionally returns
+            // `self` (as PyBuiltin_Open's file dict does), so the
+            // target's type is the *context manager's* type, not
+            // enterResult's own (usually-untracked) type.
             if (withItem->children.size() >= 2 && withItem->children[1]) {
                 std::string targetName = withItem->children[1]->id;
                 ir.addInstruction(currentFunc, "assign", {enterResult}, targetName);
+                noteType(targetName, typeOf(ctxExpr));
             }
             // Execute body
             for (size_t i = 1; i < node->children.size(); ++i) {
@@ -1299,8 +1318,10 @@ class LoweringVisitor {
             std::string exitMethodToken = "c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"__exit__\""}, exitMethodToken, "str");
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, exitMethodToken}, exitMethod);
+            std::string exitCountConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"4"}, exitCountConst);
             std::string exitArgs = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", "4"}, exitArgs);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", exitCountConst}, exitArgs);
             std::string exitIdx = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, exitIdx);
             ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgs, exitIdx, ctxExpr}, "");
@@ -4488,7 +4509,9 @@ class LoweringVisitor {
             std::string mode = argRes.size() > 1 ? argRes[1] : "";
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Open", path, mode}, res);
-            noteType(res, "dict");
+            // "file", not "dict" — see the typeOf(obj)=="file" branch in
+            // lowerMethodCall for why plain "dict" typing broke .write().
+            noteType(res, "file");
             return res;
         }
 
@@ -7226,6 +7249,44 @@ class LoweringVisitor {
                 isPathlib = (it != moduleNameAliases.end() && it->second == "pathlib");
             }
             if (isPathlib) return lowerPathConstruct(node, args);
+        }
+        // file.write(x) — pre-existing bug found while investigating this
+        // phase's calling conventions: open()'s returned dict used to be
+        // typed "dict", so .write() fell through to the generic
+        // dict-attribute dispatch a few branches below, which does NOT
+        // prepend the receiver to the callee's args list (that dispatch
+        // is designed for module-namespace-style calls like
+        // `os.path.exists(path)`, where the dict genuinely isn't a bound
+        // receiver). pyc_file_write_adapter expects `args->list[0]` to be
+        // the file object itself (to look up its FILE* in g_pycFiles) —
+        // receiving the write data there instead means the lookup always
+        // misses and the function returns immediately without writing
+        // anything, while still reporting success. Confirmed empirically:
+        // `open(p,"w") as f: f.write("hi")` created an empty file. Fixed
+        // by typing open()'s result "file" (not "dict") and handling
+        // .write() here with the receiver explicitly prepended, mirroring
+        // how the with-statement's own __enter__/__exit__ dispatch
+        // (Compiler.cpp's With-lowering) already builds its args list.
+        if (typeOf(obj) == "file" && methodName == "write") {
+            std::string methodNameConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"write\""}, methodNameConst, "str");
+            std::string methodLookup = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, methodNameConst}, methodLookup);
+            std::string writeCountConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"2"}, writeCountConst);
+            std::string argList = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", writeCountConst}, argList);
+            std::string idx0 = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, idx0);
+            std::string setRes0 = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idx0, obj}, setRes0);
+            std::string idx1 = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, idx1);
+            std::string arg0 = args.empty() ? "" : args[0];
+            std::string setRes1 = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idx1, arg0}, setRes1);
+            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
+            return res;
         }
         // Path.exists()/.is_file()/.is_dir()/.mkdir()/.joinpath(*parts) —
         // typeOf-gated, same fast-path-only limitation as datetime's

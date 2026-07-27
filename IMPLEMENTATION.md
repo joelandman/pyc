@@ -148,6 +148,43 @@ for the same method-call/parameter-passing caveat as `datetime`.
   variable). Purely a compile-time bookkeeping fix — the runtime *values*
   were already correct either way, since arithmetic dispatch itself never
   depended on `typeOf` (see the "robust primitives" design above).
+- **Severe pre-existing bug, fixed while investigating `hashlib`'s calling
+  conventions: `with open(p, "w") as f: f.write(x)` silently never wrote
+  anything.** `open()` creates the file on disk immediately (`fopen(p,
+  "w")` truncates/creates on open, before any `write()` call), so the file
+  existing was never proof the content was written — a gap in this
+  project's own prior testing (`os`/`pathlib` smoke tests only checked
+  `os.path.exists()`, never actual file content). Root cause: the
+  with-statement's `__enter__`/`__exit__` dispatch (`Compiler.cpp`'s
+  `With`-statement lowering) built its args list via
+  `ir.addInstruction(..., {"PyList_NewBoxed", "1"}, ...)` — passing the
+  *count* as a bare literal string `"1"` instead of a properly-declared IR
+  const. `Codegen.cpp`'s `getOrLoad` resolves any operand name it doesn't
+  recognize (which an undeclared literal like `"1"` never is) to a null
+  pointer, so `PyList_NewBoxed` received a null count and allocated a
+  *zero-length* list. `PyList_SetItemBoxed`'s boxed-list path only writes
+  when the index is already within the list's current size
+  (`Runtime.cpp`'s `PyList_SetItem`), so the intended `self` argument was
+  silently dropped — `__enter__` received an empty args list, returned
+  `None` (its own empty-args guard clause), and the with-target variable
+  was bound to `None` instead of the file object. Every method call
+  *inside* the with-block (`f.write(...)`) was therefore operating on
+  `None`, dispatched through the generic `typeOf(obj)=="dict"` fallback
+  (which doesn't prepend a receiver anyway — see below), silently
+  returning `None` without error. Fixed by declaring proper `const`
+  temps for the arg-list counts in both `__enter__` and `__exit__`
+  dispatch, and by giving `open()`'s result its own `"file"` typeOf tag
+  with a dedicated `.write()` dispatch branch (mirroring `datetime`/
+  `pathlib`'s typeOf-gated methods) that explicitly prepends the receiver
+  — the generic dict-dispatch fallback is designed for **non-bound**
+  module-namespace calls (`os.path.exists(path)`, where the receiver
+  genuinely isn't a "self") and must not be changed to always prepend a
+  receiver, which would break every one of those. Only 2 other call
+  sites in the whole file used the same bare-literal-count anti-pattern
+  (both in this same with-statement code, now fixed); every other
+  `PyList_NewBoxed` call site already used a properly-declared const.
+  Verified fixed with a real regression test in `tests/runner.py` that
+  checks actual written byte count via `wc -c`, not just file existence.
 - **A pyc-level class cannot reliably back a stdlib-shaped container
   type**: confirmed by direct experiment while scoping `collections`.
   Subclassing `dict` (`class Counter(dict): ...`) does not behave as a
