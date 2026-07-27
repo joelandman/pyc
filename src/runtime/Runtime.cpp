@@ -559,6 +559,41 @@ PyObject* PyList_Range(int start, int end) {
     return list;
 }
 
+// Forward declaration: full definition (with its own explanatory
+// comment) is further down in this file; needed here because it's used
+// by PyList_Concat below, which appears earlier.
+static void pyc_ensure_boxed_list(PyObject* lst);
+
+// list + list concatenation. Not previously implemented at all (found
+// while hunting for more instances of the truthiness bug's "reads
+// obj->list directly, ignoring list_item_type" class — this one turned
+// out to be a different flavor of the same underlying gap: PyNumber_Add
+// had no type==1 && type==1 branch whatsoever, so `[1,2,3] + [4,5]`
+// returned None unconditionally, confirmed against real CPython
+// regardless of whether either list used the homogeneous fast-path
+// storage). Normalizes both operands to the generic boxed representation
+// first (mutating list_item_type in place, same as every other
+// list-reading function in this file that calls pyc_ensure_boxed_list)
+// so this works correctly for homogeneous-int/float and mixed-type
+// lists alike.
+static PyObject* PyList_Concat(PyObject* a, PyObject* b) {
+    pyc_ensure_boxed_list(a);
+    pyc_ensure_boxed_list(b);
+    size_t na = a->list.size(), nb = b->list.size();
+    PyObject* result = PyList_New(na + nb);
+    for (size_t i = 0; i < na; ++i) {
+        PyObject* elem = a->list[i];
+        if (elem) Py_INCREF(elem);
+        PyList_SetItem(result, i, elem);
+    }
+    for (size_t i = 0; i < nb; ++i) {
+        PyObject* elem = b->list[i];
+        if (elem) Py_INCREF(elem);
+        PyList_SetItem(result, na + i, elem);
+    }
+    return result;
+}
+
 // Repeat a list `n` times (positive int only — matches CPython which raises
 // TypeError on negative int * list, since it's a sequence repetition).
 // Each element is INCREF'd so the result owns its references; the source
@@ -4212,6 +4247,11 @@ static PyObject* pyc_timedelta_mul(const PycTimedelta* a, int64_t n) {
 PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
     if (!a || !b) return NULL;
     if (a->type == 3 && b->type == 3) return PyString_Concat(a, b);
+    // list + list concatenation — see PyList_Concat's comment above for
+    // why this was previously entirely missing (not a homogeneous-list
+    // storage bug on its own, but found the same way: `[1,2,3] + [4,5]`
+    // returned None unconditionally, confirmed against real CPython).
+    if (a->type == 1 && b->type == 1) return PyList_Concat(a, b);
     // bytes/bytearray concatenation. Result type follows the left
     // operand (matches real Python: bytearray + bytes -> bytearray,
     // bytes + bytearray -> bytes).
@@ -8768,6 +8808,18 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
     // first unequal pair decides, with shorter < longer when all
     // shared elements are equal. We do the same here.
     if (a->type == 1 && b->type == 1) {
+        // Same pyc_ensure_boxed_list()-class bug found repeatedly
+        // elsewhere in this file (PyObject_TruthValue's list branch,
+        // chain.from_iterable's inner lists, ...): homogeneous int/float
+        // list literals store their data in ilist/flist (list_item_type
+        // 1/2), not list — reading `a->list`/`b->list` directly here
+        // meant two homogeneous lists always compared as if both were
+        // empty (`al.size() == bl.size() == 0`), so e.g. `[1,2,3] ==
+        // [1,2,4]` and `[1,2,3] == [1,2]` both incorrectly evaluated
+        // True. Confirmed against real CPython. Normalizing both sides
+        // first fixes it for real, not just for the equal-length case.
+        pyc_ensure_boxed_list(a);
+        pyc_ensure_boxed_list(b);
         const auto& al = a->list;
         const auto& bl = b->list;
         size_t n = al.size() < bl.size() ? al.size() : bl.size();

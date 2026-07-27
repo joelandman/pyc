@@ -650,6 +650,61 @@ calls relative to before, never remove ones that were previously
 firing, since the DECREF call site was unconditionally dead code prior
 to this fix — see the second bug above).
 
+### Two More Real Bugs Found by Hunting for More Instances of the Same Class
+After fixing the truthiness bug above, deliberately audited the rest of
+`Runtime.cpp` for more of the same underlying pattern — a function
+reading `obj->list` directly without checking `list_item_type` (the
+homogeneous int/float fast-path storage, where the real data lives in
+`ilist`/`flist` instead and `list` is empty). Most list-consuming
+functions in this file were already correctly guarded (this exact bug
+class had been found and fixed piecemeal several times before, in the
+`heapq`/`bisect`/`statistics` phase and again in `chain.from_iterable`)
+— but two real gaps remained, both found by grepping every
+`->list.empty()`/`->list.size()` call site in the file and checking each
+one against its surrounding `list_item_type` handling:
+
+1. **`PyObject_CompareBool`'s list-comparison branch** (`a->type == 1 &&
+   b->type == 1`, backing `==`/`!=`/`<`/`>`/`<=`/`>=` between two lists)
+   read `a->list`/`b->list` directly with no guard at all — the exact
+   same bug `PyObject_TruthValue`'s list branch had. Since two
+   homogeneous int/float list literals both have an empty `.list`
+   (their data is in `.ilist`/`.flist`), this branch's element-count
+   check (`al.size() == bl.size()`) was always comparing `0 == 0` —
+   **always true** — for two homogeneous lists, regardless of their
+   actual contents or lengths. Confirmed against real CPython:
+   `[1,2,3] == [1,2,4]` (different content) and `[1,2,3] == [1,2]`
+   (different length) both incorrectly evaluated `True` under the old
+   code. A mixed-type list literal like `[1, "a", 2]` is forced onto the
+   generic boxed storage by its heterogeneous elements, so comparisons
+   involving at least one mixed-type list were unaffected — which is
+   presumably why this had gone unnoticed: `[1, 2, 3] == [1, 2, 3]`
+   (same content, common in tests) also happens to look "correct" by
+   the same accidental `0 == 0` logic, so only *unequal* homogeneous
+   lists exposed the bug, and evidently weren't exercised together with
+   equality checks anywhere in this codebase's existing test suite
+   before now. Fixed by calling `pyc_ensure_boxed_list()` on both
+   operands before reading `.list` — the same fix shape as
+   `PyObject_TruthValue`'s.
+2. **`list + list` concatenation wasn't implemented at all** — a
+   different flavor of the same hunt, not a storage-representation bug
+   this time but a flat-out missing feature: `PyNumber_Add` had no
+   `type==1 && type==1` branch whatsoever, so `[1,2,3] + [4,5]` returned
+   `None` unconditionally (confirmed against real CPython), regardless
+   of whether either list used the homogeneous fast-path storage or not.
+   Implemented as a new `PyList_Concat(a, b)` (normalizes both operands
+   via `pyc_ensure_boxed_list()` first, then builds a fresh boxed result
+   list with each element `Py_INCREF`'d — the same ownership shape as
+   the existing `PyList_Repeat`, placed immediately above it in
+   `Runtime.cpp`), wired into `PyNumber_Add` as `a->type == 1 && b->type
+   == 1`. Verified against real CPython for homogeneous-int,
+   homogeneous-float, mixed-type, and empty-operand combinations, plus
+   `+=` (augmented assignment, which already routed through
+   `PyNumber_Add` — no separate fix needed for that).
+
+Both verified against real CPython, added to `tests/runner.py`, and
+checked with `valgrind --tool=memcheck` (0 errors) given both touch
+refcounting on every list comparison/concatenation.
+
 ## Known Limitations
 
 ### Performance

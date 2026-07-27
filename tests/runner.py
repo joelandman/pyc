@@ -2004,6 +2004,52 @@ def add_decimals(x, y):
     return x + y
 print(add_decimals(Decimal('1.1'), Decimal('2.2')))
 """, "0.3\nTrue\n5\n3.14159\n3.00000\n10.0\n0.25\n3\n-3.14\n2.5\n2.5\nTrue\nTrue\nTrue\nTrue\nFalse\nTrue\n3.14\nDecimal('3.14')\n[Decimal('1.5'), Decimal('2.5')]\n3.14\n3\n-3\n3.14\nTrue\n<class 'decimal.Decimal'>\n3.3\n"),
+    # Two more real, general, pre-existing bugs found while hunting for
+    # more instances of the truthiness bug's "reads obj->list directly,
+    # ignoring list_item_type (the homogeneous int/float fast-path
+    # storage)" class, found this same session:
+    # (1) PyObject_CompareBool's list branch (==/!=/</>/...) read
+    #     a->list/b->list directly with no list_item_type check, same as
+    #     PyObject_TruthValue's list branch did before that fix. Two
+    #     homogeneous int/float list literals always compared as if both
+    #     were empty (since their real data lives in ilist/flist, not
+    #     list) — confirmed against real CPython: [1,2,3] == [1,2,4] and
+    #     [1,2,3] == [1,2] both incorrectly evaluated True. Fixed by
+    #     normalizing both operands via pyc_ensure_boxed_list() first.
+    # (2) list + list concatenation wasn't implemented at all —
+    #     PyNumber_Add had no type==1 && type==1 branch whatsoever, so
+    #     `[1,2,3] + [4,5]` returned None unconditionally regardless of
+    #     storage mode. Implemented (PyList_Concat), verified against
+    #     real CPython for homogeneous-int, homogeneous-float, mixed-type,
+    #     and empty-operand combinations, plus += (augmented assignment).
+    ("""
+a = [1, 2, 3]
+b = [1, 2, 4]
+print(a == b)
+print(a != b)
+c = [1, 2, 3]
+print(a == c)
+d = [1, 2]
+print(a == d)
+print(a < d)
+print(d < a)
+e = [1.0, 2.0, 3.0]
+f = [1.0, 2.0, 4.0]
+print(e == f)
+
+g = [1, 2, 3]
+h = [4, 5]
+print(g + h)
+print([] + g)
+print(g + [])
+i = [1, 2]
+i += [3, 4]
+print(i)
+print([1, 2, 3] + [4, "x"])
+j = [1, 2]
+k = [3.0, 4.0]
+print(j + k)
+""", "False\nTrue\nTrue\nFalse\nFalse\nTrue\nFalse\n[1, 2, 3, 4, 5]\n[1, 2, 3]\n[1, 2, 3]\n[1, 2, 3, 4]\n[1, 2, 3, 4, 'x']\n[1, 2, 3.0, 4.0]\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

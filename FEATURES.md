@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **319/319** (runner shows 319/319, file_case_failures=0).
+Current test count: **320/320** (runner shows 320/320, file_case_failures=0).
 
 ## Types and Literals
 
@@ -257,6 +257,16 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
 
 `list.append(x)`, `list.sort()`, `list.pop()`  
 `dict.keys()`, `dict.values()`, `dict.items()`, `dict.get(key, default)`
+
+- `list + list` concatenation — **found missing entirely and
+  implemented this session** (`[1,2,3] + [4,5]` used to return `None`
+  unconditionally). See IMPLEMENTATION.md.
+- **Real bug found and fixed**: list `==`/`!=`/`<`/`>`/`<=`/`>=`
+  comparison silently gave wrong answers for homogeneous int/float list
+  literals — e.g. `[1,2,3] == [1,2,4]` and `[1,2,3] == [1,2]` both
+  incorrectly evaluated `True` (same root cause as the `if`/`while`
+  truthiness bug documented under Control Flow above: reading internal
+  fast-path list storage incorrectly). See IMPLEMENTATION.md.
 
 ## Comprehensions
 
