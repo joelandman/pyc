@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **320/320** (runner shows 320/320, file_case_failures=0).
+Current test count: **321/321** (runner shows 321/321, file_case_failures=0).
 
 ## Types and Literals
 
@@ -91,12 +91,24 @@ f(b=3, a=4)                    keyword call arguments
   `break` / `continue`, raise inside a handler or `else`
 - Uncaught exceptions print a CPython-style traceback line to stderr, exit 1
 - Exception classes as first-class values (`exc = ValueError`, `raise exc("msg")`)
+- **Not implemented**: `type(e).__name__` on a caught exception instance
+  prints `None` instead of the exception's class name — a narrow
+  introspection gap, found but not chased down (see IMPLEMENTATION.md).
+  Catching by type (`except KeyError as e:`) and printing the instance
+  itself (`print(e)`) both work correctly; it's specifically
+  `type()`-then-`.__name__` on the caught instance that doesn't resolve.
 
 ## Statements
 
 - `with` (context managers via `__enter__` / `__exit__`)
 - `match` / `case` (literals, wildcard, capture, singletons, guards)
 - `assert`, `del`, walrus `:=`
+- **Real bugs found and fixed**: `del list[i]` silently did nothing at
+  all (for any list, not just a storage-representation edge case) —
+  `Compiler.cpp` called a dict-only deletion function unconditionally,
+  regardless of the target's actual type. `del dict[missing_key]` also
+  silently succeeded instead of raising `KeyError`. Both fixed — see
+  IMPLEMENTATION.md.
 - `import` / `from ... import` / `from ... import *` (file-based modules)
 
 ## Builtins

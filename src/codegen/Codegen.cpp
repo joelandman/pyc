@@ -599,6 +599,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     llvm::FunctionType* dictDelItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(dictDelItemTy, llvm::Function::ExternalLinkage, "PyDict_DelItem", module.get());
+    // Pyc_DelItem(obj, key): generic del obj[key], dispatching on obj's
+    // runtime type (dict key deletion or list item removal by index) —
+    // see its comment in Runtime.cpp for why this replaced calling
+    // PyDict_DelItem directly for every `del obj[idx]`.
+    llvm::Function::Create(dictDelItemTy, llvm::Function::ExternalLinkage, "Pyc_DelItem", module.get());
 
     // Subscript / membership / power
     llvm::FunctionType* getItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);

@@ -705,6 +705,56 @@ Both verified against real CPython, added to `tests/runner.py`, and
 checked with `valgrind --tool=memcheck` (0 errors) given both touch
 refcounting on every list comparison/concatenation.
 
+### `del list[i]` Did Nothing At All — A Different Root Cause From the Same Hunt
+Continuing the same audit turned up a third bug, though not another
+instance of the `list_item_type` storage-representation pattern this
+time — a plain missing dispatch branch. `Compiler.cpp`'s `del`-target
+lowering for a `Subscript` target (`del obj[idx]`) called
+`PyDict_DelItem(obj, key)` **unconditionally**, for any `obj`, with no
+check on its runtime type at all:
+```cpp
+} else if (target->type == "Subscript") {
+    // del d[k]
+    ...
+    ir.addInstruction(currentFunc, "call", {"PyDict_DelItem", obj, idx}, dummy);
+```
+`PyDict_DelItem` only acts when `dict->type == 2`, silently returning
+`PyBool_New(0)` (no-op, no error) otherwise — so `del lst[i]` on *any*
+list, not just ones using the homogeneous fast-path storage, has always
+silently done nothing. Confirmed against real CPython: `lst = [1,2,3];
+del lst[1]; print(lst)` printed `[1, 2, 3]` (unchanged) instead of
+`[1, 3]`.
+
+Fixed by adding a new `Pyc_DelItem(obj, key)` (placed next to
+`Pyc_SetItem`/`Pyc_GetItem`/`Pyc_Subscript` — the existing
+runtime-type-dispatching functions this naming convention already
+belongs to) that checks `obj->type` at runtime: dict key deletion
+(delegates to `PyDict_DelItem`) or list item removal by index
+(normalizes via `pyc_ensure_boxed_list()` first, then `Py_DECREF`s the
+removed element and erases it from `.list`), raising `IndexError` with
+CPython's exact message (`"list assignment index out of range"`, verified
+against real CPython) for an out-of-range index. `Compiler.cpp`'s
+del-Subscript lowering now calls this instead of `PyDict_DelItem`
+directly.
+
+**A second, smaller, genuinely separate bug found while verifying the
+fix above** (pre-existing in `PyDict_DelItem` itself, not introduced by
+the `Pyc_DelItem` change — this one has nothing to do with lists):
+`PyDict_DelItem` never raised `KeyError` for a missing key, silently
+returning `PyBool_New(0)` instead — confirmed `del d["missing"]` on a
+real dict raised nothing at all under the old code, where real CPython
+raises `KeyError: 'missing'`. Fixed to match `Pyc_Subscript`'s existing
+`KeyError`-raising convention exactly (same `pyc_make_exc`/`pyc_raise`
+pattern, raw key object as the message so `pyc_exc_message`'s existing
+repr-quoting applies). Verified `except KeyError as e: print(e)` now
+matches real CPython's `KeyError: 'missing'` exactly. (Also noticed,
+but explicitly did **not** chase down, since it's a different and
+narrower pre-existing gap unrelated to `del`/dict/list: `type(e).__name__`
+on a caught exception instance prints `None` instead of the exception's
+class name — an exception-object type-introspection formatting issue,
+not part of this bug hunt's pattern. Worth a future look, not fixed
+here.)
+
 ## Known Limitations
 
 ### Performance

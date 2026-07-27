@@ -2050,6 +2050,44 @@ j = [1, 2]
 k = [3.0, 4.0]
 print(j + k)
 """, "False\nTrue\nTrue\nFalse\nFalse\nTrue\nFalse\n[1, 2, 3, 4, 5]\n[1, 2, 3]\n[1, 2, 3]\n[1, 2, 3, 4]\n[1, 2, 3, 4, 'x']\n[1, 2, 3.0, 4.0]\n"),
+    # Two more real bugs found while continuing the same hunt (this
+    # session): `del list[i]` — Compiler.cpp's del-Subscript lowering
+    # called PyDict_DelItem(obj, key) unconditionally for *any*
+    # `del obj[idx]`, regardless of obj's runtime type. Since
+    # PyDict_DelItem only acts when obj->type==2, `del lst[i]` on *any*
+    # list (homogeneous-storage or not — a different root cause than the
+    # list_item_type storage bugs found alongside it, a missing dispatch
+    # branch rather than a storage-representation mismatch) silently did
+    # nothing at all. Fixed by adding a new Pyc_DelItem(obj, key) that
+    # dispatches on obj's runtime type (dict key deletion or list item
+    # removal by index), used in place of calling PyDict_DelItem
+    # directly. Also found alongside it: PyDict_DelItem itself never
+    # raised KeyError on a missing key (silently no-op'd) — a real,
+    # separate, pre-existing gap in the function itself, not introduced
+    # by the list fix; fixed to match Pyc_Subscript's existing KeyError
+    # convention. See IMPLEMENTATION.md.
+    ("""
+lst = [1.0, 2.0, 3.0]
+del lst[0]
+print(lst)
+lst2 = [1, 2, 3]
+del lst2[-1]
+print(lst2)
+try:
+    del lst2[10]
+except IndexError as e:
+    print("IndexError:", e)
+d = {"a": 1, "b": 2}
+del d["a"]
+print(d)
+try:
+    del d["missing"]
+except KeyError as e:
+    print("KeyError:", e)
+lst3 = [1, "a", 2]
+del lst3[1]
+print(lst3)
+""", "[2.0, 3.0]\n[1, 2]\nIndexError: list assignment index out of range\n{'b': 2}\nKeyError: 'missing'\n[1, 2]\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

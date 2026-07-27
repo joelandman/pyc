@@ -722,6 +722,16 @@ PyObject* PyDict_DelItem(PyObject* dict, PyObject* key) {
                 return PyBool_New(1);
             }
         }
+        // Missing key: real `del d[k]` raises KeyError — found silently
+        // succeeding instead while verifying the Pyc_DelItem fix above
+        // (this function's own pre-existing behavior, not introduced by
+        // that fix). Raw key as the message, same as Pyc_Subscript's
+        // KeyError above — pyc_exc_message adds the repr quoting.
+        PyObject* t = PyUnicode_FromString("KeyError");
+        PyObject* e = pyc_make_exc(t, key);
+        Py_DECREF(t);
+        pyc_raise(e);
+        return nullptr;
     }
     return PyBool_New(0);
 }
@@ -3258,6 +3268,34 @@ PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
         return nullptr;
     }
     return nullptr;
+}
+
+// del obj[key] — dispatches on obj's runtime type. Found missing while
+// hunting for more instances of the truthiness bug's underlying pattern:
+// Compiler.cpp previously called PyDict_DelItem unconditionally for
+// *any* `del obj[idx]`, regardless of obj's type — since PyDict_DelItem
+// only acts on type==2, `del lst[i]` on ANY list (not just ones using
+// the homogeneous fast-path storage — this one is a different root
+// cause, a missing dispatch branch rather than a storage-representation
+// mismatch) silently did nothing at all. Confirmed against real
+// CPython. Compiler.cpp's del-Subscript lowering now calls this instead
+// of PyDict_DelItem directly.
+PyObject* Pyc_DelItem(PyObject* obj, PyObject* key) {
+    if (obj && obj->type == 2) return PyDict_DelItem(obj, key);
+    if (obj && obj->type == 1 && key && (key->type == 0 || key->type == 5)) {
+        pyc_ensure_boxed_list(obj);
+        long idx = key->value;
+        if (idx < 0) idx += (long)obj->list.size();
+        if (idx >= 0 && (size_t)idx < obj->list.size()) {
+            PyObject* item = obj->list[(size_t)idx];
+            if (item) Py_DECREF(item);
+            obj->list.erase(obj->list.begin() + idx);
+            return PyBool_New(1);
+        }
+        pyc_raise_msg("IndexError", "list assignment index out of range");
+        return nullptr;
+    }
+    return PyBool_New(0);
 }
 
 PyObject* Pyc_Contains(PyObject* container, PyObject* item) {

@@ -6646,7 +6646,13 @@ class LoweringVisitor {
 
     // Lower a single `del` target. Supports:
     //   del name        — free the local/global alloca (DECREF the value, mark slot as unowned)
-    //   del d[k]        — call PyDict_DelItem(dict, key)
+    //   del d[k]        — call Pyc_DelItem(obj, key) (dict key deletion or
+    //                     list item removal by index, dispatched at runtime
+    //                     on obj's type — previously always called
+    //                     PyDict_DelItem directly, so `del lst[i]` on any
+    //                     list silently did nothing at all; found while
+    //                     hunting for more instances of the truthiness
+    //                     bug's underlying pattern, see IMPLEMENTATION.md)
     //   del obj.attr    — best-effort: del obj's instance/class attr via the same machinery
     //                     used for getattr. If the attribute is missing this is a no-op,
     //                     which differs from CPython's AttributeError but keeps the compiler
@@ -6672,7 +6678,7 @@ class LoweringVisitor {
             std::string obj = lowerExpr(target->children[0].get());
             std::string idx = lowerExpr(target->children[1].get());
             std::string dummy = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyDict_DelItem", obj, idx}, dummy);
+            ir.addInstruction(currentFunc, "call", {"Pyc_DelItem", obj, idx}, dummy);
         } else if (target->type == "Attribute") {
             // del obj.attr — best-effort: store the empty string into the instance/class attr
             // so it's effectively gone. CPython would remove the key from the dict entirely,
