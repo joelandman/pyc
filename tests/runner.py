@@ -1901,6 +1901,109 @@ print(total)
 
 print(b"\\x00\\x01\\xff")
 """, "5\n104\n111\n[101, 108]\nb'hello'\nb'hello world'\nbytearray(b'abcdef')\nbytearray(b'Abcdef')\nb''\nb'\\x00\\x00\\x00'\nb'Hi'\nb'hi'\n68656c6c6f\nb'hello'\nhello\nb'hello'\nTrue\nTrue\nTrue\nTrue\nTrue\n6\nb'\\x00\\x01\\xff'\n"),
+    # Severe, general, pre-existing bug — fixed here — found while
+    # verifying decimal.Decimal's truthiness (unrelated on its own): the
+    # "br" IR instruction's boxed-condition codegen (Codegen.cpp, backing
+    # if/while/ternary) unboxed the condition's raw `.value` int64 field
+    # and compared it to zero directly — correct only for boxed int/bool
+    # (whose `.value` field IS the number) but silently, unconditionally
+    # FALSE for every other boxed type (str/list/dict/...), since their
+    # `.value` field is unused/zero regardless of actual content.
+    # `if s:` for a non-empty string, `if some_list:`/`if some_dict:` for
+    # non-empty containers, `while s:`, and ternary `x if s else y` were
+    # all silently, always false. Fixed by calling the (now non-static)
+    # PyObject_TruthValue for a real, type-dispatching check instead.
+    # Also found and fixed alongside it: PyObject_TruthValue's own list
+    # branch had the same pyc_ensure_boxed_list()-class bug found
+    # repeatedly elsewhere this session — homogeneous int/float list
+    # literals store data in ilist/flist (list_item_type 1/2), not
+    # list, so checking obj->list.empty() alone was always true for
+    # those (`if [1,2,3]:` was falsy; `if [1,"a",2]:`, forced onto the
+    # generic boxed path by its mixed types, was correctly truthy) — see
+    # IMPLEMENTATION.md.
+    ("""
+def check(x):
+    if x:
+        return "truthy"
+    else:
+        return "falsy"
+
+print(check("hello"))
+print(check(""))
+print(check([1, 2, 3]))
+print(check([]))
+print(check({"a": 1}))
+print(check({}))
+print(check([1, "a", 2]))
+
+s = "loop"
+count = 0
+while s:
+    count += 1
+    if count >= 3:
+        s = ""
+print(count)
+
+lst = [1, 2, 3]
+x = "yes" if lst else "no"
+print(x)
+y = "yes" if [] else "no"
+print(y)
+""", "truthy\nfalsy\ntruthy\nfalsy\ntruthy\nfalsy\ntruthy\n3\nyes\nno\n"),
+    # decimal.Decimal (type 19), backed by libmpdec (arbitrary precision,
+    # same library CPython's own _decimal is built on — see
+    # IMPLEMENTATION.md and CMakeLists.txt). Context: 28 significant
+    # digits, ROUND_HALF_EVEN, matching CPython's real defaults (not
+    # libmpdec's own mpd_defaultcontext(), which differs). Unlike
+    # complex numbers (type 13), arithmetic is wired into the generic
+    # PyNumber_Add/Sub/Mul/Divide/TrueDivide/Negate functions rather than
+    # a compile-time-only tracking set, so it works correctly even for a
+    # Decimal value crossing a function-parameter boundary (see the
+    # add_decimals() call at the end of this test).
+    ("""
+from decimal import Decimal
+
+a = Decimal('0.1')
+b = Decimal('0.2')
+print(a + b)
+print(a + b == Decimal('0.3'))
+
+print(Decimal(5))
+print(Decimal('3.14159'))
+print(Decimal('3.14159') - Decimal('0.14159'))
+print(Decimal('2.5') * Decimal('4'))
+print(Decimal('1') / Decimal('4'))
+print(Decimal('10') // Decimal('3'))
+print(-Decimal('3.14'))
+
+print(Decimal('1.5') + 1)
+print(1 + Decimal('1.5'))
+
+print(Decimal('1.50') == Decimal('1.5'))
+print(Decimal('1.5') < Decimal('1.6'))
+print(Decimal('1.5') < 2)
+print(Decimal('0') == 0)
+print(bool(Decimal('0')))
+print(bool(Decimal('0.01')))
+
+d = Decimal('3.14159')
+print(d.quantize(Decimal('0.01')))
+
+print(repr(Decimal('3.14')))
+print([Decimal('1.5'), Decimal('2.5')])
+print(str(Decimal('3.14')))
+
+print(int(Decimal('3.9')))
+print(int(Decimal('-3.9')))
+print(float(Decimal('3.14')))
+
+print(isinstance(Decimal('1'), Decimal))
+print(type(Decimal('1')))
+
+def add_decimals(x, y):
+    return x + y
+print(add_decimals(Decimal('1.1'), Decimal('2.2')))
+""", "0.3\nTrue\n5\n3.14159\n3.00000\n10.0\n0.25\n3\n-3.14\n2.5\n2.5\nTrue\nTrue\nTrue\nTrue\nFalse\nTrue\n3.14\nDecimal('3.14')\n[Decimal('1.5'), Decimal('2.5')]\n3.14\n3\n-3\n3.14\nTrue\n<class 'decimal.Decimal'>\n3.3\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

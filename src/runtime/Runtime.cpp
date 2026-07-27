@@ -24,8 +24,67 @@
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
 
+#include <mpdecimal.h>
+
 #include "pyc/runtime.h"
 #include "pyc/object_struct.h"
+
+// decimal.Decimal (type 19) small helpers, needed early since
+// PyNumber_Negate/Add/Subtract/Multiply/Divide/TrueDivide all gain a
+// type==19 branch and some of those functions appear well before the
+// rest of the Decimal implementation (search "decimal.Decimal (type 19)"
+// further down for the full design comment and construction/quantize/
+// conversion functions).
+static mpd_context_t g_decCtx;
+static bool g_decCtxInit = false;
+static mpd_context_t* pyc_dec_ctx() {
+    if (!g_decCtxInit) {
+        mpd_defaultcontext(&g_decCtx);
+        mpd_qsetprec(&g_decCtx, 28);
+        mpd_qsetround(&g_decCtx, MPD_ROUND_HALF_EVEN);
+        g_decCtxInit = true;
+    }
+    return &g_decCtx;
+}
+static mpd_t* pyc_as_decimal(PyObject* o) {
+    if (!o || o->type != 19) return nullptr;
+    return reinterpret_cast<mpd_t*>(o->value);
+}
+static PyObject* pyc_decimal_wrap(mpd_t* d) {
+    PyObject* o = new PyObject();
+    o->refcount = 1;
+    o->type = 19;
+    o->value = (int64_t)(intptr_t)d;
+    return o;
+}
+// Resolves one operand of a Decimal-involving binary op: a Decimal
+// itself returns its mpd_t* directly (borrowed — *isTemp stays false,
+// caller must not free it); an int/bool is converted into a freshly
+// allocated mpd_t* (*isTemp=true, caller must mpd_del it after use) —
+// matches real Python's Decimal+int support. Anything else (float, str,
+// ...) returns nullptr: real CPython's Decimal does NOT implicitly
+// coerce from float (Decimal('1.5') + 1.5 raises TypeError, verified
+// against real Python) — the generic PyNumber_* callers below return
+// NULL for this case, the same "unsupported operand combo" convention
+// already used elsewhere in this file (e.g. is_numeric()'s early-outs).
+static mpd_t* pyc_decimal_operand(PyObject* x, bool* isTemp) {
+    *isTemp = false;
+    if (!x) return nullptr;
+    if (x->type == 19) return pyc_as_decimal(x);
+    if (x->type == 0 || x->type == 5) {
+        mpd_t* d = mpd_qnew();
+        uint32_t status = 0;
+        mpd_qset_i64(d, x->value, pyc_dec_ctx(), &status);
+        *isTemp = true;
+        return d;
+    }
+    return nullptr;
+}
+// Forward declaration: full definition (and design comment) sits with
+// the rest of the Decimal construction functions further down; needed
+// here because PyObject_CompareBool (which uses it for Decimal-vs-float
+// comparison) appears earlier in this file.
+extern "C" PyObject* PyDecimal_FromFloat(PyObject* f);
 
 extern char** environ;
 
@@ -187,13 +246,31 @@ PyObject* PyInt_FromLong(long v) {
 }
 
 // Internal truthiness predicate (mirrors Python's bool()).
-static int PyObject_TruthValue(PyObject* obj) {
+// NOT static: called directly from generated code (Codegen.cpp's "br"
+// instruction handler) for boxed non-numeric conditions (str/list/dict/
+// Decimal/...) — see the severe pre-existing bug this fixes, documented
+// in IMPLEMENTATION.md, found while verifying decimal.Decimal's
+// truthiness this session.
+int PyObject_TruthValue(PyObject* obj) {
     if (!obj) return 0;
     if (obj->type == 0 || obj->type == 5) return obj->value != 0;
     if (obj->type == 4) return obj->dvalue != 0.0;
     if (obj->type == 3 || obj->type == 17 || obj->type == 18) return !obj->str.empty();
-    if (obj->type == 1) return !obj->list.empty();
+    if (obj->type == 1) {
+        // Same pyc_ensure_boxed_list()-class bug found repeatedly
+        // elsewhere in this file: homogeneous int/float list literals
+        // store their data in ilist/flist (list_item_type 1/2), not
+        // list — checking obj->list.empty() alone is always true for
+        // those, so `if [1,2,3]:` was incorrectly falsy. Mirrors
+        // PyList_Size's existing three-way check (PyList_Size itself is
+        // defined later in this file, after this function, so inlined
+        // here rather than forward-declared).
+        if (obj->list_item_type == 1) return !obj->ilist.empty();
+        if (obj->list_item_type == 2) return !obj->flist.empty();
+        return !obj->list.empty();
+    }
     if (obj->type == 2) return !obj->dict.empty();
+    if (obj->type == 19) return !mpd_iszero(pyc_as_decimal(obj));
     return 1;
 }
 
@@ -773,6 +850,12 @@ void Py_DECREF(PyObject* obj) {
             delete reinterpret_cast<PycDateTime*>(obj->value);
         } else if (obj->type == 15) {
             delete reinterpret_cast<PycTimedelta*>(obj->value);
+        } else if (obj->type == 19) {
+            // decimal.Decimal owns a heap-allocated mpd_t* (libmpdec) —
+            // same "opaque pointer in `value`" pattern as types 8/9/14/15
+            // above, and the one thing complex numbers (type 13) didn't
+            // need since they have no out-of-struct payload.
+            mpd_del(reinterpret_cast<mpd_t*>(obj->value));
         } else if (obj->type == 10 || obj->type == 11) {
             if (obj->cell_content) { Py_DECREF(obj->cell_content); obj->cell_content = nullptr; }
         }
@@ -910,6 +993,14 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
     if (obj->type == 17 || obj->type == 18) {
         std::string r = pyc_format_bytes_repr(obj->str, obj->type == 18);
         return fprintf(fp, "%s", r.c_str());
+    }
+    if (obj->type == 19) {
+        // Nested-container form matches CPython's Decimal repr exactly:
+        // print([Decimal('3.14')]) -> [Decimal('3.14')], not [3.14].
+        char* s = mpd_to_sci(pyc_as_decimal(obj), 1);
+        int r = fprintf(fp, "Decimal('%s')", s ? s : "0");
+        if (s) mpd_free(s);
+        return r;
     }
     if (obj->type == 6) return fprintf(fp, "<cell>");
     if (obj->type == 14) {
@@ -1073,6 +1164,15 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         // same b'...' repr form CPython does (print(b"hi") -> b'hi').
         std::string r = pyc_format_bytes_repr(obj->str, obj->type == 18);
         int rc = fprintf(fp, "%s\n", r.c_str()); fflush(fp); return rc;
+    }
+    if (obj->type == 19) {
+        // Bare print()/str() shows the plain digit string (matches
+        // int/float/str's existing bare-print convention) — no
+        // Decimal('...') wrapper here, unlike PyObject_PrintElement.
+        char* s = mpd_to_sci(pyc_as_decimal(obj), 1);
+        int r = fprintf(fp, "%s\n", s ? s : "0"); fflush(fp);
+        if (s) mpd_free(s);
+        return r;
     }
     if (obj->type == 6) { int r = fprintf(fp, "<cell>\n"); fflush(fp); return r; }
     { int r = fprintf(fp, "<object>\n"); fflush(fp); return r; }
@@ -1505,6 +1605,12 @@ PyObject* PyNumber_Negate(PyObject* obj) {
     if (!obj) return NULL;
     if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(-obj->value);
     if (obj->type == 4) return PyFloat_FromDouble(-obj->dvalue);
+    if (obj->type == 19) {
+        mpd_t* r = mpd_qnew();
+        uint32_t status = 0;
+        mpd_qcopy_negate(r, pyc_as_decimal(obj), &status);
+        return pyc_decimal_wrap(r);
+    }
     return NULL;
 }
 
@@ -1527,6 +1633,18 @@ PyObject* PyBuiltin_Int(PyObject* obj) {
     if (!obj) return PyInt_FromLong(0);
     if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(obj->value);
     if (obj->type == 4) return PyInt_FromLong((long)obj->dvalue);
+    if (obj->type == 19) {
+        // int(Decimal(...)) truncates toward zero, matching CPython.
+        mpd_t* a = pyc_as_decimal(obj);
+        uint32_t status = 0;
+        mpd_context_t truncCtx = *pyc_dec_ctx();
+        mpd_qsetround(&truncCtx, MPD_ROUND_DOWN);
+        mpd_t* rounded = mpd_qnew();
+        mpd_qround_to_int(rounded, a, &truncCtx, &status);
+        int64_t v = mpd_qget_ssize(rounded, &status);
+        mpd_del(rounded);
+        return PyInt_FromLong(v);
+    }
     if (obj->type == 3) {
         long v;
         if (pyc_parse_long(obj->str, 10, &v)) return PyInt_FromLong(v);
@@ -1565,6 +1683,12 @@ PyObject* PyBuiltin_Float(PyObject* obj) {
     if (!obj) return PyFloat_FromDouble(0.0);
     if (obj->type == 0 || obj->type == 5) return PyFloat_FromDouble((double)obj->value);
     if (obj->type == 4) { Py_INCREF(obj); return obj; }
+    if (obj->type == 19) {
+        char* s = mpd_to_sci(pyc_as_decimal(obj), 1);
+        double v = s ? strtod(s, nullptr) : 0.0;
+        if (s) mpd_free(s);
+        return PyFloat_FromDouble(v);
+    }
     if (obj->type == 3) {
         try { return PyFloat_FromDouble(std::stod(obj->str)); } catch (...) {}
     }
@@ -1673,6 +1797,7 @@ PyObject* PyBuiltin_Bool(PyObject* obj) {
         return PyBool_New(len != 0);
     }
     if (obj->type == 2) return PyBool_New(!obj->dict.empty());
+    if (obj->type == 19) return PyBool_New(!mpd_iszero(pyc_as_decimal(obj)));
     return PyBool_New(1);
 }
 
@@ -1694,6 +1819,7 @@ PyObject* PyBuiltin_Type(PyObject* obj) {
         case 15: return PyUnicode_FromString("<class 'datetime.timedelta'>");
         case 17: return PyUnicode_FromString("<class 'bytes'>");
         case 18: return PyUnicode_FromString("<class 'bytearray'>");
+        case 19: return PyUnicode_FromString("<class 'decimal.Decimal'>");
         default: return PyUnicode_FromString("<class 'object'>");
     }
 }
@@ -1817,6 +1943,12 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
     }
     if (obj->type == 17 || obj->type == 18) {
         std::string r = pyc_format_bytes_repr(obj->str, obj->type == 18);
+        return PyUnicode_FromStringAndSize(r.data(), r.size());
+    }
+    if (obj->type == 19) {
+        char* s = mpd_to_sci(pyc_as_decimal(obj), 1);
+        std::string r = std::string("Decimal('") + (s ? s : "0") + "')";
+        if (s) mpd_free(s);
         return PyUnicode_FromStringAndSize(r.data(), r.size());
     }
     if (obj->type == 1) {
@@ -2792,6 +2924,14 @@ PyObject* pyc_import_failed(PyObject* modName) {
         }
         if (modName->str == "csv") {
             return makeCsvModuleDict();
+        }
+        if (modName->str == "decimal") {
+            // Empty: decimal.Decimal(...) construction is always
+            // intercepted structurally in Compiler.cpp (same rationale as
+            // pathlib.Path above — Decimal has exactly one constructor).
+            // This dict exists only so `import decimal` doesn't report
+            // ImportError.
+            return PyDict_New();
         }
         if (modName->str == "cmath") {
             PyObject* d = PyDict_New();
@@ -4083,6 +4223,21 @@ PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
     if (a->type == 14 && b->type == 15) return pyc_datetime_add_timedelta(pyc_as_datetime(a), pyc_as_timedelta(b), false);
     if (a->type == 15 && b->type == 14) return pyc_datetime_add_timedelta(pyc_as_datetime(b), pyc_as_timedelta(a), false);
     if (a->type == 15 && b->type == 15) return pyc_timedelta_add(pyc_as_timedelta(a), pyc_as_timedelta(b), false);
+    if (a->type == 19 || b->type == 19) {
+        bool aTemp = false, bTemp = false;
+        mpd_t* da = pyc_decimal_operand(a, &aTemp);
+        mpd_t* db = pyc_decimal_operand(b, &bTemp);
+        PyObject* result = nullptr;
+        if (da && db) {
+            mpd_t* r = mpd_qnew();
+            uint32_t status = 0;
+            mpd_qadd(r, da, db, pyc_dec_ctx(), &status);
+            result = pyc_decimal_wrap(r);
+        }
+        if (aTemp) mpd_del(da);
+        if (bTemp) mpd_del(db);
+        return result;
+    }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) return PyInt_FromLong(a->value + b->value);
     return PyFloat_FromDouble(numeric_val(a) + numeric_val(b));
@@ -4092,6 +4247,21 @@ PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
     if (a && b && a->type == 14 && b->type == 15) return pyc_datetime_add_timedelta(pyc_as_datetime(a), pyc_as_timedelta(b), true);
     if (a && b && a->type == 14 && b->type == 14) return pyc_datetime_diff(pyc_as_datetime(a), pyc_as_datetime(b));
     if (a && b && a->type == 15 && b->type == 15) return pyc_timedelta_add(pyc_as_timedelta(a), pyc_as_timedelta(b), true);
+    if (a && b && (a->type == 19 || b->type == 19)) {
+        bool aTemp = false, bTemp = false;
+        mpd_t* da = pyc_decimal_operand(a, &aTemp);
+        mpd_t* db = pyc_decimal_operand(b, &bTemp);
+        PyObject* result = nullptr;
+        if (da && db) {
+            mpd_t* r = mpd_qnew();
+            uint32_t status = 0;
+            mpd_qsub(r, da, db, pyc_dec_ctx(), &status);
+            result = pyc_decimal_wrap(r);
+        }
+        if (aTemp) mpd_del(da);
+        if (bTemp) mpd_del(db);
+        return result;
+    }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) return PyInt_FromLong(a->value - b->value);
     return PyFloat_FromDouble(numeric_val(a) - numeric_val(b));
@@ -8430,6 +8600,21 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
     if (a->type == 0 && b->type == 1) return PyList_Repeat(b, a->value);
     if (a->type == 15 && (b->type == 0 || b->type == 5)) return pyc_timedelta_mul(pyc_as_timedelta(a), b->value);
     if ((a->type == 0 || a->type == 5) && b->type == 15) return pyc_timedelta_mul(pyc_as_timedelta(b), a->value);
+    if (a->type == 19 || b->type == 19) {
+        bool aTemp = false, bTemp = false;
+        mpd_t* da = pyc_decimal_operand(a, &aTemp);
+        mpd_t* db = pyc_decimal_operand(b, &bTemp);
+        PyObject* result = nullptr;
+        if (da && db) {
+            mpd_t* r = mpd_qnew();
+            uint32_t status = 0;
+            mpd_qmul(r, da, db, pyc_dec_ctx(), &status);
+            result = pyc_decimal_wrap(r);
+        }
+        if (aTemp) mpd_del(da);
+        if (bTemp) mpd_del(db);
+        return result;
+    }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) return PyInt_FromLong(a->value * b->value);
     return PyFloat_FromDouble(numeric_val(a) * numeric_val(b));
@@ -8437,6 +8622,25 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
 
 // Floor division (//)
 PyObject* PyNumber_Divide(PyObject* a, PyObject* b) {
+    if (a && b && (a->type == 19 || b->type == 19)) {
+        bool aTemp = false, bTemp = false;
+        mpd_t* da = pyc_decimal_operand(a, &aTemp);
+        mpd_t* db = pyc_decimal_operand(b, &bTemp);
+        PyObject* result = nullptr;
+        if (da && db) {
+            uint32_t status = 0;
+            if (mpd_iszero(db)) {
+                pyc_raise_msg("ZeroDivisionError", "division by zero");
+            } else {
+                mpd_t* r = mpd_qnew();
+                mpd_qdivint(r, da, db, pyc_dec_ctx(), &status);
+                result = pyc_decimal_wrap(r);
+            }
+        }
+        if (aTemp) mpd_del(da);
+        if (bTemp) mpd_del(db);
+        return result;
+    }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) {
         if (b->value == 0) {
@@ -8476,6 +8680,25 @@ PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b) {
             out += rhs;
         }
         return pyc_new_path(out);
+    }
+    if (a && b && (a->type == 19 || b->type == 19)) {
+        bool aTemp = false, bTemp = false;
+        mpd_t* da = pyc_decimal_operand(a, &aTemp);
+        mpd_t* db = pyc_decimal_operand(b, &bTemp);
+        PyObject* result = nullptr;
+        if (da && db) {
+            uint32_t status = 0;
+            if (mpd_iszero(db)) {
+                pyc_raise_msg("ZeroDivisionError", "division by zero");
+            } else {
+                mpd_t* r = mpd_qnew();
+                mpd_qdiv(r, da, db, pyc_dec_ctx(), &status);
+                result = pyc_decimal_wrap(r);
+            }
+        }
+        if (aTemp) mpd_del(da);
+        if (bTemp) mpd_del(db);
+        return result;
     }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     double bv = numeric_val(b);
@@ -8628,6 +8851,47 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
     if ((a->type == 1 || a->type == 2) && (b->type == 1 || b->type == 2) &&
         a->type != b->type) {
         return 0;
+    }
+    // decimal.Decimal comparison. Decimal-vs-Decimal and Decimal-vs-int
+    // are exact (mpd_qcompare / mpd_qset_i64, no lossy double coercion).
+    // Decimal-vs-float goes through the same string round-trip
+    // PyDecimal_FromFloat uses for construction — an approximation, not
+    // exact binary comparison (documented, not fixed — matches this
+    // codebase's "don't gold-plate a rarely-hit edge" precedent, e.g.
+    // statistics's partial exact-int preservation).
+    if (a->type == 19 || b->type == 19) {
+        bool aTemp = false, bTemp = false;
+        mpd_t* da = nullptr;
+        mpd_t* db = nullptr;
+        PyObject* aFloatDec = nullptr;
+        PyObject* bFloatDec = nullptr;
+        if (a->type == 4) { aFloatDec = PyDecimal_FromFloat(a); da = pyc_as_decimal(aFloatDec); }
+        else da = pyc_decimal_operand(a, &aTemp);
+        if (b->type == 4) { bFloatDec = PyDecimal_FromFloat(b); db = pyc_as_decimal(bFloatDec); }
+        else db = pyc_decimal_operand(b, &bTemp);
+        if (da && db) {
+            mpd_t* r = mpd_qnew();
+            uint32_t status = 0;
+            mpd_qcompare(r, da, db, pyc_dec_ctx(), &status);
+            int64_t cmp = mpd_qget_ssize(r, &status);
+            mpd_del(r);
+            if (aTemp) mpd_del(da);
+            if (bTemp) mpd_del(db);
+            if (aFloatDec) Py_DECREF(aFloatDec);
+            if (bFloatDec) Py_DECREF(bFloatDec);
+            switch (op) {
+                case 0: return cmp == 0;
+                case 1: return cmp != 0;
+                case 2: return cmp <  0;
+                case 3: return cmp >  0;
+                case 4: return cmp <= 0;
+                case 5: return cmp >= 0;
+            }
+        }
+        if (aTemp) mpd_del(da);
+        if (bTemp) mpd_del(db);
+        if (aFloatDec) Py_DECREF(aFloatDec);
+        if (bFloatDec) Py_DECREF(bFloatDec);
     }
     // Numeric comparison (int or float)
     if (is_numeric(a) && is_numeric(b)) {
@@ -9113,6 +9377,103 @@ PyObject* PyCmath_Tan(PyObject* z) {
     }
     return PyComplex_New(0.0, 0.0);
 }
+
+// ---------------------------------------------------------------------
+// decimal.Decimal (type 19) — arbitrary-precision base-10 arithmetic via
+// libmpdec (the same C library CPython's own `_decimal` module is built
+// on; see CMakeLists.txt). One shared global context (28 significant
+// digits, ROUND_HALF_EVEN — matches CPython's real defaults; libmpdec's
+// own mpd_defaultcontext() differs, 38 digits/ROUND_HALF_UP, so both are
+// set explicitly). decimal.getcontext()/localcontext() precision
+// mutation is not implemented — every operation uses this one context.
+//
+// Storage: unlike complex (type 13, which fits in native `double` fields
+// added directly to PyObject), an `mpd_t*` is a heap-allocated opaque
+// struct — stashed in the existing `value` field via pointer cast, the
+// same pattern already used for CompiledRegex*/MatchObj*/PycDateTime*/
+// PycTimedelta* (types 8/9/14/15). This means, unlike complex, a
+// Py_DECREF branch calling mpd_del() is required (see Py_DECREF below) —
+// the exact thing complex's type didn't need and got right by omission,
+// not by design; important not to repeat that omission here.
+//
+// Arithmetic is wired into the *generic* PyNumber_Add/Subtract/Multiply/
+// Divide/TrueDivide/Negate functions (a type==19 branch in each), not a
+// compile-time-only tracking set like complex's `complexVars`. This is
+// the deliberate, better-quality-than-complex choice: since
+// Compiler.cpp's numericResultType() is simply never taught to treat
+// type 19 as numeric, every Decimal arithmetic op automatically falls to
+// these generic functions regardless of whether the compiler statically
+// proved the value's type — so, unlike complex, Decimal arithmetic
+// works correctly even when a value arrives as an untyped function
+// parameter.
+//
+// (pyc_dec_ctx/pyc_as_decimal/pyc_decimal_wrap are defined near the top
+// of this file, right after the mpdecimal.h include, since they're
+// needed by PyNumber_Negate/Add/Subtract — which appear earlier in this
+// file than this comment block.)
+extern "C" PyObject* PyDecimal_FromString(PyObject* s) {
+    mpd_t* d = mpd_qnew();
+    uint32_t status = 0;
+    std::string text = pyc_is_bytes_like(s) ? s->str : std::string("0");
+    mpd_qset_string(d, text.c_str(), pyc_dec_ctx(), &status);
+    return pyc_decimal_wrap(d);
+}
+extern "C" PyObject* PyDecimal_FromInt(PyObject* n) {
+    mpd_t* d = mpd_qnew();
+    uint32_t status = 0;
+    int64_t v = (n && (n->type == 0 || n->type == 5)) ? n->value : 0;
+    mpd_qset_i64(d, v, pyc_dec_ctx(), &status);
+    return pyc_decimal_wrap(d);
+}
+// Decimal(float) uses the float's exact binary value, same as real
+// CPython (Decimal(0.1) is a long, "ugly" decimal, not a clean "0.1") —
+// achieved here by formatting the double with enough digits (%.17g is
+// the shortest-round-trip precision for a double) and parsing that.
+extern "C" PyObject* PyDecimal_FromFloat(PyObject* f) {
+    mpd_t* d = mpd_qnew();
+    uint32_t status = 0;
+    double v = (f && f->type == 4) ? f->dvalue : ((f && (f->type == 0 || f->type == 5)) ? (double)f->value : 0.0);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%.17g", v);
+    // %.17g's precision would round-trip the double exactly via a real
+    // bignum float->decimal conversion; formatting through a 17-digit
+    // decimal string first (rather than round-tripping the full binary
+    // fraction) is an approximation of CPython's exact-binary-value
+    // behavior, not a bit-for-bit match — documented, not fixed (out of
+    // scope: true exact binary->decimal conversion needs a real
+    // arbitrary-precision float decomposition, more machinery than this
+    // phase's scope).
+    mpd_qset_string(d, buf, pyc_dec_ctx(), &status);
+    return pyc_decimal_wrap(d);
+}
+// decimal.Decimal(x) — dispatches on x's runtime type (string/int/float/
+// another Decimal). Direct-call convention (AST-recognized, mirroring
+// hashlib.md5/pathlib.Path) so the result can carry the "decimal"
+// noteType tag needed to gate .quantize()'s dispatch.
+extern "C" PyObject* PyDecimal_Construct(PyObject* x) {
+    if (!x) { mpd_t* d = mpd_qnew(); uint32_t st = 0; mpd_qset_i64(d, 0, pyc_dec_ctx(), &st); return pyc_decimal_wrap(d); }
+    if (x->type == 19) {
+        mpd_t* d = mpd_qnew();
+        uint32_t status = 0;
+        mpd_qcopy(d, pyc_as_decimal(x), &status);
+        return pyc_decimal_wrap(d);
+    }
+    if (x->type == 4) return PyDecimal_FromFloat(x);
+    if (x->type == 0 || x->type == 5) return PyDecimal_FromInt(x);
+    return PyDecimal_FromString(x);
+}
+extern "C" PyObject* PyDecimal_Quantize(PyObject* self, PyObject* q) {
+    mpd_t* a = pyc_as_decimal(self);
+    mpd_t* b = pyc_as_decimal(q);
+    if (!a || !b) return PyDecimal_FromInt(nullptr);
+    mpd_t* r = mpd_qnew();
+    uint32_t status = 0;
+    mpd_qquantize(r, a, b, pyc_dec_ctx(), &status);
+    return pyc_decimal_wrap(r);
+}
+// str()/print() and int()/float() conversion for Decimal are handled
+// directly in PyObject_PrintBase/PyBuiltin_Int/PyBuiltin_Float above —
+// no separate PyDecimal_ToStr/ToInt/ToFloat needed.
 
 PyObject* pyc_make_func(PyObject* token, PyObject* displayName) {
     std::string tokStr = (token && token->type == 3) ? token->str : "";

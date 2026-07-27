@@ -471,6 +471,185 @@ inventing new storage:
   I/O (`open(path, "rb")` returning real bytes — no file read-as-bytes
   exists at all yet, unrelated to this phase).
 
+### `decimal.Decimal` — Arbitrary Precision via `libmpdec`, Not a Fixed-Precision Approximation
+The user was explicitly asked whether `decimal.Decimal` should be a
+fixed-precision `(int64, scale)` approximation (no new dependency, less
+work) or real arbitrary precision via a bignum library (matching real
+CPython, which is itself built on `libmpdec`) — and chose the latter.
+
+**Build dependency**: `libmpdec-dev` (Debian/Ubuntu package name),
+found via `find_library(MPDEC_LIB mpdec)` in `CMakeLists.txt`, failing
+loudly (`message(FATAL_ERROR ...)`) if not found — the same "fail loudly
+like `find_package(LLVM REQUIRED ...)`" pattern already used there. It
+was already installed on the development machine (`libmpdec.so`/
+`libmpdec.a` at `/usr/lib/x86_64-linux-gnu/`, header found automatically
+via the default multiarch include path — verified directly, no explicit
+`-I` needed anywhere, including the separate `runtime.bc` LTO-bitcode
+custom command). Linked into `pyc_runtime` alongside the existing
+`pcre2-8` link; also added to the **compiled-program** final-link
+commands in `Compiler.cpp` (`-lpcre2-8 -lmpdec`, 3 call sites) — these
+are separate from `pyc_runtime`'s own CMake link step, since they're
+plain strings building the `clang++` invocation used to link a *user's*
+compiled program against `libpycrt.a`, found by grepping for the
+existing `-lpcre2-8` occurrences and updating all of them the same way
+(a step easy to miss, since it's not part of the normal CMake dependency
+graph at all).
+
+**Type tag 19.** Storage: unlike `complex` (type 13, which added new
+native `double` fields directly to `PyObject` since it's a genuinely new
+value shape), an `mpd_t*` is a heap-allocated opaque `libmpdec` struct —
+stashed in the existing `value` field via pointer cast, the same pattern
+already used for `CompiledRegex*`/`MatchObj*`/`PycDateTime*`/
+`PycTimedelta*` (types 8/9/14/15). This means a `Py_DECREF` branch
+calling `mpd_del()` is required — the one thing `complex` didn't need
+(no out-of-struct payload) and, being type 13, got right by omission
+rather than by a considered choice; important not to repeat that
+omission for a type that actually owns a heap payload.
+
+**Context**: one shared global `mpd_context_t`. `libmpdec`'s own
+`mpd_defaultcontext()` differs from CPython's real defaults (38
+significant digits, `MPD_ROUND_HALF_UP` — confirmed via a standalone
+probe program before writing any integration code) — CPython's actual
+default is 28 digits, `ROUND_HALF_EVEN`. Both are set explicitly via
+`mpd_qsetprec`/`mpd_qsetround` after calling `mpd_defaultcontext()`,
+verified end-to-end against real CPython (`Decimal(1) / Decimal(3)`
+produces the identical 28-digit result in both). `decimal.getcontext()`/
+`localcontext()` precision mutation is not implemented — every operation
+uses this one fixed context.
+
+**The key design difference from `complex` (quality, not just
+feature-completeness)**: per the numeric-system research done before
+implementing this, `complex`'s arithmetic is wired through a
+compile-time-only `complexVars` tracking set in `Compiler.cpp` plus
+hand-rolled `Codegen.cpp` call-site special-casing — which is why (see
+the test-infrastructure section above) it's demonstrably broken across
+function boundaries, for `==`, and for unary negation. Decimal is
+instead wired into the **existing generic** `PyNumber_Add`/`Subtract`/
+`Multiply`/`Divide`/`TrueDivide`/`Negate` functions (a `type==19` branch
+added to each) and `PyObject_CompareBool`/`PyObject_TruthValue`. Since
+`Compiler.cpp`'s `numericResultType()` is simply never taught to treat
+type 19 as numeric, every Decimal arithmetic op automatically falls to
+these generic functions regardless of whether the compiler statically
+proved the value's type at that call site — confirmed working correctly
+when a Decimal value crosses a function-parameter boundary untyped (see
+the `add_decimals()` case in `tests/runner.py`), the exact scenario
+`complex` gets wrong. Zero `Codegen.cpp` call-site special-casing was
+needed for this, unlike `complex`'s `PyComplex_New` construction path.
+
+**Mixed-type arithmetic**: `Decimal + int` auto-converts the int operand
+via a small shared helper (`pyc_decimal_operand`, returning either the
+Decimal's own `mpd_t*` directly or a freshly-converted temporary for an
+int/bool operand). `Decimal + float` returns `NULL` (the existing
+"unsupported operand combo" convention already used throughout
+`PyNumber_*`) — confirmed this matches real CPython exactly: `Decimal('1.5')
++ 1.5` raises `TypeError` in real Python too, `Decimal` does not
+implicitly coerce from `float`. Comparisons follow the same shape:
+Decimal-vs-Decimal and Decimal-vs-int are exact (`mpd_qcompare`/
+`mpd_qset_i64`, no lossy double coercion); Decimal-vs-float goes through
+the same string-round-trip construction `Decimal(float)` uses internally
+— an approximation, not exact binary comparison, matching this
+codebase's established "don't gold-plate a rarely-hit edge" precedent
+(e.g. `statistics`'s partial exact-int preservation).
+
+**`.quantize(Decimal('0.01'))`** — construction is recognized
+structurally in the AST (mirroring `hashlib.md5`/`pathlib.Path`/
+`collections.deque`'s pattern) specifically so the result can carry a
+`noteType(res, "decimal")` compile-time tag, needed to gate
+`.quantize()`'s typeOf-based dispatch (`Decimal` itself takes only
+positional arguments, so — unlike `csv.writer`/`groupby`, which need
+AST recognition to read a keyword argument — the generic dict-dispatch
+call convention would actually work fine for *construction*; the tag is
+needed purely for the *method* dispatch afterward).
+
+### Severe, General, Pre-Existing Bug: `if`/`while`/Ternary Conditions on Boxed Non-Numeric Values Were Always False
+Found while verifying `decimal.Decimal`'s truthiness (`bool(Decimal('0'))`
+correctly returned `False`, but `if Decimal('5'):` — a condition, not a
+`bool()` call — printed the falsy branch). Chasing that down surfaced a
+**far more general** bug, unrelated to Decimal specifically and
+predating this entire session: the `"br"` IR instruction's condition
+codegen (`Codegen.cpp`, the single shared code path backing `if`,
+`while`, and ternary `x if cond else y` — confirmed by inspecting
+`--emit-llvm` output directly) handled a boxed (pointer-typed) condition
+by unboxing its raw `.value` int64 struct field and comparing that to
+zero:
+```cpp
+llvm::Value* unboxed = unboxToI64(cval);
+cval = builder.CreateICmpNE(unboxed, ..., "cond.i1");
+```
+This is correct **only** for boxed `int`/`bool` (whose `.value` field
+*is* the number) — for every other boxed type (`str`, `list`, `dict`,
+`bytes`, `Decimal`, ...), `.value` is simply unused/zero regardless of
+the object's actual content, so the comparison was unconditionally
+false. Confirmed empirically: `s = "hello"; if s: print("truthy")`
+printed nothing at all — for *any* non-empty string, list, or dict held
+in a variable. (Boxed *numeric* conditions, and anything already
+producing a native `i1`/`i32` — e.g. the result of a comparison via
+`PyObject_CompareBool` — were unaffected, which is presumably why this
+had gone unnoticed: comparisons like `if x > 0:` are extremely common
+and work fine; bare truthiness checks like `if x:` on a non-numeric `x`
+are what's broken, and evidently under-exercised by both this codebase's
+own test suite before today and, apparently, by whatever workloads have
+exercised pyc up to this point.)
+
+Fixed by making `PyObject_TruthValue` (previously `static`, i.e. only
+callable from within `Runtime.cpp` itself) callable from generated code:
+dropped `static`, added a declaration in `include/pyc/runtime.h`, an
+LLVM extern `FunctionType` declaration in `Codegen.cpp` (`(ptr) -> i32`),
+and replaced the `unboxToI64`-based comparison in the `"br"` handler with
+a direct call to it. This automatically also fixed `Decimal`'s
+truthiness in conditions (no Decimal-specific code needed at the
+codegen level) and gets the *numeric* boxed cases exactly right too
+(`PyObject_TruthValue` already correctly handles int/float/bool/
+Decimal), not just the newly-fixed non-numeric ones.
+
+**A second, smaller bug found and fixed in the same few lines**: right
+below the condition-type handling, a check meant to release the boxed
+condition temp's reference after extracting its truth value —
+```cpp
+if (cval->getType()->isPointerTy())
+    emitDecRefIfOwned(cname);
+```
+— was dead code in both the old and new version: by this point, `cval`
+has *always* already been reassigned to an `i1` value (the whole point
+of the preceding block), so this check could never be true, and the
+boxed condition temp's ownership was never released here — a minor,
+silent per-condition refcount leak (not a crash; confirmed via
+`valgrind --tool=memcheck`, 0 errors before and after, with a small
+baseline "definitely lost" figure present even in a control script with
+no boxed conditions at all, i.e. unrelated to this specific bug). Fixed
+by capturing whether the *original* loaded value was a pointer in a
+separate `bool cvalWasPointer` before any reassignment, and checking
+that instead.
+
+**A third, smaller bug found and fixed while fixing the first**:
+`PyObject_TruthValue`'s own list branch (`obj->type == 1`) checked
+`!obj->list.empty()` unconditionally — the same
+`pyc_ensure_boxed_list()`-class bug found repeatedly elsewhere in this
+codebase (the `heapq`/`bisect`/`statistics` phase, and again in
+`chain.from_iterable`): homogeneous int/float list literals store their
+data in `ilist`/`flist` (`list_item_type` 1/2), not `list`, so this was
+always empty (and thus always falsy) for e.g. `if [1, 2, 3]:` — while a
+mixed-type list literal like `[1, "a", 2]`, forced onto the generic
+boxed-list storage by its heterogeneous element types, correctly
+evaluated truthy. `PyBuiltin_Bool` (the `bool()` builtin's own
+implementation, a separate function) already had the correct three-way
+`list_item_type` check — `PyObject_TruthValue` did not; fixed to match.
+
+**Verification given the blast radius**: this change affects the
+codegen path for essentially every `if`/`while`/ternary in every
+compiled program, so verified unusually thoroughly — the full
+`tests/runner.py` suite (319/319) and `test/import_tests/` (9/9) both
+stay green, plus a dedicated `valgrind --tool=memcheck` run (0 errors)
+on a script deliberately exercising boxed-condition truthiness inside a
+function, a `while` loop, a ternary, and mixed with `Decimal`
+construction — compared against a trivial-script valgrind baseline
+(numeric-only conditions) to confirm the small "definitely lost" byte
+count present in both is pre-existing/proportional-to-program-size, not
+newly introduced by this fix (the fix can only *add* missing DECREF
+calls relative to before, never remove ones that were previously
+firing, since the DECREF call site was unconditionally dead code prior
+to this fix — see the second bug above).
+
 ## Known Limitations
 
 ### Performance

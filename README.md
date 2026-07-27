@@ -6,7 +6,7 @@ LLVM IR, optimizes it, and produces standalone native executables via a minimal
 `PyObject*`-based boxed runtime with refcounting.
 
 Written in C++ with Clang++ and LLVM 18. No C/C++ intermediate language for
-the normal compiler path. **317/317 tests passing** (runner reports 317/317, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
+the normal compiler path. **319/319 tests passing** (runner reports 319/319, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
 
 ## Build
 
@@ -70,7 +70,7 @@ See [FEATURES.md](FEATURES.md) for a complete list of supported features.
 
 ### Quick Summary
 
-- **Types**: int, float, bool, str, list, dict, tuple, None, complex, bytes, bytearray
+- **Types**: int, float, bool, str, list, dict, tuple, None, complex, bytes, bytearray, decimal.Decimal
 - **Operators**: `+ - * / // % **`, `== != < > <= >=`, `is`, `in`, `and`, `or`, `not`, unary `-`
 - **Control flow**: `if/elif/else`, `while`, `for`, `break`, `continue`, ternary
 - **Functions**: `def`, `lambda`, nested functions, closures (`nonlocal`), decorators
@@ -78,7 +78,7 @@ See [FEATURES.md](FEATURES.md) for a complete list of supported features.
 - **Exceptions**: `try/except/finally/else`, structured exceptions, exception classes
 - **Statements**: `with`, `match/case`, `assert`, `del`, walrus `:=`, `import`
 - **Builtins**: `print`, `range`, `len`, `str`, `int`, `float`, `complex`, `abs`, `min`, `max`, `list`, `enumerate`, `zip`, `sum`, `sorted`, `any`, `all`, `isinstance`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`, `round`, `divmod`, `pow`, `reversed`, `cmp_to_key`
-- **Standard library stubs**: `re` (PCRE2-backed: search/match/finditer/findall/sub/split/compile, IGNORECASE/MULTILINE/DOTALL flags), `os` (path helpers, getcwd, listdir, makedirs, environ), `pathlib` (`Path`), `subprocess` (call, check_output), `sys`, `cmath`, `math` (~25 functions wrapping libm), `json` (dumps/loads), `random` (CPython-exact MT19937), `itertools` (chain/product/combinations/permutations/starmap/islice/zip_longest/accumulate/takewhile/dropwhile/compress/groupby/chain.from_iterable), `collections` (Counter, deque, namedtuple, defaultdict), `datetime` (`date`/`datetime`/`timedelta`), `hashlib` (md5/sha1/sha256, from scratch), `base64`, `struct`, `heapq`, `bisect`, `statistics`, `string`, `textwrap`, `copy`, `uuid`, `functools` (reduce/partial/wraps/lru_cache), `operator`, `shutil`, `glob`, `csv` — see FEATURES.md
+- **Standard library stubs**: `re` (PCRE2-backed: search/match/finditer/findall/sub/split/compile, IGNORECASE/MULTILINE/DOTALL flags), `os` (path helpers, getcwd, listdir, makedirs, environ), `pathlib` (`Path`), `subprocess` (call, check_output), `sys`, `cmath`, `math` (~25 functions wrapping libm), `json` (dumps/loads), `random` (CPython-exact MT19937), `itertools` (chain/product/combinations/permutations/starmap/islice/zip_longest/accumulate/takewhile/dropwhile/compress/groupby/chain.from_iterable), `collections` (Counter, deque, namedtuple, defaultdict), `datetime` (`date`/`datetime`/`timedelta`), `hashlib` (md5/sha1/sha256, from scratch), `base64`, `struct`, `heapq`, `bisect`, `statistics`, `string`, `textwrap`, `copy`, `uuid`, `functools` (reduce/partial/wraps/lru_cache), `operator`, `shutil`, `glob`, `csv`, `decimal` (`Decimal`, arbitrary precision via libmpdec) — see FEATURES.md
 
 ## Architecture
 

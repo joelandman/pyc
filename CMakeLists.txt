@@ -4,6 +4,17 @@ project(pyc LANGUAGES CXX C)
 find_package(LLVM REQUIRED CONFIG)
 find_package(Python3 REQUIRED COMPONENTS Development Interpreter)
 
+# libmpdec (mpdecimal) — the same arbitrary-precision decimal library
+# CPython's own `_decimal` module is built on. Backs decimal.Decimal.
+# Header is found automatically via the system's default multiarch
+# include path (verified: `#include <mpdecimal.h>` resolves with no
+# explicit -I needed); only the library itself needs finding/linking.
+find_library(MPDEC_LIB mpdec)
+if(NOT MPDEC_LIB)
+    message(FATAL_ERROR "libmpdec not found — install libmpdec-dev (Debian/Ubuntu) or the equivalent mpdecimal development package.")
+endif()
+message(STATUS "Found libmpdec: ${MPDEC_LIB}")
+
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 
@@ -73,7 +84,7 @@ add_library(pyc_runtime STATIC
     src/runtime/Runtime.cpp
     runtime/b7_import.cpp
 )
-target_link_libraries(pyc_runtime PUBLIC pcre2-8)
+target_link_libraries(pyc_runtime PUBLIC pcre2-8 ${MPDEC_LIB})
 set_target_properties(pyc_runtime PROPERTIES OUTPUT_NAME "pycrt")
 install(TARGETS pyc_runtime DESTINATION lib)
 install(FILES include/pyc/runtime.h DESTINATION include/pyc)

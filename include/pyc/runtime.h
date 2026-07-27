@@ -169,6 +169,7 @@ void pyc_register_class(PyObject* name, PyObject* cls);
 int64_t Pyc_PowInt64(int64_t base, int64_t exp);
 PyObject* Pyc_PowInt64Obj(int64_t base, int64_t exp);
 PyObject* PyObject_Not(PyObject* obj);
+int PyObject_TruthValue(PyObject* obj);
 PyObject* PyNumber_Negate(PyObject* obj);
 void PyErr_Print(void);
 

@@ -1242,6 +1242,10 @@ class LoweringVisitor {
                         if (mod == "collections" && origName == "deque") {
                             dequeCtorAliases.insert(name);
                         }
+                        // `from decimal import Decimal [as X]` — same rationale.
+                        if (mod == "decimal" && origName == "Decimal") {
+                            decimalCtorAliases.insert(name);
+                        }
 
                         std::string attrKey = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
@@ -2879,6 +2883,11 @@ class LoweringVisitor {
     // construction so its result can carry the compile-time "deque"
     // typeOf tag (see PyCollections_Deque's comment in Runtime.cpp).
     std::unordered_set<std::string> dequeCtorAliases;
+    // Local names bound via `from decimal import Decimal [as X]` — same
+    // rationale as dequeCtorAliases: Decimal(...) needs AST-structural
+    // construction so its result can carry the compile-time "decimal"
+    // typeOf tag (see PyDecimal_Construct's comment in Runtime.cpp).
+    std::unordered_set<std::string> decimalCtorAliases;
     // User functions (defs or synthetic lambdas) that contain a return of a
     // callable token value. Calls to them have their result temp marked so
     // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
@@ -3950,6 +3959,21 @@ class LoweringVisitor {
         return res;
     }
 
+    // Shared by both `decimal.Decimal(...)`-qualified construction
+    // (lowerMethodCall) and bare `Decimal(...)` construction after a
+    // from-import (lowerCall, via decimalCtorAliases). Single positional
+    // argument (str/int/float/another Decimal — PyDecimal_Construct
+    // dispatches on the argument's runtime type). AST-structural
+    // recognition needed (like hashlib.md5/pathlib.Path) so the result
+    // can carry the "decimal" noteType tag, gating .quantize()'s dispatch.
+    std::string lowerDecimalConstruct(const std::vector<std::string>& posArgs) {
+        std::string arg = posArgs.empty() ? "" : posArgs[0];
+        std::string res = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyDecimal_Construct", arg}, res);
+        noteType(res, "decimal");
+        return res;
+    }
+
     std::string lowerCall(const ASTNode* node) {
         // Method call: obj.method(args) — func is an Attribute node
          if (!node->children.empty() && node->children[0] &&
@@ -4073,6 +4097,20 @@ class LoweringVisitor {
                 if (ch && ch->type != "Keyword") posArgs.push_back(lowerExpr(ch));
             }
             return lowerDequeConstruct(posArgs);
+        }
+        // decimal.Decimal bound to a bare name via `from decimal import
+        // Decimal` — construct directly, same as the
+        // `decimal.Decimal(...)`-qualified form in lowerMethodCall.
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Name" &&
+            decimalCtorAliases.count(node->children[0]->id) &&
+            !isShadowedLocal(node->children[0]->id)) {
+            std::vector<std::string> posArgs;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type != "Keyword") posArgs.push_back(lowerExpr(ch));
+            }
+            return lowerDecimalConstruct(posArgs);
         }
         // super() call — returns a proxy that looks up methods on the parent class
         if (!node->children.empty() && node->children[0] &&
@@ -4928,6 +4966,7 @@ class LoweringVisitor {
                     else if (n == "NoneType" || n == "type") typecode = 6;
                     else if (n == "bytes") typecode = 17;
                     else if (n == "bytearray") typecode = 18;
+                    else if (n == "Decimal") typecode = 19;
                 } else if (childType == "Call" && node->children[2]->children.size() >= 2) {
                     // type(None) → typecode 6
                     const auto* func = node->children[2]->children[0].get();
@@ -7638,6 +7677,29 @@ class LoweringVisitor {
             }
             if (isCollectionsMod) return lowerDequeConstruct(args);
         }
+        // decimal.Decimal(...) construction — literal "decimal" name or
+        // any `import decimal as X` alias of it (same structural-
+        // recognition rationale as collections.deque above — see
+        // PyDecimal_Construct's comment in Runtime.cpp).
+        if (attr->children.size() >= 1 && attr->children[0] &&
+            attr->children[0]->type == "Name" && methodName == "Decimal") {
+            const std::string& baseId = attr->children[0]->id;
+            bool isDecimalMod = (baseId == "decimal");
+            if (!isDecimalMod) {
+                auto it = moduleNameAliases.find(baseId);
+                isDecimalMod = (it != moduleNameAliases.end() && it->second == "decimal");
+            }
+            if (isDecimalMod) return lowerDecimalConstruct(args);
+        }
+        // Decimal.quantize(Decimal('0.01')) — typeOf-gated direct call
+        // (rounding to N places, the single most common real-world
+        // Decimal method — see PyDecimal_Quantize's comment in Runtime.cpp).
+        if (methodName == "quantize" && typeOf(obj) == "decimal") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyDecimal_Quantize", obj, arg}, res);
+            noteType(res, "decimal");
+            return res;
+        }
         // bytes.fromhex(s) — a classmethod-style call on the bare type
         // name (not an instance), same structural-recognition shape as
         // collections.deque(...) above (literal "bytes" name as the
@@ -9023,6 +9085,7 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
         {"shutil",     {"copyfile", "move", "rmtree"}},
         {"glob",       {"glob"}},
         {"csv",        {"reader", "writer"}},
+        {"decimal",    {"Decimal"}},
     };
     return table;
 }
@@ -9688,7 +9751,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
              }
              linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
                  pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
-                 runtimeLink + " " + pythonLibLink + " -lpcre2-8 -o " + instrOutput + " -O3";
+                 runtimeLink + " " + pythonLibLink + " -lpcre2-8 -lmpdec -o " + instrOutput + " -O3";
             linkCmd += " -fprofile-instr-generate=" + instrOutput + ".profraw";
             if (debugInfo) linkCmd += " -g";
 
@@ -10280,7 +10343,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
              linkCmd += bitcodePath + " -flto -flto-partitions=0 -Wl,--allow-multiple-definition ";
              linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
                  pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
-                 runtimeLink + " " + pythonLibLink + " -lpcre2-8 -o " + outputPath + " -O3";
+                 runtimeLink + " " + pythonLibLink + " -lpcre2-8 -lmpdec -o " + outputPath + " -O3";
             if (!pgoProfile.empty()) {
                 linkCmd += " -fprofile-use=" + pgoProfile;
             }
@@ -10447,7 +10510,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         }
         linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
             pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
-            runtimeLink + " " + moduleObjects + " " + pythonLibLink + " -lpcre2-8 -o " + outputPath + " -O" + std::to_string(std::min(optLevel, 3));
+            runtimeLink + " " + moduleObjects + " " + pythonLibLink + " -lpcre2-8 -lmpdec -o " + outputPath + " -O" + std::to_string(std::min(optLevel, 3));
         if (optLevel >= 4 && !pgoProfile.empty()) {
             linkCmd += " -fprofile-use=" + pgoProfile;
         }

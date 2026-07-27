@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **317/317** (runner shows 317/317, file_case_failures=0).
+Current test count: **319/319** (runner shows 319/319, file_case_failures=0).
 
 ## Types and Literals
 
@@ -16,6 +16,7 @@ Current test count: **317/317** (runner shows 317/317, file_case_failures=0).
 | `None` | Constant, comparison, printing; singleton identity |
 | `complex` | Literals (`1j`, `3.5j`), arithmetic (`+ - * /`), pow, abs, `complex()` builtin |
 | `bytes` / `bytearray` | Literals (`b"..."`), indexing (→ int), slicing, concatenation, comparison, `.hex()`/`.decode()`/`str.encode()`; `bytearray` adds `.append()`/`.extend()`/item assignment |
+| `decimal.Decimal` | Arbitrary-precision base-10 arithmetic (`+ - * / //`), comparisons, `.quantize()`, `int()`/`float()` conversion — backed by libmpdec |
 
 ## Operators
 
@@ -41,6 +42,17 @@ for i, v in enumerate(lst)     tuple-target for-loop
 for (a, [b, c]) in iterable    recursive tuple/list destructuring
 x if cond else y               ternary
 ```
+
+- **Severe, general, pre-existing bug found and fixed**: `if`/`while`/
+  ternary conditions on a *boxed non-numeric* value (`if some_str:`, `if
+  some_list:`, `if some_dict:`, `while s:`, `x if lst else y`, ...) were
+  silently, unconditionally treated as **falsy**, regardless of the
+  value's actual truthiness — `if "hello":` never ran its body.
+  Conditions on boxed *numeric* values (int/float/bool, and anything
+  producing a native `i1`/`i32` comparison result) were unaffected. Found
+  while verifying `decimal.Decimal`'s truthiness (an unrelated, much
+  narrower change on its own). See IMPLEMENTATION.md for the root cause
+  and fix.
 
 ## Functions
 
@@ -320,6 +332,48 @@ backed by the existing `str` field), not a new value shape like
 - **Not implemented**: `bytes % formatting`, `memoryview`, `.join()`/
   full `.split()` parity, the buffer protocol, `open(path, "rb")`
   returning real bytes (no binary-mode file reading exists at all yet).
+
+## Decimal
+
+Real arbitrary-precision base-10 arithmetic via `libmpdec` (type 19) —
+the same C library CPython's own `_decimal` module is built on (see
+CMakeLists.txt; a real build dependency, `libmpdec-dev`, not a vendored
+copy). One shared global context: 28 significant digits,
+`ROUND_HALF_EVEN`, matching CPython's real defaults exactly (verified —
+`Decimal('0.1') + Decimal('0.2') == Decimal('0.3')` exactly, `Decimal(1)
+/ Decimal(3)` gives the same 28-digit result as real CPython).
+
+- `Decimal(str)` / `Decimal(int)` / `Decimal(float)` / `Decimal(Decimal)`
+  construction. `Decimal(float)` uses the float's exact-enough binary
+  value (via `%.17g` formatting, an approximation of CPython's true
+  exact-binary-value conversion — documented, not a bit-for-bit match).
+- Arithmetic: `+ - * / //`, unary `-`. **Wired into the same generic
+  runtime arithmetic functions every other numeric type uses**
+  (`PyNumber_Add`/`Subtract`/`Multiply`/`Divide`/`TrueDivide`/`Negate`),
+  not a compile-time-only tracking mechanism — this is a deliberate,
+  better-quality choice than how `complex` numbers were built (see
+  IMPLEMENTATION.md), meaning Decimal arithmetic works correctly even
+  when a value crosses a function-parameter boundary untyped. `Decimal +
+  int` auto-converts the int; `Decimal + float` raises (matches real
+  CPython exactly — real `Decimal` doesn't implicitly coerce from
+  `float` either). Division by zero raises `ZeroDivisionError`.
+- Comparisons (`==`/`!=`/`<`/`>`/`<=`/`>=`): exact for Decimal-vs-Decimal
+  and Decimal-vs-int; Decimal-vs-float goes through the same
+  string-round-trip construction `Decimal(float)` uses (an
+  approximation, not exact binary comparison — documented).
+- `.quantize(Decimal('0.01'))` — the single most common real-world
+  Decimal method (rounding money to N places).
+- `int()`/`float()` conversion, `bool()`/truthiness (`Decimal('0')` is
+  falsy), `str()`/`print()` (bare digit string, e.g. `3.14`), `repr()`
+  (`Decimal('3.14')`, matching CPython exactly, including in nested
+  containers — `print([Decimal('3.14')])` → `[Decimal('3.14')]`),
+  `isinstance(x, Decimal)`, `type()`.
+- **Not implemented**: `decimal.getcontext()`/`localcontext()` and any
+  precision/rounding-mode mutation (the context is fixed at 28
+  digits/`ROUND_HALF_EVEN` for the whole program), exception traps
+  (`InvalidOperation`/`Overflow`/`Underflow` signals), `.sqrt()`/`.ln()`/
+  `.exp()`/other `libmpdec`-backed math methods beyond `.quantize()`, `%`
+  formatting.
 
 ## Math
 

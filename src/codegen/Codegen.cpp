@@ -216,6 +216,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         {pyObjectPtrTy, pyObjectPtrTy, llvm::Type::getInt32Ty(context)}, false);
     llvm::Function::Create(cmpBoolTy, llvm::Function::ExternalLinkage, "PyObject_CompareBool", module.get());
 
+    // int PyObject_TruthValue(PyObject* obj) — used by the "br" handler
+    // below for boxed non-numeric conditions (str/list/dict/Decimal/...).
+    llvm::FunctionType* truthValueTy = llvm::FunctionType::get(
+        llvm::Type::getInt32Ty(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(truthValueTy, llvm::Function::ExternalLinkage, "PyObject_TruthValue", module.get());
+
     // A9: Runtime type guards for multi-versioning dispatch
     llvm::FunctionType* isIntTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {pyObjectPtrTy}, false);
     llvm::Function::Create(isIntTy, llvm::Function::ExternalLinkage, "pyc_is_int", module.get());
@@ -388,6 +394,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyDeque_Appendleft", module.get());
         llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyDeque_Rotate", module.get());
+    }
+    // decimal.Decimal(...): direct-call convention (needs a compile-time
+    // "decimal" noteType tag, mirroring collections.deque above).
+    // PyDecimal_Construct takes one ptr arg; PyDecimal_Quantize takes two.
+    {
+        llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, "PyDecimal_Construct", module.get());
+        llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyDecimal_Quantize", module.get());
     }
     // bytes/bytearray: PyBytes_FromStringAndSize/PyByteArray_FromStringAndSize
     // take (ptr, i64 length) — the length-aware construction "bytesconst"'s
@@ -1505,24 +1520,50 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     std::string tname = inst.operands[1].name;
                     std::string fname = inst.operands[2].name;
                     llvm::Value* cval = getOrLoad(cname);
+                    bool cvalWasPointer = cval->getType()->isPointerTy();
 
                     // Handle different condition types:
                     // - i1: native boolean, use directly
                     // - i32: result of PyObject_CompareBool, convert to i1
-                    // - ptr: boxed value, unbox to i64 then compare to 0
+                    // - ptr: boxed value — call PyObject_TruthValue for a
+                    //   real, type-dispatching truthiness check.
+                    //
+                    // Severe pre-existing bug, fixed here: this used to
+                    // unbox the pointer's raw `.value` int64 field and
+                    // compare it to zero directly — correct only for
+                    // boxed int/bool (whose `.value` IS the number), but
+                    // silently, unconditionally FALSE for every other
+                    // boxed type (str/list/dict/...), since their
+                    // `.value` field is unused/zero regardless of actual
+                    // content. `if s:` for a non-empty string `s`, `if
+                    // some_list:` for a non-empty list, `while s:`, and
+                    // ternary `x if s else y` were all affected — found
+                    // while verifying decimal.Decimal's truthiness this
+                    // session (an unrelated, much narrower fix on its
+                    // own surfaced this far more general bug). See
+                    // IMPLEMENTATION.md.
                     if (cval->getType() != llvm::Type::getInt1Ty(context)) {
                         if (cval->getType()->isIntegerTy() && cval->getType()->getIntegerBitWidth() == 32) {
                             // i32 from PyObject_CompareBool — truncate to i1
                             cval = builder.CreateTrunc(cval, llvm::Type::getInt1Ty(context), "cond.i1");
                         } else {
-                            // ptr (boxed) — unbox and compare to zero
-                            llvm::Value* unboxed = unboxToI64(cval);
-                            cval = builder.CreateICmpNE(unboxed, llvm::ConstantInt::get(context, llvm::APInt(64, 0)), "cond.i1");
+                            llvm::Function* truthFn = module->getFunction("PyObject_TruthValue");
+                            llvm::Value* truthy = builder.CreateCall(truthFn, {cval}, "cond.truthy");
+                            cval = builder.CreateICmpNE(truthy, llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0), "cond.i1");
                         }
                     }
 
                     // DECREF boxed condition temp after extracting truth value.
-                    if (cval->getType()->isPointerTy())
+                    // Second pre-existing bug found alongside the
+                    // truthiness one above: this checked cval's type
+                    // *after* the reassignment block above always
+                    // rewrites it to i1, so this was unreachable dead
+                    // code — the boxed condition temp's ownership was
+                    // never released here (a minor, silent refcount leak
+                    // on every `if <boxed>:`/`while <boxed>:`/ternary,
+                    // not a crash). Fixed by checking the pointer-ness of
+                    // the *original* loaded value, captured above.
+                    if (cvalWasPointer)
                         emitDecRefIfOwned(cname);
 
                     auto tit = blockMap.find(tname);
