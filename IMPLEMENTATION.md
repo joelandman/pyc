@@ -422,6 +422,49 @@ same shape, not specifically `functools`/`operator`:
   audit — any other existing function reading `lst->list` directly
   without an explicit `list_item_type` check (there may be more,
   un-audited) would have the same latent bug.
+- **Severe pre-existing use-after-free, found while adding
+  `file.readlines()`: every `with open(...) as f:` corrupted memory.**
+  `pyc_file_enter_adapter` (backs `__enter__` for pyc's synthetic file
+  object) returned `self` without incrementing its refcount. Every other
+  call result in generated code is treated as a fresh, owned reference —
+  the with-statement binds `__enter__`'s return value to the target
+  variable (`f`) as such, and emits a matching decref for it at `f`'s
+  last use. Since the *only* refcount increment actually backing that
+  "new" reference was the one already performed when `self` was stored
+  into `__enter__`'s own temporary argument list (correctly balanced by
+  that list's own decref immediately after the call), the object's true
+  reference count was undercounted by exactly 1. Concretely: the
+  with-block's own `__exit__`-argument-list cleanup (which also stores
+  and then decrefs `self`) freed the object one decref too early, and
+  the with-target variable's *own* later cleanup decref then ran against
+  already-freed memory. Confirmed with `valgrind --tool=memcheck`
+  (multiple "Invalid read/write of size 4" on a freed block before the
+  fix; 0 errors after). This went undetected through every prior phase
+  this session that used `with open(...)` (including the `.write()` fix
+  itself, `cdbb702`) because the corruption is silent in the common
+  single-open case — it only became an *observable* crash
+  (`malloc(): unaligned tcache chunk detected`) once enough further heap
+  activity in the same run gave glibc's allocator a chance to notice the
+  damaged chunk metadata (reliably reproduced by repeating the
+  open/read/close cycle 3+ times in one process, or by adding
+  `readlines()`'s own extra allocations into the mix). Fixed by adding
+  the missing `Py_INCREF` in `pyc_file_enter_adapter`, `Runtime.cpp`.
+  **Lesson for this codebase specifically**: `valgrind`/a memory
+  sanitizer would have caught this immediately — normal test-suite
+  execution (matching output) is not sufficient to validate new
+  `Runtime.cpp` refcounting logic, only to validate the *values*
+  produced. Worth running new file/object-lifecycle-touching runtime
+  code through `valgrind --tool=memcheck` before considering it verified,
+  not just diffing stdout against CPython.
+- **Newly discovered, pre-existing, general bug: string repr inside a
+  container doesn't escape special characters.** `print(["a\nb", "c"])`
+  prints a literal embedded newline instead of CPython's `['a\nb', 'c']`
+  (with a visible backslash-n). Reproducible with a bare list literal —
+  unrelated to `readlines()` (which is what surfaced it, since a line's
+  trailing `\n` inside a `print()`ed list is an easy way to trigger it)
+  or any other feature in this session. Not fixed (out of scope here);
+  new permanent tests should avoid asserting on `print()` of
+  newline-containing strings inside a container until this is addressed.
 
 ### IR
 - **Linear instruction list per function**: No CFG in IR; control flow is represented via labels and branches

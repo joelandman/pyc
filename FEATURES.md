@@ -97,6 +97,18 @@ f(b=3, a=4)                    keyword call arguments
 `ord(c)`, `chr(i)`, `round(x)`, `divmod(a, b)`, `pow(base, exp)`,
 `reversed(x)`, `cmp_to_key(cmp)`
 
+## File I/O
+
+- `open(path, mode)` / `with open(path, mode) as f:` — a synthetic file
+  object (`__enter__`/`__exit__`/`.write()`/`.readlines()`). `.write(s)`
+  appends `s` to the file; `.readlines()` reads the remainder of the file
+  from the current position to EOF, returning a list of lines with each
+  line's trailing `\n` kept (matching CPython — only the final line lacks
+  it if the file itself doesn't end with a newline). No `.read()` (whole
+  content as one string) or `.readline()` (one line at a time) — only
+  `.readlines()`, and only reachable via the `with`-statement form (no
+  bare `f = open(...); ...; f.close()` — `.close()` isn't implemented).
+
 ## Standard Library Stubs
 
 - `os.path.exists()`, `os.path.isfile()`, `os.path.isdir()`, `os.path.join()`,

@@ -1338,6 +1338,34 @@ with open(path, "w") as f:
 out2 = subprocess.check_output(["wc", "-c", path])
 print(int(out2.split()[0]))
 """, "12\n8\n"),
+    # Regression for a severe pre-existing use-after-free found while
+    # adding file.readlines(): pyc_file_enter_adapter (backing every
+    # `with open(...) as f:`'s __enter__) returned `self` without
+    # incrementing its refcount, undercounting the object's true
+    # reference count by 1. The with-block's own __exit__ cleanup then
+    # freed the file object one decref too early, and the with-target
+    # variable's later cleanup decref ran against already-freed memory —
+    # confirmed with valgrind (memcheck reported 0 errors after the fix,
+    # multiple "Invalid read/write of size 4" on a freed block before
+    # it). This didn't crash under normal execution in the single-open
+    # case (the corruption was silent, at the very end of the block) —
+    # it only became an observable crash ("malloc(): unaligned tcache
+    # chunk detected") with enough further allocation activity in the
+    # same run, which is why repeating the open/read pattern several
+    # times is included here rather than just once. Fixed in
+    # pyc_file_enter_adapter, Runtime.cpp.
+    ("""
+p = "/tmp/pyc_test_uaf_regression.txt"
+with open(p, "w") as f:
+    f.write("hello")
+with open(p, "r") as f:
+    pass
+with open(p, "r") as f:
+    pass
+with open(p, "r") as f:
+    lines = f.readlines()
+print(lines)
+""", "['hello']\n"),
     # hashlib / base64 / struct (synthetic; no bytes type — see
     # IMPLEMENTATION.md). Real CPython's hashlib/base64 both raise
     # TypeError on a plain str (they require bytes), so the live

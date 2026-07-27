@@ -5666,9 +5666,64 @@ static PyObject* pyc_file_write_adapter(PyObject* args) {
     return nullptr;
 }
 
+// file.readlines() -> list[str], keeping each line's trailing "\n"
+// (verified against real CPython: only the final line lacks it if the
+// file itself doesn't end with a newline) — the file-read prerequisite
+// for csv.reader(f.readlines()). Reads from the current file position
+// to EOF (matches real readlines() on a freshly-opened file; doesn't
+// track/restore position across multiple calls specially, same as
+// CPython). Direct-call convention (self is the receiver, dispatched
+// via a typeOf(obj)=="file" branch in Compiler.cpp, mirroring the
+// .write() fix) rather than token+registry, for the same reason
+// .write() needed it: the receiver must be explicit, not inferred from
+// a non-bound generic dict dispatch.
+extern "C" PyObject* PyBuiltin_FileReadlines(PyObject* self) {
+    PyObject* out = PyList_New(0);
+    auto it = g_pycFiles.find(self);
+    if (it == g_pycFiles.end() || !it->second.fp) return out;
+    FILE* fp = it->second.fp;
+    std::string line;
+    int c;
+    while ((c = std::fgetc(fp)) != EOF) {
+        line += (char)c;
+        if (c == '\n') {
+            PyObject* s = PyUnicode_FromString(line.c_str());
+            PyList_Append(out, s);
+            Py_DECREF(s);
+            line.clear();
+        }
+    }
+    if (!line.empty()) {
+        PyObject* s = PyUnicode_FromString(line.c_str());
+        PyList_Append(out, s);
+        Py_DECREF(s);
+    }
+    return out;
+}
+
 static PyObject* pyc_file_enter_adapter(PyObject* args) {
+    // Severe pre-existing bug, found while adding file.readlines():
+    // this returned `self` without incrementing its refcount. Every
+    // call-result is treated by the generated code as a fresh, owned
+    // reference (the with-statement binds it to the target variable as
+    // such, and emits a matching decref for it at the variable's last
+    // use) — but here the *only* refcount increment backing that "new"
+    // reference was the one already performed when `self` was stored
+    // into __enter__'s own argument list (balanced by that list's own
+    // decref right after the call). Net effect: the object's steady-
+    // state refcount was undercounted by 1, so the exitArgs decref
+    // cascade (at the end of the with-block) freed it one decref too
+    // early, and the with-target variable's own later cleanup decref
+    // then ran against already-freed memory — a real use-after-free on
+    // every `with open(...) as f:`, confirmed with valgrind (previously
+    // undetected: it manifests as silent heap corruption at the *end*
+    // of the block, not an immediate crash, so it only became visible
+    // via a glibc tcache integrity check when enough further allocation
+    // activity followed it in the same run).
     if (!args || args->type != 1 || args->list.empty()) return nullptr;
-    return args->list[0];
+    PyObject* self = args->list[0];
+    if (self) Py_INCREF(self);
+    return self;
 }
 
 static PyObject* pyc_file_exit_adapter(PyObject* args) {

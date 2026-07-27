@@ -7427,6 +7427,15 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
             return res;
         }
+        // file.readlines() — direct call (unlike .write() above, this is
+        // new code with no pre-existing token/dict-entry to reuse, so it
+        // skips the Pyc_GetItem/Pyc_Apply indirection entirely, matching
+        // the pathlib/hashlib method-dispatch pattern).
+        if (typeOf(obj) == "file" && methodName == "readlines") {
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_FileReadlines", obj}, res, "list");
+            noteType(res, "list");
+            return res;
+        }
         // Path.exists()/.is_file()/.is_dir()/.mkdir()/.joinpath(*parts) —
         // typeOf-gated, same fast-path-only limitation as datetime's
         // methods just below (works after construction/assignment/return,
