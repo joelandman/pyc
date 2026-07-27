@@ -108,6 +108,28 @@ won't match CPython's type. `stdev`/`pstdev` were verified to always
 return `float` regardless (even for a perfect-square variance), so no
 int-preservation attempt was made there.
 
+### `copy.copy`/`copy.deepcopy` — AST-Structural Dispatch, Not Token+Registry
+Every other synthetic module function (including this session's
+`hashlib`/`base64`/`struct`/`heapq`/`bisect`/`statistics`) reaches its
+implementation via the generic dict-lookup dispatch in
+`Compiler.cpp`'s `lowerMethodCall` (`typeOf(obj)=="dict"` → `Pyc_GetItem`
++ `Pyc_Apply`). `copy.copy`/`copy.deepcopy` can't use that path: the
+`copy` module's own dict is itself `typeOf`-tagged `"dict"` (exactly like
+`os.path`, `math`, every other module dict), and there is already an
+**unconditional** `.copy()` branch in that same dispatch chain (for
+`list.copy()`/`dict.copy()`) that would claim `copy.copy(x)` first and
+call `PyDict_Copy` on the *module dict itself* — a collision that,
+unlike `os.path.join`'s (Phase 1, fixed with a `typeOf(obj)!="dict"`
+guard), has no such fix available, because the colliding receiver
+genuinely *is* `"dict"`-typed. Resolved by recognizing
+`copy.copy(...)`/`copy.deepcopy(...)` structurally in the AST (the same
+`isPathlib`/`isHashlib`-style literal-or-aliased-module-name check used
+for `pathlib.Path`/`hashlib.md5`), dispatching directly to
+`PyCopy_Copy`/`PyCopy_Deepcopy` before the generic chain is ever
+reached. `from copy import copy, deepcopy` (bare-name, including `as`
+aliasing) is handled the same way as `datetimeCtorAliases`/
+`hashlibCtorAliases`, via a `copyFuncAliases` map.
+
 ## Known Limitations
 
 ### Performance

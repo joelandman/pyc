@@ -1226,6 +1226,10 @@ class LoweringVisitor {
                             (origName == "md5" || origName == "sha1" || origName == "sha256")) {
                             hashlibCtorAliases[name] = origName;
                         }
+                        // `from copy import copy/deepcopy [as X]` — same rationale.
+                        if (mod == "copy" && (origName == "copy" || origName == "deepcopy")) {
+                            copyFuncAliases[name] = origName;
+                        }
 
                         std::string attrKey = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
@@ -2813,6 +2817,13 @@ class LoweringVisitor {
     // — same rationale as datetimeCtorAliases, mapping to which hash
     // algorithm ("md5"/"sha1"/"sha256").
     std::unordered_map<std::string, std::string> hashlibCtorAliases;
+    // Local names bound via `from copy import copy/deepcopy [as X]` —
+    // same rationale as hashlibCtorAliases, mapping to which free
+    // function ("copy"/"deepcopy"). Needed because `copy.copy(...)`'s
+    // qualified form can't rely on typeOf(obj)!="dict" the way
+    // os.path.join's fix did (the copy module's own dict is itself
+    // typed "dict" — see PyCopy_Copy's comment in Runtime.cpp).
+    std::unordered_map<std::string, std::string> copyFuncAliases;
     // User functions (defs or synthetic lambdas) that contain a return of a
     // callable token value. Calls to them have their result temp marked so
     // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
@@ -3917,6 +3928,24 @@ class LoweringVisitor {
                 if (ch && ch->type != "Keyword") posArgs.push_back(lowerExpr(ch));
             }
             return lowerHashlibConstruct(hashlibCtorAliases[node->children[0]->id], node, posArgs);
+        }
+        // copy.copy/deepcopy bound to a bare name via `from copy import
+        // copy`/`deepcopy` — call directly, same as the
+        // `copy.copy(...)`-qualified form in lowerMethodCall.
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Name" &&
+            copyFuncAliases.count(node->children[0]->id) &&
+            !isShadowedLocal(node->children[0]->id)) {
+            std::string arg;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type != "Keyword") { arg = lowerExpr(ch); break; }
+            }
+            const std::string& which = copyFuncAliases[node->children[0]->id];
+            std::string fn = which == "copy" ? "PyCopy_Copy" : "PyCopy_Deepcopy";
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {fn, arg}, res);
+            return res;
         }
         // super() call — returns a proxy that looks up methods on the parent class
         if (!node->children.empty() && node->children[0] &&
@@ -7310,6 +7339,30 @@ class LoweringVisitor {
             }
             if (isHashlib) return lowerHashlibConstruct(methodName, node, args);
         }
+        // copy.copy(x)/copy.deepcopy(x) — literal "copy" name or any
+        // `import copy as X` alias of it. Must be recognized structurally,
+        // here, before the generic method-dispatch chain: the copy
+        // module's own dict is itself typeOf=="dict", so it can't be
+        // distinguished from a real dict the way os.path.join's fix
+        // distinguished os.path (typeOf(obj)!="dict" doesn't help when
+        // the receiver genuinely IS a "dict") — see PyCopy_Copy's comment
+        // in Runtime.cpp.
+        if (attr->children.size() >= 1 && attr->children[0] &&
+            attr->children[0]->type == "Name" &&
+            (methodName == "copy" || methodName == "deepcopy")) {
+            const std::string& baseId = attr->children[0]->id;
+            bool isCopyMod = (baseId == "copy");
+            if (!isCopyMod) {
+                auto it = moduleNameAliases.find(baseId);
+                isCopyMod = (it != moduleNameAliases.end() && it->second == "copy");
+            }
+            if (isCopyMod) {
+                std::string arg = args.empty() ? "" : args[0];
+                std::string fn = methodName == "copy" ? "PyCopy_Copy" : "PyCopy_Deepcopy";
+                ir.addInstruction(currentFunc, "call", {fn, arg}, res);
+                return res;
+            }
+        }
         // hashobj.hexdigest() — typeOf-gated (same fast-path-only
         // limitation as datetime/pathlib's methods: works after
         // construction/assignment/return, not through an untyped function
@@ -8596,6 +8649,11 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
                         "insort_right", "insort"}},
         {"statistics", {"mean", "median", "median_low", "median_high", "mode",
                         "stdev", "variance", "pstdev", "pvariance"}},
+        {"string",     {"ascii_lowercase", "ascii_uppercase", "ascii_letters", "digits",
+                        "hexdigits", "octdigits", "punctuation", "whitespace", "printable"}},
+        {"textwrap",   {"wrap", "fill"}},
+        {"uuid",       {"uuid4"}},
+        {"copy",       {"copy", "deepcopy"}},
     };
     return table;
 }

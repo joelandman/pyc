@@ -1482,6 +1482,52 @@ h2.append(100)
 print(h)
 print(h2)
 """, "[1, 2, 3, 5, 8, 9]\n[2, 9, 3, 8, 1, 5]\n[99, 5, 1, 8, 3, 9, 2]\n[5, 1, 3, 9, 2]\n2\n1\n[5, 1, 8, 3, 9, 2, 10, 20]\n[5, 1, 8, 3, 9, 2]\n[5, 1, 8, 3, 9, 2, 100]\n"),
+    # string / textwrap / copy / uuid (synthetic). uuid.uuid4() is real
+    # OS entropy (unseedable, matching CPython) so only structural
+    # properties are checked (length/dash placement/version nibble), not
+    # the actual value — those are deterministic even though the UUID
+    # itself differs between this run and the live python3 comparison
+    # run, so no hardcoded-fallback workaround is needed here (unlike
+    # hashlib/base64's TypeError-on-str issue).
+    ("""
+import string
+print(string.ascii_lowercase)
+print(string.ascii_uppercase)
+print(string.digits)
+print(string.punctuation)
+
+import textwrap
+text = "This is a long piece of text that should wrap across multiple lines when given a narrow width."
+print(textwrap.wrap(text, 20))
+print(textwrap.fill(text, 20))
+print(textwrap.wrap("short text"))
+
+import copy
+a = [1, 2, [3, 4]]
+b = copy.copy(a)
+b[2].append(999)
+print(a)
+print(b)
+print(a[2] is b[2])
+
+c = copy.deepcopy(a)
+c[2].append(100)
+print(a, c)
+
+from copy import deepcopy
+d = {"x": [1, 2]}
+e = deepcopy(d)
+e["x"].append(3)
+print(d, e)
+
+import uuid
+u = str(uuid.uuid4())
+print(len(u))
+print(u.count("-"))
+parts = u.split("-")
+print([len(p) for p in parts])
+print(parts[2][0])
+""", "abcdefghijklmnopqrstuvwxyz\nABCDEFGHIJKLMNOPQRSTUVWXYZ\n0123456789\n!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~\n['This is a long piece', 'of text that should', 'wrap across multiple', 'lines when given a', 'narrow width.']\nThis is a long piece\nof text that should\nwrap across multiple\nlines when given a\nnarrow width.\n['short text']\n[1, 2, [3, 4, 999]]\n[1, 2, [3, 4, 999]]\nTrue\n[1, 2, [3, 4, 999]] [1, 2, [3, 4, 999, 100]]\n{'x': [1, 2]} {'x': [1, 2, 3]}\n36\n4\n[8, 4, 4, 4, 12]\n4\n"),
     # B7: Import / module system tests
      # These require utils.py to be in the same directory
      ("b7_import.py", []),

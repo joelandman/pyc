@@ -378,6 +378,41 @@ f(b=3, a=4)                    keyword call arguments
   all eight plus every new heapq/bisect/statistics function (which share
   the identical requirement) — see IMPLEMENTATION.md.
 
+## String / Textwrap / Copy / Uuid
+
+- `string`: pure constants matching CPython exactly — `ascii_lowercase`,
+  `ascii_uppercase`, `ascii_letters`, `digits`, `hexdigits`, `octdigits`,
+  `punctuation`, `whitespace`, `printable`.
+- `textwrap.wrap(text, width=70)` / `textwrap.fill(text, width=70)` —
+  standard greedy word-wrap (split on whitespace, pack words onto a line
+  up to `width`), verified against real `textwrap` output for ordinary
+  prose. Doesn't replicate CPython's long-word-breaking/hyphenation or
+  `indent`/other keyword parameters.
+- `copy.copy(x)` (shallow) / `copy.deepcopy(x)` (recursive) — works on
+  `list`/`dict`/any other value (the latter returned as-is, matching
+  Python's immutable-type optimization). No cycle detection — a
+  self-referencing structure passed to `deepcopy` recurses until stack
+  overflow (documented, same scoping precedent as itertools' unbounded
+  iterators). Both forms robust to untyped function parameters (direct
+  runtime-tag dispatch, no `typeOf` dependency — same "robust primitive"
+  category as `str()`/attribute access elsewhere in this doc).
+- `uuid.uuid4()` — real OS entropy (`std::random_device`), **not** the
+  seeded `random` module generator: this is the *correct* match to real
+  Python (`uuid4()` is unseedable in CPython too, unlike `random`'s
+  functions), not a limitation. Excluded from exact-value testing the
+  same way `datetime.now()`/`time.perf_counter()` are — verified
+  structurally instead (length, dash placement, version nibble). Returns
+  `str`; no `uuid.UUID` type (`.hex`/`.bytes`/`.int` etc. — out of scope,
+  `str(uuid.uuid4())` covers the near-totality of real usage).
+- **`copy.copy`/`copy.deepcopy` needed AST-structural recognition, not
+  the usual token+registry dispatch**, because the `copy` module's own
+  dict is itself `typeOf`-tagged `"dict"`, making it indistinguishable
+  at the generic dispatch point from any real dict a user might call
+  `.copy()` on — the same collision class as `os.path.join`/`os.remove`
+  found in Phase 1, but not fixable the same way (`typeOf(obj)!="dict"`
+  doesn't help when the receiver genuinely *is* a `"dict"`). See
+  IMPLEMENTATION.md.
+
 ## Assignment Forms
 
 ```python

@@ -5,6 +5,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <random>
+#include <cctype>
 #include <cstdint>
 #include <stdio.h>
 #include <stdlib.h>
@@ -2561,6 +2563,10 @@ static PyObject* makeStructModuleDict();
 static PyObject* makeHeapqModuleDict();
 static PyObject* makeBisectModuleDict();
 static PyObject* makeStatisticsModuleDict();
+static PyObject* makeStringModuleDict();
+static PyObject* makeTextwrapModuleDict();
+static PyObject* makeUuidModuleDict();
+static PyObject* makeCopyModuleDict();
 
 PyObject* pyc_import_failed(PyObject* modName) {
     if (modName && modName->type == 3) {
@@ -2639,6 +2645,18 @@ PyObject* pyc_import_failed(PyObject* modName) {
         if (modName->str == "statistics") {
             return makeStatisticsModuleDict();
         }
+        if (modName->str == "string") {
+            return makeStringModuleDict();
+        }
+        if (modName->str == "textwrap") {
+            return makeTextwrapModuleDict();
+        }
+        if (modName->str == "uuid") {
+            return makeUuidModuleDict();
+        }
+        if (modName->str == "copy") {
+            return makeCopyModuleDict();
+        }
         if (modName->str == "cmath") {
             PyObject* d = PyDict_New();
             auto add = [&](const char* name, const char* token) {
@@ -2676,8 +2694,8 @@ PyObject* pyc_import_failed(PyObject* modName) {
                     "(pyc supports only synthetic 'sys', 're', 'functools', 'os', "
                     "'subprocess', 'cmath', 'time', 'math', 'json', 'random', 'itertools', "
                     "'collections', 'datetime', 'pathlib', 'hashlib', 'base64', 'struct', "
-                    "'heapq', 'bisect', and 'statistics' modules; "
-                    "real module loading is not yet implemented)\n", name);
+                    "'heapq', 'bisect', 'statistics', 'string', 'textwrap', 'uuid', and "
+                    "'copy' modules; real module loading is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;
 }
@@ -5156,6 +5174,160 @@ extern "C" PyObject* PyStatistics_Pstdev(PyObject* args) {
     return PyFloat_FromDouble(std::sqrt(pyc_stats_variance(args->list[0], false)));
 }
 
+// ---------------------------------------------------------------------
+// textwrap / uuid / copy (string module is pure constants, built
+// directly in makeStringModuleDict() further down — no functions here).
+// ---------------------------------------------------------------------
+
+// textwrap.wrap(text, width=70) -> list[str]; fill(text, width=70) ->
+// str. Standard greedy word-wrap: split on any whitespace run (matching
+// str.split() with no args), then pack words onto a line as long as
+// `current_len + 1 (space) + word_len <= width`. Doesn't replicate
+// CPython's hyphenation/long-word-breaking or indent parameters —
+// common-case greedy wrap only, verified against real textwrap output
+// for ordinary prose.
+static std::vector<std::string> pyc_textwrap_words(const std::string& text) {
+    std::vector<std::string> words;
+    size_t i = 0, n = text.size();
+    while (i < n) {
+        while (i < n && std::isspace((unsigned char)text[i])) ++i;
+        size_t start = i;
+        while (i < n && !std::isspace((unsigned char)text[i])) ++i;
+        if (i > start) words.push_back(text.substr(start, i - start));
+    }
+    return words;
+}
+static std::vector<std::string> pyc_textwrap_wrap(const std::string& text, long width) {
+    std::vector<std::string> out;
+    auto words = pyc_textwrap_words(text);
+    std::string line;
+    for (auto& w : words) {
+        if (line.empty()) {
+            line = w;
+        } else if ((long)(line.size() + 1 + w.size()) <= width) {
+            line += ' ';
+            line += w;
+        } else {
+            out.push_back(line);
+            line = w;
+        }
+    }
+    if (!line.empty()) out.push_back(line);
+    return out;
+}
+extern "C" PyObject* PyTextwrap_Wrap(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.empty()) return out;
+    PyObject* textObj = args->list[0];
+    if (!textObj || textObj->type != 3) return out;
+    long width = 70;
+    if (args->list.size() > 1 && args->list[1] && args->list[1]->type == 0) width = (long)args->list[1]->value;
+    for (auto& line : pyc_textwrap_wrap(textObj->str, width)) {
+        PyObject* s = PyUnicode_FromString(line.c_str());
+        PyList_Append(out, s);
+        Py_DECREF(s);
+    }
+    return out;
+}
+extern "C" PyObject* PyTextwrap_Fill(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    PyObject* textObj = args->list[0];
+    if (!textObj || textObj->type != 3) return PyUnicode_FromString("");
+    long width = 70;
+    if (args->list.size() > 1 && args->list[1] && args->list[1]->type == 0) width = (long)args->list[1]->value;
+    auto lines = pyc_textwrap_wrap(textObj->str, width);
+    std::string out;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        if (i > 0) out += '\n';
+        out += lines[i];
+    }
+    return PyUnicode_FromString(out.c_str());
+}
+
+// uuid.uuid4() -> str, RFC 4122 version-4 UUID. Uses real OS entropy
+// (std::random_device), deliberately NOT the seeded MT19937 used by the
+// `random` module — matches real CPython, where uuid4() is unseedable
+// regardless of random.seed(), so this is not a limitation but the
+// correct behavior; excluded from exact-match testing the same way
+// datetime.now()/time.perf_counter() are.
+extern "C" PyObject* PyUuid_Uuid4(PyObject* args) {
+    (void)args;
+    std::random_device rd;
+    uint8_t b[16];
+    for (int i = 0; i < 16; i += 4) {
+        uint32_t r = rd();
+        b[i] = (uint8_t)(r & 0xFF);
+        b[i+1] = (uint8_t)((r >> 8) & 0xFF);
+        b[i+2] = (uint8_t)((r >> 16) & 0xFF);
+        b[i+3] = (uint8_t)((r >> 24) & 0xFF);
+    }
+    b[6] = (uint8_t)((b[6] & 0x0F) | 0x40); // version 4
+    b[8] = (uint8_t)((b[8] & 0x3F) | 0x80); // variant 10xx
+    char buf[37];
+    snprintf(buf, sizeof(buf),
+        "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+        b[0],b[1],b[2],b[3], b[4],b[5], b[6],b[7], b[8],b[9], b[10],b[11],b[12],b[13],b[14],b[15]);
+    return PyUnicode_FromString(buf);
+}
+
+// copy.copy(x) / copy.deepcopy(x) — direct-call convention (recognized
+// structurally in Compiler.cpp, like datetime/pathlib/hashlib
+// construction) rather than token+registry, because the `copy` module's
+// own dict is itself typed "dict" at compile time, making it
+// indistinguishable from a real dict via the generic typeOf=="dict"
+// dispatch that the existing (unconditional) `.copy()` list/dict-method
+// branch already claims — the same class of name collision as
+// os.path.join/os.remove, but unfixable the same way (typeOf(obj)!=
+// "dict" doesn't help when the colliding receiver IS a "dict").
+// No cycle detection — a self-referencing structure passed to deepcopy
+// recurses until stack overflow (documented, matches the scoping
+// precedent set by itertools' unbounded-iterator gap).
+extern "C" PyObject* PyCopy_Copy(PyObject* x) {
+    if (!x) return nullptr;
+    if (x->type == 1) {
+        pyc_ensure_boxed_list(x);
+        PyObject* r = PyList_New(x->list.size());
+        for (size_t i = 0; i < x->list.size(); ++i) {
+            if (x->list[i]) Py_INCREF(x->list[i]);
+            PyList_SetItem(r, i, x->list[i]);
+        }
+        return r;
+    }
+    if (x->type == 2) {
+        PyObject* r = PyDict_New();
+        for (auto& p : x->dict) PyDict_SetItem(r, p.first, p.second);
+        return r;
+    }
+    Py_INCREF(x);
+    return x;
+}
+extern "C" PyObject* PyCopy_Deepcopy(PyObject* x) {
+    if (!x) return nullptr;
+    if (x->type == 1) {
+        pyc_ensure_boxed_list(x);
+        PyObject* r = PyList_New(x->list.size());
+        for (size_t i = 0; i < x->list.size(); ++i) {
+            PyObject* v = x->list[i] ? PyCopy_Deepcopy(x->list[i]) : nullptr;
+            PyList_SetItem(r, i, v);
+            if (v) Py_DECREF(v); // PyList_SetItem takes its own ref
+        }
+        return r;
+    }
+    if (x->type == 2) {
+        PyObject* r = PyDict_New();
+        for (auto& p : x->dict) {
+            PyObject* k = p.first ? PyCopy_Deepcopy(p.first) : nullptr;
+            PyObject* v = p.second ? PyCopy_Deepcopy(p.second) : nullptr;
+            PyDict_SetItem(r, k, v);
+            if (k) Py_DECREF(k);
+            if (v) Py_DECREF(v);
+        }
+        return r;
+    }
+    Py_INCREF(x);
+    return x;
+}
+
 // open(path, mode) — open a file. The path/mode are extracted from the
 // args list. Returns a synthetic "file" dict with __enter__ / __exit__
 // / write / close keys (all string tokens naming runtime adapters that
@@ -6395,6 +6567,60 @@ static PyObject* makeStatisticsModuleDict() {
     return d;
 }
 
+// string: pure constants (no functions) — values matching CPython's
+// string module exactly.
+static PyObject* makeStringModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addConst = [&](const char* name, const char* value) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(value);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addConst("ascii_lowercase", "abcdefghijklmnopqrstuvwxyz");
+    addConst("ascii_uppercase", "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    addConst("ascii_letters",   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    addConst("digits",          "0123456789");
+    addConst("hexdigits",       "0123456789abcdefABCDEF");
+    addConst("octdigits",       "01234567");
+    addConst("punctuation",     "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~");
+    addConst("whitespace",      " \t\n\r\x0b\x0c");
+    addConst("printable",
+        "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ \t\n\r\x0b\x0c");
+    return d;
+}
+
+static PyObject* makeTextwrapModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("wrap", "PyTextwrap_Wrap");
+    addTok("fill", "PyTextwrap_Fill");
+    return d;
+}
+
+static PyObject* makeUuidModuleDict() {
+    PyObject* d = PyDict_New();
+    PyObject* k = PyUnicode_FromString("uuid4");
+    PyObject* v = PyUnicode_FromString("PyUuid_Uuid4");
+    PyDict_SetItem(d, k, v);
+    Py_DECREF(k); Py_DECREF(v);
+    return d;
+}
+
+// copy: empty — copy.copy(...)/copy.deepcopy(...) are always intercepted
+// structurally in Compiler.cpp (see PyCopy_Copy/Deepcopy's comment for
+// why this can't be a token+registry dict entry like other modules).
+// This dict exists only so `import copy` doesn't report ImportError.
+static PyObject* makeCopyModuleDict() {
+    return PyDict_New();
+}
+
 // makeOsModuleDict: builds a dict that emulates the os module. The
 // `os.environ` entry is a real dict populated from the process
 // environment (`environ(7)`); `os.path` is a dict whose entries are
@@ -6768,6 +6994,9 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyStatistics_Variance",          PyStatistics_Variance);
     pyc_register_callable("PyStatistics_Pstdev",            PyStatistics_Pstdev);
     pyc_register_callable("PyStatistics_Pvariance",         PyStatistics_Pvariance);
+    pyc_register_callable("PyTextwrap_Wrap",                PyTextwrap_Wrap);
+    pyc_register_callable("PyTextwrap_Fill",                PyTextwrap_Fill);
+    pyc_register_callable("PyUuid_Uuid4",                   PyUuid_Uuid4);
     pyc_register_callable("PyBuiltin_SubprocessCall",      PyBuiltin_SubprocessCall);
     pyc_register_callable("PyBuiltin_SubprocessCheckOutput", PyBuiltin_SubprocessCheckOutput);
     pyc_register_callable("pyc_stderr_write",              stderr_write_adapter);
