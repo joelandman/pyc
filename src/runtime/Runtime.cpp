@@ -2909,6 +2909,13 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
 // User-facing subscript (a[k]): like Pyc_GetItem but raises IndexError /
 // KeyError on a miss, Python-style. Internal probes (method lookup, module
 // attributes, with-statement dunders) keep using the non-raising Pyc_GetItem.
+// collections.defaultdict's factory, keyed by the dict object's own
+// pointer (out-of-band, same pattern as g_pycFiles further down for open
+// file objects) rather than stashed as a visible dict entry — a visible
+// marker key would leak into print()/len()/iteration/.items() on every
+// defaultdict, which real defaultdict's repr/behavior never does.
+static std::unordered_map<PyObject*, PyObject*> g_pycDefaultFactories;
+
 PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
     if (obj && obj->type == 2) {
         // Dict: scan directly rather than going through Pyc_GetItem, which
@@ -2920,6 +2927,30 @@ PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
             if (PyObject_CompareBool(pair.first, key, 0)) {
                 if (pair.second) Py_INCREF(pair.second);
                 return pair.second;
+            }
+        }
+        // collections.defaultdict: before raising KeyError, check the
+        // out-of-band factory map. If this dict has one registered, call
+        // the factory (empty arg list — matches how list()/dict()/int()
+        // are invoked as zero-arg factories elsewhere), store the result
+        // under the missing key (mutate-on-access, matching real
+        // defaultdict), and return it.
+        {
+            auto dfIt = g_pycDefaultFactories.find(obj);
+            if (dfIt != g_pycDefaultFactories.end() && dfIt->second) {
+                PyObject* emptyArgs = PyList_New(0);
+                // Pyc_Apply may legitimately return nullptr (a factory
+                // that returns None) — that's fine, nullptr already
+                // represents None throughout this codebase (see the
+                // dict-scan branch above). `made` arrives already owning
+                // one reference (from Pyc_Apply); PyDict_SetItem takes its
+                // own separate reference for the dict slot, so the
+                // original reference can be handed straight to the caller
+                // below with no extra Py_INCREF needed.
+                PyObject* made = Pyc_Apply(dfIt->second, emptyArgs);
+                Py_DECREF(emptyArgs);
+                PyDict_SetItem(obj, key, made);
+                return made;
             }
         }
         // Raw key as the message; pyc_exc_message adds the repr quoting for
@@ -7171,6 +7202,123 @@ extern "C" PyObject* PyCollections_MostCommon(PyObject* args) {
     return out;
 }
 
+// collections.deque(iterable=[]) — a plain list (type 1, no new type
+// tag) with a compile-time "deque" typeOf label (Compiler.cpp) driving
+// .appendleft()/.popleft()/.rotate() dispatch. .append()/.pop() and
+// friends already work unchanged (either unconditional, like .append(),
+// or extended to accept the "deque" typeOf label alongside "list",
+// like .pop()/.copy()/.clear()). Direct-call convention (construction is
+// AST-recognized, like pathlib.Path, so the result can carry the
+// "deque" tag — the generic dict-dispatch path can't attach a custom
+// tag to its result).
+extern "C" PyObject* PyCollections_Deque(PyObject* iterable) {
+    if (!iterable || iterable->type != 1) return PyList_New(0);
+    pyc_ensure_boxed_list(iterable);
+    PyObject* r = PyList_New(iterable->list.size());
+    for (size_t i = 0; i < iterable->list.size(); ++i) {
+        if (iterable->list[i]) Py_INCREF(iterable->list[i]);
+        PyList_SetItem(r, i, iterable->list[i]);
+    }
+    return r;
+}
+extern "C" PyObject* PyDeque_Appendleft(PyObject* obj, PyObject* item) {
+    if (!obj || obj->type != 1) return nullptr;
+    pyc_ensure_boxed_list(obj);
+    if (item) Py_INCREF(item);
+    obj->list.insert(obj->list.begin(), item);
+    return nullptr;
+}
+extern "C" PyObject* PyDeque_Popleft(PyObject* obj) {
+    if (!obj || obj->type != 1) return nullptr;
+    pyc_ensure_boxed_list(obj);
+    if (obj->list.empty()) { pyc_raise_msg("IndexError", "pop from an empty deque"); return nullptr; }
+    PyObject* item = obj->list.front();
+    if (item) Py_INCREF(item); // matches PyList_PopAt's convention
+    obj->list.erase(obj->list.begin());
+    return item;
+}
+// deque.rotate(n=1): positive n moves the last n elements to the front;
+// negative n moves the first |n| elements to the end (verified against
+// real collections.deque.rotate).
+extern "C" PyObject* PyDeque_Rotate(PyObject* obj, PyObject* nObj) {
+    if (!obj || obj->type != 1) return nullptr;
+    pyc_ensure_boxed_list(obj);
+    long n = (nObj && (nObj->type == 0 || nObj->type == 5)) ? (long)nObj->value : 1;
+    size_t sz = obj->list.size();
+    if (sz == 0) return nullptr;
+    n %= (long)sz;
+    if (n < 0) n += (long)sz;
+    if (n == 0) return nullptr;
+    std::rotate(obj->list.begin(), obj->list.begin() + (long)(sz - (size_t)n), obj->list.end());
+    return nullptr;
+}
+
+// collections.namedtuple(typename, field_names) -> bundle
+// ["PyCollections_NamedtupleConstruct", fieldNamesList]; calling it
+// (Point(1, 2)) builds a plain dict pairing field_names[i] with each
+// positional argument. `.x`/`.y` attribute access then works for free
+// via the existing generic lowerAttribute -> Pyc_GetItem path (a plain
+// dict with a string key already supports `.key` attribute syntax).
+// Positional construction only (Point(1, 2), not Point(x=1, y=2)) —
+// Pyc_Apply's argument list is purely positional. print()ing an
+// instance shows the plain dict repr ({'x': 1, 'y': 2}), not CPython's
+// Point(x=1, y=2) — cosmetic gap, not fixed (documented).
+extern "C" PyObject* PyCollections_Namedtuple(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* fieldNames = args->list[1];
+    PyObject* bundle = PyList_New(2);
+    PyObject* tok = PyUnicode_FromString("PyCollections_NamedtupleConstruct");
+    if (fieldNames) Py_INCREF(fieldNames);
+    PyList_SetItem(bundle, 0, tok);
+    PyList_SetItem(bundle, 1, fieldNames);
+    Py_DECREF(tok);
+    return bundle;
+}
+extern "C" PyObject* PyCollections_NamedtupleConstruct(PyObject* args) {
+    // args = [fieldNamesList, ...positionalValues]
+    PyObject* d = PyDict_New();
+    if (!args || args->type != 1 || args->list.empty()) return d;
+    PyObject* fieldNames = args->list[0];
+    if (!fieldNames || fieldNames->type != 1) return d;
+    pyc_ensure_boxed_list(fieldNames);
+    for (size_t i = 0; i < fieldNames->list.size() && i + 1 < args->list.size(); ++i) {
+        PyDict_SetItem(d, fieldNames->list[i], args->list[i + 1]);
+    }
+    return d;
+}
+
+// collections.defaultdict(default_factory) -> a real dict (type 2) whose
+// factory is recorded in g_pycDefaultFactories (declared next to
+// Pyc_Subscript above, whose dict-miss path consults it before raising
+// KeyError). Keeping the factory out-of-band (not a visible dict key)
+// means the dict prints/len()s/iterates exactly like a plain dict,
+// matching the "instances look like plain dicts" tradeoff already made
+// for namedtuple above.
+extern "C" PyObject* PyCollections_Defaultdict(PyObject* args) {
+    PyObject* d = PyDict_New();
+    if (!args || args->type != 1 || args->list.empty()) return d;
+    PyObject* factory = args->list[0];
+    if (factory) Py_INCREF(factory); // g_pycDefaultFactories's own reference
+    g_pycDefaultFactories[d] = factory;
+    return d;
+}
+
+// Zero-arg factory tokens for `defaultdict(list)`/`defaultdict(int)`/etc.
+// A bare (uncalled) reference to a builtin type name like `list` normally
+// has no runtime representation at all in pyc — only *calls* like
+// `list(x)` are recognized structurally (Compiler.cpp's lowerCall). This
+// is the same gap B13 (builtinExcNames) already closes for exception
+// classes used as first-class values (`exc = ValueError`); these are the
+// collections-factory equivalent, registered as ordinary token+registry
+// callables so PyCollections_Defaultdict's stored factory can be invoked
+// generically via Pyc_Apply with an empty arg list, same as any other
+// zero-arg call.
+extern "C" PyObject* PyBuiltin_ListFactory(PyObject*)  { return PyList_New(0); }
+extern "C" PyObject* PyBuiltin_DictFactory(PyObject*)  { return PyDict_New(); }
+extern "C" PyObject* PyBuiltin_IntFactory(PyObject*)   { return PyInt_FromLong(0); }
+extern "C" PyObject* PyBuiltin_FloatFactory(PyObject*) { return PyFloat_FromDouble(0.0); }
+extern "C" PyObject* PyBuiltin_StrFactory(PyObject*)   { return PyUnicode_FromString(""); }
+
 static PyObject* makeCollectionsModuleDict() {
     PyObject* d = PyDict_New();
     auto addTok = [&](const char* name, const char* token) {
@@ -7181,6 +7329,18 @@ static PyObject* makeCollectionsModuleDict() {
     };
     addTok("Counter", "PyCollections_Counter");
     addTok("most_common", "PyCollections_MostCommon");
+    // "deque" is NOT a dict entry — it needs AST-structural construction
+    // (see PyCollections_Deque's comment above) so its result can carry
+    // the compile-time "deque" typeOf tag, same as csv.writer/pathlib.Path.
+    // "namedtuple"/"defaultdict" ARE normal tokens: namedtuple's factory
+    // takes purely positional args (typename, field_names) and returns a
+    // plain bundle, same shape as functools.partial, so the generic
+    // dict-dispatch call convention already handles it with no
+    // Compiler.cpp changes; defaultdict's construction doesn't need a
+    // custom typeOf tag either (Pyc_Subscript's marker-key check works on
+    // any real dict, no compile-time tracking needed).
+    addTok("namedtuple", "PyCollections_Namedtuple");
+    addTok("defaultdict", "PyCollections_Defaultdict");
     return d;
 }
 
@@ -7929,6 +8089,14 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyItertools_ZipLongest",   PyItertools_ZipLongest);
     pyc_register_callable("PyCollections_Counter",    PyCollections_Counter);
     pyc_register_callable("PyCollections_MostCommon", PyCollections_MostCommon);
+    pyc_register_callable("PyCollections_Namedtuple",          PyCollections_Namedtuple);
+    pyc_register_callable("PyCollections_NamedtupleConstruct", PyCollections_NamedtupleConstruct);
+    pyc_register_callable("PyCollections_Defaultdict",         PyCollections_Defaultdict);
+    pyc_register_callable("PyBuiltin_ListFactory",  PyBuiltin_ListFactory);
+    pyc_register_callable("PyBuiltin_DictFactory",  PyBuiltin_DictFactory);
+    pyc_register_callable("PyBuiltin_IntFactory",   PyBuiltin_IntFactory);
+    pyc_register_callable("PyBuiltin_FloatFactory", PyBuiltin_FloatFactory);
+    pyc_register_callable("PyBuiltin_StrFactory",   PyBuiltin_StrFactory);
     pyc_register_callable("PyDateTime_Today", PyDateTime_Today);
     pyc_register_callable("PyDateTime_Now",   PyDateTime_Now);
 }

@@ -1482,6 +1482,68 @@ def wrap_chain(nested):
     return list(itertools.chain.from_iterable(nested))
 print(wrap_chain([[1, 2], [3, 4]]))
 """, "[1, 3, 6, 10]\n[1, 2, 6, 24]\n[1, 3]\n[5, 2, 1]\n['a', 'c']\n1 [1, 1]\n2 [2, 2, 2]\n3 [3]\n1 [1, 1]\na ['apple', 'ant']\nb ['bear', 'bee']\nc ['cat']\n[1, 2, 3, 4, 5]\n['a', 'b', 'c']\n[5, 10, 15]\n[3, 2, 1]\nx ['x', 'x']\ny ['y']\n[['a', ['aa', 'ab']], ['b', ['bc']]]\n[1, 2, 3, 4]\n"),
+    # collections expansion: deque/namedtuple/defaultdict (synthetic).
+    # deque is a plain list at runtime (type 1) with a compile-time
+    # "deque" typeOf label driving .appendleft()/.popleft()/.rotate()
+    # dispatch — .append()/.pop()/.copy()/.clear() already work via the
+    # existing list machinery. print(d) shows a plain list repr (`[...]`),
+    # not CPython's `deque([...])`, and isinstance(d, list) is True (same
+    # runtime type, no dedicated tag) — both documented gaps, so this
+    # test uses list(d) to sidestep the repr difference and doesn't probe
+    # isinstance. namedtuple instances are plain dicts (field access
+    # works via the generic attribute-read path with no new runtime
+    # code); print(p) would show a dict repr, not CPython's
+    # `Point(x=1, y=2)`, and dict iteration order isn't guaranteed to
+    # match insertion order (dicts are unordered_map-backed) — both
+    # avoided here by reading fields individually rather than printing
+    # the instance or its dict form directly. defaultdict's factory is
+    # tracked out-of-band (g_pycDefaultFactories, keyed by the dict
+    # object's pointer) rather than as a visible dict entry, specifically
+    # so it doesn't leak into print()/len()/iteration the way a first
+    # attempt (a reserved `__pyc_default_factory__` dict key) did during
+    # development. A bare (uncalled) reference to a builtin type name
+    # like `list`/`int` had no runtime representation at all before this
+    # phase (only calls like `list(x)` were recognized) — needed for
+    # `defaultdict(list)`/`defaultdict(int)` to work, so this adds
+    # zero-arg factory tokens (PyBuiltin_ListFactory etc.) for
+    # list/dict/int/float/str, the same first-class-value mechanism B13
+    # already uses for bare exception-class references like `ValueError`.
+    ("""
+from collections import deque, namedtuple, defaultdict
+
+d = deque([1, 2, 3, 4, 5])
+print(list(d))
+d.appendleft(0)
+print(list(d))
+print(d.popleft())
+print(list(d))
+d.rotate(1)
+print(list(d))
+d.rotate(-2)
+print(list(d))
+d.pop()
+print(list(d))
+
+Point = namedtuple('Point', ['x', 'y'])
+p = Point(3, 4)
+print(p.x, p.y)
+p2 = Point(10, 20)
+print(p2.x + p2.y)
+
+dd = defaultdict(list)
+dd['a'].append(1)
+dd['a'].append(2)
+dd['b'].append(3)
+print(dd['a'])
+print(dd['b'])
+print(dd['c'])
+
+dd2 = defaultdict(int)
+dd2['x'] += 5
+dd2['x'] += 2
+print(dd2['x'])
+print(dd2['y'])
+""", "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4, 5]\n0\n[1, 2, 3, 4, 5]\n[5, 1, 2, 3, 4]\n[2, 3, 4, 5, 1]\n[2, 3, 4, 5]\n3 4\n30\n[1, 2]\n[3]\n[]\n7\n0\n"),
     # hashlib / base64 / struct (synthetic; no bytes type — see
     # IMPLEMENTATION.md). Real CPython's hashlib/base64 both raise
     # TypeError on a plain str (they require bytes), so the live

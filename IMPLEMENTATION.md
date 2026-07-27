@@ -262,6 +262,81 @@ this session's own new test cases — should use a plain `for` loop
 instead of a comprehension whenever destructuring multiple values per
 iteration, until this is fixed.
 
+### `collections.deque`/`namedtuple`/`defaultdict`
+`deque` reuses `pathlib.Path`'s pattern exactly: construction is
+recognized structurally in the AST (both `collections.deque(...)`-qualified
+and the bare-name form after `from collections import deque`, via a
+`dequeCtorAliases` set mirroring `pathCtorAliases`) so the result can
+carry a compile-time `"deque"` typeOf tag — the generic dict-dispatch path
+has no mechanism to attach one. It's a plain list at runtime (type 1, no
+new type); `.appendleft`/`.popleft`/`.rotate` are new typeOf-gated direct
+calls, and three existing typeOf-gated checks (`.pop`/`.copy`/`.clear`)
+were extended to also accept the `"deque"` tag.
+
+`namedtuple` reuses the "descriptor bundle" mechanism from
+`functools.partial` (above): `namedtuple(typename, field_names)` is pure
+token+registry (no AST recognition needed — it takes only positional
+arguments, so the generic dispatch handles it fine, unlike `deque`),
+returning a bundle `[constructorToken, fieldNamesList]`. Calling the
+bundle builds a plain dict pairing each field name to its positional
+argument; attribute reads (`p.x`) already work generically since
+`lowerAttribute` routes every bare attribute read through `Pyc_GetItem`
+regardless of the receiver's type — a dict with a string key `"x"`
+already supports `.x` syntax with zero new runtime code for that part.
+
+`defaultdict(default_factory)` is also pure token+registry. Its factory
+is **not** stored as a visible dict entry — that was the first
+implementation tried, under a reserved key
+(`"__pyc_default_factory__"`), and it broke immediately during
+verification: `print(dd)` showed the marker key alongside the real data
+(`{'a': [1, 2], '__pyc_default_factory__': 'PyBuiltin_ListFactory'}`),
+because a `defaultdict` is, at runtime, just a dict — nothing distinguishes
+"real" keys from the marker for print/len/iteration/`.items()` to skip.
+Fixed by moving the factory out-of-band into
+`g_pycDefaultFactories` (`Runtime.cpp`, declared next to `Pyc_Subscript`),
+a `std::unordered_map<PyObject*, PyObject*>` keyed by the dict object's
+own pointer — the exact same pattern already used for open file objects
+(`g_pycFiles`). `Pyc_Subscript`'s dict-miss path checks this map before
+raising `KeyError`: if the dict has a registered factory, it's called
+with an empty argument list (same convention as any other zero-arg
+factory call in this codebase), the result is stored under the missing
+key (mutate-on-access, matching real `defaultdict`), and returned.
+
+**Real bug found and fixed while wiring up `defaultdict(list)`**: a bare,
+*uncalled* reference to a builtin type name — the `list` in
+`defaultdict(list)`, as opposed to an actual call like `list(x)` — had no
+runtime representation at all. `lowerCall`'s `funcName == "list"` branch
+only fires for real calls; a bare `Name` node for `"list"` fell through
+to the generic bare-name fallback, which just returns the raw identifier
+string as if it were a variable — and since no variable named `list` was
+ever assigned, this resolved to an uninitialized/null value at runtime.
+Confirmed empirically: `defaultdict(list)` compiled and ran, but every
+auto-populated key raised `KeyError` instead of returning `[]`, because
+the stored "factory" was silently `None`. This is architecturally the
+same gap `B13` already solved for bare exception-class references
+(`exc = ValueError`) — so it's fixed the same way: `list`/`dict`/`int`/
+`float`/`str`, when referenced bare and not shadowed by a local, now
+resolve to a zero-arg factory callable-token
+(`PyBuiltin_ListFactory`/`PyBuiltin_DictFactory`/etc., `Runtime.cpp`),
+usable anywhere a callable value is expected — not just inside
+`defaultdict(...)`. Confirmed this doesn't disturb `isinstance(x, list)`:
+its typecode fast path reads the classinfo argument's *AST node*
+directly (`node->children[2]->id`), not the lowered value, so the extra
+callable-token temp this produces is simply unused dead IR in that case,
+never affecting the actual typecode dispatch.
+
+**General pre-existing limitation surfaced clearly by `namedtuple`, not
+new and not fixed**: `dict` (`include/pyc/object_struct.h`) is backed by
+`std::unordered_map<PyObject*, PyObject*>`, so no dict in this compiler —
+not just `namedtuple` instances — preserves insertion order the way real
+Python 3.7+ dicts do. `Point(x=3, y=4)` printed as a dict can come out as
+`{'y': 4, 'x': 3}`; ported code that iterates a dict expecting insertion
+order (extremely common in real Python) may see reordered output. Fixing
+this would mean changing every dict's underlying storage — out of scope
+here, but worth flagging prominently since `namedtuple`'s dict-backing
+made it directly visible for the first time in this session's stdlib
+work.
+
 ## Known Limitations
 
 ### Performance

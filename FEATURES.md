@@ -546,6 +546,63 @@ f(b=3, a=4)                    keyword call arguments
   verification with an argument-count mismatch when later called with a
   different arity. See IMPLEMENTATION.md.
 
+## Collections Expansion
+
+- `collections.deque(iterable=[])` — a plain list (type 1) at runtime,
+  **not** a new type: `.append`/`.pop`/`.copy`/`.clear` already work
+  through the existing list machinery, extended (`.pop`/`.copy`/`.clear`)
+  to also accept a `deque`-tagged receiver. `.appendleft(x)`,
+  `.popleft()`, `.rotate(n=1)` (positive rotates right, negative rotates
+  left — verified against real `collections.deque.rotate`) are new,
+  typeOf-gated dispatch. **Documented gaps**: `print(d)` shows a plain
+  list repr (`[1, 2, 3]`), not CPython's `deque([1, 2, 3])`; `isinstance(d,
+  list)` is `True` (same runtime type tag, no dedicated `deque` type).
+- `collections.namedtuple(typename, field_names)` — returns a callable
+  "descriptor bundle" (same closure/`functools.partial` mechanism used
+  elsewhere); calling it builds a **plain dict** pairing each field name
+  to its positional argument. Field access (`p.x`) works for free via the
+  existing generic attribute-read path (`Pyc_GetItem` on any dict with a
+  matching string key already supports `.attr` syntax — no new runtime
+  code needed for this part). **Documented gaps**: positional
+  construction only (`Point(1, 2)`, not `Point(x=1, y=2)` — no
+  keyword-argument channel through the callable-apply mechanism);
+  `print(p)` shows a dict repr, not CPython's `Point(x=1, y=2)`; no real
+  tuple behavior (`len()`, indexing by position) beyond attribute access.
+- `collections.defaultdict(default_factory)` — a real dict whose factory
+  is tracked **out-of-band**, in a `PyObject* -> PyObject*` map keyed by
+  the dict's own pointer (`g_pycDefaultFactories`, same pattern as the
+  open-file-object table `g_pycFiles`), *not* as a visible dict entry —
+  an earlier version stashed the factory under a reserved dict key, which
+  leaked into `print()`/`len()`/iteration on every defaultdict; moved
+  out-of-band during verification. `Pyc_Subscript`'s dict-miss path
+  checks this map before raising `KeyError`: if present, calls the
+  factory with no arguments, stores the result under the missing key
+  (mutate-on-access, matching real `defaultdict`), and returns it.
+  `defaultdict(list)`/`defaultdict(int)`/`defaultdict(dict)`/
+  `defaultdict(float)`/`defaultdict(str)` are supported. **Documented
+  gap**: `print(dd)` shows a plain dict repr, not CPython's
+  `defaultdict(<class 'list'>, {...})`.
+- **Found and fixed one real, general gap while building this**: a bare
+  (uncalled) reference to a builtin type name — `list` in
+  `defaultdict(list)`, not `list(x)` — had **no runtime representation at
+  all**; only actual calls like `list(x)` were recognized structurally.
+  `defaultdict(list)` silently stored `None` as the factory, so every
+  auto-populated key raised `KeyError` instead of getting an empty list.
+  Fixed by adding zero-arg factory tokens (`PyBuiltin_ListFactory`,
+  `PyBuiltin_DictFactory`, `PyBuiltin_IntFactory`, `PyBuiltin_FloatFactory`,
+  `PyBuiltin_StrFactory`) for `list`/`dict`/`int`/`float`/`str`, using the
+  same first-class-value mechanism (`B13`) already used for bare
+  exception-class references like `exc = ValueError`. Scoped to these
+  five names only — general first-class use of arbitrary builtins (e.g.
+  `f = sorted`) is not supported.
+- **General pre-existing limitation surfaced clearly by namedtuple's
+  dict-backed representation** (not new, not fixed): `dict` is
+  `std::unordered_map`-backed, so iteration/print order is not guaranteed
+  to match insertion order the way real Python 3.7+ dicts do. This
+  affects *every* dict in pyc, not just namedtuple instances — worth
+  knowing when porting code that (like most real Python code) relies on
+  dict insertion order.
+
 ## Assignment Forms
 
 ```python

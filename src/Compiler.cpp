@@ -1238,6 +1238,10 @@ class LoweringVisitor {
                         if (mod == "itertools" && origName == "groupby") {
                             groupbyCtorAliases.insert(name);
                         }
+                        // `from collections import deque [as X]` — same rationale.
+                        if (mod == "collections" && origName == "deque") {
+                            dequeCtorAliases.insert(name);
+                        }
 
                         std::string attrKey = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
@@ -1611,6 +1615,26 @@ class LoweringVisitor {
                 std::string excClass = "t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"pyc_make_exc_class", excNameConst}, excClass);
                 return excClass;
+            }
+            // Same rationale as B13, for the handful of builtin type names
+            // whose bare (uncalled) reference is a real, common pattern:
+            // `collections.defaultdict(list)`/`defaultdict(int)`/etc. Only
+            // covers the zero-arg-factory use case — the resulting token
+            // is a callable, not a real "type" value, so e.g. comparing it
+            // against another type or subclassing it is not supported.
+            {
+                static const std::unordered_map<std::string, const char*> builtinFactoryTokens = {
+                    {"list", "PyBuiltin_ListFactory"}, {"dict", "PyBuiltin_DictFactory"},
+                    {"int", "PyBuiltin_IntFactory"}, {"float", "PyBuiltin_FloatFactory"},
+                    {"str", "PyBuiltin_StrFactory"},
+                };
+                auto bfIt = builtinFactoryTokens.find(node->id);
+                if (bfIt != builtinFactoryTokens.end() && !isShadowedLocal(node->id)) {
+                    std::string tokenVal = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + std::string(bfIt->second) + "\""}, tokenVal, "str");
+                    callableTokenTemps.insert(tokenVal);
+                    return tokenVal;
+                }
             }
             return node->id;
         } else if (node->type == "Attribute") {
@@ -2842,6 +2866,11 @@ class LoweringVisitor {
     // argument needs AST-level extraction, so it's not a normal dict
     // entry and needs this alias tracking for the bare-name form too.
     std::unordered_set<std::string> groupbyCtorAliases;
+    // Local names bound via `from collections import deque [as X]` — same
+    // rationale as pathCtorAliases: deque(...) needs AST-structural
+    // construction so its result can carry the compile-time "deque"
+    // typeOf tag (see PyCollections_Deque's comment in Runtime.cpp).
+    std::unordered_set<std::string> dequeCtorAliases;
     // User functions (defs or synthetic lambdas) that contain a return of a
     // callable token value. Calls to them have their result temp marked so
     // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
@@ -3899,6 +3928,20 @@ class LoweringVisitor {
         return res;
     }
 
+    // Shared by both `collections.deque(...)`-qualified construction
+    // (lowerMethodCall) and bare `deque(...)` construction after a
+    // from-import (lowerCall, via dequeCtorAliases). Single optional
+    // positional iterable argument (matches real `deque(iterable=[])`);
+    // noteType(res, "deque") drives the typeOf-gated .appendleft()/
+    // .popleft()/.rotate() dispatch below.
+    std::string lowerDequeConstruct(const std::vector<std::string>& posArgs) {
+        std::string arg = posArgs.empty() ? "" : posArgs[0];
+        std::string res = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyCollections_Deque", arg}, res, "list");
+        noteType(res, "deque");
+        return res;
+    }
+
     std::string lowerCall(const ASTNode* node) {
         // Method call: obj.method(args) — func is an Attribute node
          if (!node->children.empty() && node->children[0] &&
@@ -4008,6 +4051,20 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", {"PyItertools_Groupby", iterableArg, keyArg}, res, "list");
             noteType(res, "list");
             return res;
+        }
+        // collections.deque bound to a bare name via `from collections
+        // import deque` — construct directly, same as the
+        // `collections.deque(...)`-qualified form in lowerMethodCall.
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Name" &&
+            dequeCtorAliases.count(node->children[0]->id) &&
+            !isShadowedLocal(node->children[0]->id)) {
+            std::vector<std::string> posArgs;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type != "Keyword") posArgs.push_back(lowerExpr(ch));
+            }
+            return lowerDequeConstruct(posArgs);
         }
         // super() call — returns a proxy that looks up methods on the parent class
         if (!node->children.empty() && node->children[0] &&
@@ -7526,6 +7583,38 @@ class LoweringVisitor {
                 }
             }
         }
+        // collections.deque(...) construction — literal "collections"
+        // name or any `import collections as X` alias of it (same
+        // structural-recognition rationale as pathlib.Path above — see
+        // PyCollections_Deque's comment in Runtime.cpp).
+        if (attr->children.size() >= 1 && attr->children[0] &&
+            attr->children[0]->type == "Name" && methodName == "deque") {
+            const std::string& baseId = attr->children[0]->id;
+            bool isCollectionsMod = (baseId == "collections");
+            if (!isCollectionsMod) {
+                auto it = moduleNameAliases.find(baseId);
+                isCollectionsMod = (it != moduleNameAliases.end() && it->second == "collections");
+            }
+            if (isCollectionsMod) return lowerDequeConstruct(args);
+        }
+        // deque.appendleft(x)/.popleft()/.rotate(n) — typeOf-gated direct
+        // calls (deque is a plain list at runtime with no dedicated type
+        // tag — see PyCollections_Deque's comment in Runtime.cpp).
+        if (methodName == "appendleft" && typeOf(obj) == "deque") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyDeque_Appendleft", obj, arg}, res);
+            return res;
+        }
+        if (methodName == "popleft" && typeOf(obj) == "deque") {
+            ir.addInstruction(currentFunc, "call", {"PyDeque_Popleft", obj}, res);
+            return res;
+        }
+        if (methodName == "rotate" && typeOf(obj) == "deque") {
+            std::string arg = args.empty() ? "" : args[0];
+            if (arg.empty()) { arg = "t" + std::to_string(tempCounter++); ir.addInstruction(currentFunc, "const", {"1"}, arg, "int"); }
+            ir.addInstruction(currentFunc, "call", {"PyDeque_Rotate", obj, arg}, res);
+            return res;
+        }
         // hashobj.hexdigest() — typeOf-gated (same fast-path-only
         // limitation as datetime/pathlib's methods: works after
         // construction/assignment/return, not through an untyped function
@@ -7689,9 +7778,9 @@ class LoweringVisitor {
         } else if (methodName == "extend") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyList_Extend", obj, arg}, res);
-        } else if (methodName == "copy" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float")) {
+        } else if (methodName == "copy" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float" || typeOf(obj) == "deque")) {
             ir.addInstruction(currentFunc, "call", {"PyList_Copy", obj}, res);
-        } else if (methodName == "clear" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float")) {
+        } else if (methodName == "clear" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float" || typeOf(obj) == "deque")) {
             ir.addInstruction(currentFunc, "call", {"PyList_Clear", obj}, res);
         // Known string methods
         } else if (methodName == "upper") {
@@ -7878,7 +7967,7 @@ class LoweringVisitor {
         // List methods
         } else if (methodName == "sort") {
             ir.addInstruction(currentFunc, "call", {"PyList_Sort", obj}, res);
-        } else if (methodName == "pop" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float")) {
+        } else if (methodName == "pop" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float" || typeOf(obj) == "deque")) {
             if (args.empty()) {
                 ir.addInstruction(currentFunc, "call", {"PyList_Pop", obj}, res);
             } else {
@@ -8832,7 +8921,7 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
         {"itertools",  {"chain", "product", "combinations", "permutations", "starmap",
                          "islice", "zip_longest", "accumulate", "takewhile", "dropwhile",
                          "compress", "groupby"}},
-        {"collections", {"Counter", "most_common"}},
+        {"collections", {"Counter", "most_common", "deque", "namedtuple", "defaultdict"}},
         {"datetime",   {"date", "datetime", "timedelta"}},
         {"pathlib",    {"Path"}},
         {"hashlib",    {"md5", "sha1", "sha256"}},

@@ -376,6 +376,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyItertools_Groupby", module.get());
     }
+    // collections.deque(...): direct-call convention (needs a compile-time
+    // "deque" noteType tag on construction that generic dict-dispatch
+    // can't attach, mirroring pathlib.Path). PyCollections_Deque/
+    // PyDeque_Popleft take one ptr arg; PyDeque_Appendleft/Rotate take two.
+    {
+        llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, "PyCollections_Deque", module.get());
+        llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, "PyDeque_Popleft", module.get());
+        llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyDeque_Appendleft", module.get());
+        llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyDeque_Rotate", module.get());
+    }
     // setjmp is special: declaration with the ReturnsTwice attribute.
     {
         llvm::FunctionType* setjmpTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {int8PtrTy}, false);
