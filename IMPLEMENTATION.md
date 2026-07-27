@@ -93,6 +93,21 @@ known in the call already) and no `.digest()` (raw-bytes form — only
 `.hexdigest()`). `struct` supports the common format codes and
 endianness prefixes but not native alignment padding or `n`/`N`.
 
+### `statistics` — Partial Exact-Integer Preservation, Not Full `Fraction` Arithmetic
+Real CPython's `statistics` module computes internally via `Fraction`
+(exact rational arithmetic) and converts back to `int` when the exact
+result happens to be a whole number — e.g. `statistics.mean([2, 4]) == 3`
+(an `int`, not `3.0`), and even `statistics.pvariance([1,2,3,4,5]) == 2`
+(also `int`). pyc replicates this only for the common, checkable case: all
+inputs are `int`, and the relevant division divides evenly (checked with
+exact 64-bit integer arithmetic, not a real `Fraction` type) — see
+`pyc_stats_variance_exact_int`/`PyStatistics_Mean` in `Runtime.cpp`. An
+input whose *exact rational* result is an integer despite a non-integer
+intermediate mean (a real but rare case for `Fraction`-based arithmetic)
+won't match CPython's type. `stdev`/`pstdev` were verified to always
+return `float` regardless (even for a perfect-square variance), so no
+int-preservation attempt was made there.
+
 ## Known Limitations
 
 ### Performance
@@ -291,6 +306,36 @@ endianness prefixes but not native alignment padding or `n`/`N`.
   `PyUnicode_FromString` call site legitimately only ever constructs from
   NUL-free text (literals, formatted numbers, etc.), so this was scoped
   to just the two new sites rather than an audit of the whole file.
+- **Fixed while adding `heapq`/`bisect`/`statistics`: seven existing list
+  methods were silent no-ops on a homogeneous int/float list literal**
+  (e.g. `h = [5, 1, 8, 3, 9, 2]; h.sort()` left `h` unchanged). Root
+  cause: list literals whose elements are all one numeric type get
+  stored via an existing A4 performance optimization (`list_item_type` 1
+  or 2, elements in `PyObject.ilist`/`flist` — plain `int64_t`/`double`
+  vectors, not boxed `PyObject*`) instead of the generic `list` vector.
+  `.sort()`, `.insert()`, `.remove()`, `.index()`, `.count()`,
+  `.reverse()`, `.extend()`, and `.copy()` (`PyList_Sort`/`Insert`/
+  `Remove`/`Index`/`Count`/`Reverse`/`Extend`/`Copy` in `Runtime.cpp`)
+  all operated on `lst->list` directly with no awareness of this, so for
+  such a list each one silently read or mutated an *empty* vector — a
+  true no-op for the mutators, and a wrong/empty result for the readers
+  (`.index()` returning `-1`/"not found", `.count()` returning `0`) —
+  with no visible failure signal, since none of them raise or return an
+  error code. Found by spot-checking every A4-adjacent list method after
+  discovering `.sort()`'s case while testing `heapq`/`bisect`
+  (structurally identical requirement: in-place mutation or comparison
+  over arbitrary `PyObject*` elements). **Not** affected, already
+  correct: `.append()`, `.pop()`, `.pop(i)`, `.clear()` (each already had
+  explicit `list_item_type==1`/`2` branches). Fixed centrally: a new
+  `pyc_ensure_boxed_list()` helper converts a homogeneous list to the
+  boxed representation in place (materializing a fresh `PyInt`/`PyFloat`
+  per element, `list_item_type` reset to 0), called at the top of all
+  eight affected functions plus every new `heapq`/`bisect`/`statistics`
+  function (which share the identical requirement). This was a spot-check
+  of methods adjacent to the one bug actually found, not an exhaustive
+  audit — any other existing function reading `lst->list` directly
+  without an explicit `list_item_type` check (there may be more,
+  un-audited) would have the same latent bug.
 
 ### IR
 - **Linear instruction list per function**: No CFG in IR; control flow is represented via labels and branches

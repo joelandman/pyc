@@ -6,7 +6,7 @@ LLVM IR, optimizes it, and produces standalone native executables via a minimal
 `PyObject*`-based boxed runtime with refcounting.
 
 Written in C++ with Clang++ and LLVM 18. No C/C++ intermediate language for
-the normal compiler path. **308/308 tests passing** (runner reports 308/308, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
+the normal compiler path. **310/310 tests passing** (runner reports 310/310, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
 
 ## Build
 
@@ -78,7 +78,7 @@ See [FEATURES.md](FEATURES.md) for a complete list of supported features.
 - **Exceptions**: `try/except/finally/else`, structured exceptions, exception classes
 - **Statements**: `with`, `match/case`, `assert`, `del`, walrus `:=`, `import`
 - **Builtins**: `print`, `range`, `len`, `str`, `int`, `float`, `complex`, `abs`, `min`, `max`, `list`, `enumerate`, `zip`, `sum`, `sorted`, `any`, `all`, `isinstance`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`, `round`, `divmod`, `pow`, `reversed`, `cmp_to_key`
-- **Standard library stubs**: `os` (path helpers, getcwd, listdir, makedirs, environ), `pathlib` (`Path`), `subprocess` (call, check_output), `sys`, `cmath`, `math` (~25 functions wrapping libm), `json` (dumps/loads), `random` (CPython-exact MT19937), `itertools`/`collections` (eager-list subset), `datetime` (`date`/`datetime`/`timedelta`), `hashlib` (md5/sha1/sha256, from scratch), `base64`, `struct` — see FEATURES.md
+- **Standard library stubs**: `os` (path helpers, getcwd, listdir, makedirs, environ), `pathlib` (`Path`), `subprocess` (call, check_output), `sys`, `cmath`, `math` (~25 functions wrapping libm), `json` (dumps/loads), `random` (CPython-exact MT19937), `itertools`/`collections` (eager-list subset), `datetime` (`date`/`datetime`/`timedelta`), `hashlib` (md5/sha1/sha256, from scratch), `base64`, `struct`, `heapq`, `bisect`, `statistics` — see FEATURES.md
 
 ## Architecture
 

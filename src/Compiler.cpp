@@ -8590,6 +8590,12 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
         {"hashlib",    {"md5", "sha1", "sha256"}},
         {"base64",     {"b64encode", "b64decode"}},
         {"struct",     {"pack", "unpack"}},
+        {"heapq",      {"heapify", "heappush", "heappop", "heappushpop", "heapreplace",
+                        "nlargest", "nsmallest"}},
+        {"bisect",     {"bisect_left", "bisect_right", "bisect", "insort_left",
+                        "insort_right", "insort"}},
+        {"statistics", {"mean", "median", "median_low", "median_high", "mode",
+                        "stdev", "variance", "pstdev", "pvariance"}},
     };
     return table;
 }

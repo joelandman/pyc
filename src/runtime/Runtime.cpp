@@ -2005,8 +2005,36 @@ PyObject* PyDict_Items(PyObject* d) {
     return result;
 }
 
+// Homogeneous int/float lists (list_item_type 1/2 — an existing A4
+// performance optimization) store their elements in ilist/flist instead
+// of the generic boxed `list` vector of PyObject*. Any function that
+// needs general PyObject* access (comparisons, in-place algorithms)
+// must materialize the boxed form first, or it silently operates on an
+// empty `list` vector. Found while adding heapq/bisect/statistics (see
+// Runtime.cpp further down); also fixes a real pre-existing bug found
+// the same way: `h = [5,1,8,3,9,2]; h.sort()` was a silent no-op, since
+// PyList_Sort (below) used to sort `lst->list` directly without this
+// conversion.
+static void pyc_ensure_boxed_list(PyObject* lst) {
+    if (!lst || lst->type != 1) return;
+    if (lst->list_item_type == 1) {
+        lst->list.clear();
+        lst->list.reserve(lst->ilist.size());
+        for (int64_t v : lst->ilist) lst->list.push_back(PyInt_FromLong(v));
+        lst->ilist.clear();
+        lst->list_item_type = 0;
+    } else if (lst->list_item_type == 2) {
+        lst->list.clear();
+        lst->list.reserve(lst->flist.size());
+        for (double v : lst->flist) lst->list.push_back(PyFloat_FromDouble(v));
+        lst->flist.clear();
+        lst->list_item_type = 0;
+    }
+}
+
 PyObject* PyList_Sort(PyObject* lst) {
     if (!lst || lst->type != 1) return PyInt_FromLong(0);
+    pyc_ensure_boxed_list(lst);
     std::sort(lst->list.begin(), lst->list.end(), [](PyObject* a, PyObject* b) -> bool {
         if (!a || !b) return false;
         return PyObject_CompareBool(a, b, 2) != 0;  // Lt
@@ -2099,6 +2127,7 @@ void pyc_print(PyObject* argList, PyObject* sep, PyObject* end) {
 // ---- List helper methods ----
 PyObject* PyList_Insert(PyObject* list, PyObject* idx, PyObject* item) {
     if (!list || list->type != 1 || !idx || (idx->type != 0 && idx->type != 5)) return nullptr;
+    pyc_ensure_boxed_list(list);
     long i = idx->value;
     if (i < 0) i += (long)list->list.size();
     if (i < 0) i = 0;
@@ -2109,6 +2138,7 @@ PyObject* PyList_Insert(PyObject* list, PyObject* idx, PyObject* item) {
 }
 PyObject* PyList_Remove(PyObject* list, PyObject* item) {
     if (!list || list->type != 1) return nullptr;
+    pyc_ensure_boxed_list(list);
     for (auto it = list->list.begin(); it != list->list.end(); ++it) {
         bool eq = (*it == item) ||
                   (*it && item && PyObject_CompareBool(*it, item, 0));
@@ -2123,6 +2153,7 @@ PyObject* PyList_Remove(PyObject* list, PyObject* item) {
 }
 PyObject* PyList_Index(PyObject* list, PyObject* item) {
     if (!list || list->type != 1) return nullptr;
+    pyc_ensure_boxed_list(list);
     for (size_t i = 0; i < list->list.size(); ++i) {
         bool eq = (list->list[i] == item) ||
                   (list->list[i] && item && PyObject_CompareBool(list->list[i], item, 0));
@@ -2132,6 +2163,7 @@ PyObject* PyList_Index(PyObject* list, PyObject* item) {
 }
 PyObject* PyList_Count(PyObject* list, PyObject* item) {
     if (!list || list->type != 1) return PyInt_FromLong(0);
+    pyc_ensure_boxed_list(list);
     long c = 0;
     for (auto* e : list->list) {
         if (e == item || (e && item && PyObject_CompareBool(e, item, 0))) ++c;
@@ -2140,13 +2172,16 @@ PyObject* PyList_Count(PyObject* list, PyObject* item) {
 }
 PyObject* PyList_Reverse(PyObject* list) {
     if (!list || list->type != 1) return nullptr;
+    pyc_ensure_boxed_list(list);
     std::reverse(list->list.begin(), list->list.end());
     return PyInt_FromLong(0);
 }
 PyObject* PyList_Extend(PyObject* list, PyObject* other) {
     if (!list || list->type != 1) return nullptr;
+    pyc_ensure_boxed_list(list);
     if (other) {
         if (other->type == 1) {
+            pyc_ensure_boxed_list(other);
             for (auto* e : other->list) {
                 if (e) Py_INCREF(e);
                 list->list.push_back(e);
@@ -2162,6 +2197,7 @@ PyObject* PyList_Extend(PyObject* list, PyObject* other) {
 }
 PyObject* PyList_Copy(PyObject* list) {
     if (!list || list->type != 1) return PyList_New(0);
+    pyc_ensure_boxed_list(list);
     PyObject* r = PyList_New(list->list.size());
     for (size_t i = 0; i < list->list.size(); ++i) {
         if (list->list[i]) Py_INCREF(list->list[i]);
@@ -2522,6 +2558,9 @@ static PyObject* makeDatetimeModuleDict();
 static PyObject* makeHashlibModuleDict();
 static PyObject* makeBase64ModuleDict();
 static PyObject* makeStructModuleDict();
+static PyObject* makeHeapqModuleDict();
+static PyObject* makeBisectModuleDict();
+static PyObject* makeStatisticsModuleDict();
 
 PyObject* pyc_import_failed(PyObject* modName) {
     if (modName && modName->type == 3) {
@@ -2591,6 +2630,15 @@ PyObject* pyc_import_failed(PyObject* modName) {
         if (modName->str == "struct") {
             return makeStructModuleDict();
         }
+        if (modName->str == "heapq") {
+            return makeHeapqModuleDict();
+        }
+        if (modName->str == "bisect") {
+            return makeBisectModuleDict();
+        }
+        if (modName->str == "statistics") {
+            return makeStatisticsModuleDict();
+        }
         if (modName->str == "cmath") {
             PyObject* d = PyDict_New();
             auto add = [&](const char* name, const char* token) {
@@ -2627,8 +2675,9 @@ PyObject* pyc_import_failed(PyObject* modName) {
     fprintf(stderr, "ImportError: No module named '%s' "
                     "(pyc supports only synthetic 'sys', 're', 'functools', 'os', "
                     "'subprocess', 'cmath', 'time', 'math', 'json', 'random', 'itertools', "
-                    "'collections', 'datetime', 'pathlib', 'hashlib', 'base64', and 'struct' "
-                    "modules; real module loading is not yet implemented)\n", name);
+                    "'collections', 'datetime', 'pathlib', 'hashlib', 'base64', 'struct', "
+                    "'heapq', 'bisect', and 'statistics' modules; "
+                    "real module loading is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;
 }
@@ -4780,6 +4829,333 @@ extern "C" PyObject* PyStruct_Unpack(PyObject* args) {
     return out;
 }
 
+// ---------------------------------------------------------------------
+// heapq / bisect / statistics — all operate on plain lists via the
+// existing generic comparison primitive (PyObject_CompareBool, the same
+// one PyList_Sort uses), no new types. Token+registry convention
+// throughout. All list arguments are run through pyc_ensure_boxed_list
+// (defined above, near PyList_Sort) first — see its comment for why.
+// ---------------------------------------------------------------------
+
+static bool pyc_lt(PyObject* a, PyObject* b) { return PyObject_CompareBool(a, b, 2) != 0; }
+
+static void pyc_heap_siftup(std::vector<PyObject*>& h, size_t pos) {
+    // Standard binary-heap sift-down (CPython's heapq calls this
+    // "_siftup" — moves the too-large root down by repeatedly swapping
+    // with its smaller child).
+    size_t n = h.size();
+    size_t startpos = pos;
+    PyObject* newitem = h[pos];
+    size_t childpos = 2*pos + 1;
+    while (childpos < n) {
+        size_t rightpos = childpos + 1;
+        if (rightpos < n && !pyc_lt(h[childpos], h[rightpos])) childpos = rightpos;
+        h[pos] = h[childpos];
+        pos = childpos;
+        childpos = 2*pos + 1;
+    }
+    h[pos] = newitem;
+    // Sift the moved item up to its correct resting place.
+    while (pos > startpos) {
+        size_t parentpos = (pos - 1) / 2;
+        if (pyc_lt(h[pos], h[parentpos])) {
+            std::swap(h[pos], h[parentpos]);
+            pos = parentpos;
+        } else break;
+    }
+}
+static void pyc_heap_siftdown(std::vector<PyObject*>& h, size_t startpos, size_t pos) {
+    PyObject* newitem = h[pos];
+    while (pos > startpos) {
+        size_t parentpos = (pos - 1) / 2;
+        PyObject* parent = h[parentpos];
+        if (pyc_lt(newitem, parent)) {
+            h[pos] = parent;
+            pos = parentpos;
+        } else break;
+    }
+    h[pos] = newitem;
+}
+
+extern "C" PyObject* PyHeapq_Heapify(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* lst = args->list[0];
+    if (!lst || lst->type != 1) return nullptr;
+    pyc_ensure_boxed_list(lst);
+    size_t n = lst->list.size();
+    if (n < 2) return nullptr;
+    for (size_t i = n / 2; i-- > 0;) pyc_heap_siftup(lst->list, i);
+    return nullptr;
+}
+extern "C" PyObject* PyHeapq_Heappush(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* lst = args->list[0];
+    PyObject* item = args->list[1];
+    if (!lst || lst->type != 1) return nullptr;
+    pyc_ensure_boxed_list(lst);
+    if (item) Py_INCREF(item);
+    lst->list.push_back(item);
+    pyc_heap_siftdown(lst->list, 0, lst->list.size() - 1);
+    return nullptr;
+}
+extern "C" PyObject* PyHeapq_Heappop(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* lst = args->list[0];
+    if (!lst || lst->type != 1) return nullptr;
+    pyc_ensure_boxed_list(lst);
+    if (lst->list.empty()) return nullptr;
+    PyObject* result = lst->list.front();
+    PyObject* last = lst->list.back();
+    lst->list.pop_back();
+    if (!lst->list.empty()) {
+        lst->list[0] = last;
+        pyc_heap_siftup(lst->list, 0);
+    }
+    return result; // ownership transferred to caller (was owned by the list)
+}
+extern "C" PyObject* PyHeapq_Heappushpop(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* lst = args->list[0];
+    PyObject* item = args->list[1];
+    if (!lst || lst->type != 1) return nullptr;
+    pyc_ensure_boxed_list(lst);
+    if (!lst->list.empty() && pyc_lt(lst->list[0], item)) {
+        PyObject* result = lst->list[0];
+        if (item) Py_INCREF(item);
+        lst->list[0] = item;
+        pyc_heap_siftup(lst->list, 0);
+        return result;
+    }
+    if (item) Py_INCREF(item);
+    return item;
+}
+extern "C" PyObject* PyHeapq_Heapreplace(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* lst = args->list[0];
+    PyObject* item = args->list[1];
+    if (!lst || lst->type != 1) return nullptr;
+    pyc_ensure_boxed_list(lst);
+    if (lst->list.empty()) return nullptr;
+    PyObject* result = lst->list[0];
+    if (item) Py_INCREF(item);
+    lst->list[0] = item;
+    pyc_heap_siftup(lst->list, 0);
+    return result;
+}
+static PyObject* pyc_heapq_extreme(PyObject* args, bool largest) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    PyObject* nObj = args->list[0];
+    PyObject* iterable = args->list[1];
+    if (!nObj || (nObj->type != 0 && nObj->type != 5) || !iterable || iterable->type != 1) return out;
+    pyc_ensure_boxed_list(iterable);
+    long n = (long)nObj->value;
+    std::vector<PyObject*> items = iterable->list;
+    std::sort(items.begin(), items.end(), [&](PyObject* a, PyObject* b) {
+        return largest ? pyc_lt(b, a) : pyc_lt(a, b);
+    });
+    for (long i = 0; i < n && (size_t)i < items.size(); ++i) {
+        PyObject* item = items[(size_t)i];
+        if (item) Py_INCREF(item);
+        PyList_Append(out, item);
+        if (item) Py_DECREF(item);
+    }
+    return out;
+}
+extern "C" PyObject* PyHeapq_Nlargest(PyObject* args) { return pyc_heapq_extreme(args, true); }
+extern "C" PyObject* PyHeapq_Nsmallest(PyObject* args) { return pyc_heapq_extreme(args, false); }
+
+// bisect_left/bisect_right: standard binary search for insertion point.
+static size_t pyc_bisect(PyObject* lst, PyObject* x, bool right) {
+    size_t lo = 0, hi = lst->list.size();
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        bool goRight = right ? !pyc_lt(x, lst->list[mid]) : pyc_lt(lst->list[mid], x);
+        if (goRight) lo = mid + 1; else hi = mid;
+    }
+    return lo;
+}
+extern "C" PyObject* PyBisect_Left(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyInt_FromLong(0);
+    PyObject* lst = args->list[0];
+    if (!lst || lst->type != 1) return PyInt_FromLong(0);
+    pyc_ensure_boxed_list(lst);
+    return PyInt_FromLong((long)pyc_bisect(lst, args->list[1], false));
+}
+extern "C" PyObject* PyBisect_Right(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyInt_FromLong(0);
+    PyObject* lst = args->list[0];
+    if (!lst || lst->type != 1) return PyInt_FromLong(0);
+    pyc_ensure_boxed_list(lst);
+    return PyInt_FromLong((long)pyc_bisect(lst, args->list[1], true));
+}
+extern "C" PyObject* PyBisect_InsortLeft(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* lst = args->list[0];
+    PyObject* x = args->list[1];
+    if (!lst || lst->type != 1) return nullptr;
+    pyc_ensure_boxed_list(lst);
+    size_t pos = pyc_bisect(lst, x, false);
+    if (x) Py_INCREF(x);
+    lst->list.insert(lst->list.begin() + pos, x);
+    return nullptr;
+}
+extern "C" PyObject* PyBisect_InsortRight(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* lst = args->list[0];
+    PyObject* x = args->list[1];
+    if (!lst || lst->type != 1) return nullptr;
+    pyc_ensure_boxed_list(lst);
+    size_t pos = pyc_bisect(lst, x, true);
+    if (x) Py_INCREF(x);
+    lst->list.insert(lst->list.begin() + pos, x);
+    return nullptr;
+}
+
+// statistics: mean/median/median_low/median_high/mode/stdev/variance/
+// pstdev/pvariance. mean() special-cases an all-int input to match
+// CPython's exact-Fraction-based int-preserving result (mean([2,4])==3,
+// an int, not 3.0) without implementing a full Fraction type — sum stays
+// exact 64-bit integer arithmetic, and the result is int only when it
+// divides evenly, otherwise float. Mixed int/float input always
+// produces a float (matches CPython for the common cases; CPython's
+// Fraction-exact edge cases with irrational-looking float inputs aren't
+// replicated — documented simplification).
+extern "C" PyObject* PyStatistics_Mean(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty() || args->list[0]->type != 1) return PyFloat_FromDouble(0.0);
+    PyObject* data = args->list[0];
+    pyc_ensure_boxed_list(data);
+    bool allInt = true;
+    for (PyObject* v : data->list) { if (!v || v->type != 0) { allInt = false; break; } }
+    size_t n = data->list.size();
+    if (allInt) {
+        int64_t total = 0;
+        for (PyObject* v : data->list) total += v->value;
+        if (total % (int64_t)n == 0) return PyInt_FromLong((long)(total / (int64_t)n));
+        return PyFloat_FromDouble((double)total / (double)n);
+    }
+    double total = 0.0;
+    for (PyObject* v : data->list) total += is_numeric(v) ? numeric_val(v) : 0.0;
+    return PyFloat_FromDouble(total / (double)n);
+}
+static std::vector<PyObject*> pyc_stats_sorted(PyObject* data) {
+    pyc_ensure_boxed_list(data);
+    std::vector<PyObject*> v = data->list;
+    std::sort(v.begin(), v.end(), [](PyObject* a, PyObject* b) { return pyc_lt(a, b); });
+    return v;
+}
+extern "C" PyObject* PyStatistics_Median(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty() || args->list[0]->type != 1) return PyFloat_FromDouble(0.0);
+    auto v = pyc_stats_sorted(args->list[0]);
+    size_t n = v.size();
+    if (n == 0) return PyFloat_FromDouble(0.0);
+    if (n % 2 == 1) { PyObject* r = v[n/2]; Py_INCREF(r); return r; }
+    double a = numeric_val(v[n/2 - 1]), b = numeric_val(v[n/2]);
+    return PyFloat_FromDouble((a + b) / 2.0);
+}
+extern "C" PyObject* PyStatistics_MedianLow(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty() || args->list[0]->type != 1) return PyFloat_FromDouble(0.0);
+    auto v = pyc_stats_sorted(args->list[0]);
+    size_t n = v.size();
+    if (n == 0) return PyFloat_FromDouble(0.0);
+    PyObject* r = (n % 2 == 1) ? v[n/2] : v[n/2 - 1];
+    Py_INCREF(r); return r;
+}
+extern "C" PyObject* PyStatistics_MedianHigh(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty() || args->list[0]->type != 1) return PyFloat_FromDouble(0.0);
+    auto v = pyc_stats_sorted(args->list[0]);
+    size_t n = v.size();
+    if (n == 0) return PyFloat_FromDouble(0.0);
+    PyObject* r = v[n/2];
+    Py_INCREF(r); return r;
+}
+extern "C" PyObject* PyStatistics_Mode(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty() || args->list[0]->type != 1) return nullptr;
+    PyObject* data = args->list[0];
+    pyc_ensure_boxed_list(data);
+    // First-encounter order matters for CPython's tie-breaking (the
+    // value whose max count is reached first, in original data order,
+    // wins) — a simple std::unordered_map would lose that order, so
+    // track counts alongside a separate first-seen-order value list.
+    std::vector<PyObject*> seenOrder;
+    std::vector<int> counts;
+    for (PyObject* v : data->list) {
+        bool found = false;
+        for (size_t i = 0; i < seenOrder.size(); ++i) {
+            if (PyObject_CompareBool(seenOrder[i], v, 0)) { counts[i]++; found = true; break; }
+        }
+        if (!found) { seenOrder.push_back(v); counts.push_back(1); }
+    }
+    if (seenOrder.empty()) return nullptr;
+    size_t bestIdx = 0;
+    for (size_t i = 1; i < counts.size(); ++i) if (counts[i] > counts[bestIdx]) bestIdx = i;
+    PyObject* r = seenOrder[bestIdx];
+    Py_INCREF(r); return r;
+}
+static double pyc_stats_variance(PyObject* data, bool sample) {
+    pyc_ensure_boxed_list(data);
+    size_t n = data->list.size();
+    if (n == 0 || (sample && n < 2)) return 0.0;
+    double mean = 0.0;
+    for (PyObject* v : data->list) mean += is_numeric(v) ? numeric_val(v) : 0.0;
+    mean /= (double)n;
+    double ss = 0.0;
+    for (PyObject* v : data->list) {
+        double d = (is_numeric(v) ? numeric_val(v) : 0.0) - mean;
+        ss += d * d;
+    }
+    return ss / (double)(sample ? (n - 1) : n);
+}
+// variance()/pvariance() (unlike stdev()/pstdev(), which always return
+// float even when the variance is a perfect square — confirmed against
+// real CPython) can return an exact int, via the same CPython
+// Fraction-based int-preservation as mean() — e.g.
+// statistics.pvariance([1,2,3,4,5]) == 2 (int), not 2.0. Replicated here
+// only for the common case (all-int input, exact-integer mean, and the
+// sum-of-squared-deviations divides evenly) — not full Fraction
+// arithmetic, so a case where the *exact rational* variance reduces to
+// an integer despite a non-integer mean won't match. Documented
+// simplification, same spirit as mean()'s.
+static bool pyc_stats_variance_exact_int(PyObject* data, bool sample, int64_t& outInt) {
+    for (PyObject* v : data->list) { if (!v || v->type != 0) return false; }
+    size_t n = data->list.size();
+    if (n == 0 || (sample && n < 2)) return false;
+    int64_t total = 0;
+    for (PyObject* v : data->list) total += v->value;
+    if (total % (int64_t)n != 0) return false;
+    int64_t mean = total / (int64_t)n;
+    int64_t ss = 0;
+    for (PyObject* v : data->list) { int64_t d = v->value - mean; ss += d * d; }
+    int64_t divisor = sample ? (int64_t)(n - 1) : (int64_t)n;
+    if (ss % divisor != 0) return false;
+    outInt = ss / divisor;
+    return true;
+}
+extern "C" PyObject* PyStatistics_Variance(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty() || args->list[0]->type != 1) return PyFloat_FromDouble(0.0);
+    PyObject* data = args->list[0];
+    pyc_ensure_boxed_list(data);
+    int64_t exact;
+    if (pyc_stats_variance_exact_int(data, true, exact)) return PyInt_FromLong((long)exact);
+    return PyFloat_FromDouble(pyc_stats_variance(data, true));
+}
+extern "C" PyObject* PyStatistics_Stdev(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty() || args->list[0]->type != 1) return PyFloat_FromDouble(0.0);
+    return PyFloat_FromDouble(std::sqrt(pyc_stats_variance(args->list[0], true)));
+}
+extern "C" PyObject* PyStatistics_Pvariance(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty() || args->list[0]->type != 1) return PyFloat_FromDouble(0.0);
+    PyObject* data = args->list[0];
+    pyc_ensure_boxed_list(data);
+    int64_t exact;
+    if (pyc_stats_variance_exact_int(data, false, exact)) return PyInt_FromLong((long)exact);
+    return PyFloat_FromDouble(pyc_stats_variance(data, false));
+}
+extern "C" PyObject* PyStatistics_Pstdev(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty() || args->list[0]->type != 1) return PyFloat_FromDouble(0.0);
+    return PyFloat_FromDouble(std::sqrt(pyc_stats_variance(args->list[0], false)));
+}
+
 // open(path, mode) — open a file. The path/mode are extracted from the
 // args list. Returns a synthetic "file" dict with __enter__ / __exit__
 // / write / close keys (all string tokens naming runtime adapters that
@@ -5964,6 +6340,61 @@ static PyObject* makeStructModuleDict() {
     return d;
 }
 
+static PyObject* makeHeapqModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("heapify",    "PyHeapq_Heapify");
+    addTok("heappush",   "PyHeapq_Heappush");
+    addTok("heappop",    "PyHeapq_Heappop");
+    addTok("heappushpop","PyHeapq_Heappushpop");
+    addTok("heapreplace","PyHeapq_Heapreplace");
+    addTok("nlargest",   "PyHeapq_Nlargest");
+    addTok("nsmallest",  "PyHeapq_Nsmallest");
+    return d;
+}
+
+static PyObject* makeBisectModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("bisect_left",  "PyBisect_Left");
+    addTok("bisect_right", "PyBisect_Right");
+    addTok("bisect",       "PyBisect_Right"); // bisect() is an alias for bisect_right
+    addTok("insort_left",  "PyBisect_InsortLeft");
+    addTok("insort_right", "PyBisect_InsortRight");
+    addTok("insort",       "PyBisect_InsortRight"); // insort() is an alias for insort_right
+    return d;
+}
+
+static PyObject* makeStatisticsModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("mean",       "PyStatistics_Mean");
+    addTok("median",     "PyStatistics_Median");
+    addTok("median_low", "PyStatistics_MedianLow");
+    addTok("median_high","PyStatistics_MedianHigh");
+    addTok("mode",       "PyStatistics_Mode");
+    addTok("stdev",      "PyStatistics_Stdev");
+    addTok("variance",   "PyStatistics_Variance");
+    addTok("pstdev",     "PyStatistics_Pstdev");
+    addTok("pvariance",  "PyStatistics_Pvariance");
+    return d;
+}
+
 // makeOsModuleDict: builds a dict that emulates the os module. The
 // `os.environ` entry is a real dict populated from the process
 // environment (`environ(7)`); `os.path` is a dict whose entries are
@@ -6317,6 +6748,26 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyBase64_B64Decode",            PyBase64_B64Decode);
     pyc_register_callable("PyStruct_Pack",                 PyStruct_Pack);
     pyc_register_callable("PyStruct_Unpack",                PyStruct_Unpack);
+    pyc_register_callable("PyHeapq_Heapify",                PyHeapq_Heapify);
+    pyc_register_callable("PyHeapq_Heappush",               PyHeapq_Heappush);
+    pyc_register_callable("PyHeapq_Heappop",                PyHeapq_Heappop);
+    pyc_register_callable("PyHeapq_Heappushpop",            PyHeapq_Heappushpop);
+    pyc_register_callable("PyHeapq_Heapreplace",            PyHeapq_Heapreplace);
+    pyc_register_callable("PyHeapq_Nlargest",               PyHeapq_Nlargest);
+    pyc_register_callable("PyHeapq_Nsmallest",              PyHeapq_Nsmallest);
+    pyc_register_callable("PyBisect_Left",                  PyBisect_Left);
+    pyc_register_callable("PyBisect_Right",                 PyBisect_Right);
+    pyc_register_callable("PyBisect_InsortLeft",            PyBisect_InsortLeft);
+    pyc_register_callable("PyBisect_InsortRight",           PyBisect_InsortRight);
+    pyc_register_callable("PyStatistics_Mean",              PyStatistics_Mean);
+    pyc_register_callable("PyStatistics_Median",            PyStatistics_Median);
+    pyc_register_callable("PyStatistics_MedianLow",         PyStatistics_MedianLow);
+    pyc_register_callable("PyStatistics_MedianHigh",        PyStatistics_MedianHigh);
+    pyc_register_callable("PyStatistics_Mode",              PyStatistics_Mode);
+    pyc_register_callable("PyStatistics_Stdev",             PyStatistics_Stdev);
+    pyc_register_callable("PyStatistics_Variance",          PyStatistics_Variance);
+    pyc_register_callable("PyStatistics_Pstdev",            PyStatistics_Pstdev);
+    pyc_register_callable("PyStatistics_Pvariance",         PyStatistics_Pvariance);
     pyc_register_callable("PyBuiltin_SubprocessCall",      PyBuiltin_SubprocessCall);
     pyc_register_callable("PyBuiltin_SubprocessCheckOutput", PyBuiltin_SubprocessCheckOutput);
     pyc_register_callable("pyc_stderr_write",              stderr_write_adapter);

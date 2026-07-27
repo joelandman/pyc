@@ -346,6 +346,38 @@ f(b=3, a=4)                    keyword call arguments
   that can produce arbitrary embedded-NUL byte content) — see
   IMPLEMENTATION.md.
 
+## Heapq / Bisect / Statistics
+
+- `heapq`: `heapify(list)`, `heappush(list, item)`, `heappop(list)`,
+  `heappushpop(list, item)`, `heapreplace(list, item)`, `nlargest(n,
+  iterable)`, `nsmallest(n, iterable)` — standard binary-heap operations,
+  in-place on a plain list, verified against real `heapq` output.
+- `bisect`: `bisect_left(list, x)`, `bisect_right(list, x)` (alias
+  `bisect`), `insort_left(list, x)`, `insort_right(list, x)` (alias
+  `insort`).
+- `statistics`: `mean`, `median`, `median_low`, `median_high`, `mode`,
+  `stdev`, `variance`, `pstdev`, `pvariance`. `mean`/`variance`/
+  `pvariance` preserve CPython's exact-integer results for all-int input
+  that divides evenly (`statistics.mean([2, 4]) == 3`, an `int`, not
+  `3.0`; `statistics.pvariance([1,2,3,4,5]) == 2`, also `int`) — a
+  targeted replication of CPython's Fraction-based arithmetic for the
+  common case, not a full Fraction implementation, so an input whose
+  *exact rational* result reduces to an integer despite a non-integer
+  intermediate mean won't match (rare in practice). `stdev`/`pstdev`
+  always return `float` (matches CPython — confirmed even a perfect-square
+  variance still prints as `float` from `stdev`/`pstdev`, unlike
+  `variance`/`pvariance` themselves).
+- **Fixed while adding these**: real, previously-undiscovered pre-existing
+  bugs — `h = [5, 1, 8, 3, 9, 2]; h.sort()` (and `.insert()`, `.remove()`,
+  `.index()`, `.count()`, `.reverse()`, `.extend()`, `.copy()`) were all
+  silent no-ops/wrong-results on a homogeneous int/float list literal.
+  Homogeneous list literals use a native fast-path storage (not the
+  generic boxed representation, for performance), which none of those
+  eight methods accounted for (`.append()`/`.pop()`/`.clear()` were
+  already correct). Fixed via one shared conversion helper, applied to
+  all eight plus every new heapq/bisect/statistics function (which share
+  the identical requirement) — see IMPLEMENTATION.md.
+
 ## Assignment Forms
 
 ```python

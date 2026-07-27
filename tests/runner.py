@@ -1380,6 +1380,108 @@ encoded = base64.b64encode(packed)
 decoded = base64.b64decode(encoded)
 print(list(struct.unpack("<i", decoded)))
 """, "5eb63bbbe01eeed093cb22bb8f5acdc3\n2aae6c35c94fcfb415dbe95f408b9ce91ee846ed\nb94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9\n900150983cd24fb0d6963f7d28e17f72\nba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\nc43f88e1b377c731c0205d6025265739a9578d5ebd0d2399ce09b9a7ab1c897e\naGVsbG8gd29ybGQ=\nZm9v\nhello world\nhello\n4\n[1000]\n[1, 65535]\n[-123456789012345]\n[-5, 250]\n[1000]\n"),
+    # heapq / bisect / statistics (synthetic, list-based, no new types).
+    # The first line (h.sort() on an int-literal list) is a regression
+    # for a real pre-existing bug found while adding these: homogeneous
+    # int/float list literals use a native fast-path storage
+    # (list_item_type 1/2, data in ilist/flist) that PyList_Sort — and
+    # every function added in this phase — used to silently ignore,
+    # operating on the (empty) generic boxed `list` field instead. Fixed
+    # via a shared pyc_ensure_boxed_list() conversion, applied uniformly
+    # (see the separate list-methods regression case below for the other
+    # 7 existing list methods found broken the same way).
+    # mean()/variance()/pvariance() preserve CPython's exact-int results
+    # for all-int, evenly-dividing input (e.g. mean([2,4])==3, not 3.0) —
+    # a targeted replication of CPython's Fraction-based behavior, not
+    # full Fraction arithmetic (see IMPLEMENTATION.md).
+    ("""
+import heapq
+import bisect
+import statistics
+
+h = [5, 1, 8, 3, 9, 2]
+h.sort()
+print(h)
+
+h2 = [5, 1, 8, 3, 9, 2]
+heapq.heapify(h2)
+print(h2)
+heapq.heappush(h2, 0)
+print(h2)
+print(heapq.heappop(h2))
+print(h2)
+print(heapq.heappushpop(h2, 100))
+print(h2)
+print(heapq.heapreplace(h2, -1))
+print(h2)
+print(heapq.nlargest(3, [5, 1, 8, 3, 9, 2]))
+print(heapq.nsmallest(3, [5, 1, 8, 3, 9, 2]))
+
+lst = [1, 3, 5, 7, 9]
+print(bisect.bisect_left(lst, 5))
+print(bisect.bisect_right(lst, 5))
+print(bisect.bisect(lst, 4))
+bisect.insort_left(lst, 5)
+print(lst)
+bisect.insort(lst, 6)
+print(lst)
+
+print(statistics.mean([1, 2, 3, 4]))
+print(statistics.mean([2, 4]))
+print(statistics.mean([1, 2, 4]))
+print(statistics.mean([1.0, 2.0, 3.0]))
+print(statistics.median([1, 2, 3, 4]))
+print(statistics.median([1, 2, 3]))
+print(statistics.median_low([1, 2, 3, 4]))
+print(statistics.median_high([1, 2, 3, 4]))
+print(statistics.mode([3, 3, 1, 1, 2]))
+print(statistics.mode([1, 2, 3]))
+print(statistics.stdev([1, 2, 3, 4, 5]))
+print(statistics.variance([1, 2, 3, 4, 5]))
+print(statistics.pstdev([1, 2, 3, 4, 5]))
+print(statistics.pvariance([1, 2, 3, 4, 5]))
+""", "[1, 2, 3, 5, 8, 9]\n[1, 3, 2, 5, 9, 8]\n[0, 3, 1, 5, 9, 8, 2]\n0\n[1, 3, 2, 5, 9, 8]\n1\n[2, 3, 8, 5, 9, 100]\n2\n[-1, 3, 8, 5, 9, 100]\n[9, 8, 5]\n[1, 2, 3]\n2\n3\n2\n[1, 3, 5, 5, 7, 9]\n[1, 3, 5, 5, 6, 7, 9]\n2.5\n3\n2.3333333333333335\n2.0\n2.5\n2\n2\n3\n3\n1\n1.5811388300841898\n2.5\n1.4142135623730951\n2\n"),
+    # Regression for 7 more pre-existing list-method bugs found via
+    # spot-check after the heapq/bisect/statistics work above uncovered
+    # .sort()'s case: .insert()/.remove()/.index()/.count()/.reverse()/
+    # .extend()/.copy() were all silent no-ops or wrong-results on a
+    # homogeneous int/float list literal, for the identical root cause
+    # (list_item_type 1/2 fast-path storage never converted to the
+    # generic boxed form before these functions read/mutated `lst->list`
+    # directly). .append()/.pop()/.clear() were already correct and
+    # aren't retested here. See IMPLEMENTATION.md.
+    ("""
+a = [5, 1, 8, 3, 9, 2]
+a.sort()
+print(a)
+
+b = [5, 1, 8, 3, 9, 2]
+b.reverse()
+print(b)
+
+c = [5, 1, 8, 3, 9, 2]
+c.insert(0, 99)
+print(c)
+
+d = [5, 1, 8, 3, 9, 2]
+d.remove(8)
+print(d)
+
+e = [5, 1, 8, 3, 9, 2]
+print(e.index(8))
+print(e.count(5))
+
+f = [5, 1, 8, 3, 9, 2]
+g = [10, 20]
+f.extend(g)
+print(f)
+
+h = [5, 1, 8, 3, 9, 2]
+h2 = h.copy()
+h2.append(100)
+print(h)
+print(h2)
+""", "[1, 2, 3, 5, 8, 9]\n[2, 9, 3, 8, 1, 5]\n[99, 5, 1, 8, 3, 9, 2]\n[5, 1, 3, 9, 2]\n2\n1\n[5, 1, 8, 3, 9, 2, 10, 20]\n[5, 1, 8, 3, 9, 2]\n[5, 1, 8, 3, 9, 2, 100]\n"),
     # B7: Import / module system tests
      # These require utils.py to be in the same directory
      ("b7_import.py", []),
