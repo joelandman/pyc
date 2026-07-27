@@ -642,9 +642,9 @@ struct MatchObj {
 };
 
 // Forward declarations for the re helpers. Definitions are below.
-extern "C" PyObject* PyBuiltin_ReFinditer(PyObject* pattern, PyObject* subject);
-extern "C" PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject);
-extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern);
+extern "C" PyObject* PyBuiltin_ReFinditer(PyObject* pattern, PyObject* subject, PyObject* flags);
+extern "C" PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject, PyObject* flags);
+extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern, PyObject* flags);
 extern "C" PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj);
 
 // datetime support: two more opaque-handle types, same pattern as
@@ -2538,6 +2538,21 @@ static PyObject* makeReModuleDict() {
     add("match",    "PyBuiltin_ReMatch");
     add("search",   "PyBuiltin_ReSearch");
     add("sub",      "PyBuiltin_ReSub");
+    add("split",    "PyBuiltin_ReSplit");
+    // Real flag values (matching CPython's re.IGNORECASE=2/MULTILINE=8/
+    // DOTALL=16 exactly) so `re.IGNORECASE` etc. evaluate to a real int
+    // usable both positionally and via `flags=` — previously these were
+    // undefined (no dict entry at all), silently resolving to None.
+    auto addInt = [&](const char* name, long v) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* val = PyInt_FromLong(v);
+        PyDict_SetItem(d, k, val);
+        Py_DECREF(k);
+        Py_DECREF(val);
+    };
+    addInt("IGNORECASE", 2);
+    addInt("MULTILINE", 8);
+    addInt("DOTALL", 16);
     return d;
 }
 
@@ -3996,12 +4011,26 @@ static MatchObj* asMatchObj(PyObject* o) {
     return reinterpret_cast<MatchObj*>(o->value);
 }
 
-static pcre2_code* compileRegex(const std::string& pat, std::string& err) {
+// Translates the small subset of Python re flag bits pyc supports
+// (IGNORECASE=2, MULTILINE=8, DOTALL=16 — real CPython values, see
+// makeReModuleDict below) into the corresponding PCRE2 compile options.
+// Unrecognized bits are silently ignored (matches this codebase's
+// existing "cover the common cases" precedent elsewhere, e.g. struct's
+// unsupported format codes).
+static uint32_t pyc_re_flags_to_pcre2(int64_t flags) {
+    uint32_t opts = 0;
+    if (flags & 2)  opts |= PCRE2_CASELESS;   // re.IGNORECASE
+    if (flags & 8)  opts |= PCRE2_MULTILINE;  // re.MULTILINE
+    if (flags & 16) opts |= PCRE2_DOTALL;     // re.DOTALL
+    return opts;
+}
+
+static pcre2_code* compileRegex(const std::string& pat, std::string& err, uint32_t options = 0) {
     int errcode = 0;
     PCRE2_SIZE erroffset = 0;
     pcre2_code* code = pcre2_compile(
         (PCRE2_SPTR)pat.c_str(), (PCRE2_SIZE)pat.size(),
-        0, &errcode, &erroffset, nullptr);
+        options, &errcode, &erroffset, nullptr);
     if (!code) {
         PCRE2_UCHAR buf[256];
         pcre2_get_error_message(errcode, buf, sizeof(buf));
@@ -4009,6 +4038,13 @@ static pcre2_code* compileRegex(const std::string& pat, std::string& err) {
         return nullptr;
     }
     return code;
+}
+
+// Unboxes a flags argument (int, or null/None meaning "no flags") the
+// same way count/maxsplit arguments are unboxed elsewhere in this file.
+static uint32_t pyc_re_unbox_flags(PyObject* flags) {
+    if (!flags || (flags->type != 0 && flags->type != 5)) return 0;
+    return pyc_re_flags_to_pcre2(flags->value);
 }
 
 // Run a regex against subject and return a list of Match objects (type 9).
@@ -4054,10 +4090,10 @@ static PyObject* runRegexAll(pcre2_code* code, const std::string& subject) {
     return result;
 }
 
-extern "C" PyObject* PyBuiltin_ReFinditer(PyObject* pattern, PyObject* subject) {
+extern "C" PyObject* PyBuiltin_ReFinditer(PyObject* pattern, PyObject* subject, PyObject* flags) {
     if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
     std::string err;
-    pcre2_code* code = compileRegex(pattern->str, err);
+    pcre2_code* code = compileRegex(pattern->str, err, pyc_re_unbox_flags(flags));
     if (!code) {
         std::fprintf(stderr, "re.error: %s\n", err.c_str());
         return nullptr;
@@ -4067,10 +4103,10 @@ extern "C" PyObject* PyBuiltin_ReFinditer(PyObject* pattern, PyObject* subject) 
     return result;
 }
 
-extern "C" PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject) {
+extern "C" PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject, PyObject* flags) {
     if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
     std::string err;
-    pcre2_code* code = compileRegex(pattern->str, err);
+    pcre2_code* code = compileRegex(pattern->str, err, pyc_re_unbox_flags(flags));
     if (!code) {
         std::fprintf(stderr, "re.error: %s\n", err.c_str());
         return nullptr;
@@ -4129,23 +4165,19 @@ extern "C" PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj) {
     return PyUnicode_FromString(mo->subject.substr(start, end - start).c_str());
 }
 
-// re.search(pattern, subject) — return a Match object (type 9) for the
-// first match, or None if no match. We treat re.search as a 2-arg
-// helper (ignore re.IGNORECASE etc. for now).
-extern "C" PyObject* PyBuiltin_ReSearch(PyObject* pattern, PyObject* subject) {
+// re.search(pattern, subject, flags=0) — return a Match object (type 9)
+// for the first match, or None if no match. Previously hardcoded
+// PCRE2_CASELESS unconditionally here (a real bug: every re.search/
+// re.match call was always case-insensitive regardless of flags,
+// confirmed against real CPython). Fixed by compiling case-sensitive by
+// default and only translating re.IGNORECASE (and MULTILINE/DOTALL) into
+// PCRE2 options when actually passed — see pyc_re_flags_to_pcre2.
+extern "C" PyObject* PyBuiltin_ReSearch(PyObject* pattern, PyObject* subject, PyObject* flags) {
     if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
     std::string err;
-    // We always compile with PCRE2_CASELESS for now so re.IGNORECASE
-    // is implicit. This matches what the test/regex.py expects.
-    int errcode = 0;
-    PCRE2_SIZE erroffset = 0;
-    pcre2_code* code = pcre2_compile(
-        (PCRE2_SPTR)pattern->str.c_str(), (PCRE2_SIZE)pattern->str.size(),
-        PCRE2_CASELESS, &errcode, &erroffset, nullptr);
+    pcre2_code* code = compileRegex(pattern->str, err, pyc_re_unbox_flags(flags));
     if (!code) {
-        PCRE2_UCHAR buf[256];
-        pcre2_get_error_message(errcode, buf, sizeof(buf));
-        std::fprintf(stderr, "re.error: %s at %zu\n", (char*)buf, erroffset);
+        std::fprintf(stderr, "re.error: %s\n", err.c_str());
         return nullptr;
     }
     pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, nullptr);
@@ -4179,10 +4211,10 @@ extern "C" PyObject* PyBuiltin_ReSearch(PyObject* pattern, PyObject* subject) {
     return m;
 }
 
-extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern) {
+extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern, PyObject* flags) {
     if (!pattern || pattern->type != 3) return nullptr;
     std::string err;
-    pcre2_code* code = compileRegex(pattern->str, err);
+    pcre2_code* code = compileRegex(pattern->str, err, pyc_re_unbox_flags(flags));
     if (!code) { std::fprintf(stderr, "re.error: %s\n", err.c_str()); return nullptr; }
     PyObject* o = allocObject(8);
     if (!o) { pcre2_code_free(code); return nullptr; }
@@ -7704,16 +7736,16 @@ static PyObject* makeSubprocessModuleDict() {
     return d;
 }
 
-// re.sub(pattern, repl, subject, count) — replace matches. Uses
+// re.sub(pattern, repl, subject, count, flags) — replace matches. Uses
 // pcre2_substitute for full regex semantics (including backreferences
 // like \1, \2 in the replacement). The `count` argument limits
 // replacements; a non-positive or null count means "all".
 extern "C" PyObject* PyBuiltin_ReSub(PyObject* pattern, PyObject* repl,
-                                      PyObject* subject, PyObject* count) {
+                                      PyObject* subject, PyObject* count, PyObject* flags) {
     if (!pattern || pattern->type != 3 || !repl || repl->type != 3 ||
         !subject || subject->type != 3) return nullptr;
     std::string err;
-    pcre2_code* code = compileRegex(pattern->str, err);
+    pcre2_code* code = compileRegex(pattern->str, err, pyc_re_unbox_flags(flags));
     if (!code) {
         std::fprintf(stderr, "re.error: %s\n", err.c_str());
         return nullptr;
@@ -7784,26 +7816,32 @@ extern "C" PyObject* PyBuiltin_ReSub(PyObject* pattern, PyObject* repl,
     return PyUnicode_FromString(out.c_str());
 }
 
-// re.split(pattern, subject, maxsplit) — not yet implemented.
-// re.split(pattern, subject, maxsplit) — split subject on regex matches
-// (literal if the pattern contains no regex metacharacters). We honour
-// the empty-match semantics: an empty pattern or a zero-width match
-// advances one position to avoid infinite loops.
-extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject, PyObject* /*maxsplit*/) {
+// re.split(pattern, subject, maxsplit, flags) — split subject on regex
+// matches (literal if the pattern contains no regex metacharacters). We
+// honour the empty-match semantics: an empty pattern or a zero-width
+// match advances one position to avoid infinite loops. `maxsplit`, if
+// positive, caps the number of splits performed (any non-positive or
+// null value means "no limit", matching this file's existing convention
+// for re.sub's `count`).
+extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject,
+                                        PyObject* maxsplit, PyObject* flags) {
     if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
     std::string err;
-    pcre2_code* code = compileRegex(pattern->str, err);
+    pcre2_code* code = compileRegex(pattern->str, err, pyc_re_unbox_flags(flags));
     if (!code) {
         std::fprintf(stderr, "re.error: %s\n", err.c_str());
         return nullptr;
     }
+    long maxSplits = (maxsplit && (maxsplit->type == 0 || maxsplit->type == 5)) ? maxsplit->value : 0;
     pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, nullptr);
     if (!md) { pcre2_code_free(code); return nullptr; }
     PCRE2_SPTR subj = (PCRE2_SPTR)subject->str.c_str();
     int rc = pcre2_match(code, subj, (PCRE2_SIZE)subject->str.size(), 0, 0, md, nullptr);
     PyObject* result = PyList_New(0);
     PCRE2_SIZE offset = 0;
+    int splitsDone = 0;
     while (rc >= 0) {
+        if (maxSplits > 0 && splitsDone >= maxSplits) break;
         PCRE2_SIZE* ovector = pcre2_get_ovector_pointer(md);
         PCRE2_SIZE start = ovector[0];
         PCRE2_SIZE end   = ovector[1];
@@ -7813,6 +7851,7 @@ extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject, PyO
                 std::string piece = subject->str.substr(offset, (start - offset));
                 PyObject* s = PyUnicode_FromString(piece.c_str());
                 result->list.push_back(s);
+                ++splitsDone;
             }
             offset = end + 1;
             if (offset > subject->str.size()) break;
@@ -7823,6 +7862,7 @@ extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject, PyO
         std::string piece = subject->str.substr(offset, start - offset);
         PyObject* s = PyUnicode_FromString(piece.c_str());
         result->list.push_back(s);
+        ++splitsDone;
         offset = end;
         if (offset >= subject->str.size()) break;
         rc = pcre2_match(code, subj, (PCRE2_SIZE)subject->str.size(), offset, 0, md, nullptr);

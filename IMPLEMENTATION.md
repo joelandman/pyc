@@ -337,6 +337,64 @@ here, but worth flagging prominently since `namedtuple`'s dict-backing
 made it directly visible for the first time in this session's stdlib
 work.
 
+### `re.IGNORECASE` — Severe Pre-Existing Bug, Found and Fixed
+`PyBuiltin_ReSearch` (`Runtime.cpp`, the function backing both
+`re.search` and `re.match` — the latter is aliased to it, a separate
+pre-existing gap noted below) had its own inlined `pcre2_compile` call
+that hardcoded `PCRE2_CASELESS` unconditionally, instead of going
+through the shared `compileRegex()` helper every other `re.*` function
+already used correctly (`options=0`, case-sensitive). The comment
+sitting directly above the bug even said *"We always compile with
+PCRE2_CASELESS for now so re.IGNORECASE is implicit. This matches what
+test/regex.py expects."* — i.e. the existing test suite's one flag-using
+case (`re.search(r"hello", s, re.IGNORECASE)`) passed only because the
+bug happened to produce the flag's effect unconditionally, not because
+the flag was actually read. Confirmed against real CPython:
+`re.search("Hello", "hello")` incorrectly matched under the old code.
+Compounding this, `re.IGNORECASE`/`MULTILINE`/`DOTALL` didn't exist as
+real values at all before this fix — no entry in `makeReModuleDict()` —
+so a bare `re.IGNORECASE` reference silently evaluated to `None` via the
+generic dict-miss path, and even where the compiler's `re.*` dispatch
+accepted a 3rd positional argument, it was explicitly discarded (comment:
+*"ignore extra args like re.IGNORECASE"*).
+
+Fixed by: (1) removing the hardcoded flag and making `compileRegex()`
+accept a real PCRE2 options bitmask, (2) adding a small
+`pyc_re_flags_to_pcre2()` translator for the three flags pyc supports,
+(3) adding real `IGNORECASE=2`/`MULTILINE=8`/`DOTALL=16` int-valued dict
+entries to `makeReModuleDict()` (mirroring how `math.pi`/`math.e` are
+real dict entries, not placeholders), (4) extracting `flags=` (keyword
+or positional) in `Compiler.cpp`'s `re.*` AST-structural dispatch block,
+the same technique `re.sub`'s pre-existing `count=` extraction already
+used. Every `re.*` runtime function gained a trailing `flags` parameter
+as a result (`PyBuiltin_ReSearch`/`ReFinditer`/`ReFindall`: 2→3 args;
+`PyBuiltin_ReCompile`: 1→2 args; `PyBuiltin_ReSub`: 4→5 args;
+`PyBuiltin_ReSplit`: 3→4 args) — a real, deliberate signature change
+across the module, not additive-only.
+
+**Adjacent gaps closed while touching this code, found along the way**:
+`re.split`'s `maxsplit` parameter was declared but literally named as a
+commented-out unused parameter (`PyObject* /*maxsplit*/`) — accepted
+syntactically, silently ignored. Now implemented for real. `"split"` was
+also missing from both `makeReModuleDict()` and the `re` entry in
+`syntheticModuleExports()` — meaning `import re as x; x.split(...)`
+(the non-structural, aliased-import path) would have failed to resolve
+at all, even though `re.split(...)` (the literal-name path, which is
+AST-structurally intercepted) worked. Both fixed.
+
+**Documented, not-fixed gap** (pre-existing, out of scope for this
+fix): `re.match(...)` is dispatched to the exact same
+`PyBuiltin_ReSearch` as `re.search(...)` (`"match → search for now"`),
+which is *unanchored* — real `re.match` only matches at the start of the
+string. Confirmed: `re.match("b", "abc")` incorrectly matches under pyc
+(returns a match), where real CPython's `re.match` correctly returns
+`None`. Fixing this would need a small `PCRE2_ANCHORED` addition to the
+flags passed specifically for the `match` call path; not done here since
+it's unrelated to the IGNORECASE/flags bug this session fixed, and
+conflating an anchoring-semantics fix with a flags fix risked scope
+creep in a single change. Left as a known, separate, honestly-documented
+gap.
+
 ## Known Limitations
 
 ### Performance

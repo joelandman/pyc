@@ -7321,24 +7321,37 @@ class LoweringVisitor {
             if (methodName == "finditer" || methodName == "findall" || methodName == "compile" ||
                 methodName == "search" || methodName == "match" || methodName == "sub" ||
                 methodName == "split") {
+                // Scans node->children for a Keyword argument by name (same
+                // technique `count=` already used) — the generic `args`
+                // vector excludes keywords entirely, so any keyword-passed
+                // value (count=, flags=, maxsplit=) must be pulled from the
+                // raw AST directly.
+                auto extractKw = [&](const char* name) -> std::string {
+                    for (size_t i = 1; i < node->children.size(); ++i) {
+                        const auto* ch = node->children[i].get();
+                        if (ch && ch->type == "Keyword" && ch->id == name && !ch->children.empty()) {
+                            return lowerExpr(ch->children[0].get());
+                        }
+                    }
+                    return "";
+                };
                 std::string pat = args.size() > 0 ? args[0] : "";
                 std::string subj = args.size() > 1 ? args[1] : "";
                 if (methodName == "sub") {
                     std::string rep = args.size() > 1 ? args[1] : "";
                     std::string sub = args.size() > 2 ? args[2] : "";
-                    std::string cnt;
-                    // Look for the `count=...` keyword in the call.
-                    for (size_t i = 1; i < node->children.size(); ++i) {
-                        const auto* ch = node->children[i].get();
-                        if (ch && ch->type == "Keyword" && ch->id == "count" &&
-                            !ch->children.empty()) {
-                            cnt = lowerExpr(ch->children[0].get());
-                        }
-                    }
-                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_ReSub", pat, rep, sub, cnt}, res);
+                    std::string cnt = extractKw("count");
+                    if (cnt.empty() && args.size() > 3) cnt = args[3];
+                    std::string flg = extractKw("flags");
+                    if (flg.empty() && args.size() > 4) flg = args[4];
+                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_ReSub", pat, rep, sub, cnt, flg}, res);
                     return res;
                 } else if (methodName == "split") {
-                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_ReSplit", pat, subj, args.size() > 2 ? args[2] : ""}, res);
+                    std::string maxsplit = extractKw("maxsplit");
+                    if (maxsplit.empty() && args.size() > 2) maxsplit = args[2];
+                    std::string flg = extractKw("flags");
+                    if (flg.empty() && args.size() > 3) flg = args[3];
+                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_ReSplit", pat, subj, maxsplit, flg}, res);
                     return res;
                 }
                 std::string fn;
@@ -7348,12 +7361,14 @@ class LoweringVisitor {
                 else if (methodName == "search")    fn = "PyBuiltin_ReSearch";
                 else if (methodName == "match")     fn = "PyBuiltin_ReSearch";  // match → search for now
                 if (methodName == "compile") {
-                    ir.addInstruction(currentFunc, "call", {fn, pat}, res);
+                    std::string flg = extractKw("flags");
+                    if (flg.empty() && args.size() > 1) flg = args[1];
+                    ir.addInstruction(currentFunc, "call", {fn, pat, flg}, res);
                     noteType(res, "regex");
                 } else {
-                    // Take the first two positional args and ignore extra
-                    // args like re.IGNORECASE (case-insensitive flag).
-                    ir.addInstruction(currentFunc, "call", {fn, pat, subj}, res);
+                    std::string flg = extractKw("flags");
+                    if (flg.empty() && args.size() > 2) flg = args[2];
+                    ir.addInstruction(currentFunc, "call", {fn, pat, subj, flg}, res);
                     if (methodName == "finditer" || methodName == "findall") {
                         noteType(res, "match_list");
                     } else if (methodName == "search" || methodName == "match") {
@@ -8903,7 +8918,8 @@ static std::string sanitizeModuleIdent(const std::string& dottedName) {
 // pyc_import_failed's normal dict-building path.
 static const std::unordered_map<std::string, std::vector<std::string>>& syntheticModuleExports() {
     static const std::unordered_map<std::string, std::vector<std::string>> table = {
-        {"re",         {"finditer", "findall", "compile", "match", "search", "sub"}},
+        {"re",         {"finditer", "findall", "compile", "match", "search", "sub", "split",
+                        "IGNORECASE", "MULTILINE", "DOTALL"}},
         {"os",         {"environ", "path", "unlink", "remove", "rename", "getcwd",
                         "listdir", "makedirs"}},
         {"subprocess", {"call", "check_output"}},

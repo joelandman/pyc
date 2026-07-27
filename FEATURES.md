@@ -179,6 +179,41 @@ f(b=3, a=4)                    keyword call arguments
   a comprehension when destructuring multiple values per iteration. See
   IMPLEMENTATION.md.
 
+## Regex (re)
+
+PCRE2-backed. `re.search`/`re.match`/`re.finditer`/`re.findall`/`re.sub`/
+`re.split`/`re.compile`, plus `re.IGNORECASE`/`re.MULTILINE`/`re.DOTALL`
+flag support (positional or `flags=` keyword), matching CPython's real
+flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
+`count=`/`re.split`'s `maxsplit=` are supported. Match objects support
+`.group(i)`.
+
+- **Real bug fixed**: `re.search`/`re.match` used to hardcode
+  `PCRE2_CASELESS` unconditionally, so **every** match was
+  case-insensitive regardless of any flag — `re.search("Hello",
+  "hello")` incorrectly matched, and `re.IGNORECASE` itself didn't exist
+  as a real value (a bare reference silently resolved to `None`, and was
+  discarded even when passed positionally). Confirmed against real
+  CPython, fixed by compiling case-sensitive by default and threading a
+  real flags argument through every `re.*` function via the existing
+  `compileRegex()` helper.
+- `re.split`'s `maxsplit` was previously accepted syntactically but
+  silently ignored (a no-op parameter) — now actually implemented.
+  `"split"` was also missing from the module's synthetic dict/export
+  list entirely (`import re as x; x.split(...)` would have failed) —
+  added.
+- **Documented, not-fixed gap** (pre-existing, unrelated to the flags
+  fix): `re.match(...)` is routed to the same implementation as
+  `re.search(...)` rather than being anchored at the start of the
+  string — `re.match("b", "abc")` incorrectly matches. Real anchoring
+  would need a small `PCRE2_ANCHORED` addition; left as-is since it
+  wasn't part of this fix's scope.
+- **Not implemented**: `re.VERBOSE`/`re.ASCII`/`re.UNICODE` and other
+  less-common flags; `.groups()`/`.groupdict()`/named capture groups;
+  compiled-pattern-object methods (`re.compile(p).search(...)` — the
+  compiled object is currently inert, only the free `re.*` functions
+  work); custom delimiters/dialects beyond PCRE2 syntax itself.
+
 ## Standard Library Stubs
 
 - `os.path.exists()`, `os.path.isfile()`, `os.path.isdir()`, `os.path.join()`,

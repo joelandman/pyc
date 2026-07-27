@@ -1544,6 +1544,50 @@ dd2['x'] += 2
 print(dd2['x'])
 print(dd2['y'])
 """, "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4, 5]\n0\n[1, 2, 3, 4, 5]\n[5, 1, 2, 3, 4]\n[2, 3, 4, 5, 1]\n[2, 3, 4, 5]\n3 4\n30\n[1, 2]\n[3]\n[]\n7\n0\n"),
+    # re: real bug fix — re.search/re.match used to hardcode PCRE2_CASELESS
+    # unconditionally, so every match was case-insensitive regardless of
+    # any flag (confirmed against real CPython: re.search("Hello","hello")
+    # used to incorrectly match). Fixed by compiling case-sensitive by
+    # default and adding real re.IGNORECASE/MULTILINE/DOTALL flag support
+    # (both positional and flags= keyword) across search/match/finditer/
+    # findall/sub/split/compile — previously re.IGNORECASE etc. didn't
+    # exist as real values at all (bare attribute read silently resolved
+    # to None) and were discarded even when passed. Also implemented
+    # re.split's maxsplit (previously accepted syntactically, silently
+    # ignored) and added the previously-missing "split" module-dict/
+    # export entry (import re as x; x.split(...) used to fail).
+    ("""
+import re
+
+print(re.search("Hello", "hello world") is None)
+print(re.search("hello", "hello world") is not None)
+
+m = re.search("hello", "HELLO WORLD", re.IGNORECASE)
+print(m.group(0))
+m2 = re.search("hello", "HELLO WORLD", flags=re.IGNORECASE)
+print(m2.group(0))
+
+print(re.match("hello", "hello world") is not None)
+print(re.match("Hello", "hello world") is None)
+
+print(re.findall("a", "AaAaA", re.IGNORECASE))
+for mm in re.finditer("a", "AaA", re.IGNORECASE):
+    print(mm.group(0))
+
+print(re.sub("cat", "dog", "Cat cat CAT", flags=re.IGNORECASE))
+print(re.sub("cat", "dog", "Cat cat CAT", count=1, flags=re.IGNORECASE))
+
+print(re.split(",", "a,b,c,d"))
+print(re.split(",", "a,b,c,d", maxsplit=2))
+print(re.split("a", "aXaYaZ", flags=re.IGNORECASE))
+
+p = re.compile("hello", re.IGNORECASE)
+print(p is not None)
+
+print(re.findall("^b", "a\\nb\\nc", re.MULTILINE))
+print(re.search("a.b", "a\\nb", re.DOTALL) is not None)
+print(re.search("a.b", "a\\nb") is not None)
+""", "True\nTrue\nHELLO\nHELLO\nTrue\nTrue\n['A', 'a', 'A', 'a', 'A']\nA\na\nA\ndog dog dog\ndog cat CAT\n['a', 'b', 'c', 'd']\n['a', 'b', 'c,d']\n['', 'X', 'Y', 'Z']\nTrue\n['b']\nTrue\nFalse\n"),
     # hashlib / base64 / struct (synthetic; no bytes type — see
     # IMPLEMENTATION.md). Real CPython's hashlib/base64 both raise
     # TypeError on a plain str (they require bytes), so the live

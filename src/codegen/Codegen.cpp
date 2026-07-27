@@ -486,18 +486,23 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Function::Create(t, llvm::Function::ExternalLinkage, "PyString_ReplaceN", module.get());
     }
 
-    // re module: PyBuiltin_ReFinditer/ReFindall/ReCompile/ReSearch (2-arg),
-    // PyBuiltin_ReMatchGroup (2-arg), PyBuiltin_ReSub (4-arg for count).
-    for (const char* n : {"PyBuiltin_ReFinditer","PyBuiltin_ReFindall",
-                          "PyBuiltin_ReCompile","PyBuiltin_ReSearch",
-                          "PyBuiltin_ReMatchGroup"}) twoArg(n);
+    // re module: PyBuiltin_ReMatchGroup stays 2-arg (m, idx). The rest all
+    // grew a trailing `flags` param once re.IGNORECASE/MULTILINE/DOTALL
+    // support was added: ReFinditer/ReFindall/ReSearch (pattern, subject,
+    // flags — 3-arg), ReCompile (pattern, flags — 2-arg, now genuinely
+    // using the 2nd slot), ReSub (pattern, repl, subject, count, flags —
+    // 5-arg), ReSplit (pattern, subject, maxsplit, flags — 4-arg, maxsplit
+    // now actually implemented too).
+    twoArg("PyBuiltin_ReMatchGroup");
+    twoArg("PyBuiltin_ReCompile");
+    for (const char* n : {"PyBuiltin_ReFinditer","PyBuiltin_ReFindall","PyBuiltin_ReSearch"}) threeArg(n);
     {
+        llvm::FunctionType* t5 = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(t5, llvm::Function::ExternalLinkage, "PyBuiltin_ReSub", module.get());
         llvm::FunctionType* t4 = llvm::FunctionType::get(pyObjectPtrTy,
             {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
-        llvm::Function::Create(t4, llvm::Function::ExternalLinkage, "PyBuiltin_ReSub", module.get());
-        llvm::FunctionType* t3 = llvm::FunctionType::get(pyObjectPtrTy,
-            {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
-        llvm::Function::Create(t3, llvm::Function::ExternalLinkage, "PyBuiltin_ReSplit", module.get());
+        llvm::Function::Create(t4, llvm::Function::ExternalLinkage, "PyBuiltin_ReSplit", module.get());
     }
 
     // Builtins: sum, sorted, any, all; isinstance (2-arg)
