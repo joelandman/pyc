@@ -1221,6 +1221,11 @@ class LoweringVisitor {
                         if (mod == "pathlib" && origName == "Path") {
                             pathCtorAliases.insert(name);
                         }
+                        // `from hashlib import md5/sha1/sha256 [as X]` — same rationale.
+                        if (mod == "hashlib" &&
+                            (origName == "md5" || origName == "sha1" || origName == "sha256")) {
+                            hashlibCtorAliases[name] = origName;
+                        }
 
                         std::string attrKey = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
@@ -2804,6 +2809,10 @@ class LoweringVisitor {
     // rationale as datetimeCtorAliases, but a plain set since Path has
     // only one constructor (no date/datetime/timedelta-style variants).
     std::unordered_set<std::string> pathCtorAliases;
+    // Local names bound via `from hashlib import md5/sha1/sha256 [as X]`
+    // — same rationale as datetimeCtorAliases, mapping to which hash
+    // algorithm ("md5"/"sha1"/"sha256").
+    std::unordered_map<std::string, std::string> hashlibCtorAliases;
     // User functions (defs or synthetic lambdas) that contain a return of a
     // callable token value. Calls to them have their result temp marked so
     // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
@@ -3837,6 +3846,30 @@ class LoweringVisitor {
         return res;
     }
 
+    // Shared by both `hashlib.md5(...)`-qualified construction
+    // (lowerMethodCall) and bare `md5(...)` construction after a
+    // from-import (lowerCall, via hashlibCtorAliases). `which` is
+    // "md5"/"sha1"/"sha256"; single positional/keyword `data=` argument
+    // (matches real hashlib usage — data is always known upfront, no
+    // .update() streaming support).
+    std::string lowerHashlibConstruct(const std::string& which, const ASTNode* node,
+                                       const std::vector<std::string>& posArgs) {
+        std::string arg;
+        for (size_t i = 1; i < node->children.size(); ++i) {
+            const auto* ch = node->children[i].get();
+            if (ch && ch->type == "Keyword" && ch->id == "data" && !ch->children.empty()) {
+                arg = lowerExpr(ch->children[0].get());
+                break;
+            }
+        }
+        if (arg.empty() && !posArgs.empty()) arg = posArgs[0];
+        std::string fn = which == "md5" ? "PyHashlib_Md5" : which == "sha1" ? "PyHashlib_Sha1" : "PyHashlib_Sha256";
+        std::string res = "t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {fn, arg}, res);
+        noteType(res, "hashobj");
+        return res;
+    }
+
     std::string lowerCall(const ASTNode* node) {
         // Method call: obj.method(args) — func is an Attribute node
          if (!node->children.empty() && node->children[0] &&
@@ -3870,6 +3903,20 @@ class LoweringVisitor {
                 if (ch && ch->type != "Keyword") posArgs.push_back(lowerExpr(ch));
             }
             return lowerPathConstruct(node, posArgs);
+        }
+        // hashlib.md5/sha1/sha256 bound to a bare name via `from hashlib
+        // import md5` (etc.) — construct directly, same as the
+        // `hashlib.md5(...)`-qualified form in lowerMethodCall.
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Name" &&
+            hashlibCtorAliases.count(node->children[0]->id) &&
+            !isShadowedLocal(node->children[0]->id)) {
+            std::vector<std::string> posArgs;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type != "Keyword") posArgs.push_back(lowerExpr(ch));
+            }
+            return lowerHashlibConstruct(hashlibCtorAliases[node->children[0]->id], node, posArgs);
         }
         // super() call — returns a proxy that looks up methods on the parent class
         if (!node->children.empty() && node->children[0] &&
@@ -7250,6 +7297,30 @@ class LoweringVisitor {
             }
             if (isPathlib) return lowerPathConstruct(node, args);
         }
+        // hashlib.md5/sha1/sha256(...) construction — literal "hashlib"
+        // name or any `import hashlib as X` alias of it.
+        if (attr->children.size() >= 1 && attr->children[0] &&
+            attr->children[0]->type == "Name" &&
+            (methodName == "md5" || methodName == "sha1" || methodName == "sha256")) {
+            const std::string& baseId = attr->children[0]->id;
+            bool isHashlib = (baseId == "hashlib");
+            if (!isHashlib) {
+                auto it = moduleNameAliases.find(baseId);
+                isHashlib = (it != moduleNameAliases.end() && it->second == "hashlib");
+            }
+            if (isHashlib) return lowerHashlibConstruct(methodName, node, args);
+        }
+        // hashobj.hexdigest() — typeOf-gated (same fast-path-only
+        // limitation as datetime/pathlib's methods: works after
+        // construction/assignment/return, not through an untyped function
+        // parameter). Direct call, no Pyc_GetItem/Pyc_Apply — the hash
+        // object dict has no "hexdigest" entry at all, sidestepping the
+        // receiver-prepending pitfall found and fixed in open()/.write().
+        if (methodName == "hexdigest" && typeOf(obj) == "hashobj") {
+            ir.addInstruction(currentFunc, "call", {"PyHashlib_Hexdigest", obj}, res, "str");
+            noteType(res, "str");
+            return res;
+        }
         // file.write(x) — pre-existing bug found while investigating this
         // phase's calling conventions: open()'s returned dict used to be
         // typed "dict", so .write() fell through to the generic
@@ -8516,6 +8587,9 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
         {"collections", {"Counter", "most_common"}},
         {"datetime",   {"date", "datetime", "timedelta"}},
         {"pathlib",    {"Path"}},
+        {"hashlib",    {"md5", "sha1", "sha256"}},
+        {"base64",     {"b64encode", "b64decode"}},
+        {"struct",     {"pack", "unpack"}},
     };
     return table;
 }

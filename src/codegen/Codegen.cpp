@@ -341,6 +341,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     }
     llvm::FunctionType* joinpathTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(joinpathTy, llvm::Function::ExternalLinkage, "PyPathlib_Joinpath", module.get());
+    // hashlib: same direct-call convention. PyHashlib_Md5/Sha1/Sha256 take
+    // the data string; PyHashlib_Hexdigest takes the hash-object receiver.
+    for (const char* name : {"PyHashlib_Md5", "PyHashlib_Sha1", "PyHashlib_Sha256", "PyHashlib_Hexdigest"}) {
+        llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, name, module.get());
+    }
     // setjmp is special: declaration with the ReturnsTwice attribute.
     {
         llvm::FunctionType* setjmpTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {int8PtrTy}, false);

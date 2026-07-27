@@ -75,6 +75,24 @@ which does report the right class name) — lower priority since
 `isinstance`/`type()` checks on paths are rare. See Known Limitations below
 for the same method-call/parameter-passing caveat as `datetime`.
 
+### `hashlib` / `base64` / `struct` — No `bytes` Type, Str-as-Byte-Buffer Throughout
+pyc has no distinct `bytes` type — everything is `str` (type 3, unicode).
+For these three modules, binary data is represented as a plain `str` whose
+characters hold byte values 0-255. This is correct for ASCII/text content
+(the dominant real-world use: hashing strings, base64-encoding tokens,
+packing/unpacking numeric fields) but is not a faithful `bytes` emulation
+— no `b'...'` repr, no distinct type identity, and real CPython's
+`hashlib`/`base64` functions actually *reject* a plain `str` argument with
+`TypeError` (they require real `bytes`), so pyc's versions are
+deliberately more permissive, not behaviorally identical. This was a
+conscious, user-approved scoping decision (the alternative — implementing
+a real `bytes` type — was explicitly declined as a separate, larger
+project) rather than an oversight. `hashlib` has no `.update()` (digests
+are computed eagerly at construction, since the data is always fully
+known in the call already) and no `.digest()` (raw-bytes form — only
+`.hexdigest()`). `struct` supports the common format codes and
+endianness prefixes but not native alignment padding or `n`/`N`.
+
 ## Known Limitations
 
 ### Performance
@@ -256,6 +274,23 @@ for the same method-call/parameter-passing caveat as `datetime`.
   datetime types (14/15) deliberately avoid `allocObject()`, using
   `new PyObject()` instead — the same safe pattern `PyDict_New`/
   `PyList_New`/`PyUnicode_FromString` already use.
+- **Fixed while adding `struct`**: `PyUnicode_FromString(const char* s)` —
+  the primary `str` constructor, used almost everywhere a `str` is
+  created — takes a bare `const char*` and assigns it into `PyObject.str`
+  via `std::string`'s implicit-length (`strlen`-based) constructor. Any
+  content with an embedded `0x00` byte silently **truncates** at that
+  byte. Invisible for ordinary text (no legitimate `str` content contains
+  NUL), but `struct.pack`'s output routinely does — e.g.
+  `struct.pack("<i", 1000)` is the 4 bytes `E8 03 00 00`, and the old code
+  path returned a 2-byte string. Fixed by adding a length-explicit
+  `PyUnicode_FromStringAndSize(const char*, size_t)` (using
+  `std::string::assign(s, n)`, which preserves embedded NULs and the
+  exact length) and switching `struct.pack`'s and `base64.b64decode`'s
+  return values to use it — the two new call sites that can produce
+  arbitrary embedded-NUL content. Every *other* existing
+  `PyUnicode_FromString` call site legitimately only ever constructs from
+  NUL-free text (literals, formatted numbers, etc.), so this was scoped
+  to just the two new sites rather than an audit of the whole file.
 
 ### IR
 - **Linear instruction list per function**: No CFG in IR; control flow is represented via labels and branches

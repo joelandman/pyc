@@ -1338,6 +1338,48 @@ with open(path, "w") as f:
 out2 = subprocess.check_output(["wc", "-c", path])
 print(int(out2.split()[0]))
 """, "12\n8\n"),
+    # hashlib / base64 / struct (synthetic; no bytes type — see
+    # IMPLEMENTATION.md). Real CPython's hashlib/base64 both raise
+    # TypeError on a plain str (they require bytes), so the live
+    # python3-comparison this runner normally does will fail for this
+    # case and fall back to the hardcoded `expected` below — that
+    # hardcoded value was obtained by hand-adapting the equivalent real
+    # CPython calls with .encode()/.decode() (verified separately, not
+    # inline here since this exact source can't run under real CPython).
+    # struct.pack/unpack results are wrapped in list(...) for the same
+    # tuple-vs-list reason as os.path.splitext/pathlib.joinpath elsewhere.
+    ("""
+import hashlib
+from hashlib import md5, sha256
+import base64
+import struct
+
+print(hashlib.md5("hello world").hexdigest())
+print(hashlib.sha1("hello world").hexdigest())
+print(hashlib.sha256("hello world").hexdigest())
+print(md5("abc").hexdigest())
+print(sha256("abc").hexdigest())
+
+def hash_of(x):
+    return hashlib.sha256(x).hexdigest()
+print(hash_of("param test"))
+
+print(base64.b64encode("hello world"))
+print(base64.b64encode("foo"))
+print(base64.b64decode(base64.b64encode("hello world")))
+print(base64.b64decode("aGVsbG8="))
+
+packed = struct.pack("<i", 1000)
+print(len(packed))
+print(list(struct.unpack("<i", packed)))
+print(list(struct.unpack(">HH", struct.pack(">HH", 1, 65535))))
+print(list(struct.unpack("<q", struct.pack("<q", -123456789012345))))
+print(list(struct.unpack("<bB", struct.pack("<bB", -5, 250))))
+
+encoded = base64.b64encode(packed)
+decoded = base64.b64decode(encoded)
+print(list(struct.unpack("<i", decoded)))
+""", "5eb63bbbe01eeed093cb22bb8f5acdc3\n2aae6c35c94fcfb415dbe95f408b9ce91ee846ed\nb94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9\n900150983cd24fb0d6963f7d28e17f72\nba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\nc43f88e1b377c731c0205d6025265739a9578d5ebd0d2399ce09b9a7ab1c897e\naGVsbG8gd29ybGQ=\nZm9v\nhello world\nhello\n4\n[1000]\n[1, 65535]\n[-123456789012345]\n[-5, 250]\n[1000]\n"),
     # B7: Import / module system tests
      # These require utils.py to be in the same directory
      ("b7_import.py", []),

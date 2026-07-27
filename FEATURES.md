@@ -301,6 +301,51 @@ f(b=3, a=4)                    keyword call arguments
   `datetime`/`timedelta` arithmetic result temps in the same `lowerBinOp`
   change.
 
+## Hashlib / Base64 / Struct
+
+- `hashlib.md5(data)` / `.sha1(data)` / `.sha256(data)` — digests computed
+  immediately at construction (no `.update()` streaming; data is always
+  fully known upfront in practice). `.hexdigest()` returns the lowercase
+  hex string. MD5/SHA-1/SHA-256 are implemented from scratch (standard
+  algorithms, no OpenSSL/libcrypto dependency — matches `random`'s
+  from-scratch MT19937 precedent), verified byte-for-byte against real
+  `hashlib` output. Works via `import hashlib` and
+  `from hashlib import md5, sha1, sha256` (including aliasing). No
+  `.digest()` (raw bytes — see below), `.update()`, or `.copy()`.
+- `base64.b64encode(s)` / `base64.b64decode(s)` — standard RFC 4648
+  alphabet, implemented from scratch, operating directly on/returning
+  `str` (no `.encode()`/`.decode()` step first, since pyc doesn't have
+  those either — real CPython's `base64.b64encode()` requires an actual
+  `bytes` object and raises `TypeError` on a plain `str`, so pyc's
+  signature is deliberately more permissive here, not identical).
+- `struct.pack(fmt, *values)` / `struct.unpack(fmt, data)` — common format
+  codes (`b`/`B`/`h`/`H`/`i`/`I`/`l`/`L`/`q`/`Q`/`f`/`d`/`s`) and
+  endianness prefixes (`<`/`>`/`!`/`=`, all treated explicitly —
+  `=`/no-prefix defaults to little-endian, matching every platform pyc
+  targets). Unsupported codes (`n`/`N`, native alignment padding) are
+  silently skipped rather than erroring. `struct.unpack` returns a plain
+  list, not a tuple (same documented gap as `os.path.splitext`/itertools).
+- **No `bytes` type**: all three modules represent binary data as a plain
+  `str` (type 3) whose characters hold byte values 0-255. Correct for
+  ASCII/text content (the overwhelming common case — hashing strings,
+  base64-encoding tokens, packing/unpacking numeric fields) but does
+  **not** match CPython's `bytes` object identity, repr (`b'...'`), or
+  encoding semantics for arbitrary non-ASCII/binary content. This is a
+  deliberate, permanent scoping decision (user-confirmed), not a bug to
+  fix quietly later — see IMPLEMENTATION.md.
+- **Newly discovered, fixed while adding this**: `PyUnicode_FromString`
+  (the runtime's primary string constructor, used almost everywhere)
+  takes a `const char*` and relies on `strlen()`/implicit-length
+  construction, so any content with an embedded `0x00` byte gets silently
+  **truncated** — invisible for ordinary text, but `struct.pack`'s output
+  routinely contains embedded NULs (e.g. any little-endian integer field
+  with a zero high byte: `struct.pack("<i", 1000)` is `E8 03 00 00`).
+  Fixed by adding a length-explicit `PyUnicode_FromStringAndSize`
+  constructor and using it for `struct.pack`'s and `base64.b64decode`'s
+  return values specifically (the two places in this session's new code
+  that can produce arbitrary embedded-NUL byte content) — see
+  IMPLEMENTATION.md.
+
 ## Assignment Forms
 
 ```python

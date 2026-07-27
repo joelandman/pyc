@@ -1112,6 +1112,21 @@ PyObject* PyUnicode_FromString(const char* s) {
     return obj;
 }
 
+// Length-explicit variant — needed for str-as-byte-buffer content (struct
+// pack/unpack's binary output routinely contains embedded 0x00 bytes,
+// e.g. any little-endian integer field with a zero high byte).
+// PyUnicode_FromString's const char* + implicit strlen() would silently
+// truncate at the first NUL; this preserves the full byte count via
+// std::string's explicit-length constructor.
+PyObject* PyUnicode_FromStringAndSize(const char* s, size_t n) {
+    alloc_str_count++;
+    PyObject* obj = new PyObject();
+    obj->refcount = 1;
+    obj->type = 3;
+    obj->str.assign(s, n);
+    return obj;
+}
+
 // Convert any PyObject to its string representation (no trailing newline).
 // Named PyStr_FromAny to avoid conflict with CPython's PyObject_Str.
 // Honours class `__str__` / `__repr__` methods (delegates to PyObject_Print
@@ -2504,6 +2519,9 @@ static PyObject* makeRandomModuleDict();
 static PyObject* makeItertoolsModuleDict();
 static PyObject* makeCollectionsModuleDict();
 static PyObject* makeDatetimeModuleDict();
+static PyObject* makeHashlibModuleDict();
+static PyObject* makeBase64ModuleDict();
+static PyObject* makeStructModuleDict();
 
 PyObject* pyc_import_failed(PyObject* modName) {
     if (modName && modName->type == 3) {
@@ -2564,6 +2582,15 @@ PyObject* pyc_import_failed(PyObject* modName) {
             // only so `import pathlib` doesn't report ImportError.
             return PyDict_New();
         }
+        if (modName->str == "hashlib") {
+            return makeHashlibModuleDict();
+        }
+        if (modName->str == "base64") {
+            return makeBase64ModuleDict();
+        }
+        if (modName->str == "struct") {
+            return makeStructModuleDict();
+        }
         if (modName->str == "cmath") {
             PyObject* d = PyDict_New();
             auto add = [&](const char* name, const char* token) {
@@ -2600,8 +2627,8 @@ PyObject* pyc_import_failed(PyObject* modName) {
     fprintf(stderr, "ImportError: No module named '%s' "
                     "(pyc supports only synthetic 'sys', 're', 'functools', 'os', "
                     "'subprocess', 'cmath', 'time', 'math', 'json', 'random', 'itertools', "
-                    "'collections', and 'datetime' modules; "
-                    "real module loading is not yet implemented)\n", name);
+                    "'collections', 'datetime', 'pathlib', 'hashlib', 'base64', and 'struct' "
+                    "modules; real module loading is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;
 }
@@ -4334,6 +4361,425 @@ extern "C" PyObject* PyPathlib_Joinpath(PyObject* obj, PyObject* parts) {
     return pyc_new_path(out);
 }
 
+// ---------------------------------------------------------------------
+// hashlib / base64 / struct
+//
+// pyc has no distinct `bytes` type (confirmed: zero references anywhere
+// in the codebase prior to this). Binary data throughout this section is
+// represented as a plain `str` (type 3) whose characters hold byte values
+// 0-255 — correct for ASCII/text input (the overwhelming common case:
+// hashing strings, base64-encoding tokens) but does NOT match CPython's
+// `bytes` object identity, repr (`b'...'`), or semantics for arbitrary
+// non-ASCII/binary content. This is a deliberate, permanent scoping
+// choice (not a bug to fix quietly later) — see IMPLEMENTATION.md.
+//
+// MD5/SHA-1/SHA-256 are implemented from scratch here (compact, standard
+// reference algorithms) rather than linking OpenSSL/libcrypto, matching
+// the precedent set by the `random` module's from-scratch MT19937 —
+// keeps the build dependency-free. Verified byte-for-byte against real
+// `hashlib` output for multiple inputs (see tests/runner.py).
+// ---------------------------------------------------------------------
+
+static std::string pyc_bytes_to_hex(const uint8_t* data, size_t n) {
+    static const char* hexd = "0123456789abcdef";
+    std::string out;
+    out.reserve(n * 2);
+    for (size_t i = 0; i < n; ++i) {
+        out += hexd[(data[i] >> 4) & 0xF];
+        out += hexd[data[i] & 0xF];
+    }
+    return out;
+}
+
+// --- MD5 (RFC 1321) ---
+static void pyc_md5(const std::string& msg, uint8_t out[16]) {
+    static const uint32_t K[64] = {
+        0xd76aa478,0xe8c7b756,0x242070db,0xc1bdceee,0xf57c0faf,0x4787c62a,0xa8304613,0xfd469501,
+        0x698098d8,0x8b44f7af,0xffff5bb1,0x895cd7be,0x6b901122,0xfd987193,0xa679438e,0x49b40821,
+        0xf61e2562,0xc040b340,0x265e5a51,0xe9b6c7aa,0xd62f105d,0x02441453,0xd8a1e681,0xe7d3fbc8,
+        0x21e1cde6,0xc33707d6,0xf4d50d87,0x455a14ed,0xa9e3e905,0xfcefa3f8,0x676f02d9,0x8d2a4c8a,
+        0xfffa3942,0x8771f681,0x6d9d6122,0xfde5380c,0xa4beea44,0x4bdecfa9,0xf6bb4b60,0xbebfbc70,
+        0x289b7ec6,0xeaa127fa,0xd4ef3085,0x04881d05,0xd9d4d039,0xe6db99e5,0x1fa27cf8,0xc4ac5665,
+        0xf4292244,0x432aff97,0xab9423a7,0xfc93a039,0x655b59c3,0x8f0ccc92,0xffeff47d,0x85845dd1,
+        0x6fa87e4f,0xfe2ce6e0,0xa3014314,0x4e0811a1,0xf7537e82,0xbd3af235,0x2ad7d2bb,0xeb86d391
+    };
+    static const int S[64] = {
+        7,12,17,22,7,12,17,22,7,12,17,22,7,12,17,22,
+        5, 9,14,20,5, 9,14,20,5, 9,14,20,5, 9,14,20,
+        4,11,16,23,4,11,16,23,4,11,16,23,4,11,16,23,
+        6,10,15,21,6,10,15,21,6,10,15,21,6,10,15,21
+    };
+    uint32_t a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+    std::string data = msg;
+    uint64_t bitLen = (uint64_t)msg.size() * 8;
+    data += (char)0x80;
+    while (data.size() % 64 != 56) data += (char)0x00;
+    for (int i = 0; i < 8; ++i) data += (char)((bitLen >> (8 * i)) & 0xFF);
+    for (size_t chunk = 0; chunk < data.size(); chunk += 64) {
+        uint32_t M[16];
+        for (int i = 0; i < 16; ++i) {
+            M[i] = (uint8_t)data[chunk + i*4] | ((uint8_t)data[chunk + i*4+1] << 8) |
+                   ((uint8_t)data[chunk + i*4+2] << 16) | ((uint8_t)data[chunk + i*4+3] << 24);
+        }
+        uint32_t A = a0, B = b0, C = c0, D = d0;
+        for (int i = 0; i < 64; ++i) {
+            uint32_t F; int g;
+            if (i < 16) { F = (B & C) | (~B & D); g = i; }
+            else if (i < 32) { F = (D & B) | (~D & C); g = (5*i + 1) % 16; }
+            else if (i < 48) { F = B ^ C ^ D; g = (3*i + 5) % 16; }
+            else { F = C ^ (B | ~D); g = (7*i) % 16; }
+            F += A + K[i] + M[g];
+            A = D; D = C; C = B;
+            B += (F << S[i]) | (F >> (32 - S[i]));
+        }
+        a0 += A; b0 += B; c0 += C; d0 += D;
+    }
+    uint32_t words[4] = {a0, b0, c0, d0};
+    for (int i = 0; i < 4; ++i) {
+        out[i*4]   = (uint8_t)(words[i] & 0xFF);
+        out[i*4+1] = (uint8_t)((words[i] >> 8) & 0xFF);
+        out[i*4+2] = (uint8_t)((words[i] >> 16) & 0xFF);
+        out[i*4+3] = (uint8_t)((words[i] >> 24) & 0xFF);
+    }
+}
+
+// --- SHA-1 (RFC 3174) ---
+static uint32_t pyc_rotl32(uint32_t v, int n) { return (v << n) | (v >> (32 - n)); }
+
+static void pyc_sha1(const std::string& msg, uint8_t out[20]) {
+    uint32_t h0 = 0x67452301, h1 = 0xEFCDAB89, h2 = 0x98BADCFE, h3 = 0x10325476, h4 = 0xC3D2E1F0;
+    std::string data = msg;
+    uint64_t bitLen = (uint64_t)msg.size() * 8;
+    data += (char)0x80;
+    while (data.size() % 64 != 56) data += (char)0x00;
+    for (int i = 7; i >= 0; --i) data += (char)((bitLen >> (8 * i)) & 0xFF);
+    for (size_t chunk = 0; chunk < data.size(); chunk += 64) {
+        uint32_t w[80];
+        for (int i = 0; i < 16; ++i) {
+            w[i] = ((uint8_t)data[chunk+i*4] << 24) | ((uint8_t)data[chunk+i*4+1] << 16) |
+                   ((uint8_t)data[chunk+i*4+2] << 8) | (uint8_t)data[chunk+i*4+3];
+        }
+        for (int i = 16; i < 80; ++i) w[i] = pyc_rotl32(w[i-3]^w[i-8]^w[i-14]^w[i-16], 1);
+        uint32_t a=h0,b=h1,c=h2,d=h3,e=h4;
+        for (int i = 0; i < 80; ++i) {
+            uint32_t f, k;
+            if (i < 20) { f = (b & c) | (~b & d); k = 0x5A827999; }
+            else if (i < 40) { f = b ^ c ^ d; k = 0x6ED9EBA1; }
+            else if (i < 60) { f = (b & c) | (b & d) | (c & d); k = 0x8F1BBCDC; }
+            else { f = b ^ c ^ d; k = 0xCA62C1D6; }
+            uint32_t temp = pyc_rotl32(a, 5) + f + e + k + w[i];
+            e = d; d = c; c = pyc_rotl32(b, 30); b = a; a = temp;
+        }
+        h0+=a; h1+=b; h2+=c; h3+=d; h4+=e;
+    }
+    uint32_t hs[5] = {h0,h1,h2,h3,h4};
+    for (int i = 0; i < 5; ++i) {
+        out[i*4]   = (uint8_t)((hs[i] >> 24) & 0xFF);
+        out[i*4+1] = (uint8_t)((hs[i] >> 16) & 0xFF);
+        out[i*4+2] = (uint8_t)((hs[i] >> 8) & 0xFF);
+        out[i*4+3] = (uint8_t)(hs[i] & 0xFF);
+    }
+}
+
+// --- SHA-256 (FIPS 180-4) ---
+static void pyc_sha256(const std::string& msg, uint8_t out[32]) {
+    static const uint32_t K[64] = {
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    };
+    uint32_t h[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
+    std::string data = msg;
+    uint64_t bitLen = (uint64_t)msg.size() * 8;
+    data += (char)0x80;
+    while (data.size() % 64 != 56) data += (char)0x00;
+    for (int i = 7; i >= 0; --i) data += (char)((bitLen >> (8 * i)) & 0xFF);
+    for (size_t chunk = 0; chunk < data.size(); chunk += 64) {
+        uint32_t w[64];
+        for (int i = 0; i < 16; ++i) {
+            w[i] = ((uint8_t)data[chunk+i*4] << 24) | ((uint8_t)data[chunk+i*4+1] << 16) |
+                   ((uint8_t)data[chunk+i*4+2] << 8) | (uint8_t)data[chunk+i*4+3];
+        }
+        for (int i = 16; i < 64; ++i) {
+            uint32_t s0 = pyc_rotl32(w[i-15],25) ^ pyc_rotl32(w[i-15],14) ^ (w[i-15] >> 3);
+            uint32_t s1 = pyc_rotl32(w[i-2],15) ^ pyc_rotl32(w[i-2],13) ^ (w[i-2] >> 10);
+            w[i] = w[i-16] + s0 + w[i-7] + s1;
+        }
+        uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+        for (int i = 0; i < 64; ++i) {
+            uint32_t S1 = pyc_rotl32(e,26) ^ pyc_rotl32(e,21) ^ pyc_rotl32(e,7);
+            uint32_t ch = (e & f) ^ (~e & g);
+            uint32_t temp1 = hh + S1 + ch + K[i] + w[i];
+            uint32_t S0 = pyc_rotl32(a,30) ^ pyc_rotl32(a,19) ^ pyc_rotl32(a,10);
+            uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
+            uint32_t temp2 = S0 + maj;
+            hh=g; g=f; f=e; e=d+temp1; d=c; c=b; b=a; a=temp1+temp2;
+        }
+        h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
+    }
+    for (int i = 0; i < 8; ++i) {
+        out[i*4]   = (uint8_t)((h[i] >> 24) & 0xFF);
+        out[i*4+1] = (uint8_t)((h[i] >> 16) & 0xFF);
+        out[i*4+2] = (uint8_t)((h[i] >> 8) & 0xFF);
+        out[i*4+3] = (uint8_t)(h[i] & 0xFF);
+    }
+}
+
+// hashlib.md5/sha1/sha256(data) — direct-call convention (like datetime's
+// constructors): computes the digest immediately (data is always fully
+// known at call time; no .update() streaming support — out of scope,
+// documented). Returns a dict with the raw digest bytes stashed under an
+// internal marker key; .hexdigest() (also direct-call, typeOf-gated on
+// "hashobj" in Compiler.cpp) reads that key directly rather than going
+// through the generic dict/Pyc_Apply dispatch, sidestepping the
+// receiver-prepending pitfall found and fixed in open()/.write() above.
+static PyObject* pyc_make_hashobj(const std::string& hexHash) {
+    PyObject* d = PyDict_New();
+    PyObject* k = PyUnicode_FromString("__pyc_hexdigest__");
+    PyObject* v = PyUnicode_FromString(hexHash.c_str());
+    PyDict_SetItem(d, k, v);
+    Py_DECREF(k); Py_DECREF(v);
+    return d;
+}
+extern "C" PyObject* PyHashlib_Md5(PyObject* data) {
+    uint8_t digest[16];
+    pyc_md5(data && data->type == 3 ? data->str : std::string(), digest);
+    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 16));
+}
+extern "C" PyObject* PyHashlib_Sha1(PyObject* data) {
+    uint8_t digest[20];
+    pyc_sha1(data && data->type == 3 ? data->str : std::string(), digest);
+    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 20));
+}
+extern "C" PyObject* PyHashlib_Sha256(PyObject* data) {
+    uint8_t digest[32];
+    pyc_sha256(data && data->type == 3 ? data->str : std::string(), digest);
+    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 32));
+}
+extern "C" PyObject* PyHashlib_Hexdigest(PyObject* self) {
+    if (!self || self->type != 2) return PyUnicode_FromString("");
+    PyObject* key = PyUnicode_FromString("__pyc_hexdigest__");
+    PyObject* v = Pyc_GetItem(self, key);
+    Py_DECREF(key);
+    if (v) return v; // Pyc_GetItem already returns a new ref
+    return PyUnicode_FromString("");
+}
+
+// base64 (RFC 4648), operating on the str-as-byte-buffer convention.
+static const char* kB64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+extern "C" PyObject* PyBase64_B64Encode(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    PyObject* s = args->list[0];
+    if (!s || s->type != 3) return PyUnicode_FromString("");
+    const std::string& in = s->str;
+    std::string out;
+    out.reserve(((in.size() + 2) / 3) * 4);
+    size_t i = 0;
+    for (; i + 3 <= in.size(); i += 3) {
+        uint32_t n = ((uint8_t)in[i] << 16) | ((uint8_t)in[i+1] << 8) | (uint8_t)in[i+2];
+        out += kB64Alphabet[(n >> 18) & 0x3F];
+        out += kB64Alphabet[(n >> 12) & 0x3F];
+        out += kB64Alphabet[(n >> 6) & 0x3F];
+        out += kB64Alphabet[n & 0x3F];
+    }
+    size_t rem = in.size() - i;
+    if (rem == 1) {
+        uint32_t n = (uint8_t)in[i] << 16;
+        out += kB64Alphabet[(n >> 18) & 0x3F];
+        out += kB64Alphabet[(n >> 12) & 0x3F];
+        out += "==";
+    } else if (rem == 2) {
+        uint32_t n = ((uint8_t)in[i] << 16) | ((uint8_t)in[i+1] << 8);
+        out += kB64Alphabet[(n >> 18) & 0x3F];
+        out += kB64Alphabet[(n >> 12) & 0x3F];
+        out += kB64Alphabet[(n >> 6) & 0x3F];
+        out += '=';
+    }
+    return PyUnicode_FromString(out.c_str());
+}
+
+static int pyc_b64_val(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+extern "C" PyObject* PyBase64_B64Decode(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    PyObject* s = args->list[0];
+    if (!s || s->type != 3) return PyUnicode_FromString("");
+    const std::string& in = s->str;
+    std::string out;
+    int buf = 0, bits = 0;
+    for (char c : in) {
+        if (c == '=' || c == '\n' || c == '\r') continue;
+        int v = pyc_b64_val(c);
+        if (v < 0) continue;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out += (char)((buf >> bits) & 0xFF);
+        }
+    }
+    // Decoded content is arbitrary bytes and may contain embedded NULs —
+    // PyUnicode_FromString's char* + strlen() would silently truncate.
+    return PyUnicode_FromStringAndSize(out.data(), out.size());
+}
+
+// struct.pack/unpack: common format codes (b/B/h/H/i/I/q/Q/f/d/s) with an
+// optional endianness prefix (</>/!/= — all treated as explicit
+// little/big; "=" and no-prefix default to native, which is little-endian
+// on every platform pyc targets). Unsupported codes (n/N, native alignment
+// padding) are skipped/ignored rather than erroring — documented gap.
+struct PycStructFmt { char code; bool bigEndian; };
+
+static std::vector<PycStructFmt> pyc_parse_struct_fmt(const std::string& fmt) {
+    std::vector<PycStructFmt> out;
+    bool bigEndian = false; // default: native == little-endian here
+    size_t i = 0;
+    if (!fmt.empty() && (fmt[0]=='<'||fmt[0]=='>'||fmt[0]=='!'||fmt[0]=='=')) {
+        bigEndian = (fmt[0] == '>' || fmt[0] == '!');
+        i = 1;
+    }
+    for (; i < fmt.size(); ++i) {
+        char c = fmt[i];
+        if (c == ' ') continue;
+        out.push_back({c, bigEndian});
+    }
+    return out;
+}
+static void pyc_struct_pack_int(std::string& out, uint64_t v, int nbytes, bool bigEndian) {
+    if (bigEndian) {
+        for (int i = nbytes - 1; i >= 0; --i) out += (char)((v >> (8*i)) & 0xFF);
+    } else {
+        for (int i = 0; i < nbytes; ++i) out += (char)((v >> (8*i)) & 0xFF);
+    }
+}
+static uint64_t pyc_struct_unpack_int(const std::string& s, size_t pos, int nbytes, bool bigEndian) {
+    uint64_t v = 0;
+    if (bigEndian) {
+        for (int i = 0; i < nbytes; ++i) v = (v << 8) | (uint8_t)s[pos + i];
+    } else {
+        for (int i = nbytes - 1; i >= 0; --i) v = (v << 8) | (uint8_t)s[pos + i];
+    }
+    return v;
+}
+extern "C" PyObject* PyStruct_Pack(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
+    PyObject* fmtObj = args->list[0];
+    if (!fmtObj || fmtObj->type != 3) return PyUnicode_FromString("");
+    auto codes = pyc_parse_struct_fmt(fmtObj->str);
+    std::string out;
+    size_t argi = 1;
+    for (auto& fc : codes) {
+        PyObject* v = argi < args->list.size() ? args->list[argi] : nullptr;
+        switch (fc.code) {
+            case 'b': case 'B':
+                pyc_struct_pack_int(out, v ? (uint64_t)(int64_t)v->value : 0, 1, fc.bigEndian); ++argi; break;
+            case 'h': case 'H':
+                pyc_struct_pack_int(out, v ? (uint64_t)(int64_t)v->value : 0, 2, fc.bigEndian); ++argi; break;
+            case 'i': case 'I': case 'l': case 'L':
+                pyc_struct_pack_int(out, v ? (uint64_t)(int64_t)v->value : 0, 4, fc.bigEndian); ++argi; break;
+            case 'q': case 'Q':
+                pyc_struct_pack_int(out, v ? (uint64_t)(int64_t)v->value : 0, 8, fc.bigEndian); ++argi; break;
+            case 'f': {
+                float f = v ? (float)numeric_val(v) : 0.0f;
+                uint32_t bits; memcpy(&bits, &f, 4);
+                pyc_struct_pack_int(out, bits, 4, fc.bigEndian); ++argi; break;
+            }
+            case 'd': {
+                double d = v ? numeric_val(v) : 0.0;
+                uint64_t bits; memcpy(&bits, &d, 8);
+                pyc_struct_pack_int(out, bits, 8, fc.bigEndian); ++argi; break;
+            }
+            case 's': {
+                std::string s = (v && v->type == 3) ? v->str : std::string();
+                out += s; ++argi; break;
+            }
+            default: break; // unsupported code: skip
+        }
+    }
+    // Packed binary output routinely contains embedded NULs (e.g. any
+    // little-endian integer field with a zero high byte) —
+    // PyUnicode_FromString's char* + strlen() would silently truncate.
+    return PyUnicode_FromStringAndSize(out.data(), out.size());
+}
+extern "C" PyObject* PyStruct_Unpack(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    PyObject* fmtObj = args->list[0];
+    PyObject* dataObj = args->list[1];
+    if (!fmtObj || fmtObj->type != 3 || !dataObj || dataObj->type != 3) return out;
+    auto codes = pyc_parse_struct_fmt(fmtObj->str);
+    const std::string& s = dataObj->str;
+    size_t pos = 0;
+    for (auto& fc : codes) {
+        PyObject* v = nullptr;
+        switch (fc.code) {
+            case 'b': {
+                if (pos + 1 > s.size()) break;
+                int8_t x = (int8_t)pyc_struct_unpack_int(s, pos, 1, fc.bigEndian);
+                v = PyInt_FromLong(x); pos += 1; break;
+            }
+            case 'B': {
+                if (pos + 1 > s.size()) break;
+                v = PyInt_FromLong((long)pyc_struct_unpack_int(s, pos, 1, fc.bigEndian)); pos += 1; break;
+            }
+            case 'h': {
+                if (pos + 2 > s.size()) break;
+                int16_t x = (int16_t)pyc_struct_unpack_int(s, pos, 2, fc.bigEndian);
+                v = PyInt_FromLong(x); pos += 2; break;
+            }
+            case 'H': {
+                if (pos + 2 > s.size()) break;
+                v = PyInt_FromLong((long)pyc_struct_unpack_int(s, pos, 2, fc.bigEndian)); pos += 2; break;
+            }
+            case 'i': case 'l': {
+                if (pos + 4 > s.size()) break;
+                int32_t x = (int32_t)pyc_struct_unpack_int(s, pos, 4, fc.bigEndian);
+                v = PyInt_FromLong(x); pos += 4; break;
+            }
+            case 'I': case 'L': {
+                if (pos + 4 > s.size()) break;
+                v = PyInt_FromLong((long)pyc_struct_unpack_int(s, pos, 4, fc.bigEndian)); pos += 4; break;
+            }
+            case 'q': {
+                if (pos + 8 > s.size()) break;
+                int64_t x = (int64_t)pyc_struct_unpack_int(s, pos, 8, fc.bigEndian);
+                v = PyInt_FromLong(x); pos += 8; break;
+            }
+            case 'Q': {
+                if (pos + 8 > s.size()) break;
+                v = PyInt_FromLong((long)pyc_struct_unpack_int(s, pos, 8, fc.bigEndian)); pos += 8; break;
+            }
+            case 'f': {
+                if (pos + 4 > s.size()) break;
+                uint32_t bits = (uint32_t)pyc_struct_unpack_int(s, pos, 4, fc.bigEndian);
+                float f; memcpy(&f, &bits, 4);
+                v = PyFloat_FromDouble((double)f); pos += 4; break;
+            }
+            case 'd': {
+                if (pos + 8 > s.size()) break;
+                uint64_t bits = pyc_struct_unpack_int(s, pos, 8, fc.bigEndian);
+                double d; memcpy(&d, &bits, 8);
+                v = PyFloat_FromDouble(d); pos += 8; break;
+            }
+            default: break;
+        }
+        if (v) { PyList_Append(out, v); Py_DECREF(v); }
+    }
+    return out;
+}
+
 // open(path, mode) — open a file. The path/mode are extracted from the
 // args list. Returns a synthetic "file" dict with __enter__ / __exit__
 // / write / close keys (all string tokens naming runtime adapters that
@@ -5484,6 +5930,40 @@ static PyObject* makeDatetimeModuleDict() {
     return d;
 }
 
+// hashlib: empty dict — md5/sha1/sha256 construction and .hexdigest() are
+// always intercepted structurally in Compiler.cpp (like datetime's
+// date/datetime/timedelta), never looked up via this dict at runtime.
+// Exists only so `import hashlib` doesn't report ImportError.
+static PyObject* makeHashlibModuleDict() {
+    return PyDict_New();
+}
+
+static PyObject* makeBase64ModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("b64encode", "PyBase64_B64Encode");
+    addTok("b64decode", "PyBase64_B64Decode");
+    return d;
+}
+
+static PyObject* makeStructModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("pack", "PyStruct_Pack");
+    addTok("unpack", "PyStruct_Unpack");
+    return d;
+}
+
 // makeOsModuleDict: builds a dict that emulates the os module. The
 // `os.environ` entry is a real dict populated from the process
 // environment (`environ(7)`); `os.path` is a dict whose entries are
@@ -5833,6 +6313,10 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyBuiltin_OsMakedirs",          PyBuiltin_OsMakedirs);
     pyc_register_callable("PyBuiltin_OsRemove",            PyBuiltin_OsRemove);
     pyc_register_callable("PyBuiltin_OsRename",            PyBuiltin_OsRename);
+    pyc_register_callable("PyBase64_B64Encode",            PyBase64_B64Encode);
+    pyc_register_callable("PyBase64_B64Decode",            PyBase64_B64Decode);
+    pyc_register_callable("PyStruct_Pack",                 PyStruct_Pack);
+    pyc_register_callable("PyStruct_Unpack",                PyStruct_Unpack);
     pyc_register_callable("PyBuiltin_SubprocessCall",      PyBuiltin_SubprocessCall);
     pyc_register_callable("PyBuiltin_SubprocessCheckOutput", PyBuiltin_SubprocessCheckOutput);
     pyc_register_callable("pyc_stderr_write",              stderr_write_adapter);
