@@ -365,6 +365,17 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyCsv_Writerow", module.get());
     }
+    // itertools.chain.from_iterable(...): direct-call convention.
+    {
+        llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, "PyItertools_ChainFromIterable", module.get());
+    }
+    // itertools.groupby(iterable, key=...): direct-call convention (2
+    // raw args), not token+registry — see PyItertools_Groupby's comment.
+    {
+        llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyItertools_Groupby", module.get());
+    }
     // setjmp is special: declaration with the ReturnsTwice attribute.
     {
         llvm::FunctionType* setjmpTy = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), {int8PtrTy}, false);

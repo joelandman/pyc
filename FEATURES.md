@@ -138,6 +138,47 @@ f(b=3, a=4)                    keyword call arguments
   `"`, or a newline (doubling embedded `"`), writes through the same
   file-write path as `.write()`.
 
+## Itertools Expansion
+
+- `itertools.accumulate(iterable, func=None)` — `func=None` means
+  running sum. No `initial=` keyword support.
+- `itertools.takewhile(pred, iterable)` / `itertools.dropwhile(pred,
+  iterable)` — call `pred` via the existing generic callable-apply
+  primitive, same as `sorted(key=...)`/`functools.reduce`.
+- `itertools.compress(data, selectors)` — parallel filter.
+- `itertools.groupby(iterable, key=None)` — groups only *consecutive*
+  equal keys (matches real `groupby` — **not** a full partition; verify
+  this against real output if porting code that assumes otherwise).
+  Returns a list of `[key, group_list]` 2-element lists (real `groupby`
+  yields `(key, group_iterator)` tuples — no tuple type in pyc, and the
+  group is eagerly materialized like every other itertools function
+  here, not lazily).
+- `itertools.chain.from_iterable(iterable_of_iterables)` — flattens one
+  level.
+- **Found and fixed two real bugs while adding these**: (1)
+  `chain.from_iterable([[1,2],[3,4]])` (homogeneous int/float list
+  literals as the inner lists) silently returned `[]` — the same
+  `pyc_ensure_boxed_list()` class of bug found in the `heapq`/`bisect`/
+  `statistics` phase, just not yet applied to this new function. (2)
+  `groupby(iterable, key=...)`'s `key=` keyword argument was silently
+  dropped (every keyed call grouped by the whole item instead), since it
+  went through the same generic dict-dispatch as every other synthetic
+  module function (which doesn't read keyword arguments). Fixed by
+  giving `groupby` the same AST-structural construction as
+  `csv.writer`/`pathlib.Path` so `key=` can be read directly from the
+  call's AST. See IMPLEMENTATION.md.
+- **Newly discovered, pre-existing, general bug (found while verifying
+  this phase, unrelated to itertools itself): list comprehensions don't
+  support multi-variable `for a, b in pairs` unpacking.**
+  `[k for k, g in [["a", 1], ["b", 2]]]` returns `[None, None]` instead
+  of `['a', 'b']` — even just `k`/`g` alone, not any deeper mistake. A
+  **plain `for` loop** with the identical unpacking
+  (`for k, g in pairs: ...`) works correctly; only the comprehension form
+  is affected. Not fixed (out of scope here) — new code (and this
+  session's own new test cases) should use a plain `for` loop instead of
+  a comprehension when destructuring multiple values per iteration. See
+  IMPLEMENTATION.md.
+
 ## Standard Library Stubs
 
 - `os.path.exists()`, `os.path.isfile()`, `os.path.isdir()`, `os.path.join()`,

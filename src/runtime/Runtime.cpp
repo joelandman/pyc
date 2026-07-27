@@ -6903,6 +6903,186 @@ extern "C" PyObject* PyItertools_ZipLongest(PyObject* args) {
     return out;
 }
 
+// itertools.accumulate(iterable, func=None) -> list. func=None means
+// running sum (verified against real itertools). No `initial=` keyword
+// support (token+registry calls don't carry keyword arguments through
+// generically — same limitation as other synthetic-module functions).
+extern "C" PyObject* PyItertools_Accumulate(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.empty()) return out;
+    PyObject* iterable = args->list[0];
+    if (!iterable || iterable->type != 1) return out;
+    pyc_ensure_boxed_list(iterable);
+    PyObject* func = args->list.size() > 1 ? args->list[1] : nullptr;
+    PyObject* acc = nullptr;
+    for (PyObject* item : iterable->list) {
+        if (!acc) {
+            acc = item;
+            if (acc) Py_INCREF(acc);
+        } else {
+            PyObject* next;
+            if (func) {
+                PyObject* argList = PyList_New(2);
+                if (acc) Py_INCREF(acc);
+                PyList_SetItem(argList, 0, acc);
+                if (item) Py_INCREF(item);
+                PyList_SetItem(argList, 1, item);
+                next = Pyc_Apply(func, argList);
+                Py_DECREF(argList);
+            } else {
+                next = PyNumber_Add(acc, item);
+            }
+            Py_DECREF(acc);
+            acc = next;
+        }
+        PyList_Append(out, acc);
+    }
+    if (acc) Py_DECREF(acc);
+    return out;
+}
+// itertools.takewhile(pred, iterable) / dropwhile(pred, iterable) ->
+// list. Calls pred via Pyc_Apply per element (the sorted(key=...) /
+// functools.reduce pattern).
+extern "C" PyObject* PyItertools_Takewhile(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    PyObject* pred = args->list[0];
+    PyObject* iterable = args->list[1];
+    if (!iterable || iterable->type != 1) return out;
+    pyc_ensure_boxed_list(iterable);
+    for (PyObject* item : iterable->list) {
+        PyObject* argList = PyList_New(1);
+        if (item) Py_INCREF(item);
+        PyList_SetItem(argList, 0, item);
+        PyObject* r = Pyc_Apply(pred, argList);
+        Py_DECREF(argList);
+        PyObject* truthy = PyBuiltin_Bool(r);
+        bool keep = truthy && truthy->value != 0;
+        if (r) Py_DECREF(r);
+        if (truthy) Py_DECREF(truthy);
+        if (!keep) break;
+        PyList_Append(out, item);
+    }
+    return out;
+}
+extern "C" PyObject* PyItertools_Dropwhile(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    PyObject* pred = args->list[0];
+    PyObject* iterable = args->list[1];
+    if (!iterable || iterable->type != 1) return out;
+    pyc_ensure_boxed_list(iterable);
+    bool dropping = true;
+    for (PyObject* item : iterable->list) {
+        if (dropping) {
+            PyObject* argList = PyList_New(1);
+            if (item) Py_INCREF(item);
+            PyList_SetItem(argList, 0, item);
+            PyObject* r = Pyc_Apply(pred, argList);
+            Py_DECREF(argList);
+            PyObject* truthy = PyBuiltin_Bool(r);
+            bool drop = truthy && truthy->value != 0;
+            if (r) Py_DECREF(r);
+            if (truthy) Py_DECREF(truthy);
+            if (drop) continue;
+            dropping = false;
+        }
+        PyList_Append(out, item);
+    }
+    return out;
+}
+// itertools.compress(data, selectors) -> list : parallel filter.
+extern "C" PyObject* PyItertools_Compress(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    PyObject* data = args->list[0];
+    PyObject* selectors = args->list[1];
+    if (!data || data->type != 1 || !selectors || selectors->type != 1) return out;
+    pyc_ensure_boxed_list(data);
+    pyc_ensure_boxed_list(selectors);
+    size_t n = std::min(data->list.size(), selectors->list.size());
+    for (size_t i = 0; i < n; ++i) {
+        PyObject* sel = selectors->list[i];
+        PyObject* truthy = PyBuiltin_Bool(sel);
+        bool keep = truthy && truthy->value != 0;
+        if (truthy) Py_DECREF(truthy);
+        if (keep) PyList_Append(out, data->list[i]);
+    }
+    return out;
+}
+// itertools.groupby(iterable, key=None) -> list of [key, group_list]
+// 2-element lists (real groupby yields (key, group_iterator) tuples —
+// no tuple type in pyc, and the group is eagerly materialized like
+// every other itertools function here). Groups only *consecutive* equal
+// keys (verified against real groupby — NOT a full partition).
+// Direct-call convention (2 raw args), not token+registry: `key=` is a
+// keyword argument, which the generic dict-dispatch has no mechanism to
+// read through, so construction is always intercepted structurally in
+// Compiler.cpp instead (see the call site's comment for the bug this
+// fixed — key= was being silently dropped).
+extern "C" PyObject* PyItertools_Groupby(PyObject* iterable, PyObject* keyFn) {
+    PyObject* out = PyList_New(0);
+    if (!iterable || iterable->type != 1) return out;
+    pyc_ensure_boxed_list(iterable);
+    auto computeKey = [&](PyObject* item) -> PyObject* {
+        if (!keyFn) { if (item) Py_INCREF(item); return item; }
+        PyObject* argList = PyList_New(1);
+        if (item) Py_INCREF(item);
+        PyList_SetItem(argList, 0, item);
+        PyObject* k = Pyc_Apply(keyFn, argList);
+        Py_DECREF(argList);
+        return k;
+    };
+    PyObject* curKey = nullptr;
+    PyObject* curGroup = nullptr;
+    for (PyObject* item : iterable->list) {
+        PyObject* k = computeKey(item);
+        bool sameGroup = curGroup && ((k == curKey) || (k && curKey && PyObject_CompareBool(k, curKey, 0)) ||
+                                       (!k && !curKey));
+        if (!sameGroup) {
+            if (curGroup) {
+                PyObject* pair = PyList_New(2);
+                PyList_SetItem(pair, 0, curKey);
+                PyList_SetItem(pair, 1, curGroup);
+                PyList_Append(out, pair);
+                Py_DECREF(pair);
+            }
+            curKey = k;
+            curGroup = PyList_New(0);
+        } else {
+            if (k) Py_DECREF(k);
+        }
+        if (item) Py_INCREF(item);
+        PyList_Append(curGroup, item);
+    }
+    if (curGroup) {
+        PyObject* pair = PyList_New(2);
+        PyList_SetItem(pair, 0, curKey);
+        PyList_SetItem(pair, 1, curGroup);
+        PyList_Append(out, pair);
+        Py_DECREF(pair);
+    }
+    return out;
+}
+// itertools.chain.from_iterable(iterable_of_iterables) -> list :
+// flattens one level. AST-recognized as a two-level attribute chain
+// (Compiler.cpp), same shape as datetime.date.today().
+extern "C" PyObject* PyItertools_ChainFromIterable(PyObject* outer) {
+    PyObject* out = PyList_New(0);
+    if (!outer || outer->type != 1) return out;
+    pyc_ensure_boxed_list(outer);
+    for (PyObject* inner : outer->list) {
+        if (!inner || inner->type != 1) continue;
+        pyc_ensure_boxed_list(inner);
+        for (PyObject* item : inner->list) {
+            if (item) Py_INCREF(item);
+            PyList_Append(out, item);
+            if (item) Py_DECREF(item);
+        }
+    }
+    return out;
+}
+
 static PyObject* makeItertoolsModuleDict() {
     PyObject* d = PyDict_New();
     auto addTok = [&](const char* name, const char* token) {
@@ -6918,6 +7098,13 @@ static PyObject* makeItertoolsModuleDict() {
     addTok("starmap", "PyItertools_Starmap");
     addTok("islice", "PyItertools_Islice");
     addTok("zip_longest", "PyItertools_ZipLongest");
+    addTok("accumulate", "PyItertools_Accumulate");
+    addTok("takewhile", "PyItertools_Takewhile");
+    addTok("dropwhile", "PyItertools_Dropwhile");
+    addTok("compress", "PyItertools_Compress");
+    // "groupby" is NOT a dict entry — itertools.groupby(...) is always
+    // intercepted structurally in Compiler.cpp (see PyItertools_Groupby's
+    // comment), same as csv.writer/pathlib.Path/hashlib.md5 construction.
     return d;
 }
 
@@ -7686,6 +7873,10 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyShutil_Rmtree",                PyShutil_Rmtree);
     pyc_register_callable("PyGlob_Glob",                    PyGlob_Glob);
     pyc_register_callable("PyCsv_Reader",                   PyCsv_Reader);
+    pyc_register_callable("PyItertools_Accumulate",         PyItertools_Accumulate);
+    pyc_register_callable("PyItertools_Takewhile",          PyItertools_Takewhile);
+    pyc_register_callable("PyItertools_Dropwhile",          PyItertools_Dropwhile);
+    pyc_register_callable("PyItertools_Compress",           PyItertools_Compress);
     pyc_register_callable("PyBuiltin_SubprocessCall",      PyBuiltin_SubprocessCall);
     pyc_register_callable("PyBuiltin_SubprocessCheckOutput", PyBuiltin_SubprocessCheckOutput);
     pyc_register_callable("pyc_stderr_write",              stderr_write_adapter);

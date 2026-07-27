@@ -1234,6 +1234,10 @@ class LoweringVisitor {
                         if (mod == "csv" && origName == "writer") {
                             csvWriterCtorAliases.insert(name);
                         }
+                        // `from itertools import groupby [as X]` — same rationale.
+                        if (mod == "itertools" && origName == "groupby") {
+                            groupbyCtorAliases.insert(name);
+                        }
 
                         std::string attrKey = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
@@ -2833,6 +2837,11 @@ class LoweringVisitor {
     // construction (see PyCsv_Writer's comment in Runtime.cpp) so
     // .writerow() can be dispatched with an explicit receiver.
     std::unordered_set<std::string> csvWriterCtorAliases;
+    // Local names bound via `from itertools import groupby [as X]` —
+    // same rationale as csvWriterCtorAliases: groupby's key= keyword
+    // argument needs AST-level extraction, so it's not a normal dict
+    // entry and needs this alias tracking for the bare-name form too.
+    std::unordered_set<std::string> groupbyCtorAliases;
     // User functions (defs or synthetic lambdas) that contain a return of a
     // callable token value. Calls to them have their result temp marked so
     // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
@@ -3971,6 +3980,33 @@ class LoweringVisitor {
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyCsv_Writer", arg}, res);
             noteType(res, "csvwriter");
+            return res;
+        }
+        // groupby bound to a bare name via `from itertools import
+        // groupby` — dispatch directly (with key= extraction), same as
+        // the `itertools.groupby(...)`-qualified form in lowerMethodCall.
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Name" &&
+            groupbyCtorAliases.count(node->children[0]->id) &&
+            !isShadowedLocal(node->children[0]->id)) {
+            std::vector<std::string> posArgs;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type != "Keyword") posArgs.push_back(lowerExpr(ch));
+            }
+            std::string iterableArg = posArgs.empty() ? "" : posArgs[0];
+            std::string keyArg;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type == "Keyword" && ch->id == "key" && !ch->children.empty()) {
+                    keyArg = lowerExpr(ch->children[0].get());
+                    break;
+                }
+            }
+            if (keyArg.empty() && posArgs.size() > 1) keyArg = posArgs[1];
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyItertools_Groupby", iterableArg, keyArg}, res, "list");
+            noteType(res, "list");
             return res;
         }
         // super() call — returns a proxy that looks up methods on the parent class
@@ -7431,6 +7467,65 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", {"PyCsv_Writerow", obj, arg}, res);
             return res;
         }
+        // itertools.groupby(iterable, key=...) — needs AST-level
+        // recognition (bypassing the generic dict-dispatch entirely,
+        // hence PyItertools_Groupby's direct 2-raw-arg signature rather
+        // than the usual token+registry boxed-args-list convention)
+        // because the generic dict dispatch has no mechanism to read a
+        // keyword argument through: `key=` would otherwise be silently
+        // dropped, making every keyed groupby() call group by the whole
+        // item instead (a real bug found while verifying against real
+        // CPython — the keyless form worked, `key=lambda w: w[0]`
+        // silently didn't).
+        if (methodName == "groupby" && attr->children.size() >= 1 && attr->children[0] &&
+            attr->children[0]->type == "Name") {
+            const std::string& modId = attr->children[0]->id;
+            bool isItertoolsMod = (modId == "itertools");
+            if (!isItertoolsMod) {
+                auto it = moduleNameAliases.find(modId);
+                isItertoolsMod = (it != moduleNameAliases.end() && it->second == "itertools");
+            }
+            if (isItertoolsMod) {
+                std::string iterableArg = args.empty() ? "" : args[0];
+                std::string keyArg;
+                for (size_t i = 1; i < node->children.size(); ++i) {
+                    const auto* ch = node->children[i].get();
+                    if (ch && ch->type == "Keyword" && ch->id == "key" && !ch->children.empty()) {
+                        keyArg = lowerExpr(ch->children[0].get());
+                        break;
+                    }
+                }
+                if (keyArg.empty() && args.size() > 1) keyArg = args[1];
+                ir.addInstruction(currentFunc, "call", {"PyItertools_Groupby", iterableArg, keyArg}, res, "list");
+                noteType(res, "list");
+                return res;
+            }
+        }
+        // itertools.chain.from_iterable(...) — a two-level attribute
+        // chain (attr's base is itself Attribute(Name("itertools"),
+        // "chain")), the same shape as datetime.date.today() above.
+        // Real itertools.chain.from_iterable is a classmethod on the
+        // chain type; pyc's chain is just a plain function token, so
+        // this needs the same dedicated structural recognition rather
+        // than falling out of the generic dispatch naturally.
+        if (methodName == "from_iterable" && attr->children.size() >= 1 && attr->children[0]) {
+            const ASTNode* base = attr->children[0].get();
+            if (base->type == "Attribute" && !base->children.empty() && base->children[0] &&
+                base->children[0]->type == "Name" && base->id == "chain") {
+                const std::string& modId = base->children[0]->id;
+                bool isItertoolsMod = (modId == "itertools");
+                if (!isItertoolsMod) {
+                    auto it = moduleNameAliases.find(modId);
+                    isItertoolsMod = (it != moduleNameAliases.end() && it->second == "itertools");
+                }
+                if (isItertoolsMod) {
+                    std::string arg = args.empty() ? "" : args[0];
+                    ir.addInstruction(currentFunc, "call", {"PyItertools_ChainFromIterable", arg}, res, "list");
+                    noteType(res, "list");
+                    return res;
+                }
+            }
+        }
         // hashobj.hexdigest() — typeOf-gated (same fast-path-only
         // limitation as datetime/pathlib's methods: works after
         // construction/assignment/return, not through an untyped function
@@ -8735,7 +8830,8 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
         {"json",       {"dumps", "loads"}},
         {"random",     {"seed", "random", "randrange", "randint", "uniform", "choice", "shuffle"}},
         {"itertools",  {"chain", "product", "combinations", "permutations", "starmap",
-                         "islice", "zip_longest"}},
+                         "islice", "zip_longest", "accumulate", "takewhile", "dropwhile",
+                         "compress", "groupby"}},
         {"collections", {"Counter", "most_common"}},
         {"datetime",   {"date", "datetime", "timedelta"}},
         {"pathlib",    {"Path"}},

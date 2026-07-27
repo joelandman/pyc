@@ -1419,6 +1419,69 @@ os.remove(src)
 os.remove(dst2)
 os.remove(csvpath)
 """, "['hello shutil']\n['/tmp/pyc_test_shutil_moved.txt', '/tmp/pyc_test_shutil_src.txt']\nFalse\n[['name', 'age', 'note'], ['Alice', '30', 'hello, world'], ['Bob', '25', 'has \"quotes\"']]\n"),
+    # itertools expansion: accumulate/takewhile/dropwhile/compress/
+    # groupby/chain.from_iterable (synthetic, extends the existing
+    # itertools subset). groupby uses plain for-loops (not comprehensions)
+    # to destructure (k, g) pairs — list comprehensions with multi-var
+    # `for a, b in pairs` unpacking are a separate, general, pre-existing
+    # bug (found while verifying this phase, unrelated to itertools
+    # itself: `[k for k, g in [["a",1]]]` -> [None] instead of ['a'],
+    # even a plain `for k, g in pairs:` loop works fine) — see
+    # IMPLEMENTATION.md; avoided here rather than fixed.
+    #
+    # Found and fixed two real bugs while building this: (1)
+    # chain.from_iterable's inner lists weren't run through
+    # pyc_ensure_boxed_list, so `chain.from_iterable([[1,2],[3,4]])`
+    # (homogeneous int list literals) silently returned []. (2)
+    # groupby's key= keyword argument was silently dropped (same
+    # "synthetic functions don't read keyword args generically"
+    # limitation as elsewhere) — every keyed call grouped by the whole
+    # item instead of the key, since it went through the generic
+    # dict-dispatch like every other itertools function. Fixed by giving
+    # groupby(iterable, key=...) the same AST-structural construction as
+    # csv.writer/pathlib.Path (a direct 2-raw-arg call, not
+    # token+registry), so key= can be extracted from the AST directly.
+    ("""
+import itertools
+
+print(list(itertools.accumulate([1, 2, 3, 4])))
+print(list(itertools.accumulate([1, 2, 3, 4], lambda a, b: a * b)))
+
+print(list(itertools.takewhile(lambda x: x < 5, [1, 3, 5, 2, 1])))
+print(list(itertools.dropwhile(lambda x: x < 5, [1, 3, 5, 2, 1])))
+
+print(list(itertools.compress(["a", "b", "c", "d"], [1, 0, 1, 0])))
+
+data = [1, 1, 2, 2, 2, 3, 1, 1]
+for k, g in itertools.groupby(data):
+    print(k, list(g))
+
+words = ["apple", "ant", "bear", "bee", "cat"]
+for k, g in itertools.groupby(words, key=lambda w: w[0]):
+    print(k, list(g))
+
+print(list(itertools.chain.from_iterable([[1, 2], [3, 4], [5]])))
+
+import itertools as it
+print(list(it.chain.from_iterable([["a"], ["b", "c"]])))
+
+from itertools import accumulate, takewhile, groupby
+print(list(accumulate([5, 5, 5])))
+print(list(takewhile(lambda x: x > 0, [3, 2, 1, -1, 5])))
+for k, g in groupby(["x", "x", "y"], key=lambda w: w):
+    print(k, list(g))
+
+def wrap_groupby(data, keyfn):
+    result = []
+    for k, g in itertools.groupby(data, key=keyfn):
+        result.append([k, list(g)])
+    return result
+print(wrap_groupby(["aa", "ab", "bc"], lambda w: w[0]))
+
+def wrap_chain(nested):
+    return list(itertools.chain.from_iterable(nested))
+print(wrap_chain([[1, 2], [3, 4]]))
+""", "[1, 3, 6, 10]\n[1, 2, 6, 24]\n[1, 3]\n[5, 2, 1]\n['a', 'c']\n1 [1, 1]\n2 [2, 2, 2]\n3 [3]\n1 [1, 1]\na ['apple', 'ant']\nb ['bear', 'bee']\nc ['cat']\n[1, 2, 3, 4, 5]\n['a', 'b', 'c']\n[5, 10, 15]\n[3, 2, 1]\nx ['x', 'x']\ny ['y']\n[['a', ['aa', 'ab']], ['b', ['bc']]]\n[1, 2, 3, 4]\n"),
     # hashlib / base64 / struct (synthetic; no bytes type — see
     # IMPLEMENTATION.md). Real CPython's hashlib/base64 both raise
     # TypeError on a plain str (they require bytes), so the live

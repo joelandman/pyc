@@ -209,6 +209,59 @@ recognized structurally in the AST (mirroring `pathlib.Path`/
 object directly, not the token+registry `PyObject* Fn(PyObject* argsList)`
 convention every other module function in this session's work uses.
 
+### `itertools.groupby` — Same AST-Structural Reason as `csv.writer`, But for `key=`
+`groupby(iterable, key=...)`'s `key=` is a genuine *keyword* argument,
+which the generic dict-dispatch call path has no mechanism to read
+through at all (confirmed as a real, previously-latent bug: before this
+fix, `itertools.groupby(words, key=lambda w: w[0])` silently grouped by
+the whole word instead of `w[0]`, since `key` was simply never passed to
+`PyItertools_Groupby`). Fixed the same way as `csv.writer`: `groupby`'s
+construction is recognized structurally in the AST (both the
+`itertools.groupby(...)`-qualified form and the bare-name form after
+`from itertools import groupby`, via a `groupbyCtorAliases` set mirroring
+`csvWriterCtorAliases`), extracting `key=` (or a second positional
+argument — `groupby(iterable, key)` is valid without the keyword too)
+directly from the call's AST and passing it to `PyItertools_Groupby`,
+which — like `PyCsv_Writer` — was converted from the token+registry
+`PyObject* Fn(PyObject* argsList)` convention to a direct 2-raw-argument
+call, since it's now never reached via the generic dispatch at all.
+
+### `chain.from_iterable` — Same `pyc_ensure_boxed_list` Gap as the `heapq`/`bisect`/`statistics` Phase
+`itertools.chain.from_iterable([[1,2],[3,4]])` (with homogeneous
+int/float list literals as the *inner* lists) silently returned `[]`
+before this fix, for the identical reason found and fixed for
+`list.sort()`/`heapq`/etc. in the prior phase: literal lists whose
+elements are all one numeric type are stored via the A4 fast-path
+(`list_item_type` 1/2, data in `ilist`/`flist`, not the generic boxed
+`list` vector), and the new function read `inner->list` directly without
+first calling `pyc_ensure_boxed_list()`. This is a direct instance of
+the exact class of bug already documented and (partially) audited for in
+the `heapq`/`bisect`/`statistics` phase — a reminder that the earlier
+audit was a spot-check of *existing* functions at the time, not a rule
+enforced for *all future* list-consuming functions; every new function
+that reads a list's `.list` field directly needs this call, and it's
+easy to forget for a *nested* list (the outer list here was already
+correctly boxed, going through it caught nothing).
+
+### Newly Discovered, General, Pre-Existing Bug: List Comprehensions Don't Support Multi-Variable `for a, b in pairs` Unpacking
+Found while verifying `itertools.groupby`'s output via `[(k, list(g)) for
+k, g in groupby_result]` — completely unrelated to `groupby` or any
+other feature in this session. `[k for k, g in [["a", 1], ["b", 2]]]`
+returns `[None, None]` instead of `['a', 'b']`; a **plain `for` loop**
+with the identical unpacking (`for k, g in pairs: print(k, g)`) works
+correctly and prints the right values. So the bug is specific to
+*comprehension*-form `for`-clauses with more than one loop target, not
+tuple/list unpacking in general (which plain `for` loops, plain
+assignment (`a, b = pair`), and function parameters all handle
+correctly elsewhere in this codebase). Not investigated further or
+fixed — out of scope for this stdlib-modules round, and a real
+compiler-internals issue (likely in how comprehension loop-variable
+lowering handles a multi-target `for`, as opposed to a single-name
+`for`) rather than anything specific to itertools. New code — including
+this session's own new test cases — should use a plain `for` loop
+instead of a comprehension whenever destructuring multiple values per
+iteration, until this is fixed.
+
 ## Known Limitations
 
 ### Performance
