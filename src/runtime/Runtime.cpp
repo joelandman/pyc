@@ -2567,6 +2567,9 @@ static PyObject* makeStringModuleDict();
 static PyObject* makeTextwrapModuleDict();
 static PyObject* makeUuidModuleDict();
 static PyObject* makeCopyModuleDict();
+static PyObject* makeShutilModuleDict();
+static PyObject* makeGlobModuleDict();
+static PyObject* makeCsvModuleDict();
 
 PyObject* pyc_import_failed(PyObject* modName) {
     if (modName && modName->type == 3) {
@@ -2695,6 +2698,15 @@ PyObject* pyc_import_failed(PyObject* modName) {
         if (modName->str == "copy") {
             return makeCopyModuleDict();
         }
+        if (modName->str == "shutil") {
+            return makeShutilModuleDict();
+        }
+        if (modName->str == "glob") {
+            return makeGlobModuleDict();
+        }
+        if (modName->str == "csv") {
+            return makeCsvModuleDict();
+        }
         if (modName->str == "cmath") {
             PyObject* d = PyDict_New();
             auto add = [&](const char* name, const char* token) {
@@ -2733,7 +2745,8 @@ PyObject* pyc_import_failed(PyObject* modName) {
                     "'subprocess', 'cmath', 'time', 'math', 'json', 'random', 'itertools', "
                     "'collections', 'datetime', 'pathlib', 'hashlib', 'base64', 'struct', "
                     "'heapq', 'bisect', 'statistics', 'string', 'textwrap', 'uuid', 'copy', "
-                    "and 'operator' modules; real module loading is not yet implemented)\n", name);
+                    "'operator', 'shutil', 'glob', and 'csv' modules; real module loading "
+                    "is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;
 }
@@ -5760,6 +5773,253 @@ extern "C" PyObject* PyBuiltin_Open(PyObject* path, PyObject* mode) {
     return d;
 }
 
+// ---------------------------------------------------------------------
+// shutil / glob / csv
+// ---------------------------------------------------------------------
+
+// shutil.copyfile(src, dst) -> None : direct C fopen/fread/fwrite,
+// entirely bypassing pyc's synthetic file object (no dependency on
+// file.readlines()/open() dict machinery).
+extern "C" PyObject* PyShutil_Copyfile(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* src = args->list[0];
+    PyObject* dst = args->list[1];
+    if (!src || src->type != 3 || !dst || dst->type != 3) return nullptr;
+    FILE* in = std::fopen(src->str.c_str(), "rb");
+    if (!in) { pyc_raise_msg("FileNotFoundError", "No such file or directory"); return nullptr; }
+    FILE* out = std::fopen(dst->str.c_str(), "wb");
+    if (!out) { std::fclose(in); pyc_raise_msg("OSError", "Could not open destination for writing"); return nullptr; }
+    char buf[65536];
+    size_t n;
+    while ((n = std::fread(buf, 1, sizeof(buf), in)) > 0) {
+        std::fwrite(buf, 1, n, out);
+    }
+    std::fclose(in);
+    std::fclose(out);
+    return nullptr;
+}
+// shutil.move(src, dst) -> None : rename(2) first (fast path, same
+// filesystem); on failure (e.g. cross-filesystem EXDEV) falls back to
+// copy + unlink.
+extern "C" PyObject* PyShutil_Move(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* src = args->list[0];
+    PyObject* dst = args->list[1];
+    if (!src || src->type != 3 || !dst || dst->type != 3) return nullptr;
+    if (::rename(src->str.c_str(), dst->str.c_str()) == 0) return nullptr;
+    PyShutil_Copyfile(args);
+    ::unlink(src->str.c_str());
+    return nullptr;
+}
+static void pyc_rmtree_recursive(const std::string& path) {
+    struct stat st;
+    if (::lstat(path.c_str(), &st) != 0) return;
+    if (S_ISDIR(st.st_mode)) {
+        DIR* d = ::opendir(path.c_str());
+        if (d) {
+            struct dirent* ent;
+            while ((ent = ::readdir(d)) != nullptr) {
+                if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+                pyc_rmtree_recursive(path + "/" + ent->d_name);
+            }
+            ::closedir(d);
+        }
+        ::rmdir(path.c_str());
+    } else {
+        ::unlink(path.c_str());
+    }
+}
+// shutil.rmtree(path) -> None : recursive removal.
+extern "C" PyObject* PyShutil_Rmtree(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* path = args->list[0];
+    if (!path || path->type != 3) return nullptr;
+    pyc_rmtree_recursive(path->str);
+    return nullptr;
+}
+
+// glob.glob(pattern) -> list[str]. Splits into dirname/basename, lists
+// dirname (or "." if none), matches each entry's name against basename
+// with a small from-scratch wildcard matcher (*, ?, [seq] — standard
+// glob/fnmatch semantics). No recursive "**" support (a hard scoping
+// choice, documented — matches itertools' unbounded-iterator precedent:
+// recursive directory walking + pattern matching is a materially bigger
+// feature than a single-directory match).
+static bool pyc_fnmatch(const char* name, const char* pat) {
+    if (!*pat) return !*name;
+    if (*pat == '*') {
+        // Try matching zero or more characters.
+        while (*name) {
+            if (pyc_fnmatch(name, pat + 1)) return true;
+            ++name;
+        }
+        return pyc_fnmatch(name, pat + 1);
+    }
+    if (!*name) return false;
+    if (*pat == '?') return pyc_fnmatch(name + 1, pat + 1);
+    if (*pat == '[') {
+        const char* p = pat + 1;
+        bool negate = (*p == '!');
+        if (negate) ++p;
+        bool matched = false;
+        bool first = true;
+        while (*p && (*p != ']' || first)) {
+            first = false;
+            if (p[1] == '-' && p[2] && p[2] != ']') {
+                if (*name >= p[0] && *name <= p[2]) matched = true;
+                p += 3;
+            } else {
+                if (*name == *p) matched = true;
+                ++p;
+            }
+        }
+        if (*p == ']') ++p;
+        if (matched == negate) return false;
+        return pyc_fnmatch(name + 1, p);
+    }
+    if (*pat != *name) return false;
+    return pyc_fnmatch(name + 1, pat + 1);
+}
+extern "C" PyObject* PyGlob_Glob(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.empty()) return out;
+    PyObject* patObj = args->list[0];
+    if (!patObj || patObj->type != 3) return out;
+    const std::string& pattern = patObj->str;
+    size_t slash = pattern.find_last_of('/');
+    std::string dirPart = (slash == std::string::npos) ? "." : pattern.substr(0, slash == 0 ? 1 : slash);
+    std::string basePart = (slash == std::string::npos) ? pattern : pattern.substr(slash + 1);
+    std::string prefix = (slash == std::string::npos) ? "" : (dirPart == "/" ? "/" : dirPart + "/");
+    DIR* d = ::opendir(dirPart.c_str());
+    if (!d) return out;
+    std::vector<std::string> matches;
+    struct dirent* ent;
+    while ((ent = ::readdir(d)) != nullptr) {
+        if (ent->d_name[0] == '.' && basePart.empty() == false && basePart[0] != '.') continue;
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+        if (pyc_fnmatch(ent->d_name, basePart.c_str())) {
+            matches.push_back(prefix + ent->d_name);
+        }
+    }
+    ::closedir(d);
+    std::sort(matches.begin(), matches.end());
+    for (auto& m : matches) {
+        PyObject* s = PyUnicode_FromString(m.c_str());
+        PyList_Append(out, s);
+        Py_DECREF(s);
+    }
+    return out;
+}
+
+// csv.reader(lines) -> list[list[str]]. Takes a plain list of
+// line-strings (real csv.reader's actual general contract — any
+// iterable of strings, not specifically a file object), splitting each
+// on "," with minimal quoted-field support ("a,b",c -> ["a,b","c"], ""
+// inside a quoted field means a literal double-quote). Does NOT handle
+// embedded newlines inside quoted fields (each input line is one row) or
+// custom dialects/delimiters — documented gap, verified against real
+// csv module output for representative cases.
+static std::vector<std::string> pyc_csv_parse_line(const std::string& line) {
+    std::vector<std::string> fields;
+    std::string cur;
+    bool inQuotes = false;
+    size_t i = 0;
+    // Strip a single trailing newline (lines commonly come from
+    // readlines(), which keeps it).
+    std::string s = line;
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+    size_t n = s.size();
+    while (i < n) {
+        char c = s[i];
+        if (inQuotes) {
+            if (c == '"') {
+                if (i + 1 < n && s[i+1] == '"') { cur += '"'; i += 2; continue; }
+                inQuotes = false; ++i; continue;
+            }
+            cur += c; ++i; continue;
+        }
+        if (c == '"') { inQuotes = true; ++i; continue; }
+        if (c == ',') { fields.push_back(cur); cur.clear(); ++i; continue; }
+        cur += c; ++i;
+    }
+    fields.push_back(cur);
+    return fields;
+}
+extern "C" PyObject* PyCsv_Reader(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.empty()) return out;
+    PyObject* lines = args->list[0];
+    if (!lines || lines->type != 1) return out;
+    pyc_ensure_boxed_list(lines);
+    for (PyObject* lineObj : lines->list) {
+        if (!lineObj || lineObj->type != 3) continue;
+        auto fields = pyc_csv_parse_line(lineObj->str);
+        PyObject* row = PyList_New(0);
+        for (auto& f : fields) {
+            PyObject* s = PyUnicode_FromString(f.c_str());
+            PyList_Append(row, s);
+            Py_DECREF(s);
+        }
+        PyList_Append(out, row);
+        Py_DECREF(row);
+    }
+    return out;
+}
+
+// csv.writer(f) -> dict tagged typeOf=="csvwriter" capturing the file
+// object. Direct-call convention (like hashlib.md5/pathlib.Path
+// construction), recognized structurally in Compiler.cpp, NOT
+// token+registry — because .writerow(row) needs an explicit receiver
+// (mirroring the file.write() fix's lesson: the generic, non-bound dict
+// dispatch can't supply one), which requires the constructor's result to
+// be typeOf-tagged, which in turn requires AST-level recognition at the
+// construction call site too (the generic dict-dispatch path has no way
+// to attach a custom typeOf tag to its result).
+extern "C" PyObject* PyCsv_Writer(PyObject* fileObj) {
+    PyObject* d = PyDict_New();
+    PyObject* k = PyUnicode_FromString("__pyc_csv_file__");
+    if (fileObj) Py_INCREF(fileObj);
+    PyDict_SetItem(d, k, fileObj);
+    Py_DECREF(k);
+    if (fileObj) Py_DECREF(fileObj); // PyDict_SetItem took its own ref
+    return d;
+}
+static std::string pyc_csv_quote_field(const std::string& f) {
+    bool needsQuote = f.find(',') != std::string::npos || f.find('"') != std::string::npos ||
+                       f.find('\n') != std::string::npos || f.find('\r') != std::string::npos;
+    if (!needsQuote) return f;
+    std::string out = "\"";
+    for (char c : f) { if (c == '"') out += "\"\""; else out += c; }
+    out += "\"";
+    return out;
+}
+extern "C" PyObject* PyCsv_Writerow(PyObject* writer, PyObject* row) {
+    if (!writer || writer->type != 2) return nullptr;
+    PyObject* key = PyUnicode_FromString("__pyc_csv_file__");
+    PyObject* fileObj = Pyc_GetItem(writer, key);
+    Py_DECREF(key);
+    if (!fileObj) return nullptr;
+    std::string line;
+    if (row && row->type == 1) {
+        pyc_ensure_boxed_list(row);
+        for (size_t i = 0; i < row->list.size(); ++i) {
+            if (i > 0) line += ',';
+            PyObject* item = row->list[i];
+            PyObject* s = PyStr_FromAny(item);
+            line += pyc_csv_quote_field(s ? s->str : std::string());
+            if (s) Py_DECREF(s);
+        }
+    }
+    line += '\n';
+    auto it = g_pycFiles.find(fileObj);
+    Py_DECREF(fileObj); // Pyc_GetItem returned a new ref
+    if (it != g_pycFiles.end() && it->second.fp) {
+        std::fwrite(line.data(), 1, line.size(), it->second.fp);
+        std::fflush(it->second.fp);
+    }
+    return nullptr;
+}
+
 // subprocess.call(args) -> int : spawn a subprocess, return its exit status
 extern "C" PyObject* PyBuiltin_SubprocessCall(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) return PyInt_FromLong(-1);
@@ -6986,6 +7246,42 @@ static PyObject* makeCopyModuleDict() {
     return PyDict_New();
 }
 
+static PyObject* makeShutilModuleDict() {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("copyfile", "PyShutil_Copyfile");
+    addTok("move",     "PyShutil_Move");
+    addTok("rmtree",   "PyShutil_Rmtree");
+    return d;
+}
+
+static PyObject* makeGlobModuleDict() {
+    PyObject* d = PyDict_New();
+    PyObject* k = PyUnicode_FromString("glob");
+    PyObject* v = PyUnicode_FromString("PyGlob_Glob");
+    PyDict_SetItem(d, k, v);
+    Py_DECREF(k); Py_DECREF(v);
+    return d;
+}
+
+// `writer` is NOT a dict entry here — csv.writer(f) is always
+// intercepted structurally in Compiler.cpp (see PyCsv_Writer's comment),
+// same as pathlib.Path/hashlib.md5 construction never being looked up
+// via their module dicts either.
+static PyObject* makeCsvModuleDict() {
+    PyObject* d = PyDict_New();
+    PyObject* k = PyUnicode_FromString("reader");
+    PyObject* v = PyUnicode_FromString("PyCsv_Reader");
+    PyDict_SetItem(d, k, v);
+    Py_DECREF(k); Py_DECREF(v);
+    return d;
+}
+
 // makeOsModuleDict: builds a dict that emulates the os module. The
 // `os.environ` entry is a real dict populated from the process
 // environment (`environ(7)`); `os.path` is a dict whose entries are
@@ -7385,6 +7681,11 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyOperator_ItemgetterCall",      PyOperator_ItemgetterCall);
     pyc_register_callable("PyOperator_Attrgetter",          PyOperator_Attrgetter);
     pyc_register_callable("PyOperator_AttrgetterCall",      PyOperator_AttrgetterCall);
+    pyc_register_callable("PyShutil_Copyfile",              PyShutil_Copyfile);
+    pyc_register_callable("PyShutil_Move",                  PyShutil_Move);
+    pyc_register_callable("PyShutil_Rmtree",                PyShutil_Rmtree);
+    pyc_register_callable("PyGlob_Glob",                    PyGlob_Glob);
+    pyc_register_callable("PyCsv_Reader",                   PyCsv_Reader);
     pyc_register_callable("PyBuiltin_SubprocessCall",      PyBuiltin_SubprocessCall);
     pyc_register_callable("PyBuiltin_SubprocessCheckOutput", PyBuiltin_SubprocessCheckOutput);
     pyc_register_callable("pyc_stderr_write",              stderr_write_adapter);

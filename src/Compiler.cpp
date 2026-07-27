@@ -1230,6 +1230,10 @@ class LoweringVisitor {
                         if (mod == "copy" && (origName == "copy" || origName == "deepcopy")) {
                             copyFuncAliases[name] = origName;
                         }
+                        // `from csv import writer [as X]` — same rationale.
+                        if (mod == "csv" && origName == "writer") {
+                            csvWriterCtorAliases.insert(name);
+                        }
 
                         std::string attrKey = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
@@ -2824,6 +2828,11 @@ class LoweringVisitor {
     // os.path.join's fix did (the copy module's own dict is itself
     // typed "dict" — see PyCopy_Copy's comment in Runtime.cpp).
     std::unordered_map<std::string, std::string> copyFuncAliases;
+    // Local names bound via `from csv import writer [as X]` — same
+    // rationale as pathCtorAliases. csv.writer(f) needs AST-structural
+    // construction (see PyCsv_Writer's comment in Runtime.cpp) so
+    // .writerow() can be dispatched with an explicit receiver.
+    std::unordered_set<std::string> csvWriterCtorAliases;
     // User functions (defs or synthetic lambdas) that contain a return of a
     // callable token value. Calls to them have their result temp marked so
     // that subsequent assigns/unpacks/calls can propagate the token nature (B4).
@@ -3945,6 +3954,23 @@ class LoweringVisitor {
             std::string fn = which == "copy" ? "PyCopy_Copy" : "PyCopy_Deepcopy";
             std::string res = "t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {fn, arg}, res);
+            return res;
+        }
+        // csv.writer bound to a bare name via `from csv import writer`
+        // — construct directly, same as the `csv.writer(...)`-qualified
+        // form in lowerMethodCall.
+        if (!node->children.empty() && node->children[0] &&
+            node->children[0]->type == "Name" &&
+            csvWriterCtorAliases.count(node->children[0]->id) &&
+            !isShadowedLocal(node->children[0]->id)) {
+            std::string arg;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type != "Keyword") { arg = lowerExpr(ch); break; }
+            }
+            std::string res = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyCsv_Writer", arg}, res);
+            noteType(res, "csvwriter");
             return res;
         }
         // super() call — returns a proxy that looks up methods on the parent class
@@ -7378,6 +7404,33 @@ class LoweringVisitor {
                 return res;
             }
         }
+        // csv.writer(f) construction — literal "csv" name or any
+        // `import csv as X` alias of it (same structural-recognition
+        // rationale as copy.copy above — see PyCsv_Writer's comment in
+        // Runtime.cpp for why .writerow() needs this).
+        if (attr->children.size() >= 1 && attr->children[0] &&
+            attr->children[0]->type == "Name" && methodName == "writer") {
+            const std::string& baseId = attr->children[0]->id;
+            bool isCsvMod = (baseId == "csv");
+            if (!isCsvMod) {
+                auto it = moduleNameAliases.find(baseId);
+                isCsvMod = (it != moduleNameAliases.end() && it->second == "csv");
+            }
+            if (isCsvMod) {
+                std::string arg = args.empty() ? "" : args[0];
+                ir.addInstruction(currentFunc, "call", {"PyCsv_Writer", arg}, res);
+                noteType(res, "csvwriter");
+                return res;
+            }
+        }
+        // csvwriter.writerow(row) — typeOf-gated direct call, explicit
+        // receiver (same lesson as file.write()'s fix: the generic,
+        // non-bound dict dispatch can't supply one).
+        if (methodName == "writerow" && typeOf(obj) == "csvwriter") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyCsv_Writerow", obj, arg}, res);
+            return res;
+        }
         // hashobj.hexdigest() — typeOf-gated (same fast-path-only
         // limitation as datetime/pathlib's methods: works after
         // construction/assignment/return, not through an untyped function
@@ -8700,6 +8753,9 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
         {"textwrap",   {"wrap", "fill"}},
         {"uuid",       {"uuid4"}},
         {"copy",       {"copy", "deepcopy"}},
+        {"shutil",     {"copyfile", "move", "rmtree"}},
+        {"glob",       {"glob"}},
+        {"csv",        {"reader", "writer"}},
     };
     return table;
 }

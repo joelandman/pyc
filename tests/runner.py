@@ -1366,6 +1366,59 @@ with open(p, "r") as f:
     lines = f.readlines()
 print(lines)
 """, "['hello']\n"),
+    # shutil / glob / csv (synthetic, built on os/pathlib/open from
+    # earlier phases). csv.reader(lines) takes a plain list of
+    # line-strings — real csv.reader's actual general contract, not
+    # specifically a file object — used here as
+    # csv.reader(f.readlines()), the file-read bridge added this phase.
+    # Real csv.reader returns a lazy iterator (repr'd as
+    # `<_csv.reader object at ...>` if printed directly, not its rows);
+    # pyc's returns an eager list matching every other itertools-shaped
+    # function this session, so the source wraps it in list(...) for a
+    # meaningful comparison on both sides. Cleans up every file/dir it
+    # creates so the test is idempotent across repeated runs.
+    ("""
+import shutil
+import glob
+import csv
+import os
+
+src = "/tmp/pyc_test_shutil_src.txt"
+dst = "/tmp/pyc_test_shutil_dst.txt"
+with open(src, "w") as f:
+    f.write("hello shutil")
+shutil.copyfile(src, dst)
+with open(dst, "r") as f:
+    print(f.readlines())
+
+dst2 = "/tmp/pyc_test_shutil_moved.txt"
+shutil.move(dst, dst2)
+print(sorted(glob.glob("/tmp/pyc_test_shutil_*.txt")))
+
+os.makedirs("/tmp/pyc_test_rmtree_dir/sub", exist_ok=True)
+with open("/tmp/pyc_test_rmtree_dir/f1.txt", "w") as f:
+    f.write("x")
+with open("/tmp/pyc_test_rmtree_dir/sub/f2.txt", "w") as f:
+    f.write("y")
+shutil.rmtree("/tmp/pyc_test_rmtree_dir")
+print(os.path.exists("/tmp/pyc_test_rmtree_dir"))
+
+csvpath = "/tmp/pyc_test_csv.csv"
+with open(csvpath, "w") as f:
+    w = csv.writer(f)
+    w.writerow(["name", "age", "note"])
+    w.writerow(["Alice", "30", "hello, world"])
+    w.writerow(["Bob", "25", 'has "quotes"'])
+
+with open(csvpath, "r") as f:
+    lines = f.readlines()
+rows = list(csv.reader(lines))
+print(rows)
+
+os.remove(src)
+os.remove(dst2)
+os.remove(csvpath)
+""", "['hello shutil']\n['/tmp/pyc_test_shutil_moved.txt', '/tmp/pyc_test_shutil_src.txt']\nFalse\n[['name', 'age', 'note'], ['Alice', '30', 'hello, world'], ['Bob', '25', 'has \"quotes\"']]\n"),
     # hashlib / base64 / struct (synthetic; no bytes type — see
     # IMPLEMENTATION.md). Real CPython's hashlib/base64 both raise
     # TypeError on a plain str (they require bytes), so the live

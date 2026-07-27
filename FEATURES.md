@@ -109,6 +109,35 @@ f(b=3, a=4)                    keyword call arguments
   `.readlines()`, and only reachable via the `with`-statement form (no
   bare `f = open(...); ...; f.close()` — `.close()` isn't implemented).
 
+## Shutil / Glob / Csv
+
+- `shutil.copyfile(src, dst)` — direct C-level `fopen`/`fread`/`fwrite`,
+  bypassing pyc's synthetic file object entirely (so it works
+  independently of `open()`'s own limitations).
+- `shutil.move(src, dst)` — `rename(2)` first (fast path, same
+  filesystem); falls back to copy + delete on failure (e.g.
+  cross-filesystem).
+- `shutil.rmtree(path)` — recursive directory removal.
+- `glob.glob(pattern)` — `*`, `?`, `[seq]` wildcard matching (standard
+  glob/fnmatch semantics) against a single directory's listing. **No
+  recursive `**` support** — a hard scoping choice (recursive directory
+  walking + pattern matching is a materially bigger feature than a
+  single-directory match), documented, matches the precedent set by
+  itertools' unbounded-iterator gap.
+- `csv.reader(lines)` — takes a plain list of line-strings (real
+  `csv.reader`'s actual general contract — any iterable of strings, not
+  specifically a file object), typically used as
+  `csv.reader(f.readlines())`. Returns a real (eager) list of rows, not
+  CPython's lazy iterator — same eager-materialization approach as every
+  itertools function this session. Minimal quoted-field support
+  (`"a,b",c` → `['a,b', 'c']`, `""` inside a quoted field is a literal
+  `"`); does **not** handle embedded newlines inside a quoted field
+  (each input line is always exactly one row) or custom
+  dialects/delimiters.
+- `csv.writer(f)` / `.writerow(row)` — quotes fields containing `,`,
+  `"`, or a newline (doubling embedded `"`), writes through the same
+  file-write path as `.write()`.
+
 ## Standard Library Stubs
 
 - `os.path.exists()`, `os.path.isfile()`, `os.path.isdir()`, `os.path.join()`,

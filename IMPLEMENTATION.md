@@ -193,6 +193,22 @@ same shape, not specifically `functools`/`operator`:
    only ever reflect a lambda freshly produced by *this* statement's own
    RHS expression, never a leftover from an earlier one.
 
+### `csv.writer` — AST-Structural Dispatch, Same Reason as `copy.copy`
+`csv.writer(f)` needed the same treatment as `copy.copy`/`copy.deepcopy`
+(above), for a related but distinct reason: `.writerow(row)` needs an
+explicit receiver — the *same* lesson `file.write()`'s fix established
+(the generic, non-bound dict dispatch has no way to supply one) — which
+means the writer object returned by `csv.writer(f)` needs a custom
+`typeOf` tag (`"csvwriter"`) so `.writerow()` can be gated on it. The
+generic dict-dispatch call path has no mechanism to attach a custom tag
+to its result, so `csv.writer(f)`'s *construction* also has to be
+recognized structurally in the AST (mirroring `pathlib.Path`/
+`hashlib.md5`'s pattern), even though `csv.writer` itself doesn't have
+`copy.copy`'s specific unconditional-`.copy()`-collision problem.
+`PyCsv_Writer` is a direct-call function (`Runtime.cpp`) taking the file
+object directly, not the token+registry `PyObject* Fn(PyObject* argsList)`
+convention every other module function in this session's work uses.
+
 ## Known Limitations
 
 ### Performance
@@ -205,7 +221,8 @@ same shape, not specifically `functools`/`operator`:
   `time.perf_counter`, `math`, `json`, `random`, `itertools` (subset),
   `collections` (subset), `datetime` (`date`/`datetime`/`timedelta`, see
   below), `pathlib` (`Path`, see below), `hashlib`, `base64`, `struct`,
-  `heapq`, `bisect`, `statistics`, `string`, `textwrap`, `copy`, `uuid` —
+  `heapq`, `bisect`, `statistics`, `string`, `textwrap`, `copy`, `uuid`,
+  `shutil`, `glob`, `csv` —
   everything else reports ImportError rather than compiling real CPython
   stdlib source. A function named `get` called via `module.get()`
   collides with the dict `.get()` method shim and silently returns
