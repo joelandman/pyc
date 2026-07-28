@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **340/340** (runner shows 340/340, file_case_failures=0).
+Current test count: **344/344** (runner shows 344/344, file_case_failures=0).
 
 ## Types and Literals
 
@@ -27,8 +27,16 @@ is  is not                     identity (singleton-aware)
 in  not in                     membership (list, str, dict)
 and  or  not                   boolean (short-circuit, returns actual value)
 -x  +x                         unary
-+=  -=  *=  /=  //=  %=  **=  augmented (on names and on subscripts a[i]+=1)
++=  -=  *=  /=  //=  %=  **=  augmented (on names, subscripts a[i]+=1, and attributes obj.attr+=1)
 ```
+
+- **Severe, common bug found and fixed**: augmented assignment on an
+  instance attribute (`obj.attr += x`) crashed at runtime with an
+  uncaught `KeyError` — the parser routed `Attribute` augmented-assign
+  targets through the same code path as `Subscript` targets, which reads
+  a bogus empty-string dict key for the (nonexistent) "index" of an
+  attribute node. `obj.attr = obj.attr + x` was unaffected. See
+  IMPLEMENTATION.md.
 
 ## Control Flow
 
@@ -115,6 +123,14 @@ f(b=3, a=4)                    keyword call arguments
   Catching by type (`except KeyError as e:`) and printing the instance
   itself (`print(e)`) both work correctly; it's specifically
   `type()`-then-`.__name__` on the caught instance that doesn't resolve.
+- **Found, documented, not fixed**: user-defined classes subclassing a
+  builtin exception type (`class MyError(Exception): pass`) don't work
+  at all. Raising one with an argument (`raise MyError("boom")`) crashes
+  the *entire compilation* (LLVM verification failure); raising one with
+  no arguments compiles but the resulting exception is uncatchable by
+  name or by `except Exception:` alike, surfacing as an uncaught fatal
+  error with a garbled internal repr instead of the actual message. See
+  IMPLEMENTATION.md.
 
 ## Statements
 

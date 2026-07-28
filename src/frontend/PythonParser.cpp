@@ -393,8 +393,23 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             if (tname == "Name") {
                 node->id = getPyString(target, "id");
                 // value will be added as children[0] below
+            } else if (tname == "Attribute") {
+                // Attribute target (obj.attr op= val): store target node as
+                // children[0], using the same "__attr_assign__" sentinel the
+                // plain Assign case uses — found and fixed while bug
+                // hunting: this branch used to fall into the generic
+                // "__subscript__" case below, whose Compiler.cpp handler
+                // unconditionally treats children[0] as a Subscript node
+                // (object + index-expression children), silently reading
+                // an empty-string "index" from an Attribute node (which has
+                // no second child at all) and crashing with a runtime
+                // KeyError on the very common `obj.attr += x` idiom.
+                node->id = "__attr_assign__";
+                auto t = std::make_unique<ASTNode>(); buildAST(target, t.get());
+                node->children.push_back(std::move(t));
+                // value will be added as children[1] below
             } else {
-                // Subscript or attribute target: store target node as children[0]
+                // Subscript target: store target node as children[0]
                 node->id = "__subscript__";
                 auto t = std::make_unique<ASTNode>(); buildAST(target, t.get());
                 node->children.push_back(std::move(t));

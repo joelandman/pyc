@@ -465,6 +465,44 @@ print(a[0],a[1],a[2])
     ("def f(a, b): return a < b\nprint(f(1, 2))", "True\n"),
     ("for i in range(3):\n    flag = i < 2\n    print(flag)", "True\nTrue\nFalse\n"),
 
+    # Bug-hunt regression: obj.attr += x (augmented assignment on an
+    # instance attribute) crashed at runtime with a KeyError. The parser
+    # routed Attribute AugAssign targets through the same "__subscript__"
+    # sentinel as Subscript targets; Compiler.cpp's handler unconditionally
+    # read children[1] as an index expression, which an Attribute node
+    # doesn't have, producing a bogus empty-string dict key. Covers
+    # multiple ops in sequence, non-numeric (str) attributes, nested
+    # attribute chains, and double-evaluation avoidance for an object
+    # expression with a side effect.
+    ("class B:\n"
+     "    def __init__(self, n): self.n = n\n"
+     "b = B(5)\n"
+     "b.n += 3\n"
+     "b.n -= 1\n"
+     "b.n *= 2\n"
+     "print(b.n)", "14\n"),
+    ("class B:\n"
+     "    def __init__(self): self.s = 'x'\n"
+     "b = B()\n"
+     "b.s += 'yz'\n"
+     "print(b.s)", "xyz\n"),
+    ("class B:\n"
+     "    def __init__(self, n): self.n = n\n"
+     "class Outer:\n"
+     "    def __init__(self): self.inner = B(10)\n"
+     "o = Outer()\n"
+     "o.inner.n += 100\n"
+     "print(o.inner.n)", "110\n"),
+    ("class B:\n"
+     "    def __init__(self, n): self.n = n\n"
+     "b = B(5)\n"
+     "calls = []\n"
+     "def get_box():\n"
+     "    calls.append(1)\n"
+     "    return b\n"
+     "get_box().n += 1000\n"
+     "print(b.n, len(calls))", "1005 1\n"),
+
     # Tier-2-batch regression: unsupported imports print ImportError to
     # stderr and return None (rather than silently producing wrong output).
     # The runner only checks stdout, so the program's stdout is empty.

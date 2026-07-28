@@ -1117,6 +1117,118 @@ ever claimed `upper()`/`lower()`/`strip()`/`split()`/`join()`/`find()`/
 `count()`/`replace()`/`%`-formatting, so this isn't a regression from a
 false claim, just a previously-unrecorded gap worth having in one place.
 
+### `obj.attr += x` Crashed at Runtime With a `KeyError` — Fixed
+Continuing the hunt into class features turned up a severe, very common
+bug: augmented assignment on an instance attribute (`b.n += 3`, or any
+other `op=` on `obj.attr`) crashed at runtime with an uncaught
+`KeyError`, even though the equivalent `b.n = b.n + 3` worked correctly.
+
+**Root cause**: `PythonParser.cpp`'s `AugAssign` handling only special-cased
+`Name` targets; every other target shape (`Subscript` *and* `Attribute`)
+fell into a single shared branch tagging the node with the same
+`"__subscript__"` sentinel and storing the raw target AST node as
+`children[0]` — with no record of which kind of target it actually was.
+This is a real divergence from the plain `Assign` node's handling just
+above it in the same file, which already correctly distinguishes
+`Attribute` targets (tagged `"__attr_assign__"`) from `Subscript`
+targets (tagged `"__subscript__"`) — the `AugAssign` case was simply
+never updated to match when that distinction was added for `Assign`.
+
+`Compiler.cpp`'s `lowerAugAssign` then unconditionally treated anything
+tagged `"__subscript__"` as a `Subscript` node — reading `children[0]`
+as the container object (correct by coincidence, since `Attribute` nodes
+also store their base object as `children[0]`) and `children[1]` as the
+index expression to look up. But an `Attribute` node has no `children[1]`
+at all (its attribute name lives in the node's `id` field, not as a
+child expression) — so `idx` silently lowered to an empty string, and
+the generated code called `Pyc_Subscript(instance_dict, "")`, a dict
+lookup for the literal key `""`, which doesn't exist on any real
+instance — hence the `KeyError`.
+
+Fixed in both files: `PythonParser.cpp`'s `AugAssign` handling now
+checks the target's type the same way `Assign` already does, tagging
+`Attribute` targets `"__attr_assign__"`; `Compiler.cpp`'s
+`lowerAugAssign` gained a new `"__attr_assign__"` branch that reads the
+attribute name from `attrTarget->id` and does a proper `Pyc_GetItem`/
+`<op>`/`Pyc_SetItem` sequence — lowering the base object expression only
+once and reusing the result for both the read and the write (matching
+the existing `"__subscript__"` branch's care to avoid double-evaluating
+an object expression with a side effect, e.g. `get_obj().attr += 1`
+must call `get_obj()` exactly once).
+
+Verified against real CPython: multiple ops in sequence on the same
+attribute (`+=`, `-=`, `*=`), a `str` attribute (`+=` concatenation, not
+just numeric), a nested attribute chain (`o.inner.n += 100`), and the
+double-evaluation case above (confirmed the side-effecting call happens
+exactly once, matching CPython). Added as permanent `tests/runner.py`
+regressions. Full suite (344/344) and import tests (9/9) stay green;
+`valgrind --tool=memcheck` shows 0 errors.
+
+### Severe, Different-Class Bug Found, Documented But Not Fixed: User-Defined Exception Subclasses Don't Work At All
+Continuing the hunt into exception handling turned up a large,
+foundational gap, architecturally similar in size to the `tempCounter`
+and `@classmethod`/`@property` findings above: **any** user-defined
+class subclassing a builtin exception type (the completely ordinary
+`class MyError(Exception): pass` idiom) is broken, in two independent
+ways depending on whether it's instantiated with arguments.
+
+**With a positional argument — hard compile crash, for the whole file**:
+`raise MyError("boom")` fails LLVM module verification entirely
+(`Incorrect number of arguments passed to called function!` on a call to
+the synthesized `MyError__init__`) and refuses to produce a binary at
+all, even though nothing else in the file is wrong. Root cause: a
+class with no explicit `__init__` gets a synthesized wrapper (`lowerClass`'s
+"B6" logic, ~line 8526) that looks up the parameter list of the *nearest
+base class's* `__init__` via the `classInitParams` map — but that map is
+only ever populated for classes **defined in the same compilation unit**
+(line 8389, inside the `hasOwnInitDefined` branch). `Exception` (and
+every other builtin exception name) is never in it, so the lookup fails
+silently and falls back to a bare `["self"]` parameter list — a 1-arg
+`__init__`. Separately, the call-site instantiation logic (~line 4193)
+always forwards *every* positional argument the caller actually wrote,
+regardless of what the synthesized `__init__` was declared to accept —
+so a 1-param declared function gets called with 2 arguments (`self` +
+the message), a mismatch LLVM's verifier rejects outright.
+
+**With no arguments — compiles, but the exception is neither caught by
+name nor by any generic handler**: `raise MyError()` produces an
+uncaught fatal error with a garbled dict-repr message (`Exception:
+{'__class__': {'__mro__': [...]}}`) instead of being catchable by
+`except MyError:` *or* `except Exception:`. Root cause: pyc has two
+entirely separate exception representations that don't know about each
+other. Builtin exceptions (`ValueError("x")`, etc.) are recognized
+structurally at the call site (~line 4130) and construct a dedicated
+runtime-typed "structured exception" object (`pyc_make_exc`, type tag
+10) — the only object shape `pyc_exc_type_name`/`pyc_exc_matches`
+(Runtime.cpp, used by every `except` clause's type check) know how to
+read. But `class MyError(Exception): ...` is a perfectly ordinary
+user-defined class as far as `lowerClass`/instantiation are concerned —
+it's registered in `knownClasses` and instantiated exactly like any
+other class, producing a plain `dict` (type 2) with a `"__class__"` key,
+which is neither a structured exception (type 10) nor a legacy string
+exception (type 3) — so `pyc_exc_type_name` falls through to a hardcoded
+`"Exception"` default and `pyc_exc_matches` can never match it by its
+real name, and `pyc_raise`/the fatal-error path both mishandle it as an
+unrecognized value.
+
+**Why this wasn't fixed in this pass**: both failure modes stem from the
+same deeper gap — pyc's builtin-exception machinery and its
+user-defined-class machinery were built independently and never
+integrated — and correctly integrating them (making `class
+MyError(Exception)` instantiate a real structured-exception-compatible
+object, threading a user message through to `pyc_make_exc`-equivalent
+construction, preserving `isinstance`/`except`-matching against the
+builtin exception hierarchy for a class that also has ordinary
+user-defined attributes/methods) is a multi-file, multi-representation
+redesign — larger in scope than a contained bug fix, comparable to the
+`@classmethod`/`@property` finding above rather than anything else fixed
+in this hunt. Documented here as a known, real, reproducible, unfixed
+issue (including the outright compile crash, which is the more urgent
+half) for a dedicated future session. Not previously documented anywhere
+— `FEATURES.md`'s Exceptions section only ever discussed builtin
+exception types and calling exception classes as first-class values
+(`exc = ValueError; raise exc("msg")`), never subclassing one.
+
 ## Known Limitations
 
 ### Performance

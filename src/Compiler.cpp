@@ -6831,6 +6831,32 @@ class LoweringVisitor {
             } else {
                 ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, res}, dummy);
             }
+        } else if (node->id == "__attr_assign__") {
+            // obj.attr op= val — children[0]=Attribute node, children[1]=rhs.
+            // Found missing entirely while bug hunting: this case used to
+            // fall through the "__subscript__" branch above (the parser
+            // didn't distinguish Attribute from Subscript targets for
+            // AugAssign), which reads a bogus empty-string "index" from an
+            // Attribute node and crashes with a runtime KeyError on the
+            // ordinary `obj.attr += x` idiom. obj is lowered once and
+            // reused for both the get and the set, matching the
+            // "__subscript__" branch's care to avoid double-evaluating an
+            // object expression with side effects (e.g. `f().attr += 1`).
+            if (node->children.size() < 2) return;
+            const ASTNode* attrTarget = node->children[0].get();
+            std::string obj = lowerExpr(attrTarget->children.empty() ? nullptr : attrTarget->children[0].get());
+            std::string attrName = attrTarget->id;
+            std::string attrConst = "c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + attrName + "\""}, attrConst, "str");
+            std::string cur = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, attrConst}, cur);
+            std::string rhs = lowerExpr(node->children[1].get());
+            std::string res = "t" + std::to_string(tempCounter++);
+            std::string resultType = numericResultType(op, cur, rhs);
+            ir.addInstruction(currentFunc, op, {cur, rhs}, res, resultType);
+            noteType(res, resultType);
+            std::string dummy = "t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, attrConst, res}, dummy);
         } else {
             // Normal name: children[0] = rhs
             // B5: obtain the current LHS value via the cell (PyCell_Get) if the target is
