@@ -85,6 +85,17 @@ f(b=3, a=4)                    keyword call arguments
 - Single and multiple inheritance with C3-linearized MRO
 - `super()` following the runtime C3 MRO (full remaining-MRO method search)
 - `__str__` / `__repr__` protocol (used by `print`, `str`, f-strings)
+- **Found, documented, not fixed**: `@classmethod`/`@property` method
+  decorators are silently discarded — every method is registered and
+  called identically regardless of decorator. `@classmethod` methods
+  called via the class (`A.method()`, no instance) get `cls` unbound
+  entirely; called via an instance, `cls` accidentally ends up bound to
+  the instance rather than the class. `@property` methods are never
+  invoked on plain attribute access (`a.name` returns the method's raw
+  internal callable-token string instead of calling the getter).
+  `@staticmethod` appears to work only for zero-arg methods, by
+  coincidence, not because it's actually implemented. See
+  IMPLEMENTATION.md.
 
 ## Exceptions
 
@@ -294,6 +305,13 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
 `upper()`, `lower()`, `strip()`, `split(sep)`, `join(iterable)`,
 `find()`, `count()`, `replace()`,
 `str % value` (`%d`, `%s`, `%f`, `%.Nf`, `%x`, `%X`, `%o`, `%r`, `%%`, `%*d`)
+
+- **Found, documented, not fixed**: `.format()`, `.rsplit()`,
+  `.partition()`, and `.rpartition()` have no implementation at all
+  (not a missing-dispatch bug like `tuple`/`divmod`/`pow` — there's no
+  working code to route to). Calling any of them silently prints `None`
+  instead of raising an error or producing the right result. See
+  IMPLEMENTATION.md.
 
 ## List/Dict Methods
 

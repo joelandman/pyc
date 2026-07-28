@@ -1036,6 +1036,87 @@ single-iterable (`min([3,1,2], key=...)`) forms. All added as permanent
 `tests/runner.py` regression cases. Full suite (340/340) and import
 tests (9/9) stay green; `valgrind --tool=memcheck` shows 0 errors.
 
+### Severe, Different-Class Bug Found, Documented But Not Fixed: `@classmethod`/`@property` Decorators Are Silently Discarded on Methods
+Continuing the hunt into class features turned up a bug architecturally
+similar in size to the `tempCounter` namespace-collision finding above —
+not a missing dispatch branch or a storage-representation mismatch, but
+a decorator that is recognized by the parser and then thrown away.
+`lowerClass`'s method-lowering loop filters `Decorator` children out of
+the AST nodes it lowers into the method body (`c->children[i]->type !=
+"Decorator"`) and never inspects the decorator list itself anywhere else
+— every method, regardless of `@staticmethod`/`@classmethod`/`@property`
+or no decorator at all, is registered in the class dict identically: a
+plain callable token whose first parameter is positionally bound
+whenever the method is called.
+
+**Confirmed, reproduced, three distinct failure modes**:
+- **`@classmethod`, called via the class**: `A.cm()` where `cm` reads
+  `cls.x` returns `None` instead of the class attribute's value — `cls`
+  is simply never bound to anything when there's no instance to supply
+  it, so `cls.x` resolves against nothing.
+- **`@classmethod`, called via an instance**: `a.cm()` (same method)
+  returns the *correct* answer, but only by accident — `cls` actually
+  gets bound to the instance `a` (the same binding a plain unbound
+  `self` parameter would get), and instance attribute lookup happens to
+  fall back to the class dict for `cls.x`. This "works" for read-only
+  attribute access but would not extend to anything that relies on
+  `cls` genuinely being the class object (e.g. `cls()` to construct a
+  new instance would call the instance, not the class).
+- **`@property`**: `a.doubled` (no call parens — plain attribute
+  access) does not invoke the getter at all. Since `doubled` matches a
+  registered method name, attribute access resolves it to the method's
+  raw callable-token string and returns *that* unevaluated — confirmed
+  via `print(a.doubled)` printing `A__doubled` (the method's internal
+  compiled function name) and `type(a.doubled)` printing `<class
+  'str'>`, instead of CPython's `42` / `<class 'int'>`.
+- **`@staticmethod` appears to work but for an unrelated reason**: a
+  zero-arg static method called via the class (`A.sm()`) happens to
+  produce the right answer purely because it takes no `self`/`cls`
+  parameter at all, so there's no positional-binding mismatch to
+  expose — not because `@staticmethod` is actually implemented.
+
+**Why this wasn't fixed in this pass**: a real fix touches three
+separate places that currently don't coordinate at all — decorator
+detection during class-body lowering (`lowerClass`, ~line 8440), the
+method call-site dispatch (which currently has no notion of "was this
+called as `ClassName.method(...)` or `instance.method(...)`", needed to
+decide what `cls` should be bound to for `@classmethod`), and
+plain-attribute-access lowering (needed to special-case `@property`
+methods so a bare `a.name` triggers a getter call instead of returning
+the callable token) — each a nontrivial, separately-testable change in
+its own right, comparable in total scope to the `tempCounter` finding
+above rather than a contained one- or two-file fix like the other bugs
+in this hunt. Documented here as a known, real, reproducible, unfixed
+issue for a dedicated future session; not previously called out
+anywhere in `FEATURES.md`, which lists `class`/`__init__`/inheritance/
+`super()`/`__str__`/`__repr__` as supported but makes no claim about
+method decorators either way.
+
+### Several Common `str` Methods Are Entirely Unimplemented, Silently Returning `None`
+While probing string methods during the same hunt, `.format()`,
+`.rsplit()`, `.partition()`, and `.rpartition()` were all found to have
+**zero** dispatch code anywhere in `Compiler.cpp` — not a missing-branch
+bug like `tuple`/`divmod`/`pow` earlier (those had working
+implementations that were simply unreachable), just genuinely
+unimplemented methods. Confirmed against real CPython: `"{}".format(x)`,
+`"{:>10}".format(x)`, `"a-b-c".rsplit("-")` (even the plain, no-`maxsplit`
+form), `"abc".partition("b")`, and `"abcabc".rpartition("b")` all print
+`None` under pyc instead of their real results.
+
+This falls into the same "unrecognized call silently resolves to
+`None` instead of raising an error" hazard already known from the
+`neverDynamic`/`specialBuiltinNames` bug class fixed earlier this
+session — except here there's no missing-whitelist-entry fix available,
+since there's no implementation at all to reach. Not fixed here (adding
+four new string methods, one of which — `.format()` — depends on the
+same Format Specification Mini-Language already flagged as unimplemented
+for f-strings, is a features-coverage task rather than a bug fix in the
+spirit of this hunt). Documented here and in `FEATURES.md` since neither
+was previously called out — `FEATURES.md`'s String Methods list only
+ever claimed `upper()`/`lower()`/`strip()`/`split()`/`join()`/`find()`/
+`count()`/`replace()`/`%`-formatting, so this isn't a regression from a
+false claim, just a previously-unrecorded gap worth having in one place.
+
 ## Known Limitations
 
 ### Performance
