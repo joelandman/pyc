@@ -161,6 +161,8 @@ PyObject* PyList_Clear(PyObject* list);
 PyObject* PyList_PopAt(PyObject* list, PyObject* idx);
 PyObject* PyObject_TruthBoxed(PyObject* obj);
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key);
+PyObject* Pyc_GetAttr(PyObject* obj, PyObject* attrName);
+PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* argsList);
 PyObject* Pyc_Subscript(PyObject* obj, PyObject* key);
 PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val);
 PyObject* Pyc_Contains(PyObject* container, PyObject* item);

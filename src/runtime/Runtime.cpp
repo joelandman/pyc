@@ -10423,6 +10423,126 @@ extern "C" PyObject* PyBuiltin_SuperMethod(PyObject* args) {
     return Pyc_Apply(method, callArgs);
 }
 
+// ---- @classmethod / @staticmethod / @property dispatch ----
+// Found and fixed while bug hunting: these three method decorators used
+// to be silently discarded entirely — every method was registered in
+// its class dict and called identically regardless of decorator, so
+// `cls` was never correctly bound to the class (only accidentally to
+// the instance when called via instance.method()), a @staticmethod
+// taking real parameters crashed/misbehaved when called via an instance
+// (self was wrongly prepended on top of the real arguments), and
+// @property getters were never invoked on plain attribute access at all
+// (a.doubled returned the method's raw internal token instead of
+// calling the getter). Fixed by tagging a decorated method's class-dict
+// entry as a 2-element list [kind, realToken] instead of a bare string
+// token (Compiler.cpp's lowerClass) — Pyc_CallMethod and Pyc_GetAttr
+// below recognize that shape and dispatch accordingly; a plain
+// (undecorated) method's entry is still just a bare string, so this is
+// purely additive and doesn't change the always-worked path.
+static bool pyc_is_decorated_method(PyObject* v, std::string& kindOut, PyObject*& realTokenOut) {
+    if (v && v->type == 1 && v->list.size() == 2 &&
+        v->list[0] && v->list[0]->type == 3 &&
+        v->list[1] && v->list[1]->type == 3) {
+        kindOut = v->list[0]->str;
+        realTokenOut = v->list[1];
+        return (kindOut == "staticmethod" || kindOut == "classmethod" || kindOut == "property");
+    }
+    return false;
+}
+
+// True when `obj` is a class dict itself (has __mro__) rather than an
+// instance (has __class__). Used to decide what `cls` should be for a
+// @classmethod, regardless of whether it was called as
+// ClassName.method(...) (receiver is already the class) or
+// instance.method(...) (receiver is an instance; cls must be
+// instance.__class__, not the instance itself).
+static PyObject* pyc_receiver_as_class(PyObject* receiver) {
+    if (!receiver || receiver->type != 2) return receiver;
+    for (auto& p : receiver->dict) {
+        if (pyObjStrEqualsLiteral(p.first, "__mro__")) return receiver;
+    }
+    for (auto& p : receiver->dict) {
+        if (pyObjStrEqualsLiteral(p.first, "__class__")) return p.second;
+    }
+    return receiver;
+}
+
+// Pyc_CallMethod(methodVal, receiver, argsList) — the single dispatch
+// point for obj.method(...) / ClassName.method(...) calls (both routed
+// here by Compiler.cpp's lowerMethodCall, replacing what used to be two
+// separate compile-time-fixed "always prepend self" / "never prepend"
+// code paths). Decides whether/what to prepend as the leading argument
+// based on methodVal's shape and, for a plain method, whether receiver
+// looks like a class (unbound-call idiom) or an instance (bound-call
+// idiom): @staticmethod never prepends; @classmethod prepends the class
+// (not the raw receiver, so instance.classmethod() still binds cls
+// correctly); a plain method prepends the receiver only when it's not
+// itself a class dict (ClassName.method(instance, ...) already has self
+// as an explicit argument and must not get a second one).
+PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* argsList) {
+    std::string kind;
+    PyObject* realToken = nullptr;
+    size_t n = (argsList && argsList->type == 1) ? PyList_Size(argsList) : 0;
+    if (pyc_is_decorated_method(methodVal, kind, realToken)) {
+        if (kind == "staticmethod") {
+            return Pyc_Apply(realToken, argsList);
+        }
+        // "classmethod" and the (shouldn't-normally-be-called-this-way)
+        // "property" fallback both bind a leading argument like a
+        // normal method; classmethod's leading argument is the class,
+        // not the raw receiver.
+        PyObject* lead = (kind == "classmethod") ? pyc_receiver_as_class(receiver) : receiver;
+        PyObject* callArgs = PyList_New(0);
+        PyList_Append(callArgs, lead);
+        for (size_t i = 0; i < n; ++i) PyList_Append(callArgs, PyList_GetItemInt(argsList, i));
+        return Pyc_Apply(realToken, callArgs);
+    }
+    // Plain (undecorated) method. If the receiver is itself a class dict
+    // (has __mro__) rather than an instance, this is Python's "unbound
+    // method" call shape — ClassName.method(instance, ...) — where the
+    // caller already supplied self explicitly as an ordinary positional
+    // argument; nothing should be prepended (matches the pre-existing,
+    // already-correct behavior for this call shape). Otherwise this is
+    // an ordinary bound call (instance.method(...)) and the receiver
+    // (self) is prepended, exactly as every method call worked before
+    // decorator support existed.
+    bool receiverIsClass = false;
+    if (receiver && receiver->type == 2) {
+        for (auto& p : receiver->dict) {
+            if (pyObjStrEqualsLiteral(p.first, "__mro__")) { receiverIsClass = true; break; }
+        }
+    }
+    if (receiverIsClass) {
+        return Pyc_Apply(methodVal, argsList);
+    }
+    PyObject* callArgs = PyList_New(0);
+    PyList_Append(callArgs, receiver);
+    for (size_t i = 0; i < n; ++i) PyList_Append(callArgs, PyList_GetItemInt(argsList, i));
+    return Pyc_Apply(methodVal, callArgs);
+}
+
+// Pyc_GetAttr(obj, attrName) — wraps Pyc_GetItem for plain (non-call)
+// attribute reads (obj.attr, no parens) so a @property getter is
+// invoked automatically instead of returning its raw internal token.
+// Only Compiler.cpp's lowerAttribute (the bare-attribute-read path) uses
+// this; every other internal Pyc_GetItem call site (module dispatch,
+// method-token lookups during a call, class-dict internals) is
+// deliberately untouched, since those are never meant to trigger
+// property auto-invocation.
+PyObject* Pyc_GetAttr(PyObject* obj, PyObject* attrName) {
+    PyObject* val = Pyc_GetItem(obj, attrName);
+    std::string kind;
+    PyObject* realToken = nullptr;
+    if (pyc_is_decorated_method(val, kind, realToken) && kind == "property") {
+        PyObject* argList = PyList_New(0);
+        PyList_Append(argList, obj);
+        PyObject* result = Pyc_Apply(realToken, argList);
+        Py_DECREF(argList);
+        return result;
+    }
+    return val;
+}
+
 // ---- B6: Extended attribute lookup with class fallback ----
 // PyObject_GetAttrExtended looks up an attribute on an object, first checking
 // the instance dict, then the class dict (for class attributes).

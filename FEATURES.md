@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **367/367** (runner shows 367/367, file_case_failures=0).
+Current test count: **375/375** (runner shows 375/375, file_case_failures=0).
 
 ## Types and Literals
 
@@ -114,16 +114,33 @@ f(b=3, a=4)                    keyword call arguments
 - Single and multiple inheritance with C3-linearized MRO
 - `super()` following the runtime C3 MRO (full remaining-MRO method search)
 - `__str__` / `__repr__` protocol (used by `print`, `str`, f-strings)
-- **Found, documented, not fixed**: `@classmethod`/`@property` method
-  decorators are silently discarded — every method is registered and
-  called identically regardless of decorator. `@classmethod` methods
-  called via the class (`A.method()`, no instance) get `cls` unbound
-  entirely; called via an instance, `cls` accidentally ends up bound to
-  the instance rather than the class. `@property` methods are never
-  invoked on plain attribute access (`a.name` returns the method's raw
-  internal callable-token string instead of calling the getter).
-  `@staticmethod` appears to work only for zero-arg methods, by
-  coincidence, not because it's actually implemented. See
+- `@classmethod`, `@property`, `@staticmethod` method decorators.
+  **Severe bug found and fixed**: these used to be silently discarded
+  entirely — every method was called identically regardless of
+  decorator, so `@classmethod`'s `cls` was never correctly bound (only
+  accidentally to the instance when called via `instance.method()`),
+  `@staticmethod` with real parameters crashed/misbehaved when called
+  via an instance, and `@property` getters were never invoked on plain
+  attribute access at all (`a.name` returned the method's raw internal
+  token instead of the computed value). Now works correctly for both
+  `ClassName.method()` and `instance.method()` call shapes, including
+  the "unbound method" idiom (`ClassName.method(instance, ...)`) and
+  multi-level inheritance with `super()`. Class construction via a
+  variable holding a class reference (`X = Foo; X()`, including `cls()`
+  inside a `@classmethod`) is a separate, still-unfixed gap — see
+  IMPLEMENTATION.md.
+- **Related, more severe bug found and fixed**: `x ** N` for a small
+  constant integer exponent (0–8) misrouted any function-parameter or
+  other untyped operand through complex-number multiplication instead
+  of ordinary multiplication — a silent wrong answer for int arguments,
+  and an outright compiler crash for some float arguments. Not specific
+  to methods (a plain top-level function hits it too). Fixed. A narrower
+  case survives: calling the same function with a float argument still
+  crashes — see IMPLEMENTATION.md.
+- **Found, documented, not fixed**: operator-overloading dunder methods
+  (`__add__` and presumably its siblings) don't work on class instances
+  at all — `v1 + v2` for a class defining `__add__` prints `None`.
+  Confirmed pre-existing (not introduced by any fix this session). See
   IMPLEMENTATION.md.
 
 ## Exceptions

@@ -708,6 +708,99 @@ print(a[0],a[1],a[2])
      "    return kwargs.get('missing', 'default')\n"
      "print(uses_get(a=1))", "default\n"),
 
+    # Bug-hunt regression: @classmethod/@property/@staticmethod decorators
+    # used to be silently discarded entirely — every method was called
+    # identically regardless of decorator, so cls was never correctly
+    # bound (only accidentally to the instance when called via
+    # instance.method()), @staticmethod with real parameters crashed/
+    # misbehaved when called via an instance (self was wrongly
+    # prepended), and @property getters were never invoked on plain
+    # attribute access at all. Fixed via a single runtime dispatch point
+    # (Pyc_CallMethod) that decides self/cls-prepending from a
+    # decorator-kind tag stored alongside the method token, plus
+    # Pyc_GetAttr for property auto-invocation on bare attribute reads.
+    # Covers: classmethod called via the class and via an instance
+    # (both must see cls, not an instance), classmethod mutating a class
+    # attribute (cls.x), a property computing a value from self,
+    # staticmethod with real parameters called both via the class and
+    # via an instance (the previously-broken case — 0-arg staticmethods
+    # "worked" only by accident before), the unbound-method idiom
+    # (ClassName.method(instance, ...)), and multi-level inheritance
+    # with super() still working (unaffected by the dispatch rewrite).
+    ("class A:\n"
+     "    x = 10\n"
+     "    @classmethod\n"
+     "    def cm(cls):\n"
+     "        return cls.x\n"
+     "print(A.cm())\n"
+     "a = A()\n"
+     "print(a.cm())", "10\n10\n"),
+    ("class Counter:\n"
+     "    count = 0\n"
+     "    @classmethod\n"
+     "    def increment(cls):\n"
+     "        cls.count += 1\n"
+     "        return cls.count\n"
+     "print(Counter.increment())\n"
+     "print(Counter.increment())\n"
+     "c = Counter()\n"
+     "print(c.increment())", "1\n2\n3\n"),
+    ("class Circle:\n"
+     "    def __init__(self, r):\n"
+     "        self.r = r\n"
+     "    @property\n"
+     "    def area(self):\n"
+     "        return 3.14159 * self.r * self.r\n"
+     "circ = Circle(5)\n"
+     "print(circ.area)", "78.53975\n"),
+    ("class MathUtils:\n"
+     "    @staticmethod\n"
+     "    def square(x):\n"
+     "        return x * x\n"
+     "print(MathUtils.square(4))\n"
+     "m = MathUtils()\n"
+     "print(m.square(4))", "16\n16\n"),
+    ("class Animal:\n"
+     "    def speak(self):\n"
+     "        return 'generic sound'\n"
+     "class Dog(Animal):\n"
+     "    def speak(self):\n"
+     "        return 'bark'\n"
+     "d = Dog()\n"
+     "print(Animal.speak(d))", "generic sound\n"),
+    ("class Base:\n"
+     "    def greet(self):\n"
+     "        return 'base'\n"
+     "class Mid(Base):\n"
+     "    def greet(self):\n"
+     "        return 'mid-' + super().greet()\n"
+     "class Leaf(Mid):\n"
+     "    def greet(self):\n"
+     "        return 'leaf-' + super().greet()\n"
+     "print(Leaf().greet())", "leaf-mid-base\n"),
+
+    # Bug-hunt regression: x**N for a small constant int N (0-8) uses a
+    # repeated-multiplication fast path that checked `typeOf(left) ==
+    # "boxed"` to decide "is this complex" — but "boxed" only means "not
+    # statically known to be int/float", not "is complex", so ANY
+    # function parameter or other untyped value hit PyComplex_Mul
+    # instead of plain multiplication. This produced wrong answers
+    # (silently) for int-valued parameters and, for some float-valued
+    # parameters, crashed the compiler outright with an LLVM assertion
+    # failure. Confirmed via the ordinary `def f(y): return y ** 2` —
+    # not method-specific, though found while testing method dispatch.
+    # Fixed to check the actual complexVars tracking set instead. (Not
+    # covered here: calling the same function with a *float* argument
+    # still crashes the compiler — a separate, deeper, still-unfixed
+    # interaction with function specialization, documented but not
+    # fixed; this case is int-only to test only what's actually fixed.)
+    ("def f(y):\n    return y ** 2\nprint(f(3))\nprint(f(5))", "9\n25\n"),
+    ("class A:\n"
+     "    def cube(self, x):\n"
+     "        return x ** 3\n"
+     "a = A()\n"
+     "print(a.cube(3))", "27\n"),
+
     # Tier-2-batch regression: unsupported imports print ImportError to
     # stderr and return None (rather than silently producing wrong output).
     # The runner only checks stdout, so the program's stdout is empty.

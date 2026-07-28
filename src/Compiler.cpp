@@ -3688,8 +3688,24 @@ class LoweringVisitor {
                         return one;
                     }
                     std::string cur = left;
-                    // Check if left is complex (boxed type from complex literal or complex op)
-                    bool isComplex = (typeOf(left) == "boxed");
+                    // Check if left is complex — found and fixed while
+                    // bug hunting: this used to check `typeOf(left) ==
+                    // "boxed"`, which means "not statically known to be
+                    // int/float", not "is complex" — any function
+                    // parameter or other untyped boxed value (the
+                    // overwhelmingly common case) was misrouted through
+                    // PyComplex_Mul for x**N (small constant N),
+                    // producing wrong answers for plain numeric values
+                    // and, worse, crashing the compiler outright with an
+                    // LLVM assertion failure ("Invalid operand types for
+                    // ICmp instruction") for some parameter combinations
+                    // — confirmed via the ordinary `def f(y): return y **
+                    // 2` for a plain top-level function, not specific to
+                    // methods. Fixed to check the actual complexVars
+                    // tracking set instead, matching the correct check
+                    // already used for the regular (non-power) complex
+                    // add/sub/mul/truediv dispatch just below.
+                    bool isComplex = complexVars.count(left) > 0;
                     for (long k = 1; k < expv; ++k) {
                         std::string t = "$t" + std::to_string(tempCounter++);
                         if (isComplex) {
@@ -6472,7 +6488,15 @@ class LoweringVisitor {
         std::string res = "$t" + std::to_string(tempCounter++);
         std::string attrNameConst = "$c" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "const", {"\"" + node->id + "\""}, attrNameConst, "str");
-        ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, attrNameConst}, res);
+        // Pyc_GetAttr (not the plain Pyc_GetItem every other internal
+        // lookup uses) so a @property getter on the looked-up name is
+        // invoked automatically instead of returning its raw internal
+        // token — see Pyc_GetAttr's comment in Runtime.cpp. This is the
+        // one call site that represents a real, user-written `obj.attr`
+        // read; every other Pyc_GetItem use in this file is an internal
+        // lookup (module dispatch, method-token resolution, class-dict
+        // internals) that must NOT trigger property auto-invocation.
+        ir.addInstruction(currentFunc, "call", {"Pyc_GetAttr", obj, attrNameConst}, res);
         // Annotate the result as "dict" (we can't distinguish dict vs other
         // container, but for method dispatch on sys.module-style lookups
         // this is a useful hint — see lowerMethodCall's dict-method path).
@@ -8380,6 +8404,46 @@ class LoweringVisitor {
         // String method fallbacks (some keys like "find",
         // "replace", "split" are common to both list and string; the
         // list-specific cases above win for lists).
+        } else if (attr->children[0] && attr->children[0]->type == "Name" &&
+                   knownClasses.count(attr->children[0]->id)) {
+            // ClassName.method(...) — a class-level ("unbound") method
+            // call. Deliberately not gated by isShadowedLocal(): every
+            // class name gets noteType(className, "dict") called at its
+            // own definition site, so isShadowedLocal (which treats any
+            // valueTypes entry as "shadowed") would always be true for a
+            // class name and defeat this branch entirely — found while
+            // debugging this exact fix. A local variable that happens to
+            // share a class's name is a narrower, pre-existing ambiguity
+            // the old "dict"-typeOf fallback below never resolved either
+            // (it dispatches on typeOf alone, with the same blind spot),
+            // so this isn't a new gap.
+            // Must be checked before the generic "dict"-typeOf
+            // branch just below: a class reference's typeOf is also
+            // noted "dict" (lowerClass tags it that way for module-style
+            // dispatch reuse) and would otherwise fall into that branch,
+            // which has no notion of @classmethod/@staticmethod at all.
+            // Routed through the same Pyc_CallMethod dispatch used for
+            // obj.method(...) below — see its comment in Runtime.cpp;
+            // Pyc_CallMethod itself distinguishes "receiver is a class"
+            // (this call shape) from "receiver is an instance" to decide
+            // whether a plain (undecorated) method needs self prepended.
+            std::string methodNameConst = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
+            std::string methodLookup = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, methodNameConst}, methodLookup);
+            std::string argList = "$t" + std::to_string(tempCounter++);
+            {
+                std::string z = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, z);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
+            }
+            for (auto& a : args) {
+                std::string d = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, a}, d);
+            }
+            ir.addInstruction(currentFunc, "call", {"Pyc_CallMethod", methodLookup, obj, argList}, res);
+            callableTokenTemps.insert(res);
+            return res;
         } else {
             // Chained module attribute call: `mod.path.func(args)`. The
             // dict-path branch handles the simple case (obj is a dict,
@@ -8443,26 +8507,22 @@ class LoweringVisitor {
             std::string classRef = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, classKeyConst}, classRef);
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", classRef, methodNameConst}, methodLookup);
-            // Build args list with self prepended
-            std::vector<std::string> methodArgs;
-            methodArgs.push_back(obj);
-            for (auto& a : args) {
-                methodArgs.push_back(a);
-            }
-            // Build flat arg list for Pyc_Apply
+            // Build the args list (NOT including self/cls — Pyc_CallMethod
+            // below decides whether/what to prepend based on the looked-up
+            // method's shape, replacing what used to be an unconditional
+            // "prepend obj" here regardless of @staticmethod/@classmethod —
+            // see Pyc_CallMethod's comment in Runtime.cpp).
             std::string argList = "$t" + std::to_string(tempCounter++);
-            std::string argCount = std::to_string(methodArgs.size());
-            std::string argCountConst = "$c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
-            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
-            for (size_t i = 0; i < methodArgs.size(); ++i) {
-                std::string idxConst = "$c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
-                std::string setRes = "$t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
+            {
+                std::string z = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, z);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
             }
-            // Call method via Pyc_Apply
-            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
+            for (auto& a : args) {
+                std::string d = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, a}, d);
+            }
+            ir.addInstruction(currentFunc, "call", {"Pyc_CallMethod", methodLookup, obj, argList}, res);
         }
         return res;
     }
@@ -8611,6 +8671,28 @@ class LoweringVisitor {
            // Lower method body
                 std::string savedFunc = currentFunc;
                 currentFunc = methodFuncName;
+                // @staticmethod/@classmethod/@property — found and fixed
+                // while bug hunting: these decorators used to be
+                // silently discarded entirely (this loop only ever
+                // skipped Decorator children when lowering the body,
+                // never inspecting them). Detected here and, if
+                // recognized, the class-dict entry below is tagged as a
+                // 2-element [kind, realToken] list instead of a bare
+                // token string; Pyc_CallMethod/Pyc_GetAttr (Runtime.cpp)
+                // recognize that shape and dispatch accordingly. Any
+                // other decorator on a method remains unsupported (still
+                // silently discarded, unchanged from before).
+                std::string decoKind;
+                for (const auto& cc : c->children) {
+                    if (cc && cc->type == "Decorator" && !cc->children.empty()) {
+                        const ASTNode* d = cc->children[0].get();
+                        if (d && d->type == "Name" &&
+                            (d->id == "staticmethod" || d->id == "classmethod" || d->id == "property")) {
+                            decoKind = d->id;
+                            break;
+                        }
+                    }
+                }
                 for (size_t i = 0; i < c->children.size(); ++i) {
                     if (c->children[i] && c->children[i]->type != "Default" && c->children[i]->type != "Decorator") {
                         lower(c->children[i].get());
@@ -8623,7 +8705,21 @@ class LoweringVisitor {
                 ir.addInstruction("__module__", "const", {"\"" + methodFuncName + "\""}, methodToken, "str");
                 knownIRFunctions.insert(methodFuncName);
                 std::string dummy = "$t" + std::to_string(tempCounter++);
-                ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
+                if (!decoKind.empty()) {
+                    std::string kindConst = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction("__module__", "const", {"\"" + decoKind + "\""}, kindConst, "str");
+                    std::string tagged = "$t" + std::to_string(tempCounter++);
+                    std::string zc = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction("__module__", "const", {"0"}, zc);
+                    ir.addInstruction("__module__", "call", {"PyList_NewBoxed", zc}, tagged);
+                    std::string a1 = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction("__module__", "call", {"PyList_Append", tagged, kindConst}, a1);
+                    std::string a2 = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction("__module__", "call", {"PyList_Append", tagged, methodToken}, a2);
+                    ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, tagged}, dummy);
+                } else {
+                    ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
+                }
                  currentFunc = savedFunc;
              }
          }

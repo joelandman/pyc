@@ -1159,61 +1159,165 @@ single-iterable (`min([3,1,2], key=...)`) forms. All added as permanent
 `tests/runner.py` regression cases. Full suite (340/340) and import
 tests (9/9) stay green; `valgrind --tool=memcheck` shows 0 errors.
 
-### Severe, Different-Class Bug Found, Documented But Not Fixed: `@classmethod`/`@property` Decorators Are Silently Discarded on Methods
+### `@classmethod`/`@property`/`@staticmethod` Decorators Were Silently Discarded on Methods — Fixed
 Continuing the hunt into class features turned up a bug architecturally
 similar in size to the `tempCounter` namespace-collision finding above —
 not a missing dispatch branch or a storage-representation mismatch, but
-a decorator that is recognized by the parser and then thrown away.
-`lowerClass`'s method-lowering loop filters `Decorator` children out of
-the AST nodes it lowers into the method body (`c->children[i]->type !=
-"Decorator"`) and never inspects the decorator list itself anywhere else
-— every method, regardless of `@staticmethod`/`@classmethod`/`@property`
-or no decorator at all, is registered in the class dict identically: a
-plain callable token whose first parameter is positionally bound
-whenever the method is called.
+a decorator that was recognized by the parser and then thrown away.
+`lowerClass`'s method-lowering loop filtered `Decorator` children out of
+the AST nodes it lowered into the method body and never inspected the
+decorator list itself anywhere else — every method, regardless of
+`@staticmethod`/`@classmethod`/`@property` or no decorator at all, was
+registered in the class dict identically: a plain callable token whose
+first parameter was positionally bound whenever the method was called.
+Originally documented here as "too large in scope to fix in this pass";
+revisited and fixed on explicit request.
 
-**Confirmed, reproduced, three distinct failure modes**:
-- **`@classmethod`, called via the class**: `A.cm()` where `cm` reads
-  `cls.x` returns `None` instead of the class attribute's value — `cls`
-  is simply never bound to anything when there's no instance to supply
-  it, so `cls.x` resolves against nothing.
+**Confirmed, reproduced, three distinct failure modes (all now fixed)**:
+- **`@classmethod`, called via the class**: `A.cm()` where `cm` read
+  `cls.x` returned `None` instead of the class attribute's value — `cls`
+  was simply never bound to anything when there was no instance to
+  supply it.
 - **`@classmethod`, called via an instance**: `a.cm()` (same method)
-  returns the *correct* answer, but only by accident — `cls` actually
-  gets bound to the instance `a` (the same binding a plain unbound
-  `self` parameter would get), and instance attribute lookup happens to
-  fall back to the class dict for `cls.x`. This "works" for read-only
-  attribute access but would not extend to anything that relies on
-  `cls` genuinely being the class object (e.g. `cls()` to construct a
-  new instance would call the instance, not the class).
+  returned the *correct* answer, but only by accident — `cls` actually
+  got bound to the instance `a`, and instance attribute lookup happened
+  to fall back to the class dict for `cls.x`. This "worked" for
+  read-only attribute access but broke for anything relying on `cls`
+  genuinely being the class object (e.g. `cls()` to construct a new
+  instance would have called the instance, not the class).
 - **`@property`**: `a.doubled` (no call parens — plain attribute
-  access) does not invoke the getter at all. Since `doubled` matches a
-  registered method name, attribute access resolves it to the method's
-  raw callable-token string and returns *that* unevaluated — confirmed
-  via `print(a.doubled)` printing `A__doubled` (the method's internal
-  compiled function name) and `type(a.doubled)` printing `<class
-  'str'>`, instead of CPython's `42` / `<class 'int'>`.
-- **`@staticmethod` appears to work but for an unrelated reason**: a
-  zero-arg static method called via the class (`A.sm()`) happens to
-  produce the right answer purely because it takes no `self`/`cls`
-  parameter at all, so there's no positional-binding mismatch to
-  expose — not because `@staticmethod` is actually implemented.
+  access) never invoked the getter at all — attribute access resolved
+  it to the method's raw callable-token string and returned *that*
+  unevaluated (`print(a.doubled)` printed `A__doubled`, the method's
+  internal compiled function name; `type(a.doubled)` printed `<class
+  'str'>`, instead of CPython's `42` / `<class 'int'>`).
+- **`@staticmethod` appeared to work but for an unrelated reason**: a
+  zero-arg static method called via the class (`A.sm()`) happened to
+  produce the right answer purely because it took no `self`/`cls`
+  parameter, so there was no positional-binding mismatch to expose. A
+  static method taking *real* parameters, called via an instance
+  (`instance.static_method(1, 2)`), was genuinely broken — `self` got
+  wrongly prepended on top of the real arguments.
 
-**Why this wasn't fixed in this pass**: a real fix touches three
-separate places that currently don't coordinate at all — decorator
-detection during class-body lowering (`lowerClass`, ~line 8440), the
-method call-site dispatch (which currently has no notion of "was this
-called as `ClassName.method(...)` or `instance.method(...)`", needed to
-decide what `cls` should be bound to for `@classmethod`), and
-plain-attribute-access lowering (needed to special-case `@property`
-methods so a bare `a.name` triggers a getter call instead of returning
-the callable token) — each a nontrivial, separately-testable change in
-its own right, comparable in total scope to the `tempCounter` finding
-above rather than a contained one- or two-file fix like the other bugs
-in this hunt. Documented here as a known, real, reproducible, unfixed
-issue for a dedicated future session; not previously called out
-anywhere in `FEATURES.md`, which lists `class`/`__init__`/inheritance/
-`super()`/`__str__`/`__repr__` as supported but makes no claim about
-method decorators either way.
+**The fix**, rather than the two- or three-file redesign originally
+assumed necessary, turned out to be a single new runtime dispatch point
+plus a lightweight compile-time tag:
+
+- `lowerClass` now detects `@staticmethod`/`@classmethod`/`@property` on
+  each method (scanning its `Decorator` children for a matching `Name`,
+  mirroring the existing top-level-function decorator detection it never
+  had a method-level counterpart for) and, when found, stores the
+  method's class-dict entry as a tagged 2-element list `[kind,
+  realToken]` instead of a bare token string. A plain (undecorated)
+  method's entry is still just a bare string — purely additive, no
+  change to the always-worked path.
+- A new runtime function, `Pyc_CallMethod(methodVal, receiver, argsList)`
+  (Runtime.cpp), is the single dispatch point both call shapes now go
+  through — `Compiler.cpp`'s `lowerMethodCall` no longer decides
+  self/cls-prepending itself. It inspects `methodVal`'s shape: a bare
+  token (plain method) prepends `receiver`, *unless* `receiver` is
+  itself a class dict (has `__mro__`) rather than an instance (has
+  `__class__`) — that's Python's "unbound method" call shape,
+  `ClassName.method(instance, ...)`, where the caller already supplied
+  self explicitly and nothing should be prepended (this exact behavior
+  already worked before the fix, purely by coincidence of how a class
+  reference's `typeOf` happened to be tagged — now it's an explicit,
+  intentional check). `@staticmethod` never prepends anything.
+  `@classmethod` prepends *the class*, not the raw receiver — resolved
+  via the same `__mro__`/`__class__` check, so it's correct whether
+  called via `ClassName.method()` (receiver is already the class) or
+  `instance.method()` (receiver is an instance; the class is
+  `receiver.__class__`).
+- A second new runtime function, `Pyc_GetAttr(obj, attrName)`, wraps the
+  existing `Pyc_GetItem` specifically for `lowerAttribute`'s bare
+  (non-call) attribute-read path: if the looked-up value is a
+  `"property"`-tagged marker, it calls the getter with `self=obj` and
+  returns the result instead of the raw marker. Every other internal
+  `Pyc_GetItem` call site (module dispatch, method-token lookups during
+  a call, class-dict internals) is deliberately left untouched, since
+  those must never trigger property auto-invocation.
+- `Compiler.cpp` also gained a new, explicit `ClassName.method(...)`
+  branch in `lowerMethodCall`, checked *before* the pre-existing generic
+  "receiver's static type is `dict`" fallback (a class reference's
+  `typeOf` is tagged `"dict"` for an unrelated reason — reusing module-
+  namespace-style dispatch — and would otherwise have swallowed this
+  case with no way to distinguish it from `sys.stderr.write(...)`-style
+  dispatch). Both this new branch and the existing `instance.method(...)`
+  fallback now route through the same `Pyc_CallMethod`.
+
+**A debugging note worth keeping**: the first attempt at the new
+`ClassName.method(...)` branch also gated on `!isShadowedLocal(name)`,
+by analogy with a similar check used elsewhere for builtin exception
+names — this silently defeated the branch entirely, because every class
+name gets `noteType(className, "dict")` called at its own definition
+site, and `isShadowedLocal` treats *any* `valueTypes` entry as
+"shadowed." Removed; a local variable that happens to share a class's
+name is a narrower, pre-existing ambiguity the old fallback never
+resolved either.
+
+Verified against real CPython: `@classmethod` called via the class and
+via an instance (both correctly see `cls`, not an instance);
+`@classmethod` mutating a class attribute (`cls.x += 1`); `@property`
+computing a value from `self`; `@staticmethod` with real parameters
+called both via the class and via an instance; the unbound-method idiom
+(`ClassName.method(instance, ...)`); and multi-level inheritance with
+`super()` (unaffected by the dispatch rewrite, still correct). Added as
+permanent `tests/runner.py` regressions. Full suite and import tests
+stay green; `valgrind --tool=memcheck` shows 0 errors.
+
+**A related, more severe bug found and fixed while testing the above**:
+`x ** N` for a small constant integer `N` (0–8) uses a
+repeated-multiplication fast path (`lowerBinOp`) that decided "is this
+complex arithmetic" via `typeOf(left) == "boxed"` — but `"boxed"` means
+only "not statically known to be int/float," not "is complex." Any
+function parameter or other untyped value (the overwhelmingly common
+case for a method body, but not limited to methods — confirmed via the
+plain top-level `def f(y): return y ** 2`) was misrouted through
+`PyComplex_Mul` instead of ordinary multiplication: a silent wrong
+answer (`None`) for an int-valued argument, and for some float-valued
+arguments an outright compiler crash (an LLVM assertion failure,
+`Invalid operand types for ICmp instruction`). Fixed by checking the
+actual `complexVars` tracking set instead — the same check already used
+correctly for the regular (non-power) complex add/sub/mul/truediv
+dispatch a few lines below. Verified against real CPython for both a
+plain function and a method; added as a permanent regression.
+
+**Found while testing the above, not fixed (each a separate, pre-existing
+gap, confirmed present before this session's fix and unrelated to it)**:
+- **Calling the same `x ** N` function with a *float* argument still
+  crashes the compiler** — `def f(y): return y ** 2; f(3.5)` fails the
+  same LLVM assertion, even as the only call. This survives the
+  `isComplex` fix above (which addresses a different, already-confirmed-
+  fixed symptom) and looks like a separate interaction between the
+  constant-exponent fast path and the A6 native-function-specialization
+  pass for float-typed parameters — not investigated further.
+- **Operator-overloading dunder methods (`__add__` and presumably its
+  siblings) don't work on class instances at all.** `class Vec: def
+  __add__(self, other): ...` — `v1 + v2` prints `None`. Confirmed this
+  predates the current session entirely (reproduces identically at the
+  immediately-prior commit, before any of today's fixes). Root cause:
+  grepping the whole codebase for `__add__` turns up zero hits outside a
+  comment — there is no dunder-operator dispatch mechanism anywhere;
+  `PyNumber_Add` (which the `"add"` IR opcode calls unconditionally) has
+  branches for every builtin type but falls through to `NULL` for two
+  `type == 2` (class instance) operands. A real fix needs the `"add"`
+  (and sibling) opcode's codegen, or `PyNumber_Add` itself, to check for
+  an `"__add__"` entry in a dict-type operand's class and dispatch to it
+  — not attempted here.
+- **Dynamic class instantiation via a variable doesn't work.** `X = Foo;
+  X()` (or `cls()` inside a `@classmethod`, the same underlying gap)
+  returns `None` instead of a new instance. Root cause: the "instantiate
+  a class" call-site logic in `lowerCall` recognizes a class
+  instantiation *structurally*, by checking whether the literal `Name`
+  being called matches a `knownClasses` entry at compile time — a class
+  reference reached through a variable (rather than the literal class
+  name token) never matches, so the call falls through to the generic
+  dynamic-dispatch path instead, which has no equivalent "create an
+  instance dict + call `__init__`" behavior. A real fix would need that
+  behavior available as a runtime operation (triggered when a
+  `Pyc_Apply`-style dynamic call target turns out to be a class dict,
+  i.e. has `__mro__`), not just the current compile-time-structural
+  recognition.
 
 ### Several Common `str` Methods Are Entirely Unimplemented, Silently Returning `None`
 While probing string methods during the same hunt, `.format()`,

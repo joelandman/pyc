@@ -641,6 +641,17 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::Function::Create(getItemTy, llvm::Function::ExternalLinkage, "Pyc_GetItem", module.get());
     llvm::FunctionType* subscriptTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(subscriptTy, llvm::Function::ExternalLinkage, "Pyc_Subscript", module.get());
+    // Pyc_GetAttr(obj, attrName): wraps Pyc_GetItem for a bare (non-call)
+    // attribute read, auto-invoking a @property getter — see its
+    // comment in Runtime.cpp.
+    llvm::Function::Create(getItemTy, llvm::Function::ExternalLinkage, "Pyc_GetAttr", module.get());
+    // Pyc_CallMethod(methodVal, receiver, argsList): the single dispatch
+    // point for obj.method(...)/ClassName.method(...) calls, deciding
+    // self/cls-prepending based on @staticmethod/@classmethod tagging —
+    // see its comment in Runtime.cpp.
+    llvm::FunctionType* callMethodTy = llvm::FunctionType::get(pyObjectPtrTy,
+        {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(callMethodTy, llvm::Function::ExternalLinkage, "Pyc_CallMethod", module.get());
 
     // B6: Extended attribute lookup (instance dict + class dict fallback)
     llvm::FunctionType* getAttrExtTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
