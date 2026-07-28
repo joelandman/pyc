@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **344/344** (runner shows 344/344, file_case_failures=0).
+Current test count: **345/345** (runner shows 345/345, file_case_failures=0).
 
 ## Types and Literals
 
@@ -72,7 +72,7 @@ x if cond else y               ternary
 ## Functions
 
 ```python
-def f(a, b=10, *args):         positional, default, *args, **kwargs
+def f(a, b=10, *args):         positional, default, *args
     return a, b                multi-value return (returned as list)
 
 def f(a, b): ...
@@ -86,6 +86,15 @@ f(b=3, a=4)                    keyword call arguments
   `print(f)` gives `<function f at 0x...>`, identity-based `==`/`is`
 - Decorators: `@deco`, `@deco(args)` factories, stacked (applied bottom-up)
 - Class decorators with `__repr__` injection
+- `f(**some_dict)` at a call site — spreading a real dict into a
+  callee's ordinary named parameters. **Found and fixed a segfault**
+  (a missing null-terminator in what used to be a C varargs runtime
+  helper); still doesn't fall back to a parameter's default for a key
+  the dict omits, and mis-binds when mixed with a positional argument
+  in the same call. The **`**kwargs` catch-all parameter itself**
+  (`def f(**kwargs): ...` collecting the caller's excess keyword
+  arguments) remains entirely unimplemented — see IMPLEMENTATION.md for
+  all of the above.
 
 ## Classes
 

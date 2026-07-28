@@ -10284,35 +10284,35 @@ extern "C" PyObject* PyObject_GetAttrExtended(PyObject* obj, PyObject* attr) {
     return none;
 }
 
-// Expand **kwargs: takes dict + param names, returns list of args in order
-// Args: dict, param1, param2, ..., paramN
-// Returns: [value_for_param1, value_for_param2, ..., value_for_paramN]
-PyObject* Pyc_ExpandKwargs(PyObject* dict, ...) {
-    if (!dict || dict->type != 2) {
-        // Return empty list if dict is invalid
+// Expand **kwargs: takes dict + a boxed list of param-name strings, returns
+// a list of args in order (value_for_param1, ..., value_for_paramN).
+//
+// This used to be a C varargs function (PyObject* dict, ...) reading params
+// via va_arg until a null-pointer sentinel — found and fixed while bug
+// hunting: the call site (Compiler.cpp) never actually appended a null
+// sentinel argument, and Codegen.cpp's generic "unknown external function"
+// fallback declares a plain fixed-arity (non-vararg) LLVM function type
+// sized to exactly match each call site's real argument count. So the
+// va_arg loop always read past the last real argument into undefined
+// stack/register contents looking for a sentinel that was never there —
+// undefined behavior that crashed with a segfault on every `f(**kwargs)` /
+// `f(**some_dict)` call. Rewritten to take the parameter names as a single
+// boxed list argument instead, sidestepping C varargs entirely — the call
+// site now always passes exactly 2 real arguments, matching what the
+// generic non-vararg fallback declares.
+PyObject* Pyc_ExpandKwargsList(PyObject* dict, PyObject* names) {
+    if (!dict || dict->type != 2 || !names || names->type != 1) {
         return PyList_NewBoxed(PyInt_FromLong(0));
     }
-    va_list ap;
-    va_start(ap, dict);
-    // Count remaining args to get param count
-    std::vector<PyObject*> params;
-    while (true) {
-        PyObject* p = va_arg(ap, PyObject*);
-        if (!p) break;
-        params.push_back(p);
-    }
-    va_end(ap);
-    // Build result list
-    PyObject* result = PyList_NewBoxed(PyInt_FromLong((long)params.size()));
-    for (size_t i = 0; i < params.size(); ++i) {
-        // Find value for this param key in the dict
-        PyObject* key = params[i];
-        PyObject* val = PyDict_GetItem(dict, key);
+    size_t n = names->list.size();
+    PyObject* result = PyList_NewBoxed(PyInt_FromLong((long)n));
+    for (size_t i = 0; i < n; ++i) {
+        PyObject* key = names->list[i];
+        PyObject* val = key ? PyDict_GetItem(dict, key) : nullptr;
         if (val) {
             Py_INCREF(val);
             PyList_SetItemBoxed(result, PyInt_FromLong((long)i), val);
         } else {
-            // Key not found - store None
             PyObject* none = new PyObject();
             none->refcount = 1;
             none->type = 5;

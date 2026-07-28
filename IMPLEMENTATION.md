@@ -18,9 +18,62 @@ Real CPython stdlib modules beyond the synthetic implementations (`sys`, `re`,
 compiled — pyc can't compile arbitrary CPython stdlib source — and always
 report a clear ImportError instead of attempting to.
 
-### `**kwargs` — Not Yet Implemented
-Function calls support `*args` collection and call-site unpacking, but `**kwargs`
-keyword expansion is not yet implemented.
+### `**kwargs` — Call-Site Dict Spreading Fixed; Catch-All Parameter Still Not Implemented
+This entry used to read simply "`**kwargs` keyword expansion is not yet
+implemented" — refined after a bug hunt turned up a real crash in the
+part that *was* implemented, and pinned down more precisely what still
+isn't.
+
+**Fixed: `f(**some_dict)` at a call site used to segfault.** Spreading a
+real `dict` object into a callee's ordinary named parameters (`inner(a,
+b, c)` called as `inner(**{"a": 1, "b": 2, "c": 3})`, or via a dict
+variable) is handled by a dedicated runtime helper that, at the call
+site, is given the callee's parameter names and looks each one up in the
+dict. That helper used to be a C varargs function (`Pyc_ExpandKwargs`)
+that scanned its variadic arguments for a null-pointer sentinel to know
+where they ended — except the call site (`Compiler.cpp`) never actually
+appended that sentinel, and `Codegen.cpp`'s generic fallback for
+undeclared external functions always declares a plain fixed-arity
+(non-vararg) LLVM signature sized to exactly match each call site's real
+argument count. So the `va_arg` scan always read one or more arguments
+past the real ones into undefined stack/register contents looking for a
+terminator that was never there — undefined behavior that crashed with
+a segfault on every `f(**kwargs)` call, confirmed against real CPython
+(`inner(**d)` for a plain 3-key dict). Fixed by rewriting the helper
+(now `Pyc_ExpandKwargsList`) to take the parameter names as a single
+boxed list argument instead of C varargs, so the call site always passes
+exactly two real arguments — sidestepping the sentinel problem entirely
+rather than patching around it. Verified against real CPython and added
+as a permanent `tests/runner.py` regression; valgrind shows 0 errors.
+
+**Still not implemented, and not attempted in this pass (each is its own
+gap, found while verifying the fix above, larger in scope than a
+contained crash fix)**:
+- **Missing keys don't fall back to the parameter's default.**
+  `inner(a, b, c=99)` called as `inner(**{"a": 1, "b": 2})` (omitting
+  `c`, which has a default) should give `102`; pyc substitutes `None`
+  for the missing key (→ `0` in arithmetic), giving `3`. The direct
+  `key=value` keyword-argument call path already consults
+  `funcDefaultValues` for exactly this case — the dict-spread path
+  doesn't.
+- **Mixing a positional argument with a `**dict` spread mis-binds.**
+  `mixed(a, b, c)` called as `mixed(1, **{"b": 2, "c": 3})` should give
+  `123`; pyc gives `23`, consistent with the positional `1` for `a`
+  being silently dropped/overwritten rather than combined with the
+  expanded dict values.
+- **The `**kwargs` catch-all *parameter* itself remains entirely
+  unimplemented** (this is the part the original one-line note was
+  really about): `def f(**kwargs): print(kwargs)` called as `f(a=1,
+  b=2)` prints `[]` (an empty **list**, `type()` shows `<class
+  'list'>`) instead of CPython's `{'a': 1, 'b': 2}` (a real dict) —
+  the caller's excess keyword arguments aren't collected into anything
+  at all. Forwarding that empty/wrongly-typed value onward via `g(**kwargs)`
+  compiles and runs (safely, thanks to the fix above) but obviously
+  can't produce the right result. Combining `*args` and `**kwargs`
+  catch-all parameters together on the same function (`def f(*args,
+  **kwargs): ...`) additionally crashes LLVM module verification at
+  compile time — not investigated further, since it's downstream of the
+  same missing catch-all-parameter feature.
 
 ### Full First-Class Function Objects — Partial
 Functions have identity (`is`, `==`) and repr (`<function f at 0x...>`), but full

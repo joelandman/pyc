@@ -503,6 +503,20 @@ print(a[0],a[1],a[2])
      "get_box().n += 1000\n"
      "print(b.n, len(calls))", "1005 1\n"),
 
+    # Bug-hunt regression: f(**some_dict) at a call site (spreading a real
+    # dict, whose keys exactly match the callee's parameter names, into
+    # ordinary named parameters — not the separate, still-unimplemented
+    # **kwargs catch-all *parameter*, see IMPLEMENTATION.md) segfaulted at
+    # runtime. Root cause: the runtime helper (formerly Pyc_ExpandKwargs)
+    # was a C varargs function scanning for a null-pointer sentinel that
+    # the call site never appended, reading past the real arguments into
+    # undefined memory. Fixed by passing the parameter names as a single
+    # boxed list instead of C varargs.
+    ("def inner(a, b, c):\n"
+     "    return a + b + c\n"
+     "d = {'a': 1, 'b': 2, 'c': 3}\n"
+     "print(inner(**d))", "6\n"),
+
     # Tier-2-batch regression: unsupported imports print ImportError to
     # stderr and return None (rather than silently producing wrong output).
     # The runner only checks stdout, so the program's stdout is empty.

@@ -4566,19 +4566,28 @@ class LoweringVisitor {
                 }
                 // Then, expand **kwargs dicts using a runtime helper
                 for (auto& dictVal : kwargDicts) {
-                    // Call Pyc_ExpandKwargs(dict, param1, param2, ...) -> list of args
-                    std::string expandResult = "t" + std::to_string(tempCounter++);
-                    std::vector<std::string> expandArgs;
-                    expandArgs.push_back(dictVal);
+                    // Call Pyc_ExpandKwargsList(dict, [param1, param2, ...]) -> list
+                    // of args. Param names are passed as a single boxed list
+                    // rather than as separate call operands — found and
+                    // fixed while bug hunting: the old Pyc_ExpandKwargs took
+                    // C varargs terminated by a null-pointer sentinel that
+                    // this call site never actually appended, causing a
+                    // runtime segfault on every f(**kwargs) call. See
+                    // Pyc_ExpandKwargsList's comment in Runtime.cpp.
+                    std::string namesList = "t" + std::to_string(tempCounter++);
+                    {
+                        std::string z = "c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"0"}, z);
+                        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, namesList);
+                    }
                     for (const auto& p : params) {
                         std::string paramConst = "c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + p + "\""}, paramConst, "str");
-                        expandArgs.push_back(paramConst);
+                        std::string dummyAppend = "t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", namesList, paramConst}, dummyAppend);
                     }
-                    std::vector<std::string> callOperands;
-                    callOperands.push_back("Pyc_ExpandKwargs");
-                    for (const auto& a : expandArgs) callOperands.push_back(a);
-                    ir.addInstruction(currentFunc, "call", callOperands, expandResult);
+                    std::string expandResult = "t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"Pyc_ExpandKwargsList", dictVal, namesList}, expandResult);
                     // Now unpack the result list into argRes
                     // The result list has len(params) elements, in order
                     for (size_t j = 0; j < params.size(); ++j) {
