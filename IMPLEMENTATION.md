@@ -69,20 +69,49 @@ contained crash fix)**:
   the caller's excess keyword arguments aren't collected into anything
   at all. Forwarding that empty/wrongly-typed value onward via `g(**kwargs)`
   compiles and runs (safely, thanks to the fix above) but obviously
-  can't produce the right result. Combining `*args` and `**kwargs`
-  catch-all parameters together on the same function (`def f(*args,
-  **kwargs): ...`) additionally crashes LLVM module verification at
-  compile time — not investigated further, since it's downstream of the
-  same missing catch-all-parameter feature. **This specifically breaks
-  the single most common use of `**kwargs` in real Python code: a
-  generic decorator's inner wrapper**, `def wrapper(*args, **kwargs):
-  return f(*args, **kwargs)` — confirmed this crashes compilation even
-  as a *nested* function inside a closure (the standard `@deco`
-  pattern), and even when the wrapper's body never actually reads
-  `kwargs` at all — merely declaring a nested function with both a
-  `*args` and a `**kwargs` parameter is enough to trigger the crash. A
-  nested function with only `*args` (no `**kwargs`) compiles and runs
-  correctly.
+  can't produce the right result. Not fixed — implementing this
+  properly means collecting a caller's unmatched keyword arguments into
+  a real dict at every call site, a larger feature than a contained bug
+  fix.
+
+**Fixed on a later pass**: combining `*args` and `**kwargs` catch-all
+parameters together on the same function (`def f(*args, **kwargs): ...`)
+used to crash LLVM module verification at compile time — **breaking the
+single most common use of `**kwargs` in real Python code: a generic
+decorator's inner wrapper**, `def wrapper(*args, **kwargs): return
+f(*args, **kwargs)`. Confirmed this crashed compilation even as a
+*nested* function inside a closure (the standard `@deco` pattern), and
+even when the wrapper's body never actually read `kwargs` at all —
+merely declaring a nested function with both a `*args` and a `**kwargs`
+parameter was enough to trigger the crash. A nested function with only
+`*args` (no `**kwargs`) always compiled and ran correctly, as did a
+top-level (non-nested) function combining both.
+
+Root cause: every function that might be called indirectly (through a
+first-class value, a closure, or a decorator) gets a generated
+`__apply__N` adapter in `Codegen.cpp` — a small wrapper that unpacks a
+boxed argument list into the real function's native parameter shape.
+That adapter's parameter-shape analysis scanned the function's
+parameter names for the *first* one starting with `*` to find "the"
+vararg slot — but `**kwargs` also starts with `*` (it's stored internally
+as `"**kwargs"`), so for a signature with both, the loop found `*args`
+and stopped, never noticing `**kwargs` as a *second*, separate slot. The
+adapter then collected only one variadic list and called the real
+function (which — correctly — has two separate trailing parameters, one
+per star-marker) with one argument short, an argument-count mismatch
+LLVM's verifier rejects outright.
+
+Fixed by detecting `*args` and `**kwargs` as two independent slots
+(checking for a *second* leading `*` character, not just the first) and
+supplying a placeholder argument for the `**kwargs` slot — an empty list,
+matching the same placeholder direct (non-adapter) calls already use for
+this still-unimplemented parameter, so the fix only removes the crash
+without changing (or worsening) the existing "always empty" kwargs
+semantics documented above. Verified against real CPython for a single
+decorator and a stacked pair of decorators (base case → wrapped once →
+wrapped twice), each going through its own generated adapter. Added as
+permanent `tests/runner.py` regressions. Full suite and import tests
+stay green; `valgrind --tool=memcheck` shows 0 errors.
 
 ### Full First-Class Function Objects — Partial
 Functions have identity (`is`, `==`) and repr (`<function f at 0x...>`), but full
@@ -1226,70 +1255,103 @@ exactly once, matching CPython). Added as permanent `tests/runner.py`
 regressions. Full suite (344/344) and import tests (9/9) stay green;
 `valgrind --tool=memcheck` shows 0 errors.
 
-### Severe, Different-Class Bug Found, Documented But Not Fixed: User-Defined Exception Subclasses Don't Work At All
+### User-Defined Exception Subclasses Didn't Work At All — Fixed
 Continuing the hunt into exception handling turned up a large,
-foundational gap, architecturally similar in size to the `tempCounter`
-and `@classmethod`/`@property` findings above: **any** user-defined
-class subclassing a builtin exception type (the completely ordinary
-`class MyError(Exception): pass` idiom) is broken, in two independent
-ways depending on whether it's instantiated with arguments.
+foundational gap: **any** user-defined class subclassing a builtin
+exception type (the completely ordinary `class MyError(Exception): pass`
+idiom) was broken, in two independent ways depending on whether it was
+instantiated with arguments. Originally documented here as "too large in
+scope to fix in this pass"; revisited and fixed on explicit request.
 
 **With a positional argument — hard compile crash, for the whole file**:
-`raise MyError("boom")` fails LLVM module verification entirely
+`raise MyError("boom")` failed LLVM module verification entirely
 (`Incorrect number of arguments passed to called function!` on a call to
-the synthesized `MyError__init__`) and refuses to produce a binary at
-all, even though nothing else in the file is wrong. Root cause: a
-class with no explicit `__init__` gets a synthesized wrapper (`lowerClass`'s
-"B6" logic, ~line 8526) that looks up the parameter list of the *nearest
-base class's* `__init__` via the `classInitParams` map — but that map is
-only ever populated for classes **defined in the same compilation unit**
-(line 8389, inside the `hasOwnInitDefined` branch). `Exception` (and
-every other builtin exception name) is never in it, so the lookup fails
-silently and falls back to a bare `["self"]` parameter list — a 1-arg
-`__init__`. Separately, the call-site instantiation logic (~line 4193)
-always forwards *every* positional argument the caller actually wrote,
+the synthesized `MyError__init__`) and refused to produce a binary at
+all, even though nothing else in the file was wrong. Root cause: a
+class with no explicit `__init__` gets a synthesized wrapper
+(`lowerClass`'s "B6" logic) that looks up the parameter list of the
+*nearest base class's* `__init__` via the `classInitParams` map — but
+that map is only ever populated for classes **defined in the same
+compilation unit** (inside the `hasOwnInitDefined` branch). `Exception`
+(and every other builtin exception name) is never in it, so the lookup
+failed silently and fell back to a bare `["self"]` parameter list — a
+1-arg `__init__`. Separately, the call-site instantiation logic always
+forwarded *every* positional argument the caller actually wrote,
 regardless of what the synthesized `__init__` was declared to accept —
-so a 1-param declared function gets called with 2 arguments (`self` +
+so a 1-param declared function got called with 2 arguments (`self` +
 the message), a mismatch LLVM's verifier rejects outright.
 
-**With no arguments — compiles, but the exception is neither caught by
-name nor by any generic handler**: `raise MyError()` produces an
+**With no arguments — compiled, but the exception was neither caught by
+name nor by any generic handler**: `raise MyError()` produced an
 uncaught fatal error with a garbled dict-repr message (`Exception:
 {'__class__': {'__mro__': [...]}}`) instead of being catchable by
 `except MyError:` *or* `except Exception:`. Root cause: pyc has two
-entirely separate exception representations that don't know about each
+entirely separate exception representations that didn't know about each
 other. Builtin exceptions (`ValueError("x")`, etc.) are recognized
-structurally at the call site (~line 4130) and construct a dedicated
-runtime-typed "structured exception" object (`pyc_make_exc`, type tag
-10) — the only object shape `pyc_exc_type_name`/`pyc_exc_matches`
-(Runtime.cpp, used by every `except` clause's type check) know how to
-read. But `class MyError(Exception): ...` is a perfectly ordinary
-user-defined class as far as `lowerClass`/instantiation are concerned —
-it's registered in `knownClasses` and instantiated exactly like any
-other class, producing a plain `dict` (type 2) with a `"__class__"` key,
-which is neither a structured exception (type 10) nor a legacy string
-exception (type 3) — so `pyc_exc_type_name` falls through to a hardcoded
-`"Exception"` default and `pyc_exc_matches` can never match it by its
-real name, and `pyc_raise`/the fatal-error path both mishandle it as an
-unrecognized value.
+structurally at the call site and construct a dedicated runtime-typed
+"structured exception" object (`pyc_make_exc`, type tag 10) — the only
+object shape `pyc_exc_type_name`/`pyc_exc_matches` (Runtime.cpp, used by
+every `except` clause's type check) knew how to read. But `class
+MyError(Exception): ...` is a perfectly ordinary user-defined class as
+far as `lowerClass`/instantiation are concerned — it's registered in
+`knownClasses` and instantiated exactly like any other class, producing
+a plain `dict` (type 2) with a `"__class__"` key, which is neither a
+structured exception (type 10) nor a legacy string exception (type 3) —
+so `pyc_exc_type_name` fell through to a hardcoded `"Exception"` default
+and `pyc_exc_matches` could never match it by its real name.
 
-**Why this wasn't fixed in this pass**: both failure modes stem from the
-same deeper gap — pyc's builtin-exception machinery and its
-user-defined-class machinery were built independently and never
-integrated — and correctly integrating them (making `class
-MyError(Exception)` instantiate a real structured-exception-compatible
-object, threading a user message through to `pyc_make_exc`-equivalent
-construction, preserving `isinstance`/`except`-matching against the
-builtin exception hierarchy for a class that also has ordinary
-user-defined attributes/methods) is a multi-file, multi-representation
-redesign — larger in scope than a contained bug fix, comparable to the
-`@classmethod`/`@property` finding above rather than anything else fixed
-in this hunt. Documented here as a known, real, reproducible, unfixed
-issue (including the outright compile crash, which is the more urgent
-half) for a dedicated future session. Not previously documented anywhere
-— `FEATURES.md`'s Exceptions section only ever discussed builtin
-exception types and calling exception classes as first-class values
-(`exc = ValueError; raise exc("msg")`), never subclassing one.
+**The fix** avoids the deep redesign originally assumed necessary
+("making `class MyError(Exception)` instantiate a real
+structured-exception object") by instead teaching the *existing*
+exception-matching machinery to also understand a plain class-instance
+dict, using metadata every class already carries:
+
+- **Construction-site fix** (`Compiler.cpp`, the `initParams.empty()`
+  fallback in the class-instantiation `Call` lowering): when a class has
+  no `__init__` anywhere in its base chain (the exact condition that used
+  to fall into the broken bare-`["self"]` synthesis), check whether its
+  compile-time-computed `classMRO` includes any name from the existing
+  `builtinExcNames()` set. If so, skip `__init__` synthesis entirely —
+  there's no real base `__init__` to call — and instead collect the
+  constructor's positional arguments into a list and store it as
+  `instance.args`, mirroring CPython's own
+  `BaseException.__init__(self, *args)`. A class with its own explicit
+  `__init__` (even one that calls `super().__init__(...)`) is unaffected
+  by this branch; that remains a separate, narrower, still-unsupported
+  case (calling into a builtin base's `__init__` via `super()` isn't
+  implemented).
+- **Runtime-side fix** (`Runtime.cpp`): `pyc_exc_type_name`,
+  `pyc_exc_matches`, and `pyc_exc_message` each gained a `type == 2`
+  branch alongside their existing `type == 10` (structured) and
+  `type == 3` (legacy string) branches. A class instance's `__mro__`
+  (already stored in every class dict, a compile-time-flattened list of
+  ancestor class names used for `super()` support — e.g. `class
+  MyError(Exception)` has `__mro__ == ["MyError", "Exception"]`) supplies
+  the type name (`__mro__[0]`) and the exact ancestor chain for matching
+  (walk the whole list, not just a linear parent lookup, since MRO
+  already includes the builtin ancestor names); the new `args` list
+  populated by the construction-site fix supplies the message
+  (`args[0]`, matching CPython's single-arg `Exception.__str__`).
+  `PyObject_PrintBase` gained a matching check (`pyc_instance_is_exception`,
+  reusing the same `__mro__` walk) so `print(e)`/f-string formatting of
+  an uncaught-and-not-yet-`__str__`-defined instance shows the message
+  rather than the raw dict repr.
+
+Verified against real CPython: raising with a message and catching by
+exact name; catching via an ancestor class (`class SpecificError(MyError)`
+caught by `except MyError:`); catching via generic `except Exception:`;
+propagation out of a function call; multiple constructor arguments
+landing in `e.args` (list-shaped, per pyc's existing, unrelated
+list-vs-tuple architectural choice — not a new gap); and a non-matching
+`except ValueError:` correctly falling through to the right outer
+handler rather than swallowing the exception. Two pre-existing,
+already-established differences remain, both applying equally to
+*every* exception in pyc, not specific to this fix: uncaught tracebacks
+don't include the `File "...", line N` detail CPython shows, and
+`type(e).__name__` on any caught exception instance prints `None` (a
+narrower, separately-documented introspection gap — see below). Added
+as permanent `tests/runner.py` regressions. Full suite and import tests
+stay green; `valgrind --tool=memcheck` shows 0 errors.
 
 ### `lst[-1]` — Negative List Indexing Was Broken For Every List Storage Representation
 Continuing the hunt turned up what may be the highest-impact bug found

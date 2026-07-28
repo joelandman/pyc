@@ -808,13 +808,36 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // paramNames is always the user-level signature (we never mutate it with cells).
         // It may legitimately be empty (e.g. a nested def with no user parameters).
         const auto& pnames = f.paramNames;  // authoritative user params (may be empty)
+        // vidx = index of a *args (single-star) param; kwidx = index of a
+        // **kwargs (double-star) param. Found and fixed while bug hunting:
+        // this loop used to stop at the *first* star-prefixed name and
+        // treat it as "the" vararg slot — for a signature with both *args
+        // and **kwargs, the **kwargs marker (which also starts with '*')
+        // was silently never detected as a separate slot at all. The real
+        // function (declared via ir.addFunction with both bare names as
+        // separate parameters) then got called with one argument short,
+        // crashing LLVM module verification ("Incorrect number of
+        // arguments") on every indirect call to a function combining
+        // *args and **kwargs — including the standard generic-decorator
+        // wrapper pattern, def wrapper(*args, **kwargs): ...
         size_t vidx = (size_t)-1;
+        size_t kwidx = (size_t)-1;
         for (size_t j = 0; j < pnames.size(); ++j) {
-            if (!pnames[j].empty() && pnames[j][0] == '*') { vidx = j; break; }
+            if (pnames[j].size() >= 2 && pnames[j][0] == '*' && pnames[j][1] == '*') {
+                kwidx = j;
+            } else if (!pnames[j].empty() && pnames[j][0] == '*') {
+                if (vidx == (size_t)-1) vidx = j;
+            }
         }
         bool hasVar = (vidx != (size_t)-1);
+        bool hasKwVar = (kwidx != (size_t)-1);
+        // The star-param boundary for computing fixed-param counts below:
+        // *args if present (it always precedes **kwargs in a valid
+        // signature), else **kwargs if that's the only star param, else
+        // there's no star param at all.
+        size_t starIdx = hasVar ? vidx : (hasKwVar ? kwidx : pnames.size());
         // Number of *user* fixed params in the original signature (cells are not user params).
-        size_t userFixedCount = hasVar ? vidx : pnames.size();
+        size_t userFixedCount = starIdx;
         // For the *vararg start in the Pyc list we still need the pre-vararg user count.
         size_t fixed = userFixedCount;  // in Pyc list terms (after cells), this is the user fixed count before *
 
@@ -830,7 +853,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // (we only ever prepend cell slots to args; paramNames holds original user view).
         size_t origUserParams = (f.args.size() >= ncells) ? (f.args.size() - ncells) : 0;
         // Number of leading *user* fixed params in the post-cell Pyc arg list.
-        size_t userFixed = hasVar ? vidx : origUserParams;
+        size_t userFixed = hasVar ? vidx : (hasKwVar ? kwidx : origUserParams);
 
         // Adapter must supply defaults for trailing defaulted params when the
         // incoming Pyc arg list (after cells) has fewer user args than the
@@ -983,6 +1006,30 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             abuilder.SetInsertPoint(ex);
 
             cargs.push_back(rest ? rest : llvm::ConstantPointerNull::get(pyObjectPtrTy));
+        }
+
+        if (hasKwVar) {
+            // **kwargs catch-all slot: the real function was declared
+            // (via ir.addFunction) with a separate parameter for this
+            // name, so the adapter must supply an argument for it or the
+            // call below fails LLVM module verification with an
+            // argument-count mismatch — see the comment above vidx/kwidx.
+            // The **kwargs catch-all itself is not yet populated with the
+            // caller's actual keyword arguments (a separate, documented
+            // gap — see IMPLEMENTATION.md); an always-empty list is
+            // passed as a placeholder, matching the same placeholder
+            // already used for direct (non-adapter) calls to this
+            // pattern, so this fix only removes the crash and doesn't
+            // change (or worsen) the existing wrong-but-consistent
+            // kwargs semantics.
+            llvm::Value* kwEmpty = nullptr;
+            if (listNew) {
+                llvm::Value* zeroSz = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
+                kwEmpty = abuilder.CreateCall(listNew, {zeroSz}, "kwempty");
+            } else {
+                kwEmpty = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            }
+            cargs.push_back(kwEmpty);
         }
 
         llvm::Value* r = abuilder.CreateCall(real, cargs, "r");

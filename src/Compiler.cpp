@@ -4185,6 +4185,65 @@ class LoweringVisitor {
                         }
                     }
                     if (initParams.empty()) {
+                        // No __init__ found anywhere in the direct base
+                        // chain — found and fixed while bug hunting: this
+                        // used to fall straight to the bare-["self"]
+                        // fallback below, then still forward every
+                        // positional argument the caller actually wrote
+                        // regardless of that declared 0-arg arity — an
+                        // argument-count mismatch LLVM's verifier rejects
+                        // outright, crashing compilation of the *entire
+                        // file* for the ordinary `class MyError(Exception):
+                        // pass` idiom whenever it was instantiated with an
+                        // argument (`raise MyError("boom")`).
+                        //
+                        // A class transitively deriving from a builtin
+                        // exception name (Exception, ValueError, ...) has
+                        // no real __init__ to call anyway; its actual
+                        // behavior is "store the constructor's positional
+                        // args as self.args", matching CPython's own
+                        // BaseException.__init__(self, *args). Handle that
+                        // directly here instead of synthesizing a broken
+                        // forwarding call, and skip __init__ entirely.
+                        // This also makes the instance recognizable to the
+                        // exception machinery (pyc_raise / except-matching
+                        // / str(e)), which reads the same "args" key and
+                        // the class's __mro__ — see
+                        // pyc_exc_type_name/pyc_exc_matches/pyc_exc_message
+                        // in Runtime.cpp. A class with its own explicit
+                        // __init__ (even one that calls
+                        // super().__init__(...)) is unaffected by this
+                        // branch — that's the hasOwnInitDefined path
+                        // above, a separate, narrower, still-unsupported
+                        // case (documented in IMPLEMENTATION.md).
+                        bool isExcSubclass = false;
+                        auto mroIt = classMRO.find(funcName);
+                        if (mroIt != classMRO.end()) {
+                            for (const auto& m : mroIt->second) {
+                                if (builtinExcNames().count(m)) { isExcSubclass = true; break; }
+                            }
+                        }
+                        if (isExcSubclass) {
+                            std::vector<std::string> excUserArgs;
+                            for (size_t i = 1; i < node->children.size(); ++i) {
+                                if (node->children[i] && node->children[i]->type != "Keyword") {
+                                    excUserArgs.push_back(lowerExpr(node->children[i].get()));
+                                }
+                            }
+                            std::string argsList = "t" + std::to_string(tempCounter++);
+                            std::string z = "c" + std::to_string(tempCounter++);
+                            ir.addInstruction(currentFunc, "const", {"0"}, z);
+                            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argsList);
+                            for (const auto& a : excUserArgs) {
+                                std::string dummyAppend = "t" + std::to_string(tempCounter++);
+                                ir.addInstruction(currentFunc, "call", {"PyList_Append", argsList, a}, dummyAppend);
+                            }
+                            std::string argsKeyConst = "c" + std::to_string(tempCounter++);
+                            ir.addInstruction(currentFunc, "const", {"\"args\""}, argsKeyConst, "str");
+                            std::string dummySet = "t" + std::to_string(tempCounter++);
+                            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", instanceDict, argsKeyConst, argsList}, dummySet);
+                            return instanceDict;
+                        }
                         initParams.push_back("self");
                     }
                 }

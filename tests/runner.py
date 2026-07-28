@@ -541,6 +541,105 @@ print(a[0],a[1],a[2])
     ("try:\n    print([1, 2, 3][-10])\nexcept IndexError as e:\n    print('caught:', e)",
      "caught: list index out of range\n"),
 
+    # Bug-hunt regression: a nested function combining *args and **kwargs
+    # in its signature (def wrapper(*args, **kwargs): ...) crashed LLVM
+    # module verification with "Incorrect number of arguments" on every
+    # indirect call — the standard generic-decorator wrapper pattern.
+    # Root cause: Codegen.cpp's __apply__ adapter generator (used for
+    # every indirect/closure call) scanned for the first star-prefixed
+    # parameter name to find "the" vararg slot, so **kwargs (which also
+    # starts with '*') was never detected as a second, separate slot —
+    # the adapter then called the real function with one argument short.
+    # Fixed by detecting *args and **kwargs as distinct slots and
+    # supplying a placeholder for **kwargs too. Covers a single decorator
+    # and a stacked pair of decorators (each its own closure/adapter).
+    ("def deco(f):\n"
+     "    def wrap(*a, **k):\n"
+     "        return f(*a, **k) + 1\n"
+     "    return wrap\n"
+     "@deco\n"
+     "def base(x):\n"
+     "    return x\n"
+     "print(base(5))", "6\n"),
+    ("def deco1(f):\n"
+     "    def wrap(*a, **k):\n"
+     "        return f(*a, **k) + 1\n"
+     "    return wrap\n"
+     "def deco2(f):\n"
+     "    def wrap(*a, **k):\n"
+     "        return f(*a, **k) * 2\n"
+     "    return wrap\n"
+     "@deco1\n"
+     "@deco2\n"
+     "def base(x):\n"
+     "    return x\n"
+     "print(base(5))", "11\n"),
+
+    # Bug-hunt regression: user-defined classes subclassing a builtin
+    # exception type (the ordinary `class MyError(Exception): pass`
+    # idiom) didn't work at all. Instantiating one with a positional
+    # argument crashed compilation of the *entire file* (LLVM
+    # verification failure — a synthesized __init__ was declared 0-arg
+    # while the call site still forwarded the actual argument count);
+    # instantiating one with no arguments compiled but the result was
+    # uncatchable by name or by a generic `except Exception:` alike,
+    # since it was an ordinary dict-backed class instance rather than the
+    # structured-exception shape the runtime's except-matching understood.
+    # Fixed by (1) special-casing construction for a class with no own
+    # __init__ that transitively derives from a builtin exception name —
+    # storing the constructor's positional args as self.args instead of
+    # synthesizing a broken forwarding call — and (2) teaching
+    # pyc_exc_type_name/pyc_exc_matches/pyc_exc_message to recognize such
+    # an instance via its class's __mro__ and its args list. Covers a
+    # message, an ancestor-class catch, a catch by generic Exception,
+    # propagation out of a function call, and a non-matching except
+    # correctly falling through to the right outer handler. (e.args is
+    # indexed rather than printed raw to avoid pyc's already-documented,
+    # unrelated list-vs-tuple representation choice.)
+    ("class MyError(Exception):\n"
+     "    pass\n"
+     "try:\n"
+     "    raise MyError('boom')\n"
+     "except MyError as e:\n"
+     "    print('caught:', e)", "caught: boom\n"),
+    ("class MyError(Exception):\n"
+     "    pass\n"
+     "class SpecificError(MyError):\n"
+     "    pass\n"
+     "try:\n"
+     "    raise SpecificError('specific')\n"
+     "except MyError as e:\n"
+     "    print('caught via ancestor:', e)", "caught via ancestor: specific\n"),
+    ("class MyError(Exception):\n"
+     "    pass\n"
+     "try:\n"
+     "    raise MyError('via Exception')\n"
+     "except Exception as e:\n"
+     "    print('caught via Exception:', e)", "caught via Exception: via Exception\n"),
+    ("class MyError(Exception):\n"
+     "    pass\n"
+     "def risky():\n"
+     "    raise MyError('propagated')\n"
+     "try:\n"
+     "    risky()\n"
+     "except MyError as e:\n"
+     "    print('caught from function:', e)", "caught from function: propagated\n"),
+    ("class MyError(Exception):\n"
+     "    pass\n"
+     "try:\n"
+     "    raise MyError('a', 'b')\n"
+     "except MyError as e:\n"
+     "    print(e.args[0], e.args[1])", "a b\n"),
+    ("class MyError(Exception):\n"
+     "    pass\n"
+     "try:\n"
+     "    try:\n"
+     "        raise MyError('wrong catch')\n"
+     "    except ValueError:\n"
+     "        print('should not print')\n"
+     "except MyError as e:\n"
+     "    print('correctly fell through:', e)", "correctly fell through: wrong catch\n"),
+
     # Tier-2-batch regression: unsupported imports print ImportError to
     # stderr and return None (rather than silently producing wrong output).
     # The runner only checks stdout, so the program's stdout is empty.

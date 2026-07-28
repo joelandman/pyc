@@ -16,6 +16,7 @@
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
+#include <unordered_set>
 #include <map>
 #include <string>
 #include <atomic>
@@ -959,6 +960,70 @@ void Py_DECREF(PyObject* obj) {
 static int PyObject_PrintBase(PyObject* obj, FILE* fp);
 static std::string pyc_exc_message(PyObject* exc);
 
+// User-defined exception subclasses (`class MyError(Exception): pass`)
+// found and fixed while bug hunting: raising one used to either crash
+// compilation (an argument-count mismatch synthesizing a nonexistent
+// base __init__ — see the Compiler.cpp instantiation-site fix) or, once
+// that was fixed, produce an instance that was neither catchable by name
+// nor by a generic `except Exception:` and printed a garbled internal
+// dict repr instead of its message. Root cause: such an instance is an
+// ordinary dict-backed class instance (type 2), not a structured
+// exception (type 10, built by pyc_make_exc) — the only shape
+// pyc_exc_type_name/pyc_exc_matches/pyc_exc_message (further down this
+// file) previously understood. These three helpers let a type-2 instance
+// participate in the same exception protocol by reading its class's
+// __mro__ (a compile-time-flattened list of ancestor class names,
+// already stored in every class dict for super() support — see
+// lowerClass's B6b in Compiler.cpp) and its "args" list (populated at
+// construction time by the same Compiler.cpp fix, mirroring CPython's
+// own BaseException.args).
+static PyObject* pyc_exc_instance_mro(PyObject* exc) {
+    if (!exc || exc->type != 2) return nullptr;
+    for (auto& pair : exc->dict) {
+        if (pair.first && pair.first->type == 3 && pair.first->str == "__class__") {
+            PyObject* classDict = pair.second;
+            if (!classDict || classDict->type != 2) return nullptr;
+            for (auto& cpair : classDict->dict) {
+                if (cpair.first && cpair.first->type == 3 && cpair.first->str == "__mro__") {
+                    return cpair.second;
+                }
+            }
+            return nullptr;
+        }
+    }
+    return nullptr;
+}
+static bool pyc_str_is_builtin_exc_name(const std::string& n) {
+    // Mirrors Compiler.cpp's builtinExcNames() — duplicated here since
+    // Runtime.cpp has no access to the compiler's tables, and this list
+    // is small and stable.
+    static const std::unordered_set<std::string> names = {
+        "BaseException", "Exception", "ArithmeticError", "ZeroDivisionError",
+        "OverflowError", "FloatingPointError", "LookupError", "IndexError",
+        "KeyError", "ValueError", "TypeError", "RuntimeError", "StopIteration",
+        "AttributeError", "NameError", "UnboundLocalError", "NotImplementedError",
+        "OSError", "IOError", "FileNotFoundError", "PermissionError",
+        "AssertionError", "SyntaxError", "IndentationError"
+    };
+    return names.count(n) != 0;
+}
+// True when `exc` is a class instance whose MRO includes a builtin
+// exception name — i.e. an instance of `class Foo(Exception, ...)`
+// raised (or printed) directly, rather than a pyc_make_exc structured
+// exception.
+static bool pyc_instance_is_exception(PyObject* exc) {
+    PyObject* mro = pyc_exc_instance_mro(exc);
+    if (!mro || mro->type != 1) return false;
+    size_t n = PyList_Size(mro);
+    for (size_t i = 0; i < n; ++i) {
+        PyObject* m = PyList_GetItemI64(mro, (long)i);
+        bool match = (m && m->type == 3 && pyc_str_is_builtin_exc_name(m->str));
+        if (m) Py_DECREF(m);
+        if (match) return true;
+    }
+    return false;
+}
+
 // Shared date/timedelta -> string formatting, used by both PrintElement
 // (no trailing newline, for nested container repr) and PrintBase (adds
 // one), and by str()/PyStr_FromAny (which both funnel through these).
@@ -1236,6 +1301,13 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         fprintf(fp, "]\n");
         fflush(fp);
         return 0;
+    }
+    if (obj->type == 2 && pyc_instance_is_exception(obj)) {
+        // User-defined exception subclass instance: print str(e) (the
+        // message), matching CPython's default Exception.__str__ —
+        // not the raw {'__class__': ...} dict repr a plain class
+        // instance with no __str__/__repr__ would otherwise get below.
+        int r = fprintf(fp, "%s\n", pyc_exc_message(obj).c_str()); fflush(fp); return r;
     }
     if (obj->type == 2) {
         fprintf(fp, "{");
@@ -9788,6 +9860,18 @@ static std::string pyc_exc_type_name(PyObject* exc) {
         if (p != std::string::npos) return exc->str.substr(0, p);
         return exc->str;
     }
+    // User-defined exception subclass instance (type 2) — see the
+    // pyc_exc_instance_mro/pyc_instance_is_exception comment far above
+    // for the full story. __mro__[0] is the class's own name.
+    if (exc->type == 2) {
+        PyObject* mro = pyc_exc_instance_mro(exc);
+        if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
+            PyObject* first = PyList_GetItemI64(mro, 0);
+            std::string r = (first && first->type == 3) ? first->str : "Exception";
+            if (first) Py_DECREF(first);
+            return r;
+        }
+    }
     return "Exception";
 }
 static std::string pyc_exc_message(PyObject* exc) {
@@ -9806,6 +9890,31 @@ static std::string pyc_exc_message(PyObject* exc) {
         size_t p = exc->str.find(": ");
         if (p != std::string::npos) return exc->str.substr(p + 2);
         return exc->str;
+    }
+    // User-defined exception subclass instance: message is args[0],
+    // matching CPython's BaseException.__str__ for a single-arg
+    // exception (args is populated at construction time — see the
+    // Compiler.cpp instantiation-site fix). Must be handled explicitly
+    // here, before the generic PyStr_FromAny(exc) fallback below: that
+    // fallback goes through PyObject_Print -> PyObject_PrintBase, which
+    // for an exception-instance now calls back into this very function —
+    // falling through to it here would recurse infinitely.
+    if (exc->type == 2) {
+        for (auto& pair : exc->dict) {
+            if (pair.first && pair.first->type == 3 && pair.first->str == "args") {
+                PyObject* args = pair.second;
+                if (args && args->type == 1 && PyList_Size(args) > 0) {
+                    PyObject* first = PyList_GetItemI64(args, 0);
+                    PyObject* s = PyStr_FromAny(first);
+                    std::string r = s ? s->str : "";
+                    if (s) Py_DECREF(s);
+                    if (first) Py_DECREF(first);
+                    return r;
+                }
+                break;
+            }
+        }
+        return "";
     }
     PyObject* s = PyStr_FromAny(exc);
     std::string r = s ? s->str : "";
@@ -9829,6 +9938,24 @@ PyObject* pyc_exc_matches(PyObject* exc, PyObject* typeName) {
     if (!typeName || typeName->type != 3) return PyBool_New(0);
     const std::string& want = typeName->str;
     if (want == "Exception" || want == "BaseException") return PyBool_New(1);
+    // User-defined exception subclass instance: check its exact __mro__
+    // chain (already flattened at compile time via C3 linearization,
+    // e.g. class MyError(Exception) has __mro__ == ["MyError",
+    // "Exception"]) rather than the pyc_exc_parent() child->parent table
+    // below, which only covers structured (type 10) builtin exceptions.
+    if (exc && exc->type == 2) {
+        PyObject* mro = pyc_exc_instance_mro(exc);
+        if (mro && mro->type == 1) {
+            size_t n = PyList_Size(mro);
+            for (size_t i = 0; i < n; ++i) {
+                PyObject* m = PyList_GetItemI64(mro, (long)i);
+                bool eq = (m && m->type == 3 && m->str == want);
+                if (m) Py_DECREF(m);
+                if (eq) return PyBool_New(1);
+            }
+        }
+        return PyBool_New(0);
+    }
     std::string have = pyc_exc_type_name(exc);
     while (!have.empty()) {
         if (have == want) return PyBool_New(1);

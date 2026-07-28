@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **350/350** (runner shows 350/350, file_case_failures=0).
+Current test count: **358/358** (runner shows 358/358, file_case_failures=0).
 
 ## Types and Literals
 
@@ -95,6 +95,11 @@ f(b=3, a=4)                    keyword call arguments
   (`def f(**kwargs): ...` collecting the caller's excess keyword
   arguments) remains entirely unimplemented — see IMPLEMENTATION.md for
   all of the above.
+- **Severe bug found and fixed**: a nested function combining `*args`
+  and `**kwargs` in its signature (`def wrapper(*args, **kwargs): ...`)
+  crashed compilation entirely — breaking the standard generic-decorator
+  wrapper pattern, `def wrapper(*args, **kwargs): return f(*args,
+  **kwargs)`, even when `kwargs` was never read. See IMPLEMENTATION.md.
 
 ## Classes
 
@@ -132,14 +137,18 @@ f(b=3, a=4)                    keyword call arguments
   Catching by type (`except KeyError as e:`) and printing the instance
   itself (`print(e)`) both work correctly; it's specifically
   `type()`-then-`.__name__` on the caught instance that doesn't resolve.
-- **Found, documented, not fixed**: user-defined classes subclassing a
-  builtin exception type (`class MyError(Exception): pass`) don't work
-  at all. Raising one with an argument (`raise MyError("boom")`) crashes
-  the *entire compilation* (LLVM verification failure); raising one with
-  no arguments compiles but the resulting exception is uncatchable by
-  name or by `except Exception:` alike, surfacing as an uncaught fatal
-  error with a garbled internal repr instead of the actual message. See
-  IMPLEMENTATION.md.
+- **Severe bug found and fixed**: user-defined classes subclassing a
+  builtin exception type (`class MyError(Exception): pass` — an
+  ordinary, common idiom) didn't work at all. Raising one with an
+  argument used to crash the *entire compilation* (LLVM verification
+  failure); raising one with no arguments compiled but the resulting
+  exception was uncatchable by name or by `except Exception:` alike.
+  Now works: catch by exact name, by an ancestor class, or by generic
+  `Exception`; message display; propagation out of a function call;
+  multiple constructor arguments land in `e.args` (list-shaped, per
+  pyc's existing list-vs-tuple choice). A class with its own explicit
+  `__init__` that calls `super().__init__(...)` remains unsupported (a
+  narrower, separate gap). See IMPLEMENTATION.md.
 
 ## Statements
 
