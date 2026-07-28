@@ -105,18 +105,40 @@ in every arg-count combination (`h(1,2,3,x=1,y=2)`, `h(1,2,3)`, `h(x=1)`,
   available (only a flat positional argument list), so there's nothing
   for the adapter to populate the dict from without a deeper change to
   how indirect calls carry keyword information.
-- **Missing keys in a `**dict` spread don't fall back to the parameter's
-  default.** `inner(a, b, c=99)` called as `inner(**{"a": 1, "b": 2})`
-  (omitting `c`, which has a default) should give `102`; pyc substitutes
-  `None` for the missing key (→ `0` in arithmetic), giving `3`. The
-  direct `key=value` keyword-argument path (fixed above) already
-  consults `funcDefaultValues` for exactly this case — the dict-spread
-  path doesn't.
-- **Mixing a positional argument with a `**dict` spread mis-binds.**
-  `mixed(a, b, c)` called as `mixed(1, **{"b": 2, "c": 3})` should give
-  `123`; pyc gives `23`, consistent with the positional `1` for `a`
-  being silently dropped/overwritten rather than combined with the
-  expanded dict values.
+- **Fixed on a later pass**: missing keys in a `**dict` spread not
+  falling back to the parameter's default, and mixing a positional
+  argument with a `**dict` spread mis-binding. Both had the same root
+  cause: the dict-spread path unpacked its runtime helper's results into
+  every parameter position unconditionally, regardless of what was
+  already there. `inner(a, b, c=99)` called as `inner(**{"a": 1, "b": 2})`
+  (omitting `c`, which has a default) gave `3` instead of `102` — the
+  missing key produced `None` (→ `0` in arithmetic) rather than
+  consulting `c`'s default, unlike the direct `key=value` keyword-
+  -argument path, which already consulted `funcDefaultValues` correctly.
+  `mixed(a, b, c)` called as `mixed(1, **{"b": 2, "c": 3})` gave `23`
+  instead of `123` — the spread dict didn't happen to also supply `"a"`,
+  so the unconditional overwrite clobbered the already-correct
+  positional `1` with `None`.
+
+  Fixed by replacing the batch "look up every parameter name, unpack the
+  whole result list" design (`Pyc_ExpandKwargsList`) with one
+  `Pyc_DictGetOrDefault(dict, paramName, fallback)` call per parameter,
+  where `Compiler.cpp` computes the exact right `fallback` for each
+  position at compile time: an already-bound value (a positional
+  argument, or a `key=value` keyword argument matched earlier in the
+  same call) takes priority, then the parameter's registered default (if
+  any), then boxed `None` (matching the existing, separate,
+  undocumented gap of not raising `TypeError` for a genuinely missing
+  required argument — not attempted here). This eliminated the whole
+  batch-unpack step entirely rather than patching around its
+  unconditional-overwrite behavior. Verified against real CPython:
+  omitted-defaulted-parameter, all-parameters-present (unaffected,
+  confirmed no regression), positional argument combined with a spread
+  dict, a spread dict combined with a direct `key=value` keyword
+  argument in the same call, and an all-defaults call with an empty
+  spread dict (`f(**{})`). Added as permanent `tests/runner.py`
+  regressions. Full suite and import tests stay green; `valgrind
+  --tool=memcheck` shows 0 errors.
 - A `**dict` spread's own unmatched entries (keys that don't name any
   regular parameter) are not routed into a `**kwargs` catch-all
   parameter either, even though direct `key=value` arguments now are —

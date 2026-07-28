@@ -4694,48 +4694,55 @@ class LoweringVisitor {
                     // the populated one.
                     argRes[kwidx] = kwDict;
                 }
-                // Then, expand **kwargs dicts using a runtime helper
+                // Then, expand **kwargs dicts: one Pyc_DictGetOrDefault
+                // call per regular parameter, each with the exact right
+                // fallback for that position — an already-bound value
+                // (a positional argument, or a key=value keyword argument
+                // matched above), else that parameter's registered
+                // default, else boxed None. Found and fixed while bug
+                // hunting: the previous design (Pyc_ExpandKwargsList,
+                // looking up every parameter name in the dict and
+                // unconditionally overwriting argRes for all of them)
+                // had two separate correctness bugs, both rooted in that
+                // same unconditional overwrite — see Pyc_DictGetOrDefault's
+                // comment in Runtime.cpp for the exact confirmed repros
+                // (a defaulted parameter omitted from the spread dict got
+                // None instead of its default; a positional argument got
+                // silently clobbered with None whenever the spread dict
+                // didn't also happen to supply that same parameter name).
+                //
+                // Skip kwidx (a **kwargs catch-all isn't a regular named
+                // parameter a spread dict's keys could ever match — see
+                // the populated-dict logic above) and any *args slot
+                // (already correctly populated by the *args collection
+                // earlier in this function; a dict spread's entries don't
+                // map onto it). Routing a **dict spread's own unmatched
+                // entries into a **kwargs catch-all is a further,
+                // separate, still-open gap — not attempted here.
                 for (auto& dictVal : kwargDicts) {
-                    // Call Pyc_ExpandKwargsList(dict, [param1, param2, ...]) -> list
-                    // of args. Param names are passed as a single boxed list
-                    // rather than as separate call operands — found and
-                    // fixed while bug hunting: the old Pyc_ExpandKwargs took
-                    // C varargs terminated by a null-pointer sentinel that
-                    // this call site never actually appended, causing a
-                    // runtime segfault on every f(**kwargs) call. See
-                    // Pyc_ExpandKwargsList's comment in Runtime.cpp.
-                    std::string namesList = "$t" + std::to_string(tempCounter++);
-                    {
-                        std::string z = "$c" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "const", {"0"}, z);
-                        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, namesList);
+                    auto ddit = funcDefaultValues.find(funcName);
+                    size_t nregular = params.size();
+                    for (size_t k = 0; k < params.size(); ++k) {
+                        if (!params[k].empty() && params[k][0] == '*') { nregular = k; break; }
                     }
-                    for (const auto& p : params) {
-                        std::string paramConst = "$c" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "const", {"\"" + p + "\""}, paramConst, "str");
-                        std::string dummyAppend = "$t" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "call", {"PyList_Append", namesList, paramConst}, dummyAppend);
-                    }
-                    std::string expandResult = "$t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"Pyc_ExpandKwargsList", dictVal, namesList}, expandResult);
-                    // Now unpack the result list into argRes
-                    // The result list has len(params) elements, in order.
-                    // Skip kwidx: a **kwargs catch-all isn't a regular
-                    // named parameter Pyc_ExpandKwargsList could ever
-                    // find a matching key for (it would look up the
-                    // literal string "**kwargs" in the spread dict and
-                    // always miss), and overwriting it here would clobber
-                    // the correctly-populated dict built above from any
-                    // direct key=value keyword arguments in this same
-                    // call. Routing a **dict spread's own unmatched
-                    // entries into a **kwargs catch-all too is a further,
-                    // separate gap — not attempted here.
+                    size_t ndefaults = (ddit != funcDefaultValues.end()) ? ddit->second.size() : 0;
                     for (size_t j = 0; j < params.size(); ++j) {
                         if (j == kwidx) continue;
-                        std::string idx = "$c" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "const", {std::to_string(j)}, idx);
+                        if (!params[j].empty() && params[j][0] == '*') continue;
+                        std::string fallback;
+                        if (j < argRes.size() && !argRes[j].empty()) {
+                            fallback = argRes[j];
+                        } else if (j < nregular && ndefaults > 0 && j >= nregular - ndefaults) {
+                            fallback = ddit->second[j - (nregular - ndefaults)];
+                        }
+                        if (fallback.empty()) {
+                            fallback = "$c" + std::to_string(tempCounter++);
+                            ir.addInstruction(currentFunc, "nconst", {}, fallback, "none");
+                        }
+                        std::string paramConst = "$c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"\"" + params[j] + "\""}, paramConst, "str");
                         std::string elem = "$t" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", expandResult, idx}, elem);
+                        ir.addInstruction(currentFunc, "call", {"Pyc_DictGetOrDefault", dictVal, paramConst, fallback}, elem);
                         if (argRes.size() <= j) argRes.resize(j + 1);
                         argRes[j] = elem;
                     }

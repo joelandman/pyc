@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **413/413** (runner shows 413/413, file_case_failures=0).
+Current test count: **417/417** (runner shows 417/417, file_case_failures=0).
 
 ## Types and Literals
 
@@ -89,9 +89,11 @@ f(b=3, a=4)                    keyword call arguments
 - `f(**some_dict)` at a call site — spreading a real dict into a
   callee's ordinary named parameters. **Found and fixed a segfault**
   (a missing null-terminator in what used to be a C varargs runtime
-  helper); still doesn't fall back to a parameter's default for a key
-  the dict omits, and mis-binds when mixed with a positional argument
-  in the same call.
+  helper). **Found and fixed two further bugs**: a key the dict omits
+  now correctly falls back to that parameter's default instead of
+  `None`, and mixing a positional argument with the spread dict no
+  longer clobbers the positional value with `None` when the dict doesn't
+  also happen to supply that same parameter's name.
 - `def f(**kwargs): ...` — the `**kwargs` catch-all parameter.
   **Severe bug found and fixed**: this used to bind an empty, wrongly
   -typed list no matter what the caller passed (`f(a=1, b=2)` gave

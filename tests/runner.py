@@ -517,6 +517,39 @@ print(a[0],a[1],a[2])
      "d = {'a': 1, 'b': 2, 'c': 3}\n"
      "print(inner(**d))", "6\n"),
 
+    # Bug-hunt regression: two further, separate correctness bugs in the
+    # f(**some_dict) call-site mechanism above, found and fixed on a
+    # later pass. Root cause was the old batch-unpack design
+    # unconditionally overwriting every parameter position regardless of
+    # what was already there: (1) a spread dict omitting a parameter that
+    # has a registered default got None instead of the default (unlike
+    # the direct key=value path, which already consulted defaults
+    # correctly); (2) mixing a positional argument with a spread dict
+    # that didn't also happen to supply that same parameter's name
+    # silently clobbered the positional value with None. Fixed by
+    # replacing the batch unpack with one Pyc_DictGetOrDefault call per
+    # parameter, each given the exact right fallback (an already-bound
+    # value, else the registered default, else None) instead of a single
+    # one-size-fits-all None. Also covers a spread dict combined with a
+    # direct key=value keyword argument, and an all-defaults call with an
+    # empty spread dict.
+    ("def inner(a, b, c=99):\n"
+     "    return a + b + c\n"
+     "d1 = {'a': 1, 'b': 2}\n"
+     "print(inner(**d1))\n"
+     "d2 = {'a': 10, 'b': 20, 'c': 30}\n"
+     "print(inner(**d2))", "102\n60\n"),
+    ("def mixed(a, b, c):\n"
+     "    return a * 100 + b * 10 + c\n"
+     "print(mixed(1, **{'b': 2, 'c': 3}))", "123\n"),
+    ("def f(a, b, c=5):\n"
+     "    return a, b, c\n"
+     "x, y, z = f(**{'a': 1}, b=2)\n"
+     "print(x, y, z)", "1 2 5\n"),
+    ("def g(a=1, b=2, c=3):\n"
+     "    return a + b + c\n"
+     "print(g(**{}))", "6\n"),
+
     # Bug-hunt regression: negative indexing on a list (lst[-1], an
     # extremely common idiom) raised a bogus IndexError for a homogeneous
     # int/float fast-path list, or silently returned/wrote the wrong

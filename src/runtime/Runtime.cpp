@@ -10966,43 +10966,37 @@ extern "C" PyObject* PyObject_GetAttrExtended(PyObject* obj, PyObject* attr) {
     return none;
 }
 
-// Expand **kwargs: takes dict + a boxed list of param-name strings, returns
-// a list of args in order (value_for_param1, ..., value_for_paramN).
-//
-// This used to be a C varargs function (PyObject* dict, ...) reading params
-// via va_arg until a null-pointer sentinel — found and fixed while bug
-// hunting: the call site (Compiler.cpp) never actually appended a null
-// sentinel argument, and Codegen.cpp's generic "unknown external function"
-// fallback declares a plain fixed-arity (non-vararg) LLVM function type
-// sized to exactly match each call site's real argument count. So the
-// va_arg loop always read past the last real argument into undefined
-// stack/register contents looking for a sentinel that was never there —
-// undefined behavior that crashed with a segfault on every `f(**kwargs)` /
-// `f(**some_dict)` call. Rewritten to take the parameter names as a single
-// boxed list argument instead, sidestepping C varargs entirely — the call
-// site now always passes exactly 2 real arguments, matching what the
-// generic non-vararg fallback declares.
-PyObject* Pyc_ExpandKwargsList(PyObject* dict, PyObject* names) {
-    if (!dict || dict->type != 2 || !names || names->type != 1) {
-        return PyList_NewBoxed(PyInt_FromLong(0));
-    }
-    size_t n = names->list.size();
-    PyObject* result = PyList_NewBoxed(PyInt_FromLong((long)n));
-    for (size_t i = 0; i < n; ++i) {
-        PyObject* key = names->list[i];
-        PyObject* val = key ? PyDict_GetItem(dict, key) : nullptr;
-        if (val) {
-            Py_INCREF(val);
-            PyList_SetItemBoxed(result, PyInt_FromLong((long)i), val);
-        } else {
-            PyObject* none = new PyObject();
-            none->refcount = 1;
-            none->type = 5;
-            none->str = "None";
-            PyList_SetItemBoxed(result, PyInt_FromLong((long)i), none);
-        }
-    }
-    return result;
+// Pyc_DictGetOrDefault(dict, key, fallback) — dict[key] if present, else
+// fallback (a new owned reference either way, mirroring dict.get()'s own
+// convention just above). Used by Compiler.cpp for f(**some_dict) call
+// sites: one call per parameter, with `fallback` set at compile time to
+// whichever already applies to that position — an already-bound
+// positional argument, that parameter's registered default value, or
+// boxed None if neither applies. This replaced an earlier batch-oriented
+// design (Pyc_ExpandKwargsList, taking the whole parameter-name list and
+// returning a whole values list in one call) that was fixed for its own
+// crash (a stale doc trail: it began life as a raw C-varargs function
+// with a missing null-sentinel, then a boxed-list-of-names version) but
+// still had two further, separate correctness bugs found while bug
+// hunting, both root-caused to the batch unpack unconditionally
+// overwriting every parameter position regardless of what was already
+// there: (1) omitting a defaulted parameter from the spread dict
+// (`inner(a, b, c=99)` called as `inner(**{"a":1,"b":2})`) produced
+// `None` instead of consulting `c`'s default — unlike the direct
+// `key=value` keyword-argument path, which already consulted defaults
+// correctly; (2) mixing a positional argument with a spread dict that
+// didn't also happen to supply that same parameter's name
+// (`mixed(1, **{"b":2,"c":3})`, `mixed(a,b,c)`) clobbered the positional
+// `1` with `None`, since the batch unpack looked up "a" in the dict,
+// found nothing, and overwrote position 0 unconditionally. The
+// per-parameter design here lets Compiler.cpp supply the exact right
+// fallback for each position instead of a single one-size-fits-all
+// `None`.
+PyObject* Pyc_DictGetOrDefault(PyObject* dict, PyObject* key, PyObject* fallback) {
+    PyObject* val = PyDict_GetItem(dict, key);
+    if (val) return val; // already a new reference
+    if (fallback) Py_INCREF(fallback);
+    return fallback;
 }
 
 

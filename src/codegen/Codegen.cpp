@@ -638,6 +638,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     llvm::FunctionType* dictGetWithDefaultTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(dictGetWithDefaultTy, llvm::Function::ExternalLinkage, "PyDict_GetItemWithDefault", module.get());
+    // Pyc_DictGetOrDefault(dict, key, fallback) — used for f(**some_dict)
+    // call sites; see its comment in Runtime.cpp.
+    llvm::Function::Create(dictGetWithDefaultTy, llvm::Function::ExternalLinkage, "Pyc_DictGetOrDefault", module.get());
 
     llvm::FunctionType* dictDelItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(dictDelItemTy, llvm::Function::ExternalLinkage, "PyDict_DelItem", module.get());

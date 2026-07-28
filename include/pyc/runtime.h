@@ -28,6 +28,7 @@ PyObject* PyNumber_Divide(PyObject* a, PyObject* b);
  PyObject* PyDict_New(void);
 void      PyDict_SetItem(PyObject* dict, PyObject* key, PyObject* value);
 PyObject* PyDict_GetItem(PyObject* dict, PyObject* key);
+PyObject* Pyc_DictGetOrDefault(PyObject* dict, PyObject* key, PyObject* fallback);
 PyObject* PyDict_GetItemWithDefault(PyObject* dict, PyObject* key, PyObject* defaultVal);
 PyObject* PyDict_DelItem(PyObject* dict, PyObject* key);
 PyObject* PyList_Append(PyObject* list, PyObject* item);
