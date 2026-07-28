@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **321/321** (runner shows 321/321, file_case_failures=0).
+Current test count: **322/322** (runner shows 322/322, file_case_failures=0).
 
 ## Types and Literals
 
@@ -120,7 +120,21 @@ f(b=3, a=4)                    keyword call arguments
 `sum(x)`, `sorted(x)` / `sorted(x, key=)`, `any(x)`, `all(x)`, `isinstance(obj, info)`,
 `bool(x)`, `type(x)`, `id(x)`, `repr(x)`, `hex(x)`, `oct(x)`, `bin(x)`,
 `ord(c)`, `chr(i)`, `round(x)`, `divmod(a, b)`, `pow(base, exp)`,
+`pow(base, exp, mod)` (modular exponentiation), `tuple(x)`,
 `reversed(x)`, `cmp_to_key(cmp)`
+
+- **Real bugs found and fixed**: `tuple(x)`, `divmod(a, b)`, and
+  `pow(base, exp)` all unconditionally returned `None` — each had a
+  correctly-implemented dispatch branch that was simply never reached
+  (same root cause already found and fixed for `bytes`/`bytearray`
+  earlier this session: missing from an internal whitelist that decides
+  how bare-name calls are compiled). `tuple(x)` behaves like `list(x)`
+  (no distinct tuple type — see the Types table above); `divmod()`
+  likewise returns a 2-element list, not a tuple — both consistent with
+  pyc's existing, pre-dating, documented "no tuple type" choice, not new
+  gaps. `pow(base, exp, mod)` (3-arg modular exponentiation) was
+  additionally found to have never been implemented at all — the
+  modulus was silently ignored. See IMPLEMENTATION.md.
 
 ## File I/O
 

@@ -4291,7 +4291,7 @@ class LoweringVisitor {
             "print", "len", "range", "min", "max", "sum", "sorted", "any", "all", "isinstance",
             "int", "float", "abs", "str", "list", "enumerate", "zip",
             "bool", "type", "id", "repr", "hex", "oct", "bin", "ord", "chr", "round",
-            "bytes", "bytearray"
+            "bytes", "bytearray", "tuple", "divmod", "pow"
         };
 
         if (!knownDirect0) {
@@ -4303,7 +4303,8 @@ class LoweringVisitor {
                 static const std::unordered_set<std::string> neverDynamic = {
                     "print","len","range","min","max","sum","sorted","any","all","isinstance",
                     "int","float","complex","abs","str","list","enumerate","zip","bool","type","id",
-                    "repr","hex","oct","bin","ord","chr","round","open","bytes","bytearray"
+                    "repr","hex","oct","bin","ord","chr","round","open","bytes","bytearray",
+                    "tuple","divmod","pow"
                 };
                 if (!theName.empty() && neverDynamic.count(theName) == 0) {
                     // B4 complete: any bare name that is not a known direct IR function *and*
@@ -4813,6 +4814,33 @@ class LoweringVisitor {
                 markStructuredList(res, structuredElementLayout[arg]);
             return res;
         }
+        // tuple(x) — found returning None unconditionally (real bug,
+        // same class as the earlier bytes/bytearray gap: "tuple" wasn't
+        // in neverDynamic/specialBuiltinNames below, so any call routed
+        // through the dynamic Pyc_Apply(token) path instead of collecting
+        // its argument normally — since no variable named "tuple" is
+        // ever assigned, the callee-token lookup silently resolved to
+        // nothing). Fixed by treating tuple(x) exactly like list(x) —
+        // pyc has no distinct tuple type at all (tuple *literals* are
+        // already mapped straight to list internally, an existing,
+        // deliberate, documented scoping decision — see FEATURES.md/
+        // IMPLEMENTATION.md), so this is consistent with that, not a new
+        // gap of its own: `tuple([1,2,3])` prints as `[1, 2, 3]`, not
+        // CPython's `(1, 2, 3)`, same as a `(1,2,3)` tuple literal
+        // already does.
+        if (funcName == "tuple") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "t" + std::to_string(tempCounter++);
+            if (argRes.empty()) {
+                std::string sc = "c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, sc);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", arg}, res);
+            }
+            noteType(res, "list");
+            return res;
+        }
         // bytes(...)/bytearray(...) construction. arg0 (value) and arg1
         // (encoding, only meaningful when arg0 is a str) are both
         // optional — missing ones pass through as empty operands, which
@@ -5122,13 +5150,23 @@ class LoweringVisitor {
             noteType(res, "boxed");
             return res;
         }
-        // pow(base, exp) → PyBuiltin_Pow(base, exp)
+        // pow(base, exp) → PyBuiltin_Pow(base, exp); pow(base, exp, mod)
+        // → PyBuiltin_Pow3(base, exp, mod) — the 3-arg modular form was
+        // found completely unimplemented (silently ignored the modulus)
+        // while fixing the neverDynamic bug for 2-arg pow(); see
+        // PyBuiltin_Pow3's comment in Runtime.cpp.
         if (funcName == "pow") {
             std::string a = argRes.size() > 0 ? argRes[0] : "";
             std::string b = argRes.size() > 1 ? argRes[1] : "";
             std::string res = "t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Pow", a, b}, res);
-            noteType(res, "boxed");
+            if (argRes.size() > 2) {
+                std::string m = argRes[2];
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Pow3", a, b, m}, res, "int");
+                noteType(res, "int");
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Pow", a, b}, res);
+                noteType(res, "boxed");
+            }
             return res;
         }
 

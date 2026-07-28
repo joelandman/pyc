@@ -826,6 +826,64 @@ hunting for other bugs rather than attempting either fix in this pass —
 this is recorded here as a known, real, reproducible, unfixed issue for
 a dedicated future session.
 
+### `tuple`, `divmod`, `pow` — the Same `neverDynamic` Bug Class Found in an Earlier Phase, With More Victims
+Continuing the hunt (directed to keep going after the namespace-collision
+finding above) surfaced a fourth bug, a recurrence of a bug class already
+found and fixed once this session for `bytes`/`bytearray`: `lowerCall`'s
+`neverDynamic`/`specialBuiltinNames` sets are a whitelist of builtin
+names that must collect their call arguments normally; anything *not* on
+the list gets routed through the dynamic `Pyc_Apply(token, ...)` path
+instead (the mechanism that makes `f = some_func; f()` work for
+first-class function values) — and since no local variable named
+`tuple`/`divmod`/`pow` is ever assigned in ordinary code, that path's
+callee-token lookup silently resolves to nothing, so the call
+unconditionally returns `None`, even though each of these already has a
+correctly-implemented dispatch branch in `lowerCall` that's simply never
+reached. Confirmed: `tuple([1,2,3])`, `divmod(17,5)`, `pow(2,10)` all
+returned `None` unconditionally under the old code.
+
+Found by systematically grepping every `funcName == "..."` branch in
+`lowerCall` and diffing the resulting name list against
+`neverDynamic`— not every name missing from that diff turned out to be
+broken (`reversed`, `combinations`, `cmp_to_key` were also missing but
+work correctly, apparently via a different, not fully investigated,
+fallback path — not pursued further since they weren't actually
+broken); `tuple`, `divmod`, and `pow` were confirmed broken by direct
+testing and fixed by adding all three to both sets.
+
+`tuple(x)` was made to behave exactly like `list(x)` rather than
+implementing real tuple semantics — pyc has no distinct tuple type at
+all (tuple *literals* like `(1, 2, 3)` already map straight to `list`
+internally, an existing, deliberate, documented scoping decision predating
+this session, not a new gap introduced here), so `tuple([1,2,3])`
+printing as `[1, 2, 3]` rather than CPython's `(1, 2, 3)` is consistent
+with that existing choice, not a fresh inconsistency. `divmod()`
+likewise already returned (and still returns) a 2-element list rather
+than a tuple, for the same reason.
+
+**A second, separate, smaller gap found while fixing 2-arg `pow()`**:
+3-arg modular exponentiation (`pow(base, exp, mod)`) had never been
+implemented at the runtime level at all — `lowerCall`'s `pow` branch
+only ever passed 2 arguments to `PyBuiltin_Pow` regardless of how many
+were given, so `pow(2, 10, 1000)` silently ignored the modulus and
+returned the un-modded `1024` instead of `24`. Implemented as a new
+`PyBuiltin_Pow3` using fast modular exponentiation (avoids overflow for
+larger exponents than the naive repeated-multiplication approach
+`PyBuiltin_Pow` itself uses for the 2-arg case), verified against real
+CPython for positive/negative modulus and the exact `ValueError`
+message CPython raises for a zero modulus (`pow() 3rd argument cannot
+be 0`) and a negative exponent with a modulus specified.
+
+**Test-writing lesson repeated from the complex-numbers case earlier**:
+the first version of this test printed `tuple(x)`'s and `divmod()`'s
+raw results directly, which made this runner's live-CPython comparison
+(always preferred over the hardcoded `expected` string when the source
+runs successfully under real CPython) permanently disagree with pyc's
+correct-for-its-own-architecture list-shaped output — rewritten to index
+into / unpack the results instead of printing the container directly,
+sidestepping the representation difference entirely rather than fighting
+the test harness's comparison priority.
+
 ## Known Limitations
 
 ### Performance

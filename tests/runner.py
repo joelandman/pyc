@@ -2088,6 +2088,55 @@ lst3 = [1, "a", 2]
 del lst3[1]
 print(lst3)
 """, "[2.0, 3.0]\n[1, 2]\nIndexError: list assignment index out of range\n{'b': 2}\nKeyError: 'missing'\n[1, 2]\n"),
+    # Continuing the same bug hunt turned up a fourth real bug class:
+    # `tuple`, `divmod`, and `pow` were all missing from the
+    # neverDynamic/specialBuiltinNames whitelist that decides whether a
+    # bare-name call collects its arguments normally or gets routed
+    # through the dynamic Pyc_Apply(token) path (the same class of bug
+    # already found and fixed for bytes/bytearray in an earlier phase
+    # this session) — since no local variable named "tuple"/"divmod"/
+    # "pow" is ever assigned, each call's callee-token lookup silently
+    # resolved to nothing, so `tuple([1,2,3])`, `divmod(17,5)`, and
+    # `pow(2,10)` all unconditionally returned None. Fixed by adding all
+    # three to both sets. `tuple(x)` now behaves exactly like `list(x)`
+    # — pyc has no distinct tuple type at all (tuple *literals* already
+    # map straight to list internally, an existing, deliberate,
+    # documented scoping decision, not a new gap) — so `tuple([1,2,3])`
+    # prints as `[1, 2, 3]`, not CPython's `(1, 2, 3)`, matching how a
+    # `(1,2,3)` literal already prints. `divmod()` likewise returns a
+    # list `[3, 2]`, not a tuple, same documented reason. This test
+    # avoids printing the raw tuple()/divmod() result directly (indexing
+    # and unpacking instead) — same lesson as the earlier complex-numbers
+    # test found stranded in the wrong list this session: printing a
+    # raw list-vs-tuple repr difference makes this runner's live-CPython
+    # comparison (which always wins when the source runs successfully
+    # under real CPython) permanently disagree with any hardcoded
+    # `expected` string, regardless of correctness.
+    #
+    # Fixing 2-arg pow() surfaced a second, separate, smaller gap:
+    # 3-arg modular pow (`pow(base, exp, mod)`) wasn't implemented at
+    # the runtime level at all — Compiler.cpp's pow dispatch only ever
+    # passed 2 args, so the modulus was silently ignored (`pow(2, 10,
+    # 1000)` returned the un-modded 1024, not 24). Implemented via a new
+    # PyBuiltin_Pow3 (fast modular exponentiation), verified against real
+    # CPython including negative modulus and the exact `pow() 3rd
+    # argument cannot be 0` ValueError message.
+    ("""
+f = [1, 2, 3]
+g = tuple(f)
+print(g[0], g[1], g[2])
+print(len(g))
+q, r = divmod(17, 5)
+print(q, r)
+print(pow(2, 10))
+print(pow(2, 10, 1000))
+print(pow(3, 5, 7))
+print(pow(2, 10, -7))
+try:
+    pow(2, 10, 0)
+except ValueError as e:
+    print("ValueError:", e)
+""", "1 2 3\n3\n3 2\n1024\n24\n5\n-5\nValueError: pow() 3rd argument cannot be 0\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

@@ -471,6 +471,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Round", module.get());
     llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Pow", module.get());
     llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Complex", module.get());
+    // 3-arg pow(base, exp, mod)
+    {
+        llvm::FunctionType* threeArgTy = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(threeArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_Pow3", module.get());
+    }
 
     for (const char* name : {"PyString_Split","PyString_Join","PyBuiltin_IntBase",
                               "PyString_RFind"}) {

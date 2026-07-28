@@ -2168,6 +2168,36 @@ PyObject* PyBuiltin_Pow(PyObject* a, PyObject* b) {
     return PyInt_FromLong((long)r);
 }
 
+// pow(base, exp, mod) — 3-arg modular exponentiation. Found missing
+// while hunting for more instances of the "builtin name missing from
+// neverDynamic" bug class: fixing that bug for 2-arg pow() surfaced
+// that the 3-arg form was *also* never implemented at the runtime level
+// at all (Compiler.cpp's pow dispatch only ever passed 2 args) —
+// confirmed `pow(2, 10, 1000)` silently ignored the modulus and
+// returned the unmodded 1024 instead of 24. Real CPython's 3-arg pow
+// requires int operands (raises TypeError otherwise) and a non-negative
+// exponent; matched here via fast modular exponentiation to avoid
+// overflow for larger exponents.
+PyObject* PyBuiltin_Pow3(PyObject* a, PyObject* b, PyObject* m) {
+    if (!a || !b || !m) return nullptr;
+    long long base = (a->type == 0 || a->type == 5) ? a->value : 0;
+    long long exp  = (b->type == 0 || b->type == 5) ? b->value : 0;
+    long long mod  = (m->type == 0 || m->type == 5) ? m->value : 1;
+    if (mod == 0) { pyc_raise_msg("ValueError", "pow() 3rd argument cannot be 0"); return nullptr; }
+    if (exp < 0) { pyc_raise_msg("ValueError", "pow() 2nd argument cannot be negative when 3rd argument specified"); return nullptr; }
+    bool negResult = mod < 0;
+    long long m_abs = negResult ? -mod : mod;
+    base %= m_abs; if (base < 0) base += m_abs;
+    long long result = 1 % m_abs;
+    while (exp > 0) {
+        if (exp & 1) result = (result * base) % m_abs;
+        base = (base * base) % m_abs;
+        exp >>= 1;
+    }
+    if (negResult && result != 0) result -= m_abs;
+    return PyInt_FromLong((long)result);
+}
+
 PyObject* PyString_Upper(PyObject* s) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
     std::string r = s->str;
