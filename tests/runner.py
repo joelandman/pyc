@@ -640,6 +640,74 @@ print(a[0],a[1],a[2])
      "except MyError as e:\n"
      "    print('correctly fell through:', e)", "correctly fell through: wrong catch\n"),
 
+    # Bug-hunt regression: a user variable named like the compiler's own
+    # internal temp namespace (t<N>/c<N>/i<N>/s<N>, e.g. t0, c2, i5, s1)
+    # used to silently collide with an unrelated internal temp generated
+    # around the same point in the same function — either corrupting the
+    # variable's value with no error at all, or crashing LLVM module
+    # verification outright, depending on the exact sequence of temps
+    # already allocated. Fixed by prefixing every internal temp name with
+    # '$', a character no valid Python identifier can ever contain,
+    # closing the collision permanently. Covers module-level variables,
+    # function parameters, a loop-local, and instance attributes, all
+    # using names in the previously-collision-prone pattern.
+    ("c0 = 'hello'\nprint(c0)", "hello\n"),
+    ("t0 = 100\nt1 = 200\nc0 = 5\ni0 = [1, 2, 3]\ns0 = 3.14\n"
+     "print(t0, t1, c0, i0, s0)", "100 200 5 [1, 2, 3] 3.14\n"),
+    ("def f(t2, c3):\n"
+     "    i5 = t2 + c3\n"
+     "    return i5\n"
+     "print(f(10, 20))", "30\n"),
+    ("for i in range(3):\n    t3 = i * 2\n    print(t3)", "0\n2\n4\n"),
+    ("class Foo:\n"
+     "    def __init__(self):\n"
+     "        self.c5 = 'attr'\n"
+     "        self.t9 = 99\n"
+     "foo = Foo()\n"
+     "print(foo.c5, foo.t9)", "attr 99\n"),
+
+    # Bug-hunt regression: the **kwargs catch-all parameter (def
+    # f(**kwargs): ...) never collected the caller's excess keyword
+    # arguments into anything at all — it always bound an empty, wrongly
+    # -typed list instead of a dict. Fixed for direct calls to a named
+    # function (the call site now builds a real dict from whichever
+    # keyword arguments don't match a regular parameter name). Indirect
+    # calls through a closure/decorator still get an empty dict — a
+    # separate, narrower, still-documented gap, since the caller's
+    # keyword names aren't available by the time such a call reaches the
+    # generic dynamic-dispatch adapter. Covers a mix of regular params
+    # plus **kwargs, iterating/summing the collected values, *args
+    # combined with **kwargs in every arg-count combination, and
+    # .get(key, default) on the result. (dict contents are read back via
+    # sorted(...items()) / indexing rather than printed raw, to avoid
+    # pyc's already-documented, unrelated dict key-ordering limitation.)
+    ("def f(a, b, **kwargs):\n"
+     "    print(a, b, sorted(kwargs.keys()), kwargs['x'], kwargs['y'])\n"
+     "f(1, 2, x=10, y=20)\n"
+     "def f2(a, b, **kwargs):\n"
+     "    print(a, b, len(kwargs))\n"
+     "f2(1, 2)", "1 2 ['x', 'y'] 10 20\n1 2 0\n"),
+    ("def g(**kwargs):\n"
+     "    total = 0\n"
+     "    for k in kwargs:\n"
+     "        total += kwargs[k]\n"
+     "    return total\n"
+     "print(g(x=1, y=2, z=3))\n"
+     "print(g())", "6\n0\n"),
+    ("def h(*args, **kwargs):\n"
+     "    return len(args), len(kwargs)\n"
+     "a, b = h(1, 2, 3, x=1, y=2)\n"
+     "print(a, b)\n"
+     "c, d = h(1, 2, 3)\n"
+     "print(c, d)\n"
+     "e, f = h(x=1)\n"
+     "print(e, f)\n"
+     "g, h2 = h()\n"
+     "print(g, h2)", "3 2\n3 0\n0 1\n0 0\n"),
+    ("def uses_get(**kwargs):\n"
+     "    return kwargs.get('missing', 'default')\n"
+     "print(uses_get(a=1))", "default\n"),
+
     # Tier-2-batch regression: unsupported imports print ImportError to
     # stderr and return None (rather than silently producing wrong output).
     # The runner only checks stdout, so the program's stdout is empty.

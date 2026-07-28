@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **358/358** (runner shows 358/358, file_case_failures=0).
+Current test count: **367/367** (runner shows 367/367, file_case_failures=0).
 
 ## Types and Literals
 
@@ -91,10 +91,17 @@ f(b=3, a=4)                    keyword call arguments
   (a missing null-terminator in what used to be a C varargs runtime
   helper); still doesn't fall back to a parameter's default for a key
   the dict omits, and mis-binds when mixed with a positional argument
-  in the same call. The **`**kwargs` catch-all parameter itself**
-  (`def f(**kwargs): ...` collecting the caller's excess keyword
-  arguments) remains entirely unimplemented — see IMPLEMENTATION.md for
-  all of the above.
+  in the same call.
+- `def f(**kwargs): ...` — the `**kwargs` catch-all parameter.
+  **Severe bug found and fixed**: this used to bind an empty, wrongly
+  -typed list no matter what the caller passed (`f(a=1, b=2)` gave
+  `kwargs == []`, not `{'a': 1, 'b': 2}`) — now correctly collects the
+  caller's keyword arguments into a real dict for direct calls (a named
+  function called directly), including combined with `*args` in any
+  arg-count shape. Indirect calls (through a closure, decorator, or
+  first-class function value) still only ever get an empty dict — a
+  narrower, separate, still-unimplemented case. See IMPLEMENTATION.md
+  for all of the above.
 - **Severe bug found and fixed**: a nested function combining `*args`
   and `**kwargs` in its signature (`def wrapper(*args, **kwargs): ...`)
   crashed compilation entirely — breaking the standard generic-decorator

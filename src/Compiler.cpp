@@ -135,20 +135,20 @@ class LoweringVisitor {
             // This dict will be stored in a global variable (e.g., pyc_module_utils)
             // so that importing modules can access it.
             if (!ir.moduleGlobals.empty()) {
-                std::string modDict = "t" + std::to_string(tempCounter++);
+                std::string modDict = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyDict_New"}, modDict);
                 
                 // Add __name__ to the module dict - always "__main__" for top-level module
-                std::string nameKey = "c" + std::to_string(tempCounter++);
+                std::string nameKey = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"__name__\""}, nameKey, "str");
                 std::string moduleName = "__main__";
-                std::string nameVal = "c" + std::to_string(tempCounter++);
+                std::string nameVal = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + moduleName + "\""}, nameVal, "str");
                 ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, nameKey, nameVal}, "set_name");
                 
                 // Add each global to the module dict
                 for (auto& gname : ir.moduleGlobals) {
-                    std::string key = "c" + std::to_string(tempCounter++);
+                    std::string key = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + gname + "\""}, key, "str");
                     // For known IR functions (user-defined functions), register a string token
                     // pointing to the function name (not null, not the global which is uninitialised).
@@ -156,7 +156,7 @@ class LoweringVisitor {
                     auto knownIt = knownIRFunctions.find(gname);
                     if (knownIt != knownIRFunctions.end()) {
                         // Store the function name as a string token
-                        val = "t" + std::to_string(tempCounter++);
+                        val = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + gname + "\""}, val, "str");
                     } else {
                         val = gname;  // Load the global value for regular variables
@@ -170,67 +170,67 @@ class LoweringVisitor {
                 // B7: Populate stub module dicts for os, sys, subprocess
                 if (ir.moduleName == "os") {
                     // os.environ = {}
-                    std::string envDict = "t" + std::to_string(tempCounter++);
+                    std::string envDict = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyDict_New"}, envDict);
-                    std::string envKey = "c" + std::to_string(tempCounter++);
+                    std::string envKey = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"environ\""}, envKey, "str");
                     ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, envKey, envDict}, "set_env");
                     
                     // os.path = {exists: fn, isfile: fn, isdir: fn, unlink: fn}
-                    std::string pathDict = "t" + std::to_string(tempCounter++);
+                    std::string pathDict = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyDict_New"}, pathDict);
-                    std::string pathKey = "c" + std::to_string(tempCounter++);
+                    std::string pathKey = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"path\""}, pathKey, "str");
                     ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, pathKey, pathDict}, "set_path");
                     
                     // os.path.exists = Pyc_OsPathExists
-                    std::string existsKey = "c" + std::to_string(tempCounter++);
+                    std::string existsKey = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"exists\""}, existsKey, "str");
-                    std::string existsFn = "c" + std::to_string(tempCounter++);
+                    std::string existsFn = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"Pyc_OsPathExists\""}, existsFn, "str");
                     ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", pathDict, existsKey, existsFn}, "set_exists");
                     
                     // os.path.isfile = Pyc_OsPathIsFile
-                    std::string isfileKey = "c" + std::to_string(tempCounter++);
+                    std::string isfileKey = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"isfile\""}, isfileKey, "str");
-                    std::string isfileFn = "c" + std::to_string(tempCounter++);
+                    std::string isfileFn = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"Pyc_OsPathIsFile\""}, isfileFn, "str");
                     ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", pathDict, isfileKey, isfileFn}, "set_isfile");
                     
                     // os.path.isdir = Pyc_OsPathIsDir
-                    std::string isdirKey = "c" + std::to_string(tempCounter++);
+                    std::string isdirKey = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"isdir\""}, isdirKey, "str");
-                    std::string isdirFn = "c" + std::to_string(tempCounter++);
+                    std::string isdirFn = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"Pyc_OsPathIsDir\""}, isdirFn, "str");
                     ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", pathDict, isdirKey, isdirFn}, "set_isdir");
                     
                     // os.unlink = Pyc_OsUnlink
-                    std::string unlinkKey = "c" + std::to_string(tempCounter++);
+                    std::string unlinkKey = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"unlink\""}, unlinkKey, "str");
-                    std::string unlinkFn = "c" + std::to_string(tempCounter++);
+                    std::string unlinkFn = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"Pyc_OsUnlink\""}, unlinkFn, "str");
                     ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, unlinkKey, unlinkFn}, "set_unlink");
                 } else if (ir.moduleName == "sys") {
                     // sys.argv = [] (placeholder)
-                    std::string argvKey = "c" + std::to_string(tempCounter++);
+                    std::string argvKey = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"argv\""}, argvKey, "str");
-                    std::string argvSize = "c" + std::to_string(tempCounter++);
+                    std::string argvSize = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"0"}, argvSize, "int");
-                    std::string argvList = "t" + std::to_string(tempCounter++);
+                    std::string argvList = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argvSize}, argvList);
                     ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, argvKey, argvList}, "set_argv");
                 } else if (ir.moduleName == "subprocess") {
                     // subprocess.call = Pyc_SubprocessCall
-                    std::string callKey = "c" + std::to_string(tempCounter++);
+                    std::string callKey = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"call\""}, callKey, "str");
-                    std::string callFn = "c" + std::to_string(tempCounter++);
+                    std::string callFn = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"Pyc_SubprocessCall\""}, callFn, "str");
                     ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, callKey, callFn}, "set_call");
                     
                     // subprocess.check_output = Pyc_SubprocessCheckOutput
-                    std::string outKey = "c" + std::to_string(tempCounter++);
+                    std::string outKey = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"check_output\""}, outKey, "str");
-                    std::string outFn = "c" + std::to_string(tempCounter++);
+                    std::string outFn = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"Pyc_SubprocessCheckOutput\""}, outFn, "str");
                     ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", modDict, outKey, outFn}, "set_output");
                 }
@@ -752,11 +752,11 @@ class LoweringVisitor {
                         }
                         std::string initial = isParam ? nm : "0";
                         if (!isParam) {
-                            std::string z = "c" + std::to_string(tempCounter++);
+                            std::string z = "$c" + std::to_string(tempCounter++);
                             ir.addInstruction(defIRName, "const", {"0"}, z);
                             initial = z;
                         }
-                        std::string cellObj = "t" + std::to_string(tempCounter++);
+                        std::string cellObj = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(defIRName, "call", {"PyCell_New", initial}, cellObj);
                         ir.addInstruction(defIRName, "assign", {cellObj}, cellSlot);
                     }
@@ -940,12 +940,12 @@ class LoweringVisitor {
                 // factory Call), then Pyc_Apply it to the current value.
                 for (auto it = decorators.rbegin(); it != decorators.rend(); ++it) {
                     std::string dv = lowerExpr(*it);
-                    std::string z = "c" + std::to_string(tempCounter++);
+                    std::string z = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"0"}, z);
-                    std::string argList = "t" + std::to_string(tempCounter++);
+                    std::string argList = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
                     ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, node->id}, "");
-                    std::string decorated = "t" + std::to_string(tempCounter++);
+                    std::string decorated = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"Pyc_Apply", dv, argList}, decorated);
                     ir.addInstruction(currentFunc, "assign", {decorated}, node->id);
                 }
@@ -1025,9 +1025,9 @@ class LoweringVisitor {
                 if (compiledModules.count(orig) > 0) {
                     // Module was compiled — pyc_run_module runs it (once,
                     // cached via sys.modules) and returns its dict directly.
-                    std::string modConst = "c" + std::to_string(tempCounter++);
+                    std::string modConst = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, modConst, "str");
-                    std::string dictLoad = "t" + std::to_string(tempCounter++);
+                    std::string dictLoad = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, dictLoad);
 
                     // A bare dotted import with no asname (e.g. `import
@@ -1042,9 +1042,9 @@ class LoweringVisitor {
                     // in that case, so this check doesn't match.
                     bool isBareDottedImport = (orig != name) && orig.rfind(name + ".", 0) == 0;
                     if (isBareDottedImport) {
-                        std::string topConst = "c" + std::to_string(tempCounter++);
+                        std::string topConst = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + name + "\""}, topConst, "str");
-                        std::string topDict = "t" + std::to_string(tempCounter++);
+                        std::string topDict = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"pyc_run_module", topConst}, topDict);
                         ir.addInstruction(currentFunc, "assign", {topDict}, name);
                     } else {
@@ -1062,9 +1062,9 @@ class LoweringVisitor {
                     // generic dict-dispatch path below (see lowerCall's
                     // method-call handling) instead of silently mis-typing
                     // as "boxed" and never dispatching at all.
-                    std::string modName = "c" + std::to_string(tempCounter++);
+                    std::string modName = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + orig + "\""}, modName, "str");
-                    std::string failResult = "t" + std::to_string(tempCounter++);
+                    std::string failResult = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modName}, failResult);
 
                     ir.addInstruction(currentFunc, "assign", {failResult}, name);
@@ -1095,9 +1095,9 @@ class LoweringVisitor {
                 if (compiledModules.count(mod) > 0) {
                     // Module was compiled — pyc_run_module runs it (once,
                     // cached via sys.modules) and returns its dict directly.
-                    std::string modConst = "c" + std::to_string(tempCounter++);
+                    std::string modConst = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modConst, "str");
-                    std::string moduleDict = "t" + std::to_string(tempCounter++);
+                    std::string moduleDict = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"pyc_run_module", modConst}, moduleDict);
 
                     // Detect `from X import *`. The parser puts the literal "*"
@@ -1143,16 +1143,16 @@ class LoweringVisitor {
                             // own __init__.py dict, so load the submodule
                             // directly instead of doing Pyc_GetItem against
                             // the package dict.
-                            std::string subModConst = "c" + std::to_string(tempCounter++);
+                            std::string subModConst = "$c" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "const", {"\"" + submoduleDotted + "\""}, subModConst, "str");
-                            std::string subDict = "t" + std::to_string(tempCounter++);
+                            std::string subDict = "$t" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "call", {"pyc_run_module", subModConst}, subDict);
                             ir.addInstruction(currentFunc, "assign", {subDict}, targetName);
                             noteType(targetName, "dict");
                         } else {
-                            std::string attrKey = "c" + std::to_string(tempCounter++);
+                            std::string attrKey = "$c" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
-                            std::string attrVal = "t" + std::to_string(tempCounter++);
+                            std::string attrVal = "$t" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", moduleDict, attrKey}, attrVal);
                             ir.addInstruction(currentFunc, "assign", {attrVal}, targetName);
                         }
@@ -1164,9 +1164,9 @@ class LoweringVisitor {
                     // returns the right thing (a synthetic dict, or an
                     // ImportError-reporting empty result) for each imported
                     // name to be looked up against.
-                    std::string modName = "c" + std::to_string(tempCounter++);
+                    std::string modName = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + mod + "\""}, modName, "str");
-                    std::string moduleDict = "t" + std::to_string(tempCounter++);
+                    std::string moduleDict = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"pyc_import_failed", modName}, moduleDict);
 
                     // `from X import *` on a synthetic module: expand to its
@@ -1195,7 +1195,7 @@ class LoweringVisitor {
 
                         // Special case: time.perf_counter - directly use the callable token
                         if (mod == "time" && origName == "perf_counter") {
-                            std::string tokenVal = "t" + std::to_string(tempCounter++);
+                            std::string tokenVal = "$t" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "const", {"\"Pyc_Time_PerfCounter\""}, tokenVal, "str");
                             callableTokenTemps.insert(tokenVal);
                             ir.addInstruction(currentFunc, "assign", {tokenVal}, name);
@@ -1247,9 +1247,9 @@ class LoweringVisitor {
                             decimalCtorAliases.insert(name);
                         }
 
-                        std::string attrKey = "c" + std::to_string(tempCounter++);
+                        std::string attrKey = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
-                        std::string attrVal = "t" + std::to_string(tempCounter++);
+                        std::string attrVal = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", moduleDict, attrKey}, attrVal);
                         // Mark attrVal as a callable token temp and as owned (Pyc_GetItem returns new ref)
                         callableTokenTemps.insert(attrVal);
@@ -1272,11 +1272,11 @@ class LoweringVisitor {
             } else if (node->children[0]->type == "Name" &&
                        builtinExcNames().count(node->children[0]->id)) {
                 // `raise ValueError` — construct with no message
-                std::string nameConst = "c" + std::to_string(tempCounter++);
+                std::string nameConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + node->children[0]->id + "\""}, nameConst, "str");
-                std::string emptyMsg = "c" + std::to_string(tempCounter++);
+                std::string emptyMsg = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"\""}, emptyMsg, "str");
-                std::string exc = "t" + std::to_string(tempCounter++);
+                std::string exc = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"pyc_make_exc", nameConst, emptyMsg}, exc);
                 ir.addInstruction(currentFunc, "call", {"pyc_raise", exc}, "");
             } else {
@@ -1297,8 +1297,8 @@ class LoweringVisitor {
             std::string ctxExpr = lowerExpr(withItem->children[0].get());
             // Call __enter__ on the context manager
             // Get the __enter__ method using Pyc_GetItem (supports class dict fallback)
-            std::string enterMethod = "t" + std::to_string(tempCounter++);
-            std::string enterMethodToken = "c" + std::to_string(tempCounter++);
+            std::string enterMethod = "$t" + std::to_string(tempCounter++);
+            std::string enterMethodToken = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"__enter__\""}, enterMethodToken, "str");
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, enterMethodToken}, enterMethod);
             // Build args list: [self]. The count operand must be a
@@ -1310,15 +1310,15 @@ class LoweringVisitor {
             // __exit__ never actually received `self`, since
             // PyList_SetItemBoxed's boxed-list path only writes when the
             // index is already within the list's current size).
-            std::string enterCountConst = "c" + std::to_string(tempCounter++);
+            std::string enterCountConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"1"}, enterCountConst);
-            std::string enterArgs = "t" + std::to_string(tempCounter++);
+            std::string enterArgs = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", enterCountConst}, enterArgs);
-            std::string enterIdx = "t" + std::to_string(tempCounter++);
+            std::string enterIdx = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, enterIdx);
             ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", enterArgs, enterIdx, ctxExpr}, "");
             // Call __enter__(self) via Pyc_Apply
-            std::string enterResult = "t" + std::to_string(tempCounter++);
+            std::string enterResult = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_Apply", enterMethod, enterArgs}, enterResult);
             // Bind to target variable if present. This "assign" is emitted
             // directly (not via lowerAssign), so it doesn't get
@@ -1339,21 +1339,21 @@ class LoweringVisitor {
                 if (node->children[i]) lower(node->children[i].get());
             }
             // Call __exit__ with None, None, None (simplified)
-            std::string exitMethod = "t" + std::to_string(tempCounter++);
-            std::string exitMethodToken = "c" + std::to_string(tempCounter++);
+            std::string exitMethod = "$t" + std::to_string(tempCounter++);
+            std::string exitMethodToken = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"__exit__\""}, exitMethodToken, "str");
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", ctxExpr, exitMethodToken}, exitMethod);
-            std::string exitCountConst = "c" + std::to_string(tempCounter++);
+            std::string exitCountConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"4"}, exitCountConst);
-            std::string exitArgs = "t" + std::to_string(tempCounter++);
+            std::string exitArgs = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", exitCountConst}, exitArgs);
-            std::string exitIdx = "t" + std::to_string(tempCounter++);
+            std::string exitIdx = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, exitIdx);
             ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgs, exitIdx, ctxExpr}, "");
-            std::string noneVal = "t" + std::to_string(tempCounter++);
+            std::string noneVal = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "nconst", {}, noneVal);
             for (int i = 1; i < 4; ++i) {
-                std::string idx = "t" + std::to_string(tempCounter++);
+                std::string idx = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idx);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", exitArgs, idx, noneVal}, "");
             }
@@ -1395,7 +1395,7 @@ class LoweringVisitor {
 
                 std::string matchCond;
                 if (isWildcard || isMatchAs) {
-                    std::string trueConst = "t" + std::to_string(tempCounter++);
+                    std::string trueConst = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "bconst", {"True"}, trueConst, "bool");
                     matchCond = trueConst;
                     if (hasBinding) {
@@ -1405,19 +1405,19 @@ class LoweringVisitor {
                     if (pattern->children.empty()) continue;
                     std::string patternVal = lowerExpr(pattern->children[0].get());
                     if (patternVal.empty()) continue;
-                    std::string cmpResult = "t" + std::to_string(tempCounter++);
+                    std::string cmpResult = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "icmp", {"Eq", subject, patternVal}, cmpResult, "bool");
                     matchCond = cmpResult;
                 } else if (pattern->type == "MatchSingleton") {
-                    std::string cmpResult = "t" + std::to_string(tempCounter++);
+                    std::string cmpResult = "$t" + std::to_string(tempCounter++);
                     if (pattern->value == "None") {
-                        std::string noneConst = "t" + std::to_string(tempCounter++);
+                        std::string noneConst = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "nconst", {}, noneConst);
                         ir.addInstruction(currentFunc, "icmp", {"Eq", subject, noneConst}, cmpResult, "bool");
                         matchCond = cmpResult;
                     } else {
                         std::string boolVal = pattern->value == "True" ? "True" : "False";
-                        std::string boolConst = "t" + std::to_string(tempCounter++);
+                        std::string boolConst = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "bconst", {boolVal}, boolConst, "bool");
                         ir.addInstruction(currentFunc, "icmp", {"Eq", subject, boolConst}, cmpResult, "bool");
                         matchCond = cmpResult;
@@ -1479,7 +1479,7 @@ class LoweringVisitor {
         if (node->lineno > 0) currentLineno = node->lineno;
 
         if (node->type == "Constant") {
-            std::string res = "c" + std::to_string(tempCounter++);
+            std::string res = "$c" + std::to_string(tempCounter++);
             std::string val = node->value;
             if (node->is_bool) {
                 ir.addInstruction(currentFunc, "bconst", {val}, res, "bool");
@@ -1510,11 +1510,11 @@ class LoweringVisitor {
                     }
                 }
                 // Emit native doubles directly (PyComplex_New expects double args)
-                std::string realConst = "c" + std::to_string(tempCounter++);
+                std::string realConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "fconst", {std::to_string(real)}, realConst, "float");
-                std::string imagConst = "c" + std::to_string(tempCounter++);
+                std::string imagConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "fconst", {std::to_string(imag)}, imagConst, "float");
-                std::string complexRes = "t" + std::to_string(tempCounter++);
+                std::string complexRes = "$t" + std::to_string(tempCounter++);
                 // Use a special IR instruction that passes native doubles
                 ir.addInstruction(currentFunc, "call", {"PyComplex_New", realConst, imagConst}, complexRes);
                 complexVars.insert(complexRes);
@@ -1553,7 +1553,7 @@ class LoweringVisitor {
             // the cell slot instead of resolving as a bare local (which would be null).
             if (isCellBackedHere(node->id)) {
                 std::string cellSlot = node->id + "_cell";
-                std::string res = "t" + std::to_string(tempCounter++);
+                std::string res = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyCell_Get", cellSlot}, res);
                 noteType(res, "boxed");
                 return res;
@@ -1580,12 +1580,12 @@ class LoweringVisitor {
                         }
                     }
                     if (!caps.empty()) {
-                        std::string zero = "c" + std::to_string(tempCounter++);
+                        std::string zero = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"0"}, zero);
-                        std::string lst = "t" + std::to_string(tempCounter++);
+                        std::string lst = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, lst);
 
-                    std::string tok = "c" + std::to_string(tempCounter++);
+                    std::string tok = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + eff + "\""}, tok, "str");
                     // Do not capture the Append result. Append returns the receiver (borrowed).
                     // Capturing it creates a temp we would markOwned, leading to over-DECREF of
@@ -1622,9 +1622,9 @@ class LoweringVisitor {
             if (builtinExcNames().count(node->id) &&
                 !knownClasses.count(node->id) &&
                 !isShadowedLocal(node->id)) {
-                std::string excNameConst = "c" + std::to_string(tempCounter++);
+                std::string excNameConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + node->id + "\""}, excNameConst, "str");
-                std::string excClass = "t" + std::to_string(tempCounter++);
+                std::string excClass = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"pyc_make_exc_class", excNameConst}, excClass);
                 return excClass;
             }
@@ -1642,7 +1642,7 @@ class LoweringVisitor {
                 };
                 auto bfIt = builtinFactoryTokens.find(node->id);
                 if (bfIt != builtinFactoryTokens.end() && !isShadowedLocal(node->id)) {
-                    std::string tokenVal = "t" + std::to_string(tempCounter++);
+                    std::string tokenVal = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + std::string(bfIt->second) + "\""}, tokenVal, "str");
                     callableTokenTemps.insert(tokenVal);
                     return tokenVal;
@@ -1701,13 +1701,13 @@ class LoweringVisitor {
                 bool hasDefaultsForLam = funcDefaultValues.count(lamName) && !funcDefaultValues[lamName].empty();
                 if (!caps.empty() || hasDefaultsForLam) {
                     // Build a list: [ tokenString, cell0, cell1, ..., preboundDefault0, ... ]
-                    std::string zero = "c" + std::to_string(tempCounter++);
+                    std::string zero = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"0"}, zero);
-                    std::string lst = "t" + std::to_string(tempCounter++);
+                    std::string lst = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, lst);
 
                     // token (synthetic name string)
-                    std::string tok = "c" + std::to_string(tempCounter++);
+                    std::string tok = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + lamName + "\""}, tok, "str");
                     // Do not capture Append result. It returns the receiver (borrowed).
                     // Capturing would mark an alias owned and cause over-DECREF of the bundle list.
@@ -1796,7 +1796,7 @@ class LoweringVisitor {
         if (!node->args.empty() && node->args[0] == "1") {
             is_yield_from = true;
         }
-        std::string result = "t" + std::to_string(tempCounter++);
+        std::string result = "$t" + std::to_string(tempCounter++);
         if (is_yield_from && !node->children.empty()) {
             // yield from subgen(): directly call subgen (no generator wrapper)
             // and iterate its result list, yielding each element.
@@ -1811,7 +1811,7 @@ class LoweringVisitor {
                 funcName = node->children[0]->children[0]->id;
             }
             // Emit direct call to subgen (no wrapper)
-            std::string callRes = "t" + std::to_string(tempCounter++);
+            std::string callRes = "$t" + std::to_string(tempCounter++);
             std::vector<std::string> callOps;
             callOps.push_back(funcName);
             ir.addInstruction(currentFunc, "call", callOps, callRes);
@@ -1821,7 +1821,7 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "assign", {subgenVal}, subgenSlot);
             subgenVal = subgenSlot;
             // Use boxed index for comparison and iteration
-            std::string idxVar = "t" + std::to_string(tempCounter++);
+            std::string idxVar = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, idxVar);
             std::string loopLabel = "yfrom_loop_" + std::to_string(tempCounter);
             std::string bodyLabel = "yfrom_body_" + std::to_string(tempCounter);
@@ -1829,21 +1829,21 @@ class LoweringVisitor {
             tempCounter++;
             ir.addInstruction(currentFunc, "label", {}, loopLabel);
             // len = PyList_SizeBoxed(subgenVal) returns boxed int
-            std::string lenRes = "t" + std::to_string(tempCounter++);
+            std::string lenRes = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", subgenVal}, lenRes);
             std::string lenSlot = "__sl_yfrom_" + std::to_string(tempCounter);
             ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
-            std::string cmpRes = "t" + std::to_string(tempCounter++);
+            std::string cmpRes = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenSlot}, cmpRes);
             ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
             ir.addInstruction(currentFunc, "label", {}, bodyLabel);
-            std::string elemRes = "t" + std::to_string(tempCounter++);
+            std::string elemRes = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", subgenVal, idxVar}, elemRes);
-            std::string yld = "t" + std::to_string(tempCounter++);
+            std::string yld = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"pyc_yield_collect", elemRes}, yld);
-            std::string oneRes = "t" + std::to_string(tempCounter++);
+            std::string oneRes = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"1"}, oneRes);
-            std::string nextIdx = "t" + std::to_string(tempCounter++);
+            std::string nextIdx = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "add", {idxVar, oneRes}, nextIdx);
             ir.addInstruction(currentFunc, "assign", {nextIdx}, idxVar);
             ir.addInstruction(currentFunc, "br", {}, loopLabel);
@@ -3666,7 +3666,7 @@ class LoweringVisitor {
             if (leftNode && leftNode->type == "Constant" && leftNode->is_str) {
                 std::string left = lowerExpr(leftNode);
                 std::string right = lowerExpr(node->children[1].get());
-                std::string res = "t" + std::to_string(tempCounter++);
+                std::string res = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyString_Format", left, right}, res);
                 noteType(res, "str");
                 return res;
@@ -3682,7 +3682,7 @@ class LoweringVisitor {
                 if (expv >= 0 && expv <= 8) {
                     std::string left = lowerExpr(node->children[0].get());
                     if (expv == 0) {
-                        std::string one = "c" + std::to_string(tempCounter++);
+                        std::string one = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"1"}, one, "int");
                         noteType(one, "int");
                         return one;
@@ -3691,7 +3691,7 @@ class LoweringVisitor {
                     // Check if left is complex (boxed type from complex literal or complex op)
                     bool isComplex = (typeOf(left) == "boxed");
                     for (long k = 1; k < expv; ++k) {
-                        std::string t = "t" + std::to_string(tempCounter++);
+                        std::string t = "$t" + std::to_string(tempCounter++);
                         if (isComplex) {
                             ir.addInstruction(currentFunc, "call", {"PyComplex_Mul", cur, left}, t);
                             noteType(t, "boxed");
@@ -3716,7 +3716,7 @@ class LoweringVisitor {
             else if (op == "mul") funcName = "PyComplex_Mul";
             else if (op == "truediv") funcName = "PyComplex_Div";
             if (!funcName.empty() && complexVars.count(left) > 0 && complexVars.count(right) > 0) {
-                std::string res = "t" + std::to_string(tempCounter++);
+                std::string res = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {funcName, left, right}, res);
                 complexVars.insert(res);
                 noteType(res, "boxed");
@@ -3726,14 +3726,14 @@ class LoweringVisitor {
         // B16: Complex pow — if op is pow and operands are complex, emit PyComplex_Pow
         if (op == "pow") {
             if (complexVars.count(left) > 0 && complexVars.count(right) > 0) {
-                std::string res = "t" + std::to_string(tempCounter++);
+                std::string res = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyComplex_Pow", left, right}, res);
                 complexVars.insert(res);
                 noteType(res, "boxed");
                 return res;
             }
         }
-        std::string res = "t" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
         std::string resultType = numericResultType(op, left, right);
         ir.addInstruction(currentFunc, op, {left, right}, res, resultType);
         noteType(res, resultType);
@@ -3786,26 +3786,26 @@ class LoweringVisitor {
         }
         std::vector<std::string> fwd;
         for (size_t k = 0; k < fixed; ++k) {
-            std::string ck = "c" + std::to_string(tempCounter++);
+            std::string ck = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(k)}, ck);
-            std::string el = "t" + std::to_string(tempCounter++);
+            std::string el = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, ck}, el);
             fwd.push_back(el);
         }
         std::string rest;
         if (hasVar) {
             // Collect [fixed .. n) into a fresh list for the * slot.
-            std::string ln = "t" + std::to_string(tempCounter++);
+            std::string ln = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", listVal}, ln);
             std::string lnSlot = "__sl_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {ln}, lnSlot);
-            std::string startC = "c" + std::to_string(tempCounter++);
+            std::string startC = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(fixed)}, startC);
-            std::string zero = "c" + std::to_string(tempCounter++);
+            std::string zero = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, zero);
-            rest = "t" + std::to_string(tempCounter++);
+            rest = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, rest);
-            std::string jv = "s" + std::to_string(tempCounter++);
+            std::string jv = "$s" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {startC}, jv);
             int sc = tempCounter++;
             std::string slp = "vf_lp_" + std::to_string(sc);
@@ -3813,24 +3813,24 @@ class LoweringVisitor {
             std::string sex = "vf_ex_" + std::to_string(sc);
             ir.addInstruction(currentFunc, "br", {}, slp);
             ir.addInstruction(currentFunc, "label", {}, slp);
-            std::string cm = "t" + std::to_string(tempCounter++);
+            std::string cm = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "icmp", {"Lt", jv, lnSlot}, cm);
             ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
             ir.addInstruction(currentFunc, "label", {}, sbd);
-            std::string el = "t" + std::to_string(tempCounter++);
+            std::string el = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, jv}, el);
-            std::string d = "t" + std::to_string(tempCounter++);
+            std::string d = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_Append", rest, el}, d);
-            std::string one = "c" + std::to_string(tempCounter++);
+            std::string one = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"1"}, one);
-            std::string nj = "t" + std::to_string(tempCounter++);
+            std::string nj = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "add", {jv, one}, nj);
             ir.addInstruction(currentFunc, "assign", {nj}, jv);
             ir.addInstruction(currentFunc, "br", {}, slp);
             ir.addInstruction(currentFunc, "label", {}, sex);
         }
         if (hasVar) fwd.push_back(rest);
-        std::string callRes = resultTemp.empty() ? ("t" + std::to_string(tempCounter++)) : resultTemp;
+        std::string callRes = resultTemp.empty() ? ("$t" + std::to_string(tempCounter++)) : resultTemp;
         std::vector<std::string> cops = {targetFunc};
         cops.insert(cops.end(), fwd.begin(), fwd.end());
         ir.addInstruction(currentFunc, "call", cops, callRes);
@@ -3851,7 +3851,7 @@ class LoweringVisitor {
         tempCounter = 0;
 
         std::string vaParam = "va";
-        std::string callRes = "t" + std::to_string(tempCounter++);
+        std::string callRes = "$t" + std::to_string(tempCounter++);
         emitForwardCallFromList(target, vaParam, callRes);
         ir.addInstruction(wrapper, "ret", {callRes});
 
@@ -3880,7 +3880,7 @@ class LoweringVisitor {
             if (!kw.empty()) return kw;
             return posIdx < posArgs.size() ? posArgs[posIdx] : "";
         };
-        std::string res = "t" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
         if (which == "date") {
             ir.addInstruction(currentFunc, "call",
                 {"PyDateTime_Date", posOrKw(0, "year"), posOrKw(1, "month"), posOrKw(2, "day")}, res);
@@ -3915,7 +3915,7 @@ class LoweringVisitor {
             }
         }
         if (arg.empty() && !posArgs.empty()) arg = posArgs[0];
-        std::string res = "t" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyPathlib_Path", arg}, res);
         noteType(res, "path");
         return res;
@@ -3939,7 +3939,7 @@ class LoweringVisitor {
         }
         if (arg.empty() && !posArgs.empty()) arg = posArgs[0];
         std::string fn = which == "md5" ? "PyHashlib_Md5" : which == "sha1" ? "PyHashlib_Sha1" : "PyHashlib_Sha256";
-        std::string res = "t" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {fn, arg}, res);
         noteType(res, "hashobj");
         return res;
@@ -3953,7 +3953,7 @@ class LoweringVisitor {
     // .popleft()/.rotate() dispatch below.
     std::string lowerDequeConstruct(const std::vector<std::string>& posArgs) {
         std::string arg = posArgs.empty() ? "" : posArgs[0];
-        std::string res = "t" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyCollections_Deque", arg}, res, "list");
         noteType(res, "deque");
         return res;
@@ -3968,7 +3968,7 @@ class LoweringVisitor {
     // can carry the "decimal" noteType tag, gating .quantize()'s dispatch.
     std::string lowerDecimalConstruct(const std::vector<std::string>& posArgs) {
         std::string arg = posArgs.empty() ? "" : posArgs[0];
-        std::string res = "t" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyDecimal_Construct", arg}, res);
         noteType(res, "decimal");
         return res;
@@ -4036,7 +4036,7 @@ class LoweringVisitor {
             }
             const std::string& which = copyFuncAliases[node->children[0]->id];
             std::string fn = which == "copy" ? "PyCopy_Copy" : "PyCopy_Deepcopy";
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {fn, arg}, res);
             return res;
         }
@@ -4052,7 +4052,7 @@ class LoweringVisitor {
                 const auto* ch = node->children[i].get();
                 if (ch && ch->type != "Keyword") { arg = lowerExpr(ch); break; }
             }
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyCsv_Writer", arg}, res);
             noteType(res, "csvwriter");
             return res;
@@ -4079,7 +4079,7 @@ class LoweringVisitor {
                 }
             }
             if (keyArg.empty() && posArgs.size() > 1) keyArg = posArgs[1];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyItertools_Groupby", iterableArg, keyArg}, res, "list");
             noteType(res, "list");
             return res;
@@ -4115,7 +4115,7 @@ class LoweringVisitor {
         // super() call — returns a proxy that looks up methods on the parent class
         if (!node->children.empty() && node->children[0] &&
             node->children[0]->type == "Name" && node->children[0]->id == "super") {
-            std::string superProxy = "t" + std::to_string(tempCounter++);
+            std::string superProxy = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Super"}, superProxy);
             superProxyTemps.insert(superProxy);
             return superProxy;
@@ -4128,7 +4128,7 @@ class LoweringVisitor {
             builtinExcNames().count(node->children[0]->id) &&
             !knownClasses.count(node->children[0]->id) &&
             !isShadowedLocal(node->children[0]->id)) {
-            std::string nameConst = "c" + std::to_string(tempCounter++);
+            std::string nameConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + node->children[0]->id + "\""}, nameConst, "str");
             std::string msg;
             for (size_t i = 1; i < node->children.size(); ++i) {
@@ -4138,10 +4138,10 @@ class LoweringVisitor {
                 }
             }
             if (msg.empty()) {
-                msg = "c" + std::to_string(tempCounter++);
+                msg = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"\""}, msg, "str");
             }
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"pyc_make_exc", nameConst, msg}, res);
             return res;
         }
@@ -4151,10 +4151,10 @@ class LoweringVisitor {
             funcName = node->children[0]->id;
             auto classIt = knownClasses.find(funcName);
             if (classIt != knownClasses.end()) {
-                std::string instanceDict = "t" + std::to_string(tempCounter++);
+                std::string instanceDict = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyDict_New"}, instanceDict);
                 // Store class reference on instance for method lookup
-                std::string classKeyConst = "c" + std::to_string(tempCounter++);
+                std::string classKeyConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"__class__\""}, classKeyConst, "str");
                 ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", instanceDict, classKeyConst, funcName}, "class_set");
                 // Build __init__ function with correct parameters
@@ -4230,17 +4230,17 @@ class LoweringVisitor {
                                     excUserArgs.push_back(lowerExpr(node->children[i].get()));
                                 }
                             }
-                            std::string argsList = "t" + std::to_string(tempCounter++);
-                            std::string z = "c" + std::to_string(tempCounter++);
+                            std::string argsList = "$t" + std::to_string(tempCounter++);
+                            std::string z = "$c" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "const", {"0"}, z);
                             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argsList);
                             for (const auto& a : excUserArgs) {
-                                std::string dummyAppend = "t" + std::to_string(tempCounter++);
+                                std::string dummyAppend = "$t" + std::to_string(tempCounter++);
                                 ir.addInstruction(currentFunc, "call", {"PyList_Append", argsList, a}, dummyAppend);
                             }
-                            std::string argsKeyConst = "c" + std::to_string(tempCounter++);
+                            std::string argsKeyConst = "$c" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "const", {"\"args\""}, argsKeyConst, "str");
-                            std::string dummySet = "t" + std::to_string(tempCounter++);
+                            std::string dummySet = "$t" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", instanceDict, argsKeyConst, argsList}, dummySet);
                             return instanceDict;
                         }
@@ -4281,7 +4281,7 @@ class LoweringVisitor {
                     size_t di = defaults.size() - trailing + i;
                     if (di < defaults.size()) callArgs.push_back(defaults[di]);
                 }
-                std::string initCallRes = "t" + std::to_string(tempCounter++);
+                std::string initCallRes = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", callArgs, initCallRes);
                 return instanceDict;
             }
@@ -4380,7 +4380,7 @@ class LoweringVisitor {
                         // callable, e.g. a decorator wrapper's captured fn):
                         // the bare name has no direct slot here — fetch the
                         // cell content and apply that.
-                        std::string cellVal = "t" + std::to_string(tempCounter++);
+                        std::string cellVal = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyCell_Get", theName + "_cell"}, cellVal);
                         tokenTempForApply = cellVal;
                     } else {
@@ -4415,9 +4415,9 @@ class LoweringVisitor {
         std::string indirectArgListTemp; // if non-empty, this list is passed to Pyc_Apply
         bool buildingIndirectArgs = false;
         if (isIndirectCallee) {
-            std::string z = "c" + std::to_string(tempCounter++);
+            std::string z = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, z);
-            indirectArgListTemp = "t" + std::to_string(tempCounter++);
+            indirectArgListTemp = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, indirectArgListTemp);
             buildingIndirectArgs = true;
         }
@@ -4475,16 +4475,16 @@ class LoweringVisitor {
                         // then splice the starred list's contents into the same indirect list.
                         for (auto& p : argRes) {
                             if (!p.empty()) {
-                                std::string d = "t" + std::to_string(tempCounter++);
+                                std::string d = "$t" + std::to_string(tempCounter++);
                                 ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, p}, d);
                             }
                         }
-                        std::string ln = "t" + std::to_string(tempCounter++);
+                        std::string ln = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", lst}, ln);
                         std::string lnSlotI = "__sl_" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "assign", {ln}, lnSlotI);
-                        std::string jv = "s" + std::to_string(tempCounter++);
-                        std::string j0 = "c" + std::to_string(tempCounter++);
+                        std::string jv = "$s" + std::to_string(tempCounter++);
+                        std::string j0 = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"0"}, j0);
                         ir.addInstruction(currentFunc, "assign", {j0}, jv);
                         int sc = tempCounter++;
@@ -4493,17 +4493,17 @@ class LoweringVisitor {
                         std::string sex = "istar_ex_" + std::to_string(sc);
                         ir.addInstruction(currentFunc, "br", {}, slp);
                         ir.addInstruction(currentFunc, "label", {}, slp);
-                        std::string cm = "t" + std::to_string(tempCounter++);
+                        std::string cm = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "icmp", {"Lt", jv, lnSlotI}, cm);
                         ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
                         ir.addInstruction(currentFunc, "label", {}, sbd);
-                        std::string el = "t" + std::to_string(tempCounter++);
+                        std::string el = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", lst, jv}, el);
-                        std::string dmy = "t" + std::to_string(tempCounter++);
+                        std::string dmy = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, el}, dmy);
-                        std::string one = "c" + std::to_string(tempCounter++);
+                        std::string one = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"1"}, one);
-                        std::string nj = "t" + std::to_string(tempCounter++);
+                        std::string nj = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "add", {jv, one}, nj);
                         ir.addInstruction(currentFunc, "assign", {nj}, jv);
                         ir.addInstruction(currentFunc, "br", {}, slp);
@@ -4511,12 +4511,12 @@ class LoweringVisitor {
                         // Nothing is pushed to argRes; the indirect Pyc_Apply path will use indirectArgListTemp.
                     } else {
                         // Direct target: original dynamic * path using a __va_<target> wrapper.
-                        std::string ln = "t" + std::to_string(tempCounter++);
+                        std::string ln = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", lst}, ln);
                         std::string lnSlotD = "__sl_" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "assign", {ln}, lnSlotD);
-                        std::string jv = "s" + std::to_string(tempCounter++);
-                        std::string j0 = "c" + std::to_string(tempCounter++);
+                        std::string jv = "$s" + std::to_string(tempCounter++);
+                        std::string j0 = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"0"}, j0);
                         ir.addInstruction(currentFunc, "assign", {j0}, jv);
                         int sc = tempCounter++;
@@ -4524,29 +4524,29 @@ class LoweringVisitor {
                         std::string sbd = "star_bd_" + std::to_string(sc);
                         std::string sex = "star_ex_" + std::to_string(sc);
                         // Seed va list with fixed prefix so far (positionals before the *)
-                        std::string va = "t" + std::to_string(tempCounter++);
-                        std::string pn = "c" + std::to_string(tempCounter++);
+                        std::string va = "$t" + std::to_string(tempCounter++);
+                        std::string pn = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {std::to_string(argRes.size())}, pn);
                         ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", pn}, va);
                         for (auto& p : argRes) {
                             if (!p.empty()) {
-                                std::string d = "t" + std::to_string(tempCounter++);
+                                std::string d = "$t" + std::to_string(tempCounter++);
                                 ir.addInstruction(currentFunc, "call", {"PyList_Append", va, p}, d);
                             }
                         }
                         ir.addInstruction(currentFunc, "br", {}, slp);
                         ir.addInstruction(currentFunc, "label", {}, slp);
-                        std::string cm = "t" + std::to_string(tempCounter++);
+                        std::string cm = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "icmp", {"Lt", jv, lnSlotD}, cm);
                         ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
                         ir.addInstruction(currentFunc, "label", {}, sbd);
-                        std::string el = "t" + std::to_string(tempCounter++);
+                        std::string el = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", lst, jv}, el);
-                        std::string dmy = "t" + std::to_string(tempCounter++);
+                        std::string dmy = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_Append", va, el}, dmy);
-                        std::string one = "c" + std::to_string(tempCounter++);
+                        std::string one = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"1"}, one);
-                        std::string nj = "t" + std::to_string(tempCounter++);
+                        std::string nj = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "add", {jv, one}, nj);
                         ir.addInstruction(currentFunc, "assign", {nj}, jv);
                         ir.addInstruction(currentFunc, "br", {}, slp);
@@ -4561,22 +4561,39 @@ class LoweringVisitor {
             } else {
                 if (buildingIndirectArgs) {
                     std::string v = lowerExpr(node->children[i].get());
-                    std::string d = "t" + std::to_string(tempCounter++);
+                    std::string d = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, v}, d);
                 } else {
                     argRes.push_back(lowerExpr(node->children[i].get()));
                 }
             }
         }
-        // Callee-side *args collection (skip for runtime * call sites; the __va wrapper
-        // already forwards the correct fixed+tail shape for the target).
+        // Callee-side *args/**kwargs collection (skip for runtime * call
+        // sites; the __va wrapper already forwards the correct
+        // fixed+tail shape for the target).
+        // vidx = index of a *args param; kwidx = index of a **kwargs
+        // param. Found and fixed while bug hunting: this loop used to
+        // stop at the first star-prefixed name (matching **kwargs too,
+        // since it also starts with '*'), so a **kwargs catch-all
+        // parameter never got a value collected for it at all — the
+        // callee's IR function has a real parameter slot for it
+        // regardless, so the call ended up one argument short whenever
+        // the caller passed zero keyword arguments (crashing exactly
+        // like the *args-only case did before that was separately
+        // fixed). kwidx is captured here (outer scope) so the keyword-
+        // argument handling below can populate the slot.
+        size_t kwidx = (size_t)-1;
         if (!hadRuntimeStar) {
             auto pit = funcParamNames.find(funcName);
             if (pit != funcParamNames.end()) {
                 const auto& params = pit->second;
                 size_t vidx = (size_t)-1;
                 for (size_t j = 0; j < params.size(); ++j) {
-                    if (!params[j].empty() && params[j][0] == '*') { vidx = j; break; }
+                    if (params[j].size() >= 2 && params[j][0] == '*' && params[j][1] == '*') {
+                        kwidx = j;
+                    } else if (!params[j].empty() && params[j][0] == '*') {
+                        if (vidx == (size_t)-1) vidx = j;
+                    }
                 }
                 if (vidx != (size_t)-1) {
                     size_t fixed = vidx;
@@ -4589,16 +4606,29 @@ class LoweringVisitor {
                     std::string collected;
                     // Always start empty and append; pre-sizing + append would leave
                     // initial null slots (visible as None) and double the length.
-                    std::string z = "c" + std::to_string(tempCounter++);
+                    std::string z = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"0"}, z);
-                    collected = "t" + std::to_string(tempCounter++);
+                    collected = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, collected);
                     for (auto& t : tail) {
-                        std::string d = "t" + std::to_string(tempCounter++);
+                        std::string d = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_Append", collected, t}, d);
                     }
                     if (argRes.size() < fixed) argRes.resize(fixed, "");
                     argRes.push_back(collected);
+                }
+                // **kwargs catch-all: unconditionally give this slot a
+                // real (empty, for now) dict here — the keyword-argument
+                // handling below replaces it with a populated dict only
+                // when the call actually has unmatched keyword
+                // arguments, but every call to this callee needs
+                // *something* real in this position regardless, since
+                // the declared IR function always has this parameter.
+                if (kwidx != (size_t)-1) {
+                    std::string emptyDict = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyDict_New"}, emptyDict);
+                    if (argRes.size() <= kwidx) argRes.resize(kwidx + 1, "");
+                    argRes[kwidx] = emptyDict;
                 }
             }
         }
@@ -4613,15 +4643,40 @@ class LoweringVisitor {
             auto pit = funcParamNames.find(funcName);
             if (pit != funcParamNames.end()) {
                 const auto& params = pit->second;
-                // First, apply regular keyword arguments
+                // First, apply regular keyword arguments. Any keyword
+                // that doesn't name a regular parameter is collected for
+                // the **kwargs catch-all below (found and fixed while
+                // bug hunting: this used to be silently dropped
+                // entirely — a **kwargs parameter always bound an empty,
+                // wrongly-typed list rather than a dict populated with
+                // exactly these unmatched keyword arguments, matching
+                // CPython's own semantics).
+                std::vector<std::pair<std::string, std::string>> unmatchedKwArgs;
                 for (auto& kw : kwArgs) {
+                    bool matched = false;
                     for (size_t j = 0; j < params.size(); ++j) {
                         if (params[j] == kw.first) {
                             if (argRes.size() <= j) argRes.resize(j + 1);
                             argRes[j] = kw.second;
+                            matched = true;
                             break;
                         }
                     }
+                    if (!matched && kwidx != (size_t)-1) unmatchedKwArgs.push_back(kw);
+                }
+                if (kwidx != (size_t)-1 && !unmatchedKwArgs.empty()) {
+                    std::string kwDict = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyDict_New"}, kwDict);
+                    for (auto& kw : unmatchedKwArgs) {
+                        std::string keyConst = "$c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"\"" + kw.first + "\""}, keyConst, "str");
+                        std::string dummySet = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", kwDict, keyConst, kw.second}, dummySet);
+                    }
+                    // A slot for kwidx already exists (unconditionally
+                    // created as an empty dict above); overwrite it with
+                    // the populated one.
+                    argRes[kwidx] = kwDict;
                 }
                 // Then, expand **kwargs dicts using a runtime helper
                 for (auto& dictVal : kwargDicts) {
@@ -4633,26 +4688,37 @@ class LoweringVisitor {
                     // this call site never actually appended, causing a
                     // runtime segfault on every f(**kwargs) call. See
                     // Pyc_ExpandKwargsList's comment in Runtime.cpp.
-                    std::string namesList = "t" + std::to_string(tempCounter++);
+                    std::string namesList = "$t" + std::to_string(tempCounter++);
                     {
-                        std::string z = "c" + std::to_string(tempCounter++);
+                        std::string z = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"0"}, z);
                         ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, namesList);
                     }
                     for (const auto& p : params) {
-                        std::string paramConst = "c" + std::to_string(tempCounter++);
+                        std::string paramConst = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + p + "\""}, paramConst, "str");
-                        std::string dummyAppend = "t" + std::to_string(tempCounter++);
+                        std::string dummyAppend = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_Append", namesList, paramConst}, dummyAppend);
                     }
-                    std::string expandResult = "t" + std::to_string(tempCounter++);
+                    std::string expandResult = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"Pyc_ExpandKwargsList", dictVal, namesList}, expandResult);
                     // Now unpack the result list into argRes
-                    // The result list has len(params) elements, in order
+                    // The result list has len(params) elements, in order.
+                    // Skip kwidx: a **kwargs catch-all isn't a regular
+                    // named parameter Pyc_ExpandKwargsList could ever
+                    // find a matching key for (it would look up the
+                    // literal string "**kwargs" in the spread dict and
+                    // always miss), and overwriting it here would clobber
+                    // the correctly-populated dict built above from any
+                    // direct key=value keyword arguments in this same
+                    // call. Routing a **dict spread's own unmatched
+                    // entries into a **kwargs catch-all too is a further,
+                    // separate gap — not attempted here.
                     for (size_t j = 0; j < params.size(); ++j) {
-                        std::string idx = "c" + std::to_string(tempCounter++);
+                        if (j == kwidx) continue;
+                        std::string idx = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {std::to_string(j)}, idx);
-                        std::string elem = "t" + std::to_string(tempCounter++);
+                        std::string elem = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", expandResult, idx}, elem);
                         if (argRes.size() <= j) argRes.resize(j + 1);
                         argRes[j] = elem;
@@ -4747,7 +4813,7 @@ class LoweringVisitor {
 
         // print() with no positional args and no kwargs → bare newline.
         if (funcName == "print" && argRes.empty() && kwArgs.empty()) {
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_PrintNewline"}, res);
             return res;
         }
@@ -4761,14 +4827,14 @@ class LoweringVisitor {
             const size_t n = posArgCount;
             // Build the args list. We use the boxed list runtime so the args
             // are reference-counted like any other list.
-            std::string sizeConst = "c" + std::to_string(tempCounter++);
+            std::string sizeConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
-            std::string argList = "t" + std::to_string(tempCounter++);
+            std::string argList = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, argList);
             for (size_t i = 0; i < n; ++i) {
-                std::string idx = "c" + std::to_string(tempCounter++);
+                std::string idx = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idx);
-                std::string dummy = "t" + std::to_string(tempCounter++);
+                std::string dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idx, argRes[i]}, dummy);
             }
             // Resolve sep/end from kwArgs. Default to null (runtime uses " " and "\n").
@@ -4785,17 +4851,17 @@ class LoweringVisitor {
             if (sepGiven) {
                 sepArg = sepVal;
             } else {
-                sepArg = "c" + std::to_string(tempCounter++);
+                sepArg = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "nconst", {}, sepArg, "none");
             }
             std::string endArg;
             if (endGiven) {
                 endArg = endVal;
             } else {
-                endArg = "c" + std::to_string(tempCounter++);
+                endArg = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "nconst", {}, endArg, "none");
             }
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"pyc_print", argList, sepArg, endArg}, res);
             return res;
         }
@@ -4803,7 +4869,7 @@ class LoweringVisitor {
         // len(obj) → PyBuiltin_Len(obj)
         if (funcName == "len") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Len", arg}, res);
             noteType(res, "i64");
             return res;
@@ -4818,7 +4884,7 @@ class LoweringVisitor {
         if (funcName == "open") {
             std::string path = argRes.size() > 0 ? argRes[0] : "";
             std::string mode = argRes.size() > 1 ? argRes[1] : "";
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Open", path, mode}, res);
             // "file", not "dict" — see the typeOf(obj)=="file" branch in
             // lowerMethodCall for why plain "dict" typing broke .write().
@@ -4845,14 +4911,14 @@ class LoweringVisitor {
             std::vector<std::string> posArgs(argRes.begin(),
                 argRes.begin() + std::min(posArgCount, argRes.size()));
             if (posArgs.size() == 1) {
-                std::string res = "t" + std::to_string(tempCounter++);
+                std::string res = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {fnLst, posArgs[0], keyName}, res);
                 noteType(res, "boxed");
                 return res;
             }
             std::string acc = posArgs[0];
             for (size_t i = 1; i < posArgs.size(); ++i) {
-                std::string res2 = "t" + std::to_string(tempCounter++);
+                std::string res2 = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {fn2, acc, posArgs[i], keyName}, res2);
                 noteType(res2, "boxed");
                 acc = res2;
@@ -4863,9 +4929,9 @@ class LoweringVisitor {
         // list(x) → PyBuiltin_List(x)
         if (funcName == "list") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             if (argRes.empty()) {
-                std::string sc = "c" + std::to_string(tempCounter++);
+                std::string sc = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"0"}, sc);
                 ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, res);
             } else {
@@ -4912,9 +4978,9 @@ class LoweringVisitor {
         // already does.
         if (funcName == "tuple") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             if (argRes.empty()) {
-                std::string sc = "c" + std::to_string(tempCounter++);
+                std::string sc = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"0"}, sc);
                 ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, res);
             } else {
@@ -4933,7 +4999,7 @@ class LoweringVisitor {
             std::string arg0 = argRes.size() > 0 ? argRes[0] : "";
             std::string arg1 = argRes.size() > 1 ? argRes[1] : "";
             std::string fn = (funcName == "bytes") ? "PyBuiltin_Bytes" : "PyBuiltin_Bytearray";
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {fn, arg0, arg1}, res);
             noteType(res, funcName == "bytes" ? "bytes" : "bytearray");
             return res;
@@ -4941,7 +5007,7 @@ class LoweringVisitor {
         // reversed(seq) → PyBuiltin_Reversed(seq)
         if (funcName == "reversed") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Reversed", arg}, res);
             noteType(res, "list");
             // S3: Propagate element type
@@ -4953,7 +5019,7 @@ class LoweringVisitor {
         // enumerate(iterable) → PyBuiltin_Enumerate(iterable)
         if (funcName == "enumerate") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Enumerate", arg}, res);
             noteType(res, "list");
             // S3: enumerate returns tuples, always boxed
@@ -4962,7 +5028,7 @@ class LoweringVisitor {
         }
         // zip(a, b) → PyBuiltin_Zip2(a, b)
         if (funcName == "zip" && argRes.size() >= 2) {
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Zip2", argRes[0], argRes[1]}, res);
             noteType(res, "list");
             // S3: zip returns tuples, always boxed
@@ -4972,7 +5038,7 @@ class LoweringVisitor {
         // sum(iterable) → PyBuiltin_Sum
         if (funcName == "sum") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sum", arg}, res);
             noteType(res, "boxed");
             return res;
@@ -4980,7 +5046,7 @@ class LoweringVisitor {
         // cmp_to_key(cmp) → PyBuiltin_CmpToKey(cmp)
         // Returns a dict token that sorted recognizes for the fast-path.
         if (funcName == "cmp_to_key" && argRes.size() >= 1) {
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_CmpToKey", argRes[0]}, res);
             noteType(res, "dict");
             return res;
@@ -4995,7 +5061,7 @@ class LoweringVisitor {
         if (funcName == "sorted") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string argType = typeOf(arg);
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             // Find the key argument (positional or keyword).
             std::string keyName;
             // reverse= — found completely missing (silently ignored,
@@ -5057,7 +5123,7 @@ class LoweringVisitor {
         // any(iterable) → PyBuiltin_Any (bool result)
         if (funcName == "any") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Any", arg}, res, "bool");
             noteType(res, "bool");
             return res;
@@ -5065,7 +5131,7 @@ class LoweringVisitor {
         // all(iterable) → PyBuiltin_All (bool result)
         if (funcName == "all") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_All", arg}, res, "bool");
             noteType(res, "bool");
             return res;
@@ -5104,9 +5170,9 @@ class LoweringVisitor {
                     }
                 }
             }
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             if (typecode >= 0) {
-                std::string tc = "c" + std::to_string(tempCounter++);
+                std::string tc = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {std::to_string(typecode)}, tc, "int");
                 ir.addInstruction(currentFunc, "call", {"Pyc_IsInstance", argRes[0], tc}, res, "bool");
             } else {
@@ -5118,7 +5184,7 @@ class LoweringVisitor {
 
         // int(x) or int(x, base) → PyBuiltin_Int / PyBuiltin_IntBase
         if (funcName == "int") {
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             if (argRes.size() >= 2) {
                 ir.addInstruction(currentFunc, "call", {"PyBuiltin_IntBase", argRes[0], argRes[1]}, res, "int");
             } else {
@@ -5131,14 +5197,14 @@ class LoweringVisitor {
         // float(x) → PyBuiltin_Float(x)
         if (funcName == "float") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Float", arg}, res, "float");
             noteType(res, "float");
             return res;
         }
         // complex(x) or complex(x, y) → PyBuiltin_Complex(x, y)
         if (funcName == "complex") {
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             std::string arg1 = argRes.empty() ? "" : argRes[0];
             std::string arg2 = argRes.size() >= 2 ? argRes[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Complex", arg1, arg2}, res, "boxed");
@@ -5149,7 +5215,7 @@ class LoweringVisitor {
         // abs(x) → PyBuiltin_Abs(x) or PyComplex_Abs(x) for complex
         if (funcName == "abs") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             // Check if arg is complex (type 13, boxed)
             // Complex values are always boxed, so we check if the arg was produced by complex literal lowering
             // For now, use a heuristic: if resultType would be "boxed" and we can't determine it's int/float,
@@ -5175,7 +5241,7 @@ class LoweringVisitor {
         // ord(c) → PyBuiltin_Ord(c)
         if (funcName == "ord") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Ord", arg}, res, "int");
             noteType(res, "int");
             return res;
@@ -5183,7 +5249,7 @@ class LoweringVisitor {
         // chr(i) → PyBuiltin_Chr(i)
         if (funcName == "chr") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Chr", arg}, res, "str");
             noteType(res, "str");
             return res;
@@ -5191,7 +5257,7 @@ class LoweringVisitor {
         // bool(x) → PyBuiltin_Bool(x)
         if (funcName == "bool") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Bool", arg}, res, "bool");
             noteType(res, "bool");
             return res;
@@ -5199,7 +5265,7 @@ class LoweringVisitor {
         // type(x) → PyBuiltin_Type(x)  (returns a string like "<class 'int'>")
         if (funcName == "type") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Type", arg}, res, "str");
             noteType(res, "str");
             return res;
@@ -5210,7 +5276,7 @@ class LoweringVisitor {
                                 : (funcName == "oct") ? "PyBuiltin_Oct"
                                 : "PyBuiltin_Bin";
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {helper, arg}, res, "str");
             noteType(res, "str");
             return res;
@@ -5218,7 +5284,7 @@ class LoweringVisitor {
         // id(obj) → PyBuiltin_Id(obj)
         if (funcName == "id") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Id", arg}, res, "int");
             noteType(res, "int");
             return res;
@@ -5227,7 +5293,7 @@ class LoweringVisitor {
         if (funcName == "divmod") {
             std::string a = argRes.size() > 0 ? argRes[0] : "";
             std::string b = argRes.size() > 1 ? argRes[1] : "";
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Divmod", a, b}, res, "list");
             noteType(res, "list");
             return res;
@@ -5235,7 +5301,7 @@ class LoweringVisitor {
         // repr(obj) → PyBuiltin_Repr(obj) (returns a string)
         if (funcName == "repr") {
             std::string arg = argRes.empty() ? "" : argRes[0];
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Repr", arg}, res, "str");
             noteType(res, "str");
             return res;
@@ -5244,7 +5310,7 @@ class LoweringVisitor {
         if (funcName == "round") {
             std::string x = argRes.empty() ? "" : argRes[0];
             std::string n = argRes.size() > 1 ? argRes[1] : "";
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Round", x, n}, res);
             noteType(res, "boxed");
             return res;
@@ -5257,7 +5323,7 @@ class LoweringVisitor {
         if (funcName == "pow") {
             std::string a = argRes.size() > 0 ? argRes[0] : "";
             std::string b = argRes.size() > 1 ? argRes[1] : "";
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             if (argRes.size() > 2) {
                 std::string m = argRes[2];
                 ir.addInstruction(currentFunc, "call", {"PyBuiltin_Pow3", a, b, m}, res, "int");
@@ -5272,12 +5338,12 @@ class LoweringVisitor {
         // str(obj) → PyStr_FromAny(obj)
         if (funcName == "str") {
             if (argRes.empty()) {
-                std::string res = "c" + std::to_string(tempCounter++);
+                std::string res = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"\""}, res);
                 noteType(res, "str");
                 return res;
             }
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", argRes[0]}, res);
             noteType(res, "str");
             return res;
@@ -5288,15 +5354,15 @@ class LoweringVisitor {
         if (funcName == "range") {
             std::string startRes, stopRes, stepRes;
             if (argRes.size() == 1) {
-                startRes = "c" + std::to_string(tempCounter++);
+                startRes = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"0"}, startRes);
                 stopRes  = argRes[0];
-                stepRes  = "c" + std::to_string(tempCounter++);
+                stepRes  = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"1"}, stepRes);
             } else if (argRes.size() == 2) {
                 startRes = argRes[0];
                 stopRes  = argRes[1];
-                stepRes  = "c" + std::to_string(tempCounter++);
+                stepRes  = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"1"}, stepRes);
             } else if (argRes.size() >= 3) {
                 startRes = argRes[0];
@@ -5304,10 +5370,10 @@ class LoweringVisitor {
                 stepRes  = argRes[2];
             } else {
                 // range() with no args → empty list
-                startRes = stopRes = stepRes = "c" + std::to_string(tempCounter++);
+                startRes = stopRes = stepRes = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"0"}, startRes);
             }
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call",
                               {"PyBuiltin_Range", startRes, stopRes, stepRes}, res);
             noteType(res, "range_object");
@@ -5415,7 +5481,7 @@ class LoweringVisitor {
                 if (!calleeVal.empty() && (bundleTemps.count(calleeVal) || namesThatMayHoldBundles.count(calleeVal))) bsrc = calleeVal;
                 else if (!funcName.empty() && (bundleTemps.count(funcName) || namesThatMayHoldBundles.count(funcName))) bsrc = funcName;
                 if (!bsrc.empty()) {
-                    std::string bc = "t" + std::to_string(tempCounter++);
+                    std::string bc = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "assign", {bsrc}, bc);
                     bundleCallee = bc;
                     bundleTemps.insert(bc);
@@ -5431,7 +5497,7 @@ class LoweringVisitor {
                 // existing slot names like "c1" or "c2" that the user code
                 // may have assigned earlier — otherwise getOrLoad may pick
                 // up the wrong value for the same name).
-                std::string bc = "t" + std::to_string(tempCounter++);
+                std::string bc = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "assign", {calleeVal}, bc);
                 bundleCallee = bc;
                 bundleTemps.insert(bc);
@@ -5451,9 +5517,9 @@ class LoweringVisitor {
                 argList = indirectArgListTemp;
             } else {
                 // Build a fresh arg list, prepending bundle cells (if any) followed by user args.
-                std::string z = "c" + std::to_string(tempCounter++);
+                std::string z = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"0"}, z);
-                argList = "t" + std::to_string(tempCounter++);
+                argList = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
                 if (!bundleCallee.empty()) {
                     auto dit = descriptorCells.find(bundleCallee);
@@ -5461,11 +5527,11 @@ class LoweringVisitor {
                         int k = 0;
                         for (const auto& nm : dit->second) {
                             // bundle[1+k] is the k-th cell (a PyCell* PyObject).
-                            std::string ic = "c" + std::to_string(tempCounter++);
+                            std::string ic = "$c" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "const", {std::to_string(1 + k)}, ic);
-                            std::string cellObj = "t" + std::to_string(tempCounter++);
+                            std::string cellObj = "$t" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", bundleCallee, ic}, cellObj);
-                            std::string d = "t" + std::to_string(tempCounter++);
+                            std::string d = "$t" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, cellObj}, d);
                             ++k;
                         }
@@ -5476,13 +5542,13 @@ class LoweringVisitor {
                     // (For dynamic * under a non-bundle indirect callee, the
                     // indirectArgListTemp holds the user args; we appended bundle
                     // cells above, so just iterate the list and append each item.)
-                    std::string sz = "t" + std::to_string(tempCounter++);
+                    std::string sz = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", indirectArgListTemp}, sz);
-                    std::string idx = "c" + std::to_string(tempCounter++);
+                    std::string idx = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"0"}, idx);
                     std::string szc = "__ipc_sz_" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "assign", {sz}, szc);
-                    std::string jc = "c" + std::to_string(tempCounter++);
+                    std::string jc = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"0"}, jc);
                     std::string jslot = "__ipc_j_" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "assign", {jc}, jslot);
@@ -5492,24 +5558,24 @@ class LoweringVisitor {
                     std::string ex = "__ipc_ex_" + std::to_string(sc);
                     ir.addInstruction(currentFunc, "br", {}, lp);
                     ir.addInstruction(currentFunc, "label", {}, lp);
-                    std::string cm = "t" + std::to_string(tempCounter++);
+                    std::string cm = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "icmp", {"Lt", jslot, szc}, cm);
                     ir.addInstruction(currentFunc, "br", {cm, bd, ex});
                     ir.addInstruction(currentFunc, "label", {}, bd);
-                    std::string el = "t" + std::to_string(tempCounter++);
+                    std::string el = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", indirectArgListTemp, jslot}, el);
-                    std::string d = "t" + std::to_string(tempCounter++);
+                    std::string d = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, el}, d);
-                    std::string oneC = "c" + std::to_string(tempCounter++);
+                    std::string oneC = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"1"}, oneC);
-                    std::string newJ = "t" + std::to_string(tempCounter++);
+                    std::string newJ = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "add", {jslot, oneC}, newJ, "int");
                     ir.addInstruction(currentFunc, "assign", {newJ}, jslot);
                     ir.addInstruction(currentFunc, "br", {}, lp);
                     ir.addInstruction(currentFunc, "label", {}, ex);
                 } else {
                     for (auto& v : argRes) {
-                        std::string d = "t" + std::to_string(tempCounter++);
+                        std::string d = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, v}, d);
                     }
                 }
@@ -5517,12 +5583,12 @@ class LoweringVisitor {
             std::string tok = tokenTempForApply;
             // Bundle callee: extract the token from bundle[0] (a string).
             if (!bundleCallee.empty()) {
-                std::string zc = "c" + std::to_string(tempCounter++);
+                std::string zc = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"0"}, zc);
-                tok = "t" + std::to_string(tempCounter++);
+                tok = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", bundleCallee, zc}, tok);
             } else if (tok.empty() && !funcName.empty()) {
-                tok = "c" + std::to_string(tempCounter++);
+                tok = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + funcName + "\""}, tok, "str");
             } else if (!tok.empty() && (namesThatMayHoldCallableTokens.count(tok) || callableTokenTemps.count(tok))) {
                 // tok is a temp that may hold a callable token string. Get its value.
@@ -5530,7 +5596,7 @@ class LoweringVisitor {
                 // We need to pass this temp directly to Pyc_Apply since it contains the token string.
                 // No additional handling needed - the temp holds the string token.
             }
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_Apply", tok, argList}, res);
             // The Pyc_GetItem on the bundle returns a borrowed ref to a
             // string token (the function name). Pyc_Apply does not
@@ -5558,9 +5624,9 @@ class LoweringVisitor {
                 if (dit != descriptorCells.end()) {
                     int k = 0;
                     for (const auto& nm : dit->second) {
-                        std::string ic = "c" + std::to_string(tempCounter++);
+                        std::string ic = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {std::to_string(1 + k)}, ic);
-                        std::string cellObj = "t" + std::to_string(tempCounter++);
+                        std::string cellObj = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", calleeVal, ic}, cellObj);
                         finalOps.push_back(cellObj);
                         ++k;
@@ -5598,10 +5664,10 @@ class LoweringVisitor {
             if (isGenCall) {
                 ir.addInstruction(currentFunc, "call", {"pyc_clear_yield_buffer"}, "");
             }
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", finalOps, res);
             if (isGenCall) {
-                std::string genRes = "t" + std::to_string(tempCounter++);
+                std::string genRes = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"pyc_get_yield_buffer"}, genRes);
                 res = genRes;
             }
@@ -5751,11 +5817,11 @@ class LoweringVisitor {
                 // If the body produced a native unboxed numeric (A2/A3), box it.
                 std::string rt = typeOf(bodyVal);
                 if (rt == "i64") {
-                    std::string bx = "t" + std::to_string(tempCounter++);
+                    std::string bx = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(lamName, "box_i64", {bodyVal}, bx, "int");
                     bodyVal = bx;
                 } else if (rt == "float") {
-                    std::string bx = "t" + std::to_string(tempCounter++);
+                    std::string bx = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(lamName, "box_f64", {bodyVal}, bx, "float");
                     bodyVal = bx;
                 }
@@ -5765,7 +5831,7 @@ class LoweringVisitor {
             }
         }
         if (!emittedRet) {
-            std::string z = "c" + std::to_string(tempCounter++);
+            std::string z = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(lamName, "const", {"0"}, z);
             ir.addInstruction(lamName, "ret", {z});
         }
@@ -5796,11 +5862,11 @@ class LoweringVisitor {
         // Helper: emit one pairwise comparison, return result name
         auto emitPair = [&](const std::string& opName,
                              const std::string& lhs, const std::string& rhs) {
-            std::string r = "t" + std::to_string(tempCounter++);
+            std::string r = "$t" + std::to_string(tempCounter++);
             if (opName == "In") {
                 ir.addInstruction(currentFunc, "call", {"Pyc_Contains", rhs, lhs}, r);
             } else if (opName == "NotIn") {
-                std::string c2 = "t" + std::to_string(tempCounter++);
+                std::string c2 = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"Pyc_Contains", rhs, lhs}, c2);
                 ir.addInstruction(currentFunc, "call", {"PyObject_Not", c2}, r);
             } else if (opName == "Is") {
@@ -5828,7 +5894,7 @@ class LoweringVisitor {
 
         for (size_t i = 1; i < ops.size() && i + 1 < operands.size(); ++i) {
             std::string rhsL = "chain_rhs_" + std::to_string(bc) + "_" + std::to_string(i);
-            std::string truth = "t" + std::to_string(tempCounter++);
+            std::string truth = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyObject_TruthBoxed", resultVar}, truth);
             ir.addInstruction(currentFunc, "br", {truth, rhsL, endLabel});
             ir.addInstruction(currentFunc, "label", {}, rhsL);
@@ -5926,7 +5992,7 @@ class LoweringVisitor {
         // and other sequences it converts to a list of elements. We can't
         // know the static type at lowering time, so always go through
         // PyBuiltin_List which is cheap for lists and correct otherwise.
-        std::string listRes = "t" + std::to_string(tempCounter++);
+        std::string listRes = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", listVal}, listRes);
         if (iterElemType != "boxed") noteType(listRes, "match_list");
         // P0: layouts must survive List() + slot assign or pairs/bodies typing is lost
@@ -5955,7 +6021,7 @@ class LoweringVisitor {
         numericLocals.insert(lenI64);
 
         std::string idxVar = node->id + "__idx";
-        std::string idxInit = "i" + std::to_string(tempCounter++);
+        std::string idxInit = "$i" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "i64const", {"0"}, idxInit, "i64");
         noteType(idxInit, "i64");
         ir.addInstruction(currentFunc, "i64assign", {idxInit}, idxVar, "i64");
@@ -5974,12 +6040,12 @@ class LoweringVisitor {
 
         ir.addInstruction(currentFunc, "label", {}, loopLabel);
         auto loopEntryTypes = valueTypes;
-        std::string cmpRes = "t" + std::to_string(tempCounter++);
+        std::string cmpRes = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "i64icmp", {"Lt", idxVar, lenI64}, cmpRes, "bool");
         ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
 
         ir.addInstruction(currentFunc, "label", {}, bodyLabel);
-        std::string itemRes = "t" + std::to_string(tempCounter++);
+        std::string itemRes = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyList_GetItemI64", listVal, idxVar}, itemRes);
         // P0: Propagate element layouts from iterated list to loop item.
         // - structured list (SYSTEM): item is one body tuple layout
@@ -6038,9 +6104,9 @@ class LoweringVisitor {
                 lowerUnpackTarget(node->children[0].get(), itemRes);
             } else {
                 for (size_t j = 0; j < node->args.size(); ++j) {
-                    std::string ic = "c" + std::to_string(tempCounter++);
+                    std::string ic = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {std::to_string(j)}, ic);
-                    std::string elem = "t" + std::to_string(tempCounter++);
+                    std::string elem = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", itemRes, ic}, elem);
                     ir.addInstruction(currentFunc, "assign", {elem}, node->args[j]);
                 }
@@ -6062,7 +6128,7 @@ class LoweringVisitor {
             }
             if (isCell) {
                 std::string cellSlot = node->id + "_cell";
-                std::string dummy = "t" + std::to_string(tempCounter++);
+                std::string dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, node->id}, dummy);
             }
         }
@@ -6071,10 +6137,10 @@ class LoweringVisitor {
             lower(node->children[i].get());
 
         // idxVar = idxVar + 1 (native i64)
-        std::string oneRes = "i" + std::to_string(tempCounter++);
+        std::string oneRes = "$i" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "i64const", {"1"}, oneRes, "i64");
         noteType(oneRes, "i64");
-        std::string nextIdx = "i" + std::to_string(tempCounter++);
+        std::string nextIdx = "$i" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "i64add", {idxVar, oneRes}, nextIdx, "i64");
         noteType(nextIdx, "i64");
         ir.addInstruction(currentFunc, "i64assign", {nextIdx}, idxVar, "i64");
@@ -6149,13 +6215,13 @@ class LoweringVisitor {
     std::string lowerRangeI64Arg(const ASTNode* arg) {
         long constVal = 0;
         if (constantI64Value(arg, constVal)) {
-            std::string nativeConst = "i" + std::to_string(tempCounter++);
+            std::string nativeConst = "$i" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "i64const", {std::to_string(constVal)}, nativeConst, "i64");
             noteType(nativeConst, "i64");
             return nativeConst;
         }
         std::string boxed = lowerExpr(arg);
-        std::string native = "i" + std::to_string(tempCounter++);
+        std::string native = "$i" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "i64_from_box", {boxed}, native, "i64");
         noteType(native, "i64");
         return native;
@@ -6171,11 +6237,11 @@ class LoweringVisitor {
         int stepSign = 1;
 
         if (argc == 1) {
-            startRes = "i" + std::to_string(tempCounter++);
+            startRes = "$i" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "i64const", {"0"}, startRes, "i64");
             noteType(startRes, "i64");
             stopRes = lowerRangeI64Arg(call->children[1].get());
-            stepRes = "i" + std::to_string(tempCounter++);
+            stepRes = "$i" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "i64const", {"1"}, stepRes, "i64");
             noteType(stepRes, "i64");
         } else if (argc >= 2) {
@@ -6185,14 +6251,14 @@ class LoweringVisitor {
                 stepSign = constantStepSign(call->children[3].get());
                 stepRes = lowerRangeI64Arg(call->children[3].get());
             } else {
-                stepRes = "i" + std::to_string(tempCounter++);
+                stepRes = "$i" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "i64const", {"1"}, stepRes, "i64");
                 noteType(stepRes, "i64");
             }
         } else {
-            startRes = "i" + std::to_string(tempCounter++);
-            stopRes = "i" + std::to_string(tempCounter++);
-            stepRes = "i" + std::to_string(tempCounter++);
+            startRes = "$i" + std::to_string(tempCounter++);
+            stopRes = "$i" + std::to_string(tempCounter++);
+            stepRes = "$i" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "i64const", {"0"}, startRes, "i64");
             ir.addInstruction(currentFunc, "i64const", {"0"}, stopRes, "i64");
             ir.addInstruction(currentFunc, "i64const", {"1"}, stepRes, "i64");
@@ -6218,7 +6284,7 @@ class LoweringVisitor {
 
         auto loopEntryTypes = valueTypes;
         ir.addInstruction(currentFunc, "label", {}, loopLabel);
-        std::string cmpRes = "i" + std::to_string(tempCounter++);
+        std::string cmpRes = "$i" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "i64icmp", {stepSign < 0 ? "Gt" : "Lt", idxVar, stopRes}, cmpRes, "bool");
         ir.addInstruction(currentFunc, "br", {cmpRes, bodyLabel, exitLabel});
 
@@ -6233,7 +6299,7 @@ class LoweringVisitor {
             lower(node->children[i].get());
 
         ir.addInstruction(currentFunc, "label", {}, incrLabel);
-        std::string nextIdx = "i" + std::to_string(tempCounter++);
+        std::string nextIdx = "$i" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "i64add", {idxVar, stepRes}, nextIdx, "i64");
         noteType(nextIdx, "i64");
         ir.addInstruction(currentFunc, "i64assign", {nextIdx}, idxVar, "i64");
@@ -6266,21 +6332,21 @@ class LoweringVisitor {
                 if (t != "float") allFloat = false;
                 elemTypeList.push_back(t);
             }
-        std::string listRes = "t" + std::to_string(tempCounter++);
+        std::string listRes = "$t" + std::to_string(tempCounter++);
         if (allInt) {
-            std::string sizeConst = "c" + std::to_string(tempCounter++);
+            std::string sizeConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
             ir.addInstruction(currentFunc, "call", {"PyList_NewIntBoxed", sizeConst}, listRes);
             noteType(listRes, "list_int");
             knownIntLists.insert(listRes);
         } else if (allFloat) {
-            std::string sizeConst = "c" + std::to_string(tempCounter++);
+            std::string sizeConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
             ir.addInstruction(currentFunc, "call", {"PyList_NewFloatBoxed", sizeConst}, listRes);
             noteType(listRes, "list_float");
             knownFloatLists.insert(listRes);
         } else {
-            std::string sizeConst = "c" + std::to_string(tempCounter++);
+            std::string sizeConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, listRes);
             noteType(listRes, "list");
@@ -6306,7 +6372,7 @@ class LoweringVisitor {
 
         bool containsTok = false;
         for (size_t i = 0; i < n; ++i) {
-            std::string idxConst = "c" + std::to_string(tempCounter++);
+            std::string idxConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
             if (allInt && i < n) {
                 std::string elemType = typeOf(elems[i]);
@@ -6345,7 +6411,7 @@ class LoweringVisitor {
     }
 
      std::string lowerDict(const ASTNode* node) {
-         std::string dictRes = "t" + std::to_string(tempCounter++);
+         std::string dictRes = "$t" + std::to_string(tempCounter++);
          ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
          noteType(dictRes, "dict");
 
@@ -6365,7 +6431,7 @@ class LoweringVisitor {
              // entirely). See PythonParser.cpp's Dict-handling comment.
              if (keyNode && keyNode->type == "DictUnpack") {
                  std::string src = lowerExpr(node->children[i + 1].get());
-                 std::string dummy = "t" + std::to_string(tempCounter++);
+                 std::string dummy = "$t" + std::to_string(tempCounter++);
                  ir.addInstruction(currentFunc, "call", {"PyDict_Update", dictRes, src}, dummy);
                  continue;
              }
@@ -6403,8 +6469,8 @@ class LoweringVisitor {
 
     std::string lowerAttribute(const ASTNode* node) {
         std::string obj = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
-        std::string res = "t" + std::to_string(tempCounter++);
-        std::string attrNameConst = "c" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
+        std::string attrNameConst = "$c" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "const", {"\"" + node->id + "\""}, attrNameConst, "str");
         ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, attrNameConst}, res);
         // Annotate the result as "dict" (we can't distinguish dict vs other
@@ -6473,9 +6539,9 @@ class LoweringVisitor {
             std::string obj = lowerExpr(attrTarget->children.size() > 0 ? attrTarget->children[0].get() : nullptr);
             std::string attrName = attrTarget->id;  // attribute name (e.g., "x")
             std::string val = lowerExpr(node->children[1].get());
-            std::string attrConst = "c" + std::to_string(tempCounter++);
+            std::string attrConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + attrName + "\""}, attrConst, "str");
-            std::string dummy = "t" + std::to_string(tempCounter++);
+            std::string dummy = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, attrConst, val}, dummy);
             return;
         }
@@ -6490,7 +6556,7 @@ class LoweringVisitor {
                 std::string stop  = lowerExpr(idxnode->children.size() > 1 ? idxnode->children[1].get() : nullptr);
                 std::string step  = (idxnode->children.size() > 2 && idxnode->children[2])
                                        ? lowerExpr(idxnode->children[2].get()) : "";
-                std::string dummy = "t" + std::to_string(tempCounter++);
+                std::string dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"Pyc_SetSlice", obj, start, stop, step, val}, dummy);
                 return;
             }
@@ -6508,19 +6574,19 @@ class LoweringVisitor {
             bool valIsFloat = (valType == "float");
             std::string dummy;
             if (isIntList && valIsInt) {
-                dummy = "t" + std::to_string(tempCounter++);
+                dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64", obj, idx, val}, dummy);
             } else if (isFloatList && valIsFloat) {
-                dummy = "t" + std::to_string(tempCounter++);
+                dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemDouble", obj, idx, val}, dummy);
             } else if (objIsList && valIsFloat) {
-                dummy = "t" + std::to_string(tempCounter++);
+                dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemDoubleAuto", obj, idx, val}, dummy);
             } else if (objIsList && valIsInt) {
-                dummy = "t" + std::to_string(tempCounter++);
+                dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64Auto", obj, idx, val}, dummy);
             } else {
-                dummy = "t" + std::to_string(tempCounter++);
+                dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, val}, dummy);
             }
             return;
@@ -6554,7 +6620,7 @@ class LoweringVisitor {
             // nested scope should not be routed through a cell at this level.
             if (isCellBackedHere(node->id)) {
                 std::string cellSlot = node->id + "_cell";
-                std::string dummy = "t" + std::to_string(tempCounter++);
+                std::string dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, val}, dummy);
                 noteType(node->id, typeOf(val));
                 killNumericLocal(node->id);  // A2.1: unboxed numeric locals are not cell-backed yet
@@ -6670,7 +6736,7 @@ class LoweringVisitor {
                 std::string vt = typeOf(value);
                 if (isCell) {
                     std::string cellSlot = target->id + "_cell";
-                    std::string dummy = "t" + std::to_string(tempCounter++);
+                    std::string dummy = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, value}, dummy);
                     noteType(target->id, vt);
                     killNumericLocal(target->id);
@@ -6739,7 +6805,7 @@ class LoweringVisitor {
         // Bulk unpack 2/3-element tuples (nbody pair/body spine) — one runtime call
         if (n == 2 || n == 3) {
             for (size_t i = 0; i < n; ++i)
-                elems[i] = "t" + std::to_string(tempCounter++);
+                elems[i] = "$t" + std::to_string(tempCounter++);
             std::vector<std::string> ops;
             ops.push_back(n == 3 ? "PyList_Unpack3" : "PyList_Unpack2");
             ops.push_back(value);
@@ -6747,7 +6813,7 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", ops, "");
         } else {
             for (size_t i = 0; i < n; ++i) {
-                elems[i] = "t" + std::to_string(tempCounter++);
+                elems[i] = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call",
                     {"PyList_GetItemI64", value, std::to_string((long long)i)}, elems[i]);
             }
@@ -6815,10 +6881,10 @@ class LoweringVisitor {
             // conceptually cleared. Then store a real null constant into the slot so
             // subsequent reads see None instead of a freed pointer.
             const std::string& name = target->id;
-            std::string dummy = "t" + std::to_string(tempCounter++);
+            std::string dummy = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Py_DECREF", name}, dummy);
             // Emit a real nconst and assign it to the slot.
-            std::string noneRes = "c" + std::to_string(tempCounter++);
+            std::string noneRes = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "nconst", {}, noneRes, "none");
             ir.addInstruction(currentFunc, "assign", {noneRes}, name);
             noteType(name, "none");
@@ -6828,7 +6894,7 @@ class LoweringVisitor {
             if (target->children.size() < 2) return;
             std::string obj = lowerExpr(target->children[0].get());
             std::string idx = lowerExpr(target->children[1].get());
-            std::string dummy = "t" + std::to_string(tempCounter++);
+            std::string dummy = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_DelItem", obj, idx}, dummy);
         } else if (target->type == "Attribute") {
             // del obj.attr — best-effort: store the empty string into the instance/class attr
@@ -6864,7 +6930,7 @@ class LoweringVisitor {
             std::string objType = typeOf(obj);
             bool isFloatList = (objType == "list_float") || knownFloatLists.count(obj);
             bool isIntList = (objType == "list_int") || knownIntLists.count(obj);
-            std::string cur = "t" + std::to_string(tempCounter++);
+            std::string cur = "$t" + std::to_string(tempCounter++);
             if (isFloatList) {
                 ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, cur, "float");
                 noteType(cur, "float");
@@ -6876,7 +6942,7 @@ class LoweringVisitor {
             } else {
                 ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, cur);
             }
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             std::string resultType = numericResultType(op, cur, rhs);
             if (resultType == "boxed" && isFloatList) resultType = "float";
             if (resultType == "boxed" && isIntList) resultType = "int";
@@ -6884,7 +6950,7 @@ class LoweringVisitor {
             noteType(res, resultType);
             if (resultType == "float") numericFloatLocals.insert(res);
             if (resultType == "int" || resultType == "i64") numericLocals.insert(res);
-            std::string dummy = "t" + std::to_string(tempCounter++);
+            std::string dummy = "$t" + std::to_string(tempCounter++);
             std::string valType = typeOf(res);
             bool valIsFloat = (valType == "float" || resultType == "float");
             bool valIsInt = (valType == "int" || valType == "i64" || resultType == "int");
@@ -6914,16 +6980,16 @@ class LoweringVisitor {
             const ASTNode* attrTarget = node->children[0].get();
             std::string obj = lowerExpr(attrTarget->children.empty() ? nullptr : attrTarget->children[0].get());
             std::string attrName = attrTarget->id;
-            std::string attrConst = "c" + std::to_string(tempCounter++);
+            std::string attrConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + attrName + "\""}, attrConst, "str");
-            std::string cur = "t" + std::to_string(tempCounter++);
+            std::string cur = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, attrConst}, cur);
             std::string rhs = lowerExpr(node->children[1].get());
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             std::string resultType = numericResultType(op, cur, rhs);
             ir.addInstruction(currentFunc, op, {cur, rhs}, res, resultType);
             noteType(res, resultType);
-            std::string dummy = "t" + std::to_string(tempCounter++);
+            std::string dummy = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, attrConst, res}, dummy);
         } else {
             // Normal name: children[0] = rhs
@@ -6935,19 +7001,19 @@ class LoweringVisitor {
             std::string lhsVal;
             if (isCellBackedHere(node->id)) {
                 std::string cellSlot = node->id + "_cell";
-                lhsVal = "t" + std::to_string(tempCounter++);
+                lhsVal = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyCell_Get", cellSlot}, lhsVal);
             } else {
                 lhsVal = node->id;
             }
             std::string rhs = lowerExpr(node->children[0].get());
-            std::string result = "t" + std::to_string(tempCounter++);
+            std::string result = "$t" + std::to_string(tempCounter++);
             std::string resultType = numericResultType(op, lhsVal, rhs);
             ir.addInstruction(currentFunc, op, {lhsVal, rhs}, result, resultType);
             noteType(result, resultType);
             if (isCellBackedHere(node->id)) {
                 std::string cellSlot = node->id + "_cell";
-                std::string dummy = "t" + std::to_string(tempCounter++);
+                std::string dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyCell_Set", cellSlot, result}, dummy);
                 return;
             }
@@ -6972,12 +7038,12 @@ class LoweringVisitor {
             std::string stop = lowerExpr(slice->children.size() > 1 ? slice->children[1].get() : nullptr);
             std::string step = (slice->children.size() > 2 && slice->children[2])
                                    ? lowerExpr(slice->children[2].get()) : "";
-            std::string res = "t" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_GetSlice", obj, start, stop, step}, res);
             return res;
         }
         std::string idx = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
-        std::string res = "t" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
         // A4: determine element type for homogeneous lists so codegen can use native path
         std::string elemType = "boxed";
         std::string objType = typeOf(obj);
@@ -7328,7 +7394,7 @@ class LoweringVisitor {
         ir.addInstruction(currentFunc, "call", {"pyc_try_pop"}, "");
         ir.addInstruction(currentFunc, "br", {}, afterL);
         ir.addInstruction(currentFunc, "label", {}, pexcL);
-        std::string e2 = "t" + std::to_string(tempCounter++);
+        std::string e2 = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"pyc_current_exception"}, e2);
         for (const auto& s : finallyBody->children) if (s) lower(s.get());
         ir.addInstruction(currentFunc, "call", {"pyc_raise", e2}, "");
@@ -7414,7 +7480,7 @@ class LoweringVisitor {
 
         // Exception path: fetch the exception, then run the dispatch chain.
         ir.addInstruction(currentFunc, "label", {}, excL);
-        std::string excVar = "t" + std::to_string(tempCounter++);
+        std::string excVar = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"pyc_current_exception"}, excVar);
         for (size_t i = 0; i < handlers.size(); ++i) {
             const ASTNode* h = handlers[i];
@@ -7427,9 +7493,9 @@ class LoweringVisitor {
             } else {
                 // One check per listed type; any match enters the handler.
                 for (size_t k = 0; k < h->args.size(); ++k) {
-                    std::string nameConst = "c" + std::to_string(tempCounter++);
+                    std::string nameConst = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + h->args[k] + "\""}, nameConst, "str");
-                    std::string m = "t" + std::to_string(tempCounter++);
+                    std::string m = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"pyc_exc_matches", excVar, nameConst}, m);
                     std::string noMatchNextL = (k + 1 < h->args.size())
                         ? ("try_chk_" + std::to_string(c) + "_" + std::to_string(i) + "_" + std::to_string(k + 1))
@@ -7492,7 +7558,7 @@ class LoweringVisitor {
         std::string obj;
         if (isSuperCall && !currentClass.empty()) {
             // Create a super proxy
-            obj = "t" + std::to_string(tempCounter++);
+            obj = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Super"}, obj);
             superProxyTemps.insert(obj);
         } else {
@@ -7513,42 +7579,42 @@ class LoweringVisitor {
             // 2. Looks up __mro__ from that class dict
             // 3. Finds currentClass in the MRO
             // 4. Calls the method on the next class in the MRO
-            std::string res = "t" + std::to_string(tempCounter++);
-            std::string methodNameConst = "c" + std::to_string(tempCounter++);
+            std::string res = "$t" + std::to_string(tempCounter++);
+            std::string methodNameConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
-            std::string definingClassConst = "c" + std::to_string(tempCounter++);
+            std::string definingClassConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + currentClass + "\""}, definingClassConst, "str");
             
             // Build args list: self, definingClass, methodName, [remaining args]
-            std::string argList = "t" + std::to_string(tempCounter++);
+            std::string argList = "$t" + std::to_string(tempCounter++);
             std::string argCount = std::to_string(args.size() + 3); // self + definingClass + methodName + args
-            std::string argCountConst = "c" + std::to_string(tempCounter++);
+            std::string argCountConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
             
             // Add self at index 0
-            std::string idxConst = "c" + std::to_string(tempCounter++);
+            std::string idxConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, idxConst);
-            std::string setRes = "t" + std::to_string(tempCounter++);
+            std::string setRes = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, "self"}, setRes);
             
             // Add definingClass at index 1
-            idxConst = "c" + std::to_string(tempCounter++);
+            idxConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"1"}, idxConst);
-            setRes = "t" + std::to_string(tempCounter++);
+            setRes = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, definingClassConst}, setRes);
             
             // Add methodName at index 2
-            idxConst = "c" + std::to_string(tempCounter++);
+            idxConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"2"}, idxConst);
-            setRes = "t" + std::to_string(tempCounter++);
+            setRes = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodNameConst}, setRes);
             
             // Add remaining args at indices 3+
             for (size_t i = 0; i < args.size(); ++i) {
-                idxConst = "c" + std::to_string(tempCounter++);
+                idxConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {std::to_string(i + 3)}, idxConst);
-                setRes = "t" + std::to_string(tempCounter++);
+                setRes = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, args[i]}, setRes);
             }
             
@@ -7556,7 +7622,7 @@ class LoweringVisitor {
             return res;
         }
 
-        std::string res = "t" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
 
         // re module dispatch: detect `re.<name>(...)` by looking at the
         // AST node (Name "re" as the Attribute's base) rather than the
@@ -7909,7 +7975,7 @@ class LoweringVisitor {
         }
         if (methodName == "rotate" && typeOf(obj) == "deque") {
             std::string arg = args.empty() ? "" : args[0];
-            if (arg.empty()) { arg = "t" + std::to_string(tempCounter++); ir.addInstruction(currentFunc, "const", {"1"}, arg, "int"); }
+            if (arg.empty()) { arg = "$t" + std::to_string(tempCounter++); ir.addInstruction(currentFunc, "const", {"1"}, arg, "int"); }
             ir.addInstruction(currentFunc, "call", {"PyDeque_Rotate", obj, arg}, res);
             return res;
         }
@@ -7949,22 +8015,22 @@ class LoweringVisitor {
         // how the with-statement's own __enter__/__exit__ dispatch
         // (Compiler.cpp's With-lowering) already builds its args list.
         if (typeOf(obj) == "file" && methodName == "write") {
-            std::string methodNameConst = "c" + std::to_string(tempCounter++);
+            std::string methodNameConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"write\""}, methodNameConst, "str");
-            std::string methodLookup = "t" + std::to_string(tempCounter++);
+            std::string methodLookup = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, methodNameConst}, methodLookup);
-            std::string writeCountConst = "c" + std::to_string(tempCounter++);
+            std::string writeCountConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"2"}, writeCountConst);
-            std::string argList = "t" + std::to_string(tempCounter++);
+            std::string argList = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", writeCountConst}, argList);
-            std::string idx0 = "c" + std::to_string(tempCounter++);
+            std::string idx0 = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, idx0);
-            std::string setRes0 = "t" + std::to_string(tempCounter++);
+            std::string setRes0 = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idx0, obj}, setRes0);
-            std::string idx1 = "c" + std::to_string(tempCounter++);
+            std::string idx1 = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"1"}, idx1);
             std::string arg0 = args.empty() ? "" : args[0];
-            std::string setRes1 = "t" + std::to_string(tempCounter++);
+            std::string setRes1 = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idx1, arg0}, setRes1);
             ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
             return res;
@@ -8004,14 +8070,14 @@ class LoweringVisitor {
                 return res;
             }
             if (methodName == "joinpath") {
-                std::string partsList = "t" + std::to_string(tempCounter++);
-                std::string countConst = "c" + std::to_string(tempCounter++);
+                std::string partsList = "$t" + std::to_string(tempCounter++);
+                std::string countConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {std::to_string(args.size())}, countConst);
                 ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", countConst}, partsList);
                 for (size_t i = 0; i < args.size(); ++i) {
-                    std::string idxConst = "c" + std::to_string(tempCounter++);
+                    std::string idxConst = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
-                    std::string setRes = "t" + std::to_string(tempCounter++);
+                    std::string setRes = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", partsList, idxConst, args[i]}, setRes);
                 }
                 ir.addInstruction(currentFunc, "call", {"PyPathlib_Joinpath", obj, partsList}, res);
@@ -8324,23 +8390,23 @@ class LoweringVisitor {
             // two Pyc_GetItem calls; here the obj's typeOf is "dict"
             // from lowerAttribute, but at runtime the value is a str).
             if (typeOf(obj) == "dict" || typeOf(obj) == "str") {
-                std::string methodNameConst = "c" + std::to_string(tempCounter++);
+                std::string methodNameConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
-                std::string methodLookup = "t" + std::to_string(tempCounter++);
+                std::string methodLookup = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, methodNameConst}, methodLookup);
                 std::vector<std::string> methodArgs;
                 for (auto& a : args) {
                     methodArgs.push_back(a);
                 }
-                std::string argList = "t" + std::to_string(tempCounter++);
+                std::string argList = "$t" + std::to_string(tempCounter++);
                 std::string argCount = std::to_string(methodArgs.size());
-                std::string argCountConst = "c" + std::to_string(tempCounter++);
+                std::string argCountConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
                 ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
                 for (size_t i = 0; i < methodArgs.size(); ++i) {
-                    std::string idxConst = "c" + std::to_string(tempCounter++);
+                    std::string idxConst = "$c" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
-                    std::string setRes = "t" + std::to_string(tempCounter++);
+                    std::string setRes = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
                 }
                 ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
@@ -8368,13 +8434,13 @@ class LoweringVisitor {
             }
             // Try to call as user-defined method
             // For class instances: look up method on class dict
-            std::string methodLookup = "t" + std::to_string(tempCounter++);
-            std::string methodNameConst = "c" + std::to_string(tempCounter++);
+            std::string methodLookup = "$t" + std::to_string(tempCounter++);
+            std::string methodNameConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
             // Get __class__ from instance, then look up method on class dict
-            std::string classKeyConst = "c" + std::to_string(tempCounter++);
+            std::string classKeyConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"__class__\""}, classKeyConst, "str");
-            std::string classRef = "t" + std::to_string(tempCounter++);
+            std::string classRef = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, classKeyConst}, classRef);
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", classRef, methodNameConst}, methodLookup);
             // Build args list with self prepended
@@ -8384,15 +8450,15 @@ class LoweringVisitor {
                 methodArgs.push_back(a);
             }
             // Build flat arg list for Pyc_Apply
-            std::string argList = "t" + std::to_string(tempCounter++);
+            std::string argList = "$t" + std::to_string(tempCounter++);
             std::string argCount = std::to_string(methodArgs.size());
-            std::string argCountConst = "c" + std::to_string(tempCounter++);
+            std::string argCountConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {argCount}, argCountConst);
             ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", argCountConst}, argList);
             for (size_t i = 0; i < methodArgs.size(); ++i) {
-                std::string idxConst = "c" + std::to_string(tempCounter++);
+                std::string idxConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
-                std::string setRes = "t" + std::to_string(tempCounter++);
+                std::string setRes = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
             }
             // Call method via Pyc_Apply
@@ -8426,7 +8492,7 @@ class LoweringVisitor {
         // Register class as module-level global
         ir.addModuleGlobal(className);
         // Create class dict to hold methods
-        std::string classDictTemp = "c" + std::to_string(tempCounter++);
+        std::string classDictTemp = "$c" + std::to_string(tempCounter++);
         ir.addInstruction("__module__", "call", {"PyDict_New"}, classDictTemp, "dict");
         // Register class name as known IR function so it can be called directly
         knownIRFunctions.insert(className);
@@ -8522,13 +8588,13 @@ class LoweringVisitor {
             // __init__ must return self (the first argument)
                 ir.addInstruction(initFuncName, "ret", {"self"});
                 // Store __init__ in class dict as a callable token (string name)
-                std::string methodConst = "c" + std::to_string(tempCounter++);
+                std::string methodConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "const", {"\"" + methodName + "\""}, methodConst, "str");
-                std::string methodToken = "c" + std::to_string(tempCounter++);
+                std::string methodToken = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "const", {"\"" + initFuncName + "\""}, methodToken, "str");
                 knownIRFunctions.insert(initFuncName);
                 // Store the function name string in the class dict
-                std::string dummy = "t" + std::to_string(tempCounter++);
+                std::string dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
                 currentFunc = savedFunc;
            } else {
@@ -8551,12 +8617,12 @@ class LoweringVisitor {
                     }
                 }
                 // Store method in class dict as a callable token
-                std::string methodConst = "c" + std::to_string(tempCounter++);
+                std::string methodConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "const", {"\"" + methodName + "\""}, methodConst, "str");
-                std::string methodToken = "c" + std::to_string(tempCounter++);
+                std::string methodToken = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "const", {"\"" + methodFuncName + "\""}, methodToken, "str");
                 knownIRFunctions.insert(methodFuncName);
-                std::string dummy = "t" + std::to_string(tempCounter++);
+                std::string dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
                  currentFunc = savedFunc;
              }
@@ -8568,28 +8634,28 @@ class LoweringVisitor {
              std::string attrName = c->id.empty() ? (c->args.empty() ? "" : c->args[0]) : c->id;
              if (attrName.empty()) continue;
              std::string attrValue = lowerExpr(c->children.empty() ? nullptr : c->children[0].get());
-             std::string attrKeyConst = "c" + std::to_string(tempCounter++);
+             std::string attrKeyConst = "$c" + std::to_string(tempCounter++);
              ir.addInstruction("__module__", "const", {"\"" + attrName + "\""}, attrKeyConst, "str");
-             std::string dummy = "t" + std::to_string(tempCounter++);
+             std::string dummy = "$t" + std::to_string(tempCounter++);
              ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, attrKeyConst, attrValue}, dummy);
          }
          currentClass = savedClass;
         // B6b: Store MRO in class dict for runtime super() support
         const auto& mro = classMRO[className];
         if (!mro.empty()) {
-            std::string mroKeyConst = "c" + std::to_string(tempCounter++);
+            std::string mroKeyConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction("__module__", "const", {"\"__mro__\""}, mroKeyConst, "str");
-            std::string mroList = "c" + std::to_string(tempCounter++);
-            std::string zeroConst = "c" + std::to_string(tempCounter++);
+            std::string mroList = "$c" + std::to_string(tempCounter++);
+            std::string zeroConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction("__module__", "const", {"0"}, zeroConst);
             ir.addInstruction("__module__", "call", {"PyList_NewBoxed", zeroConst}, mroList);
             for (const auto& classNameInMRO : mro) {
-                std::string classNameConst = "c" + std::to_string(tempCounter++);
+                std::string classNameConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "const", {"\"" + classNameInMRO + "\""}, classNameConst, "str");
-                std::string appendRes = "t" + std::to_string(tempCounter++);
+                std::string appendRes = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "call", {"PyList_Append", mroList, classNameConst}, appendRes);
             }
-            std::string mroDummy = "t" + std::to_string(tempCounter++);
+            std::string mroDummy = "$t" + std::to_string(tempCounter++);
             ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, mroKeyConst, mroList}, mroDummy);
         }
         // Decorators, bottom-up: className = decoN(...(deco1(classDict))...).
@@ -8597,12 +8663,12 @@ class LoweringVisitor {
         // in a one-element list, call Pyc_Apply, and update classDictTemp.
         for (auto it = decorators.rbegin(); it != decorators.rend(); ++it) {
             std::string dv = lowerExpr(*it);
-            std::string z = "c" + std::to_string(tempCounter++);
+            std::string z = "$c" + std::to_string(tempCounter++);
             ir.addInstruction("__module__", "const", {"0"}, z);
-            std::string argList = "t" + std::to_string(tempCounter++);
+            std::string argList = "$t" + std::to_string(tempCounter++);
             ir.addInstruction("__module__", "call", {"PyList_NewBoxed", z}, argList);
             ir.addInstruction("__module__", "call", {"PyList_Append", argList, classDictTemp}, "");
-            classDictTemp = "t" + std::to_string(tempCounter++);
+            classDictTemp = "$t" + std::to_string(tempCounter++);
             ir.addInstruction("__module__", "call", {"Pyc_Apply", dv, argList}, classDictTemp);
         }
         // Store class dict as the class value
@@ -8611,7 +8677,7 @@ class LoweringVisitor {
         // B6b: register the class in the runtime registry so super() can
         // resolve the class-name strings stored in __mro__ to class dicts.
         {
-            std::string regNameConst = "c" + std::to_string(tempCounter++);
+            std::string regNameConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction("__module__", "const", {"\"" + className + "\""}, regNameConst, "str");
             ir.addInstruction("__module__", "call", {"pyc_register_class", regNameConst, classDictTemp}, "");
         }
@@ -8650,16 +8716,16 @@ class LoweringVisitor {
                 for (size_t i = 0; i < initParams.size(); ++i) {
                     callArgs.push_back(initParams[i]);
                 }
-                std::string dummy = "t" + std::to_string(tempCounter++);
+                std::string dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(initName, "call", callArgs, dummy);
                 ir.addInstruction(initName, "ret", {"self"});
                 currentFunc = savedFunc;
                 // Store the __init__ wrapper name in the class dict (overrides base __init__)
-                std::string initKeyConst = "c" + std::to_string(tempCounter++);
+                std::string initKeyConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "const", {"\"__init__\""}, initKeyConst, "str");
-                std::string initValConst = "c" + std::to_string(tempCounter++);
+                std::string initValConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "const", {"\"" + initName + "\""}, initValConst, "str");
-                std::string initSet = "t" + std::to_string(tempCounter++);
+                std::string initSet = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, initKeyConst, initValConst}, initSet);
             }
         }
@@ -8675,7 +8741,7 @@ class LoweringVisitor {
         std::string endL      = "ifexp_end_"  + std::to_string(c);
 
         // Pre-create the result alloca before the branch so both branches can store to it.
-        std::string initVal = "c" + std::to_string(tempCounter++);
+        std::string initVal = "$c" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "const", {"0"}, initVal);
         ir.addInstruction(currentFunc, "assign", {initVal}, resultVar);
 
@@ -8715,7 +8781,7 @@ class LoweringVisitor {
                                    + "_" + std::to_string(i);
 
             // Box truthiness so the br handler can unbox it.
-            std::string truthVal = "t" + std::to_string(tempCounter++);
+            std::string truthVal = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call",
                               {"PyObject_TruthBoxed", resultVar}, truthVal);
 
@@ -8739,7 +8805,7 @@ class LoweringVisitor {
         std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         if (node->op == "UAdd") return val;   // identity
 
-        std::string res = "t" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
         if (node->op == "Not") {
             ir.addInstruction(currentFunc, "call", {"PyObject_Not",  val}, res, "bool");
             noteType(res, "bool");
@@ -8772,21 +8838,21 @@ class LoweringVisitor {
 
     std::string lowerFormattedValue(const ASTNode* node) {
         std::string exprVal = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
-        std::string res = "t" + std::to_string(tempCounter++);
+        std::string res = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", exprVal}, res);
         return res;
     }
 
     std::string lowerJoinedStr(const ASTNode* node) {
         if (node->children.empty()) {
-            std::string res = "c" + std::to_string(tempCounter++);
+            std::string res = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"\""}, res);
             return res;
         }
         std::string acc = lowerFStrPart(node->children[0].get());
         for (size_t i = 1; i < node->children.size(); ++i) {
             std::string part = lowerFStrPart(node->children[i].get());
-            std::string newAcc = "t" + std::to_string(tempCounter++);
+            std::string newAcc = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyString_Concat", acc, part}, newAcc);
             acc = newAcc;
         }
@@ -8817,9 +8883,9 @@ class LoweringVisitor {
         }
 
         // Create the result list with the detected type.
-        std::string sc = "c" + std::to_string(tempCounter++);
+        std::string sc = "$c" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "const", {"0"}, sc);
-        std::string listVar = "t" + std::to_string(tempCounter++);
+        std::string listVar = "$t" + std::to_string(tempCounter++);
         if (elemType == "int") {
             ir.addInstruction(currentFunc, "call", {"PyList_NewIntBoxed", sc}, listVar);
             noteType(listVar, "list_int");
@@ -8899,7 +8965,7 @@ class LoweringVisitor {
             std::string iterSlot = "__lci_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {iterVal}, iterSlot);
             // Also materialise as a list (handles dict/string iterables).
-            std::string listified = "t" + std::to_string(tempCounter++);
+            std::string listified = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", iterSlot}, listified);
             std::string listifiedSlot = "__lcmat_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {listified}, listifiedSlot);
@@ -8916,12 +8982,12 @@ class LoweringVisitor {
         lenSlots.reserve(gens.size());
         for (size_t gi = 0; gi < gens.size(); ++gi) {
             std::string idxVar  = "lc_i_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
-            std::string idxInit = "t" + std::to_string(tempCounter++);
+            std::string idxInit = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
             ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
             idxVars.push_back(idxVar);
 
-            std::string lenRes = "t" + std::to_string(tempCounter++);
+            std::string lenRes = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterSlots[gi]}, lenRes);
             std::string lenSlot = "__lcsl_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
@@ -8945,12 +9011,12 @@ class LoweringVisitor {
         for (size_t gi = 0; gi < gens.size(); ++gi) {
             const auto& g = gens[gi];
             ir.addInstruction(currentFunc, "label", {}, g.loopL);
-            std::string cmpR = "t" + std::to_string(tempCounter++);
+            std::string cmpR = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "icmp", {"Lt", idxVars[gi], lenSlots[gi]}, cmpR);
             ir.addInstruction(currentFunc, "br", {cmpR, g.bodyL, g.exitL});
 
             ir.addInstruction(currentFunc, "label", {}, g.bodyL);
-            std::string item = "t" + std::to_string(tempCounter++);
+            std::string item = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", iterSlots[gi], idxVars[gi]}, item);
             ir.addInstruction(currentFunc, "assign", {item}, g.target);
 
@@ -8969,7 +9035,7 @@ class LoweringVisitor {
                 // loop's `idx < len` check fails on subsequent outer
                 // iterations and the inner never re-runs.
                 for (size_t gj = gi + 1; gj < gens.size(); ++gj) {
-                    std::string zeroR = "t" + std::to_string(tempCounter++);
+                    std::string zeroR = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"0"}, zeroR);
                     ir.addInstruction(currentFunc, "assign", {zeroR}, idxVars[gj]);
                 }
@@ -8981,9 +9047,9 @@ class LoweringVisitor {
             }
             // Fall through to contL.
             ir.addInstruction(currentFunc, "label", {}, g.contL);
-            std::string one = "t" + std::to_string(tempCounter++);
+            std::string one = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"1"}, one);
-            std::string nxt = "t" + std::to_string(tempCounter++);
+            std::string nxt = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "add", {idxVars[gi], one}, nxt);
             ir.addInstruction(currentFunc, "assign", {nxt}, idxVars[gi]);
             ir.addInstruction(currentFunc, "br", {}, g.loopL);
@@ -9026,7 +9092,7 @@ class LoweringVisitor {
     std::string lowerDictComp(const ASTNode* node) {
         // {key: val for target in iter if conds ...}  (supports multiple generators for product/nested)
         if (node->children.size() < 2) {
-            std::string dictRes = "t" + std::to_string(tempCounter++);
+            std::string dictRes = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
             return dictRes;
         }
@@ -9040,13 +9106,13 @@ class LoweringVisitor {
                 gens.push_back(node->children[i].get());
         }
         if (gens.empty()) {
-            std::string dictRes = "t" + std::to_string(tempCounter++);
+            std::string dictRes = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
             return dictRes;
         }
 
         // Create result dict
-        std::string dictRes = "t" + std::to_string(tempCounter++);
+        std::string dictRes = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyDict_New"}, dictRes);
 
         // Recursive emitter for nested generators.
@@ -9056,7 +9122,7 @@ class LoweringVisitor {
                 // innermost: compute key/val and insert
                 std::string kVal = lowerExpr(keyNode);
                 std::string vVal = lowerExpr(valNode);
-                std::string dummy = "t" + std::to_string(tempCounter++);
+                std::string dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, kVal, vVal}, dummy);
                 return;
             }
@@ -9067,14 +9133,14 @@ class LoweringVisitor {
             std::string dcIterSlot = "__dci_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {iterVal}, dcIterSlot);
             iterVal = dcIterSlot;
-            std::string lenRes  = "t" + std::to_string(tempCounter++);
+            std::string lenRes  = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterVal}, lenRes);
             std::string lenSlotDC = "__sl_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlotDC);
 
             // per-level index
             std::string idxVar  = "dc_i" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
-            std::string idxInit = "t" + std::to_string(tempCounter++);
+            std::string idxInit = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
             ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
 
@@ -9085,12 +9151,12 @@ class LoweringVisitor {
             std::string exitL = "dc_ex" + std::to_string(gi) + "_" + std::to_string(dc);
 
             ir.addInstruction(currentFunc, "label", {}, loopL);
-            std::string cmpR = "t" + std::to_string(tempCounter++);
+            std::string cmpR = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "icmp", {"Lt", idxVar, lenSlotDC}, cmpR);
             ir.addInstruction(currentFunc, "br", {cmpR, bodyL, exitL});
 
             ir.addInstruction(currentFunc, "label", {}, bodyL);
-            std::string item = "t" + std::to_string(tempCounter++);
+            std::string item = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", iterVal, idxVar}, item);
             // target is the first child of the comprehension (Name or unpack pattern)
             if (g->children.size() > 0 && g->children[0]) {
@@ -9118,9 +9184,9 @@ class LoweringVisitor {
             // increment and continue outer loop
             ir.addInstruction(currentFunc, "label", {}, afterCondsL);  // fallthrough from body if no ifs
             ir.addInstruction(currentFunc, "label", {}, contL);
-            std::string one = "t" + std::to_string(tempCounter++);
+            std::string one = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"1"}, one);
-            std::string nxt = "t" + std::to_string(tempCounter++);
+            std::string nxt = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "add", {idxVar, one}, nxt);
             ir.addInstruction(currentFunc, "assign", {nxt}, idxVar);
             ir.addInstruction(currentFunc, "br", {}, loopL);

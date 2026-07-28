@@ -18,11 +18,10 @@ Real CPython stdlib modules beyond the synthetic implementations (`sys`, `re`,
 compiled — pyc can't compile arbitrary CPython stdlib source — and always
 report a clear ImportError instead of attempting to.
 
-### `**kwargs` — Call-Site Dict Spreading Fixed; Catch-All Parameter Still Not Implemented
-This entry used to read simply "`**kwargs` keyword expansion is not yet
-implemented" — refined after a bug hunt turned up a real crash in the
-part that *was* implemented, and pinned down more precisely what still
-isn't.
+### `**kwargs` — Now Mostly Working; Two Narrow Gaps Remain
+This entry has accumulated fixes across several passes of the same bug
+hunt; kept as one section since all four findings below are different
+facets of the same feature.
 
 **Fixed: `f(**some_dict)` at a call site used to segfault.** Spreading a
 real `dict` object into a callee's ordinary named parameters (`inner(a,
@@ -43,75 +42,91 @@ a segfault on every `f(**kwargs)` call, confirmed against real CPython
 (now `Pyc_ExpandKwargsList`) to take the parameter names as a single
 boxed list argument instead of C varargs, so the call site always passes
 exactly two real arguments — sidestepping the sentinel problem entirely
-rather than patching around it. Verified against real CPython and added
-as a permanent `tests/runner.py` regression; valgrind shows 0 errors.
+rather than patching around it.
 
-**Still not implemented, and not attempted in this pass (each is its own
-gap, found while verifying the fix above, larger in scope than a
-contained crash fix)**:
-- **Missing keys don't fall back to the parameter's default.**
-  `inner(a, b, c=99)` called as `inner(**{"a": 1, "b": 2})` (omitting
-  `c`, which has a default) should give `102`; pyc substitutes `None`
-  for the missing key (→ `0` in arithmetic), giving `3`. The direct
-  `key=value` keyword-argument call path already consults
-  `funcDefaultValues` for exactly this case — the dict-spread path
-  doesn't.
+**Fixed: combining `*args` and `**kwargs` catch-all parameters together
+on the same function crashed compilation entirely.** `def f(*args,
+**kwargs): ...` failed LLVM module verification on every *indirect*
+call (through a first-class value, closure, or decorator) — **breaking
+the single most common use of `**kwargs` in real Python code: a generic
+decorator's inner wrapper**, `def wrapper(*args, **kwargs): return
+f(*args, **kwargs)`. Confirmed this crashed compilation even as a
+*nested* function inside a closure (the standard `@deco` pattern), and
+even when the wrapper's body never actually read `kwargs` at all —
+merely declaring a nested function with both parameters was enough.
+Root cause: every function that might be called indirectly gets a
+generated `__apply__N` adapter in `Codegen.cpp` — a wrapper that unpacks
+a boxed argument list into the real function's native parameter shape.
+That adapter's parameter-shape analysis scanned for the *first*
+parameter name starting with `*` to find "the" vararg slot — but
+`**kwargs` also starts with `*` (stored internally as `"**kwargs"`), so
+for a signature with both, the loop found `*args` and stopped, never
+noticing `**kwargs` as a *second*, separate slot, leaving the adapter's
+call to the real function one argument short. Fixed by detecting
+`*args` and `**kwargs` as two independent slots (checking for a
+*second* leading `*` character) and supplying a placeholder for the
+`**kwargs` slot.
+
+**Fixed: the `**kwargs` catch-all *parameter* itself now actually
+collects the caller's keyword arguments, for direct calls.** `def
+f(**kwargs): print(kwargs)` called as `f(a=1, b=2)` used to print `[]`
+(an empty **list**, `type()` showed `<class 'list'>`) instead of
+CPython's `{'a': 1, 'b': 2}` (a real dict) — the caller's excess keyword
+arguments weren't collected into anything at all, for *any* call shape,
+not just the indirect one described above. Root cause was the same
+"first star-prefixed name wins" bug pattern as the adapter crash above,
+but in the separate, *direct*-call-site logic in `Compiler.cpp`'s
+`lowerCall` (used when calling a named function directly, not through
+`Pyc_Apply`): the code that collects `*args` overflow into a list also
+stopped at the first `*`-prefixed parameter, so a trailing `**kwargs`
+parameter never got a value collected for it — and separately, keyword
+arguments that didn't match any *regular* parameter name were simply
+dropped on the floor instead of being routed anywhere.
+
+Fixed by detecting `*args` and `**kwargs` as independent slots (mirroring
+the `Codegen.cpp` adapter fix above) and, whenever the callee has a
+`**kwargs` slot: unconditionally giving it a real (initially empty) dict
+so a call with zero keyword arguments still supplies every parameter the
+declared IR function expects (the crash-shaped failure mode), then — if
+the call actually has keyword arguments that don't name a regular
+parameter — building a populated dict from exactly those and using it
+instead. Verified against real CPython: `**kwargs` alongside regular
+positional parameters, `**kwargs` alone, `*args` and `**kwargs` together
+in every arg-count combination (`h(1,2,3,x=1,y=2)`, `h(1,2,3)`, `h(x=1)`,
+`h()`), iterating and summing the collected dict's values, and
+`.get(key, default)` on the result.
+
+**Still not fixed (each a separate, narrower gap)**:
+- **Indirect calls** (through a closure/decorator/first-class value,
+  going through the `Codegen.cpp` adapter rather than `lowerCall`'s
+  direct-call path) still only ever get an empty dict for a `**kwargs`
+  slot — the adapter fix above only stops the crash; by the time a call
+  reaches `Pyc_Apply`, the caller's keyword *names* are no longer
+  available (only a flat positional argument list), so there's nothing
+  for the adapter to populate the dict from without a deeper change to
+  how indirect calls carry keyword information.
+- **Missing keys in a `**dict` spread don't fall back to the parameter's
+  default.** `inner(a, b, c=99)` called as `inner(**{"a": 1, "b": 2})`
+  (omitting `c`, which has a default) should give `102`; pyc substitutes
+  `None` for the missing key (→ `0` in arithmetic), giving `3`. The
+  direct `key=value` keyword-argument path (fixed above) already
+  consults `funcDefaultValues` for exactly this case — the dict-spread
+  path doesn't.
 - **Mixing a positional argument with a `**dict` spread mis-binds.**
   `mixed(a, b, c)` called as `mixed(1, **{"b": 2, "c": 3})` should give
   `123`; pyc gives `23`, consistent with the positional `1` for `a`
   being silently dropped/overwritten rather than combined with the
   expanded dict values.
-- **The `**kwargs` catch-all *parameter* itself remains entirely
-  unimplemented** (this is the part the original one-line note was
-  really about): `def f(**kwargs): print(kwargs)` called as `f(a=1,
-  b=2)` prints `[]` (an empty **list**, `type()` shows `<class
-  'list'>`) instead of CPython's `{'a': 1, 'b': 2}` (a real dict) —
-  the caller's excess keyword arguments aren't collected into anything
-  at all. Forwarding that empty/wrongly-typed value onward via `g(**kwargs)`
-  compiles and runs (safely, thanks to the fix above) but obviously
-  can't produce the right result. Not fixed — implementing this
-  properly means collecting a caller's unmatched keyword arguments into
-  a real dict at every call site, a larger feature than a contained bug
-  fix.
+- A `**dict` spread's own unmatched entries (keys that don't name any
+  regular parameter) are not routed into a `**kwargs` catch-all
+  parameter either, even though direct `key=value` arguments now are —
+  routing them would need a *runtime* set-difference between the spread
+  dict's keys and the callee's named parameters, since (unlike direct
+  keyword arguments) the dict's actual keys aren't known until runtime.
 
-**Fixed on a later pass**: combining `*args` and `**kwargs` catch-all
-parameters together on the same function (`def f(*args, **kwargs): ...`)
-used to crash LLVM module verification at compile time — **breaking the
-single most common use of `**kwargs` in real Python code: a generic
-decorator's inner wrapper**, `def wrapper(*args, **kwargs): return
-f(*args, **kwargs)`. Confirmed this crashed compilation even as a
-*nested* function inside a closure (the standard `@deco` pattern), and
-even when the wrapper's body never actually read `kwargs` at all —
-merely declaring a nested function with both a `*args` and a `**kwargs`
-parameter was enough to trigger the crash. A nested function with only
-`*args` (no `**kwargs`) always compiled and ran correctly, as did a
-top-level (non-nested) function combining both.
-
-Root cause: every function that might be called indirectly (through a
-first-class value, a closure, or a decorator) gets a generated
-`__apply__N` adapter in `Codegen.cpp` — a small wrapper that unpacks a
-boxed argument list into the real function's native parameter shape.
-That adapter's parameter-shape analysis scanned the function's
-parameter names for the *first* one starting with `*` to find "the"
-vararg slot — but `**kwargs` also starts with `*` (it's stored internally
-as `"**kwargs"`), so for a signature with both, the loop found `*args`
-and stopped, never noticing `**kwargs` as a *second*, separate slot. The
-adapter then collected only one variadic list and called the real
-function (which — correctly — has two separate trailing parameters, one
-per star-marker) with one argument short, an argument-count mismatch
-LLVM's verifier rejects outright.
-
-Fixed by detecting `*args` and `**kwargs` as two independent slots
-(checking for a *second* leading `*` character, not just the first) and
-supplying a placeholder argument for the `**kwargs` slot — an empty list,
-matching the same placeholder direct (non-adapter) calls already use for
-this still-unimplemented parameter, so the fix only removes the crash
-without changing (or worsening) the existing "always empty" kwargs
-semantics documented above. Verified against real CPython for a single
-decorator and a stacked pair of decorators (base case → wrapped once →
-wrapped twice), each going through its own generated adapter. Added as
-permanent `tests/runner.py` regressions. Full suite and import tests
-stay green; `valgrind --tool=memcheck` shows 0 errors.
+Verified fixes added as permanent `tests/runner.py` regressions. Full
+suite and import tests stay green after each fix; `valgrind
+--tool=memcheck` shows 0 errors throughout.
 
 ### Full First-Class Function Objects — Partial
 Functions have identity (`is`, `==`) and repr (`<function f at 0x...>`), but full
@@ -846,18 +861,20 @@ class name — an exception-object type-introspection formatting issue,
 not part of this bug hunt's pattern. Worth a future look, not fixed
 here.)
 
-### Severe, Different-Class Bug Found, Documented But Not Fixed: User Variable Names Can Collide With the Compiler's Internal Temp Namespace
-Found by continuing the same bug hunt into `copy.copy()`. This one is
+### User Variable Names Could Collide With the Compiler's Internal Temp Namespace — Fixed
+Found by continuing the same bug hunt into `copy.copy()`. This one was
 architecturally unlike the others above — not a storage-representation
 mismatch or a missing dispatch branch, but a genuine **namespace
 collision**: the compiler allocates internal temporary IR values using
-names of the form `t<N>`/`c<N>` (`tempCounter`, reset per function),
-inlined directly as `"t" + std::to_string(tempCounter++)` /
-`"c" + std::to_string(tempCounter++)` at **361 separate call sites**
-across `Compiler.cpp` (not centralized through one helper). These names
-live in **the same namespace** as real user variable names — nothing
-prevents a Python variable actually named `t3` or `c0` from being
+names of the form `t<N>`/`c<N>`/`i<N>`/`s<N>` (`tempCounter`, reset per
+function), inlined directly as `"t" + std::to_string(tempCounter++)` and
+three sibling patterns at **392 separate call sites** across
+`Compiler.cpp` (not centralized through one helper). These names lived
+in **the same namespace** as real user variable names — nothing
+prevented a Python variable actually named `t3` or `c0` from being
 treated as, and silently confused with, one of these internal temps.
+Originally documented here as "too large in scope to fix in this pass";
+revisited and fixed on explicit request.
 
 **Confirmed, reproduced, both failure modes exist**:
 - **Silent data corruption** (the worse of the two): `c0 = "hello";
@@ -892,30 +909,45 @@ choose (loop temporaries, coefficients `c0`/`c1`/`c2` in numeric code),
 making this more than a purely theoretical risk, even though it's still
 an unusual naming style overall.
 
-**Why this wasn't fixed in this pass, unlike the others above**: a real
-fix is one of two shapes, both meaningfully larger in scope than
-anything else fixed during this bug hunt:
-1. A validation pass rejecting `t<N>`/`c<N>`-pattern names at compile
-   time with a clear error (converts silent corruption into a loud,
-   safe failure, but doesn't remove the underlying collision — and
-   getting full coverage right requires enumerating every kind of AST
-   binding site correctly: assignment targets, function/lambda
-   parameters — stored in a separate `ASTNode::args` string vector, not
-   as child `Name` nodes, so a naive "walk all `Name` nodes" check would
-   miss them entirely — `with`/`except`-as targets, comprehension
-   targets, `global`/`nonlocal` declarations, and more).
-2. Changing the temp-naming prefix to something no valid Python
-   identifier can ever contain (Python identifiers are restricted to
-   `[A-Za-z0-9_]`; LLVM value-name hints accept a much broader
-   character set), closing the collision permanently — mechanical, but
-   touches the naming convention at all 361 call sites, which is a
-   large enough surface that it warrants dedicated planning rather than
-   a same-session drive-by change.
+**The fix**: of the two shapes considered when this was first documented
+(a validation pass rejecting collision-prone names, or closing the
+collision permanently by changing the temp-naming prefix), the second
+was chosen — it removes the hazard entirely rather than merely detecting
+it, and turned out to be mechanical rather than a redesign. Python
+identifiers are restricted to `[A-Za-z0-9_]` (plus non-ASCII letters,
+never ASCII punctuation); LLVM's local-value-name syntax explicitly
+permits `$` unquoted (already used throughout this codebase's own
+runtime bitcode, e.g. in Itanium-mangled C++ template symbols pulled in
+by the LTO step) and accepts arbitrary characters when quoted regardless.
+Prepending `$` to all four generated prefixes — `t`/`c`/`i`/`s` all
+became `$t`/`$c`/`$i`/`$s` — makes every internal temp name something no
+valid Python identifier can ever be, closing the collision permanently,
+while remaining completely unremarkable as an LLVM value-name hint (LLVM
+prints it as `%"$c0"` — quoted, but syntactically ordinary, no different
+in kind from names it already quotes elsewhere).
 
-Given the user's explicit direction — document this thoroughly and keep
-hunting for other bugs rather than attempting either fix in this pass —
-this is recorded here as a known, real, reproducible, unfixed issue for
-a dedicated future session.
+Applied as a single mechanical, literal-string substitution across all
+392 call sites (a scripted find-and-replace of the four exact generation
+expressions, not a hand-edit of each site — verified no comment or
+unrelated string literal in `Compiler.cpp` coincidentally matched the
+substituted text first). Nothing outside `Compiler.cpp` inspects or
+parses these name strings by character content (confirmed by grepping
+`Codegen.cpp`/`LLVMDCE.cpp`/`IR.cpp` for any code that reads the first
+character of an operand name), so no other file needed changes. Longer,
+already-low-collision-risk generated names (`__nesteddef_`,
+`__lc_lst_`, `assert_fail_`, and similar `__`- or word-prefixed labels
+used elsewhere in the same file) were left as-is — they were never the
+confirmed collision vector and aren't standalone short names a
+programmer would plausibly pick.
+
+Verified against both original repros (`c0 = "hello"; print(c0)` now
+correctly prints `hello`; `b = [1,2,3]; import copy; c2 = copy.copy(b)`
+now compiles and runs correctly) plus a broader sweep of previously
+collision-prone names (`t0`, `t1`, `c0`, `c1`, `i0`, `i1`, `s0`, `s1`,
+function parameters `t2`/`c3`, a loop-local `t3`, and instance attributes
+`c5`/`t9`) — all match real CPython exactly. Full suite and import tests
+stay green; `valgrind --tool=memcheck` shows 0 errors on both a mixed
+collision-name smoke test and the existing `nbody.py` numeric benchmark.
 
 ### `tuple`, `divmod`, `pow` — the Same `neverDynamic` Bug Class Found in an Earlier Phase, With More Victims
 Continuing the hunt (directed to keep going after the namespace-collision
