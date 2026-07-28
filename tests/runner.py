@@ -429,6 +429,42 @@ print(a[0],a[1],a[2])
      "print(sorted(words, key=cmp_to_key(lambda a, b: spaceship(b, a))))",
      "['cherry', 'banana', 'apple']\n"),
 
+    # Bug-hunt regression: sorted()/.sort() reverse= was silently ignored;
+    # fixing it initially caused a regression where passing reverse= at
+    # all (True or False) corrupted the sort, because sorted() has no
+    # funcParamNames entry so the generic kwarg-append fallback stuffed
+    # reverse's value onto argRes[1], which the key-argument fallback
+    # then misread as a positional key function. Covers no-arg, reverse=
+    # alone (both values), key= alone, and key=+reverse= together.
+    ("print(sorted([3, 1, 2]))", "[1, 2, 3]\n"),
+    ("print(sorted([3, 1, 2], reverse=True))", "[3, 2, 1]\n"),
+    ("print(sorted([3, 1, 2], reverse=False))", "[1, 2, 3]\n"),
+    ("print(sorted([3, 1, 2], key=lambda x: -x))", "[3, 2, 1]\n"),
+    ("print(sorted([3, 1, 2], key=lambda x: -x, reverse=True))", "[1, 2, 3]\n"),
+    ("a = [3, 1, 2]\na.sort()\nprint(a)", "[1, 2, 3]\n"),
+    ("a = [3, 1, 2]\na.sort(reverse=True)\nprint(a)", "[3, 2, 1]\n"),
+    ("a = [3, 1, 2]\na.sort(key=lambda x: -x)\nprint(a)", "[3, 2, 1]\n"),
+    ("a = [3, 1, 2]\na.sort(key=lambda x: -x, reverse=True)\nprint(a)", "[1, 2, 3]\n"),
+
+    # Bug-hunt regression: min()/max() key= was silently ignored (no
+    # funcParamNames entry meant key's value got appended to argRes and
+    # misread as a second positional value to compare, e.g. printing the
+    # lambda function object itself instead of the correct min/max).
+    ("print(min([3, 1, 2], key=lambda x: -x))", "3\n"),
+    ("print(max([3, 1, 2], key=lambda x: -x))", "1\n"),
+    ("print(min(3, 1, key=lambda x: -x))", "3\n"),
+    ("print(max(3, 1, key=lambda x: -x))", "1\n"),
+
+    # Bug-hunt regression: assigning a native i1 comparison result to a
+    # variable crashed LLVM verification ("assign" opcode's native-value
+    # boxing switch handled i64/double but not i1, despite icmp's own
+    # fast path promising lazy boxing on demand). Covers literal,
+    # chained, function-parameter, and loop-variable comparisons.
+    ("x = 1 < 2\nprint(x)", "True\n"),
+    ("x = 1 < 2 < 3\nprint(x)", "True\n"),
+    ("def f(a, b): return a < b\nprint(f(1, 2))", "True\n"),
+    ("for i in range(3):\n    flag = i < 2\n    print(flag)", "True\nTrue\nFalse\n"),
+
     # Tier-2-batch regression: unsupported imports print ImportError to
     # stderr and return None (rather than silently producing wrong output).
     # The runner only checks stdout, so the program's stdout is empty.

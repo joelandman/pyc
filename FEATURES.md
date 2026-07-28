@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **323/323** (runner shows 323/323, file_case_failures=0).
+Current test count: **340/340** (runner shows 340/340, file_case_failures=0).
 
 ## Types and Literals
 
@@ -53,6 +53,13 @@ x if cond else y               ternary
   while verifying `decimal.Decimal`'s truthiness (an unrelated, much
   narrower change on its own). See IMPLEMENTATION.md for the root cause
   and fix.
+- **Severe, general bug found and fixed**: *assigning* a native
+  comparison result to a variable (`x = 1 < 2`, chained `1 < 2 < 3`,
+  comparisons of function parameters, `flag = i < 3` inside a loop —
+  an entirely ordinary idiom) crashed LLVM module verification or
+  silently miscompiled. Conditions used directly in `if`/`while`/ternary
+  were unaffected (a different, already-fixed bug — see above). See
+  IMPLEMENTATION.md for the root cause and fix.
 
 ## Functions
 
@@ -117,7 +124,7 @@ f(b=3, a=4)                    keyword call arguments
 `len(x)`, `str(x)`, `int(x)` / `int(x, base)`, `float(x)`, `complex(x)` / `complex(x, y)`,
 `abs(x)`, `min(a,b,...)` / `min(list)`, `max(a,b,...)` / `max(list)`,
 `list(x)`, `enumerate(iterable)`, `zip(a, b)`,
-`sum(x)`, `sorted(x)` / `sorted(x, key=)`, `any(x)`, `all(x)`, `isinstance(obj, info)`,
+`sum(x)`, `sorted(x)` / `sorted(x, key=)` / `sorted(x, reverse=)`, `any(x)`, `all(x)`, `isinstance(obj, info)`,
 `bool(x)`, `type(x)`, `id(x)`, `repr(x)`, `hex(x)`, `oct(x)`, `bin(x)`,
 `ord(c)`, `chr(i)`, `round(x)`, `divmod(a, b)`, `pow(base, exp)`,
 `pow(base, exp, mod)` (modular exponentiation), `tuple(x)`,
@@ -135,6 +142,15 @@ f(b=3, a=4)                    keyword call arguments
   gaps. `pow(base, exp, mod)` (3-arg modular exponentiation) was
   additionally found to have never been implemented at all — the
   modulus was silently ignored. See IMPLEMENTATION.md.
+- **Real bugs found and fixed**: `sorted(x, reverse=True)`,
+  `list.sort(reverse=True)`, `list.sort(key=...)`, and `min`/`max`'s
+  `key=` argument were all silently ignored — `reverse=`/`key=`'s value
+  was misread as an unrelated positional argument (a key function
+  mistaken for the reverse flag, or vice versa) due to how builtins with
+  no known parameter signature merge keyword arguments back into the
+  positional-argument list. All fixed; `cmp_to_key`-based sorting still
+  doesn't support `reverse=` (a narrower, documented remaining gap). See
+  IMPLEMENTATION.md.
 
 ## File I/O
 

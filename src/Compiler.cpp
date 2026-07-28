@@ -4762,16 +4762,30 @@ class LoweringVisitor {
         if (funcName == "min" || funcName == "max") {
             std::string fn2  = (funcName == "min") ? "PyBuiltin_Min2"    : "PyBuiltin_Max2";
             std::string fnLst = (funcName == "min") ? "PyBuiltin_MinList" : "PyBuiltin_MaxList";
-            if (argRes.size() == 1) {
+            // key= — found completely unsupported (silently ignored;
+            // min/max have no funcParamNames entry, so the generic
+            // kwarg-append fallback stuffed key's value onto the end of
+            // argRes where it was then misread as a second positional
+            // value to compare against, e.g. min([3,1,2], key=lambda
+            // x: -x) printed the lambda itself) while hunting for more
+            // bugs. Use posArgCount, not argRes.size(), to find the true
+            // positional args (argRes may have kwarg values appended).
+            std::string keyName;
+            for (const auto& kv : kwArgs) {
+                if (kv.first == "key") keyName = kv.second;
+            }
+            std::vector<std::string> posArgs(argRes.begin(),
+                argRes.begin() + std::min(posArgCount, argRes.size()));
+            if (posArgs.size() == 1) {
                 std::string res = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {fnLst, argRes[0]}, res);
+                ir.addInstruction(currentFunc, "call", {fnLst, posArgs[0], keyName}, res);
                 noteType(res, "boxed");
                 return res;
             }
-            std::string acc = argRes[0];
-            for (size_t i = 1; i < argRes.size(); ++i) {
+            std::string acc = posArgs[0];
+            for (size_t i = 1; i < posArgs.size(); ++i) {
                 std::string res2 = "t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {fn2, acc, argRes[i]}, res2);
+                ir.addInstruction(currentFunc, "call", {fn2, acc, posArgs[i], keyName}, res2);
                 noteType(res2, "boxed");
                 acc = res2;
             }
@@ -4916,10 +4930,22 @@ class LoweringVisitor {
             std::string res = "t" + std::to_string(tempCounter++);
             // Find the key argument (positional or keyword).
             std::string keyName;
+            // reverse= — found completely missing (silently ignored,
+            // sorted(x, reverse=True) returned the plain ascending sort)
+            // while hunting for more bugs; PyBuiltin_Sorted now takes a
+            // 3rd reverse-flag argument.
+            std::string reverseName;
             for (const auto& kv : kwArgs) {
-                if (kv.first == "key") { keyName = kv.second; break; }
+                if (kv.first == "key") keyName = kv.second;
+                else if (kv.first == "reverse") reverseName = kv.second;
             }
-            if (keyName.empty() && argRes.size() >= 2) keyName = argRes[1];
+            // Use posArgCount (captured before the kwArgs-append fallback
+            // runs for builtins with no funcParamNames entry) rather than
+            // argRes.size(): sorted() has no registered params, so any
+            // kwarg (e.g. reverse=True) gets blindly appended to argRes by
+            // that fallback, and argRes.size()>=2 would then wrongly treat
+            // reverse's value as a positional key function.
+            if (keyName.empty() && posArgCount >= 2) keyName = argRes[1];
             // Detect the cmp_to_key(cmp) pattern: a Call to cmp_to_key
             // (direct, not via an alias) with one positional arg. The
             // call may be a positional arg or a keyword arg's value.
@@ -4944,10 +4970,15 @@ class LoweringVisitor {
                 if (!cmpArg.empty()) break;
             }
             if (!cmpArg.empty()) {
+                // reverse= isn't threaded through the cmp_to_key path —
+                // a narrower, documented remaining gap (this combination
+                // is rare enough not to have been hit by this bug hunt;
+                // the far more common sorted(x, reverse=True) and
+                // sorted(x, key=..., reverse=True) forms are fixed above).
                 ir.addInstruction(currentFunc, "call", {"PyBuiltin_SortedWithCmp", arg, cmpArg}, res);
             } else {
                 std::string keyArg = keyName.empty() ? "" : keyName;
-                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sorted", arg, keyArg}, res);
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sorted", arg, keyArg, reverseName}, res);
             }
             noteType(res, "list");
             // S3: Propagate element type from argument to sorted result
@@ -8167,7 +8198,18 @@ class LoweringVisitor {
             }
         // List methods
         } else if (methodName == "sort") {
-            ir.addInstruction(currentFunc, "call", {"PyList_Sort", obj}, res);
+            // key=/reverse= — found completely unimplemented (silently
+            // ignored) while hunting for more bugs; extracted the same
+            // way other keyword-only args are pulled from the raw AST
+            // elsewhere in this function (e.g. groupby's key=).
+            std::string keyArg, reverseArg;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (!ch || ch->type != "Keyword" || ch->children.empty()) continue;
+                if (ch->id == "key") keyArg = lowerExpr(ch->children[0].get());
+                else if (ch->id == "reverse") reverseArg = lowerExpr(ch->children[0].get());
+            }
+            ir.addInstruction(currentFunc, "call", {"PyList_Sort", obj, keyArg, reverseArg}, res);
         } else if (methodName == "pop" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float" || typeOf(obj) == "deque")) {
             if (args.empty()) {
                 ir.addInstruction(currentFunc, "call", {"PyList_Pop", obj}, res);

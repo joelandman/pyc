@@ -437,16 +437,30 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         sj->addFnAttr(llvm::Attribute::ReturnsTwice);
     }
 
-    // Builtins: min/max, list, reversed, enumerate, zip
-    for (const char* name : {"PyBuiltin_MinList","PyBuiltin_MaxList",
-                              "PyBuiltin_List","PyBuiltin_Reversed",
+    // Builtins: list, reversed, enumerate, zip
+    for (const char* name : {"PyBuiltin_List","PyBuiltin_Reversed",
                               "PyBuiltin_Enumerate"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
-    for (const char* name : {"PyBuiltin_Min2","PyBuiltin_Max2","PyBuiltin_Zip2"}) {
-        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
-        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    llvm::FunctionType* zip2Ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(zip2Ty, llvm::Function::ExternalLinkage, "PyBuiltin_Zip2", module.get());
+    // min/max: list form takes (iterable, key); 2-value form takes
+    // (a, b, key) — key= was found completely unsupported (silently
+    // ignored, min([...], key=f) printed the key function itself,
+    // because min/max have no funcParamNames entry so the generic
+    // kwarg-append fallback stuffed key's value onto the end of argRes,
+    // where it was then misread as a second positional value) while
+    // hunting for more bugs.
+    {
+        llvm::FunctionType* minMaxListTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        for (const char* name : {"PyBuiltin_MinList","PyBuiltin_MaxList"}) {
+            llvm::Function::Create(minMaxListTy, llvm::Function::ExternalLinkage, name, module.get());
+        }
+        llvm::FunctionType* minMax2Ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        for (const char* name : {"PyBuiltin_Min2","PyBuiltin_Max2"}) {
+            llvm::Function::Create(minMax2Ty, llvm::Function::ExternalLinkage, name, module.get());
+        }
     }
 
     // Builtins: int, float, abs; string methods; dict/list methods
@@ -461,9 +475,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                               "PyBuiltin_Id","PyBuiltin_Repr",
                               "PyString_Upper","PyString_Lower","PyString_Strip",
                               "PyString_SplitWhitespace","PyDict_Keys","PyDict_Values",
-                              "PyDict_Items","PyList_Sort","PyList_Pop"}) {
+                              "PyDict_Items","PyList_Pop"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    // list.sort(key, reverse) — 3-arg (receiver, key, reverse), both key
+    // and reverse newly supported (previously silently ignored).
+    {
+        llvm::FunctionType* sort3Ty = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(sort3Ty, llvm::Function::ExternalLinkage, "PyList_Sort", module.get());
     }
     // 2-arg builtins: divmod, round, pow, complex
     llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
@@ -563,10 +584,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyBuiltin_CmpToKey", module.get());
     }
-    // sorted(lst, key) and sorted_with_cmp(lst, cmp) take 2 args.
+    // sorted_with_cmp(lst, cmp) takes 2 args; sorted(lst, key, reverse) takes 3.
     llvm::FunctionType* sortedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
-    llvm::Function::Create(sortedTy, llvm::Function::ExternalLinkage, "PyBuiltin_Sorted", module.get());
     llvm::Function::Create(sortedTy, llvm::Function::ExternalLinkage, "PyBuiltin_SortedWithCmp", module.get());
+    {
+        llvm::FunctionType* sorted3Ty = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(sorted3Ty, llvm::Function::ExternalLinkage, "PyBuiltin_Sorted", module.get());
+    }
     {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_IsInstance", module.get());
@@ -2509,6 +2534,32 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 if (srcIsOwned) ownedTemps.erase(srcName);
 
                 // Box native values. The box call creates a new owned ref.
+                //
+                // Severe, general, previously-unnoticed bug fixed here:
+                // this switch didn't have an i1 case, even though the
+                // "icmp" opcode's handler (above) deliberately stores a
+                // *native*, unboxed i1 for a comparison between two
+                // native i64/double operands (its own comment there says
+                // so explicitly: "the result is used in a non-branch
+                // context... getAsPyObject boxes it lazily via
+                // PyBool_New" — getAsPyObject (this function's sibling
+                // helper, used by "call" instruction arguments) already
+                // has exactly this i1 case; "assign" duplicates
+                // getAsPyObject's i64/double logic inline instead of
+                // calling it, and that duplicate never got the i1 case
+                // added). Result: assigning ANY comparison between two
+                // proven-native values to a variable — not just chained
+                // comparisons, and not just literal-vs-literal — crashed
+                // LLVM module verification outright (`Call parameter
+                // type does not match function signature! ... i1 true
+                // ... call void @Py_INCREF(i1 true)`), since the raw i1
+                // got passed straight to Py_INCREF as if it were a
+                // PyObject*. Confirmed broad, realistic impact: `x = 1 <
+                // 2`, `def f(a,b): x = a < b` (proven-native function
+                // parameters), and `flag = i < 3` inside a loop over
+                // range() (a proven-native loop variable) all crashed —
+                // an entirely ordinary "name a comparison result" idiom,
+                // not a rare edge case.
                 llvm::Value* newVal = src;
                 if (newVal->getType() == i64Ty) {
                     newVal = boxI64(newVal, srcName + ".boxed");
@@ -2516,6 +2567,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 } else if (newVal->getType()->isDoubleTy()) {
                     newVal = boxDouble(newVal, srcName + ".boxed");
                     srcIsOwned = true;
+                } else if (newVal->getType() == llvm::Type::getInt1Ty(context)) {
+                    llvm::Function* boolNewAssign = module->getFunction("PyBool_New");
+                    if (boolNewAssign) {
+                        llvm::Value* i32v = builder.CreateZExt(newVal, llvm::Type::getInt32Ty(context));
+                        newVal = builder.CreateCall(boolNewAssign, {i32v}, srcName + ".boxed");
+                        srcIsOwned = true;
+                    }
                 }
 
                 llvm::Function* incref = module->getFunction("Py_INCREF");

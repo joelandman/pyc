@@ -944,6 +944,98 @@ it was **not** documented anywhere before, despite being a known,
 deliberate cut — the existing `FEATURES.md` line ("`str` | Literals, +,
 *, f-strings, ...") claimed f-string support without this caveat.
 
+### Assigning a Native Comparison Result to a Variable Crashed LLVM Verification — Fixed
+Continuing the hunt turned up a severe, broad-impact bug distinct from
+the earlier truthiness bug (which affected `if`/`while`/ternary
+*conditions*, not assignments) — but caused by the same underlying
+pattern: the codegen path for "native" (unboxed) values didn't fully
+agree with itself about who's responsible for boxing an `i1`.
+
+The `"icmp"` IR opcode has a fast path for comparisons between two native
+`i64`/`i64` or `double`/`double` operands: it stores the raw, unboxed
+LLVM `i1` result directly in the codegen value map, with an existing
+comment promising that "when the result is used in a non-branch context
+(e.g. assigned to a variable...), `getAsPyObject` boxes it lazily via
+`PyBool_New`." That promise held for call arguments (`getAsPyObject`
+does correctly handle `i1` via `CreateZExt` + `PyBool_New`) but **not**
+for the `"assign"` opcode's own "box native values" section, which only
+handled `i64` (`boxI64`) and `double` (`boxDouble`) — silently falling
+through with no boxing at all for `i1`, so the raw 1-bit LLVM value got
+stored into a `PyObject**` slot and then passed to `Py_INCREF` as if it
+were already a pointer.
+
+Confirmed via minimal repros: `x = 1 < 2` (literal comparison), `x = 1 <
+2 < 3` (chained comparison), `def f(a, b): return a < b` called with
+plain int arguments (comparison of function parameters proven native by
+the compiler's own type inference), and `flag = i < 3` inside a `for i
+in range(n):` loop (an entirely ordinary "name a comparison result"
+idiom) all either crashed LLVM module verification outright (`Store
+operand must be a pointer`, or `Call parameter type does not match
+function signature! i1 true ... call void @Py_INCREF(i1 true)`) or, in
+some builds, silently miscompiled. Fixed by adding an `i1` branch to the
+`"assign"` opcode's boxing switch in `Codegen.cpp`, mirroring
+`getAsPyObject`'s existing correct handling exactly (`CreateZExt` to
+`i32`, then `PyBool_New`). Verified fixed against all four repros,
+matching CPython exactly; added as permanent regression cases in
+`tests/runner.py`.
+
+### `sorted()`/`.sort()` `reverse=` and `key=`, `min()`/`max()` `key=` — All Silently Ignored, Now Fixed
+Continuing the hunt, `sorted(x, reverse=True)`, `list.sort(reverse=True)`,
+`list.sort(key=...)`, and `min`/`max`'s `key=` argument were all found
+completely unimplemented: the keyword was silently dropped and the
+plain unmodified ascending sort (or the un-keyed min/max) was returned
+instead. Confirmed against real CPython for each.
+
+**Root cause, shared by all of them**: `sorted`, `min`, and `max` are
+builtins with no entry in `funcParamNames` (that map only tracks
+user-defined function signatures). `lowerCall`'s generic keyword-argument
+handling has a fallback for exactly this case — "no known parameter
+list, so just append every keyword's value onto the end of the
+positional-argument list" (`for (auto& kw : kwArgs) argRes.push_back(kw.second);`).
+That fallback is fine for call sites that don't separately try to
+recover a specific keyword's meaning from `argRes` by position — but
+each of `sorted`/`min`/`max`'s own special-case lowering *did* exactly
+that: `sorted`'s handler treated `argRes[1]` as a positional `key=`
+argument whenever `argRes.size() >= 2`, and `min`/`max`'s handler
+treated *any* second-or-later `argRes` entry as another value to
+compare. Once `reverse=`/`key=` support was added and their values
+started landing in `argRes` via the generic fallback, both handlers
+misread the appended keyword value as something else entirely:
+`sorted([3,1,2], reverse=True)` had its `reverse` boolean misread as a
+key *function*, corrupting the sort into `[2, 1, 3]`; `min([3,1,2],
+key=lambda x: -x)` had the lambda misread as a second value to compare
+against the list itself, printing the lambda object.
+
+Fixed by capturing `posArgCount` — the true positional-argument count,
+already computed earlier in `lowerCall` *before* the generic kwarg-append
+fallback runs — and using it instead of `argRes.size()` when deciding
+whether a given `argRes` slot is a real positional argument versus a
+keyword value that got appended afterward. `key=`/`reverse=` are now
+extracted directly from `kwArgs` by name (as they already were for the
+cases that worked), and the position-based fallback only fires when
+`posArgCount` proves the value was genuinely positional.
+
+Runtime changes: `PyBuiltin_Sorted`/`PyList_Sort` gained a 3rd `reverse`
+parameter (`std::reverse` on the result after the existing sort/key
+logic); `PyList_Sort` also gained the `key=` support `.sort()` never had
+at all (mirrors `PyBuiltin_Sorted`'s existing key-based approach:
+compute a key per element via `Pyc_Apply`, sort an index vector, reorder
+`.list` directly). `PyBuiltin_Min2`/`Max2`/`MinList`/`MaxList` all gained
+a `key` parameter (a new shared `pyc_apply_key1` helper applies it once
+per compared item, comparing keys instead of raw values while still
+returning the original item). `cmp_to_key(cmp)`'s comparator-based sort
+path was **not** extended with `reverse=` support — documented as a
+narrower remaining gap (that specific combination wasn't hit by this
+hunt).
+
+Verified against real CPython for every combination: `sorted()` with no
+args, `reverse=` alone (both `True` and `False`), `key=` alone, `key=`
+and `reverse=` together, `.sort()` with the same four combinations, and
+`min`/`max` with `key=` in both the multi-arg (`min(3, 1, key=...)`) and
+single-iterable (`min([3,1,2], key=...)`) forms. All added as permanent
+`tests/runner.py` regression cases. Full suite (340/340) and import
+tests (9/9) stay green; `valgrind --tool=memcheck` shows 0 errors.
+
 ## Known Limitations
 
 ### Performance

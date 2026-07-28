@@ -2312,13 +2312,42 @@ static void pyc_ensure_boxed_list(PyObject* lst) {
     }
 }
 
-PyObject* PyList_Sort(PyObject* lst) {
+// `key`/`reverse` were found completely unimplemented (silently
+// ignored — list.sort(key=...) sorted by natural order, list.sort
+// (reverse=True) sorted ascending) while hunting for more bugs; the
+// in-place reorder mirrors PyBuiltin_Sorted's key-based approach
+// (compute a key per element, sort indices, reorder), applied directly
+// to lst->list rather than building a new list.
+PyObject* PyList_Sort(PyObject* lst, PyObject* key, PyObject* reverse) {
     if (!lst || lst->type != 1) return PyInt_FromLong(0);
     pyc_ensure_boxed_list(lst);
-    std::sort(lst->list.begin(), lst->list.end(), [](PyObject* a, PyObject* b) -> bool {
-        if (!a || !b) return false;
-        return PyObject_CompareBool(a, b, 2) != 0;  // Lt
-    });
+    if (key) {
+        std::vector<PyObject*> keys;
+        keys.reserve(lst->list.size());
+        for (auto* item : lst->list) {
+            PyObject* argList = PyList_New(1);
+            if (item) { Py_INCREF(item); PyList_SetItem(argList, 0, item); }
+            PyObject* k = Pyc_Apply(key, argList);
+            Py_DECREF(argList);
+            keys.push_back(k);
+        }
+        std::vector<size_t> idx(lst->list.size());
+        for (size_t i = 0; i < idx.size(); ++i) idx[i] = i;
+        std::sort(idx.begin(), idx.end(), [&](size_t i, size_t j) {
+            if (!keys[i] || !keys[j]) return false;
+            return PyObject_CompareBool(keys[i], keys[j], 2) != 0;
+        });
+        std::vector<PyObject*> reordered(lst->list.size());
+        for (size_t i = 0; i < idx.size(); ++i) reordered[i] = lst->list[idx[i]];
+        lst->list = reordered;
+        for (auto* k : keys) if (k) Py_DECREF(k);
+    } else {
+        std::sort(lst->list.begin(), lst->list.end(), [](PyObject* a, PyObject* b) -> bool {
+            if (!a || !b) return false;
+            return PyObject_CompareBool(a, b, 2) != 0;  // Lt
+        });
+    }
+    if (PyObject_TruthValue(reverse)) std::reverse(lst->list.begin(), lst->list.end());
     return PyInt_FromLong(0);
 }
 
@@ -3443,7 +3472,12 @@ PyObject* PyBuiltin_Sum(PyObject* lst) {
 // PyBuiltin_Sorted(iterable, key) — sort the iterable's elements. If
 // `key` is non-null it is a 1-arg callable applied to each element
 // before comparison (standard sort key behaviour).
-PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key) {
+// `reverse`, if truthy, reverses the final sorted order — found missing
+// entirely (silently ignored, `sorted([3,1,2], reverse=True)` returned
+// the plain ascending sort) while hunting for more bugs; fixed by
+// reversing `r` in place before returning, in both the key and no-key
+// branches below.
+PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse) {
     if (!lst) return PyList_New(0);
     std::vector<PyObject*> items;
     if (lst->type == 1) {
@@ -3498,6 +3532,7 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key) {
         }
         for (auto* k : keys) if (k) Py_DECREF(k);
         for (auto* it : items) if (it) Py_DECREF(it);
+        if (PyObject_TruthValue(reverse)) std::reverse(r->list.begin(), r->list.end());
         return r;
     }
 
@@ -3511,6 +3546,7 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key) {
         return PyObject_CompareBool(a, b, 2) != 0;
     });
     for (auto* it : items) if (it) Py_DECREF(it);
+    if (PyObject_TruthValue(reverse)) std::reverse(r->list.begin(), r->list.end());
     return r;
 }
 
@@ -3534,7 +3570,7 @@ PyObject* PyBuiltin_CmpToKey(PyObject* cmp) {
 // a < b, zero means a == b, positive means a > b. This is the
 // internal fast-path for sorted(..., key=cmp_to_key(cmp)).
 PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp) {
-    if (!lst || !cmp) return PyBuiltin_Sorted(lst, nullptr);
+    if (!lst || !cmp) return PyBuiltin_Sorted(lst, nullptr, nullptr);
     std::vector<PyObject*> items;
     if (lst->type == 1) {
         // Handle homogeneous int lists
@@ -3902,62 +3938,93 @@ void Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step
     }
 }
 
-PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b) {
+// Apply an optional key function to a single item, returning a new
+// reference (the item itself, re-INCREF'd, when key is null). Shared by
+// the min/max 2-value and list forms below.
+static PyObject* pyc_apply_key1(PyObject* key, PyObject* item) {
+    if (!key) { if (item) Py_INCREF(item); return item; }
+    PyObject* argList = PyList_New(1);
+    if (item) { Py_INCREF(item); PyList_SetItem(argList, 0, item); }
+    PyObject* k = Pyc_Apply(key, argList);
+    Py_DECREF(argList);
+    return k;
+}
+PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b, PyObject* key) {
     if (!a) return (b ? (Py_INCREF(b), b) : nullptr);
     if (!b) return (Py_INCREF(a), a);
-    return PyObject_CompareBool(a, b, 2) ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
+    if (!key) return PyObject_CompareBool(a, b, 2) ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
+    PyObject* ka = pyc_apply_key1(key, a);
+    PyObject* kb = pyc_apply_key1(key, b);
+    bool aWins = (ka && kb) ? (PyObject_CompareBool(ka, kb, 2) != 0) : true;
+    if (ka) Py_DECREF(ka);
+    if (kb) Py_DECREF(kb);
+    return aWins ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
 }
-PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b) {
+PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b, PyObject* key) {
     if (!a) return (b ? (Py_INCREF(b), b) : nullptr);
     if (!b) return (Py_INCREF(a), a);
-    return PyObject_CompareBool(a, b, 3) ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
+    if (!key) return PyObject_CompareBool(a, b, 3) ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
+    PyObject* ka = pyc_apply_key1(key, a);
+    PyObject* kb = pyc_apply_key1(key, b);
+    bool aWins = (ka && kb) ? (PyObject_CompareBool(ka, kb, 3) != 0) : true;
+    if (ka) Py_DECREF(ka);
+    if (kb) Py_DECREF(kb);
+    return aWins ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
 }
-PyObject* PyBuiltin_MinList(PyObject* lst) {
+PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key) {
     if (!lst || lst->type != 1) return nullptr;
     size_t n = 0;
     if (lst->list_item_type == 1) n = lst->ilist.size();
     else if (lst->list_item_type == 2) n = lst->flist.size();
     else n = lst->list.size();
     if (n == 0) return nullptr;
-    PyObject* r = nullptr;
-    if (lst->list_item_type == 1) r = PyInt_FromLong(lst->ilist[0]);
-    else if (lst->list_item_type == 2) r = PyFloat_FromDouble(lst->flist[0]);
-    else { r = lst->list[0]; if (r) Py_INCREF(r); }
+    auto getItem = [&](size_t i) -> PyObject* {
+        if (lst->list_item_type == 1) return PyInt_FromLong(lst->ilist[i]);
+        if (lst->list_item_type == 2) return PyFloat_FromDouble(lst->flist[i]);
+        PyObject* it = lst->list[i]; if (it) Py_INCREF(it); return it;
+    };
+    PyObject* r = getItem(0);
+    PyObject* rKey = pyc_apply_key1(key, r);
     for (size_t i = 1; i < n; ++i) {
-        PyObject* item = nullptr;
-        if (lst->list_item_type == 1) item = PyInt_FromLong(lst->ilist[i]);
-        else if (lst->list_item_type == 2) item = PyFloat_FromDouble(lst->flist[i]);
-        else { item = lst->list[i]; if (item) Py_INCREF(item); }
-        if (item && PyObject_CompareBool(item, r, 2)) {
-            Py_DECREF(r); r = item;
-        } else if (item) {
-            Py_DECREF(item);
+        PyObject* item = getItem(i);
+        PyObject* k = pyc_apply_key1(key, item);
+        if (item && k && rKey && PyObject_CompareBool(k, rKey, 2)) {
+            Py_DECREF(r); if (rKey) Py_DECREF(rKey);
+            r = item; rKey = k;
+        } else {
+            if (item) Py_DECREF(item);
+            if (k) Py_DECREF(k);
         }
     }
+    if (rKey) Py_DECREF(rKey);
     return r;
 }
-PyObject* PyBuiltin_MaxList(PyObject* lst) {
+PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key) {
     if (!lst || lst->type != 1) return nullptr;
     size_t n = 0;
     if (lst->list_item_type == 1) n = lst->ilist.size();
     else if (lst->list_item_type == 2) n = lst->flist.size();
     else n = lst->list.size();
     if (n == 0) return nullptr;
-    PyObject* r = nullptr;
-    if (lst->list_item_type == 1) r = PyInt_FromLong(lst->ilist[0]);
-    else if (lst->list_item_type == 2) r = PyFloat_FromDouble(lst->flist[0]);
-    else { r = lst->list[0]; if (r) Py_INCREF(r); }
+    auto getItem = [&](size_t i) -> PyObject* {
+        if (lst->list_item_type == 1) return PyInt_FromLong(lst->ilist[i]);
+        if (lst->list_item_type == 2) return PyFloat_FromDouble(lst->flist[i]);
+        PyObject* it = lst->list[i]; if (it) Py_INCREF(it); return it;
+    };
+    PyObject* r = getItem(0);
+    PyObject* rKey = pyc_apply_key1(key, r);
     for (size_t i = 1; i < n; ++i) {
-        PyObject* item = nullptr;
-        if (lst->list_item_type == 1) item = PyInt_FromLong(lst->ilist[i]);
-        else if (lst->list_item_type == 2) item = PyFloat_FromDouble(lst->flist[i]);
-        else { item = lst->list[i]; if (item) Py_INCREF(item); }
-        if (item && PyObject_CompareBool(item, r, 3)) {
-            Py_DECREF(r); r = item;
-        } else if (item) {
-            Py_DECREF(item);
+        PyObject* item = getItem(i);
+        PyObject* k = pyc_apply_key1(key, item);
+        if (item && k && rKey && PyObject_CompareBool(k, rKey, 3)) {
+            Py_DECREF(r); if (rKey) Py_DECREF(rKey);
+            r = item; rKey = k;
+        } else {
+            if (item) Py_DECREF(item);
+            if (k) Py_DECREF(k);
         }
     }
+    if (rKey) Py_DECREF(rKey);
     return r;
 }
 PyObject* PyBuiltin_List(PyObject* obj) {
