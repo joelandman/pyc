@@ -1041,31 +1041,61 @@ found during the `namedtuple` work — confirmed unrelated here too, by
 checking that even a plain `{"a":1,"b":2,"c":3}` literal with no
 unpacking involved reorders the exact same way).
 
-### F-String Format Specs (`:.2f`, `:05d`, `:>10`, ...) Are Silently Ignored — Documented, Not Fixed
+### F-String Format Specs (`:.2f`, `:05d`, `:>10`, ...) and `!r`/`!s`/`!a` Conversion — Fixed
 Found alongside the dict-unpacking bug while testing other f-string/
-container-literal edge cases. `f"{x:.2f}"` prints the *unformatted*
-value (`3.14159`, not `3.14`) — the entire `:spec` portion of a
-`FormattedValue` node is silently discarded. Unlike the dict-unpacking
-bug above, this is not an undiscovered bug so much as a **previously
-undocumented, pre-existing, deliberate MVP-era scope cut**:
-`PythonParser.cpp`'s `FormattedValue` handling has an explicit comment,
+container-literal edge cases. `f"{x:.2f}"` used to print the
+*unformatted* value (`3.14159`, not `3.14`) — the entire `:spec` portion
+of a `FormattedValue` node was silently discarded. Unlike the
+dict-unpacking bug above, this wasn't an undiscovered bug so much as a
+previously undocumented, pre-existing, deliberate MVP-era scope cut:
+`PythonParser.cpp`'s `FormattedValue` handling had an explicit comment,
 predating this session — `// format_spec (e.g. :.2f) — skip for MVP` —
-right where the `format_spec` attribute would need to be read from
-Python's AST. The `!r`/`!s`/`!a` conversion flag (the `node->op` field)
-*is* correctly captured by the parser but is then **also** never read by
-`Compiler.cpp`'s `lowerFormattedValue`, which unconditionally calls
+right where the `format_spec` attribute needed to be read from Python's
+AST. The `!r`/`!s`/`!a` conversion flag (the `node->op` field) *was*
+correctly captured by the parser but was then **also** never read by
+`Compiler.cpp`'s `lowerFormattedValue`, which unconditionally called
 `PyStr_FromAny` regardless of the requested conversion — so `f"{x!r}"`
-and `f"{x}"` currently produce identical output too.
+and `f"{x}"` used to produce identical output too. Originally documented
+here as a substantial, self-contained feature project rather than a
+bounded bug fix; implemented on explicit request, alongside `str.format()`
+(see further down) since both need the same underlying formatter.
 
-Not fixed here: implementing real format-spec support means
-implementing a meaningful subset of Python's Format Specification
-Mini-Language (fill/align/sign/width/precision/type for numbers and
-strings) — a substantial, self-contained feature project in its own
-right, not a bounded bug fix comparable to anything else found during
-this hunt. Documented here (and in `FEATURES.md`) specifically because
-it was **not** documented anywhere before, despite being a known,
-deliberate cut — the existing `FEATURES.md` line ("`str` | Literals, +,
-*, f-strings, ...") claimed f-string support without this caveat.
+**The implementation**:
+- `PythonParser.cpp` now captures `format_spec` as a real `children[1]`
+  AST subtree (when present) rather than skipping it. `format_spec` is
+  itself a `JoinedStr` node in Python's AST — it can contain nested
+  expressions for a dynamic width/precision (`f"{x:{width}.{prec}f}"`)
+  — so it's captured as a full subtree and lowered exactly like any
+  other `JoinedStr` (reusing the existing `lowerJoinedStr`/`lowerExpr`
+  machinery to produce a plain runtime string), rather than assuming
+  it's always a static literal. This got dynamic specs working "for
+  free," with no separate static-vs-dynamic code path.
+- A new runtime function, `Pyc_FormatValue(value, specStr)`
+  (`Runtime.cpp`), implements a practical subset of Python's Format
+  Specification Mini-Language: `[[fill]align][sign]["#"]["0"][width][","|"_"]["." precision][type]`,
+  covering fill/align (`<>^=`, with an optional fill character), sign
+  (`+`/`-`/space), `#` (alternate form — implemented for integer base
+  prefixes `0b`/`0o`/`0x`, not for floats' always-show-decimal-point
+  behavior), `0` (zero-pad), width, `,`/`_` (thousands grouping),
+  precision, and type codes `s`/`d`/`b`/`o`/`x`/`X`/`f`/`F`/`e`/`E`/`g`/`G`/`%`/`c`.
+  Not implemented (documented, not chased down): `n` (locale-aware —
+  treated as a plain numeric type instead), `#` for floats, and
+  `decimal.Decimal` operands with a numeric type code (falls back to
+  plain `str()` + padding rather than the mini-language's numeric
+  formatting).
+- `Compiler.cpp`'s `lowerFormattedValue` now reads the conversion code
+  (applying `PyBuiltin_Repr` for `!r`/`!a`; `!s` and the no-conversion
+  default are treated identically, since pyc has no `__format__`
+  protocol for the two to meaningfully diverge on) and lowers
+  `format_spec` when present, then calls `Pyc_FormatValue`.
+
+Verified against real CPython across float precision/width/align/sign/
+thousands-separator, int width/zero-pad/hex-octal-binary/thousands-
+separator, string width/align/precision-truncation, percentage type,
+dynamic width+precision, negative-number zero-padding (`f"{-42:05d}"`
+→ `"-0042"`, sign staying left of the zero-fill), and `!r` conversion.
+Added as permanent `tests/runner.py` regressions. Full suite and import
+tests stay green; `valgrind --tool=memcheck` shows 0 errors.
 
 ### Assigning a Native Comparison Result to a Variable Crashed LLVM Verification — Fixed
 Continuing the hunt turned up a severe, broad-impact bug distinct from
@@ -1319,30 +1349,69 @@ gap, confirmed present before this session's fix and unrelated to it)**:
   i.e. has `__mro__`), not just the current compile-time-structural
   recognition.
 
-### Several Common `str` Methods Are Entirely Unimplemented, Silently Returning `None`
+### Several Common `str` Methods Were Entirely Unimplemented — Fixed
 While probing string methods during the same hunt, `.format()`,
 `.rsplit()`, `.partition()`, and `.rpartition()` were all found to have
 **zero** dispatch code anywhere in `Compiler.cpp` — not a missing-branch
 bug like `tuple`/`divmod`/`pow` earlier (those had working
 implementations that were simply unreachable), just genuinely
-unimplemented methods. Confirmed against real CPython: `"{}".format(x)`,
-`"{:>10}".format(x)`, `"a-b-c".rsplit("-")` (even the plain, no-`maxsplit`
-form), `"abc".partition("b")`, and `"abcabc".rpartition("b")` all print
-`None` under pyc instead of their real results.
+unimplemented methods, each silently returning `None` instead of raising
+an error or working. Originally documented here as a features-coverage
+task rather than a bug fix (`.format()` in particular depends on the
+same Format Specification Mini-Language flagged unimplemented for
+f-strings at the time); implemented on explicit request, once that
+mini-language existed as `Pyc_FormatValue` (see the f-string entry
+above).
 
-This falls into the same "unrecognized call silently resolves to
-`None` instead of raising an error" hazard already known from the
-`neverDynamic`/`specialBuiltinNames` bug class fixed earlier this
-session — except here there's no missing-whitelist-entry fix available,
-since there's no implementation at all to reach. Not fixed here (adding
-four new string methods, one of which — `.format()` — depends on the
-same Format Specification Mini-Language already flagged as unimplemented
-for f-strings, is a features-coverage task rather than a bug fix in the
-spirit of this hunt). Documented here and in `FEATURES.md` since neither
-was previously called out — `FEATURES.md`'s String Methods list only
-ever claimed `upper()`/`lower()`/`strip()`/`split()`/`join()`/`find()`/
-`count()`/`replace()`/`%`-formatting, so this isn't a regression from a
-false claim, just a previously-unrecorded gap worth having in one place.
+- **`.rsplit(sep=None, maxsplit=-1)`**: when `maxsplit < 0` (the
+  default, matching real Python) it delegates straight to the existing
+  `.split()` implementation, since the two produce identical results
+  with no limit. The two only diverge once `maxsplit` caps the count —
+  `.rsplit()` scans from the end of the string, keeping the *rightmost*
+  `maxsplit+1` pieces (`"a,b,c,d".rsplit(",", 1) == ["a,b,c", "d"]`)
+  where `.split()` would keep the leftmost ones. The whitespace-mode
+  form (`sep=None`) needed its own from-the-right algorithm to match
+  CPython's exact behavior of preserving internal whitespace runs in
+  the unsplit prefix (`"  a  b  c  ".rsplit(None, 1) == ["  a  b", "c"]`
+  — only the *trailing* whitespace of that prefix is trimmed, not the
+  internal run between "a" and "b").
+- **A related, separate, pre-existing bug found and fixed while
+  verifying the above**: both `.split()` and the new `.rsplit()` only
+  detected "whitespace mode" via "no argument was given at all" — an
+  *explicit* `None` passed positionally (`s.split(None)`,
+  `s.rsplit(None, 1)`, both valid, common Python idioms) fell through to
+  the literal-separator path with the separator silently coerced to a
+  plain single space, producing spurious empty-string elements for any
+  run of more than one whitespace character (confirmed:
+  `"a  b   c".split(None)` gave `['a', '', 'b', '', '', 'c']` instead of
+  `['a', 'b', 'c']`). Fixed by detecting an explicit `None` argument from
+  the AST (`Constant` node with `is_none` set), not just argument
+  absence.
+- **`.partition(sep)` / `.rpartition(sep)`**: return a 3-element
+  `[before, sep, after]` (list, not a tuple — pyc's existing, unrelated
+  "no distinct tuple type" architectural choice, not a new gap);
+  `partition` finds the first occurrence of `sep`, `rpartition` the
+  last. Real CPython raises `ValueError` for an empty separator; this
+  takes the more lenient "no match" fallback instead (`[s, "", ""]` /
+  `["", "", s]`) rather than raising, a narrower simplification.
+- **`.format(*args, **kwargs)`**: a new `PyBuiltin_StrFormat` parses the
+  `{field[!conv][:format_spec]}` template mini-language — `"{{"`/`"}}"`
+  for literal braces, an empty field (`"{}"`) auto-numbering through the
+  positional args in order, a digit-only field as an explicit positional
+  index, any other field as a keyword lookup — and delegates actual
+  value formatting to `Pyc_FormatValue`, the same formatter f-strings
+  use. Nested field access (`"{0.attr}"`, `"{0[1]}"`) is not supported —
+  a narrower, documented gap.
+
+Verified against real CPython: `.rsplit()` with and without `maxsplit`,
+both separator and whitespace modes, both forms of the `None`-detection
+fix; `.partition()`/`.rpartition()` with a found and a not-found
+separator; `.format()` with positional, explicit-index, keyword, and
+mixed arguments, a format spec, `!r` conversion, and literal-brace
+escaping. Added as permanent `tests/runner.py` regressions (indexing
+into `.partition()`'s result rather than printing it raw, to avoid the
+same list-vs-tuple representation difference noted above). Full suite
+and import tests stay green; `valgrind --tool=memcheck` shows 0 errors.
 
 ### `obj.attr += x` Crashed at Runtime With a `KeyError` — Fixed
 Continuing the hunt into class features turned up a severe, very common

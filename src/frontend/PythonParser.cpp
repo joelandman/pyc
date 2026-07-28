@@ -940,7 +940,23 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
             node->children.push_back(std::move(child));
             Py_DECREF(value);
         }
-        // format_spec (e.g. :.2f) — skip for MVP
+        // format_spec (e.g. :.2f) — found and fixed while bug hunting
+        // (previously a deliberate, documented MVP-era scope cut: this
+        // whole attribute was skipped, so f"{x:.2f}" silently printed
+        // the unformatted value). format_spec is itself a JoinedStr node
+        // (or None when absent) — it can contain nested expressions for
+        // a dynamic width/precision (f"{x:{width}.{prec}f}"), so it's
+        // captured here as a real children[1] AST subtree and lowered
+        // the same way any other JoinedStr is (producing a plain string
+        // value at runtime), rather than assuming it's always a static
+        // literal.
+        PyObject* fspec = PyObject_GetAttrString(pyNode, "format_spec");
+        if (fspec && fspec != Py_None) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(fspec, child.get());
+            node->children.push_back(std::move(child));
+        }
+        Py_XDECREF(fspec);
     } else if (node->type == "Import") {
         // Import(names=[alias(name='sys', asname='s')])
         // Store original module names in node->id (space-separated for the

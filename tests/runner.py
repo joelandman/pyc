@@ -801,6 +801,83 @@ print(a[0],a[1],a[2])
      "a = A()\n"
      "print(a.cube(3))", "27\n"),
 
+    # Bug-hunt regression: str.rsplit()/.partition()/.rpartition() had no
+    # implementation at all (calling them silently printed None instead
+    # of erroring or working). rsplit's maxsplit behavior differs from
+    # split's — it keeps the rightmost pieces rather than the leftmost —
+    # and both split()/rsplit() had a related, separate, pre-existing bug
+    # where an *explicit* `None` positional separator (as opposed to
+    # simply omitting the argument) fell through to a literal-single-
+    # -space separator instead of whitespace-run splitting, producing
+    # spurious empty-string elements for runs of more than one space;
+    # fixed alongside rsplit since it's the same root check. partition/
+    # rpartition results are indexed rather than printed raw, since real
+    # Python returns a tuple and pyc's list-based tuple representation is
+    # an existing, unrelated, documented architectural choice.
+    ("print('a-b-c'.rsplit('-'))", "['a', 'b', 'c']\n"),
+    ("print('a-b-c'.rsplit('-', 1))", "['a-b', 'c']\n"),
+    ("print('a-b-c-d'.rsplit('-', 2))", "['a-b', 'c', 'd']\n"),
+    ("print('  a  b  c  '.rsplit())", "['a', 'b', 'c']\n"),
+    ("print('  a  b  c  '.rsplit(None, 1))", "['  a  b', 'c']\n"),
+    ("print('   '.rsplit(None, 1))", "[]\n"),
+    ("print('hello world'.rsplit(maxsplit=1))", "['hello', 'world']\n"),
+    ("print('a  b   c'.split(None))", "['a', 'b', 'c']\n"),
+    ("r = 'abc'.partition('b')\nprint(r[0], r[1], r[2])", "a b c\n"),
+    ("r = 'abcabc'.rpartition('b')\nprint(r[0], r[1], r[2])", "abca b c\n"),
+    ("r = 'abc'.partition('x')\nprint(r[0], r[1], r[2])", "abc  \n"),
+    ("r = 'abc'.rpartition('x')\nprint(r[0], r[1], r[2])", "  abc\n"),
+
+    # Bug-hunt regression: f-string format specs (f"{x:.2f}") were a
+    # documented, deliberate MVP-era scope cut — the parser skipped
+    # format_spec entirely, so the unformatted value printed instead.
+    # The !r/!s/!a conversion flag was also captured by the parser but
+    # never read. Both fixed via a new Pyc_FormatValue runtime function
+    # implementing a practical subset of Python's Format Specification
+    # Mini-Language (fill/align/sign/#/0-pad/width/,/precision/type),
+    # and format_spec is captured as a full nested JoinedStr subtree (not
+    # assumed to be a static literal), so dynamic width/precision
+    # (f"{x:{width}.{prec}f}") work too. Covers float precision/width/
+    # align/sign/thousands-separator, int width/zero-pad/hex-octal-binary
+    # /thousands-separator, string width/align/precision-truncation,
+    # percentage type, dynamic width+precision, and !r conversion.
+    ("x = 3.14159265358979\nprint(f'{x:.2f}')", "3.14\n"),
+    ("x = 3.14159265358979\nprint(f'{x:10.2f}')", "      3.14\n"),
+    ("x = 3.14159265358979\nprint(f'{x:<10.2f}|')", "3.14      |\n"),
+    ("x = 3.14159265358979\nprint(f'{x:^10.2f}|')", "   3.14   |\n"),
+    ("x = 3.14159265358979\nprint(f'{-x:+.2f}')", "-3.14\n"),
+    ("x = 3.14159265358979\nprint(f'{x:+.2f}')", "+3.14\n"),
+    ("print(f'{1234567:,}')", "1,234,567\n"),
+    ("n = 42\nprint(f'{n:05d}')", "00042\n"),
+    ("n = 42\nprint(f'{n:x}', f'{n:X}', f'{n:#x}', f'{n:o}', f'{n:b}')",
+     "2a 2A 0x2a 52 101010\n"),
+    ("n = -42\nprint(f'{n:05d}')", "-0042\n"),
+    ("s = 'hi'\nprint(f'{s:*^10}|')", "****hi****|\n"),
+    ("s = 'hi'\nprint(f'{s:.1}')", "h\n"),
+    ("print(f'{0.5:.1%}')", "50.0%\n"),
+    ("w = 10\np = 3\nx = 3.14159\nprint(f'{x:{w}.{p}f}')", "     3.142\n"),
+    ("class Foo:\n"
+     "    def __repr__(self):\n"
+     "        return 'FooRepr'\n"
+     "foo = Foo()\n"
+     "print(f'{foo!r}')", "FooRepr\n"),
+
+    # Bug-hunt regression: str.format() had no implementation at all
+    # (calling it silently printed None). Implemented via the same
+    # Pyc_FormatValue formatter as f-strings, plus a template-parsing
+    # loop (PyBuiltin_StrFormat) supporting "{{"/"}}" literal braces,
+    # auto-numbered/explicit-positional/keyword fields, and !conversion.
+    ("print('{}'.format('hi'))", "hi\n"),
+    ("print('{:>10}'.format('hi'))", "        hi\n"),
+    ("print('{:05d}'.format(3))", "00003\n"),
+    ("print('{} {}'.format('a', 'b'))", "a b\n"),
+    ("print('{1} {0}'.format('a', 'b'))", "b a\n"),
+    ("print('{name} is {age}'.format(name='Alice', age=30))", "Alice is 30\n"),
+    ("print('{0} {name}'.format('hi', name='there'))", "hi there\n"),
+    ("print('{:.2f}'.format(3.14159))", "3.14\n"),
+    ("print('Value: {!r}'.format('x'))", "Value: 'x'\n"),
+    ("print('{{literal braces}}'.format())", "{literal braces}\n"),
+    ("print('{{{}}}'.format(5))", "{5}\n"),
+
     # Tier-2-batch regression: unsupported imports print ImportError to
     # stderr and return None (rather than silently producing wrong output).
     # The runner only checks stdout, so the program's stdout is empty.

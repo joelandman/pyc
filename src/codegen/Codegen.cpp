@@ -236,6 +236,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* strConcatTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(strConcatTy, llvm::Function::ExternalLinkage, "PyString_Concat", module.get());
 
+    // Pyc_FormatValue(value, specStr) — Format Specification Mini-
+    // Language, used by f-string format specs and str.format().
+    llvm::Function::Create(strConcatTy, llvm::Function::ExternalLinkage, "Pyc_FormatValue", module.get());
+    // PyBuiltin_StrFormat(templateStr, argsList, kwargsDict) — str.format().
+    {
+        llvm::FunctionType* strFormatTy = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(strFormatTy, llvm::Function::ExternalLinkage, "PyBuiltin_StrFormat", module.get());
+    }
+
     llvm::FunctionType* strRepeatTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(strRepeatTy, llvm::Function::ExternalLinkage, "PyString_Repeat", module.get());
 
@@ -500,11 +510,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     }
 
     for (const char* name : {"PyString_Split","PyString_Join","PyBuiltin_IntBase",
-                              "PyString_RFind"}) {
+                              "PyString_RFind","PyString_Partition","PyString_RPartition",
+                              "PyString_RSplitWhitespace"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
-    for (const char* name : {"PyString_Find3","PyString_RFind3"}) {
+    for (const char* name : {"PyString_Find3","PyString_RFind3","PyString_RSplit"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }

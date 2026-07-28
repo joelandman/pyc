@@ -125,6 +125,94 @@ static void format_double(char* buf, size_t bufsize, double v) {
     }
 }
 
+// ---- Format Specification Mini-Language (Pyc_FormatValue, defined
+// further down once PyStr_FromAny is available) — found and fixed while
+// bug hunting: f"{x:.2f}"-style format specs were a documented, deliberate
+// MVP-era scope cut (the parser skipped format_spec entirely), and
+// str.format() had no implementation at all. These helpers implement a
+// practical subset of Python's spec grammar:
+//   [[fill]align][sign]["#"]["0"][width][","|"_"]["." precision][type]
+// covering fill/align (<>^= with an optional fill char), sign (+/-/space),
+// "#" alternate form (only for int base prefixes 0b/0o/0x), "0" zero-pad,
+// width, "," / "_" thousands grouping, precision, and type codes
+// s/d/b/o/x/X/f/F/e/E/g/G/%/c. Not implemented (documented, not chased
+// down): "n" (locale-aware — treated as a plain numeric type instead),
+// "#" for floats (always-show-decimal-point), and decimal.Decimal
+// operands with a numeric type code (falls back to plain str()+padding).
+static std::string pyc_group_digits(const std::string& digits, char sep, int groupSize = 3) {
+    int n = (int)digits.size();
+    if (n <= groupSize) return digits;
+    int firstGroup = n % groupSize;
+    if (firstGroup == 0) firstGroup = groupSize;
+    std::string out = digits.substr(0, (size_t)firstGroup);
+    for (int i = firstGroup; i < n; i += groupSize) {
+        out += sep;
+        out += digits.substr((size_t)i, (size_t)groupSize);
+    }
+    return out;
+}
+static std::string pyc_to_base(unsigned long v, int base, bool upper) {
+    if (v == 0) return "0";
+    static const char* lo = "0123456789abcdef";
+    static const char* hi = "0123456789ABCDEF";
+    const char* d = upper ? hi : lo;
+    std::string s;
+    while (v > 0) { s = std::string(1, d[v % (unsigned long)base]) + s; v /= (unsigned long)base; }
+    return s;
+}
+// Pad `body` to `width` using fillch/align. numPrefixLen is the length
+// of a leading sign/base-prefix (e.g. "-0x") that must stay to the left
+// of zero-padding under align=='=' (numeric zero-fill mode) rather than
+// being pushed rightward with the digits.
+static std::string pyc_fmt_pad(const std::string& body, long width, char fillch, char align, size_t numPrefixLen) {
+    long len = (long)body.size();
+    if (width <= len) return body;
+    long padLen = width - len;
+    if (align == '<') return body + std::string((size_t)padLen, fillch);
+    if (align == '^') {
+        long left = padLen / 2, right = padLen - left;
+        return std::string((size_t)left, fillch) + body + std::string((size_t)right, fillch);
+    }
+    if (align == '=') {
+        std::string prefix = body.substr(0, numPrefixLen);
+        std::string rest = body.substr(numPrefixLen);
+        return prefix + std::string((size_t)padLen, fillch) + rest;
+    }
+    return std::string((size_t)padLen, fillch) + body; // '>' or default
+}
+struct PycFormatSpec {
+    char fill = ' ';
+    char align = 0;   // 0 = unset (defaults chosen per-type below)
+    char sign = '-';  // '-' = only negative numbers show a sign (default)
+    bool alt = false;
+    long width = -1;
+    char grouping = 0;
+    long precision = -1;
+    char type = 0;
+};
+static void pyc_parse_format_spec(const std::string& spec, PycFormatSpec& f) {
+    size_t i = 0, n = spec.size();
+    if (n >= 2 && (spec[1]=='<'||spec[1]=='>'||spec[1]=='='||spec[1]=='^')) { f.fill = spec[0]; f.align = spec[1]; i = 2; }
+    else if (n >= 1 && (spec[0]=='<'||spec[0]=='>'||spec[0]=='='||spec[0]=='^')) { f.align = spec[0]; i = 1; }
+    if (i < n && (spec[i]=='+'||spec[i]=='-'||spec[i]==' ')) { f.sign = spec[i]; i++; }
+    if (i < n && spec[i]=='#') { f.alt = true; i++; }
+    if (i < n && spec[i]=='0') {
+        i++;
+        if (f.align == 0) { f.align = '='; f.fill = '0'; }
+    }
+    std::string widthStr;
+    while (i < n && isdigit((unsigned char)spec[i])) { widthStr += spec[i]; i++; }
+    if (!widthStr.empty()) f.width = std::stol(widthStr);
+    if (i < n && (spec[i]==','||spec[i]=='_')) { f.grouping = spec[i]; i++; }
+    if (i < n && spec[i]=='.') {
+        i++;
+        std::string precStr;
+        while (i < n && isdigit((unsigned char)spec[i])) { precStr += spec[i]; i++; }
+        f.precision = precStr.empty() ? 0 : std::stol(precStr);
+    }
+    if (i < n) f.type = spec[i];
+}
+
 extern "C" {
 
 // === Singletons and small-int cache ===
@@ -2365,6 +2453,305 @@ PyObject* PyString_SplitWhitespace(PyObject* s) {
         i = j;
     }
     return result;
+}
+
+// str.rsplit(sep, maxsplit) — found entirely unimplemented while bug
+// hunting. When maxsplit < 0 (CPython's default, no limit) rsplit
+// produces the exact same list as split, so this just delegates; the
+// two only diverge once maxsplit caps the split count, in which case
+// rsplit keeps the rightmost maxsplit+1 pieces (splitting scans from
+// the end of the string) where split would keep the leftmost ones.
+PyObject* PyString_RSplit(PyObject* s, PyObject* sep, PyObject* maxsplitObj) {
+    long maxsplit = (maxsplitObj && (maxsplitObj->type == 0 || maxsplitObj->type == 5))
+        ? maxsplitObj->value : -1;
+    if (maxsplit < 0) return PyString_Split(s, sep);
+    PyObject* result = PyList_New(0);
+    if (!s || s->type != 3) return result;
+    std::string delim = (sep && sep->type == 3) ? sep->str : " ";
+    if (delim.empty()) return result;
+    std::vector<std::string> parts;
+    std::string remaining = s->str;
+    long count = 0;
+    while (count < maxsplit) {
+        size_t pos = remaining.rfind(delim);
+        if (pos == std::string::npos) break;
+        parts.insert(parts.begin(), remaining.substr(pos + delim.size()));
+        remaining = remaining.substr(0, pos);
+        ++count;
+    }
+    parts.insert(parts.begin(), remaining);
+    for (auto& p : parts) PyList_Append(result, PyUnicode_FromString(p.c_str()));
+    return result;
+}
+
+// str.rsplit(None, maxsplit) — the whitespace-delimited form. Splits
+// from the right on runs of whitespace, up to maxsplit times; whatever
+// remains at the front (including any internal whitespace runs that
+// weren't split on) becomes the first element as-is, mirroring
+// CPython's exact behavior — e.g. "  a  b  c  ".rsplit(None, 1) ==
+// ["  a  b", "c"] (leading/internal whitespace in the unsplit prefix is
+// preserved, only the trailing whitespace of that prefix is trimmed).
+PyObject* PyString_RSplitWhitespace(PyObject* s, PyObject* maxsplitObj) {
+    long maxsplit = (maxsplitObj && (maxsplitObj->type == 0 || maxsplitObj->type == 5))
+        ? maxsplitObj->value : -1;
+    if (maxsplit < 0) return PyString_SplitWhitespace(s);
+    PyObject* result = PyList_New(0);
+    if (!s || s->type != 3) return result;
+    const std::string& str = s->str;
+    long end = (long)str.size();
+    std::vector<std::string> parts;
+    long count = 0;
+    while (count < maxsplit) {
+        while (end > 0 && isspace((unsigned char)str[end - 1])) --end;
+        if (end == 0) break;
+        long tokEnd = end;
+        long tokStart = end;
+        while (tokStart > 0 && !isspace((unsigned char)str[tokStart - 1])) --tokStart;
+        parts.push_back(str.substr((size_t)tokStart, (size_t)(tokEnd - tokStart)));
+        end = tokStart;
+        ++count;
+    }
+    long remEnd = end;
+    while (remEnd > 0 && isspace((unsigned char)str[remEnd - 1])) --remEnd;
+    if (remEnd > 0) parts.push_back(str.substr(0, (size_t)remEnd));
+    std::reverse(parts.begin(), parts.end());
+    for (auto& p : parts) PyList_Append(result, PyUnicode_FromString(p.c_str()));
+    return result;
+}
+
+// Pyc_FormatValue(value, specStr) — implements Python's Format
+// Specification Mini-Language (see the PycFormatSpec/pyc_parse_format_spec
+// comment far above for the supported grammar subset and known gaps).
+// Used both by f-string format specs (f"{x:.2f}") and, via
+// PyBuiltin_StrFormat below, by str.format("{:.2f}", x).
+PyObject* Pyc_FormatValue(PyObject* value, PyObject* specObj) {
+    std::string spec = (specObj && specObj->type == 3) ? specObj->str : "";
+    if (spec.empty()) return PyStr_FromAny(value);
+
+    PycFormatSpec f;
+    pyc_parse_format_spec(spec, f);
+    char type = f.type;
+
+    bool isStrType = (value && value->type == 3);
+    bool isIntType = (value && (value->type == 0 || value->type == 5)); // int or bool
+
+    std::string body;
+    size_t signPrefixLen = 0;
+    char defaultAlign = '>';
+
+    if (type == 's' || (type == 0 && isStrType)) {
+        std::string sv;
+        if (isStrType) sv = value->str;
+        else { PyObject* c = PyStr_FromAny(value); if (c) { sv = c->str; Py_DECREF(c); } }
+        if (f.precision >= 0 && (long)sv.size() > f.precision) sv = sv.substr(0, (size_t)f.precision);
+        body = sv;
+        defaultAlign = '<';
+    } else if (type=='d'||type=='b'||type=='o'||type=='x'||type=='X'||type=='n'||type=='c' ||
+               (type==0 && isIntType)) {
+        long v = isIntType ? value->value : (value && value->type == 4 ? (long)value->dvalue : 0);
+        if (type == 'c') {
+            body = std::string(1, (char)v);
+            defaultAlign = '<';
+        } else {
+            bool neg = v < 0;
+            unsigned long uv = neg ? (unsigned long)(-(long long)v) : (unsigned long)v;
+            std::string digits, basePrefix;
+            int base = 10;
+            if (type=='b') { base=2; if (f.alt) basePrefix = "0b"; }
+            else if (type=='o') { base=8; if (f.alt) basePrefix = "0o"; }
+            else if (type=='x') { base=16; if (f.alt) basePrefix = "0x"; }
+            else if (type=='X') { base=16; if (f.alt) basePrefix = "0X"; }
+            if (base == 10) {
+                digits = std::to_string(uv);
+                if (f.grouping) digits = pyc_group_digits(digits, f.grouping);
+            } else {
+                digits = pyc_to_base(uv, base, type=='X');
+            }
+            std::string signStr = neg ? "-" : (f.sign=='+' ? "+" : (f.sign==' ' ? " " : ""));
+            body = signStr + basePrefix + digits;
+            signPrefixLen = signStr.size() + basePrefix.size();
+            defaultAlign = '>';
+        }
+    } else if (type=='f'||type=='F'||type=='e'||type=='E'||type=='g'||type=='G'||type=='%' ||
+               (type==0 && value && value->type==4)) {
+        double d = (value && value->type==4) ? value->dvalue
+                  : (isIntType ? (double)value->value : 0.0);
+        bool neg = d < 0.0;
+        double av = neg ? -d : d;
+        if (type == '%') av *= 100.0;
+        char buf[512];
+        if (type=='f'||type=='F'||type=='%') {
+            snprintf(buf, sizeof(buf), "%.*f", f.precision >= 0 ? (int)f.precision : 6, av);
+        } else if (type=='e'||type=='E') {
+            snprintf(buf, sizeof(buf), type=='e' ? "%.*e" : "%.*E", f.precision >= 0 ? (int)f.precision : 6, av);
+        } else if (type=='g'||type=='G') {
+            int p = f.precision >= 0 ? (int)f.precision : 6;
+            if (p == 0) p = 1;
+            snprintf(buf, sizeof(buf), type=='g' ? "%.*g" : "%.*G", p, av);
+        } else if (f.precision >= 0) {
+            // No type char but an explicit precision: Python's default
+            // float presentation with a given precision behaves like 'g'.
+            int p = (int)f.precision; if (p == 0) p = 1;
+            snprintf(buf, sizeof(buf), "%.*g", p, av);
+        } else {
+            // No type char, no precision: shortest round-trip repr.
+            format_double(buf, sizeof(buf), av);
+        }
+        std::string digits = buf;
+        if (f.grouping && (type=='f'||type=='F'||type==0)) {
+            size_t dot = digits.find('.');
+            std::string intPart = dot==std::string::npos ? digits : digits.substr(0, dot);
+            std::string fracPart = dot==std::string::npos ? "" : digits.substr(dot);
+            digits = pyc_group_digits(intPart, f.grouping) + fracPart;
+        }
+        std::string signStr = neg ? "-" : (f.sign=='+' ? "+" : (f.sign==' ' ? " " : ""));
+        std::string suffix = (type=='%') ? "%" : "";
+        body = signStr + digits + suffix;
+        signPrefixLen = signStr.size();
+        defaultAlign = '>';
+    } else {
+        // Unknown type code, or a value type this formatter doesn't have
+        // a dedicated numeric/string path for (e.g. decimal.Decimal,
+        // list, dict, None): fall back to str() and just apply
+        // width/fill/align padding.
+        PyObject* c = PyStr_FromAny(value);
+        body = c ? c->str : "";
+        if (c) Py_DECREF(c);
+        defaultAlign = isStrType ? '<' : '>';
+    }
+
+    char align = f.align ? f.align : defaultAlign;
+    long width = f.width >= 0 ? f.width : 0;
+    std::string padded = pyc_fmt_pad(body, width, f.fill, align, signPrefixLen);
+    return PyUnicode_FromString(padded.c_str());
+}
+
+// str.partition(sep) / str.rpartition(sep) — found entirely
+// unimplemented while bug hunting. Both return a 3-element
+// [before, sep, after] (list, not a tuple — pyc's existing, unrelated
+// "no distinct tuple type" architectural choice, not a new gap).
+// partition finds the first occurrence of sep; rpartition finds the
+// last. Real CPython raises ValueError for an empty separator; this
+// takes the more lenient "no match" fallback instead (documented, not
+// treated as an error case here — matches this codebase's general
+// preference for graceful fallback over raising in edge cases that
+// aren't the primary target of the fix).
+PyObject* PyString_Partition(PyObject* s, PyObject* sep) {
+    PyObject* r = PyList_New(0);
+    std::string str = (s && s->type == 3) ? s->str : "";
+    std::string delim = (sep && sep->type == 3) ? sep->str : "";
+    size_t pos = delim.empty() ? std::string::npos : str.find(delim);
+    if (pos == std::string::npos) {
+        PyList_Append(r, PyUnicode_FromString(str.c_str()));
+        PyList_Append(r, PyUnicode_FromString(""));
+        PyList_Append(r, PyUnicode_FromString(""));
+    } else {
+        PyList_Append(r, PyUnicode_FromString(str.substr(0, pos).c_str()));
+        PyList_Append(r, PyUnicode_FromString(delim.c_str()));
+        PyList_Append(r, PyUnicode_FromString(str.substr(pos + delim.size()).c_str()));
+    }
+    return r;
+}
+PyObject* PyString_RPartition(PyObject* s, PyObject* sep) {
+    PyObject* r = PyList_New(0);
+    std::string str = (s && s->type == 3) ? s->str : "";
+    std::string delim = (sep && sep->type == 3) ? sep->str : "";
+    size_t pos = delim.empty() ? std::string::npos : str.rfind(delim);
+    if (pos == std::string::npos) {
+        PyList_Append(r, PyUnicode_FromString(""));
+        PyList_Append(r, PyUnicode_FromString(""));
+        PyList_Append(r, PyUnicode_FromString(str.c_str()));
+    } else {
+        PyList_Append(r, PyUnicode_FromString(str.substr(0, pos).c_str()));
+        PyList_Append(r, PyUnicode_FromString(delim.c_str()));
+        PyList_Append(r, PyUnicode_FromString(str.substr(pos + delim.size()).c_str()));
+    }
+    return r;
+}
+
+// str.format(*args, **kwargs) — found entirely unimplemented while bug
+// hunting (calling it silently printed None). Implements the
+// {field[!conv][:format_spec]} template mini-language: "{{"/"}}" are
+// literal braces; an empty field ("{}") auto-numbers through argsList in
+// order; a digit-only field is an explicit positional index; any other
+// field is a keyword lookup in kwargsDict. Nested field access
+// (attribute/index lookups inside the braces, e.g. "{0.attr}"/"{0[1]}")
+// is not supported — a narrower, documented gap; real Python also
+// raises for mixing auto-numbered and explicit-positional fields in one
+// template, which this doesn't enforce (harmless leniency, not a
+// correctness gap for well-formed templates). Formatting itself is
+// delegated to Pyc_FormatValue, the same Format Spec Mini-Language
+// implementation f-strings use.
+PyObject* PyBuiltin_StrFormat(PyObject* templateStr, PyObject* argsList, PyObject* kwargsDict) {
+    if (!templateStr || templateStr->type != 3) return PyUnicode_FromString("");
+    const std::string& tmpl = templateStr->str;
+    std::string out;
+    long autoIdx = 0;
+    size_t i = 0, n = tmpl.size();
+    while (i < n) {
+        char c = tmpl[i];
+        if (c == '{') {
+            if (i + 1 < n && tmpl[i + 1] == '{') { out += '{'; i += 2; continue; }
+            size_t close = tmpl.find('}', i);
+            if (close == std::string::npos) { out += tmpl.substr(i); break; }
+            std::string inner = tmpl.substr(i + 1, close - i - 1);
+            std::string fieldPart = inner, formatSpecStr;
+            size_t colon = inner.find(':');
+            if (colon != std::string::npos) {
+                fieldPart = inner.substr(0, colon);
+                formatSpecStr = inner.substr(colon + 1);
+            }
+            std::string fieldName = fieldPart;
+            char conv = 0;
+            size_t bang = fieldPart.find('!');
+            if (bang != std::string::npos) {
+                if (bang + 1 < fieldPart.size()) conv = fieldPart[bang + 1];
+                fieldName = fieldPart.substr(0, bang);
+            }
+            PyObject* val = nullptr;
+            bool ownVal = false;
+            if (fieldName.empty()) {
+                if (argsList && argsList->type == 1 && autoIdx < (long)PyList_Size(argsList)) {
+                    val = PyList_GetItemI64(argsList, autoIdx);
+                    ownVal = true;
+                }
+                autoIdx++;
+            } else if (isdigit((unsigned char)fieldName[0])) {
+                long idx = std::atol(fieldName.c_str());
+                if (argsList && argsList->type == 1 && idx >= 0 && idx < (long)PyList_Size(argsList)) {
+                    val = PyList_GetItemI64(argsList, idx);
+                    ownVal = true;
+                }
+            } else if (kwargsDict && kwargsDict->type == 2) {
+                for (auto& pair : kwargsDict->dict) {
+                    if (pair.first && pair.first->type == 3 && pair.first->str == fieldName) {
+                        val = pair.second; // borrowed — kwargsDict outlives this call
+                        break;
+                    }
+                }
+            }
+            if (conv == 'r' || conv == 'a') {
+                PyObject* r = PyBuiltin_Repr(val);
+                if (ownVal && val) Py_DECREF(val);
+                val = r;
+                ownVal = true;
+            }
+            PyObject* specObj = PyUnicode_FromString(formatSpecStr.c_str());
+            PyObject* formatted = Pyc_FormatValue(val, specObj);
+            Py_DECREF(specObj);
+            if (formatted) { out += formatted->str; Py_DECREF(formatted); }
+            if (ownVal && val) Py_DECREF(val);
+            i = close + 1;
+        } else if (c == '}') {
+            if (i + 1 < n && tmpl[i + 1] == '}') { out += '}'; i += 2; continue; }
+            out += '}';
+            i++;
+        } else {
+            out += c;
+            i++;
+        }
+    }
+    return PyUnicode_FromString(out.c_str());
 }
 
 PyObject* PyString_Join(PyObject* sep, PyObject* iterable) {

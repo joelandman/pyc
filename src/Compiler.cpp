@@ -8254,12 +8254,93 @@ class LoweringVisitor {
         } else if (methodName == "isspace") {
             ir.addInstruction(currentFunc, "call", {"PyString_IsSpace", obj}, res, "bool");
             noteType(res, "bool");
-        } else if (methodName == "split") {
-            if (args.empty()) {
-                ir.addInstruction(currentFunc, "call", {"PyString_SplitWhitespace", obj}, res);
-            } else {
-                ir.addInstruction(currentFunc, "call", {"PyString_Split", obj, args[0]}, res);
+        } else if (methodName == "split" || methodName == "rsplit") {
+            // sep=None (the whitespace-run-splitting mode, collapsing
+            // consecutive whitespace and dropping empty tokens) must be
+            // detected from the AST, not just "no argument given" — a
+            // caller can also pass None *explicitly* as a positional
+            // argument (`s.split(None)`, `s.rsplit(None, 1)`), which
+            // args.empty() alone doesn't catch. Found and fixed while
+            // bug hunting (rsplit's implementation, alongside split's
+            // pre-existing version of the same gap): without this check,
+            // an explicit None fell through to the literal-separator
+            // path with sep coerced to a plain single space, producing
+            // spurious empty-string elements for any run of more than
+            // one whitespace character.
+            bool sepIsNone = false;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type != "Keyword") { sepIsNone = (ch->type == "Constant" && ch->is_none); break; }
             }
+            if (methodName == "split") {
+                if (args.empty() || sepIsNone) {
+                    ir.addInstruction(currentFunc, "call", {"PyString_SplitWhitespace", obj}, res);
+                } else {
+                    ir.addInstruction(currentFunc, "call", {"PyString_Split", obj, args[0]}, res);
+                }
+            } else {
+                // rsplit(sep=None, maxsplit=-1) — found entirely
+                // unimplemented while bug hunting. maxsplit may be
+                // positional or a maxsplit= keyword (scanned the same
+                // way sub()'s count= keyword already is elsewhere in
+                // this file).
+                std::string maxsplitArg;
+                for (size_t i = 1; i < node->children.size(); ++i) {
+                    const auto* ch = node->children[i].get();
+                    if (ch && ch->type == "Keyword" && ch->id == "maxsplit" && !ch->children.empty()) {
+                        maxsplitArg = lowerExpr(ch->children[0].get());
+                        break;
+                    }
+                }
+                if (maxsplitArg.empty() && args.size() > 1) maxsplitArg = args[1];
+                if (maxsplitArg.empty()) {
+                    maxsplitArg = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"-1"}, maxsplitArg, "int");
+                }
+                if (args.empty() || sepIsNone) {
+                    ir.addInstruction(currentFunc, "call", {"PyString_RSplitWhitespace", obj, maxsplitArg}, res);
+                } else {
+                    ir.addInstruction(currentFunc, "call", {"PyString_RSplit", obj, args[0], maxsplitArg}, res);
+                }
+            }
+        } else if (methodName == "partition") {
+            // partition(sep) — found entirely unimplemented while bug
+            // hunting. Returns [before, sep, after] (list, not a tuple —
+            // pyc's existing "no distinct tuple type" choice, not new).
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_Partition", obj, arg}, res);
+        } else if (methodName == "rpartition") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_RPartition", obj, arg}, res);
+        } else if (methodName == "format" && typeOf(obj) != "dict") {
+            // str.format(*args, **kwargs) — found entirely unimplemented
+            // while bug hunting. `args` here already has only positional
+            // arguments (Keyword children are filtered out at the top of
+            // this function); scan node->children again to build the
+            // kwargs dict PyBuiltin_StrFormat also needs.
+            std::string argsListVar = "$t" + std::to_string(tempCounter++);
+            {
+                std::string z = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, z);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argsListVar);
+            }
+            for (auto& a : args) {
+                std::string d = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_Append", argsListVar, a}, d);
+            }
+            std::string kwargsDictVar = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyDict_New"}, kwargsDictVar);
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (ch && ch->type == "Keyword" && !ch->id.empty() && !ch->children.empty()) {
+                    std::string keyConst = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + ch->id + "\""}, keyConst, "str");
+                    std::string val = lowerExpr(ch->children[0].get());
+                    std::string dummy = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", kwargsDictVar, keyConst, val}, dummy);
+                }
+            }
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_StrFormat", obj, argsListVar, kwargsDictVar}, res);
         } else if (methodName == "join" && typeOf(obj) != "dict") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyString_Join", obj, arg}, res);
@@ -8934,8 +9015,40 @@ class LoweringVisitor {
 
     std::string lowerFormattedValue(const ASTNode* node) {
         std::string exprVal = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        // !r / !s / !a conversion — found and fixed while bug hunting
+        // (previously captured by the parser into node->op but never
+        // read here, so f"{x!r}" and f"{x}" produced identical output).
+        // !s and the no-conversion default are treated identically
+        // (both just pass the value through to Pyc_FormatValue, which
+        // dispatches on the value's runtime type) since pyc has no
+        // __format__ protocol for the two to meaningfully diverge on;
+        // !a (ascii) is approximated as repr — pyc's str values are
+        // already assumed ASCII/UTF-8 passthrough, so there's no
+        // separate non-ASCII-escaping behavior to implement.
+        int conv = -1;
+        try { conv = node->op.empty() ? -1 : std::stoi(node->op); } catch (...) {}
+        std::string convertedVal = exprVal;
+        if (conv == 114 || conv == 97) { // ord('r'), ord('a')
+            std::string r = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Repr", exprVal}, r);
+            convertedVal = r;
+        }
+        // format_spec (e.g. :.2f) — found and fixed while bug hunting
+        // (previously a deliberate MVP-era scope cut, silently ignored;
+        // see the parser's comment on why format_spec is captured as a
+        // full nested JoinedStr subtree rather than assumed to always be
+        // a static literal). Lowered like any other f-string part when
+        // present, producing a plain runtime string; Pyc_FormatValue
+        // implements Python's Format Specification Mini-Language.
+        std::string specVal;
+        if (node->children.size() > 1 && node->children[1]) {
+            specVal = lowerExpr(node->children[1].get());
+        } else {
+            specVal = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"\""}, specVal, "str");
+        }
         std::string res = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyStr_FromAny", exprVal}, res);
+        ir.addInstruction(currentFunc, "call", {"Pyc_FormatValue", convertedVal, specVal}, res);
         return res;
     }
 

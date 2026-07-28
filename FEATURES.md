@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **375/375** (runner shows 375/375, file_case_failures=0).
+Current test count: **413/413** (runner shows 413/413, file_case_failures=0).
 
 ## Types and Literals
 
@@ -9,7 +9,7 @@ Current test count: **375/375** (runner shows 375/375, file_case_failures=0).
 | `int` | Full arithmetic, comparison, floor/true division, small int cache (-5..256) |
 | `float` | `3.14`, `1e-3`, mixed int/float; shortest round-trip printing |
 | `bool` | `True`/`False`; prints correctly; arithmetic with ints (`True+1=2`); singleton identity |
-| `str` | Literals, `+`, `*`, f-strings (see caveat below), `%` formatting, all major methods, full slicing |
+| `str` | Literals, `+`, `*`, f-strings (incl. format specs and `!r`/`!s`/`!a`), `%` formatting, `.format()`, all major methods, full slicing |
 | `list` | Literals, subscript get/set (incl. negative indices), full slices (incl. step), comprehensions, append/sort/pop |
 | `dict` | Literals, subscript get/set, keys/values/items, `get(key, default)` |
 | `tuple` | Literals and unpacking (mapped to list internally) |
@@ -360,16 +360,24 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
 
 ## String Methods
 
-`upper()`, `lower()`, `strip()`, `split(sep)`, `join(iterable)`,
-`find()`, `count()`, `replace()`,
+`upper()`, `lower()`, `strip()`, `split(sep)`, `rsplit(sep, maxsplit)`,
+`partition(sep)`, `rpartition(sep)`, `join(iterable)`,
+`find()`, `count()`, `replace()`, `format(*args, **kwargs)`,
 `str % value` (`%d`, `%s`, `%f`, `%.Nf`, `%x`, `%X`, `%o`, `%r`, `%%`, `%*d`)
 
-- **Found, documented, not fixed**: `.format()`, `.rsplit()`,
-  `.partition()`, and `.rpartition()` have no implementation at all
-  (not a missing-dispatch bug like `tuple`/`divmod`/`pow` — there's no
-  working code to route to). Calling any of them silently prints `None`
-  instead of raising an error or producing the right result. See
-  IMPLEMENTATION.md.
+- **Severe bug found and fixed**: `.format()`, `.rsplit()`,
+  `.partition()`, and `.rpartition()` used to have no implementation at
+  all — calling any of them silently printed `None` instead of raising
+  an error or producing the right result. All four now work; `.format()`
+  supports positional/explicit-index/keyword fields, format specs
+  (sharing the same formatter f-strings use),
+  `!r` conversion, and literal-brace escaping. Nested field access
+  (`"{0.attr}"`) isn't supported. See IMPLEMENTATION.md.
+- **Related bug found and fixed**: `.split(None)` / `.rsplit(None, ...)`
+  with an *explicit* `None` separator (as opposed to omitting the
+  argument) silently produced spurious empty-string elements for any run
+  of more than one whitespace character, instead of collapsing runs the
+  way whitespace-mode splitting should. See IMPLEMENTATION.md.
 
 ## List/Dict Methods
 
@@ -400,13 +408,15 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
   silently lost data — `{**d1, **d2}` printed as `{None: {'b': 2}}`,
   with `d1`'s entries dropped entirely, instead of merging both dicts.
   See IMPLEMENTATION.md.
-- **Not fixed, newly documented**: f-string format specs (`f"{x:.2f}"`)
-  are silently ignored — the value is substituted unformatted. A
+- **Severe bug found and fixed**: f-string format specs (`f"{x:.2f}"`)
+  used to be silently ignored — the value was substituted unformatted. A
   pre-existing, deliberate MVP-era scope cut that was previously
-  undocumented, not a new regression; implementing it means implementing
-  a meaningful subset of Python's Format Specification Mini-Language, a
-  substantial separate feature. The `!r`/`!s`/`!a` conversion flag is
-  captured by the parser but similarly never applied. See
+  undocumented, not a new regression. Now implements a practical subset
+  of Python's Format Specification Mini-Language (fill/align/sign/#/
+  0-pad/width/,/precision/type — see IMPLEMENTATION.md for exactly
+  what's covered and what isn't), including dynamic width/precision
+  (`f"{x:{width}.{prec}f}"`). The `!r`/`!s`/`!a` conversion flag,
+  previously captured by the parser but never applied, now is too. See
   IMPLEMENTATION.md.
 
 ## Comprehensions
