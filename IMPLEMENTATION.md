@@ -73,7 +73,16 @@ contained crash fix)**:
   catch-all parameters together on the same function (`def f(*args,
   **kwargs): ...`) additionally crashes LLVM module verification at
   compile time — not investigated further, since it's downstream of the
-  same missing catch-all-parameter feature.
+  same missing catch-all-parameter feature. **This specifically breaks
+  the single most common use of `**kwargs` in real Python code: a
+  generic decorator's inner wrapper**, `def wrapper(*args, **kwargs):
+  return f(*args, **kwargs)` — confirmed this crashes compilation even
+  as a *nested* function inside a closure (the standard `@deco`
+  pattern), and even when the wrapper's body never actually reads
+  `kwargs` at all — merely declaring a nested function with both a
+  `*args` and a `**kwargs` parameter is enough to trigger the crash. A
+  nested function with only `*args` (no `**kwargs`) compiles and runs
+  correctly.
 
 ### Full First-Class Function Objects — Partial
 Functions have identity (`is`, `==`) and repr (`<function f at 0x...>`), but full
@@ -1281,6 +1290,77 @@ half) for a dedicated future session. Not previously documented anywhere
 — `FEATURES.md`'s Exceptions section only ever discussed builtin
 exception types and calling exception classes as first-class values
 (`exc = ValueError; raise exc("msg")`), never subclassing one.
+
+### `lst[-1]` — Negative List Indexing Was Broken For Every List Storage Representation
+Continuing the hunt turned up what may be the highest-impact bug found
+this session: negative indexing on a list — `lst[-1]` for "the last
+element", one of the single most common indexing idioms in Python —
+either raised a bogus `IndexError` or produced a silently wrong answer,
+depending on the list's internal storage representation. Confirmed
+against real CPython: `[1, 2, 3][-1]` must be `3`.
+
+**Root cause**: pyc stores lists three ways depending on what's proven
+about their contents at compile time — a homogeneous-int fast path
+(`ilist`, a raw `std::vector<long>`), a homogeneous-float fast path
+(`flist`), and a generic boxed fallback (`list`, `std::vector<PyObject*>`).
+Every *generic* indexing path already normalizes negative indices
+correctly (`Pyc_Subscript`/`Pyc_GetItem`/`PyList_GetItemObj`/
+`PyList_GetItemI64`, and the equivalent str/bytes indexing) with the
+standard `if (idx < 0) idx += length;` step. But `Codegen.cpp`'s A4/A7
+optimization — which routes a subscript on a list *proven homogeneous
+int/float at compile time* straight to a native fast-path call instead
+of the boxed `Pyc_Subscript` — calls six functions
+(`PyList_GetItemInt64`, `PyList_GetItemDouble`, `PyList_SetItemInt64`,
+`PyList_SetItemDouble`, `PyList_SetItemInt64Auto`,
+`PyList_SetItemDoubleAuto`) that all took an **unsigned** `size_t`
+index with no negative-normalization step at all. A negative `i64`
+index (e.g. `-1`) reinterpreted as `size_t` becomes an enormous value
+(`0xFFFFFFFFFFFFFFFF`), which fails every bounds check — for the get
+functions this hits the "index out of range" fallback and raises a
+bogus `IndexError` even though the index is perfectly valid; for the
+set functions, which don't raise, it just silently no-ops, dropping the
+assignment entirely.
+
+This means the exact failure mode depended on what pyc could prove about
+the list at compile time — not something a user could predict from
+their own code:
+- A homogeneous-int/float list literal or one built via `list()`:
+  `lst[-1]` raised `IndexError: list index out of range`; `lst[-1] = x`
+  silently did nothing.
+- A mixed-type (boxed) list: neither fast path applies, so indexing goes
+  through the always-correct `Pyc_Subscript`/`PyList_GetItemObj` — but a
+  separate, narrower compile-time constant-folding path (see below)
+  still produced a wrong answer (`0` instead of the last element) in at
+  least one shape.
+- A list received as an untyped function parameter: also broken, since
+  the fast path applies based on what's known about the list's
+  *contents*, tracked independently of how it arrives at a given call site.
+
+Fixed by adding a shared `pyc_normalize_list_index` helper (mirroring
+the exact `if (index < 0) index += length;` pattern already used
+everywhere else) and calling it at the top of all six functions before
+any bounds check; changed their signatures from `size_t` to a signed
+`long` so a negative index survives the C++ call unchanged (the LLVM
+side was already declaring the parameter as a plain `i64`, which has no
+signedness of its own — only the C++-side interpretation was wrong, so
+no `Codegen.cpp` changes were needed).
+
+Verified against real CPython: get and set on both int and float lists,
+last/second-to-last/most-negative-valid-index cases, an out-of-range
+negative index still correctly raising `IndexError`, and a list passed
+through an untyped function parameter (to confirm the fix isn't merely
+a special case for literal lists). Added as permanent `tests/runner.py`
+regressions. Full suite (350/350) and import tests (9/9) stay green;
+`valgrind --tool=memcheck` shows 0 errors.
+
+**A separate, narrower, minor finding noticed while verifying this
+fix, not previously documented**: a homogeneous list of `bool` values
+(`[True, False, True]`) loses its bool-ness when read back —
+`lb[0]` prints `1` instead of `True`. This is a representation-loss
+issue (the int fast-path storage is a raw `std::vector<long>` with no
+per-element flag distinguishing "this came from a bool literal"), not
+related to the indexing bug above (reproduces with plain `lb[0]`, no
+negative index involved) and much narrower in impact. Not fixed here.
 
 ## Known Limitations
 

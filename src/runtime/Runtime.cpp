@@ -477,78 +477,126 @@ PyObject* PyList_NewFloatBoxed(PyObject* n) {
     return PyList_NewFloat(size);
 }
 
-long PyList_GetItemInt64(PyObject* list, size_t index) {
-    if (list && list->type == 1 && list->list_item_type == 1 && index < list->ilist.size())
-        return list->ilist[index];
+// Negative-index normalization for the native-fast-path list get/set
+// functions below — found missing while bug hunting: unlike every other
+// indexing path in this file (PyList_GetItemObj, PyList_GetItemI64, str/
+// bytes indexing), these six functions took an unsigned size_t index
+// with no "if negative, add length" step at all. Codegen.cpp routes
+// lst[-1]-style subscripts on a compile-time-known homogeneous int/float
+// list straight to these functions with a raw native i64 index (the
+// A4/A7 fast path, bypassing the correctly-negative-aware Pyc_Subscript
+// entirely) — a negative i64 reinterpreted as size_t becomes an enormous
+// value, so `lst[-1]` on such a list raised a bogus IndexError (get) or
+// silently no-op'd (set) instead of returning/updating the last element.
+// Confirmed against real CPython: `[1,2,3][-1]` must be 3.
+static inline long pyc_normalize_list_index(PyObject* list, long index) {
+    if (!list || list->type != 1) return index;
+    long n;
+    if (list->list_item_type == 1) n = (long)list->ilist.size();
+    else if (list->list_item_type == 2) n = (long)list->flist.size();
+    else n = (long)list->list.size();
+    if (index < 0) index += n;
+    return index;
+}
+
+long PyList_GetItemInt64(PyObject* list, long index) {
+    index = pyc_normalize_list_index(list, index);
+    if (index < 0) {
+        if (list && list->type == 1 && list->list_item_type == 1)
+            pyc_raise_msg("IndexError", "list index out of range");
+        return 0;
+    }
+    size_t idx = (size_t)index;
+    if (list && list->type == 1 && list->list_item_type == 1 && idx < list->ilist.size())
+        return list->ilist[idx];
     if (list && list->type == 1 && list->list_item_type == 1)
         pyc_raise_msg("IndexError", "list index out of range");
     // Fallback: boxed list (e.g. after sorted()/slice demotion) holding int/bool/float
-    if (list && list->type == 1 && list->list_item_type == 0 && index < list->list.size()) {
-        PyObject* el = list->list[index];
+    if (list && list->type == 1 && list->list_item_type == 0 && idx < list->list.size()) {
+        PyObject* el = list->list[idx];
         if (el && (el->type == 0 || el->type == 5)) return el->value;
         if (el && el->type == 4) return (long)el->dvalue;
     }
     return 0;
 }
 
-void PyList_SetItemInt64(PyObject* list, size_t index, long v) {
-    if (list && list->type == 1 && list->list_item_type == 1 && index < list->ilist.size())
-        list->ilist[index] = v;
-    else if (list && list->type == 1 && list->list_item_type == 0 && index < list->list.size()) {
-        PyObject* old = list->list[index];
+void PyList_SetItemInt64(PyObject* list, long index, long v) {
+    index = pyc_normalize_list_index(list, index);
+    if (index < 0) return;
+    size_t idx = (size_t)index;
+    if (list && list->type == 1 && list->list_item_type == 1 && idx < list->ilist.size())
+        list->ilist[idx] = v;
+    else if (list && list->type == 1 && list->list_item_type == 0 && idx < list->list.size()) {
+        PyObject* old = list->list[idx];
         if (old) Py_DECREF(old);
-        list->list[index] = PyInt_FromLong(v);
+        list->list[idx] = PyInt_FromLong(v);
     }
 }
 
-double PyList_GetItemDouble(PyObject* list, size_t index) {
-    if (list && list->type == 1 && list->list_item_type == 2 && index < list->flist.size())
-        return list->flist[index];
+double PyList_GetItemDouble(PyObject* list, long index) {
+    index = pyc_normalize_list_index(list, index);
+    if (index < 0) {
+        if (list && list->type == 1 && list->list_item_type == 2)
+            pyc_raise_msg("IndexError", "list index out of range");
+        return 0.0;
+    }
+    size_t idx = (size_t)index;
+    if (list && list->type == 1 && list->list_item_type == 2 && idx < list->flist.size())
+        return list->flist[idx];
     if (list && list->type == 1 && list->list_item_type == 2)
         pyc_raise_msg("IndexError", "list index out of range");
     // Fallback: boxed list holding float/int
-    if (list && list->type == 1 && list->list_item_type == 0 && index < list->list.size()) {
-        PyObject* el = list->list[index];
+    if (list && list->type == 1 && list->list_item_type == 0 && idx < list->list.size()) {
+        PyObject* el = list->list[idx];
         if (el && el->type == 4) return el->dvalue;
         if (el && (el->type == 0 || el->type == 5)) return (double)el->value;
     }
     return 0.0;
 }
 
-void PyList_SetItemDouble(PyObject* list, size_t index, double v) {
-    if (list && list->type == 1 && list->list_item_type == 2 && index < list->flist.size())
-        list->flist[index] = v;
-    else if (list && list->type == 1 && list->list_item_type == 0 && index < list->list.size()) {
-        PyObject* old = list->list[index];
+void PyList_SetItemDouble(PyObject* list, long index, double v) {
+    index = pyc_normalize_list_index(list, index);
+    if (index < 0) return;
+    size_t idx = (size_t)index;
+    if (list && list->type == 1 && list->list_item_type == 2 && idx < list->flist.size())
+        list->flist[idx] = v;
+    else if (list && list->type == 1 && list->list_item_type == 0 && idx < list->list.size()) {
+        PyObject* old = list->list[idx];
         if (old) Py_DECREF(old);
-        list->list[index] = PyFloat_FromDouble(v);
+        list->list[idx] = PyFloat_FromDouble(v);
     }
 }
 
-void PyList_SetItemDoubleAuto(PyObject* list, size_t index, double v) {
+void PyList_SetItemDoubleAuto(PyObject* list, long index, double v) {
     if (!list || list->type != 1) return;
-    if (list->list_item_type == 2 && index < list->flist.size()) {
-        list->flist[index] = v;
+    index = pyc_normalize_list_index(list, index);
+    if (index < 0) return;
+    size_t idx = (size_t)index;
+    if (list->list_item_type == 2 && idx < list->flist.size()) {
+        list->flist[idx] = v;
         return;
     }
-    if (index < list->list.size()) {
-        PyObject* old = list->list[index];
+    if (idx < list->list.size()) {
+        PyObject* old = list->list[idx];
         if (old) Py_DECREF(old);
-        list->list[index] = PyFloat_FromDouble(v);
+        list->list[idx] = PyFloat_FromDouble(v);
     }
     // If index >= size, silently ignore (matches PyList_SetItem behavior)
 }
 
-void PyList_SetItemInt64Auto(PyObject* list, size_t index, long v) {
+void PyList_SetItemInt64Auto(PyObject* list, long index, long v) {
     if (!list || list->type != 1) return;
-    if (list->list_item_type == 1 && index < list->ilist.size()) {
-        list->ilist[index] = v;
+    index = pyc_normalize_list_index(list, index);
+    if (index < 0) return;
+    size_t idx = (size_t)index;
+    if (list->list_item_type == 1 && idx < list->ilist.size()) {
+        list->ilist[idx] = v;
         return;
     }
-    if (index < list->list.size()) {
-        PyObject* old = list->list[index];
+    if (idx < list->list.size()) {
+        PyObject* old = list->list[idx];
         if (old) Py_DECREF(old);
-        list->list[index] = PyInt_FromLong(v);
+        list->list[idx] = PyInt_FromLong(v);
     }
 }
 

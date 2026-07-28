@@ -43,12 +43,12 @@ int PyList_Unpack3(PyObject* list, PyObject** out0, PyObject** out1, PyObject** 
 PyObject* PyList_NewBoxed(PyObject* n);
 PyObject* PyList_NewIntBoxed(PyObject* n);
 PyObject* PyList_NewFloatBoxed(PyObject* n);
-long      PyList_GetItemInt64(PyObject* list, size_t index);
-double    PyList_GetItemDouble(PyObject* list, size_t index);
-void      PyList_SetItemInt64(PyObject* list, size_t index, long v);
-void      PyList_SetItemDouble(PyObject* list, size_t index, double v);
-void      PyList_SetItemInt64Auto(PyObject* list, size_t index, long v);
-void      PyList_SetItemDoubleAuto(PyObject* list, size_t index, double v);
+long      PyList_GetItemInt64(PyObject* list, long index);
+double    PyList_GetItemDouble(PyObject* list, long index);
+void      PyList_SetItemInt64(PyObject* list, long index, long v);
+void      PyList_SetItemDouble(PyObject* list, long index, double v);
+void      PyList_SetItemInt64Auto(PyObject* list, long index, long v);
+void      PyList_SetItemDoubleAuto(PyObject* list, long index, double v);
 void      PyList_SetItemBoxed(PyObject* list, PyObject* idx, PyObject* item);
 PyObject* PyList_Comprehension(int start, int end);
 PyObject* PyFloat_FromDouble(double v);

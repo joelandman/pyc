@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **345/345** (runner shows 345/345, file_case_failures=0).
+Current test count: **350/350** (runner shows 350/350, file_case_failures=0).
 
 ## Types and Literals
 
@@ -10,7 +10,7 @@ Current test count: **345/345** (runner shows 345/345, file_case_failures=0).
 | `float` | `3.14`, `1e-3`, mixed int/float; shortest round-trip printing |
 | `bool` | `True`/`False`; prints correctly; arithmetic with ints (`True+1=2`); singleton identity |
 | `str` | Literals, `+`, `*`, f-strings (see caveat below), `%` formatting, all major methods, full slicing |
-| `list` | Literals, subscript get/set, full slices (incl. step), comprehensions, append/sort/pop |
+| `list` | Literals, subscript get/set (incl. negative indices), full slices (incl. step), comprehensions, append/sort/pop |
 | `dict` | Literals, subscript get/set, keys/values/items, `get(key, default)` |
 | `tuple` | Literals and unpacking (mapped to list internally) |
 | `None` | Constant, comparison, printing; singleton identity |
@@ -346,6 +346,17 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
 - `list + list` concatenation — **found missing entirely and
   implemented this session** (`[1,2,3] + [4,5]` used to return `None`
   unconditionally). See IMPLEMENTATION.md.
+- **Severe, high-impact bug found and fixed**: negative list indexing
+  (`lst[-1]`, one of the most common indexing idioms in Python) either
+  raised a bogus `IndexError` or silently produced/wrote the wrong
+  value, depending on the list's internal storage representation — a
+  homogeneous int/float fast-path list crashed on read and silently
+  no-op'd on write; a boxed/mixed-type list read back a wrong value.
+  `lst[3]`-style non-negative indexing was unaffected. See
+  IMPLEMENTATION.md.
+- **Found, documented, not fixed (minor)**: a homogeneous list of
+  `bool` values loses its bool-ness on read — `[True, False][0]` prints
+  `1` instead of `True`. See IMPLEMENTATION.md.
 - **Real bug found and fixed**: list `==`/`!=`/`<`/`>`/`<=`/`>=`
   comparison silently gave wrong answers for homogeneous int/float list
   literals — e.g. `[1,2,3] == [1,2,4]` and `[1,2,3] == [1,2]` both

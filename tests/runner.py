@@ -517,6 +517,30 @@ print(a[0],a[1],a[2])
      "d = {'a': 1, 'b': 2, 'c': 3}\n"
      "print(inner(**d))", "6\n"),
 
+    # Bug-hunt regression: negative indexing on a list (lst[-1], an
+    # extremely common idiom) raised a bogus IndexError for a homogeneous
+    # int/float fast-path list, or silently returned/wrote the wrong
+    # element for a mixed/boxed list. Root cause: Codegen.cpp routes
+    # subscripts on a compile-time-known homogeneous list straight to
+    # native PyList_Get/SetItemInt64/Double, bypassing the correctly
+    # negative-aware Pyc_Subscript entirely — those six functions took an
+    # unsigned size_t index with no "if negative, add length"
+    # normalization at all, unlike every other indexing path in the
+    # runtime (str, bytes, the generic Pyc_Subscript/PyList_GetItemObj
+    # path). Fixed by normalizing in a shared helper before every use.
+    # Covers get and set, on int and float lists, negative-index
+    # out-of-range (still raises IndexError), and passing a list through
+    # an untyped function parameter (proving the fix isn't just a
+    # literal-list special case).
+    ("li = [10, 20, 30, 40, 50]\nprint(li[-1], li[-2], li[-5])", "50 40 10\n"),
+    ("li = [10, 20, 30]\nli[-1] = 999\nprint(li)", "[10, 20, 999]\n"),
+    ("lf = [1.1, 2.2, 3.3]\nprint(lf[-1])\nlf[-1] = 9.9\nprint(lf)",
+     "3.3\n[1.1, 2.2, 9.9]\n"),
+    ("def get_last(lst):\n    return lst[-1]\nprint(get_last([1, 2, 3]))",
+     "3\n"),
+    ("try:\n    print([1, 2, 3][-10])\nexcept IndexError as e:\n    print('caught:', e)",
+     "caught: list index out of range\n"),
+
     # Tier-2-batch regression: unsupported imports print ImportError to
     # stderr and return None (rather than silently producing wrong output).
     # The runner only checks stdout, so the program's stdout is empty.
