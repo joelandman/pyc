@@ -876,12 +876,12 @@ raises `KeyError: 'missing'`. Fixed to match `Pyc_Subscript`'s existing
 pattern, raw key object as the message so `pyc_exc_message`'s existing
 repr-quoting applies). Verified `except KeyError as e: print(e)` now
 matches real CPython's `KeyError: 'missing'` exactly. (Also noticed,
-but explicitly did **not** chase down, since it's a different and
-narrower pre-existing gap unrelated to `del`/dict/list: `type(e).__name__`
-on a caught exception instance prints `None` instead of the exception's
-class name — an exception-object type-introspection formatting issue,
-not part of this bug hunt's pattern. Worth a future look, not fixed
-here.)
+but explicitly did **not** chase down at the time, since it's a
+different and narrower pre-existing gap unrelated to `del`/dict/list:
+`type(e).__name__` on a caught exception instance printed `None`
+instead of the exception's class name — an exception-object type-
+introspection formatting issue, not part of this bug hunt's pattern at
+the time. Fixed on a later pass — see the dedicated entry further down.)
 
 ### User Variable Names Could Collide With the Compiler's Internal Temp Namespace — Fixed
 Found by continuing the same bug hunt into `copy.copy()`. This one was
@@ -1574,11 +1574,11 @@ list-vs-tuple architectural choice — not a new gap); and a non-matching
 handler rather than swallowing the exception. Two pre-existing,
 already-established differences remain, both applying equally to
 *every* exception in pyc, not specific to this fix: uncaught tracebacks
-don't include the `File "...", line N` detail CPython shows, and
-`type(e).__name__` on any caught exception instance prints `None` (a
-narrower, separately-documented introspection gap — see below). Added
-as permanent `tests/runner.py` regressions. Full suite and import tests
-stay green; `valgrind --tool=memcheck` shows 0 errors.
+don't include the `File "...", line N` detail CPython shows (still
+true), and `type(e).__name__` on any caught exception instance printed
+`None` — fixed on a later pass, see the dedicated entry further down.
+Added as permanent `tests/runner.py` regressions. Full suite and import
+tests stay green; `valgrind --tool=memcheck` shows 0 errors.
 
 ### `lst[-1]` — Negative List Indexing Was Broken For Every List Storage Representation
 Continuing the hunt turned up what may be the highest-impact bug found
@@ -1650,6 +1650,65 @@ issue (the int fast-path storage is a raw `std::vector<long>` with no
 per-element flag distinguishing "this came from a bool literal"), not
 related to the indexing bug above (reproduces with plain `lb[0]`, no
 negative index involved) and much narrower in impact. Not fixed here.
+
+### `type(x).__name__` Printed `None` For Every Type — Fixed
+Originally found and documented narrowly (as `type(e).__name__` on a
+caught exception instance) while working on an unrelated `del`/dict fix;
+revisited and fixed on explicit request. Confirmed the gap was actually
+broader than first documented: `type(x).__name__` printed `None` for
+*every* type, not just caught exceptions — `type(5).__name__`,
+`type("x").__name__`, etc. all printed `None` too.
+
+**Two layered root causes, both fixed**:
+- `PyBuiltin_Type` (the `type()` builtin) showed the wrong class for
+  two whole categories of value: any user-defined class instance
+  (`type(instance)`) and any structured/builtin exception instance
+  (`type(e)` for a caught `ValueError`, etc.) both showed a generic
+  placeholder (`<class 'dict'>` for the former, since a class instance
+  is a plain dict with a `"__class__"` key and the dispatch switch had
+  no case distinguishing that from a genuine plain dict; `<class
+  'object'>` for the latter, since structured exceptions have their own
+  type tag — 10 — with no case in the switch at all, falling to the
+  generic default). Fixed by adding a `type == 10` case (structured
+  exceptions already carry their type name directly in `obj->str`) and
+  making the `type == 2` case check for a `"__class__"` entry, and if
+  present, use the same `__mro__[0]` lookup already relied on for
+  `super()` and for exception-instance matching (see
+  `pyc_exc_instance_mro`'s comment far above — despite the
+  exception-flavored name, it was already general-purpose, not
+  exception-specific) to get the real class name instead of falling
+  back to the generic `dict` label. A genuine plain dict (no
+  `"__class__"` entry) still correctly shows `<class 'dict'>`.
+- Even with `type()` itself fixed, `.__name__` on the result still
+  didn't work — because pyc's `type()` returns a **formatted display
+  string** (`"<class 'ValueError'>"`) rather than a real type object (a
+  bigger, separate architectural gap not addressed here: pyc has no
+  actual type/class object protocol, only this string formatting), and
+  a plain `str` value has no attribute dict for a normal `.__name__`
+  lookup to find anything in. Fixed by adding a dedicated case to
+  `Pyc_GetAttr` (the centralized bare-attribute-read dispatcher added
+  for the `@property` fix elsewhere in this document): when the target
+  is a string matching the `"<class '...'>"` shape and the requested
+  attribute is exactly `"__name__"`, parse the class name back out of
+  the string instead of doing a real attribute lookup. Also strips any
+  module-qualifier prefix (`"__main__."`) if present, so `.__name__`
+  behaves correctly regardless of whether `type()`'s own display string
+  includes one.
+
+One remaining, deliberate simplification, not fully matching CPython:
+`type()`'s formatted string for a user-defined class omits the
+`__main__.` module qualifier CPython includes (`<class 'MyError'>`
+instead of `<class '__main__.MyError'>`) — pyc doesn't track modules
+the way CPython does. This doesn't affect `.__name__`'s correctness,
+since it strips any module prefix either way.
+
+Verified against real CPython: a builtin exception, a user-defined
+exception subclass, a plain user-defined class instance (including one
+reached through inheritance), a genuine plain dict (confirming it's
+still correctly distinguished from a class instance), and several
+non-exception builtin types (`int`, `str`, `list`, `float`). Added as
+permanent `tests/runner.py` regressions. Full suite and import tests
+stay green; `valgrind --tool=memcheck` shows 0 errors.
 
 ## Known Limitations
 

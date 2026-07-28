@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **417/417** (runner shows 417/417, file_case_failures=0).
+Current test count: **422/422** (runner shows 422/422, file_case_failures=0).
 
 ## Types and Literals
 
@@ -157,12 +157,18 @@ f(b=3, a=4)                    keyword call arguments
   `break` / `continue`, raise inside a handler or `else`
 - Uncaught exceptions print a CPython-style traceback line to stderr, exit 1
 - Exception classes as first-class values (`exc = ValueError`, `raise exc("msg")`)
-- **Not implemented**: `type(e).__name__` on a caught exception instance
-  prints `None` instead of the exception's class name — a narrow
-  introspection gap, found but not chased down (see IMPLEMENTATION.md).
-  Catching by type (`except KeyError as e:`) and printing the instance
-  itself (`print(e)`) both work correctly; it's specifically
-  `type()`-then-`.__name__` on the caught instance that doesn't resolve.
+- **Bug found and fixed**: `type(e).__name__` on a caught exception
+  instance used to print `None` instead of the exception's class name —
+  confirmed to actually be broader than originally documented,
+  affecting `type(x).__name__` for *every* type, not just caught
+  exceptions (`type(5).__name__` printed `None` too). `type()` itself
+  also showed the wrong class for any user-defined class instance or
+  builtin/structured exception (`<class 'dict'>` / `<class 'object'>`
+  instead of the real name) — both now fixed. `<class 'ClassName'>`
+  omits the CPython `__main__.` module qualifier for user-defined
+  classes (pyc doesn't track modules the way CPython does); `.__name__`
+  is unaffected by this since it strips any module prefix either way.
+  See IMPLEMENTATION.md.
 - **Severe bug found and fixed**: user-defined classes subclassing a
   builtin exception type (`class MyError(Exception): pass` — an
   ordinary, common idiom) didn't work at all. Raising one with an

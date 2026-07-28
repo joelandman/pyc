@@ -550,6 +550,41 @@ print(a[0],a[1],a[2])
      "    return a + b + c\n"
      "print(g(**{}))", "6\n"),
 
+    # Bug-hunt regression: type(e).__name__ printed None for every type,
+    # not just a caught exception instance as originally documented
+    # (type(5).__name__ printed None too). Two layered root causes, both
+    # fixed: (1) PyBuiltin_Type (the type() builtin) showed the generic
+    # '<class 'dict'>' / '<class 'object'>' for any class instance or
+    # structured/builtin exception instead of the real class name — now
+    # uses the same __mro__[0] lookup already relied on for super().
+    # (2) pyc's type() returns a formatted display string rather than a
+    # real type object (a bigger, separate architectural gap, not
+    # addressed here), so .__name__ needed a dedicated case parsing the
+    # class name back out of that string rather than a real attribute
+    # lookup. Covers a builtin exception, a user-defined exception
+    # subclass, a plain user-defined class instance (including via
+    # inheritance), a genuine plain dict (must still show 'dict', not be
+    # confused with a class instance), and non-exception builtin types.
+    ("try:\n"
+     "    raise ValueError('boom')\n"
+     "except ValueError as e:\n"
+     "    print(type(e).__name__)", "ValueError\n"),
+    ("class MyError(Exception):\n"
+     "    pass\n"
+     "try:\n"
+     "    raise MyError('custom')\n"
+     "except MyError as e:\n"
+     "    print(type(e).__name__)", "MyError\n"),
+    ("class Animal:\n"
+     "    def __init__(self, name):\n"
+     "        self.name = name\n"
+     "class Dog(Animal):\n"
+     "    pass\n"
+     "print(type(Dog('Fido')).__name__)", "Dog\n"),
+    ("d = {'a': 1}\nprint(type(d).__name__)", "dict\n"),
+    ("print(type(5).__name__, type('x').__name__, type([1]).__name__, type(5.0).__name__)",
+     "int str list float\n"),
+
     # Bug-hunt regression: negative indexing on a list (lst[-1], an
     # extremely common idiom) raised a bogus IndexError for a homogeneous
     # int/float fast-path list, or silently returned/wrote the wrong

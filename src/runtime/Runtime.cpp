@@ -2061,11 +2061,34 @@ PyObject* PyBuiltin_Type(PyObject* obj) {
     switch (obj->type) {
         case 0: return PyUnicode_FromString("<class 'int'>");
         case 1: return PyUnicode_FromString("<class 'list'>");
-        case 2: return PyUnicode_FromString("<class 'dict'>");
+        case 2: {
+            // Class instance (has a "__class__" entry) vs a genuine
+            // plain dict — found and fixed while bug hunting: type(e)
+            // for a caught user-defined exception (or any user-defined
+            // class instance) previously showed the generic '<class
+            // 'dict'>' instead of the real class name. Uses the same
+            // __mro__[0] lookup already relied on for super() and for
+            // structured-exception-style matching on a class instance
+            // (see pyc_exc_instance_mro's comment, far above) — despite
+            // the name, it's general-purpose, not exception-specific.
+            PyObject* mro = pyc_exc_instance_mro(obj);
+            if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
+                PyObject* first = PyList_GetItemI64(mro, 0);
+                std::string name = (first && first->type == 3) ? first->str : "dict";
+                if (first) Py_DECREF(first);
+                return PyUnicode_FromString(("<class '" + name + "'>").c_str());
+            }
+            return PyUnicode_FromString("<class 'dict'>");
+        }
         case 3: return PyUnicode_FromString("<class 'str'>");
         case 4: return PyUnicode_FromString("<class 'float'>");
         case 5: return PyUnicode_FromString("<class 'bool'>");
         case 6: return PyUnicode_FromString("<class 'cell'>");
+        case 10:
+            // Structured (builtin) exception — found and fixed
+            // alongside the type-2 case above: previously fell through
+            // to the generic '<class 'object'>' default.
+            return PyUnicode_FromString(("<class '" + obj->str + "'>").c_str());
         case 13: return PyUnicode_FromString("<class 'complex'>");
         case 14: return PyUnicode_FromString(pyc_as_datetime(obj)->hasTime
                      ? "<class 'datetime.datetime'>" : "<class 'datetime.date'>");
@@ -10917,6 +10940,25 @@ PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* args
 // deliberately untouched, since those are never meant to trigger
 // property auto-invocation.
 PyObject* Pyc_GetAttr(PyObject* obj, PyObject* attrName) {
+    // type(x).__name__ — found and fixed while bug hunting: confirmed
+    // broken for every type, not just a caught exception instance as
+    // originally documented (type(5).__name__ printed None too).
+    // pyc's type() builtin returns a formatted display string
+    // ("<class 'int'>") rather than a real type object — a bigger,
+    // separate architectural gap not addressed here — so .__name__
+    // needs a dedicated case that parses the class name back out of
+    // that string, rather than a real attribute lookup (a plain str
+    // object has no attribute dict for Pyc_GetItem to search).
+    if (obj && obj->type == 3 && attrName && attrName->type == 3 && attrName->str == "__name__") {
+        const std::string& s = obj->str;
+        if (s.size() >= 10 && s.compare(0, 8, "<class '") == 0 &&
+            s.back() == '>' && s[s.size() - 2] == '\'') {
+            std::string full = s.substr(8, s.size() - 8 - 2);
+            size_t dot = full.rfind('.');
+            std::string name = (dot == std::string::npos) ? full : full.substr(dot + 1);
+            return PyUnicode_FromString(name.c_str());
+        }
+    }
     PyObject* val = Pyc_GetItem(obj, attrName);
     std::string kind;
     PyObject* realToken = nullptr;
