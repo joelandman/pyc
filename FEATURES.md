@@ -770,6 +770,16 @@ a[i] = v       # subscript
 d[k] = v       # dict subscript
 ```
 
+- **Severe, unfixed bug found and documented (not fixed — see
+  IMPLEMENTATION.md)**: variable names of the form `t<N>`/`c<N>` (e.g.
+  `t3`, `c0`, `c17`) can silently collide with the compiler's own
+  internal temp-naming scheme, causing either silently wrong output
+  (`c0 = "hello"; print(c0)` prints `0`) or a hard compile failure,
+  depending on the exact sequence of internal temp allocation at that
+  point in the function. Avoid naming variables this way (a short
+  letter followed immediately by digits, nothing else) until this is
+  fixed.
+
 ## Import System
 
 - `import X` / `import X.Y.Z` — resolves same-directory modules and packages

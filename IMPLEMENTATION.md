@@ -755,6 +755,77 @@ class name — an exception-object type-introspection formatting issue,
 not part of this bug hunt's pattern. Worth a future look, not fixed
 here.)
 
+### Severe, Different-Class Bug Found, Documented But Not Fixed: User Variable Names Can Collide With the Compiler's Internal Temp Namespace
+Found by continuing the same bug hunt into `copy.copy()`. This one is
+architecturally unlike the others above — not a storage-representation
+mismatch or a missing dispatch branch, but a genuine **namespace
+collision**: the compiler allocates internal temporary IR values using
+names of the form `t<N>`/`c<N>` (`tempCounter`, reset per function),
+inlined directly as `"t" + std::to_string(tempCounter++)` /
+`"c" + std::to_string(tempCounter++)` at **361 separate call sites**
+across `Compiler.cpp` (not centralized through one helper). These names
+live in **the same namespace** as real user variable names — nothing
+prevents a Python variable actually named `t3` or `c0` from being
+treated as, and silently confused with, one of these internal temps.
+
+**Confirmed, reproduced, both failure modes exist**:
+- **Silent data corruption** (the worse of the two): `c0 = "hello";
+  print(c0)` prints `0` instead of `"hello"` — no error, no crash, just
+  a wrong answer, because `c0` collided with an unrelated
+  compiler-generated constant temp that happened to also be named `c0`
+  in that function.
+- **Hard compile failure**: `b = [1, 2, 3]; import copy; c2 =
+  copy.copy(b)` fails LLVM module verification entirely (`Store operand
+  must be a pointer` — a malformed `store ptr %t10, i64 3` instruction)
+  and refuses to produce a binary. Bisected precisely: renaming the
+  variable from `c2` to anything else (e.g. `x`) makes the exact same
+  program compile and run correctly; `copy.deepcopy` (vs. `copy.copy`)
+  on the identical `b` doesn't trigger it either — the collision is
+  about the *variable name* `c2` matching an internal temp generated
+  around that point in that function, not about `copy.copy` itself.
+- **Not deterministic per-name in isolation**: a function parameter
+  literally named `t3` compiled and ran *correctly* in one test. Whether
+  a given `t<N>`/`c<N>`-named variable collides depends on the exact
+  sequence of temp allocations already performed in that specific
+  function by the time the name is used — which can change with
+  unrelated edits elsewhere in the same function. This makes the bug
+  genuinely unpredictable from the outside, not a fixed list of "these
+  N names are always broken."
+
+**Why `tempCounter` resets to 0 per function matters for real-world
+risk**: since every function starts counting from 0 again, *low*
+numbers (`t0`, `t1`, `c0`, `c1`, `c2`, ...) are generated near the start
+of essentially every function body — these are exactly the
+short-name-plus-small-number style names a programmer might plausibly
+choose (loop temporaries, coefficients `c0`/`c1`/`c2` in numeric code),
+making this more than a purely theoretical risk, even though it's still
+an unusual naming style overall.
+
+**Why this wasn't fixed in this pass, unlike the others above**: a real
+fix is one of two shapes, both meaningfully larger in scope than
+anything else fixed during this bug hunt:
+1. A validation pass rejecting `t<N>`/`c<N>`-pattern names at compile
+   time with a clear error (converts silent corruption into a loud,
+   safe failure, but doesn't remove the underlying collision — and
+   getting full coverage right requires enumerating every kind of AST
+   binding site correctly: assignment targets, function/lambda
+   parameters — stored in a separate `ASTNode::args` string vector, not
+   as child `Name` nodes, so a naive "walk all `Name` nodes" check would
+   miss them entirely — `with`/`except`-as targets, comprehension
+   targets, `global`/`nonlocal` declarations, and more).
+2. Changing the temp-naming prefix to something no valid Python
+   identifier can ever contain (Python identifiers are restricted to
+   `[A-Za-z0-9_]`; LLVM value-name hints accept a much broader
+   character set), closing the collision permanently — mechanical, but
+   touches the naming convention at all 361 call sites, which is a
+   large enough surface that it warrants dedicated planning rather than
+   a same-session drive-by change.
+
+Given the user's explicit direction — document this thoroughly and keep
+hunting for other bugs rather than attempting either fix in this pass —
+this is recorded here as a known, real, reproducible, unfixed issue for
+a dedicated future session.
+
 ## Known Limitations
 
 ### Performance
