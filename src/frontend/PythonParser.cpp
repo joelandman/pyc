@@ -718,7 +718,23 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 PyObject* key = PyList_GetItem(keys, i);
                 PyObject* val = PyList_GetItem(values, i);
                 auto keyChild = std::make_unique<ASTNode>();
-                buildAST(key, keyChild.get());
+                if (key == Py_None) {
+                    // {**mapping, ...} entry: real Python's ast.Dict
+                    // signals this with a None key (the "value" is the
+                    // unpacked mapping expression itself, e.g. `d1` in
+                    // `{**d1}`). buildAST can't process a bare Python
+                    // None as if it were an AST node (it has no `.type`
+                    // etc.), so this used to silently produce a garbage
+                    // child instead of being recognized — confirmed:
+                    // `{**d1, **d2}` used to print as `{None: {'b': 2}}`,
+                    // losing d1's entries entirely. Mark explicitly
+                    // instead so Compiler.cpp's lowerDict can emit a
+                    // dict-merge (PyDict_Update) for this pair rather
+                    // than treating it as a literal key/value pair.
+                    keyChild->type = "DictUnpack";
+                } else {
+                    buildAST(key, keyChild.get());
+                }
                 auto valChild = std::make_unique<ASTNode>();
                 buildAST(val, valChild.get());
                 node->children.push_back(std::move(keyChild));

@@ -2137,6 +2137,37 @@ try:
 except ValueError as e:
     print("ValueError:", e)
 """, "1 2 3\n3\n3 2\n1024\n24\n5\n-5\nValueError: pow() 3rd argument cannot be 0\n"),
+    # {**mapping} dict-literal unpacking — real bug found and fixed: real
+    # Python's ast.Dict represents a `**expr` entry inside a `{...}`
+    # literal with a `None` key (the paired "value" is the unpacked
+    # mapping expression itself). PythonParser.cpp's Dict handling never
+    # special-cased this — passing bare Python `None` into `buildAST` as
+    # if it were a real AST node produced a garbage child instead — so
+    # `{**d1, **d2}` printed as `{None: {'b': 2}}`, silently losing d1's
+    # entries entirely. Fixed by tagging that entry as a "DictUnpack"
+    # marker node in the parser and having Compiler.cpp's lowerDict emit
+    # a PyDict_Update merge for it instead of a literal PyDict_SetItem.
+    # This test checks individual keys rather than the merged dict's
+    # full repr, since dict iteration/print order isn't guaranteed to
+    # match insertion order in pyc regardless of this fix (a separate,
+    # already-documented, pre-existing limitation — std::unordered_map-
+    # backed dicts — confirmed unrelated by checking that even a plain
+    # `{"a":1,"b":2,"c":3}` literal with no unpacking involved reorders
+    # the same way).
+    ("""
+d1 = {"a": 1}
+d2 = {"b": 2}
+merged = {**d1, **d2}
+print(merged["a"])
+print(merged["b"])
+print(len(merged))
+merged2 = {**d1, "c": 3}
+print(merged2["a"])
+print(merged2["c"])
+d3 = {"a": 100}
+merged3 = {**d1, **d3}
+print(merged3["a"])
+""", "1\n2\n2\n1\n3\n100\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

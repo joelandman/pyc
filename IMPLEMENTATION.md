@@ -884,6 +884,66 @@ into / unpack the results instead of printing the container directly,
 sidestepping the representation difference entirely rather than fighting
 the test harness's comparison priority.
 
+### `{**mapping}` Dict-Literal Unpacking Silently Lost Data — Fixed
+Found by continuing the hunt into other container-literal constructs.
+Real Python's `ast.Dict` node represents a `**expr` entry inside a
+`{...}` literal (e.g. `{**d1, "x": 1, **d2}`) with a **`None` key** in
+its `keys` list — the paired `values` entry is the unpacked mapping
+expression itself (`d1`, `d2`). `PythonParser.cpp`'s `Dict` handling
+never special-cased this: it called `buildAST(key, keyChild.get())`
+unconditionally for every key, and `buildAST` has no way to process a
+bare Python `None` object as if it were a real AST node (`None` has no
+`.type`/attributes to extract), producing a garbage child instead of
+either working correctly or failing clearly. Confirmed against real
+CPython: `{**d1, **d2}` printed as `{None: {'b': 2}}` — `d1`'s entries
+were silently lost entirely, not merely reordered.
+
+Fixed in two coordinated places: `PythonParser.cpp` now detects the
+`None`-key sentinel and tags that entry's key child with a distinct
+`"DictUnpack"` node type instead of trying to `buildAST` a `None`;
+`Compiler.cpp`'s `lowerDict` checks for that tag and emits a
+`PyDict_Update(dictRes, src)` merge call for that entry instead of the
+normal `PyDict_SetItem(dictRes, key, val)` — reusing the existing
+`PyDict_Update` function already used for `dict.update()`, no new
+runtime code needed. Verified against real CPython for
+`{**d1, **d2}`, `{**d1, "c": 3}` (mixing unpacked and literal entries),
+and `{**d1, **d3}` where `d3` also has a key `d1` has (confirming the
+later mapping's value correctly wins on key conflict, matching real
+Python's merge-order semantics). The permanent test checks individual
+keys via subscript rather than comparing the merged dict's full repr,
+since dict iteration/print order isn't guaranteed to match insertion
+order in pyc regardless of this fix (the separate, already-documented,
+pre-existing `std::unordered_map`-backed dict-ordering limitation first
+found during the `namedtuple` work — confirmed unrelated here too, by
+checking that even a plain `{"a":1,"b":2,"c":3}` literal with no
+unpacking involved reorders the exact same way).
+
+### F-String Format Specs (`:.2f`, `:05d`, `:>10`, ...) Are Silently Ignored — Documented, Not Fixed
+Found alongside the dict-unpacking bug while testing other f-string/
+container-literal edge cases. `f"{x:.2f}"` prints the *unformatted*
+value (`3.14159`, not `3.14`) — the entire `:spec` portion of a
+`FormattedValue` node is silently discarded. Unlike the dict-unpacking
+bug above, this is not an undiscovered bug so much as a **previously
+undocumented, pre-existing, deliberate MVP-era scope cut**:
+`PythonParser.cpp`'s `FormattedValue` handling has an explicit comment,
+predating this session — `// format_spec (e.g. :.2f) — skip for MVP` —
+right where the `format_spec` attribute would need to be read from
+Python's AST. The `!r`/`!s`/`!a` conversion flag (the `node->op` field)
+*is* correctly captured by the parser but is then **also** never read by
+`Compiler.cpp`'s `lowerFormattedValue`, which unconditionally calls
+`PyStr_FromAny` regardless of the requested conversion — so `f"{x!r}"`
+and `f"{x}"` currently produce identical output too.
+
+Not fixed here: implementing real format-spec support means
+implementing a meaningful subset of Python's Format Specification
+Mini-Language (fill/align/sign/width/precision/type for numbers and
+strings) — a substantial, self-contained feature project in its own
+right, not a bounded bug fix comparable to anything else found during
+this hunt. Documented here (and in `FEATURES.md`) specifically because
+it was **not** documented anywhere before, despite being a known,
+deliberate cut — the existing `FEATURES.md` line ("`str` | Literals, +,
+*, f-strings, ...") claimed f-string support without this caveat.
+
 ## Known Limitations
 
 ### Performance

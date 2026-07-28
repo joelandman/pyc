@@ -6256,7 +6256,21 @@ class LoweringVisitor {
          bool haveLayout = false;
 
          for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
-             std::string key = lowerExpr(node->children[i].get());
+             const ASTNode* keyNode = node->children[i].get();
+             // {**mapping} entry — real bug found and fixed: this whole
+             // "DictUnpack" case previously didn't exist, so a None-key
+             // pair (real Python's ast.Dict sentinel for `**expr` inside
+             // a dict literal) got lowered as if it were a literal
+             // key/value pair, producing garbage (`{**d1, **d2}` printed
+             // as `{None: {'b': 2}}`, silently losing d1's entries
+             // entirely). See PythonParser.cpp's Dict-handling comment.
+             if (keyNode && keyNode->type == "DictUnpack") {
+                 std::string src = lowerExpr(node->children[i + 1].get());
+                 std::string dummy = "t" + std::to_string(tempCounter++);
+                 ir.addInstruction(currentFunc, "call", {"PyDict_Update", dictRes, src}, dummy);
+                 continue;
+             }
+             std::string key = lowerExpr(keyNode);
              std::string val = lowerExpr(node->children[i + 1].get());
              ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", dictRes, key, val}, "");
 

@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **322/322** (runner shows 322/322, file_case_failures=0).
+Current test count: **323/323** (runner shows 323/323, file_case_failures=0).
 
 ## Types and Literals
 
@@ -9,7 +9,7 @@ Current test count: **322/322** (runner shows 322/322, file_case_failures=0).
 | `int` | Full arithmetic, comparison, floor/true division, small int cache (-5..256) |
 | `float` | `3.14`, `1e-3`, mixed int/float; shortest round-trip printing |
 | `bool` | `True`/`False`; prints correctly; arithmetic with ints (`True+1=2`); singleton identity |
-| `str` | Literals, `+`, `*`, f-strings, `%` formatting, all major methods, full slicing |
+| `str` | Literals, `+`, `*`, f-strings (see caveat below), `%` formatting, all major methods, full slicing |
 | `list` | Literals, subscript get/set, full slices (incl. step), comprehensions, append/sort/pop |
 | `dict` | Literals, subscript get/set, keys/values/items, `get(key, default)` |
 | `tuple` | Literals and unpacking (mapped to list internally) |
@@ -293,6 +293,18 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
   incorrectly evaluated `True` (same root cause as the `if`/`while`
   truthiness bug documented under Control Flow above: reading internal
   fast-path list storage incorrectly). See IMPLEMENTATION.md.
+- **Real bug found and fixed**: `{**mapping}` dict-literal unpacking
+  silently lost data — `{**d1, **d2}` printed as `{None: {'b': 2}}`,
+  with `d1`'s entries dropped entirely, instead of merging both dicts.
+  See IMPLEMENTATION.md.
+- **Not fixed, newly documented**: f-string format specs (`f"{x:.2f}"`)
+  are silently ignored — the value is substituted unformatted. A
+  pre-existing, deliberate MVP-era scope cut that was previously
+  undocumented, not a new regression; implementing it means implementing
+  a meaningful subset of Python's Format Specification Mini-Language, a
+  substantial separate feature. The `!r`/`!s`/`!a` conversion flag is
+  captured by the parser but similarly never applied. See
+  IMPLEMENTATION.md.
 
 ## Comprehensions
 
