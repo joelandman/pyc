@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **433/433** (runner shows 433/433, file_case_failures=0).
+Current test count: **436/436** (runner shows 436/436, file_case_failures=0).
 
 ## Types and Literals
 
@@ -100,10 +100,13 @@ f(b=3, a=4)                    keyword call arguments
   `kwargs == []`, not `{'a': 1, 'b': 2}`) — now correctly collects the
   caller's keyword arguments into a real dict for direct calls (a named
   function called directly), including combined with `*args` in any
-  arg-count shape. Indirect calls (through a closure, decorator, or
-  first-class function value) still only ever get an empty dict — a
-  narrower, separate, still-unimplemented case. See IMPLEMENTATION.md
-  for all of the above.
+  arg-count shape. **Also now fixed for indirect calls** (through a
+  closure, decorator, or first-class function value, e.g. `g = f; g(a=1,
+  b=2)`, or the standard `def wrapper(*args, **kwargs): return
+  fn(*args, **kwargs)` decorator-forwarding pattern) — these used to
+  always get an empty placeholder of the wrong type (a list, not even a
+  dict) regardless of what was passed. See IMPLEMENTATION.md for all of
+  the above.
 - **Severe bug found and fixed**: a nested function combining `*args`
   and `**kwargs` in its signature (`def wrapper(*args, **kwargs): ...`)
   crashed compilation entirely — breaking the standard generic-decorator
@@ -135,18 +138,30 @@ f(b=3, a=4)                    keyword call arguments
   token instead of the computed value). Now works correctly for both
   `ClassName.method()` and `instance.method()` call shapes, including
   the "unbound method" idiom (`ClassName.method(instance, ...)`) and
-  multi-level inheritance with `super()`. Class construction via a
-  variable holding a class reference (`X = Foo; X()`, including `cls()`
-  inside a `@classmethod`) is a separate, still-unfixed gap — see
-  IMPLEMENTATION.md.
+  multi-level inheritance with `super()`.
+  **Severe bug found and fixed**: class construction via a variable
+  holding a class reference (`X = Foo; X()`; a class value pulled from a
+  container, e.g. `registry["foo"](7)`; a class passed into a plain
+  function, e.g. `def make(cls): return cls()`) always silently returned
+  `None` instead of a new instance — class instantiation was only ever
+  recognized structurally, by literal class name, at compile time. Now
+  dispatches dynamically at the runtime level too, including resolving
+  and calling an inherited `__init__` through the class's MRO. Surfaced
+  and fixed two further, more severe pre-existing bugs along the way: a
+  defaulted `__init__` parameter (`def __init__(self, n=5)`) silently
+  clobbered across every class in the module sharing the same positional
+  default index; and `__init__` defaults were entirely unreachable via
+  any indirect call to `__init__` at all (a stored bound-method
+  reference, or `super().__init__()`). See IMPLEMENTATION.md.
 - **Related, more severe bug found and fixed**: `x ** N` for a small
   constant integer exponent (0–8) misrouted any function-parameter or
   other untyped operand through complex-number multiplication instead
   of ordinary multiplication — a silent wrong answer for int arguments,
   and an outright compiler crash for some float arguments. Not specific
-  to methods (a plain top-level function hits it too). Fixed. A narrower
-  case survives: calling the same function with a float argument still
-  crashes — see IMPLEMENTATION.md.
+  to methods (a plain top-level function hits it too). Fixed.
+  **Also now fixed**: calling the same function with a float argument
+  (`def f(y): return y ** 2; f(3.5)`) used to crash the compiler outright
+  even as the only call site — see IMPLEMENTATION.md.
 - **Severe bug found and fixed, much broader than first documented**:
   operator/protocol dunder methods weren't dispatched at all. Now works:
   comparison (`__eq__`/`__ne__`/`__lt__`/`__le__`/`__gt__`/`__ge__` —

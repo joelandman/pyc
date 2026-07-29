@@ -2824,6 +2824,198 @@ d3 = {"a": 100}
 merged3 = {**d1, **d3}
 print(merged3["a"])
 """, "1\n2\n2\n1\n3\n100\n"),
+    # x ** N compiler crash on a float argument — real bug found and
+    # fixed: `def f(y): return y ** 2` (constant small-int exponent, the
+    # fast-path expansion) statically guesses y's type as "int" purely
+    # from body-only usage (inferParamTypesFromBody runs before any
+    # call-site type is known), baking resultType="int" into the mul
+    # instruction and inferring an "int" return type. When the only real
+    # call site passes a float, call-site analysis correctly allocates y
+    # as a native double — but codegen still trusted the stale "int"
+    # tags, routing a native double value into the i64-unboxing path
+    # (unboxToI64 -> CreateIsNull on a double), which is an LLVM type
+    # mismatch that previously crashed the compiler outright ("Invalid
+    # operand types for ICmp instruction") rather than just producing a
+    # wrong answer. Fixed at two levels: (1) Codegen.cpp's native
+    # int/float dispatch (mul/add/sub/div/mod) now refuses the int path
+    # whenever an operand actually resolved to a native double, falling
+    # through to the existing float path instead; (2) Compiler.cpp's
+    # specialized-variant generation no longer propagates a native
+    # return type for a variant whose call-site-derived signature
+    # disagrees with the earlier body-only int/float guess, avoiding an
+    # LLVM function-type/body mismatch. Also exercises the same
+    # int-vs-float guess on `*`, `//`, and `%` directly (not just via
+    # the pow fast path), and confirms plain-int call sites (no float
+    # involved at all) still take the fast native path unaffected.
+    ("""
+def f(y):
+    return y ** 2
+print(f(3.5))
+print(f(4))
+print(f(-2.5))
+
+def g(y):
+    return y ** 3
+print(g(2))
+print(g(2.0))
+
+def sq(x):
+    return x * x
+print(sq(3))
+print(sq(3.5))
+
+def cube(x):
+    return x ** 4
+print(cube(2))
+print(cube(2.5))
+
+def only_int(n):
+    return n ** 2
+print(only_int(5))
+print(only_int(6))
+""", "12.25\n16\n6.25\n8\n8.0\n9\n12.25\n16\n39.0625\n25\n36\n"),
+    # Dynamic class instantiation via a variable — real bug found and
+    # fixed: `X = Foo; X()` (factory patterns, class registries, `cls()`
+    # passed into a plain function) always silently returned None.
+    # Compiler.cpp only recognizes class instantiation structurally, for
+    # a literal `ClassName(...)` callee; a variable/dict-lookup/parameter
+    # holding a class value fell all the way through to the generic
+    # Pyc_Apply runtime fallback, where a dict-typed token (the class
+    # dict itself, type 2) matched none of the recognized callable
+    # shapes. Fixed by teaching Pyc_Apply's fallback to recognize a class
+    # dict (has "__mro__") and construct a new instance dict + resolve
+    # and call __init__ through the class's MRO, checked *before* the
+    # existing __call__-dispatch check (a class's own dict entries are
+    # its *instance* methods, so a class defining `__call__` would
+    # otherwise spuriously match there instead).
+    #
+    # This surfaced two additional, more severe pre-existing bugs along
+    # the way, both fixed here too: (1) __init__ default-argument globals
+    # were named/keyed by the bare literal "__init__" shared across the
+    # *entire module* instead of per-class — with two or more classes
+    # each defining an __init__ with a default at the same positional
+    # index, they collided on the same storage, so whichever class's
+    # default assignment ran last at module-init time silently clobbered
+    # every earlier class's default value for *any* instantiation,
+    # structural or dynamic (confirmed: plain `A()` returned the wrong
+    # default once a second class B with its own defaulted __init__
+    # existed elsewhere in the same file — see the A/B case below); (2)
+    # this same bug also meant an __init__ default was entirely
+    # unreachable via any *indirect* call to __init__ (a stored
+    # bound-method reference, or super().__init__() — the pre-existing
+    # PyBuiltin_SuperMethod path, unrelated to this session's new
+    # instantiation code but exercised by the Base2/Child2 case below),
+    # since the indirect-call adapter's default-lookup convention name
+    # never matched the mis-keyed global at all. Also fixed, while in the
+    # area: Pyc_CallMethod and PyBuiltin_SuperMethod each built a
+    # temporary argument list to prepend self/cls and never freed it —
+    # a real (if small) pre-existing refcount leak on *every*
+    # instance.method()/super() call, found via valgrind while verifying
+    # this fix and confirmed unrelated to (but present alongside) it.
+    ("""
+class Foo:
+    def __init__(self, n=5):
+        self.n = n
+    def show(self):
+        print("n =", self.n)
+
+X = Foo
+y = X()
+print(y.n)
+y.show()
+
+z = X(42)
+print(z.n)
+
+registry = {"foo": Foo}
+w = registry["foo"](7)
+print(w.n)
+
+class Base:
+    def __init__(self, v=1):
+        self.v = v
+
+class Child(Base):
+    def __init__(self, v):
+        super().__init__(v)
+
+Y = Child
+c = Y(99)
+print(c.v)
+
+def make(cls):
+    return cls()
+print(make(Foo).n)
+
+class A:
+    def __init__(self, n=1):
+        self.n = n
+class B:
+    def __init__(self, n=2):
+        self.n = n
+print(A().n, B().n)
+
+class Base2:
+    def __init__(self, n=5):
+        self.n = n
+
+class Child2(Base2):
+    def __init__(self):
+        super().__init__()
+
+print(Child2().n)
+""", "5\nn = 5\n42\n7\n99\n5\n1 2\n5\n"),
+    # Indirect/closure calls losing **kwargs — real bug found and fixed:
+    # `g = f; g(a=1, b=2)` (a stored function reference, a decorator's
+    # `def wrapper(*args, **kwargs): return fn(*args, **kwargs)`
+    # forwarding pattern, or any call whose callee isn't statically known)
+    # to a function with a **kwargs catch-all always got an empty
+    # placeholder — and the wrong TYPE (a list, not a dict) at that.
+    # Root cause: indirect calls build their argument list incrementally
+    # into `indirectArgListTemp` as each call-site argument is processed,
+    # but keyword arguments were instead pushed onto `argRes` — a vector
+    # that isn't even used for indirect calls, so they were silently
+    # discarded before ever reaching Pyc_Apply. Fixed by packing keyword
+    # arguments and dict spreads into a single merged dict, appended as
+    # the last element of the flat indirect-call argument list; the
+    # generated __apply__<name> adapter (Codegen.cpp) now recognizes a
+    # trailing dict argument at runtime (by checking its type tag, since
+    # the adapter doesn't know the call site's shape, only the target's
+    # signature) and binds it to the **kwargs slot when the target has
+    # one, correctly disambiguating it from a *args tail when the target
+    # has both. An ordinary positional-only indirect call (no keyword
+    # arguments at that call site) is unaffected — confirmed via the
+    # `j(5)`/`k(1,2,3)` no-kwargs cases below still working exactly as
+    # before. Uses .get()/indexing/len() rather than printing raw dicts/
+    # tuples directly, matching this file's existing convention, since
+    # pyc's dict iteration order and tuple-vs-list display are separate,
+    # already-documented, pre-existing differences unrelated to this fix.
+    ("""
+def f(**kwargs):
+    print(kwargs.get("a"), kwargs.get("b"), len(kwargs))
+
+g = f
+g(a=1, b=2)
+g()
+
+def h(a, **kwargs):
+    print(a, kwargs.get("x"), kwargs.get("y"), len(kwargs))
+
+j = h
+j(1, x=2, y=3)
+j(5)
+
+def both(*args, **kwargs):
+    return args, kwargs
+
+k = both
+r1 = k(1, 2, 3, a=4, b=5)
+print(len(r1[0]), r1[0][0], r1[0][1], r1[0][2], r1[1].get("a"), r1[1].get("b"), len(r1[1]))
+r2 = k(1, 2, 3)
+print(len(r2[0]), len(r2[1]))
+r3 = k(a=1)
+print(len(r3[0]), r3[1].get("a"))
+""", "1 2 2\nNone None 0\n1 2 3 2\n5 None None 0\n3 1 2 3 4 5 2\n3 0\n0 1\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

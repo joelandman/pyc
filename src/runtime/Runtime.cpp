@@ -10877,6 +10877,45 @@ extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObje
     if (name && func) g_callableRegistry[std::string(name)] = func;
 }
 
+// Forward declaration: classRegistry() is defined further down (alongside
+// super()'s MRO resolution) but is also needed here, by
+// pyc_lookup_via_mro, for the dynamic class-instantiation branch below.
+static std::unordered_map<std::string, PyObject*>& classRegistry();
+
+// Resolve `name` by walking classDict's __mro__ (own class first, then
+// bases in MRO order) — same resolution order PyBuiltin_SuperMethod uses
+// for inherited methods (further down), but starting at index 0 instead
+// of "just past the defining class" since this is an ordinary (non-super)
+// lookup. Used by Pyc_Apply's dynamic instantiation branch to find
+// __init__, including one inherited from a base class.
+static PyObject* pyc_lookup_via_mro(PyObject* classDict, const char* name) {
+    if (!classDict || classDict->type != 2) return nullptr;
+    PyObject* mroList = nullptr;
+    for (auto& kv : classDict->dict) {
+        if (kv.first && kv.first->type == 3 && kv.first->str == "__mro__") { mroList = kv.second; break; }
+    }
+    if (!mroList || mroList->type != 1) {
+        for (auto& kv : classDict->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == name) return kv.second;
+        }
+        return nullptr;
+    }
+    for (auto* mroItem : mroList->list) {
+        PyObject* cls = nullptr;
+        if (mroItem && mroItem->type == 3) {
+            auto it = classRegistry().find(mroItem->str);
+            if (it != classRegistry().end()) cls = it->second;
+        } else if (mroItem && mroItem->type == 2) {
+            cls = mroItem;
+        }
+        if (!cls) continue;
+        for (auto& kv : cls->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == name) return kv.second;
+        }
+    }
+    return nullptr;
+}
+
 // Pyc_Apply(tokenStr or bundleList, argList) -> boxed result
 // If first arg is a bundle list [tokenStr, extra0, ...] (cells or prebound defaults),
 // extract the token and prepend the extras to the provided argList before dispatch.
@@ -10918,18 +10957,49 @@ extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
         }
     }
     if (!haveTok) {
-        // __call__ dispatch for a class instance — found and fixed
-        // while bug hunting: calling an instance like a function
-        // (f(5) where f is a class instance defining __call__)
-        // previously always silently returned None, since a dict-typed
-        // token (type 2) matched none of the "callable" shapes above.
-        // callMethod is normally a bare token string, but could rarely
-        // be a decorator-tagged 2-element list (e.g. a @staticmethod
-        // __call__, unusual but not disallowed) — Pyc_CallMethod
-        // already knows how to unwrap either shape correctly for a
-        // bound call, so route through it rather than re-deriving that
-        // logic here.
         if (token->type == 2) {
+            // Dynamic class instantiation — found and fixed while bug
+            // hunting: `X = Foo; X()` (factory patterns, class
+            // registries, `cls()` inside plain functions) previously
+            // always silently returned None. Compiler.cpp's structural
+            // instantiation path only recognizes a literal `ClassName(...)`
+            // callee at compile time; a variable holding a class value
+            // falls all the way through to this generic Pyc_Apply
+            // fallback instead, where a dict-typed token (type 2)
+            // previously matched none of the "callable" shapes above.
+            // Must be checked BEFORE the __call__ dispatch below: a
+            // class dict's own entries are its *instance* methods, so a
+            // class defining `__call__` for its instances would
+            // otherwise make pyc_lookup_dunder(token, "__call__")
+            // spuriously match on the class dict itself (which has no
+            // bound instance to call it on).
+            bool isClassDict = false;
+            for (auto& p : token->dict) {
+                if (p.first && p.first->type == 3 && p.first->str == "__mro__") { isClassDict = true; break; }
+            }
+            if (isClassDict) {
+                PyObject* instance = PyDict_New();
+                PyObject* classKey = PyUnicode_FromString("__class__");
+                PyDict_SetItem(instance, classKey, token);
+                Py_DECREF(classKey);
+                PyObject* initMethod = pyc_lookup_via_mro(token, "__init__");
+                if (initMethod) {
+                    PyObject* r = Pyc_CallMethod(initMethod, instance, argList);
+                    if (r) Py_DECREF(r);
+                }
+                return instance;
+            }
+            // __call__ dispatch for a class instance — found and fixed
+            // while bug hunting: calling an instance like a function
+            // (f(5) where f is a class instance defining __call__)
+            // previously always silently returned None, since a dict-typed
+            // token (type 2) matched none of the "callable" shapes above.
+            // callMethod is normally a bare token string, but could rarely
+            // be a decorator-tagged 2-element list (e.g. a @staticmethod
+            // __call__, unusual but not disallowed) — Pyc_CallMethod
+            // already knows how to unwrap either shape correctly for a
+            // bound call, so route through it rather than re-deriving that
+            // logic here.
             PyObject* callMethod = pyc_lookup_dunder(token, "__call__");
             if (callMethod) return Pyc_CallMethod(callMethod, token, argList);
         }
@@ -11186,8 +11256,11 @@ extern "C" PyObject* PyBuiltin_SuperMethod(PyObject* args) {
         PyList_Append(callArgs, PyList_GetItemInt(args, i));
     }
     
-    // Call the method
-    return Pyc_Apply(method, callArgs);
+    // Call the method. callArgs is a temporary built just to prepend
+    // self — see the same fix in Pyc_CallMethod above; freed after use.
+    PyObject* result = Pyc_Apply(method, callArgs);
+    Py_DECREF(callArgs);
+    return result;
 }
 
 // ---- @classmethod / @staticmethod / @property dispatch ----
@@ -11262,7 +11335,14 @@ PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* args
         PyObject* callArgs = PyList_New(0);
         PyList_Append(callArgs, lead);
         for (size_t i = 0; i < n; ++i) PyList_Append(callArgs, PyList_GetItemInt(argsList, i));
-        return Pyc_Apply(realToken, callArgs);
+        // callArgs is a temporary built just to prepend `lead` — found and
+        // fixed while bug hunting: this list (a new ref) was never freed,
+        // leaking on every @classmethod/@property call. Confirmed
+        // pre-existing (present before the dynamic-instantiation work that
+        // surfaced it) via valgrind on a plain instance.method() call.
+        PyObject* result = Pyc_Apply(realToken, callArgs);
+        Py_DECREF(callArgs);
+        return result;
     }
     // Plain (undecorated) method. If the receiver is itself a class dict
     // (has __mro__) rather than an instance, this is Python's "unbound
@@ -11285,7 +11365,11 @@ PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* args
     PyObject* callArgs = PyList_New(0);
     PyList_Append(callArgs, receiver);
     for (size_t i = 0; i < n; ++i) PyList_Append(callArgs, PyList_GetItemInt(argsList, i));
-    return Pyc_Apply(methodVal, callArgs);
+    // See the classmethod branch above: callArgs is a temporary list built
+    // just to prepend `receiver` and must be freed after the call.
+    PyObject* result = Pyc_Apply(methodVal, callArgs);
+    Py_DECREF(callArgs);
+    return result;
 }
 
 // Pyc_GetAttr(obj, attrName) — wraps Pyc_GetItem for plain (non-call)

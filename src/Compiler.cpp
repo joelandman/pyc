@@ -2207,7 +2207,31 @@ class LoweringVisitor {
                 // PyObject*. This eliminates PyInt_FromLong/PyFloat_FromDouble on every
                 // return and enables fully native recursive chains (e.g. fib(n-1)+fib(n-2)
                 // becomes a native i64 add with no boxing at any recursion level).
-                if (origFunc->returnType == "int" || origFunc->returnType == "float") {
+                //
+                // origFunc->returnType comes from a body-only static guess
+                // (inferParamTypesFromBody) made before real call-site types are
+                // known, and origFunc->numericLocals/numericFloatLocals record which
+                // params that same guess assumed int/float. If THIS variant's actual
+                // (call-site-derived) signature disagrees with that guess for any
+                // param — e.g. `def f(y): return y ** 2` guessed y as int, but the
+                // only real call site passes a float — the guessed return type is
+                // unreliable: forcing a native i64/double return type here would
+                // make the LLVM function type disagree with what the body actually
+                // computes, crashing codegen. Skip native-return propagation for
+                // this variant and fall back to the safe, always-correct boxed
+                // return path. Found via `def f(y): return y ** 2; f(3.5)`.
+                bool sigMatchesInference = true;
+                for (size_t i = 0; i < sig.size() && i < origFunc->args.size(); ++i) {
+                    const std::string& pname = origFunc->args[i];
+                    bool guessedInt = std::find(origFunc->numericLocals.begin(), origFunc->numericLocals.end(), pname) != origFunc->numericLocals.end();
+                    bool guessedFloat = std::find(origFunc->numericFloatLocals.begin(), origFunc->numericFloatLocals.end(), pname) != origFunc->numericFloatLocals.end();
+                    if ((sig[i] == 'f' && guessedInt) || (sig[i] == 'i' && guessedFloat)) {
+                        sigMatchesInference = false;
+                        break;
+                    }
+                }
+                if (sigMatchesInference &&
+                    (origFunc->returnType == "int" || origFunc->returnType == "float")) {
                     variant.nativeReturnType = origFunc->returnType;
                 }
 
@@ -4275,7 +4299,7 @@ class LoweringVisitor {
                 // Pad with defaults for trailing params that lack user args.
                 // Defaults for the class's __init__ were registered (in the
                 // FunctionDef lowering of `__init__`) as module globals named
-                // __default___init__<i> in the order they appear. The total
+                // __default_<initName>_<i> in the order they appear. The total
                 // number of params (incl. self) minus userArgs minus 1 (self)
                 // gives the number of trailing defaults to inject.
                 size_t totalParams = initParams.size();
@@ -4284,8 +4308,11 @@ class LoweringVisitor {
                 // Look up the defaults registered for the underlying __init__.
                 // funcDefaultValues stores them in order; the *last* N are the
                 // trailing defaults (consistent with Python: defaults apply to
-                // the last N parameters).
-                auto dit = funcDefaultValues.find("__init__");
+                // the last N parameters). Keyed per-class by initName (see the
+                // fix note in the class-lowering code above) rather than the
+                // shared literal "__init__", which used to collide across
+                // classes.
+                auto dit = funcDefaultValues.find(initName);
                 std::vector<std::string> defaults;
                 if (dit != funcDefaultValues.end()) defaults = dit->second;
                 // Build args list: self + user args + injected defaults.
@@ -4746,6 +4773,44 @@ class LoweringVisitor {
                         if (argRes.size() <= j) argRes.resize(j + 1);
                         argRes[j] = elem;
                     }
+                }
+            } else if (buildingIndirectArgs) {
+                // Indirect callee (unknown shape at compile time — a
+                // variable holding a function, a closure/decorator
+                // forwarding *args/**kwargs, a value pulled from a
+                // container). Real bug found and fixed while bug hunting:
+                // keyword arguments to an indirect call used to be
+                // silently dropped entirely — pushed onto `argRes`, which
+                // isn't even the list actually used for indirect calls
+                // (see buildingIndirectArgs above; indirect args are
+                // appended directly to indirectArgListTemp as they're
+                // processed, so anything pushed onto argRes here was dead
+                // code). Fixed by packing keyword args + dict spreads into
+                // a single merged dict, appended as the LAST element of
+                // the flat Pyc_Apply argument list. The generated
+                // __apply__<name> adapter (Codegen.cpp) recognizes a
+                // trailing dict argument and, if the target has a
+                // **kwargs catch-all, binds it there instead of always
+                // synthesizing an empty placeholder (which, before this
+                // fix, was itself also the wrong type — a list, not a
+                // dict). An ordinary positional-only indirect call (no
+                // keyword args at this call site) is unaffected: nothing
+                // is appended, matching prior behavior exactly.
+                if (!kwArgs.empty() || !kwargDicts.empty()) {
+                    std::string kwDict = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyDict_New"}, kwDict);
+                    for (auto& dictVal : kwargDicts) {
+                        std::string dummyUpd = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyDict_Update", kwDict, dictVal}, dummyUpd);
+                    }
+                    for (auto& kw : kwArgs) {
+                        std::string keyConst = "$c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"\"" + kw.first + "\""}, keyConst, "str");
+                        std::string dummySet = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", kwDict, keyConst, kw.second}, dummySet);
+                    }
+                    std::string dAppend = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, kwDict}, dAppend);
                 }
             } else {
                 // Fallback: append keyword values
@@ -8718,29 +8783,52 @@ class LoweringVisitor {
                     initParams += pname;
                 }
                 classInitParams[className] = initParams;
+                // Generate __init__ function with correct params
+                std::string initFuncName = className + "__init__";
                 // Register defaults for this __init__ so the call site (A() /
                 // A(x)) can inject trailing defaults when the user omits args.
                 // Mirrors the default-handling block in the FunctionDef
                 // lowering (see "Count defaults and collect their values").
+                //
+                // Real bug found and fixed while bug hunting: the default
+                // slot globals used to be named the literal
+                // "__default___init__<i>" and funcDefaultValues/
+                // funcDefaultCount were keyed by the bare literal
+                // "__init__" — shared across EVERY class in the module
+                // instead of being per-class. With two or more classes each
+                // defining an __init__ with a default at the same
+                // positional index, they all pointed at the SAME global
+                // storage slot, so whichever class's default assignment ran
+                // last at module-init time silently clobbered every earlier
+                // class's default value (confirmed: `class A: def __init__
+                // (self, n=1)` / `class B: def __init__(self, n=2)` then
+                // `A().n` incorrectly printed 2, not 1). It also meant
+                // IRFunction::defaultGlobals was never populated for any
+                // __init__, so Codegen.cpp's indirect-call adapter (used by
+                // super().__init__(), a stored bound-method reference, or
+                // dynamically calling a class held in a variable) had no
+                // way to find the default value at all and silently passed
+                // a null argument instead. Fixed by keying everything
+                // (slot names, funcDefaultCount/funcDefaultValues, and the
+                // IRFunction's defaultGlobals) by the per-class initFuncName
+                // instead of the shared literal "__init__".
+                std::vector<std::string> initDefaults;
                 {
-                    std::vector<std::string> defaults;
                     size_t defaultIndex = 0;
                     for (const auto& cc : c->children) {
                         if (cc && cc->type == "Default") {
                             std::string defVal = lowerExpr(cc.get());
-                            std::string slot = "__default___init__" + std::to_string(defaultIndex++);
+                            std::string slot = "__default_" + initFuncName + "_" + std::to_string(defaultIndex++);
                             ir.addModuleGlobal(slot);
                             ir.addInstruction("__module__", "assign", {defVal}, slot);
-                            defaults.push_back(slot);
+                            initDefaults.push_back(slot);
                         }
                     }
-                    if (!defaults.empty()) {
-                        funcDefaultCount["__init__"] = defaults.size();
-                        funcDefaultValues["__init__"] = defaults;
+                    if (!initDefaults.empty()) {
+                        funcDefaultCount[initFuncName] = initDefaults.size();
+                        funcDefaultValues[initFuncName] = initDefaults;
                     }
                 }
-                // Generate __init__ function with correct params
-                std::string initFuncName = className + "__init__";
                 std::vector<std::string> initFuncParams;
                 std::stringstream ss(initParams);
                 std::string param;
@@ -8748,6 +8836,11 @@ class LoweringVisitor {
                     initFuncParams.push_back(param);
                 }
                 ir.addFunction(initFuncName, initFuncParams);
+                if (!initDefaults.empty()) {
+                    for (auto& fnr : ir.functions) {
+                        if (fnr.name == initFuncName) { fnr.defaultGlobals = initDefaults; break; }
+                    }
+                }
                 // Lower __init__ body into the init function
                 std::string savedFunc = currentFunc;
                 currentFunc = initFuncName;

@@ -96,16 +96,69 @@ in every arg-count combination (`h(1,2,3,x=1,y=2)`, `h(1,2,3)`, `h(x=1)`,
 `h()`), iterating and summing the collected dict's values, and
 `.get(key, default)` on the result.
 
-**Still not fixed (each a separate, narrower gap)**:
-- **Indirect calls** (through a closure/decorator/first-class value,
-  going through the `Codegen.cpp` adapter rather than `lowerCall`'s
-  direct-call path) still only ever get an empty dict for a `**kwargs`
-  slot — the adapter fix above only stops the crash; by the time a call
-  reaches `Pyc_Apply`, the caller's keyword *names* are no longer
-  available (only a flat positional argument list), so there's nothing
-  for the adapter to populate the dict from without a deeper change to
-  how indirect calls carry keyword information.
-- **Fixed on a later pass**: missing keys in a `**dict` spread not
+**Fixed on a later pass: indirect calls losing `**kwargs` entirely.**
+Indirect calls (through a closure/decorator/first-class value, going
+through the `Codegen.cpp` `__apply__<name>` adapter rather than
+`lowerCall`'s direct-call path) always got an empty dict for a
+`**kwargs` slot — worse, the placeholder itself was the wrong *type* (an
+empty **list**, not a dict), regardless of what the caller passed.
+Confirmed via both `g = f; g(a=1, b=2)` (a stored function reference)
+and the standard decorator-forwarding pattern (`w(x=1, y=2)` where `w`
+wraps `def wrapper(*args, **kwargs): return fn(*args, **kwargs)`), and
+even `g()` with zero keyword args (which should get `{}`, not `[]`).
+
+Root cause: `Compiler.cpp`'s indirect-call lowering builds the flat
+argument list Pyc_Apply expects (`indirectArgListTemp`) incrementally,
+appending each call-site argument as it's processed — *except* keyword
+arguments, which were instead pushed onto a separate `argRes` vector
+that indirect calls never actually read from at all (that vector only
+feeds the *direct*-call codegen path). So keyword arguments to an
+indirect call were silently discarded before ever reaching `Pyc_Apply`,
+regardless of the adapter's own (also-broken) placeholder logic.
+
+Fixed at two levels:
+- **Call site** (`Compiler.cpp`): when an indirect call has keyword
+  arguments and/or dict spreads, they're merged into a single real dict
+  (`PyDict_New` + `PyDict_SetItem`/`PyDict_Update`) and appended as the
+  *last* element of the flat argument list — after all positional
+  arguments and any spliced `*args` contents, which are already
+  appended in call-site source order by the time this runs. An ordinary
+  positional-only indirect call (no keyword arguments at that call site)
+  appends nothing extra, so it's byte-for-byte unaffected.
+- **Adapter** (`Codegen.cpp`): the generated `__apply__<name>` adapter
+  doesn't know the calling convention of any particular call site — only
+  its own target's declared signature (`hasVar`/`hasKwVar`). When
+  `hasKwVar`, it now checks at runtime whether the incoming list has one
+  more element than the minimum required count *and* that trailing
+  element's type tag is a dict (2); if so, that element is bound to the
+  `**kwargs` slot and excluded from the `*args` tail (correctly
+  disambiguating a target with *both* `*args` and `**kwargs`, e.g.
+  `both(*args, **kwargs)` called indirectly with a mix of positional and
+  keyword arguments); otherwise it falls back to a fresh, empty dict
+  (fixing the wrong-type placeholder too, for every indirect call to a
+  `**kwargs` target — not just the ones with actual keyword arguments).
+
+While fixing this, also found and fixed a small, genuinely pre-existing
+refcount leak in the two functions this work exercises most heavily:
+`Pyc_CallMethod` and `PyBuiltin_SuperMethod` each build a temporary
+argument list (to prepend `self`/`cls`) and pass it to `Pyc_Apply`
+without ever freeing it — a leak on *every* `instance.method()` call and
+every `super()` call, confirmed present on the unmodified commit via
+valgrind on a plain, unrelated `y.show()` method call. Fixed by
+capturing `Pyc_Apply`'s result before `Py_DECREF`ing the temporary list,
+matching the pattern already used correctly by `pyc_call_dunder1`/
+`pyc_call_dunder2` elsewhere in the same file.
+
+Verified against real CPython: a stored function reference with
+keyword args, with zero keyword args (dict, not list, and empty), a
+function combining a positional param with `**kwargs`, and the full
+`*args`+`**kwargs` decorator-forwarding shape (`both(*args, **kwargs)`
+called indirectly with positional-only, keyword-only, and mixed
+arguments). Added as a permanent `tests/runner.py` regression. Full
+suite and import tests stay green; `valgrind --tool=memcheck` shows 0
+new errors (fewer than before, thanks to the leak fix above).
+
+**Fixed on a later pass**: missing keys in a `**dict` spread not
   falling back to the parameter's default, and mixing a positional
   argument with a `**dict` spread mis-binding. Both had the same root
   cause: the dict-spread path unpacked its runtime helper's results into
@@ -139,12 +192,17 @@ in every arg-count combination (`h(1,2,3,x=1,y=2)`, `h(1,2,3)`, `h(x=1)`,
   spread dict (`f(**{})`). Added as permanent `tests/runner.py`
   regressions. Full suite and import tests stay green; `valgrind
   --tool=memcheck` shows 0 errors.
-- A `**dict` spread's own unmatched entries (keys that don't name any
-  regular parameter) are not routed into a `**kwargs` catch-all
-  parameter either, even though direct `key=value` arguments now are —
-  routing them would need a *runtime* set-difference between the spread
-  dict's keys and the callee's named parameters, since (unlike direct
-  keyword arguments) the dict's actual keys aren't known until runtime.
+
+**Still not fixed (a separate, narrower, distinct gap from the indirect-
+call fix above)**: a `**dict` spread's own unmatched entries (keys that
+don't name any regular parameter) are not routed into a `**kwargs`
+catch-all parameter either, even though direct `key=value` arguments now
+are — routing them would need a *runtime* set-difference between the
+spread dict's keys and the callee's named parameters, since (unlike
+direct keyword arguments) the dict's actual keys aren't known until
+runtime. Confirmed still present: `def f(**kwargs): ...` called
+directly as `f(**{"p": 1, "q": 2})` gives `kwargs == {}`, not `{'p': 1,
+'q': 2}`.
 
 Verified fixes added as permanent `tests/runner.py` regressions. Full
 suite and import tests stay green after each fix; `valgrind
@@ -1334,29 +1392,107 @@ correctly for the regular (non-power) complex add/sub/mul/truediv
 dispatch a few lines below. Verified against real CPython for both a
 plain function and a method; added as a permanent regression.
 
-**Found while testing the above, not fixed (each a separate, pre-existing
-gap, confirmed present before this session's fix and unrelated to it)**:
-- **Calling the same `x ** N` function with a *float* argument still
-  crashes the compiler** — `def f(y): return y ** 2; f(3.5)` fails the
-  same LLVM assertion, even as the only call. This survives the
-  `isComplex` fix above (which addresses a different, already-confirmed-
-  fixed symptom) and looks like a separate interaction between the
-  constant-exponent fast path and the A6 native-function-specialization
-  pass for float-typed parameters — not investigated further.
-- **Dynamic class instantiation via a variable doesn't work.** `X = Foo;
-  X()` (or `cls()` inside a `@classmethod`, the same underlying gap)
-  returns `None` instead of a new instance. Root cause: the "instantiate
-  a class" call-site logic in `lowerCall` recognizes a class
-  instantiation *structurally*, by checking whether the literal `Name`
-  being called matches a `knownClasses` entry at compile time — a class
-  reference reached through a variable (rather than the literal class
-  name token) never matches, so the call falls through to the generic
-  dynamic-dispatch path instead, which has no equivalent "create an
-  instance dict + call `__init__`" behavior. A real fix would need that
-  behavior available as a runtime operation (triggered when a
-  `Pyc_Apply`-style dynamic call target turns out to be a class dict,
-  i.e. has `__mro__`), not just the current compile-time-structural
-  recognition.
+**Found while testing the above, fixed on a later pass: `x ** N` with a
+float argument still crashed the compiler.** `def f(y): return y ** 2;
+f(3.5)` failed the same LLVM assertion (`Invalid operand types for ICmp
+instruction`), even as the only call site — this survived the
+`isComplex` fix above (a different, already-fixed symptom). Root cause
+was a *third*, independent bug, one level deeper: `inferParamTypesFromBody`
+statically guesses a parameter's type from its usage within the function
+body alone (`y ** 2` looks numeric, so it guessed `y` as `int`) — this
+runs *before* any call-site type is known, since a function's body is
+lowered before its callers are seen. That guess got baked into the `mul`
+instruction's `resultType` (via the pow-expansion fast path) and into
+the function's inferred return type. When the *only* real call site
+later turned out to pass a `float`, call-site analysis correctly
+allocated the parameter as a native `double` — but codegen still trusted
+the stale `resultType="int"`/`nativeReturnType="int"` tags baked in
+earlier, routing a native `double` value into the `int64`-unboxing path
+(`unboxToI64` → `CreateIsNull` on a `double`), an LLVM type mismatch
+that crashed compilation outright rather than just producing a wrong
+answer.
+
+Fixed at two levels: (1) `Codegen.cpp`'s native int/float dispatch
+(shared by `mul`/`add`/`sub`, and duplicated similarly for `div`/`mod`)
+now refuses the int path whenever an operand actually resolved to a
+native `double` at codegen time, falling through to the existing,
+correct float path instead — a general defensive fix against this whole
+category of "static guess disagreed with the eventual real type," not
+just the pow case specifically; (2) `Compiler.cpp`'s specialized-variant
+generation (A6) no longer propagates a native return type onto a
+variant whose call-site-derived signature disagrees with the earlier
+body-only int/float guess for any parameter, avoiding an LLVM
+function-type/body mismatch at the declaration level too. Verified
+against real CPython: the exact crashing repro, the same function also
+called with an int (still takes the fast native path, unaffected), `*`/
+`//`/`%` directly (not just via the pow fast path), and a
+purely-int-typed function (no float anywhere) confirmed unaffected.
+Added as a permanent `tests/runner.py` regression.
+
+**Found while testing the above, fixed on a later pass: dynamic class
+instantiation via a variable didn't work.** `X = Foo; X()` (or `cls()`
+inside a plain function, or a class value pulled from a container, e.g.
+`registry["foo"](7)`) returned `None` instead of a new instance. Root
+cause: the "instantiate a class" call-site logic in `lowerCall`
+recognizes a class instantiation *structurally*, by checking whether the
+literal `Name` being called matches a `knownClasses` entry at compile
+time — a class reference reached through a variable never matches, so
+the call fell through to the generic `Pyc_Apply` dynamic-dispatch
+fallback instead, which had no equivalent "create an instance dict +
+call `__init__`" behavior (a dict-typed token, the class dict itself,
+matched none of `Pyc_Apply`'s recognized callable shapes).
+
+Fixed by teaching `Pyc_Apply`'s runtime fallback to recognize a class
+dict (has a `"__mro__"` key) and, when found, construct a new instance
+dict, bind `"__class__"` to it, resolve `__init__` by walking the
+class's `__mro__` (a new `pyc_lookup_via_mro` helper, mirroring
+`PyBuiltin_SuperMethod`'s existing MRO-resolution pattern but starting
+at index 0 instead of "just past the defining class"), and call it if
+found. This check runs *before* the existing `__call__`-dispatch check
+in the same fallback: a class's own dict entries are its *instance*
+methods, so a class defining `__call__` for its instances would
+otherwise make the `__call__` lookup spuriously match on the class dict
+itself (which has no bound instance to call it on).
+
+This surfaced two further, more severe, genuinely pre-existing bugs
+along the way, both fixed here too:
+- **`__init__` default-argument globals were keyed by the bare literal
+  `"__init__"`, shared across every class in the module, instead of
+  per-class.** With two or more classes each defining an `__init__` with
+  a default at the same positional index, they all pointed at the same
+  global storage slot, so whichever class's default assignment ran last
+  at module-init time silently clobbered every earlier class's default
+  value — for *any* instantiation, structural or dynamic. Confirmed:
+  `class A: def __init__(self, n=1)` followed by `class B: def __init__
+  (self, n=2)` elsewhere in the same file, then `A()` (zero arguments)
+  incorrectly returned `n=2`, not `1`. This also meant `IRFunction::
+  defaultGlobals` was never populated for any `__init__` at all, so
+  `Codegen.cpp`'s indirect-call adapter (used by `super().__init__()`, a
+  stored bound-method reference, or the new dynamic-instantiation code
+  above) had no way to find the default value and silently passed a null
+  argument instead — confirmed via `super().__init__()` on a base class
+  with a defaulted parameter, which printed `None` instead of the
+  default. Fixed by keying the default-slot global names,
+  `funcDefaultCount`/`funcDefaultValues`, and `IRFunction::defaultGlobals`
+  all by the per-class `initFuncName` (e.g. `"Foo__init__"`) instead of
+  the shared literal `"__init__"`.
+- **`Pyc_CallMethod` and `PyBuiltin_SuperMethod` each leaked a small
+  temporary argument list on every call.** Both build a fresh list to
+  prepend `self`/`cls` before calling `Pyc_Apply`, and neither freed it
+  afterward — a real (if small) refcount leak on *every*
+  `instance.method()` call and every `super()` call, found via valgrind
+  while verifying the fix above and confirmed present on the unmodified
+  commit for a plain, unrelated method call. Fixed by capturing
+  `Pyc_Apply`'s result before `Py_DECREF`ing the temporary list.
+
+Verified against real CPython: `X = Foo; X()` with and without
+`__init__` arguments/defaults, a class value from a dict lookup, a class
+passed as a plain function parameter, `super().__init__()` with a
+defaulted base-class parameter, and two classes in the same module each
+defaulting a same-position `__init__` parameter to different values.
+Added as a permanent `tests/runner.py` regression. Full suite and import
+tests stay green; `valgrind --tool=memcheck` shows 0 new errors (fewer
+than before, thanks to the leak fix above).
 
 ### Several Common `str` Methods Were Entirely Unimplemented — Fixed
 While probing string methods during the same hunt, `.format()`,

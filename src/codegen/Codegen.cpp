@@ -991,14 +991,68 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             cargs.push_back(phi);
         }
 
+        // Real bug found and fixed while bug hunting: an indirect call to a
+        // target with a **kwargs catch-all always got an always-empty LIST
+        // (wrong type — should be a dict — and never populated with the
+        // caller's actual keyword arguments regardless). Compiler.cpp's
+        // indirect-call lowering now appends the caller's merged keyword
+        // arguments as a single trailing dict onto the flat Pyc_Apply list
+        // (only when the call site actually had keyword arguments/dict
+        // spreads — an ordinary positional-only indirect call is
+        // unaffected). This adapter now looks for that trailing dict: if
+        // hasKwVar and the incoming list has one more element than the
+        // minimum required (ncells + userFixed [+ *args tail, disambiguated
+        // below]) AND that last element is actually a dict (type 2), it is
+        // used as the kwargs value and excluded from the *args tail;
+        // otherwise (a plain positional-only call, or a target that wasn't
+        // called with keyword args) kwargs defaults to a fresh empty dict,
+        // matching Python's own `f()` with no kwargs behavior.
+        llvm::Function* dictNewFn = module->getFunction("PyDict_New");
+        llvm::Value* kwargsVal = nullptr;
+        llvm::Value* varEndIdx = ln;  // upper bound (exclusive) for the *args tail below
+        if (hasKwVar) {
+            llvm::Value* minRequired = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), ncells + userFixed);
+            llvm::Value* hasExtra = abuilder.CreateICmpSGT(ln, minRequired, "kw.hasextra");
+            llvm::BasicBlock* checkB = llvm::BasicBlock::Create(context, "kw.check", adapter);
+            llvm::BasicBlock* foundB = llvm::BasicBlock::Create(context, "kw.found", adapter);
+            llvm::BasicBlock* noneB = llvm::BasicBlock::Create(context, "kw.none", adapter);
+            llvm::BasicBlock* mergeB = llvm::BasicBlock::Create(context, "kw.merge", adapter);
+            abuilder.CreateCondBr(hasExtra, checkB, noneB);
+            abuilder.SetInsertPoint(checkB);
+            llvm::Value* one64 = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 1);
+            llvm::Value* lastIdx = abuilder.CreateSub(ln, one64, "kw.lastidx");
+            llvm::Value* lastEl = listGet
+                ? (llvm::Value*)abuilder.CreateCall(listGet, {argListVal, lastIdx}, "kw.last")
+                : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            llvm::Value* lastType = abuilder.CreateAlignedLoad(llvm::Type::getInt32Ty(context),
+                abuilder.CreateStructGEP(pyObjectTy, lastEl, 1), llvm::Align(4), "kw.last.type");
+            llvm::Value* isDict = abuilder.CreateICmpEQ(lastType,
+                llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 2), "kw.isdict");
+            abuilder.CreateCondBr(isDict, foundB, noneB);
+            abuilder.SetInsertPoint(foundB);
+            llvm::Value* foundVal = lastEl;
+            llvm::Value* foundEnd = lastIdx;
+            abuilder.CreateBr(mergeB);
+            abuilder.SetInsertPoint(noneB);
+            llvm::Value* emptyVal = dictNewFn
+                ? (llvm::Value*)abuilder.CreateCall(dictNewFn, {}, "kw.empty")
+                : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            llvm::Value* emptyEnd = ln;
+            abuilder.CreateBr(mergeB);
+            abuilder.SetInsertPoint(mergeB);
+            llvm::PHINode* valPhi = abuilder.CreatePHI(pyObjectPtrTy, 2, "kw.val");
+            valPhi->addIncoming(foundVal, foundB);
+            valPhi->addIncoming(emptyVal, noneB);
+            llvm::PHINode* endPhi = abuilder.CreatePHI(llvm::Type::getInt64Ty(context), 2, "kw.end");
+            endPhi->addIncoming(foundEnd, foundB);
+            endPhi->addIncoming(emptyEnd, noneB);
+            kwargsVal = valPhi;
+            varEndIdx = endPhi;
+        }
+
         if (hasVar) {
-            // Collect [ncells + userFixed .. len) into a fresh list for the * slot.
-            llvm::Value* ln = nullptr;
-            if (listSize) {
-                ln = abuilder.CreateCall(listSize, {argListVal}, "ln");
-            } else {
-                ln = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
-            }
+            // Collect [ncells + userFixed .. varEndIdx) into a fresh list for
+            // the * slot. varEndIdx excludes a trailing kwargs dict (see above).
             llvm::Value* startC = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), ncells + userFixed);
             llvm::Value* zero = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
             llvm::Value* rest = nullptr;
@@ -1008,7 +1062,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 rest = llvm::ConstantPointerNull::get(pyObjectPtrTy);
             }
 
-            // Inline counted loop: j = start; while j < ln { append GetItem(j); j++ }
+            // Inline counted loop: j = start; while j < varEndIdx { append GetItem(j); j++ }
             llvm::AllocaInst* jAlloca = abuilder.CreateAlloca(llvm::Type::getInt64Ty(context), nullptr, "j");
             abuilder.CreateStore(startC, jAlloca);
 
@@ -1018,7 +1072,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             abuilder.CreateBr(lp);
             abuilder.SetInsertPoint(lp);
             llvm::Value* jcur = abuilder.CreateLoad(llvm::Type::getInt64Ty(context), jAlloca, "jcur");
-            llvm::Value* cmp = abuilder.CreateICmpSLT(jcur, ln, "cm");
+            llvm::Value* cmp = abuilder.CreateICmpSLT(jcur, varEndIdx, "cm");
             abuilder.CreateCondBr(cmp, bd, ex);
             abuilder.SetInsertPoint(bd);
             llvm::Value* el = nullptr;
@@ -1040,27 +1094,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         }
 
         if (hasKwVar) {
-            // **kwargs catch-all slot: the real function was declared
-            // (via ir.addFunction) with a separate parameter for this
-            // name, so the adapter must supply an argument for it or the
-            // call below fails LLVM module verification with an
-            // argument-count mismatch — see the comment above vidx/kwidx.
-            // The **kwargs catch-all itself is not yet populated with the
-            // caller's actual keyword arguments (a separate, documented
-            // gap — see IMPLEMENTATION.md); an always-empty list is
-            // passed as a placeholder, matching the same placeholder
-            // already used for direct (non-adapter) calls to this
-            // pattern, so this fix only removes the crash and doesn't
-            // change (or worsen) the existing wrong-but-consistent
-            // kwargs semantics.
-            llvm::Value* kwEmpty = nullptr;
-            if (listNew) {
-                llvm::Value* zeroSz = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
-                kwEmpty = abuilder.CreateCall(listNew, {zeroSz}, "kwempty");
-            } else {
-                kwEmpty = llvm::ConstantPointerNull::get(pyObjectPtrTy);
-            }
-            cargs.push_back(kwEmpty);
+            cargs.push_back(kwargsVal ? kwargsVal : llvm::ConstantPointerNull::get(pyObjectPtrTy));
         }
 
         llvm::Value* r = abuilder.CreateCall(real, cargs, "r");
@@ -1536,8 +1570,20 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             bool rhsIsNative = rawR && (rawR->getType() == llvm::Type::getInt64Ty(context)
                                         || rawR->getType()->isDoubleTy());
             bool bothNative = lhsIsNative && rhsIsNative;
-            
-            if (inst.resultType == "int" || (bothNative && rawL->getType() == llvm::Type::getInt64Ty(context) && rawR->getType() == llvm::Type::getInt64Ty(context))) {
+
+            // Guard against a stale compile-time resultType="int" disagreeing with
+            // the actual native operand type. inst.resultType is baked in during
+            // lowering from a body-only static guess (inferParamTypesFromBody),
+            // which runs before call-site type analysis; if a later, authoritative
+            // pass (generateParamTypeAnalysis) determines the param is actually
+            // float and allocates it as a native double, trusting resultType=="int"
+            // here would route a double operand into the i64 unboxing path below,
+            // which calls CreateIsNull on it — an LLVM type mismatch that crashes
+            // the compiler outright. Found via `def f(y): return y ** 2; f(3.5)`.
+            bool eitherRawDouble = (rawL && rawL->getType()->isDoubleTy())
+                                 || (rawR && rawR->getType()->isDoubleTy());
+
+            if ((inst.resultType == "int" && !eitherRawDouble) || (bothNative && rawL->getType() == llvm::Type::getInt64Ty(context) && rawR->getType() == llvm::Type::getInt64Ty(context))) {
                 llvm::Value* lhs = unboxToI64(getOrLoad(inst.operands[0].name));
                 llvm::Value* rhs = unboxToI64(getOrLoad(inst.operands[1].name));
                 llvm::Value* native = nullptr;
@@ -2062,8 +2108,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 llvm::Value* rhsRaw = rname.empty() ? nullptr : getOrLoad(rname);
                 bool bothNativeInt = (lhsRaw && lhsRaw->getType() == llvm::Type::getInt64Ty(context)) &&
                                      (rhsRaw && rhsRaw->getType() == llvm::Type::getInt64Ty(context));
-                
-                if (inst.resultType == "int" || bothNativeInt) {
+                // See emitNativeNumericBinary above: don't trust a stale
+                // resultType=="int" when an operand actually resolved to a
+                // native double (crash risk in unboxToI64/CreateIsNull).
+                bool eitherRawDoubleDiv = (lhsRaw && lhsRaw->getType()->isDoubleTy())
+                                        || (rhsRaw && rhsRaw->getType()->isDoubleTy());
+
+                if ((inst.resultType == "int" && !eitherRawDoubleDiv) || bothNativeInt) {
                     llvm::Value* lhs = unboxToI64(getOrLoad(lname));
                     llvm::Value* rhs = unboxToI64(getOrLoad(rname));
                     llvm::Value* isZero = builder.CreateICmpEQ(rhs, llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
@@ -2226,8 +2277,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 llvm::Value* rhsRawM = rname.empty() ? nullptr : getOrLoad(rname);
                 bool bothNativeIntM = (lhsRawM && lhsRawM->getType() == llvm::Type::getInt64Ty(context)) &&
                                       (rhsRawM && rhsRawM->getType() == llvm::Type::getInt64Ty(context));
-                
-                if (inst.resultType == "int" || bothNativeIntM) {
+                // See emitNativeNumericBinary above: don't trust a stale
+                // resultType=="int" when an operand actually resolved to a
+                // native double (crash risk in unboxToI64/CreateIsNull).
+                bool eitherRawDoubleMod = (lhsRawM && lhsRawM->getType()->isDoubleTy())
+                                        || (rhsRawM && rhsRawM->getType()->isDoubleTy());
+
+                if ((inst.resultType == "int" && !eitherRawDoubleMod) || bothNativeIntM) {
                     llvm::Value* lhs = unboxToI64(getOrLoad(lname));
                     llvm::Value* rhs = unboxToI64(getOrLoad(rname));
                     llvm::Value* isZero = builder.CreateICmpEQ(rhs, llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
