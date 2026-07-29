@@ -6618,7 +6618,7 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64Auto", obj, idx, val}, dummy);
             } else {
                 dummy = "$t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, val}, dummy);
+                ir.addInstruction(currentFunc, "call", {"Pyc_SubscriptSetItem", obj, idx, val}, dummy);
             }
             return;
         }
@@ -6813,6 +6813,29 @@ class LoweringVisitor {
             }
             return;
         }
+        // obj.attr, obj[key] as an unpacking target — found and fixed
+        // while bug hunting: this function only ever handled a "Name"
+        // leaf target; an Attribute or Subscript target (the extremely
+        // common `self.x, self.y = x, y` idiom in __init__, or
+        // `d["k"], other = 1, 2`) fell through to the guard just below
+        // and silently did nothing at all — confirmed `self.x, self.y =
+        // x, y` left both attributes unset (reading back as None)
+        // with no error of any kind.
+        if (target->type == "Attribute") {
+            std::string obj = lowerExpr(target->children.empty() ? nullptr : target->children[0].get());
+            std::string attrConst = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + target->id + "\""}, attrConst, "str");
+            std::string dummy = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, attrConst, value}, dummy);
+            return;
+        }
+        if (target->type == "Subscript") {
+            std::string obj = lowerExpr(target->children.size() > 0 ? target->children[0].get() : nullptr);
+            std::string idx = lowerExpr(target->children.size() > 1 ? target->children[1].get() : nullptr);
+            std::string dummy = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_SubscriptSetItem", obj, idx, value}, dummy);
+            return;
+        }
         if (target->type != "Tuple" && target->type != "List") return;
 
         // Resolve per-index element kinds for this value
@@ -6994,7 +7017,7 @@ class LoweringVisitor {
             } else if (valIsInt) {
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64Auto", obj, idx, res}, dummy);
             } else {
-                ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, idx, res}, dummy);
+                ir.addInstruction(currentFunc, "call", {"Pyc_SubscriptSetItem", obj, idx, res}, dummy);
             }
         } else if (node->id == "__attr_assign__") {
             // obj.attr op= val — children[0]=Attribute node, children[1]=rhs.

@@ -585,6 +585,145 @@ print(a[0],a[1],a[2])
     ("print(type(5).__name__, type('x').__name__, type([1]).__name__, type(5.0).__name__)",
      "int str list float\n"),
 
+    # Bug-hunt regression: self.x, self.y = x, y (tuple-unpacking where a
+    # target is an attribute or subscript, not a plain name) silently
+    # did nothing at all for the non-Name targets — lowerUnpackTarget
+    # only ever handled a "Name" leaf target; an Attribute/Subscript
+    # target fell through a guard that just returned, with no error of
+    # any kind. Confirmed via the extremely common `self.x, self.y = x,
+    # y` idiom in __init__, which left both attributes unset (None).
+    # Found while testing the operator-dispatch fixes below (many
+    # natural test classes use this idiom in __init__).
+    ("class Vec:\n"
+     "    def __init__(self, x, y):\n"
+     "        self.x, self.y = x, y\n"
+     "v = Vec(1, 2)\n"
+     "print(v.x, v.y)", "1 2\n"),
+    ("d = {}\nd['a'], d['b'] = 1, 2\nprint(d['a'], d['b'])", "1 2\n"),
+    ("a = [0, 0]\na[0], a[1] = 5, 6\nprint(a)", "[5, 6]\n"),
+    ("class C:\n"
+     "    pass\n"
+     "c = C()\n"
+     "c.x, y, c.z = 1, 2, 3\n"
+     "print(c.x, y, c.z)", "1 2 3\n"),
+
+    # Bug-hunt regression: operator/protocol dunder methods weren't
+    # dispatched at all — apart from __init__/__str__/__repr__ (and
+    # @classmethod/@property from an earlier pass), essentially no
+    # Python "special method" worked. __eq__ was the most deceptive
+    # case: it *appeared* to work, since both operands are dict-backed
+    # (a class instance) and `==` fell through to a generic structural
+    # dict-equality comparison that happens to be right when two
+    # instances hold identical attribute values and wrong otherwise —
+    # confirmed `Point(1,2) == Point(9,9)` incorrectly evaluating `True`
+    # with a real __eq__ defined and ignored. Fixed via a single shared
+    # dunder-lookup helper (pyc_lookup_dunder, checking the instance
+    # dict then the class dict) reused across every dispatch site: the
+    # comparison operators in PyObject_CompareBool (__eq__/__ne__/
+    # __lt__/__le__/__gt__/__ge__ — __ne__ falls back to `not __eq__`
+    # when only __eq__ is defined, matching CPython), the arithmetic
+    # operators in PyNumber_Add/Subtract/Multiply/Divide/TrueDivide/
+    # Remainder (__add__/__sub__/__mul__/__floordiv__/__truediv__/
+    # __mod__), PyNumber_Negate (__neg__), PyBuiltin_Len (__len__) and
+    # PyObject_TruthValue (__bool__, falling back to __len__ — the
+    # correct CPython precedence), the container protocol in
+    # Pyc_Subscript/the new Pyc_SubscriptSetItem/Pyc_Contains
+    # (__getitem__/__setitem__/__contains__ — __getitem__ previously
+    # didn't just misbehave but crashed with an uncaught KeyError, since
+    # a class instance's own attribute dict essentially never contains
+    # the caller's actual subscript key), the iterator protocol via a
+    # new pyc_materialize_iterator_protocol eagerly draining __iter__/
+    # __next__ into a real list (matching pyc's existing "eager
+    # materialization" architecture — see FEATURES.md), and __call__ in
+    # Pyc_Apply (calling an instance like a function). Only the left
+    # operand's dunder is consulted for binary operators — reflected
+    # methods (__radd__ etc.) are a further, narrower, documented
+    # simplification, not attempted here. PyBuiltin_Bool was also found
+    # to be an independent, buggy reimplementation of
+    # PyObject_TruthValue's logic that the new __bool__/__len__
+    # dispatch didn't reach; simplified to delegate outright.
+    ("class Point:\n"
+     "    def __init__(self, x, y):\n"
+     "        self.x, self.y = x, y\n"
+     "    def __eq__(self, other):\n"
+     "        return self.x == other.x and self.y == other.y\n"
+     "p1 = Point(1, 2)\n"
+     "print(p1 == Point(1, 2))\n"
+     "print(p1 == Point(9, 9))\n"
+     "print(p1 != Point(9, 9))", "True\nFalse\nTrue\n"),
+    ("class AlwaysEqual:\n"
+     "    def __eq__(self, other):\n"
+     "        return True\n"
+     "a = AlwaysEqual()\n"
+     "print(a == 5, a == 'anything')", "True True\n"),
+    ("class Vec:\n"
+     "    def __init__(self, x, y):\n"
+     "        self.x, self.y = x, y\n"
+     "    def __lt__(self, other):\n"
+     "        return (self.x, self.y) < (other.x, other.y)\n"
+     "    def __sub__(self, other):\n"
+     "        return Vec(self.x - other.x, self.y - other.y)\n"
+     "    def __mul__(self, scalar):\n"
+     "        return Vec(self.x * scalar, self.y * scalar)\n"
+     "    def __neg__(self):\n"
+     "        return Vec(-self.x, -self.y)\n"
+     "    def __len__(self):\n"
+     "        return 2\n"
+     "    def __repr__(self):\n"
+     "        return f'Vec({self.x},{self.y})'\n"
+     "v1 = Vec(1, 2)\n"
+     "v2 = Vec(3, 4)\n"
+     "print(v1 < v2)\n"
+     "print(v1 - v2)\n"
+     "print(v1 * 3)\n"
+     "print(-v1)\n"
+     "print(len(v1))", "True\nVec(-2,-2)\nVec(3,6)\nVec(-1,-2)\n2\n"),
+    ("class Vec:\n"
+     "    def __init__(self, x, y):\n"
+     "        self.x, self.y = x, y\n"
+     "    def __bool__(self):\n"
+     "        return self.x != 0 or self.y != 0\n"
+     "print(bool(Vec(0, 0)), bool(Vec(1, 0)))\n"
+     "print('t' if Vec(0, 0) else 'f')", "False True\nf\n"),
+    ("class Container:\n"
+     "    def __init__(self):\n"
+     "        self.items = {}\n"
+     "    def __getitem__(self, key):\n"
+     "        return self.items.get(key, 'missing')\n"
+     "    def __setitem__(self, key, value):\n"
+     "        self.items[key] = value\n"
+     "    def __contains__(self, key):\n"
+     "        return key in self.items\n"
+     "c = Container()\n"
+     "c['a'] = 1\n"
+     "print(c['a'], c['b'], 'a' in c, 'b' in c)", "1 missing True False\n"),
+    ("class Range2:\n"
+     "    def __init__(self, n):\n"
+     "        self.n = n\n"
+     "        self.i = 0\n"
+     "    def __iter__(self):\n"
+     "        return self\n"
+     "    def __next__(self):\n"
+     "        if self.i >= self.n:\n"
+     "            raise StopIteration\n"
+     "        v = self.i\n"
+     "        self.i += 1\n"
+     "        return v\n"
+     "for x in Range2(3):\n"
+     "    print('r:', x)\n"
+     "print(list(Range2(2)))", "r: 0\nr: 1\nr: 2\n[0, 1]\n"),
+    ("class Counter:\n"
+     "    def __init__(self):\n"
+     "        self.n = 0\n"
+     "    def __call__(self, x):\n"
+     "        self.n += 1\n"
+     "        return x * 2\n"
+     "f = Counter()\n"
+     "print(f(5))\n"
+     "print(f.n)\n"
+     "print(f(10))\n"
+     "print(f.n)", "10\n1\n20\n2\n"),
+
     # Bug-hunt regression: negative indexing on a list (lst[-1], an
     # extremely common idiom) raised a bogus IndexError for a homogeneous
     # int/float fast-path list, or silently returned/wrote the wrong

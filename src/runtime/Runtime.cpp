@@ -334,6 +334,84 @@ PyObject* PyInt_FromLong(long v) {
     return obj;
 }
 
+// ---- Operator/protocol dunder-method dispatch ----
+// Found and fixed while bug hunting: apart from __init__/__str__/__repr__
+// (and, as of this session, __classmethod__/@property), essentially no
+// Python "special method" was ever dispatched — arithmetic
+// (__add__/__sub__/...), comparison (__eq__/__lt__/...), __len__,
+// __bool__, __neg__, the container protocol (__getitem__/__setitem__/
+// __contains__), the iterator protocol (__iter__/__next__), and
+// __call__ all either silently returned None/crashed, or — worse, for
+// __eq__ specifically — appeared to "work" by sheer coincidence (two
+// class instances are both dict-backed, so `==` fell through to a
+// generic structural dict-equality comparison that's *right* when two
+// instances happen to hold identical attribute values and *wrong*
+// otherwise: confirmed `Point(1,2) == Point(9,9)` incorrectly
+// evaluating `True` with a real `__eq__` defined and ignored).
+//
+// pyc_lookup_dunder is the single lookup mechanism every dispatch site
+// below shares — checks the instance dict first, then the class dict
+// (found via "__class__"). This used to be a private, identically-
+// -bodied static helper (GetStrOrRepr) that only PyObject_Print's
+// __str__/__repr__ dispatch could see, since it lived much further down
+// this file; generalized and moved up here (before its earliest
+// consumer, PyObject_TruthValue's __bool__/__len__ check) so every
+// operator dispatch site added this pass can use it too, including ones
+// defined earlier in the file than dict/method lookup infrastructure
+// previously lived. GetStrOrRepr itself, further down, now just calls
+// this.
+static PyObject* pyc_lookup_dunder(PyObject* obj, const char* method) {
+    if (!obj || obj->type != 2) return nullptr;
+    for (auto& pair : obj->dict) {
+        if (pair.first && pair.first->type == 3 && pair.first->str == method) {
+            return pair.second;
+        }
+    }
+    for (auto& pair : obj->dict) {
+        if (pair.first && pair.first->type == 3 && pair.first->str == "__class__") {
+            PyObject* classDict = pair.second;
+            if (classDict && classDict->type == 2) {
+                for (auto& cpair : classDict->dict) {
+                    if (cpair.first && cpair.first->type == 3 && cpair.first->str == method) {
+                        return cpair.second;
+                    }
+                }
+            }
+            break;
+        }
+    }
+    return nullptr;
+}
+// Calls a looked-up dunder method with `self` as the sole argument
+// (__len__, __bool__, __neg__, __iter__, __next__, ...). Returns a new
+// reference, or nullptr if Pyc_Apply itself returns nullptr (a dunder
+// legitimately returning None).
+static PyObject* pyc_call_dunder1(PyObject* method, PyObject* self) {
+    PyObject* args = PyList_New(0);
+    PyList_Append(args, self);
+    PyObject* result = Pyc_Apply(method, args);
+    Py_DECREF(args);
+    return result;
+}
+// Calls a looked-up dunder method with (self, other) — every binary
+// operator (__add__, __eq__, __getitem__, __contains__'s (self, item)
+// shape, ...). Returns a new reference.
+static PyObject* pyc_call_dunder2(PyObject* method, PyObject* self, PyObject* other) {
+    PyObject* args = PyList_New(0);
+    PyList_Append(args, self);
+    PyList_Append(args, other);
+    PyObject* result = Pyc_Apply(method, args);
+    Py_DECREF(args);
+    return result;
+}
+// Defined much further down this file (needs the setjmp-based try/except
+// machinery, which lives there) — drains a class instance's __iter__/
+// __next__ protocol eagerly into a real list. See its own comment for
+// why. Forward-declared here so PyBuiltin_List (used by both `for x in
+// obj:` and the bare `list(obj)` builtin) can call it despite being
+// defined earlier in the file than the try/except infrastructure.
+static PyObject* pyc_materialize_iterator_protocol(PyObject* obj);
+
 // Internal truthiness predicate (mirrors Python's bool()).
 // NOT static: called directly from generated code (Codegen.cpp's "br"
 // instruction handler) for boxed non-numeric conditions (str/list/dict/
@@ -358,7 +436,28 @@ int PyObject_TruthValue(PyObject* obj) {
         if (obj->list_item_type == 2) return !obj->flist.empty();
         return !obj->list.empty();
     }
-    if (obj->type == 2) return !obj->dict.empty();
+    if (obj->type == 2) {
+        // __bool__ then __len__ (CPython's exact precedence for a class
+        // instance with neither is "always truthy" — the plain
+        // !obj->dict.empty() fallback below is a pre-existing,
+        // deliberate approximation of that for a class instance with
+        // neither dunder, not something this pass changes).
+        PyObject* boolMethod = pyc_lookup_dunder(obj, "__bool__");
+        if (boolMethod) {
+            PyObject* r = pyc_call_dunder1(boolMethod, obj);
+            int truthy = PyObject_TruthValue(r);
+            if (r) Py_DECREF(r);
+            return truthy;
+        }
+        PyObject* lenMethod = pyc_lookup_dunder(obj, "__len__");
+        if (lenMethod) {
+            PyObject* r = pyc_call_dunder1(lenMethod, obj);
+            int truthy = PyObject_TruthValue(r);
+            if (r) Py_DECREF(r);
+            return truthy;
+        }
+        return !obj->dict.empty();
+    }
     if (obj->type == 19) return !mpd_iszero(pyc_as_decimal(obj));
     return 1;
 }
@@ -1864,6 +1963,12 @@ PyObject* PyNumber_Negate(PyObject* obj) {
         mpd_qcopy_negate(r, pyc_as_decimal(obj), &status);
         return pyc_decimal_wrap(r);
     }
+    // __neg__ dispatch for a class instance — found and fixed while bug
+    // hunting: -instance previously always returned None.
+    if (obj->type == 2) {
+        PyObject* negMethod = pyc_lookup_dunder(obj, "__neg__");
+        if (negMethod) return pyc_call_dunder1(negMethod, obj);
+    }
     return NULL;
 }
 
@@ -2038,20 +2143,15 @@ PyObject* PyBuiltin_Complex(PyObject* obj1, PyObject* obj2) {
 // always returns a real bool (True/False). Our PyBool_New now returns
 // the cached immortal singletons, so identity comparisons work.
 PyObject* PyBuiltin_Bool(PyObject* obj) {
-    if (!obj) return PyBool_New(0);
-    if (obj->type == 0 || obj->type == 5) return PyBool_New(obj->value != 0);
-    if (obj->type == 4) return PyBool_New(obj->dvalue != 0.0);
-    if (obj->type == 3) return PyBool_New(!obj->str.empty());
-    if (obj->type == 1) {
-        size_t len = 0;
-        if (obj->list_item_type == 1) len = obj->ilist.size();
-        else if (obj->list_item_type == 2) len = obj->flist.size();
-        else len = obj->list.size();
-        return PyBool_New(len != 0);
-    }
-    if (obj->type == 2) return PyBool_New(!obj->dict.empty());
-    if (obj->type == 19) return PyBool_New(!mpd_iszero(pyc_as_decimal(obj)));
-    return PyBool_New(1);
+    // Found and fixed while bug hunting: this used to be a second,
+    // independent reimplementation of PyObject_TruthValue's logic (down
+    // to duplicating its own now-fixed homogeneous-list bug pattern),
+    // so PyObject_TruthValue's __bool__/__len__ dunder dispatch (added
+    // this pass) never applied to the bare bool() builtin — confirmed
+    // bool(Vec(0,0)) for a class defining __bool__ still incorrectly
+    // returned True. Delegating outright removes the duplication rather
+    // than patching it a second time.
+    return PyBool_New(PyObject_TruthValue(obj));
 }
 
 // type(x) — returns a string naming the runtime type of x. We use the
@@ -3615,7 +3715,24 @@ PyObject* PyBuiltin_Len(PyObject* obj) {
     if (!obj) return PyInt_FromLong(0);
     if (obj->type == 1) return PyInt_FromLong((long)PyList_Size(obj));
     if (obj->type == 3 || obj->type == 17 || obj->type == 18) return PyInt_FromLong((long)obj->str.size());
-    if (obj->type == 2) return PyInt_FromLong((long)obj->dict.size());
+    if (obj->type == 2) {
+        // __len__ dispatch for a class instance — found and fixed while
+        // bug hunting: len(instance) previously always fell through to
+        // the generic "number of instance-attribute entries" count
+        // below, which is a meaningless number for most classes (e.g.
+        // an instance with __len__ returning 2 but 3 real attributes
+        // would report 3, not 2), confirmed via a Vec class defining
+        // __len__ to return 2. A genuine plain dict (no __class__ entry)
+        // still correctly reports its own entry count via the fallback.
+        PyObject* lenMethod = pyc_lookup_dunder(obj, "__len__");
+        if (lenMethod) {
+            PyObject* r = pyc_call_dunder1(lenMethod, obj);
+            long n = (r && (r->type == 0 || r->type == 5)) ? r->value : 0;
+            if (r) Py_DECREF(r);
+            return PyInt_FromLong(n);
+        }
+        return PyInt_FromLong((long)obj->dict.size());
+    }
     return PyInt_FromLong(0);
 }
 
@@ -3789,6 +3906,24 @@ static std::unordered_map<PyObject*, PyObject*> g_pycDefaultFactories;
 
 PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
     if (obj && obj->type == 2) {
+        // __getitem__ dispatch for a class instance — found and fixed
+        // while bug hunting: obj[key] for a class defining __getitem__
+        // previously always fell straight into the dict-scan-and-raise
+        // logic below (a class instance is a dict with a "__class__"
+        // entry), which — since a real class instance's attribute
+        // dict essentially never contains the caller's actual subscript
+        // key — almost always raised an uncaught KeyError instead of
+        // running the user's __getitem__ body at all. Confirmed via a
+        // Container class whose __getitem__ has its own fallback
+        // ("missing") for an absent key: `c["b"]` crashed with
+        // `KeyError: 'b'` instead of calling __getitem__ and returning
+        // "missing". Checked first, before the "is this dict itself
+        // secretly a class instance" question even needs the
+        // pyc_lookup_dunder call below to matter for plain dicts (which
+        // have no "__class__" entry, so pyc_lookup_dunder always
+        // returns nullptr for them and this check is a no-op).
+        PyObject* getitemMethod = pyc_lookup_dunder(obj, "__getitem__");
+        if (getitemMethod) return pyc_call_dunder2(getitemMethod, obj, key);
         // Dict: scan directly rather than going through Pyc_GetItem, which
         // returns a null PyObject* both when the key is absent AND when
         // the key is present with a None value — indistinguishable to the
@@ -3859,6 +3994,31 @@ PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
     return nullptr;
 }
 
+// obj[key] = val — genuine subscript assignment only. Deliberately a
+// separate function from Pyc_SetItem: that one is also used for plain
+// attribute assignment (obj.attr = val) and various internal class/
+// instance-dict setup, none of which should ever trigger a
+// user-defined __setitem__ — only Compiler.cpp's Subscript-assignment
+// lowering (obj[key] = val, and the read-modify-write half of
+// obj[key] op= val) calls this one. Found and fixed while bug hunting,
+// alongside __getitem__ above.
+PyObject* Pyc_SubscriptSetItem(PyObject* obj, PyObject* key, PyObject* val) {
+    if (obj && obj->type == 2) {
+        PyObject* setitemMethod = pyc_lookup_dunder(obj, "__setitem__");
+        if (setitemMethod) {
+            PyObject* args = PyList_New(0);
+            PyList_Append(args, obj);
+            PyList_Append(args, key);
+            PyList_Append(args, val);
+            PyObject* r = Pyc_Apply(setitemMethod, args);
+            Py_DECREF(args);
+            if (r) Py_DECREF(r);
+            return nullptr;
+        }
+    }
+    return Pyc_SetItem(obj, key, val);
+}
+
 // del obj[key] — dispatches on obj's runtime type. Found missing while
 // hunting for more instances of the truthiness bug's underlying pattern:
 // Compiler.cpp previously called PyDict_DelItem unconditionally for
@@ -3889,6 +4049,22 @@ PyObject* Pyc_DelItem(PyObject* obj, PyObject* key) {
 
 PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
     if (!container || !item) return PyBool_New(0);
+    // __contains__ dispatch for a class instance — found and fixed
+    // while bug hunting: `item in container` for a class defining
+    // __contains__ previously fell through to the type==2 branch
+    // further below, which scans the instance's own attribute *names*
+    // for a match (a class instance is a dict with a "__class__" entry)
+    // — a meaningless check for almost any real class, confirmed via a
+    // Container class whose __contains__ checks its own `items` dict.
+    if (container->type == 2) {
+        PyObject* containsMethod = pyc_lookup_dunder(container, "__contains__");
+        if (containsMethod) {
+            PyObject* r = pyc_call_dunder2(containsMethod, container, item);
+            int truthy = PyObject_TruthValue(r);
+            if (r) Py_DECREF(r);
+            return PyBool_New(truthy);
+        }
+    }
     if (container->type == 1) {
         // Homogeneous int list
         if (container->list_item_type == 1) {
@@ -4569,6 +4745,16 @@ PyObject* PyBuiltin_List(PyObject* obj) {
         return r;
     }
     if (obj->type == 2) {
+        // __iter__/__next__ dispatch for a class instance — found and
+        // fixed while bug hunting; see pyc_materialize_iterator_protocol's
+        // comment (far below) for the full story. Checked first: a
+        // genuine plain dict has no "__class__" entry, so
+        // pyc_lookup_dunder always returns nullptr for it and this is a
+        // no-op, falling through to the existing dict-iterates-its-keys
+        // behavior below unchanged.
+        if (pyc_lookup_dunder(obj, "__iter__")) {
+            return pyc_materialize_iterator_protocol(obj);
+        }
         // CPython: list(dict) iterates over keys.
         PyObject* r = PyList_New(obj->dict.size());
         size_t i = 0;
@@ -4911,6 +5097,16 @@ static PyObject* pyc_timedelta_mul(const PycTimedelta* a, int64_t n) {
 
 PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
     if (!a || !b) return NULL;
+    // __add__ dispatch for a class instance — found and fixed while bug
+    // hunting: a + b for a class defining __add__ previously always
+    // returned None. Only the left operand's dunder is consulted
+    // (__radd__ is a further, narrower simplification, not attempted
+    // here — matches the same choice made for comparison dispatch
+    // above).
+    if (a->type == 2) {
+        PyObject* method = pyc_lookup_dunder(a, "__add__");
+        if (method) return pyc_call_dunder2(method, a, b);
+    }
     if (a->type == 3 && b->type == 3) return PyString_Concat(a, b);
     // list + list concatenation — see PyList_Concat's comment above for
     // why this was previously entirely missing (not a homogeneous-list
@@ -4949,6 +5145,12 @@ PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
 }
 
 PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
+    // __sub__ dispatch for a class instance — see PyNumber_Add's
+    // comment; same "left operand only" simplification.
+    if (a && b && a->type == 2) {
+        PyObject* method = pyc_lookup_dunder(a, "__sub__");
+        if (method) return pyc_call_dunder2(method, a, b);
+    }
     if (a && b && a->type == 14 && b->type == 15) return pyc_datetime_add_timedelta(pyc_as_datetime(a), pyc_as_timedelta(b), true);
     if (a && b && a->type == 14 && b->type == 14) return pyc_datetime_diff(pyc_as_datetime(a), pyc_as_datetime(b));
     if (a && b && a->type == 15 && b->type == 15) return pyc_timedelta_add(pyc_as_timedelta(a), pyc_as_timedelta(b), true);
@@ -9299,6 +9501,11 @@ void pyc_register_module(const char* name, PyObject* module_dict) {
 
 PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
     if (!a || !b) return NULL;
+    // __mul__ dispatch for a class instance — see PyNumber_Add's comment.
+    if (a->type == 2) {
+        PyObject* method = pyc_lookup_dunder(a, "__mul__");
+        if (method) return pyc_call_dunder2(method, a, b);
+    }
     if (a->type == 3 && b->type == 0) return PyString_Repeat(a, b);
     if (a->type == 0 && b->type == 3) return PyString_Repeat(b, a);
     if (a->type == 1 && b->type == 0) return PyList_Repeat(a, b->value);
@@ -9327,6 +9534,11 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
 
 // Floor division (//)
 PyObject* PyNumber_Divide(PyObject* a, PyObject* b) {
+    // __floordiv__ dispatch for a class instance — see PyNumber_Add's comment.
+    if (a && b && a->type == 2) {
+        PyObject* method = pyc_lookup_dunder(a, "__floordiv__");
+        if (method) return pyc_call_dunder2(method, a, b);
+    }
     if (a && b && (a->type == 19 || b->type == 19)) {
         bool aTemp = false, bTemp = false;
         mpd_t* da = pyc_decimal_operand(a, &aTemp);
@@ -9386,6 +9598,13 @@ PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b) {
         }
         return pyc_new_path(out);
     }
+    // __truediv__ dispatch for a class instance — see PyNumber_Add's
+    // comment. Checked after the Path-joining special case above (Path
+    // isn't a class instance — type 16, not 2 — so there's no overlap).
+    if (a && b && a->type == 2) {
+        PyObject* method = pyc_lookup_dunder(a, "__truediv__");
+        if (method) return pyc_call_dunder2(method, a, b);
+    }
     if (a && b && (a->type == 19 || b->type == 19)) {
         bool aTemp = false, bTemp = false;
         mpd_t* da = pyc_decimal_operand(a, &aTemp);
@@ -9418,6 +9637,11 @@ PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b) {
 
 PyObject* PyNumber_Remainder(PyObject* a, PyObject* b) {
     if (a && a->type == 3) return PyString_Format(a, b);   // "fmt" % val
+    // __mod__ dispatch for a class instance — see PyNumber_Add's comment.
+    if (a && b && a->type == 2) {
+        PyObject* method = pyc_lookup_dunder(a, "__mod__");
+        if (method) return pyc_call_dunder2(method, a, b);
+    }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) {
         if (b->value == 0) {
@@ -9459,6 +9683,50 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
         switch (op) {
             case 1: return 1;
             default: return 0;
+        }
+    }
+    // Comparison-dunder dispatch for a class instance — found and fixed
+    // while bug hunting: __eq__ appeared to "work" only by sheer
+    // coincidence (both operands are dict-backed, so `==` fell through
+    // to the generic structural dict-equality comparison further below,
+    // which is right when two instances happen to hold identical
+    // attribute values and wrong otherwise — confirmed `Point(1,2) ==
+    // Point(9,9)` incorrectly evaluating `True` with a real __eq__
+    // defined and ignored). __lt__/__le__/__gt__/__ge__/__ne__ had no
+    // dispatch at all. Only the left operand's dunder is consulted —
+    // reflected comparisons (falling back to b's dunder when a's is
+    // absent) are a further, narrower simplification, not attempted
+    // here.
+    if (a->type == 2) {
+        const char* dunderName = nullptr;
+        switch (op) {
+            case 0: dunderName = "__eq__"; break;
+            case 1: dunderName = "__ne__"; break;
+            case 2: dunderName = "__lt__"; break;
+            case 3: dunderName = "__gt__"; break;
+            case 4: dunderName = "__le__"; break;
+            case 5: dunderName = "__ge__"; break;
+        }
+        if (dunderName) {
+            PyObject* method = pyc_lookup_dunder(a, dunderName);
+            if (method) {
+                PyObject* r = pyc_call_dunder2(method, a, b);
+                int truthy = PyObject_TruthValue(r);
+                if (r) Py_DECREF(r);
+                return truthy;
+            }
+            // __ne__ with no direct override falls back to `not __eq__`,
+            // matching CPython's own default when a class defines
+            // __eq__ but not __ne__.
+            if (op == 1) {
+                PyObject* eqMethod = pyc_lookup_dunder(a, "__eq__");
+                if (eqMethod) {
+                    PyObject* r = pyc_call_dunder2(eqMethod, a, b);
+                    int truthy = PyObject_TruthValue(r);
+                    if (r) Py_DECREF(r);
+                    return !truthy;
+                }
+            }
         }
     }
     // Function objects compare by identity (CPython: no __eq__ on functions).
@@ -10475,6 +10743,78 @@ void pyc_clear_exception(void) {
     }
 }
 
+// Eagerly materializes a class instance's __iter__/__next__ protocol
+// into a real list — found and fixed while bug hunting: `for x in obj:`
+// (and the bare `list(obj)` builtin, both of which route through
+// PyBuiltin_List) for a class implementing the iterator protocol
+// previously always iterated the instance's own raw attribute dict
+// instead (a class instance IS a dict, per pyc's representation), with
+// no error of any kind — confirmed via a Range2 class whose __next__
+// raises StopIteration: `for x in Range2(3):` printed the instance's
+// attribute names ("n", "i", "__class__") instead of the intended
+// 0/1/2 sequence.
+//
+// This fits pyc's existing, deliberate "eager materialization"
+// architecture (already used for generator expressions and most
+// itertools functions — see FEATURES.md) rather than implementing true
+// lazy iteration (a much larger, separate architectural change): the
+// entire iterator is drained up front into a real list before the
+// for-loop / list() call ever sees it, so a __next__ that never raises
+// StopIteration would hang here exactly as any other already-documented
+// "no lazy iterator, no infinite iterables" case would.
+//
+// __next__ is invoked through the same setjmp-based try/except
+// machinery Compiler.cpp's generated code already uses for every other
+// try/except in a compiled program (pyc_try_push/pyc_try_pop, a fresh
+// jmp_buf per call) so that a StopIteration raised deep inside the
+// user's __next__ body — an ordinary compiled Python function, not
+// something this helper can special-case — correctly unwinds back here
+// instead of propagating past this function entirely. A non-
+// StopIteration exception is deliberately re-raised outward (propagates
+// to whatever try/except, if any, wraps the for-loop/list() call in the
+// user's own code), matching real Python's behavior when __next__
+// raises something else.
+static PyObject* pyc_materialize_iterator_protocol(PyObject* obj) {
+    PyObject* iterMethod = pyc_lookup_dunder(obj, "__iter__");
+    PyObject* iterObj = iterMethod ? pyc_call_dunder1(iterMethod, obj) : nullptr;
+    if (!iterObj) return PyList_New(0);
+    PyObject* nextMethod = pyc_lookup_dunder(iterObj, "__next__");
+    if (!nextMethod) { Py_DECREF(iterObj); return PyList_New(0); }
+    PyObject* result = PyList_New(0);
+    for (;;) {
+        jmp_buf jb;
+        PyObject* item = nullptr;
+        bool stopped = false;
+        bool propagate = false;
+        if (setjmp(jb) == 0) {
+            pyc_try_push(&jb, nullptr);
+            item = pyc_call_dunder1(nextMethod, iterObj);
+            pyc_try_pop();
+        } else {
+            PyObject* exc = pyc_current_exception();
+            if (exc && pyc_exc_type_name(exc) == "StopIteration") {
+                stopped = true;
+            } else {
+                propagate = true;
+            }
+            if (propagate) {
+                Py_DECREF(iterObj);
+                Py_DECREF(result);
+                if (exc) pyc_raise(exc); // does not return when an outer try exists
+                if (exc) Py_DECREF(exc);
+                return nullptr;
+            }
+            pyc_clear_exception();
+            if (exc) Py_DECREF(exc);
+        }
+        if (stopped) break;
+        PyList_Append(result, item);
+        if (item) Py_DECREF(item);
+    }
+    Py_DECREF(iterObj);
+    return result;
+}
+
 // Comprehension helpers (kept for backward compat)
 PyObject* list_create() { return PyList_New(0); }
 void list_append(PyObject* list, PyObject* item) { PyList_Append(list, item); }
@@ -10577,7 +10917,24 @@ extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
             haveTok = true;
         }
     }
-    if (!haveTok) return nullptr;
+    if (!haveTok) {
+        // __call__ dispatch for a class instance — found and fixed
+        // while bug hunting: calling an instance like a function
+        // (f(5) where f is a class instance defining __call__)
+        // previously always silently returned None, since a dict-typed
+        // token (type 2) matched none of the "callable" shapes above.
+        // callMethod is normally a bare token string, but could rarely
+        // be a decorator-tagged 2-element list (e.g. a @staticmethod
+        // __call__, unusual but not disallowed) — Pyc_CallMethod
+        // already knows how to unwrap either shape correctly for a
+        // bound call, so route through it rather than re-deriving that
+        // logic here.
+        if (token->type == 2) {
+            PyObject* callMethod = pyc_lookup_dunder(token, "__call__");
+            if (callMethod) return Pyc_CallMethod(callMethod, token, argList);
+        }
+        return nullptr;
+    }
     auto it = g_callableRegistry.find(tokName);
     if (it == g_callableRegistry.end()) return nullptr;
 

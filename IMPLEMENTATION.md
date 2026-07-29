@@ -1343,19 +1343,6 @@ gap, confirmed present before this session's fix and unrelated to it)**:
   fixed symptom) and looks like a separate interaction between the
   constant-exponent fast path and the A6 native-function-specialization
   pass for float-typed parameters — not investigated further.
-- **Operator-overloading dunder methods (`__add__` and presumably its
-  siblings) don't work on class instances at all.** `class Vec: def
-  __add__(self, other): ...` — `v1 + v2` prints `None`. Confirmed this
-  predates the current session entirely (reproduces identically at the
-  immediately-prior commit, before any of today's fixes). Root cause:
-  grepping the whole codebase for `__add__` turns up zero hits outside a
-  comment — there is no dunder-operator dispatch mechanism anywhere;
-  `PyNumber_Add` (which the `"add"` IR opcode calls unconditionally) has
-  branches for every builtin type but falls through to `NULL` for two
-  `type == 2` (class instance) operands. A real fix needs the `"add"`
-  (and sibling) opcode's codegen, or `PyNumber_Add` itself, to check for
-  an `"__add__"` entry in a dict-type operand's class and dispatch to it
-  — not attempted here.
 - **Dynamic class instantiation via a variable doesn't work.** `X = Foo;
   X()` (or `cls()` inside a `@classmethod`, the same underlying gap)
   returns `None` instead of a new instance. Root cause: the "instantiate
@@ -1709,6 +1696,149 @@ still correctly distinguished from a class instance), and several
 non-exception builtin types (`int`, `str`, `list`, `float`). Added as
 permanent `tests/runner.py` regressions. Full suite and import tests
 stay green; `valgrind --tool=memcheck` shows 0 errors.
+
+### Operator/Protocol Dunder Methods Weren't Dispatched At All — Fixed
+Continuing the hunt into class features turned up a gap far broader than
+the already-documented `__add__` finding above: apart from
+`__init__`/`__str__`/`__repr__` (and `@classmethod`/`@property` from an
+earlier pass), essentially **no** Python "special method" was ever
+dispatched. Confirmed via a battery of ordinary classes: `__lt__`
+(`v1 < v2` always `False`), `__sub__`/`__mul__` (always `None`),
+`__neg__` (always `None`), `__len__` (`len(instance)` always reported
+the instance's raw *attribute count*, not the `__len__` result —
+confirmed wrong for a class with `__len__` returning `2` but 3 real
+attributes), `__bool__` (silently ignored), the container protocol
+(`obj[key]` for a class with `__getitem__` **crashed with an uncaught
+`KeyError`**, since a class instance's own attribute dict essentially
+never contains the caller's actual subscript key; `obj[key] = val` and
+`key in obj` were similarly ignored), the iterator protocol (`for x in
+obj:` for a class implementing `__iter__`/`__next__` silently iterated
+the instance's own raw attribute dict instead — no error, just
+completely wrong values), and `__call__` (calling an instance like a
+function silently returned `None`).
+
+**`__eq__` deserves special mention as the most deceptive case**: it
+*appeared* to work. Both operands of `p1 == p2` are dict-backed (a class
+instance is a plain dict with a `"__class__"` entry), so `==` fell
+through to a generic structural dict-equality comparison — right when
+two instances happen to hold identical attribute values, wrong
+otherwise. Confirmed: `Point(1,2) == Point(9,9)` incorrectly evaluated
+`True` with a real `__eq__` defined and completely ignored; `a == 5` for
+a class whose `__eq__` always returns `True` gave `False`.
+
+**The fix**: a single shared lookup helper, `pyc_lookup_dunder(obj,
+method)` — checking the instance dict first, then the class dict via
+`"__class__"` — generalized from what used to be a private,
+identically-bodied helper (`GetStrOrRepr`) that only the existing
+`__str__`/`__repr__` dispatch in `PyObject_Print` could see, since it
+lived much further down `Runtime.cpp` than several of the functions
+needing it now. Moved up to before its earliest consumer
+(`PyObject_TruthValue`); `GetStrOrRepr` itself now just calls it. Two
+small helpers, `pyc_call_dunder1`/`pyc_call_dunder2`, wrap the existing
+`Pyc_Apply` call convention for the common "call with just `self`" /
+"call with `(self, other)`" shapes. Every dispatch site below now
+checks for and calls the matching dunder before falling through to its
+existing builtin-type-specific logic, so a genuine plain dict, list, int,
+etc. is completely unaffected (`pyc_lookup_dunder` only ever matches a
+`type == 2` object that actually has a `"__class__"` entry):
+
+- `PyObject_CompareBool` — `__eq__`/`__ne__`/`__lt__`/`__le__`/`__gt__`/
+  `__ge__`. `__ne__` with no direct override falls back to `not
+  __eq__(...)`, matching CPython's own default when a class defines
+  `__eq__` but not `__ne__`.
+- `PyNumber_Add`/`Subtract`/`Multiply`/`Divide`/`TrueDivide`/`Remainder`
+  — `__add__`/`__sub__`/`__mul__`/`__floordiv__`/`__truediv__`/`__mod__`.
+- `PyNumber_Negate` — `__neg__`.
+- `PyBuiltin_Len` — `__len__`.
+- `PyObject_TruthValue` — `__bool__`, falling back to `__len__` if
+  `__bool__` isn't defined (the correct CPython precedence) before the
+  pre-existing "non-empty dict" default for a class with neither.
+  `PyBuiltin_Bool` (the bare `bool()` builtin) turned out to be an
+  entirely separate, independent reimplementation of
+  `PyObject_TruthValue`'s logic — down to duplicating its own
+  already-fixed homogeneous-list bug pattern — so the new dispatch
+  didn't reach it at all until `PyBuiltin_Bool` was simplified to
+  delegate outright, removing the duplication instead of patching it a
+  second time.
+- `Pyc_Subscript` — `__getitem__`, checked before the existing
+  dict-scan-and-raise `KeyError` logic.
+- A **new** `Pyc_SubscriptSetItem` — `__setitem__`. Deliberately a
+  separate function from the existing `Pyc_SetItem`, which is *also*
+  used for plain attribute assignment (`obj.attr = val`) and various
+  internal class/instance-dict setup — none of which should ever
+  trigger a user-defined `__setitem__`. Only `Compiler.cpp`'s genuine
+  `obj[key] = val` assignment lowering (plain assignment, the
+  read-modify-write half of `obj[key] op= val`, and the
+  tuple-unpacking-to-a-subscript-target case below) now calls the new
+  function; attribute assignment and internal setup still call the
+  original `Pyc_SetItem`, unaffected.
+- `Pyc_Contains` — `__contains__`, checked before the existing
+  type==2 branch (which scans the instance's own attribute *names* —
+  meaningless for almost any real class).
+- A **new** `pyc_materialize_iterator_protocol`, wired into
+  `PyBuiltin_List` (used by both `for x in obj:` and the bare `list(obj)`
+  builtin) — `__iter__`/`__next__`. This fits pyc's existing, deliberate
+  "eager materialization" architecture (already used for generator
+  expressions and most `itertools` functions) rather than implementing
+  true lazy iteration, a much larger, separate architectural change: the
+  *entire* iterator is drained up front into a real list before the
+  for-loop/`list()` call ever sees it, so a `__next__` that never raises
+  `StopIteration` would hang here exactly as any other already-documented
+  "no lazy iterator, no infinite iterables" case would. `__next__` is
+  invoked through the same `setjmp`-based try/except machinery
+  `Compiler.cpp`'s generated code already uses for every other
+  try/except in a compiled program (a fresh `jmp_buf` + `pyc_try_push`/
+  `pyc_try_pop` per call), so a `StopIteration` raised deep inside the
+  user's `__next__` body — an ordinary compiled Python function, not
+  something this helper can special-case — correctly unwinds back to
+  the materialization loop instead of propagating past it entirely; a
+  non-`StopIteration` exception is deliberately re-raised outward,
+  matching real Python's behavior when `__next__` raises something else.
+- `Pyc_Apply` — `__call__`, checked in the fallback branch that used to
+  unconditionally return `None` for any token that wasn't a recognized
+  callable shape (string, function object, or descriptor bundle).
+  Delegates to the existing `Pyc_CallMethod` (from the `@classmethod`/
+  `@property` work) to bind `self` correctly, in case `__call__` is
+  ever itself decorated (unusual, but not disallowed).
+
+**Deliberate simplifications, not attempted here**: only the *left*
+operand's dunder is consulted for every binary operator above — no
+`__radd__`/reflected-method fallback when the left operand lacks the
+primary dunder but the right operand defines the reflected one. The
+bare `iter(x)` builtin itself is still entirely unimplemented (confirmed
+while testing: a class whose `__iter__` does `return iter(self._data)`
+rather than the common `return self` idiom yields nothing, since
+`iter()` itself silently returns `None` — `pyc_materialize_iterator_protocol`
+correctly falls back to an empty list rather than crashing when
+`__iter__`'s return value turns out not to be a class instance with its
+own `__next__`).
+
+**A related, separate bug found and fixed while testing the above**:
+`self.x, self.y = x, y` — tuple-unpacking where a target is an attribute
+or subscript, not a plain name — silently did nothing at all for every
+non-`Name` target. `lowerUnpackTarget` only ever handled a `"Name"` leaf
+target; an `Attribute` or `Subscript` target fell through a guard that
+just returned, with no error. Confirmed via the extremely common
+`self.x, self.y = x, y` idiom in `__init__` (found while writing test
+classes for the operator-dispatch fixes above — most natural test
+classes with two-plus attributes use exactly this idiom), which left
+both attributes unset (reading back as `None`), and via `d["a"], d["b"]
+= 1, 2` / `a[0], a[1] = 5, 6` (subscript targets). Fixed by adding
+`Attribute` and `Subscript` cases to `lowerUnpackTarget`, mirroring the
+existing `Pyc_SetItem`-based logic `lowerAssign`'s `"__attr_assign__"`/
+`"__subscript__"` branches already use for the non-unpacking form of the
+same assignments.
+
+Verified against real CPython across every dunder method listed above,
+individually and combined (a `Vec` class exercising comparison,
+arithmetic, unary negation, and `__len__` together; a `Container` class
+exercising the full get/set/contains container protocol; a `Range2`
+self-iterator class exercising both `for` and `list()`; a `Counter`
+class exercising `__call__` with internal state mutation across
+multiple calls), plus the attribute/subscript-unpacking fix on its own.
+Added as permanent `tests/runner.py` regressions. Full suite (433/433)
+and import tests (9/9) stay green; `valgrind --tool=memcheck` shows 0
+errors.
 
 ## Known Limitations
 

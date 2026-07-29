@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **422/422** (runner shows 422/422, file_case_failures=0).
+Current test count: **433/433** (runner shows 433/433, file_case_failures=0).
 
 ## Types and Literals
 
@@ -116,6 +116,14 @@ f(b=3, a=4)                    keyword call arguments
 - Single and multiple inheritance with C3-linearized MRO
 - `super()` following the runtime C3 MRO (full remaining-MRO method search)
 - `__str__` / `__repr__` protocol (used by `print`, `str`, f-strings)
+- Operator/protocol dunder methods: comparison (`__eq__`/`__ne__`/
+  `__lt__`/`__le__`/`__gt__`/`__ge__`), arithmetic (`__add__`/`__sub__`/
+  `__mul__`/`__floordiv__`/`__truediv__`/`__mod__`), `__neg__`,
+  `__len__`, `__bool__`, the container protocol (`__getitem__`/
+  `__setitem__`/`__contains__`), the iterator protocol (`__iter__`/
+  `__next__`, eagerly materialized — see IMPLEMENTATION.md), and
+  `__call__`. Only the left operand's dunder is consulted for binary
+  operators (no `__radd__`/reflected-method fallback).
 - `@classmethod`, `@property`, `@staticmethod` method decorators.
   **Severe bug found and fixed**: these used to be silently discarded
   entirely — every method was called identically regardless of
@@ -139,10 +147,30 @@ f(b=3, a=4)                    keyword call arguments
   to methods (a plain top-level function hits it too). Fixed. A narrower
   case survives: calling the same function with a float argument still
   crashes — see IMPLEMENTATION.md.
-- **Found, documented, not fixed**: operator-overloading dunder methods
-  (`__add__` and presumably its siblings) don't work on class instances
-  at all — `v1 + v2` for a class defining `__add__` prints `None`.
-  Confirmed pre-existing (not introduced by any fix this session). See
+- **Severe bug found and fixed, much broader than first documented**:
+  operator/protocol dunder methods weren't dispatched at all. Now works:
+  comparison (`__eq__`/`__ne__`/`__lt__`/`__le__`/`__gt__`/`__ge__` —
+  `__eq__` was the most deceptive case, since it *appeared* to work by
+  sheer coincidence of a generic structural fallback, giving outright
+  wrong answers for genuinely different instances), arithmetic
+  (`__add__`, `__sub__`, `__mul__`, `__floordiv__`, `__truediv__`,
+  `__mod__`), `__neg__`, `__len__`, `__bool__` (falling back to
+  `__len__` per real Python precedence), the container protocol
+  (`__getitem__`/`__setitem__`/`__contains__` — `__getitem__` didn't
+  just misbehave but crashed with an uncaught `KeyError`), the iterator
+  protocol (`for x in obj:` completely bypassed `__iter__`/`__next__`,
+  silently iterating the instance's own raw attributes instead — now
+  eagerly drains the iterator into a real list, matching pyc's existing
+  "eager materialization" architecture), and `__call__` (calling an
+  instance like a function silently returned `None`). Only the left
+  operand's dunder is consulted for binary operators (no `__radd__`
+  etc.); the bare `iter(x)` builtin itself is still unimplemented
+  (`__iter__` returning something other than `self`, e.g. `return
+  iter(self._data)`, silently yields nothing). See IMPLEMENTATION.md.
+- **Related bug found and fixed**: `self.x, self.y = x, y` (unpacking
+  where a target is an attribute or subscript, not a plain name) — the
+  extremely common attribute-unpacking idiom in `__init__` — silently
+  left every non-plain-name target unset, with no error. See
   IMPLEMENTATION.md.
 
 ## Exceptions

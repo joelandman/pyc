@@ -673,6 +673,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     llvm::FunctionType* setItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(setItemTy, llvm::Function::ExternalLinkage, "Pyc_SetItem", module.get());
+    // Pyc_SubscriptSetItem(obj, key, val) — genuine obj[key] = val
+    // assignment only, dispatching __setitem__ for a class instance;
+    // see its comment in Runtime.cpp for why this must be a separate
+    // function from Pyc_SetItem (also used for plain attribute
+    // assignment, which must never trigger __setitem__).
+    llvm::Function::Create(setItemTy, llvm::Function::ExternalLinkage, "Pyc_SubscriptSetItem", module.get());
 
     llvm::FunctionType* containsTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(containsTy, llvm::Function::ExternalLinkage, "Pyc_Contains", module.get());

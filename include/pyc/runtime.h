@@ -172,6 +172,7 @@ PyObject* Pyc_GetAttr(PyObject* obj, PyObject* attrName);
 PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* argsList);
 PyObject* Pyc_Subscript(PyObject* obj, PyObject* key);
 PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val);
+PyObject* Pyc_SubscriptSetItem(PyObject* obj, PyObject* key, PyObject* val);
 PyObject* Pyc_Contains(PyObject* container, PyObject* item);
 PyObject* Pyc_Pow(PyObject* a, PyObject* b);
 void pyc_register_class(PyObject* name, PyObject* cls);
