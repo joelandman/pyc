@@ -392,7 +392,7 @@ class ListComp final : public Expr {
     std::shared_ptr<Expr> elt_;
 public:
     struct Comprehension {
-        std::string target;
+        std::shared_ptr<Expr> target;
         std::shared_ptr<Expr> iterable;
         std::vector<std::shared_ptr<Expr>> ifs;
     };
@@ -407,7 +407,7 @@ class SetComp final : public Expr {
     std::shared_ptr<Expr> elt_;
 public:
     struct Comprehension {
-        std::string target;
+        std::shared_ptr<Expr> target;
         std::shared_ptr<Expr> iterable;
         std::vector<std::shared_ptr<Expr>> ifs;
     };

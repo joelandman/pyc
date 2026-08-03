@@ -24,7 +24,7 @@
 #include <llvm/Transforms/Vectorize/SLPVectorizer.h>
 #include <llvm/ProfileData/InstrProfWriter.h>
 #include <llvm/Passes/PassBuilder.h>
-#include <llvm/Passes/PassPlugin.h>
+// #include <llvm/Passes/PassPlugin.h>  // Removed: header not available in LLVM 22
 #include <llvm/Analysis/LoopAnalysisManager.h>
 #include <llvm/Analysis/CGSCCPassManager.h>
 #include <llvm/IR/PassManager.h>
@@ -575,7 +575,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     // now actually implemented too).
     twoArg("PyBuiltin_ReMatchGroup");
     twoArg("PyBuiltin_ReCompile");
-    for (const char* n : {"PyBuiltin_ReFinditer","PyBuiltin_ReFindall","PyBuiltin_ReSearch"}) threeArg(n);
+    for (const char* n : {"PyBuiltin_ReFinditer","PyBuiltin_ReFindall","PyBuiltin_ReSearch","PyBuiltin_ReMatch"}) threeArg(n);
     {
         llvm::FunctionType* t5 = llvm::FunctionType::get(pyObjectPtrTy,
             {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
@@ -641,6 +641,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     // Pyc_DictGetOrDefault(dict, key, fallback) — used for f(**some_dict)
     // call sites; see its comment in Runtime.cpp.
     llvm::Function::Create(dictGetWithDefaultTy, llvm::Function::ExternalLinkage, "Pyc_DictGetOrDefault", module.get());
+    // Pyc_RouteSpreadKwargs(spread_dict, param_names_list, kwargs_dict) —
+    // routes unmatched **dict spread keys into a **kwargs catch-all.
+    llvm::FunctionType* routeSpreadKwargsTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(routeSpreadKwargsTy, llvm::Function::ExternalLinkage, "Pyc_RouteSpreadKwargs", module.get());
 
     llvm::FunctionType* dictDelItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(dictDelItemTy, llvm::Function::ExternalLinkage, "PyDict_DelItem", module.get());
@@ -1167,6 +1171,56 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             diBlocks[f.name] = lexBlock;
         }
 
+        // Variable tracking: DI types and helper (created when debugInfo is enabled).
+        // These are used below to emit DbgDeclareInst for each alloca.
+        llvm::DIType* diPyObjPtrDI = nullptr;
+        llvm::DIType* diIntDI = nullptr;
+        llvm::DIType* diFloatDI = nullptr;
+        llvm::DILexicalBlock* varLexBlock = nullptr;
+        llvm::DIFile* varDiFile = nullptr;
+        int varDefLine = 1;
+        if (debugInfo && diBuilder && diCU && subprog) {
+            llvm::DIFile* funcDiFileForVars = diFile;
+            if (!f.sourceFile.empty()) {
+                std::filesystem::path p(f.sourceFile);
+                funcDiFileForVars = diBuilder->createFile(p.filename().string(),
+                    p.parent_path().empty() ? "." : p.parent_path().string());
+            }
+            int dlv = f.defLineno > 0 ? f.defLineno : 1;
+            // PyObject* as a pointer to an unspecified type (64-bit pointer).
+            llvm::DIType* pyObjUnspec = diBuilder->createBasicType(
+                "PyObject", 64, llvm::dwarf::DW_ATE_address);
+            diPyObjPtrDI = diBuilder->createPointerType(
+                pyObjUnspec, 64, 64, std::nullopt, "PyObject*");
+            // int64_t and double base types.
+            diIntDI = diBuilder->createBasicType(
+                "int64_t", 64, llvm::dwarf::DW_ATE_signed);
+            diFloatDI = diBuilder->createBasicType(
+                "double", 64, llvm::dwarf::DW_ATE_float);
+            varLexBlock = lexBlock;
+            varDiFile = funcDiFileForVars;
+            varDefLine = dlv;
+        }
+
+        // Helper lambda: emit DbgDeclareInst for an alloca.
+        // Only does work when debugInfo is enabled (DI types are non-null).
+        auto emitDbgDeclare = [&](llvm::AllocaInst* alloca, const std::string& pythonName,
+                                  llvm::DIType* diType) {
+            if (!diType || !varLexBlock || !varDiFile) return;
+            llvm::DILocalVariable* diVar = diBuilder->createAutoVariable(
+                varLexBlock,       // Scope (lexical block)
+                pythonName,        // Variable name
+                varDiFile,         // Source file
+                varDefLine,        // Line number
+                diType,            // Type
+                false,             // AlwaysPreserve
+                llvm::DINode::FlagZero);  // Flags
+            // Insert at the start of the entry block.
+            llvm::DILocation* diLoc = llvm::DILocation::get(context, varDefLine, 0, varLexBlock);
+            llvm::InsertPosition insertPt(func->getEntryBlock().begin());
+            diBuilder->insertDeclare(alloca, diVar, diBuilder->createExpression(), diLoc, insertPt);
+        };
+
         llvm::BasicBlock* entry = llvm::BasicBlock::Create(context, "entry", func);
         builder.SetInsertPoint(entry);
 
@@ -1240,6 +1294,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(slotType, nullptr, f.args[i] + ".slot");
                 entryBuilder.CreateStore(arg, alloca);
                 valueMap[f.args[i]] = alloca;
+                // Debug info: track this parameter variable.
+                emitDbgDeclare(alloca, f.args[i], diPyObjPtrDI);
                 // B5: if this is a hidden cell parameter (suffixed _cell from freeCellVars),
                 // INCREF the received cell so the local slot owns a reference. The provider
                 // (bundle list or Pyc arg list) may drop its ref after the call returns.
@@ -1277,9 +1333,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                       if (auto* a = llvm::dyn_cast<llvm::AllocaInst>(bsit->second)) boxedSlotAlloca = a;
                   }
                   if (!boxedSlotAlloca || boxedSlotAlloca->getAllocatedType() != pyObjectPtrTy) continue;
-                  auto nativeTy = isFloat ? llvm::Type::getDoubleTy(ctx) : llvm::Type::getInt64Ty(ctx);
-                  auto* nativeAlloca = endBuilder.CreateAlloca(nativeTy, nullptr, pname + ".native");
-                   // Unbox from boxed slot and store to native
+                   auto nativeTy = isFloat ? llvm::Type::getDoubleTy(ctx) : llvm::Type::getInt64Ty(ctx);
+                   auto* nativeAlloca = endBuilder.CreateAlloca(nativeTy, nullptr, pname + ".native");
+                   // Debug info: track this native variable slot.
+                   emitDbgDeclare(nativeAlloca, pname, isFloat ? diFloatDI : diIntDI);
+                    // Unbox from boxed slot and store to native
                    llvm::Value* boxedPtr = endBuilder.CreateLoad(pyObjectPtrTy, boxedSlotAlloca, pname + ".boxed");
                    if (isFloat) {
                        llvm::Value* typeTag = endBuilder.CreateAlignedLoad(llvm::Type::getInt32Ty(ctx),
@@ -1328,6 +1386,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 std::string slot = cname + "_cell";
                 if (valueMap.count(slot)) continue;
                 llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, slot + ".slot");
+                // Debug info: track this cell variable.
+                emitDbgDeclare(alloca, slot, diPyObjPtrDI);
                 // B: explicitly wire the incoming cell arg (hidden leading params) into the slot.
                 // Hidden cells are the first N args in the order of freeCellVars.
                 if (ci < func->arg_size()) {
@@ -1354,6 +1414,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 std::string slot = cname + "_cell";
                 if (valueMap.count(slot)) continue;
                 llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, slot + ".slot");
+                // Debug info: track this cell variable.
+                emitDbgDeclare(alloca, slot, diPyObjPtrDI);
                 // B: null-init so first assign (PyCell_New) can safely DECREF old (null is safe).
                 entryBuilder.CreateStore(llvm::ConstantPointerNull::get(pyObjectPtrTy), alloca);
                 valueMap[slot] = alloca;
@@ -1968,8 +2030,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 }
                 if (!i64alloca) {
                     llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
-                                                  func->getEntryBlock().begin());
+                                                   func->getEntryBlock().begin());
                     i64alloca = entryBuilder.CreateAlloca(i64Ty, nullptr, inst.result + ".i64");
+                    // Debug info: track this native int variable.
+                    emitDbgDeclare(i64alloca, inst.result, diIntDI);
                 }
                 valueMap[inst.result] = i64alloca;
                 builder.CreateStore(newVal, i64alloca);
@@ -2519,6 +2583,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 if (!f64a) {
                     llvm::IRBuilder<> eb(&func->getEntryBlock(), func->getEntryBlock().begin());
                     f64a = eb.CreateAlloca(llvm::Type::getDoubleTy(context), nullptr, inst.result + ".f64");
+                    // Debug info: track this native float variable.
+                    emitDbgDeclare(f64a, inst.result, diFloatDI);
                     valueMap[inst.result] = f64a;
                 }
                 builder.CreateStore(dsrc, f64a);
@@ -2565,8 +2631,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                              } else {
                                  llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
                                                                func->getEntryBlock().begin());
-                                 llvm::AllocaInst* newAlloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result + ".slot");
-                                 llvm::Value* toStore = src;
+                                  llvm::AllocaInst* newAlloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result + ".slot");
+                                  // Debug info: track this local variable.
+                                  emitDbgDeclare(newAlloca, inst.result, diPyObjPtrDI);
+                                  llvm::Value* toStore = src;
                                  if (toStore->getType() == i64Ty) toStore = boxI64(toStore);
                                  builder.CreateStore(toStore, newAlloca);
                                  valueMap[inst.result] = newAlloca;
@@ -2596,8 +2664,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                          // Create a new i64 alloca in the entry block.
                          llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
                                                         func->getEntryBlock().begin());
-                         llvm::AllocaInst* i64alloca = entryBuilder.CreateAlloca(i64Ty, nullptr, inst.result + ".i64");
-                         valueMap[inst.result] = i64alloca;
+                          llvm::AllocaInst* i64alloca = entryBuilder.CreateAlloca(i64Ty, nullptr, inst.result + ".i64");
+                          // Debug info: track this native int variable.
+                          emitDbgDeclare(i64alloca, inst.result, diIntDI);
+                          valueMap[inst.result] = i64alloca;
                      }
                      // Store the native i64 value.
                      auto tit2 = valueMap.find(inst.result);
@@ -2648,9 +2718,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                            }
                            llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
                                                           func->getEntryBlock().begin());
-                           llvm::AllocaInst* f64alloca = entryBuilder.CreateAlloca(
-                               llvm::Type::getDoubleTy(context), nullptr, inst.result + ".f64");
-                           valueMap[inst.result] = f64alloca;
+                            llvm::AllocaInst* f64alloca = entryBuilder.CreateAlloca(
+                                llvm::Type::getDoubleTy(context), nullptr, inst.result + ".f64");
+                            // Debug info: track this native float variable.
+                            emitDbgDeclare(f64alloca, inst.result, diFloatDI);
+                            valueMap[inst.result] = f64alloca;
                        }
                        auto tit2 = valueMap.find(inst.result);
                        if (tit2 != valueMap.end()) {
@@ -2782,6 +2854,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         llvm::IRBuilder<> entryBuilder(&func->getEntryBlock(),
                                                        func->getEntryBlock().begin());
                         llvm::AllocaInst* alloca = entryBuilder.CreateAlloca(pyObjectPtrTy, nullptr, inst.result);
+                        // Debug info: track this local variable.
+                        emitDbgDeclare(alloca, inst.result, diPyObjPtrDI);
                         // Null-init so DECREF of old is safe even on first use (loop re-assignment)
                         entryBuilder.CreateStore(llvm::ConstantPointerNull::get(pyObjectPtrTy), alloca);
                         valueMap[inst.result] = alloca;
@@ -2934,10 +3008,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                       llvm::IRBuilder<> eb(&func->getEntryBlock(), func->getEntryBlock().begin());
                       std::vector<llvm::AllocaInst*> slots;
                       std::vector<std::string> outNames;
-                      for (size_t k = 0; k < nOut; ++k) {
-                          outNames.push_back(inst.operands[2 + k].name);
-                          slots.push_back(eb.CreateAlloca(pyObjectPtrTy, nullptr, outNames.back() + ".uslot"));
-                          eb.CreateStore(llvm::ConstantPointerNull::get(pyObjectPtrTy), slots.back());
+                       for (size_t k = 0; k < nOut; ++k) {
+                           outNames.push_back(inst.operands[2 + k].name);
+                           llvm::AllocaInst* slot = eb.CreateAlloca(pyObjectPtrTy, nullptr, outNames.back() + ".uslot");
+                           // Debug info: track this unpack target variable.
+                           emitDbgDeclare(slot, outNames.back(), diPyObjPtrDI);
+                           eb.CreateStore(llvm::ConstantPointerNull::get(pyObjectPtrTy), slot);
+                           slots.push_back(slot);
                       }
                       llvm::Function* ufn = module->getFunction(funcName);
                       if (ufn) {

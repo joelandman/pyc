@@ -4774,6 +4774,31 @@ class LoweringVisitor {
                         argRes[j] = elem;
                     }
                 }
+                // If the callee has a **kwargs parameter, route unmatched
+                // keys from the spread dict(s) into it. This fixes the gap
+                // where `def f(**kwargs): ...` called as `f(**{"p":1,"q":2})`
+                // left kwargs empty (unmatched keys were silently dropped).
+                if (kwidx != (size_t)-1 && !kwargDicts.empty() && kwidx < argRes.size() && !argRes[kwidx].empty()) {
+                    // Build a list of parameter names for the runtime helper.
+                    // Create an empty list using PyList_NewBoxed (takes boxed int size).
+                    std::string paramList = "$t" + std::to_string(tempCounter++);
+                    std::string sizeConst = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, sizeConst, "int");
+                    ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, paramList, "boxed");
+                    for (size_t j = 0; j < params.size(); ++j) {
+                        if (!params[j].empty() && params[j][0] == '*') break; // stop at *args
+                        std::string paramName = "$c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"\"" + params[j] + "\""}, paramName, "str");
+                        std::string dummyAppend = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyList_Append", paramList, paramName}, dummyAppend);
+                    }
+                    // Call Pyc_RouteSpreadKwargs(spread_dict, param_names_list, kwargs_dict)
+                    // for each spread dict.
+                    for (auto& dictVal : kwargDicts) {
+                        std::string dummyRoute = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"Pyc_RouteSpreadKwargs", dictVal, paramList, argRes[kwidx]}, dummyRoute);
+                    }
+                }
             } else if (buildingIndirectArgs) {
                 // Indirect callee (unknown shape at compile time — a
                 // variable holding a function, a closure/decorator
@@ -7792,7 +7817,7 @@ class LoweringVisitor {
                 else if (methodName == "findall")   fn = "PyBuiltin_ReFindall";
                 else if (methodName == "compile")   fn = "PyBuiltin_ReCompile";
                 else if (methodName == "search")    fn = "PyBuiltin_ReSearch";
-                else if (methodName == "match")     fn = "PyBuiltin_ReSearch";  // match → search for now
+                else if (methodName == "match")     fn = "PyBuiltin_ReMatch";
                 if (methodName == "compile") {
                     std::string flg = extractKw("flags");
                     if (flg.empty() && args.size() > 1) flg = args[1];
@@ -9257,7 +9282,7 @@ class LoweringVisitor {
         // after the conditions pass.
         struct GenCtx {
             std::string loopL, bodyL, contL, exitL;
-            std::string target;
+            const ASTNode* targetNode;
             std::vector<const ASTNode*> conds;
         };
         std::vector<GenCtx> gens;
@@ -9275,7 +9300,7 @@ class LoweringVisitor {
             g.bodyL  = "lc_bd_" + std::to_string(c);
             g.contL  = "lc_ct_" + std::to_string(c);
             g.exitL  = "lc_ex_" + std::to_string(c);
-            g.target = genNode->children[0]->id;
+            g.targetNode = genNode->children[0].get();
             for (size_t ci = 2; ci < genNode->children.size(); ++ci) {
                 g.conds.push_back(genNode->children[ci].get());
             }
@@ -9350,7 +9375,15 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "label", {}, g.bodyL);
             std::string item = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", iterSlots[gi], idxVars[gi]}, item);
-            ir.addInstruction(currentFunc, "assign", {item}, g.target);
+            // target is the first child of the comprehension (Name or unpack pattern)
+            if (g.targetNode) {
+                if (g.targetNode->type == "Name") {
+                    ir.addInstruction(currentFunc, "assign", {item}, g.targetNode->id);
+                } else {
+                    // tuple/list target unpack (reuse the unpack helper)
+                    lowerUnpackTarget(g.targetNode, item);
+                }
+            }
 
             // Conditions: if any is false, jump to contL (skip append / recurse).
             for (const auto* cond : g.conds) {

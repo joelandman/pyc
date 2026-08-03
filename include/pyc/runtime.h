@@ -29,6 +29,9 @@ PyObject* PyNumber_Divide(PyObject* a, PyObject* b);
 void      PyDict_SetItem(PyObject* dict, PyObject* key, PyObject* value);
 PyObject* PyDict_GetItem(PyObject* dict, PyObject* key);
 PyObject* Pyc_DictGetOrDefault(PyObject* dict, PyObject* key, PyObject* fallback);
+// Route unmatched **dict spread keys into a **kwargs catch-all parameter.
+void Pyc_RouteSpreadKwargs(PyObject* spread_dict, PyObject* param_names_list,
+                           PyObject* kwargs_dict);
 PyObject* PyDict_GetItemWithDefault(PyObject* dict, PyObject* key, PyObject* defaultVal);
 PyObject* PyDict_DelItem(PyObject* dict, PyObject* key);
 PyObject* PyList_Append(PyObject* list, PyObject* item);
@@ -296,6 +299,7 @@ long PyAlloc_GetTotal();
 PyObject* PyBuiltin_ReFinditer(PyObject* pattern, PyObject* subject, PyObject* flags);
 PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject, PyObject* flags);
 PyObject* PyBuiltin_ReSearch(PyObject* pattern, PyObject* subject, PyObject* flags);
+PyObject* PyBuiltin_ReMatch(PyObject* pattern, PyObject* subject, PyObject* flags);
 PyObject* PyBuiltin_ReCompile(PyObject* pattern, PyObject* flags);
 PyObject* PyBuiltin_ReSub(PyObject* pattern, PyObject* repl, PyObject* subject, PyObject* count, PyObject* flags);
 PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject, PyObject* maxsplit, PyObject* flags);

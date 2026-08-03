@@ -569,18 +569,9 @@ also missing from both `makeReModuleDict()` and the `re` entry in
 at all, even though `re.split(...)` (the literal-name path, which is
 AST-structurally intercepted) worked. Both fixed.
 
-**Documented, not-fixed gap** (pre-existing, out of scope for this
-fix): `re.match(...)` is dispatched to the exact same
-`PyBuiltin_ReSearch` as `re.search(...)` (`"match → search for now"`),
-which is *unanchored* — real `re.match` only matches at the start of the
-string. Confirmed: `re.match("b", "abc")` incorrectly matches under pyc
-(returns a match), where real CPython's `re.match` correctly returns
-`None`. Fixing this would need a small `PCRE2_ANCHORED` addition to the
-flags passed specifically for the `match` call path; not done here since
-it's unrelated to the IGNORECASE/flags bug this session fixed, and
-conflating an anchoring-semantics fix with a flags fix risked scope
-creep in a single change. Left as a known, separate, honestly-documented
-gap.
+**Fixed**: `re.match(...)` is now dispatched to a separate `PyBuiltin_ReMatch`
+runtime function that compiles with `PCRE2_ANCHORED`, so it only matches at
+the start of the string. `re.match("b", "abc")` correctly returns None.
 
 ### `bytes`/`bytearray` — Reopened a Previously-Declined Scope Decision
 `FEATURES.md`/`IMPLEMENTATION.md` previously stated that a real `bytes`

@@ -5416,6 +5416,47 @@ extern "C" PyObject* PyBuiltin_ReSearch(PyObject* pattern, PyObject* subject, Py
     return m;
 }
 
+extern "C" PyObject* PyBuiltin_ReMatch(PyObject* pattern, PyObject* subject, PyObject* flags) {
+    // re.match: anchored at start of string (PCRE2_ANCHORED flag).
+    if (!pattern || pattern->type != 3 || !subject || subject->type != 3) return nullptr;
+    std::string err;
+    uint32_t opts = pyc_re_unbox_flags(flags) | PCRE2_ANCHORED;
+    pcre2_code* code = compileRegex(pattern->str, err, opts);
+    if (!code) {
+        std::fprintf(stderr, "re.error: %s\n", err.c_str());
+        return nullptr;
+    }
+    pcre2_match_data* md = pcre2_match_data_create_from_pattern(code, nullptr);
+    if (!md) { pcre2_code_free(code); return nullptr; }
+    int rc = pcre2_match(code, (PCRE2_SPTR)subject->str.c_str(),
+                         (PCRE2_SIZE)subject->str.size(), 0, 0, md, nullptr);
+    if (rc < 0) {
+        pcre2_match_data_free(md);
+        pcre2_code_free(code);
+        return nullptr;  // no match
+    }
+    int capture_count = rc - 1;
+    pcre2_match_data* mdcopy = pcre2_match_data_create(capture_count + 1, nullptr);
+    if (!mdcopy) {
+        pcre2_match_data_free(md);
+        pcre2_code_free(code);
+        return nullptr;
+    }
+    PCRE2_SIZE* src_ov = pcre2_get_ovector_pointer(md);
+    PCRE2_SIZE* dst_ov = pcre2_get_ovector_pointer(mdcopy);
+    for (int k = 0; k < 2 * (capture_count + 1); ++k) dst_ov[k] = src_ov[k];
+    pcre2_match_data_free(md);
+    pcre2_code_free(code);
+    PyObject* m = allocObject(9);
+    if (!m) { pcre2_match_data_free(mdcopy); return nullptr; }
+    MatchObj* mo = new MatchObj();
+    mo->md = mdcopy;
+    mo->subject = subject->str;
+    mo->capture_count = capture_count;
+    m->value = (long)(intptr_t)mo;
+    return m;
+}
+
 extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern, PyObject* flags) {
     if (!pattern || pattern->type != 3) return nullptr;
     std::string err;
@@ -11480,6 +11521,33 @@ PyObject* Pyc_DictGetOrDefault(PyObject* dict, PyObject* key, PyObject* fallback
     if (val) return val; // already a new reference
     if (fallback) Py_INCREF(fallback);
     return fallback;
+}
+
+// Pyc_RouteSpreadKwargs(spread_dict, param_names_list, kwargs_dict) —
+// routes unmatched keys from a **dict spread into a **kwargs catch-all.
+// Called at call sites when the callee has a **kwargs parameter: iterates
+// over the spread dict's keys, and for each key not in the callee's named
+// parameters, sets it in the kwargs dict. This fixes the gap where
+// `def f(**kwargs): ...` called as `f(**{"p":1,"q":2})` left kwargs empty.
+void Pyc_RouteSpreadKwargs(PyObject* spread_dict, PyObject* param_names_list,
+                           PyObject* kwargs_dict) {
+    if (!spread_dict || spread_dict->type != 2 || !param_names_list ||
+        param_names_list->type != 1 || !kwargs_dict || kwargs_dict->type != 2)
+        return;
+    // Build a set of parameter names for O(1) lookup.
+    std::unordered_set<std::string> param_set;
+    for (auto& item : param_names_list->list) {
+        if (item && item->type == 3) param_set.insert(item->str);
+    }
+    // Route unmatched keys into kwargs.
+    for (auto& kv : spread_dict->dict) {
+        if (kv.first && kv.first->type == 3) {
+            if (param_set.find(kv.first->str) == param_set.end()) {
+                // Key not a named parameter — route to kwargs.
+                PyDict_SetItem(kwargs_dict, kv.first, kv.second);
+            }
+        }
+    }
 }
 
 

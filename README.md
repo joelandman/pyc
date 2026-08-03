@@ -120,6 +120,7 @@ type metadata (`int`, `float`, `bool`, `str`, or `boxed`).
 - [README.md](README.md) — This file: build, usage, options, quick feature summary
 - [FEATURES.md](FEATURES.md) — Complete feature list and capabilities
 - [IMPLEMENTATION.md](IMPLEMENTATION.md) — Design choices, limitations, architecture details
+- [KnownGapsPlan.md](KnownGapsPlan.md) — Implementation plans for known gaps (all fixed)
 
 ## License
 

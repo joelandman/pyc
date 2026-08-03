@@ -1427,12 +1427,35 @@ uint32_t IRBuilder::build_list_comp(const ast::ListComp& expr) {
     get_elem->operands.push_back(iter_load->id);
     get_elem->operands.push_back(index_load->id);
     
-    // Store target variable
-    auto target_slot = alloc_local(expr.comprehensions_[0].target);
-    auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, expr.comprehensions_[0].target);
-    target_store->operands.push_back(target_slot);
-    target_store->operands.push_back(get_elem->id);
-    current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+    // Store target variable (handle both simple Name and unpack targets)
+    auto& comp = expr.comprehensions_[0];
+    if (comp.target && comp.target->type == "Name") {
+        auto target_slot = alloc_local(comp.target->id);
+        auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, comp.target->id);
+        target_store->operands.push_back(target_slot);
+        target_store->operands.push_back(get_elem->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+    } else if (comp.target && (comp.target->type == "Tuple" || comp.target->type == "List")) {
+        // Unpack tuple/list target: emit element-by-element stores
+        for (size_t i = 0; i < comp.target->children.size(); ++i) {
+            std::string elem = "$t" + std::to_string(tempCounter_++);
+            ir.addInstruction(current_func_, "list_get", {get_elem->id, std::to_string(i)}, elem);
+            if (comp.target->children[i] && comp.target->children[i]->type == "Name") {
+                auto target_slot = alloc_local(comp.target->children[i]->id);
+                auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, comp.target->children[i]->id);
+                target_store->operands.push_back(target_slot);
+                target_store->operands.push_back(elem);
+                current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+            }
+        }
+    } else {
+        // Fallback: use empty string as target name
+        auto target_slot = alloc_local("__comp_target__");
+        auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__comp_target__");
+        target_store->operands.push_back(target_slot);
+        target_store->operands.push_back(get_elem->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+    }
     
     // Evaluate expression
     auto expr_val = build_expr(*expr.elt());
@@ -1541,11 +1564,35 @@ uint32_t IRBuilder::build_set_comp(const ast::SetComp& expr) {
     get_elem->operands.push_back(iter_load->id);
     get_elem->operands.push_back(index_load->id);
     
-    auto target_slot = alloc_local(expr.comprehensions_[0].target);
-    auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, expr.comprehensions_[0].target);
-    target_store->operands.push_back(target_slot);
-    target_store->operands.push_back(get_elem->id);
-    current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+    // Store target variable (handle both simple Name and unpack targets)
+    auto& comp = expr.comprehensions_[0];
+    if (comp.target && comp.target->type == "Name") {
+        auto target_slot = alloc_local(comp.target->id);
+        auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, comp.target->id);
+        target_store->operands.push_back(target_slot);
+        target_store->operands.push_back(get_elem->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+    } else if (comp.target && (comp.target->type == "Tuple" || comp.target->type == "List")) {
+        // Unpack tuple/list target: emit element-by-element stores
+        for (size_t i = 0; i < comp.target->children.size(); ++i) {
+            std::string elem = "$t" + std::to_string(tempCounter_++);
+            ir.addInstruction(current_func_, "list_get", {get_elem->id, std::to_string(i)}, elem);
+            if (comp.target->children[i] && comp.target->children[i]->type == "Name") {
+                auto target_slot = alloc_local(comp.target->children[i]->id);
+                auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, comp.target->children[i]->id);
+                target_store->operands.push_back(target_slot);
+                target_store->operands.push_back(elem);
+                current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+            }
+        }
+    } else {
+        // Fallback: use empty string as target name
+        auto target_slot = alloc_local("__set_comp_target__");
+        auto* target_store = current_func_->new_inst(IRInstKind::STORELOCAL, "__set_comp_target__");
+        target_store->operands.push_back(target_slot);
+        target_store->operands.push_back(get_elem->id);
+        current_block_->instrs.push_back(std::unique_ptr<IRInst>(target_store));
+    }
     
     auto expr_val = build_expr(*expr.elt());
     

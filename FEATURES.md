@@ -377,12 +377,10 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
   `"split"` was also missing from the module's synthetic dict/export
   list entirely (`import re as x; x.split(...)` would have failed) —
   added.
-- **Documented, not-fixed gap** (pre-existing, unrelated to the flags
-  fix): `re.match(...)` is routed to the same implementation as
-  `re.search(...)` rather than being anchored at the start of the
-  string — `re.match("b", "abc")` incorrectly matches. Real anchoring
-  would need a small `PCRE2_ANCHORED` addition; left as-is since it
-  wasn't part of this fix's scope.
+- **Real bug fixed**: `re.match(...)` was routed to the same
+  implementation as `re.search(...)` (unanchored). Fixed: `re.match`
+  now compiles with `PCRE2_ANCHORED` so it only matches at the start
+  of the string. `re.match("b", "abc")` correctly returns None.
 - **Not implemented**: `re.VERBOSE`/`re.ASCII`/`re.UNICODE` and other
   less-common flags; `.groups()`/`.groupdict()`/named capture groups;
   compiled-pattern-object methods (`re.compile(p).search(...)` — the
