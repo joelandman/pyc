@@ -871,9 +871,37 @@ print(a[0],a[1],a[2])
      "        self.c5 = 'attr'\n"
      "        self.t9 = 99\n"
      "foo = Foo()\n"
-     "print(foo.c5, foo.t9)", "attr 99\n"),
+      "print(foo.c5, foo.t9)", "attr 99\n"),
 
-    # Bug-hunt regression: the **kwargs catch-all parameter (def
+     # Gap 2 regression: list/set comprehension multi-variable unpacking
+     # (for a, b in pairs). Changed Comprehension.target from std::string
+     # to std::shared_ptr<Expr> in ast.h and updated lowerListComp to
+     # call lowerUnpackTarget() for non-Name targets.
+     ("pairs = [['a', 1], ['b', 2]]\n"
+      "print([k for k, g in pairs])", "['a', 'b']\n"),
+     ("pairs = [['a', 1, 2], ['b', 3, 4]]\n"
+      "print([k for k, v, w in pairs])", "['a', 'b']\n"),
+     ("pairs = [['a', 1], ['b', 2]]\n"
+      "print([[a, b] for a, b in pairs])", "[['a', 1], ['b', 2]]\n"),
+     ("pairs = [[1, 2], [3, 4], [5, 6]]\n"
+      "print([a+b for a, b in pairs])", "[3, 7, 11]\n"),
+     ("pairs = [[1, 2], [3, 4]]\n"
+      "print({a: b for a, b in pairs})", "{1: 2, 3: 4}\n"),
+     ("pairs = [[1, 2], [3, 4]]\n"
+      "print({a+b for a, b in pairs})", "{3, 7}\n"),
+     ("data = [1, 2, 3, 4]\n"
+      "print([y for x in data if (y := x*2) > 2])", "[4, 6]\n"),
+     ("pairs = [['a', 1], ['b', 2], ['c', 3]]\n"
+      "print([k for k, v in pairs if v > 1])", "['b', 'c']\n"),
+     ("a = [[1, 2], [3, 4]]\n"
+      "b = [10, 20]\n"
+      "print([x+y for row in a for x, y in [(row[0], row[1])]])", "[3, 7]\n"),
+     ("def f():\n"
+      "    pairs = [['x', 10], ['y', 20]]\n"
+      "    return [k+str(v) for k, v in pairs]\n"
+      "print(f())", "['x10', 'y20']\n"),
+
+     # Bug-hunt regression: the **kwargs catch-all parameter (def
     # f(**kwargs): ...) never collected the caller's excess keyword
     # arguments into anything at all — it always bound an empty, wrongly
     # -typed list instead of a dict. Fixed for direct calls to a named

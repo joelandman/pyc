@@ -343,16 +343,20 @@ f(b=3, a=4)                    keyword call arguments
   `csv.writer`/`pathlib.Path` so `key=` can be read directly from the
   call's AST. See IMPLEMENTATION.md.
 - **Newly discovered, pre-existing, general bug (found while verifying
-  this phase, unrelated to itertools itself): list comprehensions don't
-  support multi-variable `for a, b in pairs` unpacking.**
-  `[k for k, g in [["a", 1], ["b", 2]]]` returns `[None, None]` instead
-  of `['a', 'b']` — even just `k`/`g` alone, not any deeper mistake. A
-  **plain `for` loop** with the identical unpacking
-  (`for k, g in pairs: ...`) works correctly; only the comprehension form
-  is affected. Not fixed (out of scope here) — new code (and this
-  session's own new test cases) should use a plain `for` loop instead of
-  a comprehension when destructuring multiple values per iteration. See
-  IMPLEMENTATION.md.
+   this phase, unrelated to itertools itself): list comprehensions don't
+   support multi-variable `for a, b in pairs` unpacking.**
+   `[k for k, g in [["a", 1], ["b", 2]]]` returns `[None, None]` instead
+   of `['a', 'b']` — even just `k`/`g` alone, not any deeper mistake. A
+   **plain `for` loop** with the identical unpacking
+   (`for k, g in pairs: ...`) works correctly; only the comprehension form
+   is affected. **Partially fixed**: AST-level change applied (`Comprehension.target`
+   changed from `std::string` to `std::shared_ptr<Expr>` in `ast.h`), and
+   `lowerListComp` updated to call `lowerUnpackTarget()` for non-Name targets.
+   However, runtime unpacking still not working — `[None, None]` output
+   persists. Debug investigation shows `lowerUnpackTarget` not being called
+   (no `PyList_Unpack2` in IR). See IMPLEMENTATION.md and KnownGapsPlan.md.
+   Workaround: use a plain `for` loop instead of a comprehension when
+   destructuring multiple values per iteration.
 
 ## Regex (re)
 

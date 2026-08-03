@@ -440,14 +440,30 @@ correctly and prints the right values. So the bug is specific to
 *comprehension*-form `for`-clauses with more than one loop target, not
 tuple/list unpacking in general (which plain `for` loops, plain
 assignment (`a, b = pair`), and function parameters all handle
-correctly elsewhere in this codebase). Not investigated further or
-fixed — out of scope for this stdlib-modules round, and a real
-compiler-internals issue (likely in how comprehension loop-variable
-lowering handles a multi-target `for`, as opposed to a single-name
-`for`) rather than anything specific to itertools. New code — including
-this session's own new test cases — should use a plain `for` loop
-instead of a comprehension whenever destructuring multiple values per
-iteration, until this is fixed.
+correctly elsewhere in this codebase).
+
+**Partially fixed:** AST-level change applied (`Comprehension.target`
+changed from `std::string` to `std::shared_ptr<Expr>` in `frontend/ast.h`
+for both `ListComp` and `SetComp`). `lowerListComp` (`Compiler.cpp`)
+updated to check if target is Name or tuple/list pattern, calling
+`lowerUnpackTarget()` for non-Name targets (same pattern as
+`lowerDictComp`). `build_list_comp` and `build_set_comp` in `ir/builder.cpp`
+updated to handle unpack targets with element-by-element stores.
+
+**Current issue:** Despite the fix being in place, runtime unpacking still
+not working — `[None, None]` output persists. Debug investigation revealed:
+- `lowerListComp` debug output not appearing (file not created despite
+  fopen calls in code)
+- LLVM IR shows comprehension lowered, but `lowerUnpackTarget` NOT being
+  called (no `PyList_Unpack2` calls in IR)
+- Target node type check at `Compiler.cpp:9381-9386` may not be matching
+  actual AST node type
+- AST from `parse_helper.py` shows target is `Tuple` node with `Name`
+  children — should match non-Name branch
+
+Workaround: use a plain `for` loop instead of a comprehension whenever
+destructuring multiple values per iteration, until this is fully fixed.
+See KnownGapsPlan.md for detailed tracking.
 
 ### `collections.deque`/`namedtuple`/`defaultdict`
 `deque` reuses `pathlib.Path`'s pattern exactly: construction is
