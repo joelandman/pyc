@@ -124,7 +124,7 @@ class LoweringVisitor {
             // still giving full lambda-as-value (B4) behavior for user callables.
             for (const char* s : {"print","len","range","min","max","sum","sorted","any","all","isinstance",
                                    "int","float","complex","abs","str","list","reversed","enumerate","zip","bool","type","id",
-                                   "repr","hex","oct","bin","ord","chr","round","cmp_to_key","open","Pyc_ToFlatList"}) {
+                                   "repr","hex","oct","bin","ord","chr","round","cmp_to_key","open","Pyc_ToFlatList","set"}) {
                 knownIRFunctions.insert(s);
             }
             for (const auto& c : node->children) {
@@ -1462,6 +1462,8 @@ class LoweringVisitor {
             }
         } else if (node->type == "ListComp") {
             lowerListComp(node);
+        } else if (node->type == "SetComp") {
+            lowerSetComp(node);
         } else if (node->type == "DictComp") {
             lowerDictComp(node);
         } else {
@@ -1638,7 +1640,7 @@ class LoweringVisitor {
                 static const std::unordered_map<std::string, const char*> builtinFactoryTokens = {
                     {"list", "PyBuiltin_ListFactory"}, {"dict", "PyBuiltin_DictFactory"},
                     {"int", "PyBuiltin_IntFactory"}, {"float", "PyBuiltin_FloatFactory"},
-                    {"str", "PyBuiltin_StrFactory"},
+                    {"str", "PyBuiltin_StrFactory"}, {"set", "PyBuiltin_SetFactory"},
                 };
                 auto bfIt = builtinFactoryTokens.find(node->id);
                 if (bfIt != builtinFactoryTokens.end() && !isShadowedLocal(node->id)) {
@@ -1659,6 +1661,8 @@ class LoweringVisitor {
             return lowerCompare(node);
         } else if (node->type == "List" || node->type == "Tuple") {
             return lowerList(node);
+        } else if (node->type == "Set") {
+            return lowerSet(node);
         } else if (node->type == "Dict") {
             return lowerDict(node);
         } else if (node->type == "Default") {
@@ -1763,6 +1767,8 @@ class LoweringVisitor {
             // for the patterns pyc supports (str.join, list(), for-loops)
             // the result is the same — callers iterate the result once.
             return lowerListComp(node);
+        } else if (node->type == "SetComp") {
+            return lowerSetComp(node);
         } else if (node->type == "DictComp") {
             return lowerDictComp(node);
         } else if (node->type == "Subscript") {
@@ -4393,7 +4399,7 @@ class LoweringVisitor {
             "print", "len", "range", "min", "max", "sum", "sorted", "any", "all", "isinstance",
             "int", "float", "abs", "str", "list", "enumerate", "zip",
             "bool", "type", "id", "repr", "hex", "oct", "bin", "ord", "chr", "round",
-            "bytes", "bytearray", "tuple", "divmod", "pow"
+            "bytes", "bytearray", "tuple", "divmod", "pow", "set"
         };
 
         if (!knownDirect0) {
@@ -5102,6 +5108,20 @@ class LoweringVisitor {
             noteType(res, "list");
             return res;
         }
+        // set() / set(iterable) construction.
+        if (funcName == "set") {
+            std::string res = "$t" + std::to_string(tempCounter++);
+            if (argRes.empty()) {
+                ir.addInstruction(currentFunc, "call", {"PySet_New"}, res);
+            } else {
+                std::string arg = argRes[0];
+                ir.addInstruction(currentFunc, "call", {"PySet_New"}, res);
+                std::string dummy = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PySet_Update", res, arg}, dummy);
+            }
+            noteType(res, "set");
+            return res;
+        }
         // bytes(...)/bytearray(...) construction. arg0 (value) and arg1
         // (encoding, only meaningful when arg0 is a str) are both
         // optional — missing ones pass through as empty operands, which
@@ -5273,6 +5293,7 @@ class LoweringVisitor {
                     else if (n == "bytes") typecode = 17;
                     else if (n == "bytearray") typecode = 18;
                     else if (n == "Decimal") typecode = 19;
+                    else if (n == "set") typecode = 20;
                 } else if (childType == "Call" && node->children[2]->children.size() >= 2) {
                     // type(None) → typecode 6
                     const auto* func = node->children[2]->children[0].get();
@@ -6521,6 +6542,17 @@ class LoweringVisitor {
         }
         if (containsBundle) listsContainingBundles.insert(listRes);
         return listRes;
+    }
+
+    std::string lowerSet(const ASTNode* node) {
+        auto elems = lowerElements(node);
+        std::string setRes = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PySet_New"}, setRes);
+        noteType(setRes, "set");
+        for (const auto& e : elems) {
+            ir.addInstruction(currentFunc, "call", {"PySet_Add", setRes, e}, "");
+        }
+        return setRes;
     }
 
      std::string lowerDict(const ASTNode* node) {
@@ -8302,7 +8334,7 @@ class LoweringVisitor {
             std::string idx = args.size() > 0 ? args[0] : "";
             std::string item = args.size() > 1 ? args[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyList_Insert", obj, idx, item}, res);
-        } else if (methodName == "remove" && typeOf(obj) != "dict") {
+        } else if (methodName == "remove" && typeOf(obj) != "dict" && typeOf(obj) != "set") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyList_Remove", obj, arg}, res);
         } else if (methodName == "index") {
@@ -8495,6 +8527,51 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyString_Replace", obj, a, b}, res);
             }
             noteType(res, "str");
+        // Set methods (gated on typeOf == "set" so they don't shadow
+        // dict/list method names like pop/copy/update/clear).
+        } else if (methodName == "add" && typeOf(obj) == "set") {
+            std::string a = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PySet_Add", obj, a}, res);
+        } else if (methodName == "remove" && typeOf(obj) == "set") {
+            std::string a = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PySet_Remove", obj, a}, res);
+        } else if (methodName == "discard" && typeOf(obj) == "set") {
+            std::string a = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PySet_Discard", obj, a}, res);
+        } else if (methodName == "pop" && typeOf(obj) == "set") {
+            ir.addInstruction(currentFunc, "call", {"PySet_Pop", obj}, res);
+        } else if (methodName == "clear" && typeOf(obj) == "set") {
+            ir.addInstruction(currentFunc, "call", {"PySet_Clear", obj}, res);
+        } else if (methodName == "copy" && typeOf(obj) == "set") {
+            ir.addInstruction(currentFunc, "call", {"PySet_Copy", obj}, res);
+            noteType(res, "set");
+        } else if (methodName == "update" && typeOf(obj) == "set") {
+            std::string a = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PySet_Update", obj, a}, res);
+        } else if (methodName == "union" && typeOf(obj) == "set") {
+            std::string a = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PySet_Union", obj, a}, res);
+            noteType(res, "set");
+        } else if (methodName == "intersection" && typeOf(obj) == "set") {
+            std::string a = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PySet_Intersection", obj, a}, res);
+            noteType(res, "set");
+        } else if (methodName == "difference" && typeOf(obj) == "set") {
+            std::string a = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PySet_Difference", obj, a}, res);
+            noteType(res, "set");
+        } else if (methodName == "symmetric_difference" && typeOf(obj) == "set") {
+            std::string a = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PySet_SymmetricDifference", obj, a}, res);
+            noteType(res, "set");
+        } else if (methodName == "issubset" && typeOf(obj) == "set") {
+            std::string a = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PySet_IsSubsetObj", obj, a}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "issuperset" && typeOf(obj) == "set") {
+            std::string a = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PySet_IsSupersetObj", obj, a}, res, "bool");
+            noteType(res, "bool");
         // Dict methods
         } else if (methodName == "get") {
             // d.get(k) → PyDict_GetItem(d, k)
@@ -9452,6 +9529,133 @@ class LoweringVisitor {
         // the explicit br we emitted above.
         ir.addInstruction(currentFunc, "label", {}, postL);
         return listSlot;
+    }
+
+    // Set comprehension — same generator/loop structure as lowerListComp,
+    // but the result is a set (PySet_New / PySet_Add) so duplicates are
+    // deduplicated and the result type is "set". No homogeneous-int/float
+    // fast path (sets always store boxed PyObject*).
+    std::string lowerSetComp(const ASTNode* node) {
+        if (node->children.size() < 2) return "";
+        const ASTNode* eltNode = node->children[0].get();
+
+        std::string setVar = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PySet_New"}, setVar);
+        noteType(setVar, "set");
+        std::string setSlot = "__sc_lst_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {setVar}, setSlot);
+        noteType(setSlot, "set");
+
+        struct GenCtx {
+            std::string loopL, bodyL, contL, exitL;
+            const ASTNode* targetNode;
+            std::vector<const ASTNode*> conds;
+        };
+        std::vector<GenCtx> gens;
+        gens.reserve(node->children.size() - 1);
+        for (size_t gi = 1; gi < node->children.size(); ++gi) {
+            const ASTNode* genNode = node->children[gi].get();
+            if (!genNode || genNode->type != "comprehension" ||
+                genNode->children.size() < 2) continue;
+            int c = tempCounter++;
+            GenCtx g;
+            g.loopL  = "sc_lp_" + std::to_string(c);
+            g.bodyL  = "sc_bd_" + std::to_string(c);
+            g.contL  = "sc_ct_" + std::to_string(c);
+            g.exitL  = "sc_ex_" + std::to_string(c);
+            g.targetNode = genNode->children[0].get();
+            for (size_t ci = 2; ci < genNode->children.size(); ++ci)
+                g.conds.push_back(genNode->children[ci].get());
+            gens.push_back(g);
+        }
+        if (gens.empty()) return setSlot;
+
+        std::vector<std::string> iterSlots;
+        iterSlots.reserve(gens.size());
+        for (size_t gi = 0; gi < gens.size(); ++gi) {
+            const ASTNode* genNode = node->children[gi + 1].get();
+            std::string iterVal = lowerExpr(genNode->children[1].get());
+            std::string iterSlot = "__sci_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {iterVal}, iterSlot);
+            std::string listified = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", iterSlot}, listified);
+            std::string listifiedSlot = "__scmat_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {listified}, listifiedSlot);
+            iterSlots.push_back(listifiedSlot);
+        }
+
+        std::vector<std::string> idxVars, lenSlots;
+        idxVars.reserve(gens.size());
+        lenSlots.reserve(gens.size());
+        for (size_t gi = 0; gi < gens.size(); ++gi) {
+            std::string idxVar  = "sc_i_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            std::string idxInit = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
+            ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
+            idxVars.push_back(idxVar);
+            std::string lenRes = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterSlots[gi]}, lenRes);
+            std::string lenSlot = "__scsl_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
+            lenSlots.push_back(lenSlot);
+        }
+
+        std::string postL = "sc_post_" + std::to_string(tempCounter++);
+
+        for (size_t gi = 0; gi < gens.size(); ++gi) {
+            const auto& g = gens[gi];
+            ir.addInstruction(currentFunc, "label", {}, g.loopL);
+            std::string cmpR = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "icmp", {"Lt", idxVars[gi], lenSlots[gi]}, cmpR);
+            ir.addInstruction(currentFunc, "br", {cmpR, g.bodyL, g.exitL});
+
+            ir.addInstruction(currentFunc, "label", {}, g.bodyL);
+            std::string item = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", iterSlots[gi], idxVars[gi]}, item);
+            if (g.targetNode) {
+                if (g.targetNode->type == "Name") {
+                    ir.addInstruction(currentFunc, "assign", {item}, g.targetNode->id);
+                } else {
+                    lowerUnpackTarget(g.targetNode, item);
+                }
+            }
+
+            for (const auto* cond : g.conds) {
+                std::string trueL = "sc_ci_" + std::to_string(tempCounter++);
+                std::string condV = lowerExpr(cond);
+                ir.addInstruction(currentFunc, "br", {condV, trueL, g.contL});
+                ir.addInstruction(currentFunc, "label", {}, trueL);
+            }
+
+            if (gi + 1 < gens.size()) {
+                for (size_t gj = gi + 1; gj < gens.size(); ++gj) {
+                    std::string zeroR = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, zeroR);
+                    ir.addInstruction(currentFunc, "assign", {zeroR}, idxVars[gj]);
+                }
+                ir.addInstruction(currentFunc, "br", {}, gens[gi + 1].loopL);
+            } else {
+                std::string eltVal = lowerExpr(eltNode);
+                ir.addInstruction(currentFunc, "call", {"PySet_Add", setSlot, eltVal}, "");
+            }
+            ir.addInstruction(currentFunc, "label", {}, g.contL);
+            std::string one = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"1"}, one);
+            std::string nxt = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "add", {idxVars[gi], one}, nxt);
+            ir.addInstruction(currentFunc, "assign", {nxt}, idxVars[gi]);
+            ir.addInstruction(currentFunc, "br", {}, g.loopL);
+            ir.addInstruction(currentFunc, "label", {}, g.exitL);
+            if (gi + 1 == gens.size()) {
+                if (gi > 0) ir.addInstruction(currentFunc, "br", {}, gens[gi - 1].contL);
+            } else if (gi == 0) {
+                ir.addInstruction(currentFunc, "br", {}, postL);
+            } else {
+                ir.addInstruction(currentFunc, "br", {}, gens[gi - 1].contL);
+            }
+        }
+        ir.addInstruction(currentFunc, "label", {}, postL);
+        return setSlot;
     }
 
     std::string lowerDictComp(const ASTNode* node) {

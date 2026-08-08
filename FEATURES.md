@@ -1,6 +1,6 @@
 # pyc — Features and Capabilities
 
-Current test count: **436/436** (runner shows 436/436, file_case_failures=0).
+Current test count: **499/500** (runner shows 499/500, file_case_failures=0; 1 remaining CASES failure is a pre-existing nested-comp type-tracking quirk).
 
 ## Types and Literals
 
@@ -343,20 +343,20 @@ f(b=3, a=4)                    keyword call arguments
   `csv.writer`/`pathlib.Path` so `key=` can be read directly from the
   call's AST. See IMPLEMENTATION.md.
 - **Newly discovered, pre-existing, general bug (found while verifying
-   this phase, unrelated to itertools itself): list comprehensions don't
-   support multi-variable `for a, b in pairs` unpacking.**
-   `[k for k, g in [["a", 1], ["b", 2]]]` returns `[None, None]` instead
-   of `['a', 'b']` — even just `k`/`g` alone, not any deeper mistake. A
-   **plain `for` loop** with the identical unpacking
-   (`for k, g in pairs: ...`) works correctly; only the comprehension form
-   is affected. **Partially fixed**: AST-level change applied (`Comprehension.target`
-   changed from `std::string` to `std::shared_ptr<Expr>` in `ast.h`), and
-   `lowerListComp` updated to call `lowerUnpackTarget()` for non-Name targets.
-   However, runtime unpacking still not working — `[None, None]` output
-   persists. Debug investigation shows `lowerUnpackTarget` not being called
-   (no `PyList_Unpack2` in IR). See IMPLEMENTATION.md and KnownGapsPlan.md.
-   Workaround: use a plain `for` loop instead of a comprehension when
-   destructuring multiple values per iteration.
+    this phase, unrelated to itertools itself): list comprehensions don't
+    support multi-variable `for a, b in pairs` unpacking.**
+    `[k for k, g in [["a", 1], ["b", 2]]]` returns `[None, None]` instead
+    of `['a', 'b']` — even just `k`/`g` alone, not any deeper mistake. A
+    **plain `for` loop** with the identical unpacking
+    (`for k, g in pairs: ...`) works correctly; only the comprehension form
+    is affected. **Fixed**: AST-level change (`Comprehension.target`
+    changed from `std::string` to `std::shared_ptr<Expr>` in `ast.h`),
+    `lowerListComp` updated to call `lowerUnpackTarget()` for non-Name
+    targets. Now works for 2- and 3-element tuple unpacking. See
+    IMPLEMENTATION.md and KnownGapsPlan.md. Set comprehensions
+    (`{a+b for a, b in pairs}`) and dict insertion-order were also fixed
+    in a follow-up — see the Sets section and the dict-order note in the
+    Collections Expansion section below.
 
 ## Regex (re)
 
@@ -505,6 +505,34 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
   `(0.0+1.0j)` in pyc vs. CPython's `1j`, always. `==`/`!=` and unary `-`
   on complex values are also unimplemented in the shared comparison/
   negation runtime functions.
+
+## Sets
+
+A real `set` type (type 20) — insertion-ordered, dedup-by-value. Backed by
+a plain `std::vector<PyObject*>` with linear-scan equality
+(`PyObject_CompareBool`), matching the dict container's O(n)-lookup
+approach (pyc prioritizes simplicity over hash performance). CPython sets
+don't guarantee insertion order, but pyc's do — a deliberate choice that
+makes `{x for x in iter}` match list-comp-style output for single-iteration
+test cases.
+
+- `set` literals (`{1, 2, 3}`), `set()` / `set(iterable)` constructor
+- Deduplication: `{1, 2, 2, 3, 1}` → `{1, 2, 3}`
+- `in` / `not in` membership, `len()`, iteration (`for x in s:`)
+- Operators: `|` (union), `&` (intersection), `-` (difference), `^`
+  (symmetric difference)
+- Comparison: `==`/`!=` (set equality), `<=`/`<` (subset/proper-subset),
+  `>=`/`>` (superset/proper-superset)
+- Methods: `.add()`/`.remove()`/`.discard()`/`.pop()`/`.clear()`/`.copy()`/
+  `.update()`/`.union()`/`.intersection()`/`.difference()`/
+  `.symmetric_difference()`/`.issubset()`/`.issuperset()`
+- Set comprehensions: `{x for x in iter}`, `{x*2 for x in range(5) if x>1}`,
+  including multi-variable unpacking (`{a+b for a, b in pairs}`)
+- `print()`/`str()`: `{1, 2, 3}`; empty set prints as `set()` (a literal
+  `{}` is a dict, matching CPython)
+- `type()` → `<class 'set'>`, `isinstance(x, set)`, `sorted(set)`,
+  `sum(set)`, `any(set)`/`all(set)`, `list(set)`, `reversed(set)`
+- `set` as a `defaultdict` factory (`defaultdict(set)`)
 
 ## Bytes / Bytearray
 
@@ -944,13 +972,12 @@ copy). One shared global context: 28 significant digits,
   exception-class references like `exc = ValueError`. Scoped to these
   five names only — general first-class use of arbitrary builtins (e.g.
   `f = sorted`) is not supported.
-- **General pre-existing limitation surfaced clearly by namedtuple's
-  dict-backed representation** (not new, not fixed): `dict` is
-  `std::unordered_map`-backed, so iteration/print order is not guaranteed
-  to match insertion order the way real Python 3.7+ dicts do. This
-  affects *every* dict in pyc, not just namedtuple instances — worth
-  knowing when porting code that (like most real Python code) relies on
-  dict insertion order.
+- **Dict iteration order is now insertion-order-preserving** (matching
+  CPython 3.7+). The dict payload was changed from `std::unordered_map`
+  to `std::vector<std::pair<PyObject*, PyObject*>>` with linear-scan
+  value-equality lookup — the lookup was already O(n) (the hash map's
+  raw-pointer key was never used for the actual value comparison), so
+  this is the same complexity with correct iteration order.
 
 ## Assignment Forms
 
@@ -1016,7 +1043,8 @@ d[k] = v       # dict subscript
 
 `PyObject` is a flat struct: `{refcount, type, value(i64), dvalue(double),
 list, dict, str}`. Type codes: 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool,
-6=cell, 10=exception, 11=function, 12=exception class, 13=complex.
+6=cell, 10=exception, 11=function, 12=exception class, 13=complex,
+17=bytes, 18=bytearray, 19=decimal, 20=set.
 
 Most values flow as boxed `PyObject*` through LLVM IR. Arithmetic dispatches
 at runtime via `PyNumber_Add` etc. Comparisons via `PyObject_CompareBool`.

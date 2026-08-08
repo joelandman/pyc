@@ -3044,6 +3044,90 @@ print(len(r2[0]), len(r2[1]))
 r3 = k(a=1)
 print(len(r3[0]), r3[1].get("a"))
 """, "1 2 2\nNone None 0\n1 2 3 2\n5 None None 0\n3 1 2 3 4 5 2\n3 0\n0 1\n"),
+
+# --- set type ---
+("print({1, 2, 3})", "{1, 2, 3}\n"),
+("print(type({1, 2}))", "<class 'set'>\n"),
+("print(len({1, 2, 3}))", "3\n"),
+("print(len(set()))", "0\n"),
+("print({1, 2, 2, 3, 1})", "{1, 2, 3}\n"),
+("print(set())", "set()\n"),
+("print(2 in {1, 2, 3})", "True\n"),
+("print(5 in {1, 2, 3})", "False\n"),
+("print(5 not in {1, 2, 3})", "True\n"),
+("print(sorted(set([3, 1, 2, 1])))", "[1, 2, 3]\n"),
+("print(sum({1, 2, 3}))", "6\n"),
+("print(any({0, 0, 0}))", "False\n"),
+("print(any({0, 1, 0}))", "True\n"),
+("print(all({1, 1, 1}))", "True\n"),
+("print(all({1, 0, 1}))", "False\n"),
+("print(isinstance({1, 2}, set))", "True\n"),
+("print(isinstance([1, 2], set))", "False\n"),
+# set operators
+("print({1, 2} | {2, 3})", "{1, 2, 3}\n"),
+("print({1, 2} & {2, 3})", "{2}\n"),
+("print({1, 2} - {2, 3})", "{1}\n"),
+("print({1, 2} ^ {2, 3})", "{1, 3}\n"),
+# set comparison
+("print({1, 2} == {1, 2})", "True\n"),
+("print({1, 2} == {2, 1})", "True\n"),
+("print({1, 2} == {1, 2, 3})", "False\n"),
+("print({1, 2} != {1, 2, 3})", "True\n"),
+("print({1} <= {1, 2})", "True\n"),
+("print({1, 2} <= {1, 2})", "True\n"),
+("print({1, 2, 3} <= {1, 2})", "False\n"),
+("print({1, 2} >= {1})", "True\n"),
+("print({1} < {1, 2})", "True\n"),
+("print({1, 2} < {1, 2})", "False\n"),
+("print({1, 2} > {1})", "True\n"),
+# set methods
+("""s = {1, 2}
+s.add(3)
+print(sorted(s))
+""", "[1, 2, 3]\n"),
+("""s = {1, 2, 3}
+s.discard(2)
+print(sorted(s))
+s.discard(99)
+print(sorted(s))
+""", "[1, 3]\n[1, 3]\n"),
+("""s = {1, 2, 3}
+s.remove(2)
+print(sorted(s))
+""", "[1, 3]\n"),
+("""s = {1, 2, 3}
+print(sorted(s.copy()))
+""", "[1, 2, 3]\n"),
+("""s = {1, 2, 3}
+s.clear()
+print(len(s))
+""", "0\n"),
+("""s = {1, 2}
+s.update([3, 4, 2])
+print(sorted(s))
+""", "[1, 2, 3, 4]\n"),
+("print(sorted({1, 2}.union({2, 3})))", "[1, 2, 3]\n"),
+("print(sorted({1, 2}.intersection({2, 3})))", "[2]\n"),
+("print(sorted({1, 2}.difference({2, 3})))", "[1]\n"),
+("print(sorted({1, 2}.symmetric_difference({2, 3})))", "[1, 3]\n"),
+("print({1, 2}.issubset({1, 2, 3}))", "True\n"),
+("print({1, 2}.issubset({3, 4}))", "False\n"),
+("print({1, 2, 3}.issuperset({1, 2}))", "True\n"),
+("print({1}.issuperset({1, 2}))", "False\n"),
+# set comprehension
+("print(sorted({x for x in range(5)}))", "[0, 1, 2, 3, 4]\n"),
+("print(sorted({x*2 for x in range(5) if x > 1}))", "[4, 6, 8]\n"),
+("print(sorted({x+y for x, y in [[1, 2], [3, 4]]}))", "[3, 7]\n"),
+# for loop over set
+("""r = []
+for x in {1, 2, 3}:
+    r.append(x)
+print(sorted(r))
+""", "[1, 2, 3]\n"),
+# set() constructor
+("print(sorted(set([3, 1, 2, 1])))", "[1, 2, 3]\n"),
+("print(set())", "set()\n"),
+("print(len(set(range(5))))", "5\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -3071,6 +3155,7 @@ FILE_CASES = [
     # ("mbs.py", []),
     ("builtins.py", []),
     ("builtins2.py", []),
+    ("sets.py", []),
     ("regex_g.py", []),
     ("regex.py", []),
     ("features.py", []),

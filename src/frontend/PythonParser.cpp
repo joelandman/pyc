@@ -813,7 +813,28 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
         // Generator expressions: (elt for target in iter if ifs) — same AST
         // shape as ListComp. We lower both to an eager list (CPython's
         // generator is lazy but for the patterns pyc supports — str.join,
-        // list(), for-loops — the semantics are the same).
+        // list(), for-loops — the result is the same).
+        PyObject* elt = PyObject_GetAttrString(pyNode, "elt");
+        if (elt) {
+            auto child = std::make_unique<ASTNode>();
+            buildAST(elt, child.get());
+            node->children.push_back(std::move(child));
+            Py_DECREF(elt);
+        }
+        PyObject* generators = PyObject_GetAttrString(pyNode, "generators");
+        if (generators && PyList_Check(generators)) {
+            for (Py_ssize_t i = 0; i < PyList_Size(generators); ++i) {
+                PyObject* gen = PyList_GetItem(generators, i);
+                auto child = std::make_unique<ASTNode>();
+                buildAST(gen, child.get());
+                node->children.push_back(std::move(child));
+            }
+        }
+        Py_XDECREF(generators);
+    } else if (node->type == "SetComp") {
+        // Set comprehensions: {elt for target in iter if ifs} — same AST
+        // shape as ListComp (elt + generators). The compiler's lowerSetComp
+        // reuses the same comprehension machinery as lowerListComp.
         PyObject* elt = PyObject_GetAttrString(pyNode, "elt");
         if (elt) {
             auto child = std::make_unique<ASTNode>();

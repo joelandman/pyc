@@ -293,6 +293,37 @@ long PyAlloc_GetDictCount();
 long PyAlloc_GetStrCount();
 long PyAlloc_GetTotal();
 
+// --- set type (type 20) ---------------------------------------------------
+// Insertion-ordered, dedup-by-value set. Backed by PyObject::setElems with
+// linear-scan equality via PyObject_CompareBool (matches the dict container's
+// O(n) lookup approach; pyc prioritizes simplicity over hash performance).
+PyObject* PySet_New(void);
+void      PySet_Add(PyObject* set, PyObject* item);
+int       PySet_Contains(PyObject* set, PyObject* item);   // 1/0
+PyObject* PySet_ContainsObj(PyObject* set, PyObject* item); // boxed bool
+void      PySet_Remove(PyObject* set, PyObject* item);     // raises KeyError if absent
+void      PySet_Discard(PyObject* set, PyObject* item);    // no-op if absent
+PyObject* PySet_Pop(PyObject* set);                        // raises KeyError if empty
+void      PySet_Clear(PyObject* set);
+PyObject* PySet_Copy(PyObject* set);
+size_t    PySet_Size(PyObject* set);
+PyObject* PySet_SizeBoxed(PyObject* set);
+PyObject* PySet_ToList(PyObject* set);                     // new list of elements (insertion order)
+void      PySet_Update(PyObject* set, PyObject* other);    // in-place union with iterable
+PyObject* PySet_Union(PyObject* a, PyObject* b);            // new set
+PyObject* PySet_Intersection(PyObject* a, PyObject* b);     // new set
+PyObject* PySet_Difference(PyObject* a, PyObject* b);       // new set
+PyObject* PySet_SymmetricDifference(PyObject* a, PyObject* b); // new set
+int       PySet_IsSubset(PyObject* a, PyObject* b);        // a <= b
+int       PySet_IsSuperset(PyObject* a, PyObject* b);      // a >= b
+int       PySet_IsDisjoint(PyObject* a, PyObject* b);       // a & b == {}
+PyObject* PySet_UnionObj(PyObject* a, PyObject* b);         // boxed dispatch for | operator
+PyObject* PySet_IntersectionObj(PyObject* a, PyObject* b); // boxed dispatch for & operator
+PyObject* PySet_DifferenceObj(PyObject* a, PyObject* b);    // boxed dispatch for - operator
+PyObject* PySet_SymmetricDifferenceObj(PyObject* a, PyObject* b); // boxed dispatch for ^ operator
+PyObject* PySet_IsSubsetObj(PyObject* a, PyObject* b);       // boxed bool for a <= b
+PyObject* PySet_IsSupersetObj(PyObject* a, PyObject* b);    // boxed bool for a >= b
+
 // --- re module (PCRE2-backed) ---------------------------------------------
 // re.finditer / re.findall / re.match / re.search / re.sub / re.compile
 // return rich objects (lists of Match or compiled regexes).

@@ -528,17 +528,18 @@ directly (`node->children[2]->id`), not the lowered value, so the extra
 callable-token temp this produces is simply unused dead IR in that case,
 never affecting the actual typecode dispatch.
 
-**General pre-existing limitation surfaced clearly by `namedtuple`, not
-new and not fixed**: `dict` (`include/pyc/object_struct.h`) is backed by
-`std::unordered_map<PyObject*, PyObject*>`, so no dict in this compiler —
-not just `namedtuple` instances — preserves insertion order the way real
-Python 3.7+ dicts do. `Point(x=3, y=4)` printed as a dict can come out as
-`{'y': 4, 'x': 3}`; ported code that iterates a dict expecting insertion
-order (extremely common in real Python) may see reordered output. Fixing
-this would mean changing every dict's underlying storage — out of scope
-here, but worth flagging prominently since `namedtuple`'s dict-backing
-made it directly visible for the first time in this session's stdlib
-work.
+**Limitation surfaced clearly by `namedtuple`, now fixed**: `dict`
+(`include/pyc/object_struct.h`) was previously backed by
+`std::unordered_map<PyObject*, PyObject*>`, so no dict in this compiler
+preserved insertion order the way real Python 3.7+ dicts do —
+`Point(x=3, y=4)` printed as a dict could come out as `{'y': 4, 'x': 3}`.
+Fixed by replacing the dict payload with
+`std::vector<std::pair<PyObject*, PyObject*>>` (linear-scan value-equality
+lookup, same O(n) complexity as before since the `unordered_map`'s
+raw-pointer hash was never used for the actual value comparison);
+`PyDict_SetItem` updates existing keys in place to preserve their
+insertion position. `Point(x=3, y=4)` now correctly prints
+`{'x': 3, 'y': 4}`.
 
 ### `re.IGNORECASE` — Severe Pre-Existing Bug, Found and Fixed
 `PyBuiltin_ReSearch` (`Runtime.cpp`, the function backing both
@@ -753,6 +754,39 @@ positional arguments, so — unlike `csv.writer`/`groupby`, which need
 AST recognition to read a keyword argument — the generic dict-dispatch
 call convention would actually work fine for *construction*; the tag is
 needed purely for the *method* dispatch afterward).
+
+### `set` — Real Set Type (Type 20), Insertion-Ordered, Dedup-by-Value
+
+Sets were entirely unimplemented (set literals printed `None`, set
+comprehensions had no parser handler). Added a real set type backed by
+`std::vector<PyObject*>` (`PyObject::setElems`) with linear-scan
+value-equality dedup (`PyObject_CompareBool` op==0) — the same O(n)
+approach the dict container already used. CPython sets don't guarantee
+insertion order, but pyc's do (a deliberate choice: makes
+`{x for x in iter}` match list-comp output for the common
+single-iteration test cases, and is the simpler implementation).
+
+- **Operators** (`|`/`&`/`-`/`^`) dispatch via `PyNumber_BitOr`/`BitAnd`/
+  `BitXor`/`Subtract` — these check `a->type == 20` before the numeric
+  paths, so set operators and integer bitwise ops coexist.
+- **Comparison** (`==`/`!=`/`<=`/`<`/`>=`/`>`) maps to
+  subset/superset/proper-subset/proper-superset in `PyObject_CompareBool`
+  (sets have no lexicographic ordering in CPython either).
+- **Method dispatch** (`lowerMethodCall`) gates set methods on
+  `typeOf(obj) == "set"` and comes *before* the list-method branches
+  that share names (`remove`/`pop`/`copy`/`update`/`clear`); the list
+  `remove` guard additionally excludes `typeOf == "set"` to avoid the
+  same name-collision silent-wrong-dispatch class already documented for
+  `os.path.join`/`os.remove`.
+- **`PyBuiltin_SetFactory`** (zero-arg `set` reference) mirrors the
+  existing `list`/`dict`/`int`/`float`/`str` factory tokens, for
+  `collections.defaultdict(set)`.
+- **`set(iterable)` construction** emits `PySet_New` + `PySet_Update`,
+  which materializes any iterable via `pyc_set_iter_to_list` (handles
+  homogeneous int/float lists' `ilist`/`flist` storage — the same
+  `pyc_ensure_boxed_list`-class bug found repeatedly elsewhere, fixed
+  here by sizing the result list from `ilist.size()`/`flist.size()`
+  rather than the empty boxed `list` vector).
 
 ### Severe, General, Pre-Existing Bug: `if`/`while`/Ternary Conditions on Boxed Non-Numeric Values Were Always False
 Found while verifying `decimal.Decimal`'s truthiness (`bool(Decimal('0'))`
@@ -1120,13 +1154,12 @@ runtime code needed. Verified against real CPython for
 and `{**d1, **d3}` where `d3` also has a key `d1` has (confirming the
 later mapping's value correctly wins on key conflict, matching real
 Python's merge-order semantics). The permanent test checks individual
-keys via subscript rather than comparing the merged dict's full repr,
-since dict iteration/print order isn't guaranteed to match insertion
-order in pyc regardless of this fix (the separate, already-documented,
-pre-existing `std::unordered_map`-backed dict-ordering limitation first
-found during the `namedtuple` work — confirmed unrelated here too, by
-checking that even a plain `{"a":1,"b":2,"c":3}` literal with no
-unpacking involved reorders the exact same way).
+keys via subscript rather than comparing the merged dict's full repr;
+dict iteration/print order now matches insertion order (the dict payload
+was changed from `std::unordered_map` to `std::vector<std::pair>` after
+this fix was written — see the "dict iteration order" note above), so
+the original caution about ordering no longer applies, but the
+subscript-based test remains valid and more precise.
 
 ### F-String Format Specs (`:.2f`, `:05d`, `:>10`, ...) and `!r`/`!s`/`!a` Conversion — Fixed
 Found alongside the dict-unpacking bug while testing other f-string/
@@ -2108,20 +2141,16 @@ errors.
   don't have, and `namedtuple` needs either attribute-style field access
   on a raw dict (unverified whether pyc supports this at all) or a new
   type, neither investigated in depth yet.
-- **Dict iteration order is not insertion-order-preserving**: `PyObject`'s
-  dict payload is `std::unordered_map<PyObject*, PyObject*>` keyed by raw
-  pointer (not value — lookups are a linear scan comparing values, the hash
-  map's own O(1) lookup is unused), and iterating it yields whatever order
-  the hash buckets happen to produce. Real Python dicts guarantee
-  insertion order (a language guarantee since 3.7); pyc's don't. This
-  affects any code that iterates a dict with 2+ keys expecting insertion
-  order (`for k in d`, `d.items()`, `json.dumps()` on a multi-key dict,
-  dict `repr()`/`print()`), not just json — discovered while testing the
-  json module (`from tests/runner.py`'s json test case deliberately avoids
-  multi-key dicts because of this). A real fix means changing the dict
-  storage to something order-preserving, which touches every dict
-  operation in the runtime — out of scope for the stdlib-modules work that
-  surfaced it; flagged here as a significant follow-up.
+- **Dict iteration order is now insertion-order-preserving** (CPython 3.7+
+  guarantee). The dict payload was changed from
+  `std::unordered_map<PyObject*, PyObject*>` (hash-bucket order, never
+  matching CPython) to `std::vector<std::pair<PyObject*, PyObject*>>` with
+  linear-scan value-equality lookup (`PyObject_CompareBool` op==0). The
+  lookup was already O(n) (the `unordered_map`'s hash was keyed by raw
+  pointer, never used — the actual match was always a linear value scan),
+  so this is the same algorithmic complexity with correct iteration order.
+  `PyDict_SetItem` now updates an existing key's value in place (preserving
+  the key's original insertion position) rather than erase-and-reappend.
 - **Fixed while adding json**: `Pyc_Subscript` (`d[key]`) used to raise
   `KeyError` for a key that legitimately maps to `None`, because it
   couldn't distinguish "key not found" from "key found, value is null"

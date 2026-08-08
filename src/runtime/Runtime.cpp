@@ -271,6 +271,7 @@ static std::atomic<long> alloc_float_count{0};
 static std::atomic<long> alloc_list_count{0};
 static std::atomic<long> alloc_dict_count{0};
 static std::atomic<long> alloc_str_count{0};
+static std::atomic<long> alloc_set_count{0};
 
 // P1: thread-local free-lists for short-lived boxed ints/floats (nbody hot path).
 // Caps keep memory bounded; overflow falls back to delete/new.
@@ -459,6 +460,7 @@ int PyObject_TruthValue(PyObject* obj) {
         return !obj->dict.empty();
     }
     if (obj->type == 19) return !mpd_iszero(pyc_as_decimal(obj));
+    if (obj->type == 20) return !obj->setElems.empty();
     return 1;
 }
 
@@ -902,20 +904,21 @@ PyObject* PyDict_New() {
 void PyDict_SetItem(PyObject* dict, PyObject* key, PyObject* value) {
     if (!dict || dict->type != 2) return;
     // Check for an existing key that compares equal to the new key.
-    // unordered_map uses pointer equality, so two different PyObject* with
-    // the same Python value would create duplicate entries and leak the old key.
+    // Update the value in place (preserving insertion order, matching
+    // CPython 3.7+ dict semantics) rather than erase-and-reappend.
     if (key) {
         for (auto it = dict->dict.begin(); it != dict->dict.end(); ++it) {
             if (PyObject_CompareBool(it->first, key, 0)) {
-                // Found equivalent key — DECREF old key, erase, then insert new.
-                if (it->first) Py_DECREF(it->first);
-                dict->dict.erase(it);
-                break;
+                // Found equivalent key — replace the value, keep the key.
+                if (it->second) Py_DECREF(it->second);
+                it->second = value;
+                if (value) Py_INCREF(value);
+                return;
             }
         }
     }
-    // Insert (or re-insert) the new key-value pair.
-    dict->dict[key] = value;
+    // New key — append (insertion-ordered).
+    dict->dict.push_back({key, value});
     if (key) Py_INCREF(key);
     if (value) Py_INCREF(value);
 }
@@ -1137,6 +1140,8 @@ void Py_DECREF(PyObject* obj) {
             // above, and the one thing complex numbers (type 13) didn't
             // need since they have no out-of-struct payload.
             mpd_del(reinterpret_cast<mpd_t*>(obj->value));
+        } else if (obj->type == 20) {
+            for (auto* e : obj->setElems) if (e) Py_DECREF(e);
         } else if (obj->type == 10 || obj->type == 11) {
             if (obj->cell_content) { Py_DECREF(obj->cell_content); obj->cell_content = nullptr; }
         }
@@ -1331,6 +1336,17 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
         }
         return fprintf(fp, "}");
     }
+    if (obj->type == 20) {
+        if (obj->setElems.empty()) return fprintf(fp, "set()");
+        fprintf(fp, "{");
+        bool first = true;
+        for (auto* e : obj->setElems) {
+            if (!first) fprintf(fp, ", ");
+            PyObject_PrintElement(e, fp);
+            first = false;
+        }
+        return fprintf(fp, "}");
+    }
     if (obj->type == 3) {
         // String element inside a container: use repr-style quotes.
         return fprintf(fp, "'%s'", obj->str.c_str());
@@ -1504,6 +1520,21 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
             PyObject_PrintElement(pair.first, fp);
             fprintf(fp, ": ");
             PyObject_PrintElement(pair.second, fp);
+            first = false;
+        }
+        fprintf(fp, "}\n");
+        fflush(fp);
+        return 0;
+    }
+    if (obj->type == 20) {
+        // Empty set prints as `set()` (a literal `{}` is a dict, so CPython
+        // needs `set()` to denote an empty set; matching that here).
+        if (obj->setElems.empty()) { int r = fprintf(fp, "set()\n"); fflush(fp); return r; }
+        fprintf(fp, "{");
+        bool first = true;
+        for (auto* e : obj->setElems) {
+            if (!first) fprintf(fp, ", ");
+            PyObject_PrintElement(e, fp);
             first = false;
         }
         fprintf(fp, "}\n");
@@ -2196,6 +2227,7 @@ PyObject* PyBuiltin_Type(PyObject* obj) {
         case 17: return PyUnicode_FromString("<class 'bytes'>");
         case 18: return PyUnicode_FromString("<class 'bytearray'>");
         case 19: return PyUnicode_FromString("<class 'decimal.Decimal'>");
+        case 20: return PyUnicode_FromString("<class 'set'>");
         default: return PyUnicode_FromString("<class 'object'>");
     }
 }
@@ -3285,6 +3317,330 @@ PyObject* PyDict_FromKeys(PyObject* keys, PyObject* defval) {
     return r;
 }
 
+// ---- set type (type 20) ----
+// Insertion-ordered, dedup-by-value. Backed by PyObject::setElems with
+// linear-scan equality (PyObject_CompareBool op==0), matching the dict
+// container's approach. CPython 3.7+ sets don't guarantee insertion order
+// for iteration, but pyc's existing dicts don't either (they're
+// unordered_map-backed) — choosing insertion order here is the simpler
+// option and lets `{x for x in iter}` match list-comp-style output for
+// the common single-iteration test cases.
+
+static PyObject* pyc_set_iter_to_list(PyObject* iterable) {
+    // Materialize any supported iterable into a fresh list. Mirrors the
+    // `PyBuiltin_List` shapes (list/str/dict/set) without depending on it.
+    if (!iterable) return PyList_New(0);
+    if (iterable->type == 1) {
+        size_t n = (iterable->list_item_type == 1) ? iterable->ilist.size()
+                  : (iterable->list_item_type == 2) ? iterable->flist.size()
+                  : iterable->list.size();
+        PyObject* r = PyList_New(n);
+        // pyc_ensure_boxed_list semantics: homogeneous int/float lists store
+        // in ilist/flist; materialize boxed PyObject* here for uniform handling.
+        if (iterable->list_item_type == 1) {
+            for (size_t i = 0; i < iterable->ilist.size(); ++i)
+                PyList_SetItem(r, i, PyInt_FromLong(iterable->ilist[i]));
+        } else if (iterable->list_item_type == 2) {
+            for (size_t i = 0; i < iterable->flist.size(); ++i)
+                PyList_SetItem(r, i, PyFloat_FromDouble(iterable->flist[i]));
+        } else {
+            for (size_t i = 0; i < iterable->list.size(); ++i) {
+                PyList_SetItem(r, i, iterable->list[i]);
+                if (iterable->list[i]) Py_INCREF(iterable->list[i]);
+            }
+        }
+        return r;
+    }
+    if (iterable->type == 3 || iterable->type == 17 || iterable->type == 18) {
+        // str/bytes/bytearray: iterate code points / byte values.
+        PyObject* r = PyList_New(iterable->str.size());
+        for (size_t i = 0; i < iterable->str.size(); ++i) {
+            if (iterable->type == 3) {
+                // One code point per element (UTF-8-aware would be ideal; pyc's
+                // str is byte-based for non-ASCII in practice — matches existing
+                // str iteration behavior elsewhere in the runtime).
+                PyList_SetItem(r, i, PyUnicode_FromString(iterable->str.substr(i, 1).c_str()));
+            } else {
+                PyList_SetItem(r, i, PyInt_FromLong((unsigned char)iterable->str[i]));
+            }
+        }
+        return r;
+    }
+    if (iterable->type == 2) {
+        // dict: iterate keys.
+        PyObject* r = PyList_New(iterable->dict.size());
+        size_t i = 0;
+        for (auto& p : iterable->dict) {
+            PyList_SetItem(r, i, p.first);
+            if (p.first) Py_INCREF(p.first);
+            ++i;
+        }
+        return r;
+    }
+    if (iterable->type == 20) {
+        PyObject* r = PyList_New(iterable->setElems.size());
+        for (size_t i = 0; i < iterable->setElems.size(); ++i) {
+            PyList_SetItem(r, i, iterable->setElems[i]);
+            if (iterable->setElems[i]) Py_INCREF(iterable->setElems[i]);
+        }
+        return r;
+    }
+    return PyList_New(0);
+}
+
+PyObject* PySet_New(void) {
+    alloc_set_count++;
+    PyObject* obj = new PyObject();
+    obj->refcount = 1;
+    obj->type = 20;
+    return obj;
+}
+
+void PySet_Add(PyObject* set, PyObject* item) {
+    if (!set || set->type != 20 || !item) return;
+    for (auto* e : set->setElems) {
+        if (e && PyObject_CompareBool(e, item, 0)) return; // already present
+    }
+    set->setElems.push_back(item);
+    Py_INCREF(item);
+}
+
+int PySet_Contains(PyObject* set, PyObject* item) {
+    if (!set || set->type != 20 || !item) return 0;
+    for (auto* e : set->setElems) {
+        if (e && PyObject_CompareBool(e, item, 0)) return 1;
+    }
+    return 0;
+}
+
+PyObject* PySet_ContainsObj(PyObject* set, PyObject* item) {
+    return PyBool_New(PySet_Contains(set, item));
+}
+
+void PySet_Remove(PyObject* set, PyObject* item) {
+    if (!set || set->type != 20 || !item) return;
+    for (auto it = set->setElems.begin(); it != set->setElems.end(); ++it) {
+        if (*it && PyObject_CompareBool(*it, item, 0)) {
+            Py_DECREF(*it);
+            set->setElems.erase(it);
+            return;
+        }
+    }
+    // Not found: raise KeyError. Reuse the existing exception machinery.
+    pyc_raise(pyc_make_exc(PyUnicode_FromString("KeyError"), item));
+}
+
+void PySet_Discard(PyObject* set, PyObject* item) {
+    if (!set || set->type != 20 || !item) return;
+    for (auto it = set->setElems.begin(); it != set->setElems.end(); ++it) {
+        if (*it && PyObject_CompareBool(*it, item, 0)) {
+            Py_DECREF(*it);
+            set->setElems.erase(it);
+            return;
+        }
+    }
+}
+
+PyObject* PySet_Pop(PyObject* set) {
+    if (!set || set->type != 20 || set->setElems.empty()) {
+        pyc_raise(pyc_make_exc(PyUnicode_FromString("KeyError"), nullptr));
+        return nullptr;
+    }
+    PyObject* r = set->setElems.back();
+    set->setElems.pop_back();
+    // Pop returns a new strong reference; the stored ref is dropped.
+    if (r) Py_INCREF(r);
+    if (r) Py_DECREF(r); // balance the stored ref
+    return r;
+}
+
+void PySet_Clear(PyObject* set) {
+    if (!set || set->type != 20) return;
+    for (auto* e : set->setElems) if (e) Py_DECREF(e);
+    set->setElems.clear();
+}
+
+PyObject* PySet_Copy(PyObject* set) {
+    PyObject* r = PySet_New();
+    if (!set || set->type != 20) return r;
+    for (auto* e : set->setElems) {
+        if (e) {
+            r->setElems.push_back(e);
+            Py_INCREF(e);
+        }
+    }
+    return r;
+}
+
+size_t PySet_Size(PyObject* set) {
+    if (!set || set->type != 20) return 0;
+    return set->setElems.size();
+}
+
+PyObject* PySet_SizeBoxed(PyObject* set) {
+    return PyInt_FromLong((long)PySet_Size(set));
+}
+
+PyObject* PySet_ToList(PyObject* set) {
+    if (!set || set->type != 20) return PyList_New(0);
+    PyObject* r = PyList_New(set->setElems.size());
+    for (size_t i = 0; i < set->setElems.size(); ++i) {
+        PyList_SetItem(r, i, set->setElems[i]);
+        if (set->setElems[i]) Py_INCREF(set->setElems[i]);
+    }
+    return r;
+}
+
+void PySet_Update(PyObject* set, PyObject* other) {
+    if (!set || set->type != 20) return;
+    PyObject* elems = pyc_set_iter_to_list(other);
+    if (!elems) return;
+    for (auto* e : elems->list) PySet_Add(set, e);
+    Py_DECREF(elems);
+}
+
+static PyObject* pyc_set_from_iter(PyObject* iterable) {
+    PyObject* r = PySet_New();
+    if (!iterable) return r;
+    PyObject* elems = pyc_set_iter_to_list(iterable);
+    for (auto* e : elems->list) PySet_Add(r, e);
+    Py_DECREF(elems);
+    return r;
+}
+
+PyObject* PySet_Union(PyObject* a, PyObject* b) {
+    PyObject* r = PySet_New();
+    if (a && a->type == 20) {
+        for (auto* e : a->setElems) {
+            if (e) { r->setElems.push_back(e); Py_INCREF(e); }
+        }
+    } else if (a) {
+        PyObject* la = pyc_set_iter_to_list(a);
+        for (auto* e : la->list) PySet_Add(r, e);
+        Py_DECREF(la);
+    }
+    if (b && b->type == 20) {
+        for (auto* e : b->setElems) PySet_Add(r, e);
+    } else if (b) {
+        PyObject* lb = pyc_set_iter_to_list(b);
+        for (auto* e : lb->list) PySet_Add(r, e);
+        Py_DECREF(lb);
+    }
+    return r;
+}
+
+PyObject* PySet_Intersection(PyObject* a, PyObject* b) {
+    PyObject* r = PySet_New();
+    if (!a || !b) return r;
+    PyObject* la = pyc_set_iter_to_list(a);
+    for (auto* e : la->list) {
+        int inB = 0;
+        if (b->type == 20) inB = PySet_Contains(b, e);
+        else {
+            PyObject* lb = pyc_set_iter_to_list(b);
+            for (auto* eb : lb->list) {
+                if (eb && PyObject_CompareBool(eb, e, 0)) { inB = 1; break; }
+            }
+            Py_DECREF(lb);
+        }
+        if (inB) PySet_Add(r, e);
+    }
+    Py_DECREF(la);
+    return r;
+}
+
+PyObject* PySet_Difference(PyObject* a, PyObject* b) {
+    PyObject* r = PySet_New();
+    if (!a) return r;
+    PyObject* la = pyc_set_iter_to_list(a);
+    for (auto* e : la->list) {
+        int inB = 0;
+        if (b && b->type == 20) inB = PySet_Contains(b, e);
+        else if (b) {
+            PyObject* lb = pyc_set_iter_to_list(b);
+            for (auto* eb : lb->list) {
+                if (eb && PyObject_CompareBool(eb, e, 0)) { inB = 1; break; }
+            }
+            Py_DECREF(lb);
+        }
+        if (!inB) PySet_Add(r, e);
+    }
+    Py_DECREF(la);
+    return r;
+}
+
+PyObject* PySet_SymmetricDifference(PyObject* a, PyObject* b) {
+    PyObject* r = PySet_New();
+    PyObject* u = PySet_Union(a, b);
+    PyObject* inter = PySet_Intersection(a, b);
+    // r = u - inter
+    PyObject* la = pyc_set_iter_to_list(u);
+    for (auto* e : la->list) {
+        int inInter = (inter && inter->type == 20) ? PySet_Contains(inter, e) : 0;
+        if (!inInter) PySet_Add(r, e);
+    }
+    Py_DECREF(la);
+    Py_DECREF(u);
+    if (inter) Py_DECREF(inter);
+    return r;
+}
+
+int PySet_IsSubset(PyObject* a, PyObject* b) {
+    if (!a) return 1;
+    PyObject* la = pyc_set_iter_to_list(a);
+    for (auto* e : la->list) {
+        int inB = 0;
+        if (b && b->type == 20) inB = PySet_Contains(b, e);
+        else if (b) {
+            PyObject* lb = pyc_set_iter_to_list(b);
+            for (auto* eb : lb->list) {
+                if (eb && PyObject_CompareBool(eb, e, 0)) { inB = 1; break; }
+            }
+            Py_DECREF(lb);
+        }
+        if (!inB) { Py_DECREF(la); return 0; }
+    }
+    Py_DECREF(la);
+    return 1;
+}
+
+int PySet_IsSuperset(PyObject* a, PyObject* b) {
+    return PySet_IsSubset(b, a);
+}
+
+int PySet_IsDisjoint(PyObject* a, PyObject* b) {
+    PyObject* inter = PySet_Intersection(a, b);
+    int empty = (inter && inter->type == 20) ? inter->setElems.empty() : 1;
+    if (inter) Py_DECREF(inter);
+    return empty;
+}
+
+// Boxed-dispatch wrappers for operators (return new set, or nullptr if
+// neither operand is a set — so the caller can fall through to other
+// numeric/dispatch paths).
+PyObject* PySet_UnionObj(PyObject* a, PyObject* b) {
+    if ((!a || a->type != 20) && (!b || b->type != 20)) return nullptr;
+    return PySet_Union(a, b);
+}
+PyObject* PySet_IntersectionObj(PyObject* a, PyObject* b) {
+    if ((!a || a->type != 20) && (!b || b->type != 20)) return nullptr;
+    return PySet_Intersection(a, b);
+}
+PyObject* PySet_DifferenceObj(PyObject* a, PyObject* b) {
+    if (!a || a->type != 20) return nullptr;
+    return PySet_Difference(a, b);
+}
+PyObject* PySet_SymmetricDifferenceObj(PyObject* a, PyObject* b) {
+    if ((!a || a->type != 20) && (!b || b->type != 20)) return nullptr;
+    return PySet_SymmetricDifference(a, b);
+}
+PyObject* PySet_IsSubsetObj(PyObject* a, PyObject* b) {
+    return PyBool_New(PySet_IsSubset(a, b));
+}
+PyObject* PySet_IsSupersetObj(PyObject* a, PyObject* b) {
+    return PyBool_New(PySet_IsSuperset(a, b));
+}
+
 // ---- String helper methods ----
 PyObject* PyString_LStrip(PyObject* s) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
@@ -3733,6 +4089,7 @@ PyObject* PyBuiltin_Len(PyObject* obj) {
         }
         return PyInt_FromLong((long)obj->dict.size());
     }
+    if (obj->type == 20) return PyInt_FromLong((long)PySet_Size(obj));
     return PyInt_FromLong(0);
 }
 
@@ -4113,6 +4470,9 @@ PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
             if (PyObject_CompareBool(pair.first, item, 0)) return PyBool_New(1);
         return PyBool_New(0);
     }
+    if (container->type == 20) {
+        return PyBool_New(PySet_Contains(container, item));
+    }
     return PyBool_New(0);
 }
 
@@ -4171,6 +4531,8 @@ PyObject* PyBuiltin_Sum(PyObject* lst) {
         }
     } else if (lst->type == 2) {
         for (auto& pair : lst->dict) addOne(pair.first);
+    } else if (lst->type == 20) {
+        for (auto* e : lst->setElems) addOne(e);
     }
     return total;
 }
@@ -4209,6 +4571,11 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse) {
         for (auto& pair : lst->dict) {
             if (pair.first) Py_INCREF(pair.first);
             items.push_back(pair.first);
+        }
+    } else if (lst->type == 20) {
+        for (auto* e : lst->setElems) {
+            if (e) Py_INCREF(e);
+            items.push_back(e);
         }
     } else {
         return PyList_New(0);
@@ -4302,6 +4669,11 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp) {
             if (pair.first) Py_INCREF(pair.first);
             items.push_back(pair.first);
         }
+    } else if (lst->type == 20) {
+        for (auto* e : lst->setElems) {
+            if (e) Py_INCREF(e);
+            items.push_back(e);
+        }
     } else {
         return PyList_New(0);
     }
@@ -4331,7 +4703,12 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp) {
 }
 
 PyObject* PyBuiltin_Any(PyObject* lst) {
-    if (!lst || lst->type != 1) return PyBool_New(0);
+    if (!lst) return PyBool_New(0);
+    if (lst->type == 20) {
+        for (auto* e : lst->setElems) if (PyObject_TruthValue(e)) return PyBool_New(1);
+        return PyBool_New(0);
+    }
+    if (lst->type != 1) return PyBool_New(0);
     if (lst->list_item_type == 1) {
         for (auto val : lst->ilist)
             if (val != 0) return PyBool_New(1);
@@ -4346,7 +4723,12 @@ PyObject* PyBuiltin_Any(PyObject* lst) {
 }
 
 PyObject* PyBuiltin_All(PyObject* lst) {
-    if (!lst || lst->type != 1) return PyBool_New(1);
+    if (!lst) return PyBool_New(1);
+    if (lst->type == 20) {
+        for (auto* e : lst->setElems) if (!PyObject_TruthValue(e)) return PyBool_New(0);
+        return PyBool_New(1);
+    }
+    if (lst->type != 1) return PyBool_New(1);
     if (lst->list_item_type == 1) {
         for (auto val : lst->ilist)
             if (val == 0) return PyBool_New(0);
@@ -4772,6 +5154,9 @@ PyObject* PyBuiltin_List(PyObject* obj) {
         }
         return r;
     }
+    if (obj->type == 20) {
+        return PySet_ToList(obj);
+    }
     return PyList_New(0);
 }
 
@@ -4815,6 +5200,13 @@ PyObject* PyBuiltin_Reversed(PyObject* obj) {
         for (size_t i = 0; i < obj->str.size(); ++i) {
             char buf[2] = {obj->str[obj->str.size() - 1 - i], '\0'};
             PyList_SetItem(r, i, PyUnicode_FromString(buf));
+        }
+    } else if (obj->type == 20) {
+        r = PyList_New(obj->setElems.size());
+        for (size_t i = 0; i < obj->setElems.size(); ++i) {
+            size_t ri = obj->setElems.size() - 1 - i;
+            if (obj->setElems[ri]) Py_INCREF(obj->setElems[ri]);
+            PyList_SetItem(r, i, obj->setElems[ri]);
         }
     } else {
         return PyList_New(0);
@@ -5151,6 +5543,7 @@ PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
         PyObject* method = pyc_lookup_dunder(a, "__sub__");
         if (method) return pyc_call_dunder2(method, a, b);
     }
+    if (a && a->type == 20) return PySet_Difference(a, b);
     if (a && b && a->type == 14 && b->type == 15) return pyc_datetime_add_timedelta(pyc_as_datetime(a), pyc_as_timedelta(b), true);
     if (a && b && a->type == 14 && b->type == 14) return pyc_datetime_diff(pyc_as_datetime(a), pyc_as_datetime(b));
     if (a && b && a->type == 15 && b->type == 15) return pyc_timedelta_add(pyc_as_timedelta(a), pyc_as_timedelta(b), true);
@@ -5492,6 +5885,8 @@ extern "C" PyObject* PyNumber_Rshift(PyObject* a, PyObject* b) {
 }
 
 extern "C" PyObject* PyNumber_BitOr(PyObject* a, PyObject* b) {
+    if (a && a->type == 20) return PySet_Union(a, b);
+    if (b && b->type == 20) return PySet_Union(a, b);
     long av = 0, bv = 0;
     if (a && a->type == 0) av = (long)a->value;
     else if (a && a->type == 5) av = (long)a->value;
@@ -5501,6 +5896,8 @@ extern "C" PyObject* PyNumber_BitOr(PyObject* a, PyObject* b) {
 }
 
 extern "C" PyObject* PyNumber_BitAnd(PyObject* a, PyObject* b) {
+    if (a && a->type == 20) return PySet_Intersection(a, b);
+    if (b && b->type == 20) return PySet_Intersection(a, b);
     long av = 0, bv = 0;
     if (a && a->type == 0) av = (long)a->value;
     else if (a && a->type == 5) av = (long)a->value;
@@ -5510,6 +5907,8 @@ extern "C" PyObject* PyNumber_BitAnd(PyObject* a, PyObject* b) {
 }
 
 extern "C" PyObject* PyNumber_BitXor(PyObject* a, PyObject* b) {
+    if (a && a->type == 20) return PySet_SymmetricDifference(a, b);
+    if (b && b->type == 20) return PySet_SymmetricDifference(a, b);
     long av = 0, bv = 0;
     if (a && a->type == 0) av = (long)a->value;
     else if (a && a->type == 5) av = (long)a->value;
@@ -8714,6 +9113,7 @@ extern "C" PyObject* PyBuiltin_DictFactory(PyObject*)  { return PyDict_New(); }
 extern "C" PyObject* PyBuiltin_IntFactory(PyObject*)   { return PyInt_FromLong(0); }
 extern "C" PyObject* PyBuiltin_FloatFactory(PyObject*) { return PyFloat_FromDouble(0.0); }
 extern "C" PyObject* PyBuiltin_StrFactory(PyObject*)   { return PyUnicode_FromString(""); }
+extern "C" PyObject* PyBuiltin_SetFactory(PyObject*)   { return PySet_New(); }
 
 static PyObject* makeCollectionsModuleDict() {
     PyObject* d = PyDict_New();
@@ -9501,6 +9901,7 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyBuiltin_IntFactory",   PyBuiltin_IntFactory);
     pyc_register_callable("PyBuiltin_FloatFactory", PyBuiltin_FloatFactory);
     pyc_register_callable("PyBuiltin_StrFactory",   PyBuiltin_StrFactory);
+    pyc_register_callable("PyBuiltin_SetFactory",   PyBuiltin_SetFactory);
     pyc_register_callable("PyDateTime_Today", PyDateTime_Today);
     pyc_register_callable("PyDateTime_Now",   PyDateTime_Now);
 }
@@ -9872,6 +10273,22 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
             case 1: return 0;
             default: return 0;
         }
+    }
+    // Set comparison. == / != is element-wise (set equality). <= / >= /
+    // < / > map to subset/superset/proper-subset/proper-superset (CPython
+    // makes sets unordered except for ==/!= and the subset/superset
+    // relations — there is no lexicographic ordering).
+    if (a->type == 20 && b->type == 20) {
+        int eq = (PySet_Size(a) == PySet_Size(b)) && PySet_IsSubset(a, b);
+        switch (op) {
+            case 0: return eq;
+            case 1: return !eq;
+            case 4: return PySet_IsSubset(a, b);             // <=
+            case 5: return PySet_IsSuperset(a, b);           // >=
+            case 2: return PySet_IsSubset(a, b) && !eq;      // < (proper subset)
+            case 3: return PySet_IsSuperset(a, b) && !eq;    // > (proper superset)
+        }
+        return 0;
     }
     // Mixed list/dict — TypeError in CPython; we return 0 for all.
     if ((a->type == 1 || a->type == 2) && (b->type == 1 || b->type == 2) &&
@@ -11138,7 +11555,8 @@ extern "C" long PyAlloc_GetDictCount() { return alloc_dict_count.load(); }
 extern "C" long PyAlloc_GetStrCount() { return alloc_str_count.load(); }
 extern "C" long PyAlloc_GetTotal() {
     return alloc_int_count.load() + alloc_float_count.load() +
-           alloc_list_count.load() + alloc_dict_count.load() + alloc_str_count.load();
+           alloc_list_count.load() + alloc_dict_count.load() + alloc_str_count.load() +
+           alloc_set_count.load();
 }
 
 // ---- B6: super() proxy ----

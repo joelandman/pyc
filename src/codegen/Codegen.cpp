@@ -654,6 +654,31 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     // PyDict_DelItem directly for every `del obj[idx]`.
     llvm::Function::Create(dictDelItemTy, llvm::Function::ExternalLinkage, "Pyc_DelItem", module.get());
 
+    // Set operations (type 20). PySet_New() and the void/boxed-arg helpers
+    // cover literal construction, comprehensions, methods, and operators.
+    llvm::FunctionType* setNewTy = llvm::FunctionType::get(pyObjectPtrTy, {}, false);
+    llvm::Function::Create(setNewTy, llvm::Function::ExternalLinkage, "PySet_New", module.get());
+    llvm::FunctionType* setAddTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(setAddTy, llvm::Function::ExternalLinkage, "PySet_Add", module.get());
+    llvm::Function::Create(setAddTy, llvm::Function::ExternalLinkage, "PySet_Discard", module.get());
+    llvm::Function::Create(setAddTy, llvm::Function::ExternalLinkage, "PySet_Remove", module.get());
+    llvm::Function::Create(setAddTy, llvm::Function::ExternalLinkage, "PySet_Update", module.get());
+    llvm::FunctionType* setUnaryVoidTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(setUnaryVoidTy, llvm::Function::ExternalLinkage, "PySet_Clear", module.get());
+    llvm::FunctionType* setContainsObjTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(setContainsObjTy, llvm::Function::ExternalLinkage, "PySet_ContainsObj", module.get());
+    llvm::FunctionType* setUnaryTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(setUnaryTy, llvm::Function::ExternalLinkage, "PySet_Pop", module.get());
+    llvm::Function::Create(setUnaryTy, llvm::Function::ExternalLinkage, "PySet_Copy", module.get());
+    llvm::Function::Create(setUnaryTy, llvm::Function::ExternalLinkage, "PySet_ToList", module.get());
+    llvm::FunctionType* setBinaryTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(setBinaryTy, llvm::Function::ExternalLinkage, "PySet_Union", module.get());
+    llvm::Function::Create(setBinaryTy, llvm::Function::ExternalLinkage, "PySet_Intersection", module.get());
+    llvm::Function::Create(setBinaryTy, llvm::Function::ExternalLinkage, "PySet_Difference", module.get());
+    llvm::Function::Create(setBinaryTy, llvm::Function::ExternalLinkage, "PySet_SymmetricDifference", module.get());
+    llvm::Function::Create(setBinaryTy, llvm::Function::ExternalLinkage, "PySet_IsSubsetObj", module.get());
+    llvm::Function::Create(setBinaryTy, llvm::Function::ExternalLinkage, "PySet_IsSupersetObj", module.get());
+
     // Subscript / membership / power
     llvm::FunctionType* getItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(getItemTy, llvm::Function::ExternalLinkage, "Pyc_GetItem", module.get());

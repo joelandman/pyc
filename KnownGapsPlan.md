@@ -70,7 +70,7 @@ g(1, **{"x": 10, "y": 20})   # {'x': 10, 'y': 20}
 
 ## Gap 2: List Comprehensions Don't Support Multi-Variable `for a, b in pairs` Unpacking
 
-**Status:** 🟡 Partially Fixed — AST-level change applied, but unpacking not working in runtime
+**Status:** ✅ Fixed
 **Location:** `Compiler.cpp` `lowerListComp`, `frontend/ast.h` `ListComp::Comprehension`, `ir/builder.cpp` `build_list_comp`/`build_set_comp`
 
 ### Symptom
@@ -84,63 +84,13 @@ for k, g in [["a", 1], ["b", 2]]:
 [k for k, g in [["a", 1], ["b", 2]]]  # returns [None, None] instead of ['a', 'b']
 ```
 
-### Fix Applied (Partial)
+### Fix Applied
 
 Changed `Comprehension.target` from `std::string` to `std::shared_ptr<Expr>` in `ast.h` for both `ListComp` and `SetComp`. Updated `lowerListComp` to check if target is Name or tuple/list pattern, calling `lowerUnpackTarget()` for non-Name targets (same pattern as `lowerDictComp`). Updated `build_list_comp` and `build_set_comp` in the IR builder to handle unpack targets with element-by-element stores.
 
-### Current Issue
-
-Despite the fix being in place, list comprehension unpacking still produces `[None, None]` instead of the expected unpacked values. Debug investigation revealed:
-
-1. The `lowerListComp` function's debug output is not appearing (file not created despite fopen calls in code)
-2. The LLVM IR shows the comprehension is being lowered, but `lowerUnpackTarget` is NOT being called (no `PyList_Unpack2` calls in IR)
-3. The target node type check at `Compiler.cpp:9381-9386` may not be matching the actual AST node type
-4. The AST structure from `parse_helper.py` shows the target is a `Tuple` node with children being `Name` nodes, which should match the non-Name branch
-
-### Root Cause
-
-Two-level problem:
-
-1. **AST level** (`ast.h`): The `ListComp::Comprehension` struct stores `target` as a `std::shared_ptr<Expr>`, not as a `std::string`. The parser flattens unpacking patterns into a single string name, losing the tuple/list structure. So `lowerListComp` has no way to know the target was originally `(k, g)` vs just `k`.
-
-2. **Codegen level** (`Compiler.cpp:lowerListComp`): Only handles simple Name targets. Unlike `lowerDictComp` which calls `lowerUnpackTarget()` for non-Name targets, `lowerListComp` has no unpacking logic at all.
-
-### Implementation Approach
-
-**Option A (Recommended): Fix at AST level**
-
-✓ PARTIALLY IMPLEMENTED
-
-Modified `frontend/ast.h` `ListComp::Comprehension` to store target as `std::shared_ptr<Expr>` instead of `std::string`:
-
-```cpp
-struct Comprehension {
-    std::shared_ptr<Expr> target;  // was: std::string target
-    std::shared_ptr<Expr> iterable;
-    std::vector<std::shared_ptr<Expr>> ifs;
-};
-```
-
-Update the parser (`PythonParser.cpp`) to extract the full target AST node instead of just the id string.
-
-Update `lowerListComp` (`Compiler.cpp`) to check if target is Name or tuple/list pattern, calling `lowerUnpackTarget()` for non-Name targets (same pattern as `lowerDictComp`).
-
-**Option B (Narrower): Fix at lowering level only**
-
-Keep AST as-is but add a new AST field to the comprehension node that encodes unpacking info (e.g., a comma-separated list of target names). `lowerListComp` splits this and calls the existing unpack machinery.
-
-### Files to Change (Option A)
-
-| File | Change | Status |
-|------|--------|--------|
-| `frontend/ast.h` | Change `Comprehension.target` from `std::string` to `std::shared_ptr<Expr>` | ✅ Done |
-| `src/Compiler.cpp` | Update `lowerListComp` to handle unpack targets via `lowerUnpackTarget` | ✅ Done |
-| `ir/builder.cpp` | Update `build_list_comp`/`build_set_comp` to handle unpack targets | ✅ Done |
-
-### Verification
+### Verification (all passing)
 
 ```python
-# Currently failing — produces [None, None] instead of ['a', 'b']
 [k for k, g in [["a", 1], ["b", 2]]]           # ['a', 'b']
 [k for k, v, w in [["a", 1, 2], ["b", 3, 4]]]  # ['a', 'b']
 [[a, b] for a, b in pairs]                      # [['a', 1], ['b', 2]]
@@ -148,13 +98,33 @@ Keep AST as-is but add a new AST field to the comprehension node that encodes un
 {k: v for k, v in pairs}                        # still works
 ```
 
-### Debug Notes
+### Note on the stale-build episode
 
-- `lowerListComp` debug output not appearing despite fopen calls in code
-- LLVM IR shows comprehension lowered but no `PyList_Unpack2` calls
-- Target node type check at `Compiler.cpp:9381-9386` may not be matching actual AST node type
-- AST from `parse_helper.py` shows target is `Tuple` node with `Name` children — should match non-Name branch
-- Need to verify: is `lowerListComp` actually being called? Is the target node type "Tuple" or something else?
+The fix in commit `86e9fd5` was correct but appeared broken for an extended
+period because the `build/pyc` binary was stale (last built before the fix)
+and could not be rebuilt: `libmpdec-dev` (a CMake hard dependency for
+`decimal.Decimal`) had silently gone missing from the build environment,
+causing CMake reconfigure to fail and `make` to exit before compiling. The
+test runner passed (`make check` swallows CASES failures) so the regression
+went unnoticed. Re-installing `libmpdec-dev` and rebuilding produced a binary
+in which Gap 2 works as designed. Lesson: a green `make check` does not
+prove the binary is fresh — verify the build actually recompiled the
+changed source before trusting runner output.
+
+### Related remaining gaps (not Gap 2)
+
+These surface in the same test cases but are distinct, pre-existing
+limitations:
+
+- **Set comprehensions are not implemented at all.** `{a+b for a, b in
+  pairs}` prints `None` — `PythonParser.cpp` has no `SetComp` handler, so
+  the AST node gets no children and `lowerExpr` returns "".
+- **Dict iteration order is not insertion-preserved** —
+  `{a: b for a, b in pairs}` produces the right values in the wrong key
+  order (the `unordered_map`-backed dict limitation, see IMPLEMENTATION.md).
+- **Nested-comp subscript-on-iteration-variable** produces float-promoted
+  / tuple-collapsed values — a compound of pre-existing type-tracking
+  quirks, not the unpack-target mechanism.
 
 ---
 
@@ -242,5 +212,5 @@ class Foo: self.c5 = 'attr'     # attr 99
 
 1. ~~**Gap 3 (`re.match` anchoring)**~~ — ✅ Fixed
 2. ~~**Gap 1 (`**dict` → `**kwargs` routing)**~~ — ✅ Fixed
-3. **Gap 2 (list comp unpacking)** — 🟡 Partially fixed — AST-level change applied, runtime unpacking not working
+3. ~~**Gap 2 (list comp unpacking)**~~ — ✅ Fixed
 4. ~~**Gap 4 (variable name collision)**~~ — ✅ Fixed
