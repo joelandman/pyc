@@ -1781,6 +1781,15 @@ print(ValueError is exc2)
     ("d = {1j: 'a', 2j: 'b'}\nprint(d[1j], d[2j])", "a b\n"),
     ("print(1j == 1j, 1j == 2j)", "True False\n"),
     ("print(callable(1j))", "False\n"),
+    # Complex pow, unary minus, mixed-type operations
+    ("a = 1 + 2j\nprint(a ** 2)", "(-3+4j)\n"),
+    ("a = 1 + 2j\nprint(a ** 0)", "(1+0j)\n"),
+    ("a = 1 + 2j\nprint(a ** 1)", "(1+2j)\n"),
+    ("print(2 ** (1+2j))", "0.36691394948660344+1.9660554808224875j\n"),
+    ("a = 3 + 4j\nprint(-a)", "(-3-4j)\n"),
+    ("a = 3 + 4j\nprint(+a)", "(3+4j)\n"),
+    ("c = 2j\nprint(c ** 2)", "(-4+0j)\n"),
+    ("print(-(1j))", "-1j\n"),
     # math module (synthetic, wraps libm)
     ("""
 import math

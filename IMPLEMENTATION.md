@@ -2492,11 +2492,18 @@ were pre-existing and unrelated to this session's work:
    `emitNativeNumericBinary` was also fixed to not fire when
    `resultType == "boxed"` (which could be complex), preventing the
    imaginary part from being silently dropped (e.g. `-0.0 + 0j` producing
-   `0.0` instead of `0j`). Complex repr was fixed to suppress zero real
-   parts (`1j` not `(0.0+1.0j)`) and strip trailing `.0` from whole
-   numbers in complex context (`format_double_complex` helper). Complex
-   equality comparison was added to `PyObject_CompareBool` (needed for
-   dict key lookup with complex keys). Test coverage re-added to `CASES`.
+   `0.0` instead of `0j`). Complex repr was fixed to suppress `+0.0` real
+   parts (`1j` not `(0.0+1.0j)`) while preserving `-0.0` (`(-0-1j)` for
+   `-(1j)`, using `signbit` to distinguish `+0.0` from `-0.0`), and strip
+   trailing `.0` from whole numbers in complex context
+   (`format_double_complex` helper). Complex equality comparison was added
+   to `PyObject_CompareBool` (needed for dict key lookup with complex
+   keys). Complex pow (`Pyc_Pow`) and unary negation (`PyNumber_Negate`)
+   also gained complex dispatch with int/float promotion, so `a ** 2`,
+   `2 ** (1+2j)`, `-b` for variable complex values work. The compiler's
+   `** 0` constant-fold was fixed to skip boxed operands (which could be
+   complex, where `x ** 0` is `(1+0j)`, not `1`). Test coverage re-added
+   to `CASES`.
 3. **Real, pre-existing, unrelated bug — function repr/naming**: a test
    directly compared a function object's raw `repr()` (which embeds a
    live process memory address) against live CPython's output — this can

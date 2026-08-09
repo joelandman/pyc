@@ -1306,9 +1306,9 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
         format_double_complex(ibuf, sizeof(ibuf), obj->complex_imag);
         // CPython format: if real==0, print just "{imag}j" (no parens).
         // Otherwise print "({real}+{imag}j)" or "({real}{imag}j)".
-        if (obj->complex_real == 0.0) {
+        if (obj->complex_real == 0.0 && !signbit(obj->complex_real)) {
             return fprintf(fp, "%sj", ibuf);
-        } else if (obj->complex_imag >= 0) {
+        } else if (!signbit(obj->complex_imag)) {
             return fprintf(fp, "(%s+%sj)", rbuf, ibuf);
         } else {
             return fprintf(fp, "(%s%sj)", rbuf, ibuf);
@@ -1427,9 +1427,9 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         format_double_complex(rbuf, sizeof(rbuf), obj->complex_real);
         format_double_complex(ibuf, sizeof(ibuf), obj->complex_imag);
         int r;
-        if (obj->complex_real == 0.0) {
+        if (obj->complex_real == 0.0 && !signbit(obj->complex_real)) {
             r = fprintf(fp, "%sj\n", ibuf);
-        } else if (obj->complex_imag >= 0) {
+        } else if (!signbit(obj->complex_imag)) {
             r = fprintf(fp, "(%s+%sj)\n", rbuf, ibuf);
         } else {
             r = fprintf(fp, "(%s%sj)\n", rbuf, ibuf);
@@ -1992,6 +1992,7 @@ PyObject* PyNumber_Negate(PyObject* obj) {
     if (!obj) return NULL;
     if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(-obj->value);
     if (obj->type == 4) return PyFloat_FromDouble(-obj->dvalue);
+    if (obj->type == 13) return PyComplex_New(-obj->complex_real, -obj->complex_imag);
     if (obj->type == 19) {
         mpd_t* r = mpd_qnew();
         uint32_t status = 0;
@@ -2398,9 +2399,9 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
         format_double_complex(rbuf, sizeof(rbuf), obj->complex_real);
         format_double_complex(ibuf, sizeof(ibuf), obj->complex_imag);
         std::string s;
-        if (obj->complex_real == 0.0) {
+        if (obj->complex_real == 0.0 && !signbit(obj->complex_real)) {
             s = std::string(ibuf) + "j";
-        } else if (obj->complex_imag >= 0) {
+        } else if (!signbit(obj->complex_imag)) {
             s = "(" + std::string(rbuf) + "+" + std::string(ibuf) + "j)";
         } else {
             s = "(" + std::string(rbuf) + std::string(ibuf) + "j)";
@@ -4556,6 +4557,16 @@ PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
 }
 
 PyObject* Pyc_Pow(PyObject* a, PyObject* b) {
+    if (!a || !b) return nullptr;
+    // Complex pow: if either operand is complex, promote and use std::pow.
+    if (has_complex(a, b)) {
+        double ar, ai, br, bi;
+        if (to_complex(a, ar, ai) && to_complex(b, br, bi)) {
+            std::complex<double> z1(ar, ai), z2(br, bi);
+            std::complex<double> result = std::pow(z1, z2);
+            return PyComplex_New(result.real(), result.imag());
+        }
+    }
     if (!is_numeric(a) || !is_numeric(b)) return nullptr;
     if (both_integral(a, b) && b->value >= 0) {
         long result = 1, base = a->value, exp = b->value;

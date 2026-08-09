@@ -3711,31 +3711,33 @@ class LoweringVisitor {
                 (void)eend; (void)errno;
                 if (expv >= 0 && expv <= 8) {
                     std::string left = lowerExpr(node->children[0].get());
-                    if (expv == 0) {
-                        std::string one = "$c" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "const", {"1"}, one, "int");
-                        noteType(one, "int");
-                        return one;
-                    }
-                    std::string cur = left;
-                    // Check if left is complex — found and fixed while
-                    // bug hunting: this used to check `typeOf(left) ==
-                    // "boxed"`, which means "not statically known to be
-                    // int/float", not "is complex" — any function
-                    // parameter or other untyped boxed value (the
-                    // overwhelmingly common case) was misrouted through
-                    // PyComplex_Mul for x**N (small constant N),
-                    // producing wrong answers for plain numeric values
-                    // and, worse, crashing the compiler outright with an
-                    // LLVM assertion failure ("Invalid operand types for
-                    // ICmp instruction") for some parameter combinations
-                    // — confirmed via the ordinary `def f(y): return y **
-                    // 2` for a plain top-level function, not specific to
-                    // methods. Fixed to check the actual complexVars
-                    // tracking set instead, matching the correct check
-                    // already used for the regular (non-power) complex
-                    // add/sub/mul/truediv dispatch just below.
                     bool isComplex = complexVars.count(left) > 0;
+                    // Don't constant-fold x ** 0 to 1 when x is a boxed
+                    // value of unknown type — it could be complex, and
+                    // complex ** 0 = (1+0j) in CPython, not 1. Let it
+                    // fall through to the runtime Pyc_Pow which handles
+                    // complex correctly.
+                    std::string leftType = typeOf(left);
+                    bool leftIsBoxed = (leftType == "boxed" || leftType.empty());
+                    if (expv == 0) {
+                        if (isComplex) {
+                            std::string res = "$t" + std::to_string(tempCounter++);
+                            ir.addInstruction(currentFunc, "call", {"PyComplex_New", "1", "0"}, res);
+                            complexVars.insert(res);
+                            noteType(res, "boxed");
+                            return res;
+                        }
+                        if (leftIsBoxed) {
+                            // Unknown type — could be complex. Fall through
+                            // to runtime Pyc_Pow for correct handling.
+                        } else {
+                            std::string one = "$c" + std::to_string(tempCounter++);
+                            ir.addInstruction(currentFunc, "const", {"1"}, one, "int");
+                            noteType(one, "int");
+                            return one;
+                        }
+                    } else {
+                    std::string cur = left;
                     for (long k = 1; k < expv; ++k) {
                         std::string t = "$t" + std::to_string(tempCounter++);
                         if (isComplex) {
@@ -3749,6 +3751,7 @@ class LoweringVisitor {
                         cur = t;
                     }
                     return cur;
+                    }
                 }
             }
         }

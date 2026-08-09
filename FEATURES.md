@@ -491,20 +491,30 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
 ## Complex Numbers
 
 - Literals: `1j`, `3j`, `2.5j`
-- Arithmetic: `+ - * /` (via `PyComplex_Add/Sub/Mul/Div`)
-- Power: `**` (via `PyComplex_Pow`)
+- Arithmetic: `+ - * /` (via `PyComplex_Add/Sub/Mul/Div` for compile-time
+  known complex, and via runtime `PyNumber_*` with complex dispatch for
+  variables/mixed-type operands)
+- Power: `**` (via `PyComplex_Pow` for compile-time known complex, and via
+  runtime `Pyc_Pow` with complex dispatch for variables/mixed-type)
+- Unary minus/plus: `-x`, `+x` (via `PyNumber_Negate` with complex dispatch)
 - Absolute value: `abs()` (via `PyComplex_Abs`)
 - Builtin: `complex()`, `complex(3)`, `complex(3, 4)`, `complex("3+4j")`
 - cmath module: `sqrt`, `log`, `exp`, `sin`, `cos`, `tan`
 - Arithmetic between plain variables holding complex values (`a = 1j; b =
-  2j; a + b`) now works — complex dispatch with int/float promotion is
-  wired into the runtime `PyNumber_Add`/`Subtract`/`Multiply`/`TrueDivide`
-  functions, not just the compile-time `complexVars` tracking set.
-- Complex `repr`/`print` now suppresses zero real parts (`1j` not
-  `(0.0+1.0j)`) and strips trailing `.0` from whole numbers in complex
-  context, matching CPython's formatting.
+  2j; a + b`) works — complex dispatch with int/float promotion is wired
+  into the runtime `PyNumber_Add`/`Subtract`/`Multiply`/`TrueDivide`/
+  `Pyc_Pow`/`PyNumber_Negate` functions, not just the compile-time
+  `complexVars` tracking set. Mixed-type operations (`2 ** (1+2j)`,
+  `a ** 2`, `-b`) also work.
+- Complex `repr`/`print` suppresses `+0.0` real parts (`1j` not
+  `(0.0+1.0j)`) while preserving `-0.0` (`(-0-1j)` for `-(1j)`), and strips
+  trailing `.0` from whole numbers in complex context, matching CPython's
+  formatting.
 - `==`/`!=` comparison on complex values works (compares both real and
   imag parts), enabling complex dict keys.
+- `x ** 0` correctly returns `(1+0j)` for complex `x` (not `1`); the
+  compiler's constant-fold for `** 0` skips boxed operands of unknown type
+  to avoid incorrectly producing an int for a complex base.
 
 ## Sets
 
