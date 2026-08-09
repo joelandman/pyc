@@ -399,6 +399,21 @@ print(a[0],a[1],a[2])
     ("class Foo: pass\nprint(callable(Foo))", "True\n"),
     ("class Bar:\n    def __call__(self): return 1\nprint(callable(Bar()))", "True\n"),
     ("print(callable(None), callable(3.14))", "False False\n"),
+    ("print(callable(print), callable(len), callable(abs))", "True True True\n"),
+
+    # Builtins as first-class values
+    ("f = len\nprint(f([1, 2, 3]), f('hello'))", "3 5\n"),
+    ("g = abs\nprint(g(-5), g(-3.14))", "5 3.14\n"),
+    ("h = str\nprint(h(42), h(3.14))", "42 3.14\n"),
+    ("import functools\nprint(functools.reduce(max, [3, 1, 4, 1, 5]))", "5\n"),
+    ("import functools\nprint(functools.reduce(min, [3, 1, 4, 1, 5]))", "1\n"),
+    ("def apply(f, x): return f(x)\nprint(apply(abs, -5), apply(str, 42), apply(len, 'hello'))",
+     "5 42 5\n"),
+    ("funcs = [abs, str, len]\nprint(funcs[0](-10), funcs[1](99), funcs[2]([1, 2, 3]))",
+     "10 99 3\n"),
+    ("b = bool\nprint(b(0), b(1), b(''), b('x'))", "False True False True\n"),
+    ("t = type\nprint(t(42), t('x'), t(3.14))",
+     "<class 'int'> <class 'str'> <class 'float'>\n"),
 
     # Sorted on dict (iterates keys)
     ("print(sorted({'c': 3, 'a': 1, 'b': 2}))", "['a', 'b', 'c']\n"),
@@ -416,8 +431,8 @@ print(a[0],a[1],a[2])
     ("for x in reversed([10, 20, 30]):\n    print(x)", "30\n20\n10\n"),
 
     # Tier-2-batch regression: sorted() with key argument (e.g. len)
-    ("print(sorted([3, 1, 2], key=len))", "[1, 2, 3]\n"),  # all len=1, stable
     ("print(sorted(['bb', 'a', 'ccc'], key=len))", "['a', 'bb', 'ccc']\n"),
+    ("print(sorted(['aaa', 'b', 'cc'], key=len))", "['b', 'cc', 'aaa']\n"),
 
     # Tier-2-batch regression: cmp_to_key — sorted with comparator
     # This relies on a special-case detection in the lowering: when

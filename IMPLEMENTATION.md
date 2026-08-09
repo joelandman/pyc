@@ -2521,6 +2521,18 @@ were pre-existing and unrelated to this session's work:
    repr showing its internal synthetic name (`<function __nesteddef_0 at
    ...>`) rather than CPython's qualified name (`<function
    outer.<locals>.inner at ...>`) remains unfixed (cosmetic, low-value).
+   **Also fixed**: builtins as first-class values. Previously, bare-name
+   references to builtins like `print`, `len`, `abs`, `str`, etc.
+   produced `None` when used as values (stored in variables, passed as
+   arguments, used as `key=` callbacks). Now each builtin has a runtime
+   adapter (`pyc_adapt_*`) registered in `g_callableRegistry`, and the
+   compiler's `lowerExpr` Name handler emits a callable token string for
+   bare builtin references. A `neverIndirect` set prevents the indirect-
+   callee path from intercepting direct calls to special builtins (the
+   token temp from `lowerExpr` would otherwise trigger `isIndirectCallee
+   = true`, bypassing the direct lowering path). Enables `sorted(words,
+   key=len)`, `functools.reduce(max, data)`, `apply(abs, x)`,
+   `callable(print)`, etc.
 
 **Lesson for this codebase specifically**: a passing test count is not
 proof of correctness if the harness itself can silently misfile test

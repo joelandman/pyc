@@ -1638,14 +1638,51 @@ class LoweringVisitor {
             // against another type or subclassing it is not supported.
             {
                 static const std::unordered_map<std::string, const char*> builtinFactoryTokens = {
-                    {"list", "PyBuiltin_ListFactory"}, {"dict", "PyBuiltin_DictFactory"},
-                    {"int", "PyBuiltin_IntFactory"}, {"float", "PyBuiltin_FloatFactory"},
-                    {"str", "PyBuiltin_StrFactory"}, {"set", "PyBuiltin_SetFactory"},
+                    {"dict", "PyBuiltin_DictFactory"},
                 };
                 auto bfIt = builtinFactoryTokens.find(node->id);
                 if (bfIt != builtinFactoryTokens.end() && !isShadowedLocal(node->id)) {
                     std::string tokenVal = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + std::string(bfIt->second) + "\""}, tokenVal, "str");
+                    callableTokenTemps.insert(tokenVal);
+                    return tokenVal;
+                }
+            }
+            // Builtin functions as first-class values: emit a callable
+            // token string registered in the runtime's g_callableRegistry.
+            // This enables sorted(key=len), functools.reduce(max, ...),
+            // apply(abs, x), etc. — the token is dispatched via Pyc_Apply
+            // to the corresponding pyc_adapt_* runtime adapter.
+            {
+                static const std::unordered_map<std::string, const char*> builtinValueTokens = {
+                    {"len", "pyc_adapt_len"}, {"abs", "pyc_adapt_abs"},
+                    {"int", "pyc_adapt_int"}, {"float", "pyc_adapt_float"},
+                    {"bool", "pyc_adapt_bool"}, {"type", "pyc_adapt_type"},
+                    {"repr", "pyc_adapt_repr"}, {"id", "pyc_adapt_id"},
+                    {"callable", "pyc_adapt_callable"},
+                    {"ord", "pyc_adapt_ord"}, {"chr", "pyc_adapt_chr"},
+                    {"hex", "pyc_adapt_hex"}, {"oct", "pyc_adapt_oct"},
+                    {"bin", "pyc_adapt_bin"}, {"round", "pyc_adapt_round"},
+                    {"divmod", "pyc_adapt_divmod"}, {"pow", "pyc_adapt_pow"},
+                    {"list", "pyc_adapt_list"}, {"tuple", "pyc_adapt_tuple"},
+                    {"set", "pyc_adapt_set"}, {"range", "pyc_adapt_range"},
+                    {"print", "pyc_adapt_print"},
+                    {"min", "pyc_adapt_min"}, {"max", "pyc_adapt_max"},
+                    {"sum", "pyc_adapt_sum"}, {"sorted", "pyc_adapt_sorted"},
+                    {"any", "pyc_adapt_any"}, {"all", "pyc_adapt_all"},
+                    {"reversed", "pyc_adapt_reversed"},
+                    {"enumerate", "pyc_adapt_enumerate"},
+                    {"zip", "pyc_adapt_zip"},
+                    {"isinstance", "pyc_adapt_isinstance"},
+                    {"complex", "pyc_adapt_complex"},
+                    {"bytes", "pyc_adapt_bytes"},
+                    {"bytearray", "pyc_adapt_bytearray"},
+                    {"str", "pyc_adapt_str"},
+                };
+                auto bvIt = builtinValueTokens.find(node->id);
+                if (bvIt != builtinValueTokens.end() && !isShadowedLocal(node->id)) {
+                    std::string tokenVal = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + std::string(bvIt->second) + "\""}, tokenVal, "str");
                     callableTokenTemps.insert(tokenVal);
                     return tokenVal;
                 }
@@ -4454,11 +4491,25 @@ class LoweringVisitor {
         // lambdas, or subscript from a list we marked, etc.), force the dynamic path and use
         // that value as the token for Pyc_Apply. This covers direct expression cases like
         // "make_adder(10)(20)" where the callee is the result temp of the inner call.
+        // Skip for special builtins (callable, len, etc.) whose bare-name reference
+        // now produces a callable token but must still go through their direct lowering.
         if (!isIndirectCallee && !calleeValEarly.empty() &&
-            (callableTokenTemps.count(calleeValEarly) || callableTokenToSynthetic.count(calleeValEarly))) {
-            useDynamicApply = true;
-            tokenTempForApply = calleeValEarly;
-            isIndirectCallee = true;
+            (callableTokenTemps.count(calleeValEarly) || callableTokenToSynthetic.count(calleeValEarly)) &&
+            !useDynamicApply) {
+            // Only apply if the callee is NOT a known special builtin name.
+            std::string calleeName = (node->children[0] && node->children[0]->type == "Name")
+                                   ? node->children[0]->id : "";
+            static const std::unordered_set<std::string> neverIndirect = {
+                "print","len","range","min","max","sum","sorted","any","all","isinstance",
+                "int","float","complex","abs","str","list","enumerate","zip","bool","type","id",
+                "repr","hex","oct","bin","ord","chr","round","open","bytes","bytearray",
+                "tuple","divmod","pow","callable","set"
+            };
+            if (neverIndirect.count(calleeName) == 0) {
+                useDynamicApply = true;
+                tokenTempForApply = calleeValEarly;
+                isIndirectCallee = true;
+            }
         }
 
         // For indirect callees (lambdas-as-values via tokens), we build the argument

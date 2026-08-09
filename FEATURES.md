@@ -271,6 +271,17 @@ f(b=3, a=4)                    keyword call arguments
   positional-argument list. All fixed; `cmp_to_key`-based sorting still
   doesn't support `reverse=` (a narrower, documented remaining gap). See
   IMPLEMENTATION.md.
+- **Builtins as first-class values**: `print`, `len`, `abs`, `str`,
+  `int`, `float`, `bool`, `type`, `repr`, `id`, `callable`, `ord`,
+  `chr`, `hex`, `oct`, `bin`, `round`, `divmod`, `pow`, `list`,
+  `tuple`, `set`, `range`, `min`, `max`, `sum`, `sorted`, `any`, `all`,
+  `reversed`, `enumerate`, `zip`, `isinstance`, `complex`, `bytes`,
+  `bytearray` can now be stored in variables, passed as arguments, used
+  as `key=` callbacks, and called indirectly via `Pyc_Apply`. Each
+  builtin has a runtime adapter (`pyc_adapt_*`) registered in the
+  callable registry. Enables patterns like `sorted(words, key=len)`,
+  `functools.reduce(max, data)`, `apply(abs, x)`, `funcs = [abs, str,
+  len]`, `callable(print)`.
 
 ## File I/O
 

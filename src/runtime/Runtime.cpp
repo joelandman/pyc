@@ -9856,6 +9856,213 @@ void pyc_setup_sys(int argc, char** argv) {
     }
 }
 
+// ---- Builtin function adapters for first-class value support ----
+// Each adapter unpacks the Pyc_Apply args list and dispatches to the
+// existing PyBuiltin_* function. This allows builtins like len, abs,
+// str, etc. to be used as values (sorted(key=len), functools.reduce(max),
+// apply(abs, x), etc.).
+
+static inline PyObject* arg0(PyObject* args) {
+    return (args && args->type == 1 && !args->list.empty()) ? args->list[0] : nullptr;
+}
+static inline PyObject* arg1(PyObject* args) {
+    return (args && args->type == 1 && args->list.size() > 1) ? args->list[1] : nullptr;
+}
+
+static PyObject* pyc_adapt_len(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Len(a);
+}
+static PyObject* pyc_adapt_abs(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Abs(a);
+}
+static PyObject* pyc_adapt_str(PyObject* args) {
+    PyObject* a = arg0(args);
+    if (!a) return PyUnicode_FromString("");
+    return PyStr_FromAny(a);
+}
+static PyObject* pyc_adapt_int(PyObject* args) {
+    PyObject* a = arg0(args);
+    if (!a) return PyInt_FromLong(0);
+    return PyBuiltin_Int(a);
+}
+static PyObject* pyc_adapt_float(PyObject* args) {
+    PyObject* a = arg0(args);
+    if (!a) return PyFloat_FromDouble(0.0);
+    return PyBuiltin_Float(a);
+}
+static PyObject* pyc_adapt_bool(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return PyBool_New(0);
+    return PyBuiltin_Bool(a);
+}
+static PyObject* pyc_adapt_type(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Type(a);
+}
+static PyObject* pyc_adapt_repr(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Repr(a);
+}
+static PyObject* pyc_adapt_id(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Id(a);
+}
+static PyObject* pyc_adapt_callable(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Callable(a);
+}
+static PyObject* pyc_adapt_ord(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Ord(a);
+}
+static PyObject* pyc_adapt_chr(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Chr(a);
+}
+static PyObject* pyc_adapt_hex(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Hex(a);
+}
+static PyObject* pyc_adapt_oct(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Oct(a);
+}
+static PyObject* pyc_adapt_bin(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Bin(a);
+}
+static PyObject* pyc_adapt_round(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    PyObject* b = arg1(args);
+    return PyBuiltin_Round(a, b);
+}
+static PyObject* pyc_adapt_divmod(PyObject* args) {
+    PyObject* a = arg0(args); PyObject* b = arg1(args);
+    if (!a || !b) return nullptr;
+    return PyBuiltin_Divmod(a, b);
+}
+static PyObject* pyc_adapt_pow(PyObject* args) {
+    PyObject* a = arg0(args); PyObject* b = arg1(args);
+    if (!a || !b) return nullptr;
+    return PyBuiltin_Pow(a, b);
+}
+static PyObject* pyc_adapt_list(PyObject* args) {
+    PyObject* a = arg0(args);
+    return PyBuiltin_List(a);
+}
+static PyObject* pyc_adapt_tuple(PyObject* args) {
+    PyObject* a = arg0(args);
+    return PyBuiltin_List(a);  // tuple behaves like list in pyc
+}
+static PyObject* pyc_adapt_set(PyObject* args) {
+    PyObject* a = arg0(args);
+    PyObject* res = PySet_New();
+    if (a) PySet_Update(res, a);
+    return res;
+}
+static PyObject* pyc_adapt_range(PyObject* args) {
+    if (!args || args->type != 1) return nullptr;
+    if (args->list.size() == 1) return PyBuiltin_Range(nullptr, args->list[0], nullptr);
+    if (args->list.size() == 2) return PyBuiltin_Range(args->list[0], args->list[1], nullptr);
+    if (args->list.size() >= 3) return PyBuiltin_Range(args->list[0], args->list[1], args->list[2]);
+    return nullptr;
+}
+static PyObject* pyc_adapt_print(PyObject* args) {
+    if (!args || args->type != 1) {
+        std::printf("\n");
+        return PyInt_FromLong(0);
+    }
+    for (size_t i = 0; i < args->list.size(); ++i) {
+        if (i > 0) std::printf(" ");
+        if (args->list[i]) {
+            PyObject_PrintElement(args->list[i], stdout);
+        } else {
+            std::printf("None");
+        }
+    }
+    std::printf("\n");
+    return PyInt_FromLong(0);
+}
+static PyObject* pyc_adapt_min(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    if (args->list.size() == 1) return PyBuiltin_MinList(args->list[0], nullptr);
+    // Multiple positional args: compare pairwise
+    PyObject* best = args->list[0];
+    if (best) Py_INCREF(best);
+    for (size_t i = 1; i < args->list.size(); ++i) {
+        PyObject* r = PyBuiltin_Min2(best, args->list[i], nullptr);
+        if (best) Py_DECREF(best);
+        best = r;
+        if (!best) break;
+    }
+    return best;
+}
+static PyObject* pyc_adapt_max(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    if (args->list.size() == 1) return PyBuiltin_MaxList(args->list[0], nullptr);
+    PyObject* best = args->list[0];
+    if (best) Py_INCREF(best);
+    for (size_t i = 1; i < args->list.size(); ++i) {
+        PyObject* r = PyBuiltin_Max2(best, args->list[i], nullptr);
+        if (best) Py_DECREF(best);
+        best = r;
+        if (!best) break;
+    }
+    return best;
+}
+static PyObject* pyc_adapt_sum(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Sum(a);
+}
+static PyObject* pyc_adapt_sorted(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Sorted(a, nullptr, nullptr);
+}
+static PyObject* pyc_adapt_any(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Any(a);
+}
+static PyObject* pyc_adapt_all(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_All(a);
+}
+static PyObject* pyc_adapt_reversed(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Reversed(a);
+}
+static PyObject* pyc_adapt_enumerate(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Enumerate(a);
+}
+static PyObject* pyc_adapt_zip(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    return PyBuiltin_Zip2(args->list[0], args->list[1]);
+}
+static PyObject* pyc_adapt_isinstance(PyObject* args) {
+    // Note: isinstance as a value is limited — the compile-time typecode
+    // resolution can't happen here. Fall back to a basic type-name check.
+    PyObject* a = arg0(args); PyObject* b = arg1(args);
+    if (!a || !b) return PyBool_New(0);
+    // b is typically a type name string; compare against type(a)
+    PyObject* t = PyBuiltin_Type(a);
+    bool match = (t && b->type == 3 && t->str == b->str);
+    if (t) Py_DECREF(t);
+    return PyBool_New(match ? 1 : 0);
+}
+static PyObject* pyc_adapt_complex(PyObject* args) {
+    PyObject* a = arg0(args); PyObject* b = arg1(args);
+    return PyBuiltin_Complex(a, b);
+}
+static PyObject* pyc_adapt_bytes(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Bytes(a, nullptr);
+}
+static PyObject* pyc_adapt_bytearray(PyObject* args) {
+    PyObject* a = arg0(args); if (!a) return nullptr;
+    return PyBuiltin_Bytearray(a, nullptr);
+}
+
 // Register all the os/subprocess/etc. runtime helpers so they can be
 // dispatched via Pyc_Apply using their PyBuiltin_* names. The synthetic
 // module dicts (`makeOsModuleDict`, `makeSubprocessModuleDict`) embed
@@ -10002,6 +10209,43 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyBuiltin_FloatFactory", PyBuiltin_FloatFactory);
     pyc_register_callable("PyBuiltin_StrFactory",   PyBuiltin_StrFactory);
     pyc_register_callable("PyBuiltin_SetFactory",   PyBuiltin_SetFactory);
+    // Builtin function adapters (first-class value support)
+    pyc_register_callable("pyc_adapt_len",        pyc_adapt_len);
+    pyc_register_callable("pyc_adapt_abs",        pyc_adapt_abs);
+    pyc_register_callable("pyc_adapt_str",        pyc_adapt_str);
+    pyc_register_callable("pyc_adapt_int",        pyc_adapt_int);
+    pyc_register_callable("pyc_adapt_float",      pyc_adapt_float);
+    pyc_register_callable("pyc_adapt_bool",       pyc_adapt_bool);
+    pyc_register_callable("pyc_adapt_type",       pyc_adapt_type);
+    pyc_register_callable("pyc_adapt_repr",       pyc_adapt_repr);
+    pyc_register_callable("pyc_adapt_id",         pyc_adapt_id);
+    pyc_register_callable("pyc_adapt_callable",   pyc_adapt_callable);
+    pyc_register_callable("pyc_adapt_ord",        pyc_adapt_ord);
+    pyc_register_callable("pyc_adapt_chr",        pyc_adapt_chr);
+    pyc_register_callable("pyc_adapt_hex",        pyc_adapt_hex);
+    pyc_register_callable("pyc_adapt_oct",        pyc_adapt_oct);
+    pyc_register_callable("pyc_adapt_bin",        pyc_adapt_bin);
+    pyc_register_callable("pyc_adapt_round",      pyc_adapt_round);
+    pyc_register_callable("pyc_adapt_divmod",     pyc_adapt_divmod);
+    pyc_register_callable("pyc_adapt_pow",        pyc_adapt_pow);
+    pyc_register_callable("pyc_adapt_list",       pyc_adapt_list);
+    pyc_register_callable("pyc_adapt_tuple",      pyc_adapt_tuple);
+    pyc_register_callable("pyc_adapt_set",        pyc_adapt_set);
+    pyc_register_callable("pyc_adapt_range",      pyc_adapt_range);
+    pyc_register_callable("pyc_adapt_print",      pyc_adapt_print);
+    pyc_register_callable("pyc_adapt_min",        pyc_adapt_min);
+    pyc_register_callable("pyc_adapt_max",        pyc_adapt_max);
+    pyc_register_callable("pyc_adapt_sum",        pyc_adapt_sum);
+    pyc_register_callable("pyc_adapt_sorted",     pyc_adapt_sorted);
+    pyc_register_callable("pyc_adapt_any",        pyc_adapt_any);
+    pyc_register_callable("pyc_adapt_all",        pyc_adapt_all);
+    pyc_register_callable("pyc_adapt_reversed",   pyc_adapt_reversed);
+    pyc_register_callable("pyc_adapt_enumerate",  pyc_adapt_enumerate);
+    pyc_register_callable("pyc_adapt_zip",        pyc_adapt_zip);
+    pyc_register_callable("pyc_adapt_isinstance", pyc_adapt_isinstance);
+    pyc_register_callable("pyc_adapt_complex",    pyc_adapt_complex);
+    pyc_register_callable("pyc_adapt_bytes",      pyc_adapt_bytes);
+    pyc_register_callable("pyc_adapt_bytearray",  pyc_adapt_bytearray);
     pyc_register_callable("PyDateTime_Today", PyDateTime_Today);
     pyc_register_callable("PyDateTime_Now",   PyDateTime_Now);
 }
