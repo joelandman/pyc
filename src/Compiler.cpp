@@ -4399,7 +4399,7 @@ class LoweringVisitor {
             "print", "len", "range", "min", "max", "sum", "sorted", "any", "all", "isinstance",
             "int", "float", "abs", "str", "list", "enumerate", "zip",
             "bool", "type", "id", "repr", "hex", "oct", "bin", "ord", "chr", "round",
-            "bytes", "bytearray", "tuple", "divmod", "pow", "set"
+            "bytes", "bytearray", "tuple", "divmod", "pow", "set", "callable"
         };
 
         if (!knownDirect0) {
@@ -4412,7 +4412,7 @@ class LoweringVisitor {
                     "print","len","range","min","max","sum","sorted","any","all","isinstance",
                     "int","float","complex","abs","str","list","enumerate","zip","bool","type","id",
                     "repr","hex","oct","bin","ord","chr","round","open","bytes","bytearray",
-                    "tuple","divmod","pow"
+                    "tuple","divmod","pow","callable"
                 };
                 if (!theName.empty() && neverDynamic.count(theName) == 0) {
                     // B4 complete: any bare name that is not a known direct IR function *and*
@@ -5402,6 +5402,14 @@ class LoweringVisitor {
             std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Type", arg}, res, "str");
             noteType(res, "str");
+            return res;
+        }
+        // callable(x) → PyBuiltin_Callable(x)  (returns True/False)
+        if (funcName == "callable") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Callable", arg}, res, "bool");
+            noteType(res, "bool");
             return res;
         }
         // hex/oct/bin(x) — string with 0x/0o/0b prefix
@@ -9388,32 +9396,28 @@ class LoweringVisitor {
             return listSlot;
         }
 
-        // Pre-evaluate each generator's iterator (evaluated once, stored in
-        // a slot). This mirrors CPython's behaviour where the iter is
-        // computed once at comprehension start.
-        std::vector<std::string> iterSlots;
-        iterSlots.reserve(gens.size());
-        for (size_t gi = 0; gi < gens.size(); ++gi) {
-            const ASTNode* genNode = node->children[gi + 1].get();
+        // Evaluate gen[0]'s iterator up front (CPython evaluates the
+        // outermost iterable once at comprehension start). Nested
+        // generators' iterables are evaluated lazily inside the parent's
+        // body, because they may reference the outer loop variable
+        // (e.g. [... for row in a for x in [(row[0], row[1])]]).
+        std::vector<std::string> iterSlots(gens.size());
+        std::vector<std::string> lenSlots(gens.size());
+        {
+            const ASTNode* genNode = node->children[1].get();
             std::string iterVal = lowerExpr(genNode->children[1].get());
-            std::string iterSlot = "__lci_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            std::string iterSlot = "__lci_0_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {iterVal}, iterSlot);
-            // Also materialise as a list (handles dict/string iterables).
             std::string listified = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", iterSlot}, listified);
-            std::string listifiedSlot = "__lcmat_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            std::string listifiedSlot = "__lcmat_0_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {listified}, listifiedSlot);
-            iterSlots.push_back(listifiedSlot);
+            iterSlots[0] = listifiedSlot;
         }
 
         // Emit each generator's index / loop / body / cont / exit blocks.
-        // For nested generators, the last block of generator i (after all
-        // conditions pass) branches to generator (i+1)'s loopL, instead of
-        // appending the elt to the result. The innermost generator appends.
         std::vector<std::string> idxVars;
-        std::vector<std::string> lenSlots;
         idxVars.reserve(gens.size());
-        lenSlots.reserve(gens.size());
         for (size_t gi = 0; gi < gens.size(); ++gi) {
             std::string idxVar  = "lc_i_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
             std::string idxInit = "$t" + std::to_string(tempCounter++);
@@ -9421,11 +9425,15 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
             idxVars.push_back(idxVar);
 
-            std::string lenRes = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterSlots[gi]}, lenRes);
-            std::string lenSlot = "__lcsl_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
-            lenSlots.push_back(lenSlot);
+            if (gi == 0) {
+                std::string lenRes = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterSlots[0]}, lenRes);
+                std::string lenSlot = "__lcsl_0_" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
+                lenSlots[0] = lenSlot;
+            }
+            // Nested gens' iterSlots/lenSlots are filled lazily inside
+            // the parent's body (see below).
         }
 
         // Pre-allocate the post-comp label name so we can reference it
@@ -9471,12 +9479,28 @@ class LoweringVisitor {
             }
 
             if (gi + 1 < gens.size()) {
-                // Recurse into the next generator. The deeper gens' idx
-                // slots persist across this gen's iterations, so we must
-                // explicitly reset them to 0 here; otherwise the inner
-                // loop's `idx < len` check fails on subsequent outer
-                // iterations and the inner never re-runs.
+                // Recurse into the next generator. Evaluate the nested
+                // gen's iterable HERE (inside the parent body) so it can
+                // reference the outer loop variable. CPython re-evaluates
+                // each nested iterable per iteration of the enclosing loop.
                 for (size_t gj = gi + 1; gj < gens.size(); ++gj) {
+                    const ASTNode* genNode = node->children[gj + 1].get();
+                    std::string iterVal = lowerExpr(genNode->children[1].get());
+                    std::string iterSlot = "__lci_" + std::to_string(gj) + "_" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "assign", {iterVal}, iterSlot);
+                    std::string listified = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", iterSlot}, listified);
+                    std::string listifiedSlot = "__lcmat_" + std::to_string(gj) + "_" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "assign", {listified}, listifiedSlot);
+                    iterSlots[gj] = listifiedSlot;
+
+                    std::string lenRes = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterSlots[gj]}, lenRes);
+                    std::string lenSlot = "__lcsl_" + std::to_string(gj) + "_" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
+                    lenSlots[gj] = lenSlot;
+
+                    // Reset the nested gen's index to 0 for this iteration.
                     std::string zeroR = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"0"}, zeroR);
                     ir.addInstruction(currentFunc, "assign", {zeroR}, idxVars[gj]);
@@ -9570,34 +9594,38 @@ class LoweringVisitor {
         }
         if (gens.empty()) return setSlot;
 
-        std::vector<std::string> iterSlots;
-        iterSlots.reserve(gens.size());
-        for (size_t gi = 0; gi < gens.size(); ++gi) {
-            const ASTNode* genNode = node->children[gi + 1].get();
+        // Evaluate gen[0]'s iterator up front. Nested generators' iterables
+        // are evaluated lazily inside the parent's body (they may reference
+        // the outer loop variable).
+        std::vector<std::string> iterSlots(gens.size());
+        std::vector<std::string> lenSlots(gens.size());
+        {
+            const ASTNode* genNode = node->children[1].get();
             std::string iterVal = lowerExpr(genNode->children[1].get());
-            std::string iterSlot = "__sci_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            std::string iterSlot = "__sci_0_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {iterVal}, iterSlot);
             std::string listified = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", iterSlot}, listified);
-            std::string listifiedSlot = "__scmat_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
+            std::string listifiedSlot = "__scmat_0_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {listified}, listifiedSlot);
-            iterSlots.push_back(listifiedSlot);
+            iterSlots[0] = listifiedSlot;
         }
 
-        std::vector<std::string> idxVars, lenSlots;
+        std::vector<std::string> idxVars;
         idxVars.reserve(gens.size());
-        lenSlots.reserve(gens.size());
         for (size_t gi = 0; gi < gens.size(); ++gi) {
             std::string idxVar  = "sc_i_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
             std::string idxInit = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"0"}, idxInit);
             ir.addInstruction(currentFunc, "assign", {idxInit}, idxVar);
             idxVars.push_back(idxVar);
-            std::string lenRes = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterSlots[gi]}, lenRes);
-            std::string lenSlot = "__scsl_" + std::to_string(gi) + "_" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
-            lenSlots.push_back(lenSlot);
+            if (gi == 0) {
+                std::string lenRes = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterSlots[0]}, lenRes);
+                std::string lenSlot = "__scsl_0_" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
+                lenSlots[0] = lenSlot;
+            }
         }
 
         std::string postL = "sc_post_" + std::to_string(tempCounter++);
@@ -9628,7 +9656,25 @@ class LoweringVisitor {
             }
 
             if (gi + 1 < gens.size()) {
+                // Evaluate nested gens' iterables HERE (inside the parent
+                // body) so they can reference the outer loop variable.
                 for (size_t gj = gi + 1; gj < gens.size(); ++gj) {
+                    const ASTNode* genNode = node->children[gj + 1].get();
+                    std::string iterVal = lowerExpr(genNode->children[1].get());
+                    std::string iterSlot = "__sci_" + std::to_string(gj) + "_" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "assign", {iterVal}, iterSlot);
+                    std::string listified = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", iterSlot}, listified);
+                    std::string listifiedSlot = "__scmat_" + std::to_string(gj) + "_" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "assign", {listified}, listifiedSlot);
+                    iterSlots[gj] = listifiedSlot;
+
+                    std::string lenRes = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", iterSlots[gj]}, lenRes);
+                    std::string lenSlot = "__scsl_" + std::to_string(gj) + "_" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "assign", {lenRes}, lenSlot);
+                    lenSlots[gj] = lenSlot;
+
                     std::string zeroR = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"0"}, zeroR);
                     ir.addInstruction(currentFunc, "assign", {zeroR}, idxVars[gj]);

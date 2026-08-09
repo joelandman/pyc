@@ -116,9 +116,12 @@ changed source before trusting runner output.
 These surface in the same test cases but are distinct, pre-existing
 limitations:
 
-- **Set comprehensions are not implemented at all.** `{a+b for a, b in
-  pairs}` prints `None` — `PythonParser.cpp` has no `SetComp` handler, so
-  the AST node gets no children and `lowerExpr` returns "".
+- ~~**Set comprehensions are not implemented at all.**~~ **Now working**
+  — `{x*x for x in [1,2,3,2]}` correctly produces `{1, 4, 9}`. The
+  `lowerSetComp` handler in `Compiler.cpp` is implemented and functional.
+  Also fixed: nested set comprehension iterators are now evaluated lazily
+  inside the parent body (same fix as `lowerListComp`), so nested set
+  comprehensions with outer-variable-dependent iterables work correctly.
 - **Dict iteration order is not insertion-preserved** —
   `{a: b for a, b in pairs}` produces the right values in the wrong key
   order (the `unordered_map`-backed dict limitation, see IMPLEMENTATION.md).

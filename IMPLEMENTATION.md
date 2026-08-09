@@ -2482,13 +2482,21 @@ were pre-existing and unrelated to this session's work:
    does (`1j` in real CPython vs. always `(0.0+1.0j)` in pyc). Since this
    source runs successfully under real CPython, the live-comparison this
    runner does always wins over any hardcoded fallback — meaning this test
-   can never pass without actually fixing complex number support. Not
-   fixed here (a separate, substantial, out-of-scope feature area) — the
-   test case was **removed** rather than left failing or silently
-   stranded again; see the `re`/`bytes`/`decimal` numeric-type research
-   notes elsewhere in this doc for what's suspected (complex arithmetic is
-   wired through a compile-time-only `complexVars` set in `Compiler.cpp`,
-   not the generic runtime `PyNumber_*` functions).
+   can never pass without actually fixing complex number support. **Now
+   fixed**: complex dispatch with int/float promotion was added to the
+   runtime `PyNumber_Add`/`Subtract`/`Multiply`/`TrueDivide` functions
+   (previously complex arithmetic was only dispatched at compile time via
+   the `complexVars` tracking set in `Compiler.cpp`, which only tracked
+   complex literals and `complex()` calls — not plain variables holding
+   complex values). The codegen native-float fast path in
+   `emitNativeNumericBinary` was also fixed to not fire when
+   `resultType == "boxed"` (which could be complex), preventing the
+   imaginary part from being silently dropped (e.g. `-0.0 + 0j` producing
+   `0.0` instead of `0j`). Complex repr was fixed to suppress zero real
+   parts (`1j` not `(0.0+1.0j)`) and strip trailing `.0` from whole
+   numbers in complex context (`format_double_complex` helper). Complex
+   equality comparison was added to `PyObject_CompareBool` (needed for
+   dict key lookup with complex keys). Test coverage re-added to `CASES`.
 3. **Real, pre-existing, unrelated bug — function repr/naming**: a test
    directly compared a function object's raw `repr()` (which embeds a
    live process memory address) against live CPython's output — this can
@@ -2496,12 +2504,16 @@ were pre-existing and unrelated to this session's work:
    of any pyc bug; not a real signal. Rewritten to check only reproducible
    properties (`repr(f).startswith("<function")`, not the literal string).
    While fixing this, also found: `callable(f)` returns `None` instead of
-   `True` (the `callable()` builtin isn't implemented at all — confirmed
-   via grep, zero hits in `Compiler.cpp`); and pyc's nested-function repr
-   shows its internal synthetic name (`<function __nesteddef_0 at ...>`)
-   rather than CPython's qualified name (`<function outer.<locals>.inner
-   at ...>`). Neither fixed (both low-value cosmetic/completeness gaps,
-   out of scope) — the rewritten test avoids exercising either.
+   `True` (the `callable()` builtin wasn't implemented at all — confirmed
+   via grep, zero hits in `Compiler.cpp`). **Now fixed**: added
+   `PyBuiltin_Callable` runtime function that checks for callable token
+   strings (against the `g_callableRegistry`), function objects (type 11),
+   exception classes (type 12), class dicts (has `__mro__`), class
+   instances with `__call__`, and descriptor bundles. Wired through
+   compiler dispatch and codegen extern declaration. pyc's nested-function
+   repr showing its internal synthetic name (`<function __nesteddef_0 at
+   ...>`) rather than CPython's qualified name (`<function
+   outer.<locals>.inner at ...>`) remains unfixed (cosmetic, low-value).
 
 **Lesson for this codebase specifically**: a passing test count is not
 proof of correctness if the harness itself can silently misfile test

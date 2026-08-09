@@ -393,6 +393,13 @@ print(a[0],a[1],a[2])
     ("print(oct(0), oct(8), oct(-1))", "0o0 0o10 -0o1\n"),
     ("print(bin(0), bin(5), bin(-1))", "0b0 0b101 -0b1\n"),
 
+    # callable() builtin
+    ("def f(): pass\nprint(callable(f), callable(42), callable('x'), callable([]))",
+     "True False False False\n"),
+    ("class Foo: pass\nprint(callable(Foo))", "True\n"),
+    ("class Bar:\n    def __call__(self): return 1\nprint(callable(Bar()))", "True\n"),
+    ("print(callable(None), callable(3.14))", "False False\n"),
+
     # Sorted on dict (iterates keys)
     ("print(sorted({'c': 3, 'a': 1, 'b': 2}))", "['a', 'b', 'c']\n"),
 
@@ -1753,6 +1760,27 @@ print(ValueError is exc2)
     # entry that's dishonest about complex number support's current
     # state; a real fix should re-add proper coverage once the
     # underlying bugs are addressed.
+    # Complex number arithmetic and repr — now fixed.
+    # Previously: (1) pyc's complex repr never suppressed a zero real part
+    # (1j printed as (0.0+1.0j)); (2) a + b / a - b / a * b / a / b for
+    # plain variables holding complex values all printed None because
+    # complex arithmetic was only dispatched at compile time via complexVars,
+    # not at runtime via PyNumber_Add/Sub/Mul/Div. Both fixed: complex
+    # dispatch added to the runtime PyNumber_* functions (with int/float
+    # promotion), and repr now suppresses zero real parts + strips .0.
+    ("a = 1j; b = 2j\nprint(a + b)", "3j\n"),
+    ("a = 1j; b = 2j\nprint(a - b)", "-1j\n"),
+    ("a = 1j; b = 2j\nprint(a * b)", "(-2+0j)\n"),
+    ("a = 1j; b = 2j\nprint(a / b)", "(0.5+0j)\n"),
+    ("print(1 + 2j)", "(1+2j)\n"),
+    ("print(3 + 0j)", "(3+0j)\n"),
+    ("print(0j)", "0j\n"),
+    ("a = 1 + 2j\nb = 3 - 1j\nprint(a + b, a - b, a * b)", "(4+1j) (-2+3j) (5+5j)\n"),
+    ("print(complex(3, 4))", "(3+4j)\n"),
+    ("print(abs(3 + 4j))", "5.0\n"),
+    ("d = {1j: 'a', 2j: 'b'}\nprint(d[1j], d[2j])", "a b\n"),
+    ("print(1j == 1j, 1j == 2j)", "True False\n"),
+    ("print(callable(1j))", "False\n"),
     # math module (synthetic, wraps libm)
     ("""
 import math

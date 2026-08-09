@@ -480,7 +480,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     for (const char* name : {"PyBuiltin_Int","PyBuiltin_Float","PyBuiltin_Abs",
                               "PyBuiltin_Ord","PyBuiltin_Chr",
-                              "PyBuiltin_Bool","PyBuiltin_Type",
+                              "PyBuiltin_Bool","PyBuiltin_Type","PyBuiltin_Callable",
                               "PyBuiltin_Hex","PyBuiltin_Oct","PyBuiltin_Bin",
                               "PyBuiltin_Id","PyBuiltin_Repr",
                               "PyString_Upper","PyString_Lower","PyString_Strip",
@@ -1702,12 +1702,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             }
             // Native float if result is float, both sides native doubles, OR either
             // side is already a native double (e.g. mag from pow/fmul chain × boxed m1).
+            // But NOT when the boxed side's IR type is "boxed" (not "float") — a boxed
+            // operand could be complex, and the native float fast path would silently
+            // drop the imaginary part (found: -0.0 + 0j produced 0.0, not 0j).
             bool eitherNativeDbl =
                 (lhsIsNative && rawL->getType()->isDoubleTy()) ||
                 (rhsIsNative && rawR->getType()->isDoubleTy());
             if (inst.resultType == "float" ||
                 (bothNative && rawL->getType()->isDoubleTy() && rawR->getType()->isDoubleTy()) ||
-                (eitherNativeDbl && (op == "add" || op == "sub" || op == "mul"))) {
+                (eitherNativeDbl && inst.resultType != "boxed" && (op == "add" || op == "sub" || op == "mul"))) {
                 llvm::Value* lhs = unboxToDouble(getOrLoad(inst.operands[0].name));
                 llvm::Value* rhs = unboxToDouble(getOrLoad(inst.operands[1].name));
                 llvm::Value* native = nullptr;

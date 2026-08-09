@@ -113,6 +113,7 @@ PyObject* PyBuiltin_Round(PyObject* x, PyObject* n);
 PyObject* PyBuiltin_Pow(PyObject* a, PyObject* b);
 PyObject* PyBuiltin_Bool(PyObject* obj);
 PyObject* PyBuiltin_Type(PyObject* obj);
+PyObject* PyBuiltin_Callable(PyObject* obj);
 PyObject* PyBuiltin_Hex(PyObject* obj);
 PyObject* PyBuiltin_Oct(PyObject* obj);
  PyObject* PyBuiltin_Bin(PyObject* obj);

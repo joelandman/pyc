@@ -248,7 +248,7 @@ f(b=3, a=4)                    keyword call arguments
 `bool(x)`, `type(x)`, `id(x)`, `repr(x)`, `hex(x)`, `oct(x)`, `bin(x)`,
 `ord(c)`, `chr(i)`, `round(x)`, `divmod(a, b)`, `pow(base, exp)`,
 `pow(base, exp, mod)` (modular exponentiation), `tuple(x)`,
-`reversed(x)`, `cmp_to_key(cmp)`
+`reversed(x)`, `cmp_to_key(cmp)`, `callable(x)`
 
 - **Real bugs found and fixed**: `tuple(x)`, `divmod(a, b)`, and
   `pow(base, exp)` all unconditionally returned `None` — each had a
@@ -496,15 +496,15 @@ flag values (`IGNORECASE=2`, `MULTILINE=8`, `DOTALL=16`). `re.sub`'s
 - Absolute value: `abs()` (via `PyComplex_Abs`)
 - Builtin: `complex()`, `complex(3)`, `complex(3, 4)`, `complex("3+4j")`
 - cmath module: `sqrt`, `log`, `exp`, `sin`, `cos`, `tan`
-- **Known real bugs, found while restoring a stranded test case (see
-  IMPLEMENTATION.md's test-infrastructure section), not fixed here (out
-  of scope for the session that found them)**: arithmetic between two
-  plain variables holding complex values (`a = 1j; b = 2j; a + b`) prints
-  `None` instead of a complex result. Complex `repr`/`print` never
-  suppresses a zero real part the way CPython's does — `print(1j)` shows
-  `(0.0+1.0j)` in pyc vs. CPython's `1j`, always. `==`/`!=` and unary `-`
-  on complex values are also unimplemented in the shared comparison/
-  negation runtime functions.
+- Arithmetic between plain variables holding complex values (`a = 1j; b =
+  2j; a + b`) now works — complex dispatch with int/float promotion is
+  wired into the runtime `PyNumber_Add`/`Subtract`/`Multiply`/`TrueDivide`
+  functions, not just the compile-time `complexVars` tracking set.
+- Complex `repr`/`print` now suppresses zero real parts (`1j` not
+  `(0.0+1.0j)`) and strips trailing `.0` from whole numbers in complex
+  context, matching CPython's formatting.
+- `==`/`!=` comparison on complex values works (compares both real and
+  imag parts), enabling complex dict keys.
 
 ## Sets
 

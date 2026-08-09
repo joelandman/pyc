@@ -125,6 +125,17 @@ static void format_double(char* buf, size_t bufsize, double v) {
     }
 }
 
+// Like format_double, but strips trailing ".0" from whole numbers, matching
+// CPython's complex repr (1j, not 1.0j). Used only for complex number parts.
+static void format_double_complex(char* buf, size_t bufsize, double v) {
+    format_double(buf, bufsize, v);
+    // Strip trailing ".0" (but keep it for inf/nan/exponential).
+    size_t len = strlen(buf);
+    if (len >= 2 && buf[len-2] == '.' && buf[len-1] == '0') {
+        buf[len-2] = '\0';
+    }
+}
+
 // ---- Format Specification Mini-Language (Pyc_FormatValue, defined
 // further down once PyStr_FromAny is available) — found and fixed while
 // bug hunting: f"{x:.2f}"-style format specs were a documented, deliberate
@@ -1291,9 +1302,13 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
     }
     if (obj->type == 13) {
         char rbuf[64], ibuf[64];
-        format_double(rbuf, sizeof(rbuf), obj->complex_real);
-        format_double(ibuf, sizeof(ibuf), obj->complex_imag);
-        if (obj->complex_imag >= 0) {
+        format_double_complex(rbuf, sizeof(rbuf), obj->complex_real);
+        format_double_complex(ibuf, sizeof(ibuf), obj->complex_imag);
+        // CPython format: if real==0, print just "{imag}j" (no parens).
+        // Otherwise print "({real}+{imag}j)" or "({real}{imag}j)".
+        if (obj->complex_real == 0.0) {
+            return fprintf(fp, "%sj", ibuf);
+        } else if (obj->complex_imag >= 0) {
             return fprintf(fp, "(%s+%sj)", rbuf, ibuf);
         } else {
             return fprintf(fp, "(%s%sj)", rbuf, ibuf);
@@ -1409,23 +1424,12 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
     }
     if (obj->type == 13) {
         char rbuf[64], ibuf[64];
-        format_double(rbuf, sizeof(rbuf), obj->complex_real);
-        format_double(ibuf, sizeof(ibuf), obj->complex_imag);
+        format_double_complex(rbuf, sizeof(rbuf), obj->complex_real);
+        format_double_complex(ibuf, sizeof(ibuf), obj->complex_imag);
         int r;
-        if (obj->complex_imag >= 0) {
-            r = fprintf(fp, "(%s+%sj)\n", rbuf, ibuf);
-        } else {
-            r = fprintf(fp, "(%s%sj)\n", rbuf, ibuf);
-        }
-        fflush(fp); return r;
-    }
-    if (obj->type == 13) {
-        // Complex number: print as (real+imagj) or (real-imagj)
-        char rbuf[64], ibuf[64];
-        format_double(rbuf, sizeof(rbuf), obj->complex_real);
-        format_double(ibuf, sizeof(ibuf), obj->complex_imag);
-        int r;
-        if (obj->complex_imag >= 0) {
+        if (obj->complex_real == 0.0) {
+            r = fprintf(fp, "%sj\n", ibuf);
+        } else if (obj->complex_imag >= 0) {
             r = fprintf(fp, "(%s+%sj)\n", rbuf, ibuf);
         } else {
             r = fprintf(fp, "(%s%sj)\n", rbuf, ibuf);
@@ -2232,6 +2236,51 @@ PyObject* PyBuiltin_Type(PyObject* obj) {
     }
 }
 
+// Forward declaration: the callable registry is defined far below (B4/B8
+// dispatch section) but PyBuiltin_Callable needs to check it.
+static std::unordered_map<std::string, PyObject* (*)(PyObject*)> g_callableRegistry;
+
+PyObject* PyBuiltin_Callable(PyObject* obj) {
+    if (!obj) return PyBool_New(0);
+    // Type 11 = function object, type 12 = exception class — callable.
+    if (obj->type == 11 || obj->type == 12) {
+        return PyBool_New(1);
+    }
+    // Type 3 (str): only callable if it's a registered callable token.
+    if (obj->type == 3) {
+        auto it = g_callableRegistry.find(obj->str);
+        if (it != g_callableRegistry.end() && it->second) {
+            return PyBool_New(1);
+        }
+        return PyBool_New(0);
+    }
+    // Type 2 (dict): could be a class dict (has __mro__) or a class
+    // instance with __call__.
+    if (obj->type == 2) {
+        // Class dict (instantiable class)
+        for (auto& p : obj->dict) {
+            if (p.first && p.first->type == 3 && p.first->str == "__mro__") {
+                return PyBool_New(1);
+            }
+        }
+        // Class instance with __call__
+        PyObject* callMethod = pyc_lookup_dunder(obj, "__call__");
+        if (callMethod) { Py_DECREF(callMethod); return PyBool_New(1); }
+    }
+    // Descriptor bundle list whose first element is a callable token
+    if (obj->type == 1 && !obj->list.empty()) {
+        PyObject* first = obj->list[0];
+        if (first) {
+            if (first->type == 11 || first->type == 12) return PyBool_New(1);
+            if (first->type == 3) {
+                auto it = g_callableRegistry.find(first->str);
+                if (it != g_callableRegistry.end() && it->second) return PyBool_New(1);
+            }
+        }
+    }
+    return PyBool_New(0);
+}
+
 static PyObject* intToBaseString(long v, int base, bool upper) {
     if (base < 2 || base > 36) base = 10;
     if (v == 0) return PyUnicode_FromString("0");
@@ -2343,6 +2392,20 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
         char buf[64];
         format_double(buf, sizeof(buf), obj->dvalue);
         return PyUnicode_FromString(buf);
+    }
+    if (obj->type == 13) {
+        char rbuf[64], ibuf[64];
+        format_double_complex(rbuf, sizeof(rbuf), obj->complex_real);
+        format_double_complex(ibuf, sizeof(ibuf), obj->complex_imag);
+        std::string s;
+        if (obj->complex_real == 0.0) {
+            s = std::string(ibuf) + "j";
+        } else if (obj->complex_imag >= 0) {
+            s = "(" + std::string(rbuf) + "+" + std::string(ibuf) + "j)";
+        } else {
+            s = "(" + std::string(rbuf) + std::string(ibuf) + "j)";
+        }
+        return PyUnicode_FromString(s.c_str());
     }
     if (obj->type == 3) {
         // String: wrap in single quotes (simplified — no escaping).
@@ -4105,6 +4168,22 @@ static int is_numeric(PyObject* o) {
     return o && (o->type == 0 || o->type == 4 || o->type == 5);
 }
 
+// Promote any numeric or complex to (real, imag) components.
+// Returns true if o is numeric or complex, false otherwise.
+static bool to_complex(PyObject* o, double& real, double& imag) {
+    if (!o) return false;
+    if (o->type == 13) { real = o->complex_real; imag = o->complex_imag; return true; }
+    if (o->type == 0 || o->type == 5) { real = (double)o->value; imag = 0.0; return true; }
+    if (o->type == 4) { real = o->dvalue; imag = 0.0; return true; }
+    return false;
+}
+
+// True if either operand is complex (type 13) — arithmetic should
+// produce a complex result in that case (CPython promotes int/float).
+static bool has_complex(PyObject* a, PyObject* b) {
+    return (a && a->type == 13) || (b && b->type == 13);
+}
+
 // Unbox the i-th element of a token+registry `args` list (see Pyc_Apply)
 // as a double, treating int/bool/float uniformly via numeric_val. Used by
 // modules like math whose functions take numeric arguments through the
@@ -5531,6 +5610,11 @@ PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
         if (bTemp) mpd_del(db);
         return result;
     }
+    if (a && b && has_complex(a, b)) {
+        double ar, ai, br, bi;
+        if (to_complex(a, ar, ai) && to_complex(b, br, bi))
+            return PyComplex_New(ar + br, ai + bi);
+    }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) return PyInt_FromLong(a->value + b->value);
     return PyFloat_FromDouble(numeric_val(a) + numeric_val(b));
@@ -5561,6 +5645,11 @@ PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
         if (aTemp) mpd_del(da);
         if (bTemp) mpd_del(db);
         return result;
+    }
+    if (a && b && has_complex(a, b)) {
+        double ar, ai, br, bi;
+        if (to_complex(a, ar, ai) && to_complex(b, br, bi))
+            return PyComplex_New(ar - br, ai - bi);
     }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) return PyInt_FromLong(a->value - b->value);
@@ -9969,6 +10058,14 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
         if (bTemp) mpd_del(db);
         return result;
     }
+    if (a && b && has_complex(a, b)) {
+        double ar, ai, br, bi;
+        if (to_complex(a, ar, ai) && to_complex(b, br, bi)) {
+            double r = ar * br - ai * bi;
+            double i = ar * bi + ai * br;
+            return PyComplex_New(r, i);
+        }
+    }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     if (both_integral(a, b)) return PyInt_FromLong(a->value * b->value);
     return PyFloat_FromDouble(numeric_val(a) * numeric_val(b));
@@ -10065,6 +10162,19 @@ PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b) {
         if (aTemp) mpd_del(da);
         if (bTemp) mpd_del(db);
         return result;
+    }
+    if (a && b && has_complex(a, b)) {
+        double ar, ai, br, bi;
+        if (to_complex(a, ar, ai) && to_complex(b, br, bi)) {
+            double denom = br * br + bi * bi;
+            if (denom == 0.0) {
+                pyc_raise_msg("ZeroDivisionError", "complex division by zero");
+                return NULL;
+            }
+            double r = (ar * br + ai * bi) / denom;
+            double i = (ai * br - ar * bi) / denom;
+            return PyComplex_New(r, i);
+        }
     }
     if (!is_numeric(a) || !is_numeric(b)) return NULL;
     double bv = numeric_val(b);
@@ -10347,6 +10457,18 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
             case 3: return av >  bv;
             case 4: return av <= bv;
             case 5: return av >= bv;
+        }
+    }
+    // Complex comparison: == and != compare both real and imag parts.
+    // Ordering (< > <= >=) is a TypeError in CPython; we return 0.
+    if (a && b && (a->type == 13 || b->type == 13)) {
+        double ar, ai, br, bi;
+        if (to_complex(a, ar, ai) && to_complex(b, br, bi)) {
+            switch (op) {
+                case 0: return (ar == br) && (ai == bi);
+                case 1: return (ar != br) || (ai != bi);
+                default: return 0;
+            }
         }
     }
     // String comparison
@@ -11328,8 +11450,7 @@ extern "C" void pyc_clear_yield_buffer(void) {
 
 // ---- B4/B8 callable dispatch (lambdas as values, dynamic call via token) ----
 
-// Simple registry: token name -> function pointer that accepts a PyObject* list and returns a boxed result.
-static std::unordered_map<std::string, PyObject* (*)(PyObject*)> g_callableRegistry;
+// g_callableRegistry is forward-declared near PyBuiltin_Callable above.
 
 extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObject*)) {
     if (name && func) g_callableRegistry[std::string(name)] = func;
