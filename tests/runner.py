@@ -1951,15 +1951,14 @@ print(collections.most_common(c, 2))
     # Covers both `import datetime` / `datetime.date(...)`-qualified and
     # `from datetime import date, timedelta` bare-name construction, plus
     # attribute reads, arithmetic, comparisons, str()/isoformat(), and the
-    # parameter-passing-robust primitives (year_of/show below take an
-    # untyped parameter and still work via Pyc_GetItem/PyObject_PrintBase,
-    # unlike .isoformat()/.weekday()/.total_seconds() which require typeOf
-    # to see the construction — see the method-call dispatch note in
-    # Compiler.cpp's lowerMethodCall). total_seconds() uses 93 seconds
-    # (not evenly divisible by 10) to sidestep a separate, pre-existing,
-    # unrelated float-formatting bug where whole floats divisible by 10
-    # print in scientific notation (e.g. `print(20.0)` -> "2e+01" instead
-    # of "20.0" — see IMPLEMENTATION.md).
+    # parameter-passing-robust primitives (year_of/show take an untyped
+    # parameter and work via Pyc_GetItem/PyObject_PrintBase). Method calls
+    # (.isoformat()/.weekday()/.total_seconds()) now also work through
+    # untyped params (the typeOf gate accepts "boxed" and the runtime
+    # type-checks via pyc_as_datetime/pyc_as_timedelta). total_seconds()
+    # uses 93 seconds (not evenly divisible by 10) to sidestep a
+    # separate, pre-existing float-formatting bug where whole floats
+    # divisible by 10 print in scientific notation.
     ("""
 import datetime
 from datetime import date, timedelta
@@ -2003,7 +2002,17 @@ def show(x):
     return str(x)
 print(year_of(d))
 print(show(dt))
-""", "2024-03-15\n2024 3 15\n2024-03-15\n4\n5\n2024-03-15 09:30:45\n2024-03-15T09:30:45\n9 30 45\n5 days, 3:00:00\n5 10800\n93.0\n2024-03-25\n10 days, 0:00:00\n<class 'datetime.timedelta'>\nTrue\nTrue\nTrue\n2024-01-08\n2024\n2024-03-15 09:30:45\n"),
+# method calls through untyped function parameters (fixed: was returning None)
+def fmt_dt(x):
+    return x.isoformat()
+def wd_of(x):
+    return x.weekday()
+def ts_of(x):
+    return x.total_seconds()
+print(fmt_dt(d))
+print(wd_of(d))
+print(ts_of(td_small))
+""", "2024-03-15\n2024 3 15\n2024-03-15\n4\n5\n2024-03-15 09:30:45\n2024-03-15T09:30:45\n9 30 45\n5 days, 3:00:00\n5 10800\n93.0\n2024-03-25\n10 days, 0:00:00\n<class 'datetime.timedelta'>\nTrue\nTrue\nTrue\n2024-01-08\n2024\n2024-03-15 09:30:45\n2024-03-15\n4\n93.0\n"),
     # os / pathlib (synthetic; os.path.* are token-dispatched functions,
     # pathlib.Path is a new runtime type — tag 16, see IMPLEMENTATION.md).
     # os.path.splitext now returns a real tuple (matching CPython); the
@@ -2051,10 +2060,19 @@ def name_of(x):
 def show(x):
     return str(x)
 print(name_of(p), show(p))
+# pathlib method calls through untyped params (fixed: was returning None)
+def exists_of(x):
+    return x.exists()
+def is_dir_of(x):
+    return x.is_dir()
+def join_of(x, y):
+    return x.joinpath(y)
+print(exists_of(f), is_dir_of(sub))
+print(join_of(p, "child"))
 
 print(isinstance(os.getcwd(), str))
 print(len(os.environ) >= 0)
-""", "a/b/c\nz.txt\n/x/y\n['/x/y/z.tar', '.gz']\nTrue\nTrue True False\nhello.txt .txt hello\nTrue\nFalse\n['dir']\nx/y/z\npyc_test_os_pathlib_scratch /tmp/pyc_test_os_pathlib_scratch\nTrue\nTrue\n"),
+""", "a/b/c\nz.txt\n/x/y\n['/x/y/z.tar', '.gz']\nTrue\nTrue True False\nhello.txt .txt hello\nTrue\nFalse\n['dir']\nx/y/z\npyc_test_os_pathlib_scratch /tmp/pyc_test_os_pathlib_scratch\nFalse True\n/tmp/pyc_test_os_pathlib_scratch/child\nTrue\nTrue\n"),
     # Regression for a severe pre-existing bug found while investigating
     # hashlib's calling conventions: `with open(p, "w") as f: f.write(x)`
     # created the file but silently never wrote any content — the
@@ -2335,7 +2353,14 @@ print(p is not None)
 print(re.findall("^b", "a\\nb\\nc", re.MULTILINE))
 print(re.search("a.b", "a\\nb", re.DOTALL) is not None)
 print(re.search("a.b", "a\\nb") is not None)
-""", "True\nTrue\nHELLO\nHELLO\nTrue\nTrue\n['A', 'a', 'A', 'a', 'A']\nA\na\nA\ndog dog dog\ndog cat CAT\n['a', 'b', 'c', 'd']\n['a', 'b', 'c,d']\n['', 'X', 'Y', 'Z']\nTrue\n['b']\nTrue\nFalse\n"),
+
+# Match.group() through untyped function parameter (fixed: was returning None)
+def grp_of(m, i):
+    return m.group(i)
+mg = re.search(r"(\\w+) (\\w+)", "hello world")
+print(grp_of(mg, 1))
+print(grp_of(mg, 2))
+""", "True\nTrue\nHELLO\nHELLO\nTrue\nTrue\n['A', 'a', 'A', 'a', 'A']\nA\na\nA\ndog dog dog\ndog cat CAT\n['a', 'b', 'c', 'd']\n['a', 'b', 'c,d']\n['', 'X', 'Y', 'Z']\nTrue\n['b']\nTrue\nFalse\nhello\nworld\n"),
     # hashlib / base64 / struct. pyc now has a real bytes type (added
     # alongside this update); hashlib/base64/struct accept str OR bytes
     # input (more permissive than real CPython, which requires actual

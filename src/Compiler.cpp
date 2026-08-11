@@ -8335,11 +8335,13 @@ class LoweringVisitor {
             return res;
         }
         // Path.exists()/.is_file()/.is_dir()/.mkdir()/.joinpath(*parts) —
-        // typeOf-gated, same fast-path-only limitation as datetime's
-        // methods just below (works after construction/assignment/return,
-        // not through an untyped function parameter — str()/attribute
-        // access remain robust for a Path in that case).
-        if (typeOf(obj) == "path") {
+        // dispatch on typeOf(obj) == "path" (fast path after construction)
+        // OR "boxed" (untyped function parameter). The runtime functions
+        // (PyPathlib_Exists etc.) already type-check at runtime via
+        // pyc_is_path_like and return safe defaults for non-Path values,
+        // so emitting the call unconditionally for "boxed" values is safe
+        // and fixes the silent-None bug for Path values passed as params.
+        if (typeOf(obj) == "path" || typeOf(obj) == "boxed") {
             if (methodName == "exists") {
                 ir.addInstruction(currentFunc, "call", {"PyPathlib_Exists", obj}, res, "bool");
                 noteType(res, "bool");
@@ -8376,37 +8378,35 @@ class LoweringVisitor {
             }
         }
         // .isoformat()/.weekday()/.isoweekday()/.total_seconds() — dispatch
-        // when the inferred type of obj is a date/datetime/timedelta
-        // (tagged by noteType at construction above). Same fast-path-only
-        // limitation as Match.group() below: requires typeOf tracking to
-        // have followed the value to this call site (works right after
-        // construction, through simple assignment, and as a return value;
-        // not guaranteed for an untyped function parameter — use
-        // str()/attribute access instead in that case, both robust).
-        if (methodName == "isoformat" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
+        // when typeOf(obj) is date/datetime/timedelta (fast path after
+        // construction) OR "boxed" (untyped function parameter). The runtime
+        // functions type-check via pyc_as_datetime/pyc_as_timedelta and return
+        // safe defaults for non-matching types, so this is safe.
+        if (methodName == "isoformat" && (typeOf(obj) == "date" || typeOf(obj) == "datetime" || typeOf(obj) == "boxed")) {
             ir.addInstruction(currentFunc, "call", {"PyDateTime_Isoformat", obj}, res, "str");
             noteType(res, "str");
             return res;
         }
-        if (methodName == "weekday" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
+        if (methodName == "weekday" && (typeOf(obj) == "date" || typeOf(obj) == "datetime" || typeOf(obj) == "boxed")) {
             ir.addInstruction(currentFunc, "call", {"PyDateTime_Weekday", obj}, res, "int");
             noteType(res, "int");
             return res;
         }
-        if (methodName == "isoweekday" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
+        if (methodName == "isoweekday" && (typeOf(obj) == "date" || typeOf(obj) == "datetime" || typeOf(obj) == "boxed")) {
             ir.addInstruction(currentFunc, "call", {"PyDateTime_Isoweekday", obj}, res, "int");
             noteType(res, "int");
             return res;
         }
-        if (methodName == "total_seconds" && typeOf(obj) == "timedelta") {
+        if (methodName == "total_seconds" && (typeOf(obj) == "timedelta" || typeOf(obj) == "boxed")) {
             ir.addInstruction(currentFunc, "call", {"PyTimedelta_TotalSeconds", obj}, res, "float");
             noteType(res, "float");
             return res;
         }
 
-        // Match.group(i) — dispatch when the inferred type of obj is a
-        // Match (which we'll tag with "match" when we construct it).
-        if (methodName == "group" && typeOf(obj) == "match") {
+        // Match.group(i) — dispatch when typeOf(obj) is "match" (fast path)
+        // OR "boxed" (untyped function parameter). PyBuiltin_ReMatchGroup
+        // type-checks via asMatchObj and returns None for non-Match values.
+        if (methodName == "group" && (typeOf(obj) == "match" || typeOf(obj) == "boxed")) {
             std::string i = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_ReMatchGroup", obj, i}, res);
             return res;

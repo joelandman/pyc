@@ -2051,27 +2051,17 @@ errors.
   individually discovered and guarded the same way. Always smoke-test a
   new synthetic module's every dict key name against this dispatch chain,
   not just against ImportError/basic call success.
-- **`datetime` method calls are not robust to untyped function parameters**:
-  unlike `date`/`datetime`/`timedelta`'s attribute reads, arithmetic,
-  comparisons, and `str()`, which are dispatched purely on the runtime
-  type tag (14/15) and so work regardless of what the compiler could infer
-  — method-call *syntax* (`.isoformat()`, `.weekday()`, `.isoweekday()`,
-  `.total_seconds()`) is gated on `typeOf(obj)` in `Compiler.cpp`'s
-  `lowerMethodCall`, the same dispatch class as the pre-existing
-  `Match.group()`. `typeOf` tracking follows construction, plain
-  assignment, and function return values, but **not** function parameters
-  (confirmed by reading `inferParamTypesFromBody`, which only ever infers
-  `int`/`float`/`boxed`) — so `def f(d): return d.isoformat()` returns
-  `None` for a `date`/`datetime` `d` passed in as a parameter, even though
-  `def f(d): return str(d)` and `def f(d): return d.year` both work
-  correctly on the same value. Prefer `str()`/attribute access over method
-  calls when a datetime value crosses a function boundary.
-- **`pathlib.Path` method calls have the identical limitation**:
-  `.exists()`/`.is_file()`/`.is_dir()`/`.mkdir()`/`.joinpath()` are
-  `typeOf`-gated the same way as `datetime`'s methods, and don't survive
-  an untyped function parameter (`.name`/`.parent`/`.suffix`/`.stem`, `/`,
-  comparisons, and `str()` all do, since they route through the universal
-  runtime-tag dispatch points).
+- **`datetime`/`pathlib`/`Match` method calls now work through untyped
+  function parameters** (fixed): previously `.isoformat()`/`.weekday()`/
+  `.total_seconds()`/`.exists()`/`.is_dir()`/`.joinpath()`/`.group()`
+  were gated on `typeOf(obj)` in `Compiler.cpp`'s `lowerMethodCall` and
+  returned `None` when the value arrived as a function parameter (which
+  is always `"boxed"`). The gates now also accept `"boxed"`, emitting
+  the same direct runtime call — the runtime functions already
+  type-check internally (`pyc_as_datetime`/`pyc_as_timedelta`/
+  `pyc_is_path_like`/`asMatchObj` return safe defaults for non-matching
+  types), so this is safe and matches how attribute reads already worked
+  (via `Pyc_GetItem`'s unconditional runtime-tag dispatch).
 - **Fixed while adding `pathlib`**: `Compiler.cpp`'s `lowerBinOp` never
   tagged a binary operation's *result temp* with a non-numeric type string
   — so `typeOf` lost track of a value the instant it passed through a
