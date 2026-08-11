@@ -109,12 +109,17 @@ struct IRFunction {
      std::vector<std::string> moduleGlobals;
      // Module name for B7 import system (e.g., "utils", "main")
      std::string moduleName;
+     // Current source line, set by LoweringVisitor before emitting instructions.
+     // addInstruction uses this when the explicit lineno parameter is 0 (the
+     // default), so the ~877 existing ir.addInstruction call sites automatically
+     // get line numbers without any per-site changes.
+     int currentLineno = 0;
 
     void addFunction(const std::string& name, const std::vector<std::string>& args = {});
     void addInstruction(const std::string& funcName, const std::string& op, const std::vector<std::string>& operands, const std::string& result = "", const std::string& resultType = "boxed", int lineno = 0);
     void addInstructionRaw(const std::string& funcName, const std::string& op, const std::vector<IRValue>& operands, const std::string& result = "", const std::string& resultType = "boxed", int lineno = 0);
      void setFunctionGlobals(const std::string& funcName, const std::vector<std::string>& globals);
      void addModuleGlobal(const std::string& name);
-};
+ };
 
 } // namespace pyc

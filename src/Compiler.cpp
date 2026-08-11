@@ -57,7 +57,7 @@ class LoweringVisitor {
     void lower(const ASTNode* node, const std::string& funcName = "") {
         if (!node) return;
         if (!funcName.empty()) currentFunc = funcName;
-        if (node->lineno > 0) currentLineno = node->lineno;
+        if (node->lineno > 0) { currentLineno = node->lineno; ir.currentLineno = currentLineno; }
 
          if (node->type == "Module") {
              ir.addFunction("__module__", {});
@@ -1502,7 +1502,7 @@ class LoweringVisitor {
     std::string lowerExpr(const ASTNode* node) {
         if (!node || currentFunc.empty()) return "";
         if (node->type == "FunctionDef") return "";
-        if (node->lineno > 0) currentLineno = node->lineno;
+        if (node->lineno > 0) { currentLineno = node->lineno; ir.currentLineno = currentLineno; }
 
         if (node->type == "Constant") {
             std::string res = "$c" + std::to_string(tempCounter++);
@@ -11327,7 +11327,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             std::cout << "Emitted bitcode " << bitcodePath << " (-O5 full LTO)\n";
             std::string linkCmd = "clang++-22 ";
             if (useStatic) linkCmd += "-static ";
-            linkCmd += "-s -Wl,--gc-sections -Wl,--strip-all ";
+            linkCmd += (debugInfo ? "-Wl,--gc-sections " : "-s -Wl,--gc-sections -Wl,--strip-all ");
 
              std::string sourceDir = PYC_SOURCE_DIR;
              std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
@@ -11378,7 +11378,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
              // Full LTO: -flto (not -flto=thin), link bitcode directly
              // -flto-partitions=0 enables parallel full LTO codegen (ld.lld only, auto-detect CPU count)
              // Use ld.lld-22 for proper LTO support
-             linkCmd = "clang++-22 -fuse-ld=lld-22 -s -Wl,--gc-sections -Wl,--strip-all ";
+              linkCmd = "clang++-22 -fuse-ld=lld-22 ";
+              linkCmd += (debugInfo ? "-Wl,--gc-sections " : "-s -Wl,--gc-sections -Wl,--strip-all ");
              linkCmd += bitcodePath + " -flto -flto-partitions=0 -Wl,--allow-multiple-definition ";
              linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
                  pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
@@ -11412,9 +11413,9 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         std::cout << "Generated object " << outputPath << ".o (-O" << optLevel << ")\n";
         std::string linkCmd = "clang++ ";
         if (useStatic) linkCmd += "-static ";
-        linkCmd += "-s -Wl,--gc-sections -Wl,--strip-all ";
+            linkCmd += (debugInfo ? "-Wl,--gc-sections " : "-s -Wl,--gc-sections -Wl,--strip-all ");
 
-        std::string sourceDir = PYC_SOURCE_DIR;
+             std::string sourceDir = PYC_SOURCE_DIR;
         std::string runtimeLink = " " + sourceDir + "/src/runtime/Runtime.cpp";
         for (const auto& libdir : {"./build", "../build", ".", "/usr/local/lib", "/usr/lib"}) {
             std::string libpath = std::string(libdir) + "/libpycrt.a";

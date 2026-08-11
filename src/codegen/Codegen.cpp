@@ -1475,14 +1475,26 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // Map from jmpVar name to a pre-allocated jmp_buf (created in the
         // entry block so its address is stable across longjmps).
         std::unordered_map<std::string, llvm::AllocaInst*> jmpBufAllocas;
+        // Set an initial debug location (the function's def line) so that
+        // instructions with lineno == 0 (e.g. specialized-variant recursive
+        // calls) still have a valid !dbg location — LLVM's verifier rejects
+        // inlinable function calls that lack one.
+        if (debugInfo && lexBlock) {
+            int defLine = f.defLineno > 0 ? f.defLineno : 1;
+            builder.SetCurrentDebugLocation(
+                llvm::DILocation::get(context, defLine, 0, lexBlock));
+        }
         for (const auto& inst : f.body) {
             // Debug info: set the current debug location from the IR instruction's lineno.
             // The builder will attach this DebugLoc to every LLVM instruction it creates.
+            // When inst.lineno == 0 (synthesized instructions, e.g. specialized-variant
+            // calls), keep the last known non-null location rather than resetting to
+            // nullptr — LLVM's verifier rejects inlinable function calls that lack a
+            // !dbg location, and "inherit the enclosing statement's line" is the
+            // standard DWARF pattern for lineless instructions.
             if (debugInfo && lexBlock && inst.lineno > 0) {
                 builder.SetCurrentDebugLocation(
                     llvm::DILocation::get(context, inst.lineno, 0, lexBlock));
-            } else if (debugInfo && lexBlock) {
-                builder.SetCurrentDebugLocation(nullptr);
             }
             if (inst.op == "label") {
                 const std::string& ln = inst.result;
@@ -1766,6 +1778,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
         llvm::BasicBlock* curBlock = entry;
         for (const auto& inst : f.body) {
+            // Debug info: set the current debug location from the IR instruction's
+            // lineno. Same logic as the pre-pass loop above — keep the last known
+            // non-null location when inst.lineno == 0.
+            if (debugInfo && lexBlock && inst.lineno > 0) {
+                builder.SetCurrentDebugLocation(
+                    llvm::DILocation::get(context, inst.lineno, 0, lexBlock));
+            }
             // C: skip any non-label instruction if current block already terminated
             // (can happen if IR list has ops after a 'ret' due to control-flow lowering).
             // Labels are allowed because they may switch to a live block.

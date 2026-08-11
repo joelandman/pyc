@@ -32,7 +32,7 @@ void ModuleIR::addInstruction(const std::string& funcName, const std::string& op
         }
         inst.result = result.empty() ? "r" + std::to_string(it->body.size()) : result;
         inst.resultType = resultType;
-        inst.lineno = lineno;
+        inst.lineno = (lineno != 0) ? lineno : currentLineno;
         it->body.push_back(inst);
     }
 }
@@ -45,7 +45,7 @@ void ModuleIR::addInstructionRaw(const std::string& funcName, const std::string&
         inst.operands = operands;
         inst.result = result.empty() ? "r" + std::to_string(it->body.size()) : result;
         inst.resultType = resultType;
-        inst.lineno = lineno;
+        inst.lineno = (lineno != 0) ? lineno : currentLineno;
         it->body.push_back(inst);
     }
 }

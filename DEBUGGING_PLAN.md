@@ -1,28 +1,67 @@
-# pyc Debug Info Plan (`-g` flag)
+# pyc Debug Info Plan (`-g` flag) — IMPLEMENTED
 
-Enable source-level debugging of compiled pyc binaries. When `-g` is passed,
-emit DWARF debug info that maps LLVM IR instructions back to Python source
-lines and variable names, so users can step through Python code in `gdb`,
-`lldb`, or any DWARF-aware debugger.
+The `-g` flag is now fully functional. Compiling with `-g -O0` produces
+DWARF debug info that maps LLVM IR instructions back to Python source
+lines and variable names, enabling source-level debugging in `gdb`/`lldb`.
 
-## Goals
+## Status: Working
 
-1. **Source line tracking**: every LLVM IR instruction emitted for a Python
-   statement carries a debug location `(file, line)` pointing back to the
-   original `.py` source. Debuggers show the Python source line, not the
-   generated C++/LLVM IR.
+- **Source line tracking**: every IR instruction carries a `lineno` from
+  the AST, propagated via `ModuleIR::currentLineno` (set automatically by
+  `LoweringVisitor::lower()`/`lowerExpr()`). Codegen attaches
+  `llvm::DILocation` to every `builder.Create*` call.
+- **Variable name tracking**: `llvm::DbgDeclareInst` emitted for every
+  variable alloca (params, locals, native i64/double). `info locals` in
+  gdb shows `PyObject*` values (a pretty-printer would format them as
+  Python repr — see Layer 4 below).
+- **Function name mapping**: `DISubprogram` per function with the
+  Python function name. `backtrace` shows `greet`, `__module__`, `main`.
+- **No impact on non-debug builds**: `-g` is opt-in. Without it, no
+  debug info is emitted and compilation is identical to today.
+- **Link flags**: when `-g` is set, `-s`/`--strip-all` are omitted from
+  the link line so DWARF sections survive into the final binary.
 
-2. **Variable name tracking**: Python-level variable names (`x`, `n`, `bodies`)
-   appear in the debugger's variable list with their `PyObject*` value. The
-   debugger can `print x` and see the boxed Python object (via a custom
-   pretty-printer or by inspecting the struct fields).
+## Usage
 
-3. **Function name mapping**: Python function names (`fib`, `advance`,
-   `__module__`) map to the corresponding LLVM functions so stack traces show
-   Python-level frames.
+```bash
+# Compile with debug info
+pyc hello.py -o hello -g -O0
 
-4. **No impact on non-debug builds**: `-g` is opt-in. Without it, no debug
-   info is emitted and compilation is identical to today.
+# Debug with gdb
+gdb ./hello
+(gdb) break greet
+(gdb) run
+(gdb) next          # steps through Python source lines
+(gdb) info locals   # shows PyObject* variables
+(gdb) backtrace     # shows Python function names in frames
+
+# Debug with lldb
+lldb ./hello
+(lldb) b greet
+(lldb) run
+(lldb) n
+(lldb) frame variable
+```
+
+## Known Limitations
+
+- **Specialized variants**: functions with A6 specialization generate
+  `__specialized_fib_i` synthetic variants. These have `DW_AT_name("fib")`
+  but a different linkage name, so `break fib` may not set a breakpoint
+  on the variant the program actually calls. Workaround: use
+  `break fib_debug.py:5` (break by source line) instead of `break fib`.
+  Future: mark specialized variants as `DINode::FlagArtificial` so gdb
+  sets breakpoints on all subprograms named `fib`.
+- **GDB `.debug_names` warning**: GDB may print "warning: .debug_names
+  not created by gdb; ignoring" — this is a GDB/LLVM DWARF 5 index
+  compatibility issue, not a pyc bug. Debugging still works; the warning
+  is cosmetic.
+- **No Python-level expression evaluation**: `print x` in gdb shows the
+  raw `PyObject*` pointer. A pretty-printer (Layer 4 below) would format
+  it as Python repr.
+- **`-g -O2`**: LTO + O2 may inline/move instructions and eliminate
+  variables. Line tables still work but some variables may be
+  "optimized out". `-g -O0` is the recommended debug configuration.
 
 ## Design
 
