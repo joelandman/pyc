@@ -50,6 +50,34 @@ halves are now complete.
 - Truthiness: non-empty tuple is truthy, empty tuple is falsy
 - `%` formatting: `"%s %d" % (1, 2)` unpacks the tuple
 
+## Functions Now Returning Tuples (Follow-up)
+
+These functions previously returned lists but now return real tuples,
+matching CPython:
+
+- `itertools.product`/`combinations`/`permutations`/`zip_longest` —
+  inner combo entries are tuples (outer container stays a list)
+- `os.path.splitext(p)` → `(root, ext)` 2-tuple
+- `os.path.split(p)` → `(head, tail)` 2-tuple (newly implemented; was
+  entirely missing before)
+- `operator.itemgetter(1, 2)(obj)` / `operator.attrgetter(...)` multi-key
+  → tuple
+- `struct.unpack(fmt, data)` → tuple
+- `str.partition(sep)` / `str.rpartition(sep)` → 3-tuple
+- `enumerate(iterable)` → list of 2-tuples `(index, value)`
+- `zip(a, b)` → list of 2-tuples
+- `dict.items()` → list of 2-tuples `(key, value)`
+
+Also fixed during this work:
+- `complex.real` / `complex.imag` attribute reads (previously returned
+  `None` — `Pyc_GetItem` now handles type 13)
+- `str.split`/`rsplit` method dispatch was catching `os.path.split(...)`
+  — now gated on `typeOf(obj) != "dict"` so `os.path.split` reaches the
+  runtime
+
+Still returning lists (narrower remaining gaps): `itertools.groupby`
+key/group pairs, `collections.Counter.most_common` entries.
+
 ## Verification
 
 All 557 runner tests pass (0 failures), 9/9 import tests pass, valgrind
