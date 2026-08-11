@@ -2715,8 +2715,10 @@ missing (now implemented, returning a 2-tuple); `str.split`/`rsplit`
 method dispatch was catching `os.path.split(...)` — now gated on
 `typeOf(obj) != "dict"` to let `os.path.split` reach the runtime.
 
-**Still returning lists** (narrower remaining gaps): `itertools.groupby`
-key/group pairs, `collections.Counter.most_common` entries.
+**Also now returning tuples**: `itertools.groupby` key/group pairs (the
+key/group entry is now a 2-tuple; the group itself is still a materialized
+list), `collections.Counter.most_common` entries (now `(element, count)`
+2-tuples, matching CPython). All tuple-coverage gaps are now closed.
 
 Verified against real CPython for all the above. 557/557 runner tests
 pass (0 failures), 9/9 import tests pass, valgrind 0 errors, verified

@@ -9283,11 +9283,10 @@ extern "C" PyObject* PyItertools_Compress(PyObject* args) {
     }
     return out;
 }
-// itertools.groupby(iterable, key=None) -> list of [key, group_list]
-// 2-element lists (real groupby yields (key, group_iterator) tuples;
-// the key/group pair is still a list here — a narrower remaining gap).
-// The group is eagerly materialized like every other itertools
-// function here. Groups only *consecutive* equal
+// itertools.groupby(iterable, key=None) -> list of (key, group_list)
+// 2-tuples (matching CPython's groupby, which yields (key, group_iterator)
+// tuples; the group is eagerly materialized as a list here). Groups only
+// *consecutive* equal
 // keys (verified against real groupby — NOT a full partition).
 // Direct-call convention (2 raw args), not token+registry: `key=` is a
 // keyword argument, which the generic dict-dispatch has no mechanism to
@@ -9315,9 +9314,9 @@ extern "C" PyObject* PyItertools_Groupby(PyObject* iterable, PyObject* keyFn) {
                                        (!k && !curKey));
         if (!sameGroup) {
             if (curGroup) {
-                PyObject* pair = PyList_New(2);
-                PyList_SetItem(pair, 0, curKey);
-                PyList_SetItem(pair, 1, curGroup);
+                PyObject* pair = PyTuple_New(2);
+                PyTuple_SetItem(pair, 0, curKey);
+                PyTuple_SetItem(pair, 1, curGroup);
                 PyList_Append(out, pair);
                 Py_DECREF(pair);
             }
@@ -9330,9 +9329,9 @@ extern "C" PyObject* PyItertools_Groupby(PyObject* iterable, PyObject* keyFn) {
         PyList_Append(curGroup, item);
     }
     if (curGroup) {
-        PyObject* pair = PyList_New(2);
-        PyList_SetItem(pair, 0, curKey);
-        PyList_SetItem(pair, 1, curGroup);
+        PyObject* pair = PyTuple_New(2);
+        PyTuple_SetItem(pair, 0, curKey);
+        PyTuple_SetItem(pair, 1, curGroup);
         PyList_Append(out, pair);
         Py_DECREF(pair);
     }
@@ -9411,7 +9410,8 @@ extern "C" PyObject* PyCollections_Counter(PyObject* args) {
 }
 
 extern "C" PyObject* PyCollections_MostCommon(PyObject* args) {
-    // most_common(counter) or most_common(counter, n). Ties (equal counts)
+    // most_common(counter) or most_common(counter, n). Returns a list of
+    // (element, count) 2-tuples, matching CPython. Ties (equal counts)
     // are broken by the counter dict's iteration order, which — like
     // real Python dicts — should be insertion order, but pyc's dict
     // iteration order is not currently insertion-order-preserving (see
@@ -9433,14 +9433,11 @@ extern "C" PyObject* PyCollections_MostCommon(PyObject* args) {
                       });
     size_t lim = (limit < 0) ? items.size() : std::min((size_t)limit, items.size());
     for (size_t i = 0; i < lim; ++i) {
-        PyObject* pairList = PyList_New(0);
-        PyObject* key = items[i].first;
-        PyList_Append(pairList, key);
-        PyObject* cntObj = PyInt_FromLong(items[i].second);
-        PyList_Append(pairList, cntObj);
-        Py_DECREF(cntObj);
-        PyList_Append(out, pairList);
-        Py_DECREF(pairList);
+        PyObject* pairTuple = PyTuple_New(2);
+        PyTuple_SetItem(pairTuple, 0, items[i].first);
+        PyTuple_SetItem(pairTuple, 1, PyInt_FromLong(items[i].second));
+        PyList_Append(out, pairTuple);
+        Py_DECREF(pairTuple);
     }
     return out;
 }

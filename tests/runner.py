@@ -1923,9 +1923,9 @@ print(lst)
     # lazy iterator protocol, so count/cycle/unbounded repeat aren't
     # implemented; see IMPLEMENTATION.md). itertools.product/combinations/
     # permutations/zip_longest now return real tuples for their element
-    # entries (matching CPython); Counter.most_common still returns list-pairs
-    # (a narrower remaining gap). The Counter test uses distinct counts
-    # (4/2/1) to avoid tie-breaking order.
+    # entries (matching CPython); Counter.most_common also returns tuples.
+    # The Counter test uses distinct counts (4/2/1) to avoid tie-breaking
+    # order.
     ("""
 import itertools
 import collections
@@ -1946,7 +1946,7 @@ print(itertools.zip_longest([1, 2, 3], [10, 20]))
 c = collections.Counter(["a", "a", "a", "a", "b", "b", "c"])
 print(collections.most_common(c))
 print(collections.most_common(c, 2))
-""", "[1, 2, 3, 4, 5]\n[(1, 3), (1, 4), (2, 3), (2, 4)]\n[(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4)]\n[(1, 2, 3), (1, 3, 2), (2, 1, 3), (2, 3, 1), (3, 1, 2), (3, 2, 1)]\n[(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)]\n[1, 2, 3]\n[3, 7, 11]\n[(1, 10), (2, 20), (3, None)]\n[['a', 4], ['b', 2], ['c', 1]]\n[['a', 4], ['b', 2]]\n"),
+""", "[1, 2, 3, 4, 5]\n[(1, 3), (1, 4), (2, 3), (2, 4)]\n[(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4)]\n[(1, 2, 3), (1, 3, 2), (2, 1, 3), (2, 3, 1), (3, 1, 2), (3, 2, 1)]\n[(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)]\n[1, 2, 3]\n[3, 7, 11]\n[(1, 10), (2, 20), (3, None)]\n[('a', 4), ('b', 2), ('c', 1)]\n[('a', 4), ('b', 2)]\n"),
     # datetime module (synthetic types, tags 14/15 — see IMPLEMENTATION.md).
     # Covers both `import datetime` / `datetime.date(...)`-qualified and
     # `from datetime import date, timedelta` bare-name construction, plus

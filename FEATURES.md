@@ -75,8 +75,8 @@ Also fixed during this work:
   — now gated on `typeOf(obj) != "dict"` so `os.path.split` reaches the
   runtime
 
-Still returning lists (narrower remaining gaps): `itertools.groupby`
-key/group pairs, `collections.Counter.most_common` entries.
+All tuple-coverage gaps are now closed — no functions remain that return
+lists where CPython returns tuples.
 
 ## Verification
 
