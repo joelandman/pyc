@@ -1,0 +1,159 @@
+# AGENTS.md
+
+Compact guide for OpenCode sessions working on **pyc**, an AOT compiler for a
+Python subset (Python source → AST → IR → LLVM IR → native executable via a
+boxed `PyObject*` runtime with refcounting). C++20, Clang++, LLVM 18.
+
+## Build & test
+
+```bash
+mkdir -p build && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && make -C build -j$(nproc)
+make -C build check          # runs tests/runner.py via ctest (tolerates CASES failures, NOT FILE_CASES)
+```
+
+Dependencies: LLVM 18, `libmpdec-dev` (mpdecimal, backs `decimal.Decimal`),
+PCRE2 (backs `re`), Python3 dev headers. The build hard-codes
+`clang++` as the C++ compiler (CMakeLists.txt:24).
+
+Single-test / focused verification (use these, not `make check`, when iterating):
+
+```bash
+PYC_BINARY=./build/pyc python3 tests/runner.py                  # full suite
+./build/pyc tests/nbody.py -o /tmp/t.bin -O0 && /tmp/t.bin 100  # one FILE_CASE
+./build/pyc tests/hello.py --emit-llvm -o /tmp/x && head /tmp/x.ll  # inspect IR
+./test/import_tests/run_import_tests.sh                         # import system suite (NOT in `make check`)
+```
+
+`build.sh` wraps configure+build+test; `--clean` wipes `build/`, `--install PREFIX` installs.
+
+## Test suite semantics (easy to misread)
+
+`tests/runner.py` has **two** sections, and they fail differently:
+
+- `CASES` (lines 7–3018): ~hundreds of inline source/expected pairs. Compiled at
+  **`-O0`** and compared against CPython output. The hardcoded `expected` string
+  is the source of truth; python3 is only a sanity check. **CASES failures are
+  tolerated** by `make check` (`|| true` in CMakeLists.txt:127) and by the
+  runner (exits 0 if `ok==total` even with CASES failures? — no: exits 0 only
+  if `ok==total`, but `make check` swallows non-zero). Do not treat a green
+  `make check` as "all CASES pass."
+- `FILE_CASES` (lines 3020–3058): real `.py` programs in `tests/`, each compiled
+  at `-O0` and compared to CPython. **A mismatch is a real regression**: the
+  runner prints a `DIFF` block and exits 1. CI-relevant.
+
+When adding a feature, add to `CASES` for inline coverage and to `FILE_CASES`
++ a real file for end-to-end coverage. Several files are deliberately excluded
+with reasons in comments (`modifiers.py` loop bug at -O0, `mbs.py` too slow
+for the 5s timeout) — read the comments before re-enabling.
+
+The runner auto-discovers the binary via `PYC_BINARY` env, then `./pyc`,
+`./build/pyc`, etc. (runner.py:3064–3082). The 5s per-command `timeout` in
+`run()` (runner.py:3061) bites slow programs.
+
+## Architecture / where things live
+
+The **build only compiles files under `src/`** plus `runtime/b7_import.cpp`.
+CMakeLists.txt:62–69 lists the exact compiler sources:
+
+- `src/main.cpp` — CLI entrypoint, flag parsing.
+- `src/frontend/PythonParser.cpp` — uses the **Python C API (`ast.parse`)** to
+  parse. pyc is NOT a from-scratch Python parser; it shells out to libpython.
+- `src/Compiler.cpp` — **~11k lines, the lowering core.** `LoweringVisitor`
+  walks the Python AST and emits `ModuleIR`. Most feature work happens here.
+- `src/ir/IR.cpp`, `src/ir/LLVMDCE.cpp` — IR data + a dead-code-elimination pass.
+- `src/codegen/Codegen.cpp` — IR → LLVM IR (~3.6k lines). Owns the
+  `__apply__N` indirect-call adapter generation and the native/local
+  fast-path gating (see gotchas below).
+- `src/runtime/Runtime.cpp` — **~11.5k lines, the boxed runtime.** Linked into
+  every compiled binary. No CPython dependency at runtime. Built twice: once
+  as a static lib (`pyc_runtime` → `libpycrt.a`) and once as **LLVM bitcode**
+  (`build/runtime.bc`) for LTO into user programs. The bitcode path is
+  baked into the compiler via `PYC_RUNTIME_BC` / `PYC_SOURCE_DIR` defines
+  (CMakeLists.txt:73); do not relocate `build/runtime.bc` without rebuilding.
+
+**Stale-looking but NOT dead:** `runtime/b7_import.cpp` is in the build
+(CMakeLists.txt:85). The root-level `codegen/`, `frontend/`, `ir/` directories
+and the `test/` tree are legacy/standalone and **not compiled by the main
+build** — ignore them when editing the compiler; the live sources are under
+`src/`. Public headers live in `include/pyc/`; runtime-internal headers in
+`runtime/`.
+
+Flow: `src/main.cpp` → `Compiler` → `PythonParser` (libpython AST) →
+`LoweringVisitor` (Compiler.cpp) → `ModuleIR` (IR.h) → `Codegen::generate`
+(Codegen.cpp) → `llvm::Module` → LLVM passes (O0–O3) → object →
+`clang++` links `libpycrt`/bitcode → executable. See README.md:85 for the
+diagram and IMPLEMENTATION.md for design rationale.
+
+## Optimization levels (non-obvious)
+
+`-O0` means **no runtime-bitcode LTO and no LLVM passes** (raw IR, for
+debugging). `-O1..3` add LLVM passes **plus LTO of `runtime.bc`**. `-O2` is
+the default. `-O4`/`-O5` (PGO/ThinLTO/multi-versioning) exist in `--help` but
+are advanced/experimental — don't assume they're exercised by the test suite,
+which runs everything at `-O0`.
+
+The runner compiles FILE_CASES at **`-O0`**, so a program that only works at
+`-O2` will show as a DIFF (this is why `modifiers.py` is excluded).
+
+## Conventions & gotchas
+
+- **Compiler is C++20, force-built with `clang++`** (not g++). CMake exports
+  `compile_commands.json` in `build/` for tooling.
+- **Boxed-everything by default.** Most values are `PyObject*`; a value's
+  type is carried in the box, not in LLVM types. `Codegen.cpp` has
+  "native-local" fast paths for `int`/`float` that bypass boxing — these are
+  gated on whether the target is a *declared module global* vs a local. Mis-
+  gating here has historically caused null derefs on module-level float
+  globals (see FIXES.md "Pyc_Apply Dispatch for main()" note). When touching
+  the `"assign"` handler in Codegen.cpp, re-check that gating.
+- **Indirect calls** (lambdas-as-values, closures, decorators) go through
+  `Pyc_Apply` + per-function `__apply__N` adapters generated in Codegen.cpp.
+  The adapter's parameter-shape analysis must distinguish `*args` from
+  `**kwargs` (stored internally as `"**kwargs"`, i.e. *two* leading stars).
+  Several past crashes came from "first star-prefixed name wins" bugs here
+  (see IMPLEMENTATION.md's `**kwargs` section). If you touch adapter
+  generation, handle both slots.
+- **`exec()`/`eval()` are intentionally unsupported.** Don't try to add them.
+  Real CPython stdlib modules beyond the synthetic ones (`sys`, `re`, `os`,
+  `subprocess`, `functools`, `cmath`, `time.perf_counter`, `math`, `json`,
+  `random`, `itertools`, `collections`, `datetime`, `hashlib`, `base64`,
+  `struct`, `heapq`, `bisect`, `statistics`, `string`, `textwrap`, `copy`,
+  `uuid`, `operator`, `shutil`, `glob`, `csv`, `decimal`, `pathlib`,
+  `re`/PCRE2) cannot be imported — pyc reports a clear `ImportError` rather
+  than attempting to compile CPython source. Synthetic module exports are
+  hand-maintained in `syntheticModuleExports()` (Compiler.cpp); keep that
+  table in sync when adding to a synthetic module's dict in Runtime.cpp.
+- **Top-level `__name__` is `"__main__"`**, not `"__module__"`. (Historic bug,
+  documented in FIXES.md.)
+- **Generated artifacts in the repo root** (`a.out`, `a.out.ll`, `a.out.o`,
+  `*_opt*.o`, `*_b7_modules.c`, `*.ll`, `*.s`) are gitignored output from
+  direct `pyc` runs. Don't commit them; don't treat them as sources. The
+  `*_b7_modules.c` files are generated alongside each compiled binary for the
+  module registry.
+- **`build/`, `build_debug/`, `build_asan/`** are all gitignored — use any of
+  these for out-of-source builds. ASAN builds: configure with
+  `-DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"` and link
+  the runtime accordingly.
+- **No formal lint/typecheck step.** There's no `.clang-tidy`/CI workflow in
+  the repo; verification = `make -C build check` + running the import suite
+  by hand. Trust the runner, not prose.
+- **Doc files are large and partially historical.** README.md (build/usage),
+  FEATURES.md (feature list), IMPLEMENTATION.md (design + a long log of past
+  bug hunts), FIXES.md, DEBUGGING_PLAN.md, OPTIMIZATION_PLAN.md,
+  PERFORMANCE_*.md exist. IMPLEMENTATION.md is the most useful for "why is X
+  like this"; PERFORMANCE_BASELINE.md has benchmarks. When docs conflict with
+  CMakeLists.txt or the runner, trust the executable.
+
+## Adding a feature: checklist
+
+1. Lower it in `src/Compiler.cpp` (`LoweringVisitor`).
+2. Emit it in `src/codegen/Codegen.cpp` (and any runtime helper in
+   `src/runtime/Runtime.cpp`).
+3. If it's a new builtin/module export, update `syntheticModuleExports()` in
+   Compiler.cpp to match.
+4. Add inline cases to `CASES` and a real file + `FILE_CASES` entry in
+   `tests/runner.py`.
+5. `make -C build -j && make -C build check`; if touching imports, also run
+   `./test/import_tests/run_import_tests.sh`.
+6. Verify at `-O0` (what the runner uses) AND `-O2` (default for users) —
+   behavior can diverge across opt levels.

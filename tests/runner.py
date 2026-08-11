@@ -1215,6 +1215,32 @@ print(fns[0](1), fns[1](7))
     ("def outer():\n    a, b = 3, 4\n    return (lambda: a + b)()\nprint(outer())", "7\n"),
     # Lambda capturing a mutable variable (cell-backed, not a snapshot).
     ("def outer():\n    n = 0\n    f = lambda: n\n    n = 42\n    return f()\nprint(outer())", "42\n"),
+    # map() builtin
+    ("print(list(map(lambda x: x*2, [1, 2, 3])))", "[2, 4, 6]\n"),
+    ("print(list(filter(lambda x: x > 2, [1, 2, 3, 4])))", "[3, 4]\n"),
+    ("print(list(filter(None, [0, 1, None, 2, 3])))", "[1, 2, 3]\n"),
+    ("print(list(map(lambda a, b: a + b, [1, 2, 3], [10, 20, 30])))", "[11, 22, 33]\n"),
+    # filter with named function
+    ("def is_even(n):\n    return n % 2 == 0\nprint(list(filter(is_even, [1, 2, 3, 4, 5, 6])))", "[2, 4, 6]\n"),
+    # Star unpacking in assignment
+    ("a, *b, c = [1, 2, 3, 4, 5]\nprint(a, b, c)", "1 [2, 3, 4] 5\n"),
+    ("a, b, *c = [1, 2, 3, 4, 5]\nprint(a, b, c)", "1 2 [3, 4, 5]\n"),
+    ("*a, b, c = [1, 2, 3, 4, 5]\nprint(a, b, c)", "[1, 2, 3] 4 5\n"),
+    ("a, *b = (1, 2, 3, 4)\nprint(a, b)", "1 [2, 3, 4]\n"),
+    # repr of homogeneous int/float lists
+    ("print(repr([1, 2, 3]))", "[1, 2, 3]\n"),
+    ("print(repr([1.0, 2.0]))", "[1.0, 2.0]\n"),
+    ("print(repr({1, 2, 3}))", "{1, 2, 3}\n"),
+    # format() builtin
+    ("print(format(255, 'x'))", "ff\n"),
+    ("print(format(3.14159, '.2f'))", "3.14\n"),
+    ("print(format(42, '05d'))", "00042\n"),
+    # Constant condition in if (was passing i64 to PyObject_TruthValue)
+    ("if 1:\n    print('yes')\nif 0:\n    print('no')", "yes\n"),
+    # for-loop continue (was infinite loop — continue jumped to loop head
+    # without incrementing the index)
+    ("for i in range(5):\n    if i == 2:\n        continue\n    print(i)", "0\n1\n3\n4\n"),
+    ("for v in [1, 2, 3, 4, 5]:\n    if v == 3:\n        continue\n    if v == 5:\n        break\n    print(v)", "1\n2\n4\n"),
     # lambda with *args in its own signature + passed as value
     ("""
 def app(f, xs):
@@ -3271,9 +3297,10 @@ FILE_CASES = [
     ("hash.py", []),
     ("sprintf.py", []),
     ("range.py", []),
-    # modifiers.py has a loop bug at -O0 (the runner's default);
-    # works fine at -O2 but times out otherwise
-    # ("modifiers.py", []),
+    # modifiers.py — previously had a loop bug at -O0 (continue jumped
+    # to the loop head, skipping the index increment → infinite loop).
+    # Fixed: for-loop continue label now points after the increment.
+    ("modifiers.py", []),
     # mbs.py is too slow for the 5s runner timeout
     # ("mbs.py", []),
     ("builtins.py", []),

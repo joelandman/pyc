@@ -1691,6 +1691,8 @@ class LoweringVisitor {
                     {"sum", "pyc_adapt_sum"}, {"sorted", "pyc_adapt_sorted"},
                     {"any", "pyc_adapt_any"}, {"all", "pyc_adapt_all"},
                     {"reversed", "pyc_adapt_reversed"},
+                    {"map", "pyc_adapt_map"},
+                    {"filter", "pyc_adapt_filter"},
                     {"enumerate", "pyc_adapt_enumerate"},
                     {"zip", "pyc_adapt_zip"},
                     {"isinstance", "pyc_adapt_isinstance"},
@@ -4484,7 +4486,8 @@ class LoweringVisitor {
             "print", "len", "range", "min", "max", "sum", "sorted", "any", "all", "isinstance",
             "int", "float", "abs", "str", "list", "enumerate", "zip",
             "bool", "type", "id", "repr", "hex", "oct", "bin", "ord", "chr", "round",
-            "bytes", "bytearray", "tuple", "divmod", "pow", "set", "callable"
+            "bytes", "bytearray", "tuple", "divmod", "pow", "set", "callable",
+            "map", "filter", "format", "ascii"
         };
 
         if (!knownDirect0) {
@@ -4497,7 +4500,8 @@ class LoweringVisitor {
                     "print","len","range","min","max","sum","sorted","any","all","isinstance",
                     "int","float","complex","abs","str","list","enumerate","zip","bool","type","id",
                     "repr","hex","oct","bin","ord","chr","round","open","bytes","bytearray",
-                    "tuple","divmod","pow","callable"
+                    "tuple","divmod","pow","callable",
+                    "map","filter","format","ascii"
                 };
                 if (!theName.empty() && neverDynamic.count(theName) == 0) {
                     // B4 complete: any bare name that is not a known direct IR function *and*
@@ -4548,7 +4552,7 @@ class LoweringVisitor {
                 "print","len","range","min","max","sum","sorted","any","all","isinstance",
                 "int","float","complex","abs","str","list","enumerate","zip","bool","type","id",
                 "repr","hex","oct","bin","ord","chr","round","open","bytes","bytearray",
-                "tuple","divmod","pow","callable","set"
+                "tuple","divmod","pow","callable","set","map","filter","format","ascii"
             };
             if (neverIndirect.count(calleeName) == 0) {
                 useDynamicApply = true;
@@ -5382,6 +5386,34 @@ class LoweringVisitor {
             noteType(res, "bool");
             return res;
         }
+        // map(func, iterable) → PyBuiltin_Map(func, iterable)
+        // map(func, iter1, iter2, ...) → PyBuiltin_MapN(func, [iter1, iter2, ...])
+        if (funcName == "map" && argRes.size() >= 2) {
+            std::string res = "$t" + std::to_string(tempCounter++);
+            if (argRes.size() == 2) {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Map", argRes[0], argRes[1]}, res);
+            } else {
+                // Build a list of iterables
+                std::string zero = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, zero);
+                std::string iterList = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, iterList);
+                for (size_t i = 1; i < argRes.size(); ++i) {
+                    std::string d = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", iterList, argRes[i]}, d);
+                }
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_MapN", argRes[0], iterList}, res);
+            }
+            noteType(res, "list");
+            return res;
+        }
+        // filter(func, iterable) → PyBuiltin_Filter(func, iterable)
+        if (funcName == "filter" && argRes.size() >= 2) {
+            std::string res = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Filter", argRes[0], argRes[1]}, res);
+            noteType(res, "list");
+            return res;
+        }
         // isinstance(obj, classinfo) → Pyc_IsInstance
         if (funcName == "isinstance" && argRes.size() >= 2) {
             // If classinfo is a known type name, pass a numeric typecode
@@ -5556,6 +5588,30 @@ class LoweringVisitor {
         }
         // repr(obj) → PyBuiltin_Repr(obj) (returns a string)
         if (funcName == "repr") {
+            std::string arg = argRes.empty() ? "" : argRes[0];
+            std::string res = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Repr", arg}, res, "str");
+            noteType(res, "str");
+            return res;
+        }
+        // format(value[, spec]) → Pyc_FormatValue(value, spec)
+        if (funcName == "format") {
+            std::string val = argRes.empty() ? "" : argRes[0];
+            std::string spec;
+            if (argRes.size() > 1) {
+                spec = argRes[1];
+            } else {
+                spec = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"\""}, spec, "str");
+            }
+            std::string res = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_FormatValue", val, spec}, res);
+            noteType(res, "str");
+            return res;
+        }
+        // ascii(obj) — like repr but escapes non-ASCII. pyc strings are ASCII
+        // passthrough, so this is equivalent to repr for now.
+        if (funcName == "ascii") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Repr", arg}, res, "str");
@@ -6363,12 +6419,13 @@ class LoweringVisitor {
 
         std::string loopLabel = "for_loop_" + std::to_string(tempCounter);
         std::string bodyLabel = "for_body_" + std::to_string(tempCounter);
+        std::string contLabel = "for_cont_" + std::to_string(tempCounter);
         std::string exitLabel = "for_exit_" + std::to_string(tempCounter);
         tempCounter++;
 
         std::string savedCont = loopContinueLabel, savedBreak = loopBreakLabel;
         loopTryDepths.push_back(activeTries.size());
-        loopContinueLabel = loopLabel;
+        loopContinueLabel = contLabel;
         loopBreakLabel    = exitLabel;
 
         ir.addInstruction(currentFunc, "label", {}, loopLabel);
@@ -6468,6 +6525,10 @@ class LoweringVisitor {
 
         for (size_t i = iterIndex + 1; i < node->children.size(); ++i)
             lower(node->children[i].get());
+
+        // Continue label: jump here from `continue` statements — this skips
+        // the body but still runs the index increment before looping.
+        ir.addInstruction(currentFunc, "label", {}, contLabel);
 
         // idxVar = idxVar + 1 (native i64)
         std::string oneRes = "$i" + std::to_string(tempCounter++);
@@ -7172,6 +7233,59 @@ class LoweringVisitor {
             return;
         }
         if (target->type != "Tuple" && target->type != "List") return;
+
+        // Check for star unpacking: any child is a Starred node.
+        int starIndex = -1;
+        for (size_t i = 0; i < target->children.size(); ++i) {
+            if (target->children[i] && target->children[i]->type == "Starred") {
+                starIndex = (int)i;
+                break;
+            }
+        }
+        if (starIndex >= 0) {
+            // Star unpacking: a, *b, c = value
+            // nBefore = starIndex, nAfter = n - starIndex - 1
+            const size_t n = target->children.size();
+            int nBefore = starIndex;
+            int nAfter = (int)n - starIndex - 1;
+
+            // Call PyList_UnpackStar(value, nBefore, nAfter) → result list
+            // result = [before0, before1, ..., starList, ..., after0]
+            // nBefore/nAfter are passed as raw i64 constants (digit strings in the IR).
+            std::string resultList = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_UnpackStar", value, std::to_string(nBefore), std::to_string(nAfter)}, resultList);
+
+            // Extract each element from the result list and assign to targets.
+            for (int i = 0; i < nBefore; ++i) {
+                std::string idx = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idx, "int");
+                std::string elem = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", resultList, idx}, elem);
+                lowerUnpackTarget(target->children[i].get(), elem);
+            }
+            // Star target: the star slot is at index nBefore in the result list.
+            {
+                std::string idx = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(nBefore)}, idx, "int");
+                std::string starSlot = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", resultList, idx}, starSlot);
+                noteType(starSlot, "list");
+                if (target->children[starIndex] && !target->children[starIndex]->children.empty()) {
+                    lowerUnpackTarget(target->children[starIndex]->children[0].get(), starSlot);
+                }
+            }
+            for (int i = 0; i < nAfter; ++i) {
+                std::string idx = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(nBefore + 1 + i)}, idx, "int");
+                std::string elem = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", resultList, idx}, elem);
+                lowerUnpackTarget(target->children[starIndex + 1 + i].get(), elem);
+            }
+            // DECREF the result list (PyList_GetItemObj returns new refs; the list itself is now dead).
+            std::string decRefDummy = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Py_DECREF", resultList}, decRefDummy);
+            return;
+        }
 
         // Resolve per-index element kinds for this value
         std::vector<std::string> idxKinds;

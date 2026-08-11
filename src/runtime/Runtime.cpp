@@ -694,6 +694,42 @@ int PyList_Unpack3(PyObject* list, PyObject** out0, PyObject** out1, PyObject** 
     return 1;
 }
 
+// PyList_UnpackStar — unpack with a starred target: a, *b, c = [1,2,3,4,5]
+// nBefore=1 (a), nAfter=1 (c). Returns a list of [a, starList, c] where starList
+// is a sub-list of the middle elements. This avoids variadic pointer args.
+PyObject* PyList_UnpackStar(PyObject* list, int64_t nBeforeI, int64_t nAfterI) {
+    int nBefore = (int)nBeforeI;
+    int nAfter = (int)nAfterI;
+    if (!list) return PyList_New(0);
+    size_t n;
+    if (list->type == 1) n = PyList_Size(list);
+    else if (list->type == 7) n = PyTuple_Size(list);
+    else return PyList_New(0);
+    if ((size_t)(nBefore + nAfter) > n) return PyList_New(0);
+
+    auto getItem = [&](size_t idx) -> PyObject* {
+        if (list->type == 7) return tupleGetNewRef(list, idx);
+        return listGetNewRef(list, idx);
+    };
+
+    size_t starStart = nBefore;
+    size_t starEnd = n - nAfter;
+    size_t starLen = starEnd > starStart ? starEnd - starStart : 0;
+    PyObject* starList = PyList_New(starLen);
+    for (size_t i = 0; i < starLen; ++i)
+        PyList_SetItem(starList, i, getItem(starStart + i));
+
+    // Result: [before0, before1, ..., starList, ..., after0, after1]
+    size_t totalOut = nBefore + 1 + nAfter;
+    PyObject* result = PyList_New(totalOut);
+    for (int i = 0; i < nBefore; ++i)
+        PyList_SetItem(result, i, getItem(i));
+    PyList_SetItem(result, nBefore, starList);
+    for (int i = 0; i < nAfter; ++i)
+        PyList_SetItem(result, nBefore + 1 + i, getItem(n - nAfter + i));
+    return result;
+}
+
 PyObject* PyList_NewBoxed(PyObject* n) {
     size_t size = (n && n->type == 0) ? (size_t)n->value : 0;
     return PyList_New(size);
@@ -2706,13 +2742,29 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
         }
         std::string r = "[";
         bool first = true;
-        for (auto* item : obj->list) {
-            if (!first) r += ", ";
-            first = false;
-            if (item && item->type == 3) { r += "'" + item->str + "'"; }
-            else if (item) {
-                PyObject* s = PyBuiltin_Repr(item);
-                if (s) { r += s->str; Py_DECREF(s); }
+        if (obj->list_item_type == 1) {
+            for (long v : obj->ilist) {
+                if (!first) r += ", ";
+                first = false;
+                r += std::to_string(v);
+            }
+        } else if (obj->list_item_type == 2) {
+            char buf[64];
+            for (double v : obj->flist) {
+                if (!first) r += ", ";
+                first = false;
+                format_double(buf, sizeof(buf), v);
+                r += buf;
+            }
+        } else {
+            for (auto* item : obj->list) {
+                if (!first) r += ", ";
+                first = false;
+                if (item && item->type == 3) { r += "'" + item->str + "'"; }
+                else if (item) {
+                    PyObject* s = PyBuiltin_Repr(item);
+                    if (s) { r += s->str; Py_DECREF(s); }
+                }
             }
         }
         r += "]";
@@ -2748,8 +2800,24 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
                 }
             }
         }
-        if (n == 1) r += ",";
-        r += ")";
+    if (n == 1) r += ",";
+    r += ")";
+        return PyUnicode_FromString(r.c_str());
+    }
+    if (obj->type == 20) {
+        if (obj->setElems.empty()) return PyUnicode_FromString("set()");
+        std::string r = "{";
+        bool first = true;
+        for (auto* e : obj->setElems) {
+            if (!first) r += ", ";
+            first = false;
+            if (e && e->type == 3) r += "'" + e->str + "'";
+            else if (e) {
+                PyObject* s = PyBuiltin_Repr(e);
+                if (s) { r += s->str; Py_DECREF(s); }
+            }
+        }
+        r += "}";
         return PyUnicode_FromString(r.c_str());
     }
     if (obj->type == 2) {
@@ -5246,6 +5314,183 @@ PyObject* PyBuiltin_All(PyObject* lst) {
             if (!PyObject_TruthValue(item)) return PyBool_New(0);
     }
     return PyBool_New(1);
+}
+
+// PyBuiltin_Map(func, iterable) — applies func to each element of iterable,
+// returns a list of results. func is a callable token (string/function object).
+// If func is None, each element is returned as-is (identity).
+PyObject* PyBuiltin_Map(PyObject* func, PyObject* iterable) {
+    if (!iterable) return PyList_New(0);
+    // Collect items from the iterable (list, tuple, set, dict, str).
+    std::vector<PyObject*> items;
+    if (iterable->type == 1) {
+        if (iterable->list_item_type == 1) {
+            for (long v : iterable->ilist) items.push_back(PyInt_FromLong(v));
+        } else if (iterable->list_item_type == 2) {
+            for (double v : iterable->flist) items.push_back(PyFloat_FromDouble(v));
+        } else {
+            for (auto* item : iterable->list) { if (item) Py_INCREF(item); items.push_back(item); }
+        }
+    } else if (iterable->type == 7) {
+        if (iterable->list_item_type == 1) {
+            for (long v : iterable->ilist) items.push_back(PyInt_FromLong(v));
+        } else if (iterable->list_item_type == 2) {
+            for (double v : iterable->flist) items.push_back(PyFloat_FromDouble(v));
+        } else {
+            for (auto* item : iterable->list) { if (item) Py_INCREF(item); items.push_back(item); }
+        }
+    } else if (iterable->type == 20) {
+        for (auto* e : iterable->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
+    } else if (iterable->type == 2) {
+        for (auto& pair : iterable->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
+    } else if (iterable->type == 3) {
+        for (char c : iterable->str) {
+            char s[2] = {c, 0};
+            items.push_back(PyUnicode_FromString(s));
+        }
+    } else {
+        return PyList_New(0);
+    }
+
+    PyObject* result = PyList_New(items.size());
+    bool isNone = (func == nullptr) || (func->type == 5 && func->value == 0);
+    for (size_t i = 0; i < items.size(); ++i) {
+        PyObject* val;
+        if (isNone) {
+            val = items[i];
+            if (val) Py_INCREF(val);
+        } else {
+            PyObject* argList = PyList_New(1);
+            if (items[i]) { Py_INCREF(items[i]); PyList_SetItem(argList, 0, items[i]); }
+            val = Pyc_Apply(func, argList);
+            Py_DECREF(argList);
+        }
+        if (val) PyList_SetItem(result, i, val);
+    }
+    for (auto* item : items) if (item) Py_DECREF(item);
+    return result;
+}
+
+// PyBuiltin_MapN(func, iterables) — multi-iterable map. `iterables` is a list
+// of iterables; func is called with one element from each iterable per row.
+// Stops at the shortest iterable (like CPython's map).
+PyObject* PyBuiltin_MapN(PyObject* func, PyObject* iterables) {
+    if (!iterables || iterables->type != 1 || iterables->list.empty())
+        return PyList_New(0);
+    size_t nIters = iterables->list.size();
+
+    // Collect items from each iterable into a vector of vectors.
+    std::vector<std::vector<PyObject*>> allItems(nIters);
+    size_t minLen = SIZE_MAX;
+    for (size_t i = 0; i < nIters; ++i) {
+        PyObject* iter = iterables->list[i];
+        if (!iter) { minLen = 0; break; }
+        std::vector<PyObject*>& items = allItems[i];
+        if (iter->type == 1) {
+            if (iter->list_item_type == 1) {
+                for (long v : iter->ilist) items.push_back(PyInt_FromLong(v));
+            } else if (iter->list_item_type == 2) {
+                for (double v : iter->flist) items.push_back(PyFloat_FromDouble(v));
+            } else {
+                for (auto* item : iter->list) { if (item) Py_INCREF(item); items.push_back(item); }
+            }
+        } else if (iter->type == 7) {
+            if (iter->list_item_type == 1) {
+                for (long v : iter->ilist) items.push_back(PyInt_FromLong(v));
+            } else if (iter->list_item_type == 2) {
+                for (double v : iter->flist) items.push_back(PyFloat_FromDouble(v));
+            } else {
+                for (auto* item : iter->list) { if (item) Py_INCREF(item); items.push_back(item); }
+            }
+        } else if (iter->type == 3) {
+            for (char c : iter->str) {
+                char s[2] = {c, 0};
+                items.push_back(PyUnicode_FromString(s));
+            }
+        } else if (iter->type == 20) {
+            for (auto* e : iter->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
+        } else if (iter->type == 2) {
+            for (auto& pair : iter->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
+        } else {
+            minLen = 0;
+            break;
+        }
+        if (items.size() < minLen) minLen = items.size();
+    }
+    if (minLen == SIZE_MAX) minLen = 0;
+
+    PyObject* result = PyList_New(minLen);
+    for (size_t row = 0; row < minLen; ++row) {
+        PyObject* argList = PyList_New(nIters);
+        for (size_t j = 0; j < nIters; ++j) {
+            if (allItems[j][row]) { Py_INCREF(allItems[j][row]); PyList_SetItem(argList, j, allItems[j][row]); }
+        }
+        PyObject* val = Pyc_Apply(func, argList);
+        Py_DECREF(argList);
+        if (val) PyList_SetItem(result, row, val);
+    }
+    for (auto& items : allItems)
+        for (auto* item : items) if (item) Py_DECREF(item);
+    return result;
+}
+
+// PyBuiltin_Filter(func, iterable) — returns a list of items where func(item)
+// is truthy. If func is None, truthiness of the item itself is used.
+PyObject* PyBuiltin_Filter(PyObject* func, PyObject* iterable) {
+    if (!iterable) return PyList_New(0);
+    std::vector<PyObject*> items;
+    if (iterable->type == 1) {
+        if (iterable->list_item_type == 1) {
+            for (long v : iterable->ilist) items.push_back(PyInt_FromLong(v));
+        } else if (iterable->list_item_type == 2) {
+            for (double v : iterable->flist) items.push_back(PyFloat_FromDouble(v));
+        } else {
+            for (auto* item : iterable->list) { if (item) Py_INCREF(item); items.push_back(item); }
+        }
+    } else if (iterable->type == 7) {
+        if (iterable->list_item_type == 1) {
+            for (long v : iterable->ilist) items.push_back(PyInt_FromLong(v));
+        } else if (iterable->list_item_type == 2) {
+            for (double v : iterable->flist) items.push_back(PyFloat_FromDouble(v));
+        } else {
+            for (auto* item : iterable->list) { if (item) Py_INCREF(item); items.push_back(item); }
+        }
+    } else if (iterable->type == 20) {
+        for (auto* e : iterable->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
+    } else if (iterable->type == 2) {
+        for (auto& pair : iterable->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
+    } else if (iterable->type == 3) {
+        for (char c : iterable->str) {
+            char s[2] = {c, 0};
+            items.push_back(PyUnicode_FromString(s));
+        }
+    } else {
+        return PyList_New(0);
+    }
+
+    bool isNone = (func == nullptr) || (func->type == 5 && func->value == 0);
+    std::vector<PyObject*> kept;
+    for (auto* item : items) {
+        bool keep = false;
+        if (isNone) {
+            keep = PyObject_TruthValue(item);
+        } else {
+            PyObject* argList = PyList_New(1);
+            if (item) { Py_INCREF(item); PyList_SetItem(argList, 0, item); }
+            PyObject* r = Pyc_Apply(func, argList);
+            Py_DECREF(argList);
+            keep = PyObject_TruthValue(r);
+            if (r) Py_DECREF(r);
+        }
+        if (keep) { if (item) Py_INCREF(item); kept.push_back(item); }
+    }
+
+    PyObject* result = PyList_New(kept.size());
+    for (size_t i = 0; i < kept.size(); ++i) {
+        if (kept[i]) PyList_SetItem(result, i, kept[i]);
+    }
+    for (auto* item : items) if (item) Py_DECREF(item);
+    return result;
 }
 
 // typecode: 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool; -1=unknown→True

@@ -608,6 +608,23 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
+    // Builtins: map, filter (2-arg: func, iterable)
+    for (const char* name : {"PyBuiltin_Map","PyBuiltin_Filter"}) {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    // PyBuiltin_MapN (func, list-of-iterables)
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyBuiltin_MapN", module.get());
+    }
+    // PyList_UnpackStar (returns PyObject* list of [before..., starList, after...])
+    {
+        std::vector<llvm::Type*> params = {pyObjectPtrTy, llvm::Type::getInt64Ty(context),
+                                            llvm::Type::getInt64Ty(context)};
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, params, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyList_UnpackStar", module.get());
+    }
     // sum(iterable, start) — 2-arg variant
     {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
@@ -1838,6 +1855,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         if (cval->getType()->isIntegerTy() && cval->getType()->getIntegerBitWidth() == 32) {
                             // i32 from PyObject_CompareBool — truncate to i1
                             cval = builder.CreateTrunc(cval, llvm::Type::getInt1Ty(context), "cond.i1");
+                        } else if (cval->getType()->isIntegerTy() && cval->getType()->getIntegerBitWidth() == 64) {
+                            // i64 from i64const (constant int condition like `if 1:`)
+                            // Compare to zero: non-zero is truthy.
+                            cval = builder.CreateICmpNE(cval, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0), "cond.i1");
+                        } else if (cval->getType()->isFloatingPointTy()) {
+                            // double from fconst (constant float condition like `if 0.0:`)
+                            cval = builder.CreateFCmpUNE(cval, llvm::ConstantFP::get(cval->getType(), 0.0), "cond.i1");
                         } else {
                             llvm::Function* truthFn = module->getFunction("PyObject_TruthValue");
                             llvm::Value* truthy = builder.CreateCall(truthFn, {cval}, "cond.truthy");
@@ -3065,6 +3089,25 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                       if (sz) {
                           llvm::Value* n = builder.CreateCall(sz, {listVal}, inst.result);
                           if (!inst.result.empty()) valueMap[inst.result] = n;
+                          emitDecRefIfOwnedSameBlock(inst.operands[1].name);
+                          continue;
+                      }
+                  }
+                  // PyList_UnpackStar(list, nBefore, nAfter) — nBefore/nAfter are raw i64 constants
+                  if (funcName == "PyList_UnpackStar" && inst.operands.size() >= 3) {
+                      llvm::Value* listVal = getAsPyObject(inst.operands[1].name);
+                      // nBefore and nAfter are digit strings → raw i64 constants
+                      long nBefore = 0, nAfter = 0;
+                      try { nBefore = std::stol(inst.operands[2].name); } catch (...) {}
+                      if (inst.operands.size() >= 4) {
+                          try { nAfter = std::stol(inst.operands[3].name); } catch (...) {}
+                      }
+                      llvm::Value* nb = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), (uint64_t)nBefore);
+                      llvm::Value* na = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), (uint64_t)nAfter);
+                      llvm::Function* usFn = module->getFunction("PyList_UnpackStar");
+                      if (usFn) {
+                          llvm::Value* res = builder.CreateCall(usFn, {listVal, nb, na}, inst.result);
+                          if (!inst.result.empty()) { valueMap[inst.result] = res; }
                           emitDecRefIfOwnedSameBlock(inst.operands[1].name);
                           continue;
                       }

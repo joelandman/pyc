@@ -82,6 +82,12 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse);
 PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp);
 PyObject* PyBuiltin_Any(PyObject* lst);
 PyObject* PyBuiltin_All(PyObject* lst);
+PyObject* PyBuiltin_Map(PyObject* func, PyObject* iterable);
+PyObject* PyBuiltin_MapN(PyObject* func, PyObject* iterables);
+PyObject* PyBuiltin_Filter(PyObject* func, PyObject* iterable);
+// PyList_UnpackStar(list, nBefore, nAfter) — returns a list of [before0, ..., starList, ..., after0]
+// where starList is a sub-list of the middle elements. nBefore/nAfter are i64 values.
+PyObject* PyList_UnpackStar(PyObject* list, int64_t nBefore, int64_t nAfter);
 PyObject* Pyc_IsInstance(PyObject* obj, PyObject* typecode);
 PyObject* PyString_Find(PyObject* s, PyObject* sub);
 PyObject* PyString_Find3(PyObject* s, PyObject* sub, PyObject* start);
