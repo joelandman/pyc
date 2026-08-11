@@ -450,7 +450,19 @@ class LoweringVisitor {
                     std::function<void(const ASTNode*)> collectLocals =
                         [&](const ASTNode* n) {
                             if (!n) return;
-                            if (n->type == "Assign" && !n->id.empty()) localsHere.insert(n->id);
+                            if (n->type == "Assign") {
+                                if (!n->id.empty()) localsHere.insert(n->id);
+                                // Tuple unpacking: "a, b = ..." — the target names are in
+                                // the first child (a Tuple of Name nodes).
+                                for (const auto& c : n->children) {
+                                    if (c && c->type == "Tuple") {
+                                        for (const auto& tc : c->children) {
+                                            if (tc && tc->type == "Name" && !tc->id.empty())
+                                                localsHere.insert(tc->id);
+                                        }
+                                    }
+                                }
+                            }
                             for (const auto& c : n->children) collectLocals(c.get());
                         };
                     for (const auto& c : node->children) collectLocals(c.get());
@@ -459,7 +471,7 @@ class LoweringVisitor {
                     std::function<void(const ASTNode*)> walkNested =
                         [&](const ASTNode* n) {
                             if (!n) return;
-                            if (n->type == "FunctionDef") {
+                            if (n->type == "FunctionDef" || n->type == "Lambda") {
                                 std::unordered_set<std::string> used;
                                 walkNames(n, used);
                                 for (const auto& nm : used) {
@@ -765,34 +777,18 @@ class LoweringVisitor {
             }
 
             // B5 (lambda cells): for each *owned* cell in this scope, if the body of any
-            // nested lambda (or nested def) references that name, we must ensure the
-            // lambda's synthetic will receive the cell via a hidden param. We do this
-            // by walking nested Lambda nodes and adding their referenced owned names
-            // into the current function's freeCellVars (so later, when lowering the
-            // lambda as a nested FunctionDef, the demanded path will mark it and the
-            // lambda will get the hidden cell param from *this* scope).
+            // nested lambda (or nested def) references that name, the lambda's synthetic
+            // must receive the cell via a hidden param. This is now handled in lowerLambda
+            // itself (which sets funcFreeCells[lamName] and synthesizes the hidden cell
+            // params on the lambda's IRFunction). This block previously added owned-cell
+            // names to funcFreeCells[defIRName] (incoming cells), which was incorrect —
+            // owned cells are not incoming cells. With the lowerLambda fix, this block is
+            // no longer needed and is intentionally left as a no-op scan (kept for any
+            // future cross-lambda forwarding needs).
             {
                 std::function<void(const ASTNode*)> markLambdaDemands = [&](const ASTNode* n) {
                     if (!n) return;
-                    if (n->type == "Lambda") {
-                        const ASTNode* body = nullptr;
-                        for (const auto& c : n->children) {
-                            if (c && c->type != "Default") { body = c.get(); break; }
-                        }
-                        if (body) {
-                            auto used = collectNames(body);
-                            auto oit2 = funcOwnedCells.find(defIRName);
-                            if (oit2 != funcOwnedCells.end()) {
-                                for (const auto& nm : oit2->second) {
-                                    if (used.count(nm)) {
-                                        auto& frees = funcFreeCells[defIRName];
-                                        if (std::find(frees.begin(), frees.end(), nm) == frees.end())
-                                            frees.push_back(nm);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    // No-op: lambda closure analysis is now done in lowerLambda.
                     for (const auto& c : n->children) markLambdaDemands(c.get());
                 };
                 for (const auto& c : node->children) markLambdaDemands(c.get());
@@ -6036,6 +6032,83 @@ class LoweringVisitor {
         lastLambdaSynthetic = lamName;
 
         std::string savedFunc = currentFunc;
+
+        // B5: closure analysis for lambdas — compute free variables captured
+        // from the enclosing scope. This runs before the body is lowered so
+        // that isCellBackedHere returns true inside the lambda body. We scan
+        // the lambda body for Name nodes that aren't locals/params, then
+        // check which are assigned in the enclosing scope (locals of the
+        // enclosing function). We can't use funcOwnedCells yet (it's populated
+        // after body lowering), so we scan the enclosing function's AST for
+        // assignments.
+        std::vector<std::string> lamFrees;
+        bool isNestedLambda = !savedFunc.empty() && savedFunc != "__module__";
+        if (isNestedLambda) {
+            // Collect names used in the lambda body (excluding nested defs/lambdas).
+            std::unordered_set<std::string> used;
+            std::function<void(const ASTNode*)> walk = [&](const ASTNode* n) {
+                if (!n) return;
+                if (n->type == "FunctionDef" || n->type == "Lambda") return;
+                if (n->type == "Name" && !n->id.empty()) used.insert(n->id);
+                for (const auto& c : n->children) walk(c.get());
+            };
+            for (const auto& c : node->children) {
+                if (c && c->type != "Default") walk(c.get());
+            }
+
+            // Lambda's own locals (params only — lambdas have single-expression bodies).
+            std::unordered_set<std::string> localsHere;
+            for (auto& a : node->args) {
+                std::string b = a;
+                while (!b.empty() && b[0] == '*') b = b.substr(1);
+                if (!b.empty()) localsHere.insert(b);
+            }
+
+            // Simplified approach: any name used in the lambda body that is:
+            // 1. Not a lambda param/local
+            // 2. Not a module global
+            // 3. Not a known builtin
+            // ...is a free variable captured from the enclosing scope.
+            auto isModGlobal = [&](const std::string& nm) -> bool {
+                for (const auto& g : ir.moduleGlobals) if (g == nm) return true;
+                return false;
+            };
+            for (const auto& nm : used) {
+                if (localsHere.count(nm)) continue;
+                if (isModGlobal(nm)) continue;
+                // Skip known builtins and IR function names
+                if (knownIRFunctions.count(nm)) continue;
+                if (nm == "print" || nm == "len" || nm == "range" || nm == "int" ||
+                    nm == "float" || nm == "str" || nm == "list" || nm == "dict" ||
+                    nm == "bool" || nm == "tuple" || nm == "set" || nm == "abs" ||
+                    nm == "min" || nm == "max" || nm == "sum" || nm == "sorted" ||
+                    nm == "enumerate" || nm == "zip" || nm == "reversed" ||
+                    nm == "type" || nm == "isinstance" || nm == "callable" ||
+                    nm == "round" || nm == "repr" || nm == "ord" || nm == "chr" ||
+                    nm == "hex" || nm == "oct" || nm == "bin" || nm == "divmod" ||
+                    nm == "pow" || nm == "any" || nm == "all" || nm == "id" ||
+                    nm == "True" || nm == "False" || nm == "None") continue;
+                if (std::find(lamFrees.begin(), lamFrees.end(), nm) == lamFrees.end())
+                    lamFrees.push_back(nm);
+            }
+            funcFreeCells[lamName] = lamFrees;
+        } else {
+            funcFreeCells[lamName] = {};
+        }
+
+        // B5: if this lambda has free cells, synthesize hidden leading cell
+        // parameters on the IRFunction (same as FunctionDef at lines 639-663).
+        if (!lamFrees.empty()) {
+            for (auto& fnr : ir.functions) if (fnr.name == lamName) {
+                fnr.freeCellVars = lamFrees;
+                std::vector<std::string> newArgs;
+                for (const auto& fc : lamFrees) newArgs.push_back(fc + "_cell");
+                newArgs.insert(newArgs.end(), fnr.args.begin(), fnr.args.end());
+                fnr.args = newArgs;
+                break;
+            }
+            closureFunctions.insert(lamName);
+        }
 
         // Handle default arguments for the lambda (mirror FunctionDef).
         // Defaults are evaluated in the definition context (saved), and stored

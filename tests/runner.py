@@ -1208,6 +1208,13 @@ print(call_it(lambda x: x*x, 6))
 fns=[lambda y:y+10, lambda y:y*2]
 print(fns[0](1), fns[1](7))
 """, "36\n11 14\n"),
+    # Lambda closure capture (was returning None — lambda didn't receive
+    # the captured variable's cell from the enclosing scope).
+    ("def outer():\n    n = 5\n    f = lambda x: x + n\n    return f(10)\nprint(outer())", "15\n"),
+    ("def make_adder(n):\n    return lambda x: x + n\nadd5 = make_adder(5)\nprint(add5(10))", "15\n"),
+    ("def outer():\n    a, b = 3, 4\n    return (lambda: a + b)()\nprint(outer())", "7\n"),
+    # Lambda capturing a mutable variable (cell-backed, not a snapshot).
+    ("def outer():\n    n = 0\n    f = lambda: n\n    n = 42\n    return f()\nprint(outer())", "42\n"),
     # lambda with *args in its own signature + passed as value
     ("""
 def app(f, xs):
