@@ -3110,46 +3110,42 @@ PyObject* Pyc_FormatValue(PyObject* value, PyObject* specObj) {
     return PyUnicode_FromString(padded.c_str());
 }
 
-// str.partition(sep) / str.rpartition(sep) — found entirely
-// unimplemented while bug hunting. Both return a 3-element
-// [before, sep, after] list (pyc now has a real tuple type, but these
-// were left as lists for simplicity — a narrower gap than the
-// tuple-literal/divmod case that was fully upgraded).
-// partition finds the first occurrence of sep; rpartition finds the
-// last. Real CPython raises ValueError for an empty separator; this
-// takes the more lenient "no match" fallback instead (documented, not
-// treated as an error case here — matches this codebase's general
-// preference for graceful fallback over raising in edge cases that
-// aren't the primary target of the fix).
+// str.partition(sep) / str.rpartition(sep) — return a 3-tuple
+// (before, sep, after), matching CPython. partition finds the first
+// occurrence of sep; rpartition finds the last. Real CPython raises
+// ValueError for an empty separator; this takes the more lenient "no
+// match" fallback instead (documented, not treated as an error case
+// here — matches this codebase's general preference for graceful
+// fallback over raising in edge cases).
 PyObject* PyString_Partition(PyObject* s, PyObject* sep) {
-    PyObject* r = PyList_New(0);
     std::string str = (s && s->type == 3) ? s->str : "";
     std::string delim = (sep && sep->type == 3) ? sep->str : "";
     size_t pos = delim.empty() ? std::string::npos : str.find(delim);
+    PyObject* r = PyTuple_New(3);
     if (pos == std::string::npos) {
-        PyList_Append(r, PyUnicode_FromString(str.c_str()));
-        PyList_Append(r, PyUnicode_FromString(""));
-        PyList_Append(r, PyUnicode_FromString(""));
+        PyTuple_SetItem(r, 0, PyUnicode_FromString(str.c_str()));
+        PyTuple_SetItem(r, 1, PyUnicode_FromString(""));
+        PyTuple_SetItem(r, 2, PyUnicode_FromString(""));
     } else {
-        PyList_Append(r, PyUnicode_FromString(str.substr(0, pos).c_str()));
-        PyList_Append(r, PyUnicode_FromString(delim.c_str()));
-        PyList_Append(r, PyUnicode_FromString(str.substr(pos + delim.size()).c_str()));
+        PyTuple_SetItem(r, 0, PyUnicode_FromString(str.substr(0, pos).c_str()));
+        PyTuple_SetItem(r, 1, PyUnicode_FromString(delim.c_str()));
+        PyTuple_SetItem(r, 2, PyUnicode_FromString(str.substr(pos + delim.size()).c_str()));
     }
     return r;
 }
 PyObject* PyString_RPartition(PyObject* s, PyObject* sep) {
-    PyObject* r = PyList_New(0);
     std::string str = (s && s->type == 3) ? s->str : "";
     std::string delim = (sep && sep->type == 3) ? sep->str : "";
     size_t pos = delim.empty() ? std::string::npos : str.rfind(delim);
+    PyObject* r = PyTuple_New(3);
     if (pos == std::string::npos) {
-        PyList_Append(r, PyUnicode_FromString(""));
-        PyList_Append(r, PyUnicode_FromString(""));
-        PyList_Append(r, PyUnicode_FromString(str.c_str()));
+        PyTuple_SetItem(r, 0, PyUnicode_FromString(""));
+        PyTuple_SetItem(r, 1, PyUnicode_FromString(""));
+        PyTuple_SetItem(r, 2, PyUnicode_FromString(str.c_str()));
     } else {
-        PyList_Append(r, PyUnicode_FromString(str.substr(0, pos).c_str()));
-        PyList_Append(r, PyUnicode_FromString(delim.c_str()));
-        PyList_Append(r, PyUnicode_FromString(str.substr(pos + delim.size()).c_str()));
+        PyTuple_SetItem(r, 0, PyUnicode_FromString(str.substr(0, pos).c_str()));
+        PyTuple_SetItem(r, 1, PyUnicode_FromString(delim.c_str()));
+        PyTuple_SetItem(r, 2, PyUnicode_FromString(str.substr(pos + delim.size()).c_str()));
     }
     return r;
 }
@@ -3268,11 +3264,12 @@ PyObject* PyDict_Items(PyObject* d) {
     PyObject* result = PyList_New(0);
     if (!d || d->type != 2) return result;
     for (auto& pair : d->dict) {
-        PyObject* item = PyList_New(2);
+        PyObject* item = PyTuple_New(2);
         Py_INCREF(pair.first); Py_INCREF(pair.second);
-        PyList_SetItem(item, 0, pair.first);
-        PyList_SetItem(item, 1, pair.second);
+        PyTuple_SetItem(item, 0, pair.first);
+        PyTuple_SetItem(item, 1, pair.second);
         PyList_Append(result, item);
+        Py_DECREF(item);
     }
     return result;
 }
@@ -4511,6 +4508,15 @@ static PyObject* pyc_new_path(const std::string& s) {
 
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
     if (!obj || !key) return nullptr;
+    // Complex number attribute reads (.real/.imag) — handled directly
+    // here so they work even when the value arrives as an untyped
+    // function parameter or through operator.attrgetter.
+    if (obj->type == 13 && key->type == 3) {
+        const std::string& k = key->str;
+        if (k == "real") return PyFloat_FromDouble(obj->complex_real);
+        if (k == "imag") return PyFloat_FromDouble(obj->complex_imag);
+        return nullptr;
+    }
     // date/datetime/timedelta attribute reads: handled directly here
     // (rather than requiring the compiler to have inferred the value's
     // type via typeOf) so `.year`/`.days`/etc. work even when the value
@@ -5631,13 +5637,13 @@ PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
     else n = iterable->list.size();
     PyObject* r = PyList_New(n);
     for (size_t i = 0; i < n; ++i) {
-        PyObject* pair = PyList_New(2);
-        PyList_SetItem(pair, 0, PyInt_FromLong((long)i));
+        PyObject* pair = PyTuple_New(2);
+        PyTuple_SetItem(pair, 0, PyInt_FromLong((long)i));
         PyObject* v = nullptr;
         if (iterable->list_item_type == 1) v = PyInt_FromLong(iterable->ilist[i]);
         else if (iterable->list_item_type == 2) v = PyFloat_FromDouble(iterable->flist[i]);
         else { v = iterable->list[i]; if (v) Py_INCREF(v); }
-        PyList_SetItem(pair, 1, v);
+        PyTuple_SetItem(pair, 1, v);
         PyList_SetItem(r, i, pair);
     }
     return r;
@@ -5658,7 +5664,7 @@ PyObject* PyBuiltin_Zip2(PyObject* a, PyObject* b) {
     size_t n = na < nb ? na : nb;
     PyObject* r = PyList_New(n);
     for (size_t i = 0; i < n; ++i) {
-        PyObject* pair = PyList_New(2);
+        PyObject* pair = PyTuple_New(2);
         PyObject* va = nullptr, *vb = nullptr;
         if (a->list_item_type == 1) va = PyInt_FromLong(a->ilist[i]);
         else if (a->list_item_type == 2) va = PyFloat_FromDouble(a->flist[i]);
@@ -5666,8 +5672,8 @@ PyObject* PyBuiltin_Zip2(PyObject* a, PyObject* b) {
         if (b->list_item_type == 1) vb = PyInt_FromLong(b->ilist[i]);
         else if (b->list_item_type == 2) vb = PyFloat_FromDouble(b->flist[i]);
         else { vb = b->list[i]; if (vb) Py_INCREF(vb); }
-        PyList_SetItem(pair, 0, va);
-        PyList_SetItem(pair, 1, vb);
+        PyTuple_SetItem(pair, 0, va);
+        PyTuple_SetItem(pair, 1, vb);
         PyList_SetItem(r, i, pair);
     }
     return r;
@@ -6426,15 +6432,43 @@ extern "C" PyObject* PyBuiltin_OsPathDirname(PyObject* args) {
     return PyUnicode_FromString(p->str.substr(0, slash).c_str());
 }
 
-// os.path.splitext(p) -> [root, ext] : returns a 2-element list instead
-// of CPython's 2-tuple (pyc now has a real tuple type, but this was left
-// as a list — a narrower remaining gap, same as itertools' tuple-shaped
-// results).
-extern "C" PyObject* PyBuiltin_OsPathSplitext(PyObject* args) {
-    PyObject* out = PyList_New(0);
-    if (!args || args->type != 1 || args->list.empty()) return out;
+// os.path.split(p) -> (head, tail) 2-tuple, matching CPython. Equivalent
+// to (os.path.dirname(p), os.path.basename(p)).
+extern "C" PyObject* PyBuiltin_OsPathSplit(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) {
+        PyObject* r = PyTuple_New(2);
+        PyTuple_SetItem(r, 0, PyUnicode_FromString(""));
+        PyTuple_SetItem(r, 1, PyUnicode_FromString(""));
+        return r;
+    }
     PyObject* p = args->list[0];
-    if (!p || p->type != 3) return out;
+    if (!p || p->type != 3) {
+        PyObject* r = PyTuple_New(2);
+        PyTuple_SetItem(r, 0, PyUnicode_FromString(""));
+        PyTuple_SetItem(r, 1, PyUnicode_FromString(""));
+        return r;
+    }
+    const std::string& s = p->str;
+    size_t slash = s.find_last_of('/');
+    std::string head, tail;
+    if (slash == std::string::npos) {
+        head = ""; tail = s;
+    } else if (slash == 0) {
+        head = "/"; tail = s.substr(1);
+    } else {
+        head = s.substr(0, slash); tail = s.substr(slash + 1);
+    }
+    PyObject* r = PyTuple_New(2);
+    PyTuple_SetItem(r, 0, PyUnicode_FromString(head.c_str()));
+    PyTuple_SetItem(r, 1, PyUnicode_FromString(tail.c_str()));
+    return r;
+}
+
+// os.path.splitext(p) -> (root, ext) 2-tuple, matching CPython.
+extern "C" PyObject* PyBuiltin_OsPathSplitext(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyTuple_New(0);
+    PyObject* p = args->list[0];
+    if (!p || p->type != 3) return PyTuple_New(0);
     const std::string& s = p->str;
     size_t slash = s.find_last_of('/');
     size_t dot = s.find_last_of('.');
@@ -6448,11 +6482,9 @@ extern "C" PyObject* PyBuiltin_OsPathSplitext(PyObject* args) {
         root = s.substr(0, dot);
         ext = s.substr(dot);
     }
-    PyObject* rootObj = PyUnicode_FromString(root.c_str());
-    PyObject* extObj = PyUnicode_FromString(ext.c_str());
-    PyList_Append(out, rootObj);
-    PyList_Append(out, extObj);
-    Py_DECREF(rootObj); Py_DECREF(extObj);
+    PyObject* out = PyTuple_New(2);
+    PyTuple_SetItem(out, 0, PyUnicode_FromString(root.c_str()));
+    PyTuple_SetItem(out, 1, PyUnicode_FromString(ext.c_str()));
     return out;
 }
 
@@ -7084,14 +7116,14 @@ extern "C" PyObject* PyStruct_Pack(PyObject* args) {
     return PyBytes_FromStringAndSize(out.data(), out.size());
 }
 extern "C" PyObject* PyStruct_Unpack(PyObject* args) {
-    PyObject* out = PyList_New(0);
-    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    if (!args || args->type != 1 || args->list.size() < 2) return PyTuple_New(0);
     PyObject* fmtObj = args->list[0];
     PyObject* dataObj = args->list[1];
-    if (!fmtObj || fmtObj->type != 3 || !pyc_is_bytes_like(dataObj)) return out;
+    if (!fmtObj || fmtObj->type != 3 || !pyc_is_bytes_like(dataObj)) return PyTuple_New(0);
     auto codes = pyc_parse_struct_fmt(fmtObj->str);
     const std::string& s = dataObj->str;
     size_t pos = 0;
+    std::vector<PyObject*> items;
     for (auto& fc : codes) {
         PyObject* v = nullptr;
         switch (fc.code) {
@@ -7145,8 +7177,10 @@ extern "C" PyObject* PyStruct_Unpack(PyObject* args) {
             }
             default: break;
         }
-        if (v) { PyList_Append(out, v); Py_DECREF(v); }
+        if (v) items.push_back(v);
     }
+    PyObject* out = PyTuple_New(items.size());
+    for (size_t i = 0; i < items.size(); ++i) PyTuple_SetItem(out, i, items[i]);
     return out;
 }
 
@@ -7868,11 +7902,9 @@ extern "C" PyObject* PyOperator_ItemgetterCall(PyObject* args) {
     size_t nKeys = args->list.size() - 1;
     PyObject* obj = args->list[nKeys];
     if (nKeys == 1) return Pyc_Subscript(obj, args->list[0]);
-    PyObject* out = PyList_New(0);
+    PyObject* out = PyTuple_New(nKeys);
     for (size_t i = 0; i < nKeys; ++i) {
-        PyObject* v = Pyc_Subscript(obj, args->list[i]);
-        PyList_Append(out, v);
-        if (v) Py_DECREF(v);
+        PyTuple_SetItem(out, i, Pyc_Subscript(obj, args->list[i]));
     }
     return out;
 }
@@ -7894,11 +7926,9 @@ extern "C" PyObject* PyOperator_AttrgetterCall(PyObject* args) {
     size_t nNames = args->list.size() - 1;
     PyObject* obj = args->list[nNames];
     if (nNames == 1) return Pyc_GetItem(obj, args->list[0]);
-    PyObject* out = PyList_New(0);
+    PyObject* out = PyTuple_New(nNames);
     for (size_t i = 0; i < nNames; ++i) {
-        PyObject* v = Pyc_GetItem(obj, args->list[i]);
-        PyList_Append(out, v);
-        if (v) Py_DECREF(v);
+        PyTuple_SetItem(out, i, Pyc_GetItem(obj, args->list[i]));
     }
     return out;
 }
@@ -8936,10 +8966,9 @@ static PyObject* makeRandomModuleDict() {
 // already eagerly materialized, see FEATURES.md), so infinite iterators
 // (count, cycle, unbounded repeat) cannot be represented at all and are
 // deliberately not implemented. Every "iterable" argument must already be
-// a real, materialized pyc list. pyc now has a real tuple type (type 7),
-// but these itertools functions still return lists for their tuple-shaped
-// results (product/combinations/permutations/zip_longest entries) — a
-// narrower remaining gap, not the default behavior for tuple literals.
+// a real, materialized pyc list. itertools.product/combinations/
+// permutations/zip_longest entries now return real tuples (type 7) for
+// their inner combos (matching CPython); the outer container is a list.
 
 // Read element i of a list uniformly regardless of homogeneous/boxed
 // storage, returning a NEW reference (caller must Py_DECREF it).
@@ -8983,11 +9012,9 @@ extern "C" PyObject* PyItertools_Product(PyObject* args) {
     }
     std::vector<size_t> idx(nLists, 0);
     while (true) {
-        PyObject* combo = PyList_New(0);
+        PyObject* combo = PyTuple_New(nLists);
         for (size_t i = 0; i < nLists; ++i) {
-            PyObject* v = pycListItemNewRef(lists[i], idx[i]);
-            PyList_Append(combo, v);
-            if (v) Py_DECREF(v);
+            PyTuple_SetItem(combo, i, pycListItemNewRef(lists[i], idx[i]));
         }
         PyList_Append(out, combo);
         Py_DECREF(combo);
@@ -9011,7 +9038,7 @@ extern "C" PyObject* PyItertools_Combinations(PyObject* args) {
     size_t n = PyList_Size(iterable);
     if ((size_t)r > n) return out;
     if (r == 0) {
-        PyObject* combo = PyList_New(0);
+        PyObject* combo = PyTuple_New(0);
         PyList_Append(out, combo);
         Py_DECREF(combo);
         return out;
@@ -9019,11 +9046,9 @@ extern "C" PyObject* PyItertools_Combinations(PyObject* args) {
     std::vector<size_t> idx((size_t)r);
     for (long i = 0; i < r; ++i) idx[(size_t)i] = (size_t)i;
     while (true) {
-        PyObject* combo = PyList_New(0);
+        PyObject* combo = PyTuple_New((size_t)r);
         for (long i = 0; i < r; ++i) {
-            PyObject* v = pycListItemNewRef(iterable, idx[(size_t)i]);
-            PyList_Append(combo, v);
-            if (v) Py_DECREF(v);
+            PyTuple_SetItem(combo, (size_t)i, pycListItemNewRef(iterable, idx[(size_t)i]));
         }
         PyList_Append(out, combo);
         Py_DECREF(combo);
@@ -9055,11 +9080,9 @@ extern "C" PyObject* PyItertools_Permutations(PyObject* args) {
     for (long i = 0; i < r; ++i) cycles[(size_t)i] = (long)n - i;
 
     auto emit = [&]() {
-        PyObject* combo = PyList_New(0);
+        PyObject* combo = PyTuple_New((size_t)r);
         for (long i = 0; i < r; ++i) {
-            PyObject* v = pycListItemNewRef(iterable, indices[(size_t)i]);
-            PyList_Append(combo, v);
-            if (v) Py_DECREF(v);
+            PyTuple_SetItem(combo, (size_t)i, pycListItemNewRef(iterable, indices[(size_t)i]));
         }
         PyList_Append(out, combo);
         Py_DECREF(combo);
@@ -9137,16 +9160,14 @@ extern "C" PyObject* PyItertools_ZipLongest(PyObject* args) {
         if (sz > maxLen) maxLen = sz;
     }
     for (size_t i = 0; i < maxLen; ++i) {
-        PyObject* row = PyList_New(0);
+        PyObject* row = PyTuple_New(nLists);
         for (size_t j = 0; j < nLists; ++j) {
             PyObject* lst = args->list[j];
             size_t sz = (lst && lst->type == 1) ? PyList_Size(lst) : 0;
             if (i < sz) {
-                PyObject* v = pycListItemNewRef(lst, i);
-                PyList_Append(row, v);
-                if (v) Py_DECREF(v);
+                PyTuple_SetItem(row, j, pycListItemNewRef(lst, i));
             } else {
-                PyList_Append(row, nullptr); // None for the exhausted iterable(s)
+                PyTuple_SetItem(row, j, nullptr); // None for exhausted iterable(s)
             }
         }
         PyList_Append(out, row);
@@ -9264,9 +9285,9 @@ extern "C" PyObject* PyItertools_Compress(PyObject* args) {
 }
 // itertools.groupby(iterable, key=None) -> list of [key, group_list]
 // 2-element lists (real groupby yields (key, group_iterator) tuples;
-// pyc now has a real tuple type but these were left as lists — and the
-// group is eagerly materialized like every other itertools function
-// here). Groups only *consecutive* equal
+// the key/group pair is still a list here — a narrower remaining gap).
+// The group is eagerly materialized like every other itertools
+// function here. Groups only *consecutive* equal
 // keys (verified against real groupby — NOT a full partition).
 // Direct-call convention (2 raw args), not token+registry: `key=` is a
 // keyword argument, which the generic dict-dispatch has no mechanism to
@@ -9894,6 +9915,7 @@ static PyObject* makeOsModuleDict() {
     addTok("basename", "PyBuiltin_OsPathBasename");
     addTok("dirname",  "PyBuiltin_OsPathDirname");
     addTok("splitext", "PyBuiltin_OsPathSplitext");
+    addTok("split",   "PyBuiltin_OsPathSplit");
     addTok("abspath",  "PyBuiltin_OsPathAbspath");
     PyDict_SetItem(d, path_key, path_val);
     Py_DECREF(path_key); Py_DECREF(path_val);
@@ -10410,6 +10432,7 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyBuiltin_OsPathBasename",      PyBuiltin_OsPathBasename);
     pyc_register_callable("PyBuiltin_OsPathDirname",       PyBuiltin_OsPathDirname);
     pyc_register_callable("PyBuiltin_OsPathSplitext",      PyBuiltin_OsPathSplitext);
+    pyc_register_callable("PyBuiltin_OsPathSplit",        PyBuiltin_OsPathSplit);
     pyc_register_callable("PyBuiltin_OsPathAbspath",       PyBuiltin_OsPathAbspath);
     pyc_register_callable("PyBuiltin_OsGetcwd",            PyBuiltin_OsGetcwd);
     pyc_register_callable("PyBuiltin_OsListdir",           PyBuiltin_OsListdir);

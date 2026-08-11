@@ -8520,7 +8520,7 @@ class LoweringVisitor {
         } else if (methodName == "isspace") {
             ir.addInstruction(currentFunc, "call", {"PyString_IsSpace", obj}, res, "bool");
             noteType(res, "bool");
-        } else if (methodName == "split" || methodName == "rsplit") {
+        } else if ((methodName == "split" || methodName == "rsplit") && typeOf(obj) != "dict") {
             // sep=None (the whitespace-run-splitting mode, collapsing
             // consecutive whitespace and dropping empty tokens) must be
             // detected from the AST, not just "no argument given" — a

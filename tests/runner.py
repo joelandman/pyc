@@ -1921,13 +1921,11 @@ print(lst)
 """, "0.6394267984578837\n0.025010755222666936\n82\n15\n1\n1.6394267984578836\n10\n[4, 2, 3, 5, 1]\n"),
     # itertools/collections subset (synthetic, eager list-returning — no
     # lazy iterator protocol, so count/cycle/unbounded repeat aren't
-    # implemented; see IMPLEMENTATION.md). Tuples aren't a distinct pyc
-    # type (pre-existing, unrelated to this work) so results that would be
-    # tuples in real Python are plain lists here — expected output below
-    # reflects that. The Counter test uses distinct counts (4/2/1) to
-    # avoid tie-breaking order, which depends on pyc's dict iteration
-    # order (not currently insertion-order-preserving — see
-    # IMPLEMENTATION.md) and so isn't guaranteed to match CPython's.
+    # implemented; see IMPLEMENTATION.md). itertools.product/combinations/
+    # permutations/zip_longest now return real tuples for their element
+    # entries (matching CPython); Counter.most_common still returns list-pairs
+    # (a narrower remaining gap). The Counter test uses distinct counts
+    # (4/2/1) to avoid tie-breaking order.
     ("""
 import itertools
 import collections
@@ -1948,7 +1946,7 @@ print(itertools.zip_longest([1, 2, 3], [10, 20]))
 c = collections.Counter(["a", "a", "a", "a", "b", "b", "c"])
 print(collections.most_common(c))
 print(collections.most_common(c, 2))
-""", "[1, 2, 3, 4, 5]\n[[1, 3], [1, 4], [2, 3], [2, 4]]\n[[1, 2], [1, 3], [1, 4], [2, 3], [2, 4], [3, 4]]\n[[1, 2, 3], [1, 3, 2], [2, 1, 3], [2, 3, 1], [3, 1, 2], [3, 2, 1]]\n[[1, 2], [1, 3], [2, 1], [2, 3], [3, 1], [3, 2]]\n[1, 2, 3]\n[3, 7, 11]\n[[1, 10], [2, 20], [3, None]]\n[['a', 4], ['b', 2], ['c', 1]]\n[['a', 4], ['b', 2]]\n"),
+""", "[1, 2, 3, 4, 5]\n[(1, 3), (1, 4), (2, 3), (2, 4)]\n[(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4)]\n[(1, 2, 3), (1, 3, 2), (2, 1, 3), (2, 3, 1), (3, 1, 2), (3, 2, 1)]\n[(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)]\n[1, 2, 3]\n[3, 7, 11]\n[(1, 10), (2, 20), (3, None)]\n[['a', 4], ['b', 2], ['c', 1]]\n[['a', 4], ['b', 2]]\n"),
     # datetime module (synthetic types, tags 14/15 — see IMPLEMENTATION.md).
     # Covers both `import datetime` / `datetime.date(...)`-qualified and
     # `from datetime import date, timedelta` bare-name construction, plus
@@ -2008,16 +2006,13 @@ print(show(dt))
 """, "2024-03-15\n2024 3 15\n2024-03-15\n4\n5\n2024-03-15 09:30:45\n2024-03-15T09:30:45\n9 30 45\n5 days, 3:00:00\n5 10800\n93.0\n2024-03-25\n10 days, 0:00:00\n<class 'datetime.timedelta'>\nTrue\nTrue\nTrue\n2024-01-08\n2024\n2024-03-15 09:30:45\n"),
     # os / pathlib (synthetic; os.path.* are token-dispatched functions,
     # pathlib.Path is a new runtime type — tag 16, see IMPLEMENTATION.md).
-    # os.path.splitext is wrapped in list(...) because it returns a real
-    # tuple in CPython but still a plain list in pyc (pyc now has a real
-    # tuple type, but os.path.splitext wasn't upgraded — same remaining
-    # gap as itertools' tuple-shaped results); list(...) normalizes both
-    # normalizes both sides to the same printed form so the comparison
-    # stays meaningful. Uses a fixed /tmp scratch dir (not the repo
-    # directory) and exist_ok=True/explicit os.remove so the test is
-    # idempotent across repeated runs. os.getcwd()/os.environ are checked
-    # structurally (isinstance/len), not by exact value, since those are
-    # environment-dependent.
+    # os.path.splitext now returns a real tuple (matching CPython); the
+    # list(...) wrapper normalizes it to the same printed form either way
+    # and keeps the test robust. Uses a fixed /tmp scratch dir (not the
+    # repo directory) and exist_ok=True/explicit os.remove so the test
+    # is idempotent across repeated runs. os.getcwd()/os.environ are
+    # checked structurally (isinstance/len), not by exact value, since
+    # those are environment-dependent.
     ("""
 import os
 import pathlib
@@ -2542,9 +2537,8 @@ print(parts[2][0])
     # Pyc_Apply prepends the captured values) for partial/lru_cache/
     # itemgetter/attrgetter — the same mechanism closures already use, so
     # no new type or dispatch machinery was needed, only construction.
-    # Multi-key itemgetter/attrgetter results are lists, not tuples (pyc
-    # now has a real tuple type, but these weren't upgraded — same
-    # remaining gap as itertools/os.path.splitext).
+    # Multi-key itemgetter/attrgetter results now return real tuples
+    # (matching CPython), same as itertools.product/combinations/etc.
     #
     # Found and fixed two real compiler bugs while building this (see
     # IMPLEMENTATION.md): (1) a value returned from the generic

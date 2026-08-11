@@ -2702,12 +2702,25 @@ list branch; tuple-vs-list always unequal, matching CPython's `(1,2) ==
 `PyTuple_NewBoxed`, `PyTuple_SetItem`, `PyTuple_SetItemBoxed`,
 `PyBuiltin_Tuple`.
 
-**Still returning lists, not tuples** (separate gaps, not addressed by this
-change): `itertools.product`/`permutations`/`combinations`/`zip_longest`
-entries, `os.path.splitext`, `operator.itemgetter`/`attrgetter` multi-key
-results, `struct.unpack`. These each have their own dispatch paths that
-would need separate tuple-conversion work; the tuple type infrastructure
-is now available for them.
+**Now also returning real tuples** (follow-up to the tuple type work):
+`itertools.product`/`permutations`/`combinations`/`zip_longest` entries
+(inner combos are tuples; outer container stays a list, matching CPython),
+`os.path.splitext` (2-tuple), `os.path.split` (2-tuple, newly implemented),
+`operator.itemgetter`/`attrgetter` multi-key results (tuple),
+`struct.unpack` (tuple), `str.partition`/`rpartition` (3-tuple),
+`enumerate`/`zip` (list of 2-tuples), `dict.items` (list of 2-tuples).
+Also fixed: `complex.real`/`.imag` attribute reads (previously returned
+None — `Pyc_GetItem` now handles type 13); `os.path.split` was entirely
+missing (now implemented, returning a 2-tuple); `str.split`/`rsplit`
+method dispatch was catching `os.path.split(...)` — now gated on
+`typeOf(obj) != "dict"` to let `os.path.split` reach the runtime.
+
+**Still returning lists** (narrower remaining gaps): `itertools.groupby`
+key/group pairs, `collections.Counter.most_common` entries.
+
+Verified against real CPython for all the above. 557/557 runner tests
+pass (0 failures), 9/9 import tests pass, valgrind 0 errors, verified
+at -O0 and -O2.
 
 Verified against real CPython: tuple literals (empty, single, multi,
 nested), repr/print format (including `(1,)` and `()`), indexing (positive
