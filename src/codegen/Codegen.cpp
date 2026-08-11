@@ -475,7 +475,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     // where it was then misread as a second positional value) while
     // hunting for more bugs.
     {
-        llvm::FunctionType* minMaxListTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::FunctionType* minMaxListTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
         for (const char* name : {"PyBuiltin_MinList","PyBuiltin_MaxList"}) {
             llvm::Function::Create(minMaxListTy, llvm::Function::ExternalLinkage, name, module.get());
         }

@@ -93,8 +93,8 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
 void      Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step, PyObject* value);
 PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b, PyObject* key);
 PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b, PyObject* key);
-PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key);
-PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key);
+PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal);
+PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal);
 PyObject* PyBuiltin_List(PyObject* obj);
 PyObject* PyBuiltin_Reversed(PyObject* obj);
 PyObject* PyBuiltin_Enumerate(PyObject* iterable);

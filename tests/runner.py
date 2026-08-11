@@ -506,6 +506,10 @@ print(a[0],a[1],a[2])
     ("print(max([3, 1, 2], key=lambda x: -x))", "1\n"),
     ("print(min(3, 1, key=lambda x: -x))", "3\n"),
     ("print(max(3, 1, key=lambda x: -x))", "1\n"),
+    # min/max default= keyword (was returning None for empty iterables)
+    ("print(min([], default=99))", "99\n"),
+    ("print(max([], default=99))", "99\n"),
+    ("print(min([], default=None))", "None\n"),
 
     # Bug-hunt regression: assigning a native i1 comparison result to a
     # variable crashed LLVM verification ("assign" opcode's native-value
@@ -2687,7 +2691,11 @@ for byte in b"\\x01\\x02\\x03":
 print(total)
 
 print(b"\\x00\\x01\\xff")
-""", "5\n104\n111\n[101, 108]\nb'hello'\nb'hello world'\nbytearray(b'abcdef')\nbytearray(b'Abcdef')\nb''\nb'\\x00\\x00\\x00'\nb'Hi'\nb'hi'\n68656c6c6f\nb'hello'\nhello\nb'hello'\nTrue\nTrue\nTrue\nTrue\nTrue\n6\nb'\\x00\\x01\\xff'\n"),
+
+print(b"hello".upper())
+print(b"HELLO".lower())
+print(bytearray(b"hello").upper())
+""", "5\n104\n111\n[101, 108]\nb'hello'\nb'hello world'\nbytearray(b'abcdef')\nbytearray(b'Abcdef')\nb''\nb'\\x00\\x00\\x00'\nb'Hi'\nb'hi'\n68656c6c6f\nb'hello'\nhello\nb'hello'\nTrue\nTrue\nTrue\nTrue\nTrue\n6\nb'\\x00\\x01\\xff'\nb'HELLO'\nb'hello'\nbytearray(b'HELLO')\n"),
     # Severe, general, pre-existing bug — fixed here — found while
     # verifying decimal.Decimal's truthiness (unrelated on its own): the
     # "br" IR instruction's boxed-condition codegen (Codegen.cpp, backing

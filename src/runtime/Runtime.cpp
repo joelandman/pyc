@@ -2915,16 +2915,22 @@ PyObject* PyBuiltin_Pow3(PyObject* a, PyObject* b, PyObject* m) {
 }
 
 PyObject* PyString_Upper(PyObject* s) {
-    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    if (!s) return nullptr;
     std::string r = s->str;
     for (char& c : r) c = (char)toupper((unsigned char)c);
+    if (s->type == 17) return PyBytes_FromStringAndSize(r.data(), r.size());
+    if (s->type == 18) return PyByteArray_FromStringAndSize(r.data(), r.size());
+    if (s->type != 3) { Py_INCREF(s); return s; }
     return PyUnicode_FromString(r.c_str());
 }
 
 PyObject* PyString_Lower(PyObject* s) {
-    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    if (!s) return nullptr;
     std::string r = s->str;
     for (char& c : r) c = (char)tolower((unsigned char)c);
+    if (s->type == 17) return PyBytes_FromStringAndSize(r.data(), r.size());
+    if (s->type == 18) return PyByteArray_FromStringAndSize(r.data(), r.size());
+    if (s->type != 3) { Py_INCREF(s); return s; }
     return PyUnicode_FromString(r.c_str());
 }
 
@@ -5490,13 +5496,19 @@ PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b, PyObject* key) {
     if (kb) Py_DECREF(kb);
     return aWins ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
 }
-PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key) {
-    if (!lst || lst->type != 1) return nullptr;
+PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) {
+    if (!lst || lst->type != 1) {
+        if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
+        return nullptr;
+    }
     size_t n = 0;
     if (lst->list_item_type == 1) n = lst->ilist.size();
     else if (lst->list_item_type == 2) n = lst->flist.size();
     else n = lst->list.size();
-    if (n == 0) return nullptr;
+    if (n == 0) {
+        if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
+        return nullptr;
+    }
     auto getItem = [&](size_t i) -> PyObject* {
         if (lst->list_item_type == 1) return PyInt_FromLong(lst->ilist[i]);
         if (lst->list_item_type == 2) return PyFloat_FromDouble(lst->flist[i]);
@@ -5518,13 +5530,19 @@ PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key) {
     if (rKey) Py_DECREF(rKey);
     return r;
 }
-PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key) {
-    if (!lst || lst->type != 1) return nullptr;
+PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal) {
+    if (!lst || lst->type != 1) {
+        if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
+        return nullptr;
+    }
     size_t n = 0;
     if (lst->list_item_type == 1) n = lst->ilist.size();
     else if (lst->list_item_type == 2) n = lst->flist.size();
     else n = lst->list.size();
-    if (n == 0) return nullptr;
+    if (n == 0) {
+        if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
+        return nullptr;
+    }
     auto getItem = [&](size_t i) -> PyObject* {
         if (lst->list_item_type == 1) return PyInt_FromLong(lst->ilist[i]);
         if (lst->list_item_type == 2) return PyFloat_FromDouble(lst->flist[i]);
@@ -10356,7 +10374,7 @@ static PyObject* pyc_adapt_print(PyObject* args) {
 }
 static PyObject* pyc_adapt_min(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) return nullptr;
-    if (args->list.size() == 1) return PyBuiltin_MinList(args->list[0], nullptr);
+    if (args->list.size() == 1) return PyBuiltin_MinList(args->list[0], nullptr, nullptr);
     // Multiple positional args: compare pairwise
     PyObject* best = args->list[0];
     if (best) Py_INCREF(best);
@@ -10370,7 +10388,7 @@ static PyObject* pyc_adapt_min(PyObject* args) {
 }
 static PyObject* pyc_adapt_max(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) return nullptr;
-    if (args->list.size() == 1) return PyBuiltin_MaxList(args->list[0], nullptr);
+    if (args->list.size() == 1) return PyBuiltin_MaxList(args->list[0], nullptr, nullptr);
     PyObject* best = args->list[0];
     if (best) Py_INCREF(best);
     for (size_t i = 1; i < args->list.size(); ++i) {

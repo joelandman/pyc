@@ -5127,14 +5127,16 @@ class LoweringVisitor {
             // bugs. Use posArgCount, not argRes.size(), to find the true
             // positional args (argRes may have kwarg values appended).
             std::string keyName;
+            std::string defaultName;
             for (const auto& kv : kwArgs) {
                 if (kv.first == "key") keyName = kv.second;
+                if (kv.first == "default") defaultName = kv.second;
             }
             std::vector<std::string> posArgs(argRes.begin(),
                 argRes.begin() + std::min(posArgCount, argRes.size()));
             if (posArgs.size() == 1) {
                 std::string res = "$t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {fnLst, posArgs[0], keyName}, res);
+                ir.addInstruction(currentFunc, "call", {fnLst, posArgs[0], keyName, defaultName}, res);
                 noteType(res, "boxed");
                 return res;
             }
