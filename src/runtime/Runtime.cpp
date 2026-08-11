@@ -424,6 +424,10 @@ static PyObject* pyc_call_dunder2(PyObject* method, PyObject* self, PyObject* ot
 // defined earlier in the file than the try/except infrastructure.
 static PyObject* pyc_materialize_iterator_protocol(PyObject* obj);
 
+// Forward decl: pyc_ensure_boxed_list is defined ~line 3146 but used by
+// PyBuiltin_Tuple (and many other functions defined earlier in the file).
+static void pyc_ensure_boxed_list(PyObject* lst);
+
 // Internal truthiness predicate (mirrors Python's bool()).
 // NOT static: called directly from generated code (Codegen.cpp's "br"
 // instruction handler) for boxed non-numeric conditions (str/list/dict/
@@ -472,6 +476,11 @@ int PyObject_TruthValue(PyObject* obj) {
     }
     if (obj->type == 19) return !mpd_iszero(pyc_as_decimal(obj));
     if (obj->type == 20) return !obj->setElems.empty();
+    if (obj->type == 7) {
+        if (obj->list_item_type == 1) return !obj->ilist.empty();
+        if (obj->list_item_type == 2) return !obj->flist.empty();
+        return !obj->list.empty();
+    }
     return 1;
 }
 
@@ -622,20 +631,42 @@ static PyObject* listGetNewRef(PyObject* list, size_t i) {
     return item;
 }
 
+// Forward decl: defined just below PyTuple_GetItem (~line 749).
+static PyObject* tupleGetNewRef(PyObject* tuple, size_t i);
+
 int PyList_Unpack2(PyObject* list, PyObject** out0, PyObject** out1) {
-    if (!list || list->type != 1 || !out0 || !out1) return 0;
-    if (PyList_Size(list) < 2) return 0;
-    *out0 = listGetNewRef(list, 0);
-    *out1 = listGetNewRef(list, 1);
+    if (!list || !out0 || !out1) return 0;
+    size_t n;
+    if (list->type == 1) n = PyList_Size(list);
+    else if (list->type == 7) n = PyTuple_Size(list);
+    else return 0;
+    if (n < 2) return 0;
+    if (list->type == 7) {
+        *out0 = tupleGetNewRef(list, 0);
+        *out1 = tupleGetNewRef(list, 1);
+    } else {
+        *out0 = listGetNewRef(list, 0);
+        *out1 = listGetNewRef(list, 1);
+    }
     return 1;
 }
 
 int PyList_Unpack3(PyObject* list, PyObject** out0, PyObject** out1, PyObject** out2) {
-    if (!list || list->type != 1 || !out0 || !out1 || !out2) return 0;
-    if (PyList_Size(list) < 3) return 0;
-    *out0 = listGetNewRef(list, 0);
-    *out1 = listGetNewRef(list, 1);
-    *out2 = listGetNewRef(list, 2);
+    if (!list || !out0 || !out1 || !out2) return 0;
+    size_t n;
+    if (list->type == 1) n = PyList_Size(list);
+    else if (list->type == 7) n = PyTuple_Size(list);
+    else return 0;
+    if (n < 3) return 0;
+    if (list->type == 7) {
+        *out0 = tupleGetNewRef(list, 0);
+        *out1 = tupleGetNewRef(list, 1);
+        *out2 = tupleGetNewRef(list, 2);
+    } else {
+        *out0 = listGetNewRef(list, 0);
+        *out1 = listGetNewRef(list, 1);
+        *out2 = listGetNewRef(list, 2);
+    }
     return 1;
 }
 
@@ -676,6 +707,144 @@ PyObject* PyList_NewIntBoxed(PyObject* n) {
 PyObject* PyList_NewFloatBoxed(PyObject* n) {
     size_t size = (n && n->type == 0) ? (size_t)n->value : 0;
     return PyList_NewFloat(size);
+}
+
+// --- tuple type (type 7) ---------------------------------------------------
+// Immutable sequence reusing the list/ilist/flist storage fields. Constructed
+// once via PyTuple_New + PyTuple_SetItem (which steals a reference, matching
+// PyList_SetItem's boxed-list convention) and never mutated afterward.
+// Homogeneous int/float tuple storage (list_item_type 1/2) is supported for
+// parity with lists, though the compiler currently always emits boxed tuples
+// (allInt/allFloat detection in lowerList only special-cases lists). Reading
+// goes through the same listGetNewRef helper used by PyList_Unpack2/3, so
+// tuples unpack correctly into `a, b = t` and `for x, y in pairs`.
+
+PyObject* PyTuple_New(size_t size) {
+    PyObject* obj = new PyObject();
+    obj->refcount = 1;
+    obj->type = 7;
+    obj->list.assign(size, nullptr);
+    obj->list_item_type = 0;
+    return obj;
+}
+
+void PyTuple_SetItem(PyObject* tuple, size_t index, PyObject* item) {
+    if (!tuple || tuple->type != 7) return;
+    // Tuples are constructed with PyTuple_New (pre-sized, list_item_type 0),
+    // so only the boxed-list path is needed. The slot starts as nullptr
+    // (PyTuple_New's list.assign), so there is no previous owner to DECREF.
+    if (index < tuple->list.size()) {
+        tuple->list[index] = item;
+        if (item) Py_INCREF(item);
+    }
+}
+
+void PyTuple_SetItemBoxed(PyObject* tuple, PyObject* idx, PyObject* item) {
+    if (!idx || (idx->type != 0 && idx->type != 5)) return;
+    PyTuple_SetItem(tuple, (size_t)idx->value, item);
+}
+
+PyObject* PyTuple_GetItem(PyObject* tuple, size_t index) {
+    if (tuple && tuple->type == 7) {
+        if (tuple->list_item_type == 1 && index < tuple->ilist.size())
+            return PyInt_FromLong(tuple->ilist[index]);
+        if (tuple->list_item_type == 2 && index < tuple->flist.size())
+            return PyFloat_FromDouble(tuple->flist[index]);
+        if (index < tuple->list.size()) {
+            // Borrowed ref, matching PyList_GetItem's boxed convention.
+            return tuple->list[index];
+        }
+    }
+    return nullptr;
+}
+
+// Internal: new-ref get (mirrors listGetNewRef) for unpacking paths.
+static PyObject* tupleGetNewRef(PyObject* tuple, size_t i) {
+    if (tuple->list_item_type == 1) return PyInt_FromLong(tuple->ilist[i]);
+    if (tuple->list_item_type == 2) return PyFloat_FromDouble(tuple->flist[i]);
+    PyObject* item = tuple->list[i];
+    if (item) Py_INCREF(item);
+    return item;
+}
+
+size_t PyTuple_Size(PyObject* tuple) {
+    if (tuple && tuple->type == 7) {
+        if (tuple->list_item_type == 1) return tuple->ilist.size();
+        if (tuple->list_item_type == 2) return tuple->flist.size();
+        return tuple->list.size();
+    }
+    return 0;
+}
+
+PyObject* PyTuple_SizeBoxed(PyObject* tuple) {
+    return PyInt_FromLong((long)PyTuple_Size(tuple));
+}
+
+PyObject* PyTuple_NewBoxed(PyObject* n) {
+    size_t size = (n && n->type == 0) ? (size_t)n->value : 0;
+    return PyTuple_New(size);
+}
+
+PyObject* PyTuple_FromArray(PyObject** items, size_t size) {
+    PyObject* obj = PyTuple_New(size);
+    for (size_t i = 0; i < size; ++i) PyTuple_SetItem(obj, i, items[i]);
+    return obj;
+}
+
+// tuple + tuple -> tuple. Mirrors PyList_Concat's ownership shape.
+PyObject* PyTuple_Concat(PyObject* a, PyObject* b) {
+    if (!a || !b || a->type != 7 || b->type != 7) return nullptr;
+    size_t na = PyTuple_Size(a), nb = PyTuple_Size(b);
+    PyObject* r = PyTuple_New(na + nb);
+    for (size_t i = 0; i < na; ++i) {
+        PyObject* it = PyTuple_GetItem(a, i);   // new ref
+        PyTuple_SetItem(r, i, it);              // steals it
+    }
+    for (size_t i = 0; i < nb; ++i) {
+        PyObject* it = PyTuple_GetItem(b, i);
+        PyTuple_SetItem(r, na + i, it);
+    }
+    return r;
+}
+
+// tuple * int -> tuple (and int * tuple). Mirrors PyList_Repeat.
+PyObject* PyTuple_Repeat(PyObject* tuple, long n) {
+    if (!tuple || tuple->type != 7 || n <= 0) return PyTuple_New(0);
+    size_t sz = PyTuple_Size(tuple);
+    PyObject* r = PyTuple_New(sz * (size_t)n);
+    for (long k = 0; k < n; ++k) {
+        for (size_t i = 0; i < sz; ++i) {
+            PyObject* it = PyTuple_GetItem(tuple, i);
+            PyTuple_SetItem(r, (size_t)k * sz + i, it);
+        }
+    }
+    return r;
+}
+
+// tuple(iterable) — materializes any iterable into a real tuple. Mirrors
+// PyBuiltin_List's dispatch but wraps the result as type 7.
+PyObject* PyBuiltin_Tuple(PyObject* obj) {
+    if (!obj) return PyTuple_New(0);
+    if (obj->type == 7) { Py_INCREF(obj); return obj; }
+    // Reuse PyBuiltin_List's full materialization (str/bytes/dict/set/
+    // iterator-protocol/class-instance) then convert the list to a tuple.
+    PyObject* lst = PyBuiltin_List(obj);
+    if (!lst) return PyTuple_New(0);
+    size_t n = PyList_Size(lst);
+    PyObject* r = PyTuple_New(n);
+    for (size_t i = 0; i < n; ++i) {
+        // Read the raw slot without INCREF so we can hand a single ref to
+        // PyTuple_SetItem. PyList_GetItem returns a *new* ref for
+        // homogeneous int/float lists (PyInt_FromLong/PyFloat_FromDouble)
+        // but a *borrowed* ref for boxed lists — to avoid a leak in the
+        // homogeneous case, normalize the list first so every element is a
+        // real boxed slot, then read the borrowed pointer directly.
+        if (lst->list_item_type != 0) pyc_ensure_boxed_list(lst);
+        PyObject* it = (i < lst->list.size()) ? lst->list[i] : nullptr;
+        PyTuple_SetItem(r, i, it);  // INCREFs it; the list keeps its own ref
+    }
+    Py_DECREF(lst);
+    return r;
 }
 
 // Negative-index normalization for the native-fast-path list get/set
@@ -1338,6 +1507,33 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
         }
         return fprintf(fp, "]");
     }
+    if (obj->type == 7) {
+        // Nested tuple — open paren, recurse, close. Single-element tuples
+        // get a trailing comma: (1,). Empty tuple: ().
+        size_t n;
+        if (obj->list_item_type == 1) n = obj->ilist.size();
+        else if (obj->list_item_type == 2) n = obj->flist.size();
+        else n = obj->list.size();
+        fprintf(fp, "(");
+        if (obj->list_item_type == 1) {
+            for (size_t i = 0; i < obj->ilist.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                PyObject_PrintElement(PyInt_FromLong(obj->ilist[i]), fp);
+            }
+        } else if (obj->list_item_type == 2) {
+            for (size_t i = 0; i < obj->flist.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                PyObject_PrintElement(PyFloat_FromDouble(obj->flist[i]), fp);
+            }
+        } else {
+            for (size_t i = 0; i < obj->list.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                PyObject_PrintElement(obj->list[i], fp);
+            }
+        }
+        if (n == 1) fprintf(fp, ",");
+        return fprintf(fp, ")");
+    }
     if (obj->type == 2) {
         // Nested dict — open brace, recurse, close.
         fprintf(fp, "{");
@@ -1506,6 +1702,41 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
             }
         }
         fprintf(fp, "]\n");
+        fflush(fp);
+        return 0;
+    }
+    if (obj->type == 7) {
+        // Top-level tuple print: paren format, single-element trailing comma.
+        size_t n;
+        if (obj->list_item_type == 1) n = obj->ilist.size();
+        else if (obj->list_item_type == 2) n = obj->flist.size();
+        else n = obj->list.size();
+        fprintf(fp, "(");
+        if (obj->list_item_type == 1) {
+            for (size_t i = 0; i < obj->ilist.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                int r = fprintf(fp, "%ld", obj->ilist[i]);
+                (void)r;
+            }
+        } else if (obj->list_item_type == 2) {
+            for (size_t i = 0; i < obj->flist.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                char buf[64];
+                format_double(buf, sizeof(buf), obj->flist[i]);
+                int r = fprintf(fp, "%s", buf);
+                (void)r;
+            }
+        } else {
+            for (size_t i = 0; i < obj->list.size(); ++i) {
+                if (i > 0) fprintf(fp, ", ");
+                if (obj->list[i] && obj->list[i]->type == 3)
+                    fprintf(fp, "'%s'", obj->list[i]->str.c_str());
+                else
+                    PyObject_PrintElement(obj->list[i], fp);
+            }
+        }
+        if (n == 1) fprintf(fp, ",");
+        fprintf(fp, ")\n");
         fflush(fp);
         return 0;
     }
@@ -2197,6 +2428,7 @@ PyObject* PyBuiltin_Type(PyObject* obj) {
     switch (obj->type) {
         case 0: return PyUnicode_FromString("<class 'int'>");
         case 1: return PyUnicode_FromString("<class 'list'>");
+        case 7: return PyUnicode_FromString("<class 'tuple'>");
         case 2: {
             // Class instance (has a "__class__" entry) vs a genuine
             // plain dict — found and fixed while bug hunting: type(e)
@@ -2362,17 +2594,16 @@ PyObject* PyBuiltin_Id(PyObject* obj) {
     return PyInt_FromLong(id);
 }
 
-// divmod(a, b) — return (a // b, a % b). CPython returns a tuple; in
-// our flat runtime a tuple is just a list, so we return a 2-element
-// list. (We use PyList_NewBoxed + PyList_SetItemBoxed for the values.)
+// divmod(a, b) — return (a // b, a % b). CPython returns a 2-tuple; now
+// that pyc has a real tuple type, we return a real tuple here.
 PyObject* PyBuiltin_Divmod(PyObject* a, PyObject* b) {
     if (!a || !b) return nullptr;
     PyObject* q = PyNumber_Divide(a, b);
     PyObject* r = PyNumber_Remainder(a, b);
     if (!q || !r) { if (q) Py_DECREF(q); if (r) Py_DECREF(r); return nullptr; }
-    PyObject* r2 = PyList_New(2);
-    PyList_SetItem(r2, 0, q);
-    PyList_SetItem(r2, 1, r);
+    PyObject* r2 = PyTuple_New(2);
+    PyTuple_SetItem(r2, 0, q);
+    PyTuple_SetItem(r2, 1, r);
     return r2;
 }
 
@@ -2461,6 +2692,40 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
             }
         }
         r += "]";
+        return PyUnicode_FromString(r.c_str());
+    }
+    if (obj->type == 7) {
+        // Tuple repr: paren format, single-element trailing comma.
+        size_t n = PyTuple_Size(obj);
+        std::string r = "(";
+        bool first = true;
+        if (obj->list_item_type == 1) {
+            for (long v : obj->ilist) {
+                if (!first) r += ", ";
+                first = false;
+                r += std::to_string(v);
+            }
+        } else if (obj->list_item_type == 2) {
+            char buf[64];
+            for (double v : obj->flist) {
+                if (!first) r += ", ";
+                first = false;
+                format_double(buf, sizeof(buf), v);
+                r += buf;
+            }
+        } else {
+            for (auto* item : obj->list) {
+                if (!first) r += ", ";
+                first = false;
+                if (item && item->type == 3) { r += "'" + item->str + "'"; }
+                else if (item) {
+                    PyObject* s = PyBuiltin_Repr(item);
+                    if (s) { r += s->str; Py_DECREF(s); }
+                }
+            }
+        }
+        if (n == 1) r += ",";
+        r += ")";
         return PyUnicode_FromString(r.c_str());
     }
     if (obj->type == 2) {
@@ -2847,8 +3112,9 @@ PyObject* Pyc_FormatValue(PyObject* value, PyObject* specObj) {
 
 // str.partition(sep) / str.rpartition(sep) — found entirely
 // unimplemented while bug hunting. Both return a 3-element
-// [before, sep, after] (list, not a tuple — pyc's existing, unrelated
-// "no distinct tuple type" architectural choice, not a new gap).
+// [before, sep, after] list (pyc now has a real tuple type, but these
+// were left as lists for simplicity — a narrower gap than the
+// tuple-literal/divmod case that was fully upgraded).
 // partition finds the first occurrence of sep; rpartition finds the
 // last. Real CPython raises ValueError for an empty separator; this
 // takes the more lenient "no match" fallback instead (documented, not
@@ -4134,6 +4400,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
 PyObject* PyBuiltin_Len(PyObject* obj) {
     if (!obj) return PyInt_FromLong(0);
     if (obj->type == 1) return PyInt_FromLong((long)PyList_Size(obj));
+    if (obj->type == 7) return PyInt_FromLong((long)PyTuple_Size(obj));
     if (obj->type == 3 || obj->type == 17 || obj->type == 18) return PyInt_FromLong((long)obj->str.size());
     if (obj->type == 2) {
         // __len__ dispatch for a class instance — found and fixed while
@@ -4285,6 +4552,16 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
         return nullptr;
     }
     if (obj->type == 1) return PyList_GetItemObj(obj, key); // returns new ref (INCREF inside)
+    if (obj->type == 7) {
+        // tuple subscript: mirror PyList_GetItemObj's index handling and
+        // new-ref convention (INCREF for boxed, fresh object for homogeneous).
+        if (!key || (key->type != 0 && key->type != 5)) return nullptr;
+        size_t n = PyTuple_Size(obj);
+        long i = (long)key->value;
+        if (i < 0) i += (long)n;
+        if (i < 0 || (size_t)i >= n) return nullptr;
+        return tupleGetNewRef(obj, (size_t)i);
+    }
     if (obj->type == 2) {
         for (auto& pair : obj->dict) {
             if (PyObject_CompareBool(pair.first, key, 0)) {
@@ -4407,6 +4684,7 @@ PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
     PyObject* r = Pyc_GetItem(obj, key);
     if (r) return r;
     if (obj && obj->type == 1) { pyc_raise_msg("IndexError", "list index out of range"); return nullptr; }
+    if (obj && obj->type == 7) { pyc_raise_msg("IndexError", "tuple index out of range"); return nullptr; }
     if (obj && obj->type == 3) { pyc_raise_msg("IndexError", "string index out of range"); return nullptr; }
     if (obj && (obj->type == 17 || obj->type == 18)) { pyc_raise_msg("IndexError", "index out of range"); return nullptr; }
     return nullptr;
@@ -4524,6 +4802,25 @@ PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
             return PyBool_New(0);
         }
         // General boxed list
+        for (auto* elem : container->list)
+            if (elem && PyObject_CompareBool(elem, item, 0)) return PyBool_New(1);
+        return PyBool_New(0);
+    }
+    if (container->type == 7) {
+        // tuple: scan elements by value (tuples are always boxed-storage
+        // from the compiler's lowering, but handle homogeneous too).
+        if (container->list_item_type == 1) {
+            long iv = (item && (item->type == 0 || item->type == 5)) ? item->value
+                      : (item && item->type == 4) ? (long)item->dvalue : 0;
+            for (auto v : container->ilist) if (v == iv) return PyBool_New(1);
+            return PyBool_New(0);
+        }
+        if (container->list_item_type == 2) {
+            double dv = (item && item->type == 4) ? item->dvalue
+                        : (item && (item->type == 0 || item->type == 5)) ? (double)item->value : 0.0;
+            for (auto v : container->flist) if (v == dv) return PyBool_New(1);
+            return PyBool_New(0);
+        }
         for (auto* elem : container->list)
             if (elem && PyObject_CompareBool(elem, item, 0)) return PyBool_New(1);
         return PyBool_New(0);
@@ -4933,6 +5230,8 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
         } else {
             n = (long)obj->list.size();
         }
+    } else if (obj->type == 7) {
+        n = (long)PyTuple_Size(obj);
     } else if (obj->type == 3 || obj->type == 17 || obj->type == 18) {
         n = (long)obj->str.size();
     } else {
@@ -4994,6 +5293,18 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
             PyObject* item = (i >= 0 && (size_t)i < obj->list.size()) ? obj->list[i] : nullptr;
             if (item) Py_INCREF(item);
             PyList_SetItem(r, k, item);
+        }
+        return r;
+    }
+    if (obj->type == 7) {
+        // Tuple slice -> tuple. Tuples are always boxed-storage from the
+        // compiler's lowering, but handle homogeneous defensively.
+        if (obj->list_item_type != 0) pyc_ensure_boxed_list(obj);
+        PyObject* r = PyTuple_New(idxs.size());
+        for (size_t k = 0; k < idxs.size(); ++k) {
+            long i = idxs[k];
+            PyObject* item = (i >= 0 && (size_t)i < obj->list.size()) ? obj->list[i] : nullptr;
+            PyTuple_SetItem(r, k, item);  // INCREFs inside
         }
         return r;
     }
@@ -5208,6 +5519,15 @@ PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key) {
 PyObject* PyBuiltin_List(PyObject* obj) {
     if (!obj) return PyList_New(0);
     if (obj->type == 1) { Py_INCREF(obj); return obj; }
+    if (obj->type == 7) {
+        // tuple -> list: copy elements into a fresh list.
+        if (obj->list_item_type != 0) pyc_ensure_boxed_list(obj);
+        PyObject* r = PyList_New(obj->list.size());
+        for (size_t i = 0; i < obj->list.size(); ++i) {
+            PyList_SetItem(r, i, obj->list[i]);  // INCREFs inside
+        }
+        return r;
+    }
     if (obj->type == 3) {
         PyObject* r = PyList_New(obj->str.size());
         for (size_t i = 0; i < obj->str.size(); ++i) {
@@ -5380,6 +5700,9 @@ PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
         }
         // Handle regular boxed lists
         if (args->type == 1 && idx < args->list.size()) return args->list[idx];
+        // Handle tuples (type 7) — % operator unpacks a tuple arg just like
+        // a list. CPython: "%s %d" % (1, 2) unpacks the tuple.
+        if (args->type == 7 && idx < args->list.size()) return args->list[idx];
         return (idx == 0) ? args : nullptr;
     };
     std::string result;
@@ -5595,6 +5918,8 @@ PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
     // storage bug on its own, but found the same way: `[1,2,3] + [4,5]`
     // returned None unconditionally, confirmed against real CPython).
     if (a->type == 1 && b->type == 1) return PyList_Concat(a, b);
+    // tuple + tuple -> tuple (CPython: TypeError for tuple + list).
+    if (a->type == 7 && b->type == 7) return PyTuple_Concat(a, b);
     // bytes/bytearray concatenation. Result type follows the left
     // operand (matches real Python: bytearray + bytes -> bytearray,
     // bytes + bytearray -> bytes).
@@ -6101,9 +6426,10 @@ extern "C" PyObject* PyBuiltin_OsPathDirname(PyObject* args) {
     return PyUnicode_FromString(p->str.substr(0, slash).c_str());
 }
 
-// os.path.splitext(p) -> [root, ext] : pyc has no tuple type, so this
-// returns a 2-element list instead of CPython's 2-tuple (documented gap,
-// same as itertools' tuple-shaped results).
+// os.path.splitext(p) -> [root, ext] : returns a 2-element list instead
+// of CPython's 2-tuple (pyc now has a real tuple type, but this was left
+// as a list — a narrower remaining gap, same as itertools' tuple-shaped
+// results).
 extern "C" PyObject* PyBuiltin_OsPathSplitext(PyObject* args) {
     PyObject* out = PyList_New(0);
     if (!args || args->type != 1 || args->list.empty()) return out;
@@ -8610,10 +8936,10 @@ static PyObject* makeRandomModuleDict() {
 // already eagerly materialized, see FEATURES.md), so infinite iterators
 // (count, cycle, unbounded repeat) cannot be represented at all and are
 // deliberately not implemented. Every "iterable" argument must already be
-// a real, materialized pyc list. Tuples aren't a distinct pyc type (they
-// print/behave as lists — a pre-existing limitation, not new here), so
-// results that would be tuples in real Python (product/combinations/
-// permutations/zip_longest entries) are plain lists instead.
+// a real, materialized pyc list. pyc now has a real tuple type (type 7),
+// but these itertools functions still return lists for their tuple-shaped
+// results (product/combinations/permutations/zip_longest entries) — a
+// narrower remaining gap, not the default behavior for tuple literals.
 
 // Read element i of a list uniformly regardless of homogeneous/boxed
 // storage, returning a NEW reference (caller must Py_DECREF it).
@@ -8937,9 +9263,10 @@ extern "C" PyObject* PyItertools_Compress(PyObject* args) {
     return out;
 }
 // itertools.groupby(iterable, key=None) -> list of [key, group_list]
-// 2-element lists (real groupby yields (key, group_iterator) tuples —
-// no tuple type in pyc, and the group is eagerly materialized like
-// every other itertools function here). Groups only *consecutive* equal
+// 2-element lists (real groupby yields (key, group_iterator) tuples;
+// pyc now has a real tuple type but these were left as lists — and the
+// group is eagerly materialized like every other itertools function
+// here). Groups only *consecutive* equal
 // keys (verified against real groupby — NOT a full partition).
 // Direct-call convention (2 raw args), not token+registry: `key=` is a
 // keyword argument, which the generic dict-dispatch has no mechanism to
@@ -9953,7 +10280,7 @@ static PyObject* pyc_adapt_list(PyObject* args) {
 }
 static PyObject* pyc_adapt_tuple(PyObject* args) {
     PyObject* a = arg0(args);
-    return PyBuiltin_List(a);  // tuple behaves like list in pyc
+    return PyBuiltin_Tuple(a);
 }
 static PyObject* pyc_adapt_set(PyObject* args) {
     PyObject* a = arg0(args);
@@ -10296,6 +10623,9 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
     if (a->type == 0 && b->type == 3) return PyString_Repeat(b, a);
     if (a->type == 1 && b->type == 0) return PyList_Repeat(a, b->value);
     if (a->type == 0 && b->type == 1) return PyList_Repeat(b, a->value);
+    // tuple * int / int * tuple -> tuple (CPython semantics).
+    if (a->type == 7 && (b->type == 0 || b->type == 5)) return PyTuple_Repeat(a, b->value);
+    if ((a->type == 0 || a->type == 5) && b->type == 7) return PyTuple_Repeat(b, a->value);
     if (a->type == 15 && (b->type == 0 || b->type == 5)) return pyc_timedelta_mul(pyc_as_timedelta(a), b->value);
     if ((a->type == 0 || a->type == 5) && b->type == 15) return pyc_timedelta_mul(pyc_as_timedelta(b), a->value);
     if (a->type == 19 || b->type == 19) {
@@ -10600,6 +10930,59 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
             case 3: return al.size() < bl.size() ? 0 : 1;
             case 4: return al.size() < bl.size() ? 1 : 0;
             case 5: return al.size() < bl.size() ? 0 : 1;
+        }
+    }
+    // tuple vs tuple: structural, same algorithm as list-vs-list above.
+    // Tuples are always boxed-storage from the compiler's lowering, but
+    // handle homogeneous storage defensively.
+    if (a->type == 7 && b->type == 7) {
+        if (a->list_item_type != 0) pyc_ensure_boxed_list(a);
+        if (b->list_item_type != 0) pyc_ensure_boxed_list(b);
+        const auto& al = a->list;
+        const auto& bl = b->list;
+        size_t n = al.size() < bl.size() ? al.size() : bl.size();
+        for (size_t i = 0; i < n; ++i) {
+            int eq = (al[i] == bl[i]) ||
+                     (al[i] && bl[i] && PyObject_CompareBool(al[i], bl[i], 0));
+            if (!eq) {
+                if (al[i] && bl[i]) return PyObject_CompareBool(al[i], bl[i], op);
+                switch (op) {
+                    case 0: return 0;
+                    case 1: return 1;
+                    case 2: return al[i] == nullptr ? 1 : 0;
+                    case 3: return al[i] == nullptr ? 0 : 1;
+                    case 4: return al[i] == nullptr ? 1 : 0;
+                    case 5: return al[i] == nullptr ? 0 : 1;
+                }
+            }
+        }
+        if (al.size() == bl.size()) {
+            switch (op) {
+                case 0: return 1;
+                case 1: return 0;
+                case 2: return 0;
+                case 3: return 0;
+                case 4: return 1;
+                case 5: return 1;
+            }
+        }
+        switch (op) {
+            case 0: return 0;
+            case 1: return 1;
+            case 2: return al.size() < bl.size() ? 1 : 0;
+            case 3: return al.size() < bl.size() ? 0 : 1;
+            case 4: return al.size() < bl.size() ? 1 : 0;
+            case 5: return al.size() < bl.size() ? 0 : 1;
+        }
+    }
+    // tuple vs list (or list vs tuple): always unequal. CPython raises
+    // TypeError for ordering between a tuple and a list; conservatively
+    // return 0 there (matches the existing dict-ordering convention).
+    if ((a->type == 7 && b->type == 1) || (a->type == 1 && b->type == 7)) {
+        switch (op) {
+            case 0: return 0;
+            case 1: return 1;
+            default: return 0;
         }
     }
     // Dict equality. CPython compares keys and values (order-independent).
@@ -12352,24 +12735,24 @@ static long pyc_objToLong(PyObject* obj) {
 }
 
 // Recursive helper for flattening
-// Lists/tuples (type 1) use obj->list and need recursion.
+// Lists (type 1) and tuples (type 7) need recursion.
 // Primitive values (int, str, float, etc.) are added directly.
 static void pyc_flattenRecursive(PyObject* obj, std::vector<PyObject*>& flat) {
     if (!obj) return;
     
-    // Only lists/tuples (type 1) need recursion
-    if (obj->type != 1) {
+    // Only lists (type 1) and tuples (type 7) need recursion
+    if (obj->type != 1 && obj->type != 7) {
         Py_INCREF(obj);
         flat.push_back(obj);
         return;
     }
     
     // List/tuple: flatten each element
-    PyObject* lenResult = PyList_SizeBoxed(obj);
-    long len = lenResult ? pyc_objToLong(lenResult) : 0;
+    long len = (obj->type == 7) ? (long)PyTuple_Size(obj) : (long)PyList_Size(obj);
     
     for (long i = 0; i < len; i++) {
-        PyObject* item = PyList_GetItemObj(obj, PyInt_FromLong(i));
+        PyObject* item = (obj->type == 7) ? PyTuple_GetItem(obj, (size_t)i)
+                                          : PyList_GetItemObj(obj, PyInt_FromLong(i));
         if (item) {
             pyc_flattenRecursive(item, flat);
         }

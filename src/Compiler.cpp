@@ -293,6 +293,7 @@ class LoweringVisitor {
             // instruction emission (addInstruction), and map keys use the name we registered.
             std::string savedForIR = currentFunc;
             currentFunc = defIRName;
+            funcQualNameStack.push_back(node->id);
 
             // Record the python -> IR name mapping for this nested def so that
             // later name lookups and bundle tokens can resolve to the registered name.
@@ -849,7 +850,14 @@ class LoweringVisitor {
             {
                 std::unordered_map<std::string, std::string> paramTypes;
                 std::string inferredRetType;
+                
+                // Create a local copy of numericFloatLocals for this function's type inference
+                // This prevents float-typed parameter names from leaking into the module scope
+                std::unordered_set<std::string> localNumericFloatLocals = numericFloatLocals;
+                
                 inferParamTypesFromBody(node, bareParams, paramTypes, &inferredRetType);
+                
+                // Apply inferred types only to this function's parameters
                 for (const auto& p : bareParams) {
                     const std::string& t = paramTypes[p];
                     if (t.empty()) continue;
@@ -857,8 +865,9 @@ class LoweringVisitor {
                     if (isCellBackedHere(p)) continue;
                     noteType(p, t);
                     if (t == "int") numericLocals.insert(p);
-                    else if (t == "float") numericFloatLocals.insert(p);
+                    else if (t == "float") localNumericFloatLocals.insert(p);
                 }
+                
                 // Seed the return type so that call results within this body
                 // inherit the numeric type. Without this, `fib(n-1) + fib(n-2)`
                 // sees both call results as "boxed" and the add goes through
@@ -872,6 +881,11 @@ class LoweringVisitor {
                         if (fnr.name == defIRName) { fnr.returnType = inferredRetType; break; }
                     }
                 }
+                
+                // Now update the global numericFloatLocals with only this function's inferred types
+                // This ensures that any float-typed parameters from nested functions don't leak
+                // into the module scope
+                numericFloatLocals = localNumericFloatLocals;
             }
 
             for (const auto& c : node->children) {
@@ -890,6 +904,15 @@ class LoweringVisitor {
             activeTries = savedActiveTries;
             loopTryDepths = savedLoopTryDepths;
             currentFunc = saved;   // restore context for siblings (important for top-level code after defs)
+            // Build the qualified name before popping, for emitFuncValue below.
+            std::string nestedQualName;
+            if (funcQualNameStack.size() > 1) {
+                for (size_t i = 0; i < funcQualNameStack.size(); ++i) {
+                    if (i > 0) nestedQualName += ".<locals>.";
+                    nestedQualName += funcQualNameStack[i];
+                }
+            }
+            funcQualNameStack.pop_back();
             tempCounter = savedTempCounter;  // restore counter to prevent collisions with module-level temps
             lastLambdaSynthetic.clear();  // do not leak "last lambda expr" from this function to later assigns/calls in outer scope
             // B4: if the function body contained a return of a callable token, record it
@@ -932,7 +955,8 @@ class LoweringVisitor {
             // are skipped: their value references build descriptor bundles with
             // the enclosing scope's cells at each use site.
             if (!closureFunctions.count(defIRName)) {
-                std::string fv = emitFuncValue(defIRName, node->id);
+                std::string displayNm = nestedQualName.empty() ? node->id : nestedQualName;
+                std::string fv = emitFuncValue(defIRName, displayNm);
                 ir.addInstruction(currentFunc, "assign", {fv}, node->id);
                 noteType(node->id, "str");
                 // Decorators, bottom-up: name = decoN(...(deco1(name))...).
@@ -950,7 +974,7 @@ class LoweringVisitor {
                     ir.addInstruction(currentFunc, "assign", {decorated}, node->id);
                 }
             } else if (!decorators.empty()) {
-                llvm::errs() << "pyc: warning: decorators on closure function '"
+                llvm::errs() << "pyc: warning: decorators on closure function '" 
                              << node->id << "' are not supported; decorators ignored\n";
             }
             // Do not fall through to the generic FunctionDef handling below.
@@ -3317,6 +3341,23 @@ class LoweringVisitor {
     // The token resolves through the callable registry in Pyc_Apply; the
     // display name is what repr shows (<function displayName at ...>).
     std::string emitFuncValue(const std::string& irName, const std::string& displayName) {
+        // Build the CPython-style qualified name for repr: if this is a
+        // nested def, the display name is "outer.<locals>.inner". For
+        // top-level functions, it's just the function name.
+        std::string qualName = displayName;
+        if (!funcQualNameStack.empty()) {
+            // The last element is this function's own name (just pushed).
+            // Build "enclosing.<locals>.name" from the stack.
+            if (funcQualNameStack.size() > 1) {
+                std::string chain;
+                for (size_t i = 0; i < funcQualNameStack.size(); ++i) {
+                    if (i > 0) chain += ".<locals>.";
+                    chain += funcQualNameStack[i];
+                }
+                qualName = chain;
+            }
+            // If size == 1, it's a top-level function; use displayName as-is.
+        }
         // Dedicated temp namespace: emitFuncValue also runs right after a
         // FunctionDef restores tempCounter, and consuming shared-counter
         // numbers there collides with temp-name-keyed compile-time maps
@@ -3326,12 +3367,15 @@ class LoweringVisitor {
         std::string tok = "cfv" + std::to_string(n);
         ir.addInstruction(currentFunc, "const", {"\"" + irName + "\""}, tok, "str");
         std::string disp = "cfv" + std::to_string(n) + "d";
-        ir.addInstruction(currentFunc, "const", {"\"" + displayName + "\""}, disp, "str");
+        ir.addInstruction(currentFunc, "const", {"\"" + qualName + "\""}, disp, "str");
         std::string res = "tfv" + std::to_string(n);
         ir.addInstruction(currentFunc, "call", {"pyc_make_func", tok, disp}, res);
         return res;
     }
     int fvCounter = 0;
+    // Stack of Python-level function names for qualified repr
+    // (outer.<locals>.inner). Pushed/popped in lower() for FunctionDef.
+    std::vector<std::string> funcQualNameStack;
 
     // True when 'name' is bound locally in the current scope (parameter or a
     // name assigned so far), i.e. it must resolve as a variable even if a
@@ -3359,6 +3403,10 @@ class LoweringVisitor {
         if (type == "float") {
             numericFloatLocals.insert(name);
         }
+        // Handle tuple type
+        if (type == "tuple") {
+            // No special handling needed - just record the type
+        }
     }
 
     // Helper: check if a name is a global variable in the current function.
@@ -3378,6 +3426,7 @@ class LoweringVisitor {
         auto it = valueTypes.find(name);
         std::string t = it == valueTypes.end() ? "boxed" : it->second;
         if (t == "i64") return "int";
+        if (t == "tuple") return "tuple";
         return t;
     }
 
@@ -5135,31 +5184,19 @@ class LoweringVisitor {
                 markStructuredList(res, structuredElementLayout[arg]);
             return res;
         }
-        // tuple(x) — found returning None unconditionally (real bug,
-        // same class as the earlier bytes/bytearray gap: "tuple" wasn't
-        // in neverDynamic/specialBuiltinNames below, so any call routed
-        // through the dynamic Pyc_Apply(token) path instead of collecting
-        // its argument normally — since no variable named "tuple" is
-        // ever assigned, the callee-token lookup silently resolved to
-        // nothing). Fixed by treating tuple(x) exactly like list(x) —
-        // pyc has no distinct tuple type at all (tuple *literals* are
-        // already mapped straight to list internally, an existing,
-        // deliberate, documented scoping decision — see FEATURES.md/
-        // IMPLEMENTATION.md), so this is consistent with that, not a new
-        // gap of its own: `tuple([1,2,3])` prints as `[1, 2, 3]`, not
-        // CPython's `(1, 2, 3)`, same as a `(1,2,3)` tuple literal
-        // already does.
+        // tuple(x) -> PyBuiltin_Tuple(x). Now that pyc has a real tuple
+        // type (type 7), tuple() returns a real tuple, matching CPython.
         if (funcName == "tuple") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "$t" + std::to_string(tempCounter++);
             if (argRes.empty()) {
                 std::string sc = "$c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"0"}, sc);
-                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sc}, res);
+                ir.addInstruction(currentFunc, "const", {"0"}, sc, "int");
+                ir.addInstruction(currentFunc, "call", {"PyTuple_NewBoxed", sc}, res);
             } else {
-                ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", arg}, res);
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Tuple", arg}, res);
             }
-            noteType(res, "list");
+            noteType(res, "tuple");
             return res;
         }
         // set() / set(iterable) construction.
@@ -5348,6 +5385,7 @@ class LoweringVisitor {
                     else if (n == "bytearray") typecode = 18;
                     else if (n == "Decimal") typecode = 19;
                     else if (n == "set") typecode = 20;
+                    else if (n == "tuple") typecode = 7;
                 } else if (childType == "Call" && node->children[2]->children.size() >= 2) {
                     // type(None) → typecode 6
                     const auto* func = node->children[2]->children[0].get();
@@ -6519,90 +6557,104 @@ class LoweringVisitor {
     std::string lowerList(const ASTNode* node) {
         auto elems = lowerElements(node);
         size_t n = elems.size();
-            bool allInt = n > 0;
-            bool allFloat = n > 0;
-            std::vector<std::string> elemTypeList;
-            for (const auto& e : elems) {
-                std::string t = typeOf(e);
-                if (t != "int" && t != "i64" && t != "bool") allInt = false;
-                if (t != "float") allFloat = false;
-                elemTypeList.push_back(t);
-            }
+        bool allInt = n > 0;
+        bool allFloat = n > 0;
+        std::vector<std::string> elemTypeList;
+        for (const auto& e : elems) {
+            std::string t = typeOf(e);
+            if (t != "int" && t != "i64" && t != "bool") allInt = false;
+            if (t != "float") allFloat = false;
+            elemTypeList.push_back(t);
+        }
         std::string listRes = "$t" + std::to_string(tempCounter++);
-        if (allInt) {
+        if (node->type == "Tuple") {
+            // Handle tuple literal — emit a real tuple (type 7).
             std::string sizeConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
-            ir.addInstruction(currentFunc, "call", {"PyList_NewIntBoxed", sizeConst}, listRes);
-            noteType(listRes, "list_int");
-            knownIntLists.insert(listRes);
-        } else if (allFloat) {
-            std::string sizeConst = "$c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
-            ir.addInstruction(currentFunc, "call", {"PyList_NewFloatBoxed", sizeConst}, listRes);
-            noteType(listRes, "list_float");
-            knownFloatLists.insert(listRes);
+            ir.addInstruction(currentFunc, "call", {"PyTuple_NewBoxed", sizeConst}, listRes);
+            noteType(listRes, "tuple");
+            for (size_t i = 0; i < n; ++i) {
+                std::string idxConst = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+                ir.addInstruction(currentFunc, "call", {"PyTuple_SetItemBoxed", listRes, idxConst, elems[i]}, "");
+            }
         } else {
-            std::string sizeConst = "$c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
-            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, listRes);
-            noteType(listRes, "list");
-            for (auto& fn : ir.functions) {
-                if (fn.name == currentFunc) {
-                    std::unordered_map<size_t, std::string> idxMap;
-                    for (size_t i = 0; i < n; ++i) {
-                        idxMap[i] = elemTypeList[i];
-                        // P0: also record container kinds for nested list elements
-                        if (elemTypeList[i] == "list_float" || elemTypeList[i] == "float_list")
-                            fn.containerElementTypes[listRes][i] = "float_list";
-                        else if (elemTypeList[i] == "list_int" || elemTypeList[i] == "int_list")
-                            fn.containerElementTypes[listRes][i] = "int_list";
-                        else if (elemTypeList[i] == "float" || elemTypeList[i] == "int")
-                            fn.containerElementTypes[listRes][i] = elemTypeList[i];
-                    }
-                    fn.subscriptElementTypes[listRes] = idxMap;
-                    fn.listElementTypes[listRes] = elemTypeList;
-                    break;
-                }
-            }
-        }
-
-        bool containsTok = false;
-        for (size_t i = 0; i < n; ++i) {
-            std::string idxConst = "$c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
-            if (allInt && i < n) {
-                std::string elemType = typeOf(elems[i]);
-                bool elemIsInt = (elemType == "int" || elemType == "i64" || elemType == "bool");
-                if (elemIsInt) {
-                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64", listRes, idxConst, elems[i]}, "");
-                } else {
-                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
-                }
-            } else if (allFloat && i < n) {
-                std::string elemType = typeOf(elems[i]);
-                bool elemIsFloat = (elemType == "float");
-                if (elemIsFloat) {
-                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemDouble", listRes, idxConst, elems[i]}, "");
-                } else {
-                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
-                }
+            // Handle list literal
+            if (allInt) {
+                std::string sizeConst = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewIntBoxed", sizeConst}, listRes);
+                noteType(listRes, "list_int");
+                knownIntLists.insert(listRes);
+            } else if (allFloat) {
+                std::string sizeConst = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewFloatBoxed", sizeConst}, listRes);
+                noteType(listRes, "list_float");
+                knownFloatLists.insert(listRes);
             } else {
-                ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
+                std::string sizeConst = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, listRes);
+                noteType(listRes, "list");
+                for (auto& fn : ir.functions) {
+                    if (fn.name == currentFunc) {
+                        std::unordered_map<size_t, std::string> idxMap;
+                        for (size_t i = 0; i < n; ++i) {
+                            idxMap[i] = elemTypeList[i];
+                            // P0: also record container kinds for nested list elements
+                            if (elemTypeList[i] == "list_float" || elemTypeList[i] == "float_list")
+                                fn.containerElementTypes[listRes][i] = "float_list";
+                            else if (elemTypeList[i] == "list_int" || elemTypeList[i] == "int_list")
+                                fn.containerElementTypes[listRes][i] = "int_list";
+                            else if (elemTypeList[i] == "float" || elemTypeList[i] == "int")
+                                fn.containerElementTypes[listRes][i] = elemTypeList[i];
+                        }
+                        fn.subscriptElementTypes[listRes] = idxMap;
+                        fn.listElementTypes[listRes] = elemTypeList;
+                        break;
+                    }
+                }
             }
-            if (!elems[i].empty() && (callableTokenTemps.count(elems[i]) || callableTokenToSynthetic.count(elems[i]))) {
-                containsTok = true;
+
+            bool containsTok = false;
+            for (size_t i = 0; i < n; ++i) {
+                std::string idxConst = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+                if (allInt && i < n) {
+                    std::string elemType = typeOf(elems[i]);
+                    bool elemIsInt = (elemType == "int" || elemType == "i64" || elemType == "bool");
+                    if (elemIsInt) {
+                        ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64", listRes, idxConst, elems[i]}, "");
+                    } else {
+                        ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
+                    }
+                } else if (allFloat && i < n) {
+                    std::string elemType = typeOf(elems[i]);
+                    bool elemIsFloat = (elemType == "float");
+                    if (elemIsFloat) {
+                        ir.addInstruction(currentFunc, "call", {"PyList_SetItemDouble", listRes, idxConst, elems[i]}, "");
+                    } else {
+                        ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
+                    }
+                } else {
+                    ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", listRes, idxConst, elems[i]}, "");
+                }
+                if (!elems[i].empty() && (callableTokenTemps.count(elems[i]) || callableTokenToSynthetic.count(elems[i]))) {
+                    containsTok = true;
+                }
             }
-        }
-        if (containsTok) {
-            listsContainingCallableTokens.insert(listRes);
-        }
-        bool containsBundle = false;
-        for (size_t i = 0; i < n; ++i) {
-            if (!elems[i].empty() && (bundleTemps.count(elems[i]) || bundleToSynthetic.count(elems[i]))) {
-                containsBundle = true; break;
+            if (containsTok) {
+                listsContainingCallableTokens.insert(listRes);
             }
+            bool containsBundle = false;
+            for (size_t i = 0; i < n; ++i) {
+                if (!elems[i].empty() && (bundleTemps.count(elems[i]) || bundleToSynthetic.count(elems[i]))) {
+                    containsBundle = true; break;
+                }
+            }
+            if (containsBundle) listsContainingBundles.insert(listRes);
         }
-        if (containsBundle) listsContainingBundles.insert(listRes);
         return listRes;
     }
 
@@ -8519,8 +8571,9 @@ class LoweringVisitor {
             }
         } else if (methodName == "partition") {
             // partition(sep) — found entirely unimplemented while bug
-            // hunting. Returns [before, sep, after] (list, not a tuple —
-            // pyc's existing "no distinct tuple type" choice, not new).
+            // hunting. Returns [before, sep, after] (list; pyc now has a
+            // real tuple type but partition was left as a list — a
+            // narrower remaining gap).
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyString_Partition", obj, arg}, res);
         } else if (methodName == "rpartition") {

@@ -163,6 +163,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* listSetItemTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), pyObjectPtrTy}, false);
     llvm::Function::Create(listSetItemTy, llvm::Function::ExternalLinkage, "PyList_SetItem", module.get());
 
+    // --- tuple type (type 7) ---
+    llvm::FunctionType* tupleNewTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(tupleNewTy, llvm::Function::ExternalLinkage, "PyTuple_New", module.get());
+    llvm::FunctionType* tupleNewBoxedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(tupleNewBoxedTy, llvm::Function::ExternalLinkage, "PyTuple_NewBoxed", module.get());
+    llvm::FunctionType* tupleSetItemTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), pyObjectPtrTy}, false);
+    llvm::Function::Create(tupleSetItemTy, llvm::Function::ExternalLinkage, "PyTuple_SetItem", module.get());
+    llvm::FunctionType* tupleSetItemBoxedTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(tupleSetItemBoxedTy, llvm::Function::ExternalLinkage, "PyTuple_SetItemBoxed", module.get());
+    llvm::FunctionType* tupleBuiltinTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(tupleBuiltinTy, llvm::Function::ExternalLinkage, "PyBuiltin_Tuple", module.get());
+
     llvm::FunctionType* numberAddTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(numberAddTy, llvm::Function::ExternalLinkage, "PyNumber_Add", module.get());
 

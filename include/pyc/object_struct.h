@@ -19,9 +19,12 @@
 struct PyObject {
     int refcount;
     int type;   // 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool,
-                // 6=cell (B5 nonlocal/closure), 10=exception, 11=function,
-                // 12=exception class, 13=complex, 17=bytes, 18=bytearray,
-                // 19=decimal, 20=set
+                // 6=cell (B5 nonlocal/closure), 7=tuple, 10=exception,
+                // 11=function, 12=exception class, 13=complex, 17=bytes,
+                // 18=bytearray, 19=decimal, 20=set
+                // Tuple (type 7) reuses list/ilist/flist/list_item_type for
+                // storage (immutable after construction; no setter is exposed
+                // beyond PyTuple_SetItem, used only during construction).
     int64_t value;    // type 0 (int)
     double dvalue;    // type 4 (float)
     std::vector<PyObject*> list;

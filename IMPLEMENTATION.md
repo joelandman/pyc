@@ -1095,15 +1095,14 @@ fallback path — not pursued further since they weren't actually
 broken); `tuple`, `divmod`, and `pow` were confirmed broken by direct
 testing and fixed by adding all three to both sets.
 
-`tuple(x)` was made to behave exactly like `list(x)` rather than
-implementing real tuple semantics — pyc has no distinct tuple type at
-all (tuple *literals* like `(1, 2, 3)` already map straight to `list`
-internally, an existing, deliberate, documented scoping decision predating
-this session, not a new gap introduced here), so `tuple([1,2,3])`
-printing as `[1, 2, 3]` rather than CPython's `(1, 2, 3)` is consistent
-with that existing choice, not a fresh inconsistency. `divmod()`
-likewise already returned (and still returns) a 2-element list rather
-than a tuple, for the same reason.
+`tuple(x)` was originally made to behave like `list(x)` because pyc had no
+distinct tuple type. **This has since been reversed**: pyc now has a real
+tuple type (type tag 7) — tuple literals, `tuple()`, and `divmod()` all
+produce real tuples that print as `(1, 2, 3)`, match CPython exactly, and
+compare unequal to lists. See the "Real Tuple Type" entry below for the
+full implementation detail. (The `tuple`/`divmod`/`pow` `neverDynamic`
+fix above is still what made the calls reachable at all — the runtime type
+change came later.)
 
 **A second, separate, smaller gap found while fixing 2-arg `pow()`**:
 3-arg modular exponentiation (`pow(base, exp, mod)`) had never been
@@ -2658,3 +2657,64 @@ The runtime tracks allocations per type via atomic counters:
 - `PyAlloc_GetTotal()` — sum of all above
 
 These counters are exposed via `extern "C"` functions in `runtime.h` for external measurement.
+
+### Real Tuple Type (Type 7) — Reversing a Previously-Documented Scoping Decision
+
+pyc previously had no distinct tuple type: tuple literals, `tuple()`,
+`divmod()`, and itertools results all mapped to plain lists (type 1),
+documented as a "deliberate, documented scoping decision." An intermediate
+attempt to add tuple literal support left the compiler emitting calls to
+`PyTuple_New`/`PyTuple_SetItem` with **no runtime implementation**, breaking
+any program containing a tuple literal at link time. The decision was
+reopened and a real tuple type implemented.
+
+**Type tag 7**, reusing the `list`/`ilist`/`flist`/`list_item_type` storage
+fields (a tuple is structurally a list with a different tag and immutable
+semantics — immutability enforced by the API, not by the storage). No new
+`PyObject` struct field was needed, matching the precedent `pathlib.Path`
+(type 16) and `bytes`/`bytearray` (types 17/18) set of reusing existing
+storage with a new tag.
+
+**Runtime (`Runtime.cpp`)**: `PyTuple_New`, `PyTuple_SetItem` (steals a
+ref, like `PyList_SetItem`'s boxed convention), `PyTuple_SetItemBoxed`,
+`PyTuple_GetItem`, `PyTuple_Size`, `PyTuple_Concat`, `PyTuple_Repeat`,
+`PyBuiltin_Tuple` (materializes any iterable into a tuple via
+`PyBuiltin_List` + conversion). Tuple branches added to all four print/repr
+functions (`PyObject_PrintBase`, `PyObject_PrintElement`, `PyBuiltin_Repr`,
+`PyStr_FromAny` via `PyObject_Print`) producing CPython-exact paren format
+including the single-element trailing comma `(1,)` and empty `()`;
+`PyObject_CompareBool` (tuple-vs-tuple structural comparison mirroring the
+list branch; tuple-vs-list always unequal, matching CPython's `(1,2) ==
+[1,2]` → `False`); `PyBuiltin_Type` (`<class 'tuple'>`); `Pyc_IsInstance`;
+`PyBuiltin_Len`; `Pyc_GetItem`/`Pyc_Subscript` (IndexError on out-of-range);
+`Pyc_Contains`; `PyList_Unpack2`/`Unpack3` (so `a, b = t` works); `Pyc_GetSlice`
+(tuple slice → tuple); `PyBuiltin_List` (tuple → list conversion);
+`PyString_Format` (`%` operator unpacks a tuple arg); `PyObject_TruthValue`
+(empty tuple is falsy); `PyNumber_Add` (tuple+tuple → tuple);
+`PyNumber_Multiply` (tuple*int / int*tuple → tuple); `pyc_flattenRecursive`
+(`Pyc_ToFlatList`). `PyBuiltin_Divmod` now returns a real tuple.
+
+**Compiler (`Compiler.cpp`)**: `lowerList`'s Tuple branch emits
+`PyTuple_NewBoxed`/`PyTuple_SetItemBoxed`; `tuple()` builtin calls
+`PyBuiltin_Tuple`; `isinstance` typecode table maps `tuple` → 7.
+
+**Codegen (`Codegen.cpp`)**: LLVM extern declarations for `PyTuple_New`,
+`PyTuple_NewBoxed`, `PyTuple_SetItem`, `PyTuple_SetItemBoxed`,
+`PyBuiltin_Tuple`.
+
+**Still returning lists, not tuples** (separate gaps, not addressed by this
+change): `itertools.product`/`permutations`/`combinations`/`zip_longest`
+entries, `os.path.splitext`, `operator.itemgetter`/`attrgetter` multi-key
+results, `struct.unpack`. These each have their own dispatch paths that
+would need separate tuple-conversion work; the tuple type infrastructure
+is now available for them.
+
+Verified against real CPython: tuple literals (empty, single, multi,
+nested), repr/print format (including `(1,)` and `()`), indexing (positive
+and negative), slicing, `len`, unpacking (`a, b = t`, `for x, y in pairs`,
+`return a, b`), `+`, `*`, `==`/`!=`/`<`/`<=`/`>`/`>=` (including
+tuple-vs-list False), `in`, `tuple()` builtin (list/str/dict/set/tuple
+inputs), `divmod()` (returns tuple), `type()`/`isinstance()`, truthiness,
+`%` formatting with tuple args. All 557 runner tests pass (0 failures), 9/9
+import tests pass, `valgrind --tool=memcheck` shows 0 errors. Verified at
+both -O0 (runner) and -O2 (default).

@@ -51,7 +51,7 @@ while i<5:
 """, "0\n1\n"),
     # dict literal
     ("d={'a':1}; print(99)", "99\n"),
-    # tuple literal (treated as list for now)
+    # tuple literal (real tuple type, type 7)
     ("t=(1,2); print(7)", "7\n"),
     # keyword argument (parsed but not yet passed specially)
     ("def f(x=1): return x\nprint(f(x=42))", "42\n"),
@@ -193,6 +193,28 @@ print(s)
     # --- tuple unpack ---
     ("a,b=1,2\nprint(a,b)", "1 2\n"),
     ("a,b,c=10,20,30\nprint(b)", "20\n"),
+    # --- tuple type (type 7): literals, repr, ops ---
+    ("print((1, 2, 3))", "(1, 2, 3)\n"),
+    ("print((1,))", "(1,)\n"),
+    ("print(())", "()\n"),
+    ("print((1, 2) + (3, 4))", "(1, 2, 3, 4)\n"),
+    ("print((1, 2) * 2)", "(1, 2, 1, 2)\n"),
+    ("print(2 * (1, 2))", "(1, 2, 1, 2)\n"),
+    ("print((1, 2, 3)[0])", "1\n"),
+    ("print((1, 2, 3)[-1])", "3\n"),
+    ("print(len((1, 2, 3)))", "3\n"),
+    ("print((1, 2) == (1, 2))", "True\n"),
+    ("print((1, 2) == (1, 3))", "False\n"),
+    ("print((1, 2) == [1, 2])", "False\n"),
+    ("print((1, 2) < (1, 3))", "True\n"),
+    ("print((1,) < (1, 2))", "True\n"),
+    ("print(2 in (1, 2, 3))", "True\n"),
+    ("print(5 in (1, 2, 3))", "False\n"),
+    ("print(type((1, 2)))", "<class 'tuple'>\n"),
+    ("print(isinstance((1, 2), tuple))", "True\n"),
+    ("print(isinstance([1, 2], tuple))", "False\n"),
+    ("print(bool((1,)), bool(()))", "True False\n"),
+    ("print((1, 2, 3)[1:])", "(2, 3)\n"),
     # --- multi return ---
     ("def f():\n    return 1,2\na,b=f()\nprint(a,b)", "1 2\n"),
     # --- method calls ---
@@ -1987,8 +2009,9 @@ print(show(dt))
     # os / pathlib (synthetic; os.path.* are token-dispatched functions,
     # pathlib.Path is a new runtime type — tag 16, see IMPLEMENTATION.md).
     # os.path.splitext is wrapped in list(...) because it returns a real
-    # tuple in CPython but a plain list in pyc (no tuple type — same
-    # documented gap as itertools' tuple-shaped results); list(...)
+    # tuple in CPython but still a plain list in pyc (pyc now has a real
+    # tuple type, but os.path.splitext wasn't upgraded — same remaining
+    # gap as itertools' tuple-shaped results); list(...) normalizes both
     # normalizes both sides to the same printed form so the comparison
     # stays meaningful. Uses a fixed /tmp scratch dir (not the repo
     # directory) and exist_ok=True/explicit os.remove so the test is
@@ -2519,8 +2542,9 @@ print(parts[2][0])
     # Pyc_Apply prepends the captured values) for partial/lru_cache/
     # itemgetter/attrgetter — the same mechanism closures already use, so
     # no new type or dispatch machinery was needed, only construction.
-    # Multi-key itemgetter/attrgetter results are lists, not tuples (no
-    # tuple type in pyc — same documented gap as elsewhere this session).
+    # Multi-key itemgetter/attrgetter results are lists, not tuples (pyc
+    # now has a real tuple type, but these weren't upgraded — same
+    # remaining gap as itertools/os.path.splitext).
     #
     # Found and fixed two real compiler bugs while building this (see
     # IMPLEMENTATION.md): (1) a value returned from the generic
@@ -2824,36 +2848,14 @@ lst3 = [1, "a", 2]
 del lst3[1]
 print(lst3)
 """, "[2.0, 3.0]\n[1, 2]\nIndexError: list assignment index out of range\n{'b': 2}\nKeyError: 'missing'\n[1, 2]\n"),
-    # Continuing the same bug hunt turned up a fourth real bug class:
     # `tuple`, `divmod`, and `pow` were all missing from the
-    # neverDynamic/specialBuiltinNames whitelist that decides whether a
-    # bare-name call collects its arguments normally or gets routed
-    # through the dynamic Pyc_Apply(token) path (the same class of bug
-    # already found and fixed for bytes/bytearray in an earlier phase
-    # this session) — since no local variable named "tuple"/"divmod"/
-    # "pow" is ever assigned, each call's callee-token lookup silently
-    # resolved to nothing, so `tuple([1,2,3])`, `divmod(17,5)`, and
-    # `pow(2,10)` all unconditionally returned None. Fixed by adding all
-    # three to both sets. `tuple(x)` now behaves exactly like `list(x)`
-    # — pyc has no distinct tuple type at all (tuple *literals* already
-    # map straight to list internally, an existing, deliberate,
-    # documented scoping decision, not a new gap) — so `tuple([1,2,3])`
-    # prints as `[1, 2, 3]`, not CPython's `(1, 2, 3)`, matching how a
-    # `(1,2,3)` literal already prints. `divmod()` likewise returns a
-    # list `[3, 2]`, not a tuple, same documented reason. This test
-    # avoids printing the raw tuple()/divmod() result directly (indexing
-    # and unpacking instead) — same lesson as the earlier complex-numbers
-    # test found stranded in the wrong list this session: printing a
-    # raw list-vs-tuple repr difference makes this runner's live-CPython
-    # comparison (which always wins when the source runs successfully
-    # under real CPython) permanently disagree with any hardcoded
-    # `expected` string, regardless of correctness.
+    # neverDynamic/specialBuiltinNames whitelist (same class of bug as
+    # bytes/bytearray) — fixed by adding all three to both sets. Now that
+    # pyc has a real tuple type (type 7), `tuple([1,2,3])` prints as
+    # `(1, 2, 3)` and `divmod(17, 5)` returns a real tuple `(3, 2)`,
+    # matching CPython exactly.
     #
-    # Fixing 2-arg pow() surfaced a second, separate, smaller gap:
-    # 3-arg modular pow (`pow(base, exp, mod)`) wasn't implemented at
-    # the runtime level at all — Compiler.cpp's pow dispatch only ever
-    # passed 2 args, so the modulus was silently ignored (`pow(2, 10,
-    # 1000)` returned the un-modded 1024, not 24). Implemented via a new
+    # 3-arg modular pow (`pow(base, exp, mod)`) implemented via
     # PyBuiltin_Pow3 (fast modular exponentiation), verified against real
     # CPython including negative modulus and the exact `pow() 3rd
     # argument cannot be 0` ValueError message.
@@ -2862,8 +2864,11 @@ f = [1, 2, 3]
 g = tuple(f)
 print(g[0], g[1], g[2])
 print(len(g))
+print(g)
+print(tuple("abc"))
 q, r = divmod(17, 5)
 print(q, r)
+print(divmod(17, 5))
 print(pow(2, 10))
 print(pow(2, 10, 1000))
 print(pow(3, 5, 7))
@@ -2872,7 +2877,7 @@ try:
     pow(2, 10, 0)
 except ValueError as e:
     print("ValueError:", e)
-""", "1 2 3\n3\n3 2\n1024\n24\n5\n-5\nValueError: pow() 3rd argument cannot be 0\n"),
+""", "1 2 3\n3\n(1, 2, 3)\n('a', 'b', 'c')\n3 2\n(3, 2)\n1024\n24\n5\n-5\nValueError: pow() 3rd argument cannot be 0\n"),
     # {**mapping} dict-literal unpacking — real bug found and fixed: real
     # Python's ast.Dict represents a `**expr` entry inside a `{...}`
     # literal with a `None` key (the paired "value" is the unpacked
@@ -3211,6 +3216,7 @@ FILE_CASES = [
     ("regex_g.py", []),
     ("regex.py", []),
     ("features.py", []),
+     ("unpack_comp.py", []),
      ("closures.py", []),
      ("generators.py", []),
     # B7: Import / module system tests

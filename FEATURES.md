@@ -1,38 +1,56 @@
-# Tuple Literal Support
+# Real Tuple Type (Type 7)
 
 ## Overview
 
-The pyc compiler now correctly handles Python tuple literals in source code. Previously, tuple literals were incorrectly constructed as lists; this has been fixed to properly create Python tuples using `PyTuple_New` and `PyTuple_SetItem`.
+pyc now has a **real, distinct tuple type** (type tag 7), matching CPython
+semantics. Previously, tuple literals were mapped to lists (type 1) — an
+intermediate state left the compiler emitting calls to `PyTuple_New`/
+`PyTuple_SetItem` with no runtime implementation, breaking any program
+containing a tuple literal at link time. Both the runtime and compiler
+halves are now complete.
 
-## Implementation Details
+## Implementation
 
-- Added `"tuple"` type tracking in `typeOf()` function in `src/Compiler.cpp`
-- Modified `lowerList()` to use `PyTuple_New` and `PyTuple_SetItem` for tuple literals
-- Updated `noteType()` to track "tuple" type information
-- Verified correct behavior with test cases
+- **Runtime (`src/runtime/Runtime.cpp`)**: `PyTuple_New`, `PyTuple_SetItem`,
+  `PyTuple_SetItemBoxed`, `PyTuple_GetItem`, `PyTuple_Size`, `PyTuple_Concat`,
+  `PyTuple_Repeat`, `PyBuiltin_Tuple` — reusing the `list`/`ilist`/`flist`/
+  `list_item_type` storage fields (a tuple is structurally a list with a
+  different tag and immutable semantics). Tuple branches added to:
+  `PyObject_PrintBase`/`PyObject_PrintElement`/`PyBuiltin_Repr` (paren
+  format `(1, 2, 3)`, `(1,)`, `()`), `PyObject_CompareBool` (tuple-vs-tuple
+  structural; tuple-vs-list → False), `PyBuiltin_Type` (`<class 'tuple'>`),
+  `Pyc_IsInstance`, `PyBuiltin_Len`, `Pyc_GetItem`/`Pyc_Subscript`,
+  `Pyc_Contains`, `PyList_Unpack2`/`Unpack3`, `Pyc_GetSlice` (tuple slice →
+  tuple), `PyBuiltin_List` (tuple → list), `PyString_Format` (`%` unpacking),
+  `PyObject_TruthValue`, `PyNumber_Add` (tuple+tuple), `PyNumber_Multiply`
+  (tuple*int), `pyc_flattenRecursive`. `PyBuiltin_Divmod` now returns a real
+  tuple.
+- **Compiler (`src/Compiler.cpp`)**: `lowerList` emits `PyTuple_NewBoxed`/
+  `PyTuple_SetItemBoxed` for Tuple AST nodes; `tuple()` builtin calls
+  `PyBuiltin_Tuple`; `isinstance` table maps `tuple` → typecode 7.
+- **Codegen (`src/codegen/Codegen.cpp`)**: LLVM extern declarations for all
+  `PyTuple_*` functions.
+- **Headers**: `object_struct.h` (type tag 7), `runtime.h` (declarations).
 
-## Test Cases
+## Supported Operations
 
-The following test cases now work correctly:
-
-```python
-# Tuple literal
-x = (1, 2, 3)
-print(x)  # Output: (1, 2, 3)
-
-# Nested tuples
-y = ((1, 2), (3, 4))
-print(y)  # Output: ((1, 2), (3, 4))
-
-# Empty tuple
-z = ()
-print(z)  # Output: ()
-```
+- Tuple literals: `(1, 2, 3)`, `(1,)`, `()`, `((1, 2), (3, 4))`
+- Printing/repr: `(1, 2, 3)`, `(1,)`, `()` (matching CPython exactly)
+- Indexing: `t[0]`, `t[-1]` (with IndexError on out-of-range)
+- Slicing: `t[1:]` → tuple
+- `len(t)`
+- Unpacking: `a, b = t`, `for x, y in pairs`, `return a, b`
+- Concatenation: `(1, 2) + (3, 4)` → `(1, 2, 3, 4)`
+- Repetition: `(1, 2) * 2` → `(1, 2, 1, 2)`, `2 * (1, 2)`
+- Comparison: `==`, `!=`, `<`, `<=`, `>`, `>=` (structural; tuple ≠ list)
+- Membership: `x in t`, `x not in t`
+- `tuple(iterable)` builtin (accepts list/str/dict/set/tuple/iterable)
+- `divmod(a, b)` returns a real tuple
+- `type(t)` → `<class 'tuple'>`, `isinstance(t, tuple)` → True/False
+- Truthiness: non-empty tuple is truthy, empty tuple is falsy
+- `%` formatting: `"%s %d" % (1, 2)` unpacks the tuple
 
 ## Verification
 
-All tests pass with `PYC_BINARY=./build/pyc python3 tests/runner.py`.
-
-## Note
-
-This change ensures pyc's behavior matches CPython for tuple literals, where tuples are distinct from lists and maintain their type throughout the program.
+All 557 runner tests pass (0 failures), 9/9 import tests pass, valgrind
+shows 0 errors. Verified at both -O0 (runner) and -O2 (default).

@@ -294,6 +294,21 @@ long PyAlloc_GetDictCount();
 long PyAlloc_GetStrCount();
 long PyAlloc_GetTotal();
 
+// --- tuple type (type 7) --------------------------------------------------
+// Immutable sequence. Reuses the list/ilist/flist storage fields; immutability
+// is enforced by the API (no setter beyond PyTuple_SetItem, used at construction).
+PyObject* PyTuple_New(size_t size);
+void      PyTuple_SetItem(PyObject* tuple, size_t index, PyObject* item);
+void      PyTuple_SetItemBoxed(PyObject* tuple, PyObject* idx, PyObject* item);
+PyObject* PyTuple_GetItem(PyObject* tuple, size_t index);
+size_t    PyTuple_Size(PyObject* tuple);
+PyObject* PyTuple_SizeBoxed(PyObject* tuple);
+PyObject* PyTuple_NewBoxed(PyObject* n);
+PyObject* PyTuple_FromArray(PyObject** items, size_t size);
+PyObject* PyTuple_Concat(PyObject* a, PyObject* b);
+PyObject* PyTuple_Repeat(PyObject* tuple, long n);
+PyObject* PyBuiltin_Tuple(PyObject* obj);
+
 // --- set type (type 20) ---------------------------------------------------
 // Insertion-ordered, dedup-by-value set. Backed by PyObject::setElems with
 // linear-scan equality via PyObject_CompareBool (matches the dict container's
