@@ -510,6 +510,15 @@ print(a[0],a[1],a[2])
     ("print(min([], default=99))", "99\n"),
     ("print(max([], default=99))", "99\n"),
     ("print(min([], default=None))", "None\n"),
+    # sum with start= (was ignoring the start value)
+    ("print(sum([1, 2, 3], 10))", "16\n"),
+    ("print(sum([1, 2, 3], start=100))", "106\n"),
+    # enumerate with start= (was ignoring start)
+    ("print(list(enumerate(['a', 'b'], start=1)))", "[(1, 'a'), (2, 'b')]\n"),
+    ("print(list(enumerate(['a', 'b'], 5)))", "[(5, 'a'), (6, 'b')]\n"),
+    # tuple methods (were returning 0/None)
+    ("print((1, 2, 2, 3).count(2))", "2\n"),
+    ("print((1, 2, 3).index(2))", "1\n"),
 
     # Bug-hunt regression: assigning a native i1 comparison result to a
     # variable crashed LLVM verification ("assign" opcode's native-value

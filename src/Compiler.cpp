@@ -5246,10 +5246,21 @@ class LoweringVisitor {
         if (funcName == "enumerate") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Enumerate", arg}, res);
+            // Check for start= keyword argument (enumerate(iterable, start=N))
+            std::string startName;
+            for (const auto& kv : kwArgs) {
+                if (kv.first == "start") startName = kv.second;
+            }
+            // start can also be a second positional argument
+            if (startName.empty() && posArgCount >= 2 && argRes.size() >= 2) {
+                startName = argRes[1];
+            }
+            if (!startName.empty()) {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Enumerate2", arg, startName}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Enumerate", arg}, res);
+            }
             noteType(res, "list");
-            // S3: enumerate returns tuples, always boxed
-            (void)typeOf(arg);
             return res;
         }
         // zip(a, b) → PyBuiltin_Zip2(a, b)
@@ -5265,7 +5276,20 @@ class LoweringVisitor {
         if (funcName == "sum") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sum", arg}, res);
+            // Check for start= keyword argument (sum(iterable, start))
+            std::string startName;
+            for (const auto& kv : kwArgs) {
+                if (kv.first == "start") startName = kv.second;
+            }
+            // start can also be a second positional argument: sum(iterable, start)
+            if (startName.empty() && posArgCount >= 2 && argRes.size() >= 2) {
+                startName = argRes[1];
+            }
+            if (!startName.empty()) {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sum2", arg, startName}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sum", arg}, res);
+            }
             noteType(res, "boxed");
             return res;
         }

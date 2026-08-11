@@ -3480,7 +3480,18 @@ PyObject* PyList_Remove(PyObject* list, PyObject* item) {
     return nullptr;
 }
 PyObject* PyList_Index(PyObject* list, PyObject* item) {
-    if (!list || list->type != 1) return nullptr;
+    if (!list) return nullptr;
+    if (list->type == 7) {
+        // tuple.index — returns the first index of item, or -1 (CPython
+        // raises ValueError; we return -1 as a documented simplification).
+        for (size_t i = 0; i < list->list.size(); ++i) {
+            bool eq = (list->list[i] == item) ||
+                      (list->list[i] && item && PyObject_CompareBool(list->list[i], item, 0));
+            if (eq) return PyInt_FromLong((long)i);
+        }
+        return PyInt_FromLong(-1);
+    }
+    if (list->type != 1) return nullptr;
     pyc_ensure_boxed_list(list);
     for (size_t i = 0; i < list->list.size(); ++i) {
         bool eq = (list->list[i] == item) ||
@@ -3490,7 +3501,16 @@ PyObject* PyList_Index(PyObject* list, PyObject* item) {
     return PyInt_FromLong(-1);
 }
 PyObject* PyList_Count(PyObject* list, PyObject* item) {
-    if (!list || list->type != 1) return PyInt_FromLong(0);
+    if (!list) return PyInt_FromLong(0);
+    if (list->type == 7) {
+        // tuple.count — count occurrences of item in the tuple.
+        long c = 0;
+        for (auto* e : list->list) {
+            if (e == item || (e && item && PyObject_CompareBool(e, item, 0))) ++c;
+        }
+        return PyInt_FromLong(c);
+    }
+    if (list->type != 1) return PyInt_FromLong(0);
     pyc_ensure_boxed_list(list);
     long c = 0;
     for (auto* e : list->list) {
@@ -4936,8 +4956,11 @@ PyObject* Pyc_PowInt64Obj(int64_t base, int64_t exp) {
 }
 
 PyObject* PyBuiltin_Sum(PyObject* lst) {
-    if (!lst) return PyInt_FromLong(0);
-    PyObject* total = PyInt_FromLong(0);
+    return PyBuiltin_Sum2(lst, nullptr);
+}
+PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
+    if (!lst) return start ? (Py_INCREF(start), start) : PyInt_FromLong(0);
+    PyObject* total = start ? (Py_INCREF(start), start) : PyInt_FromLong(0);
     auto addOne = [&](PyObject* item) {
         if (!item) return;
         PyObject* next = PyNumber_Add(total, item);
@@ -5672,7 +5695,12 @@ PyObject* PyBuiltin_Reversed(PyObject* obj) {
     return r;
 }
 PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
+    return PyBuiltin_Enumerate2(iterable, nullptr);
+}
+PyObject* PyBuiltin_Enumerate2(PyObject* iterable, PyObject* startObj) {
     if (!iterable || iterable->type != 1) return PyList_New(0);
+    long startVal = 0;
+    if (startObj && (startObj->type == 0 || startObj->type == 5)) startVal = startObj->value;
     size_t n = 0;
     if (iterable->list_item_type == 1) n = iterable->ilist.size();
     else if (iterable->list_item_type == 2) n = iterable->flist.size();
@@ -5680,7 +5708,7 @@ PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
     PyObject* r = PyList_New(n);
     for (size_t i = 0; i < n; ++i) {
         PyObject* pair = PyTuple_New(2);
-        PyTuple_SetItem(pair, 0, PyInt_FromLong((long)i));
+        PyTuple_SetItem(pair, 0, PyInt_FromLong(startVal + (long)i));
         PyObject* v = nullptr;
         if (iterable->list_item_type == 1) v = PyInt_FromLong(iterable->ilist[i]);
         else if (iterable->list_item_type == 2) v = PyFloat_FromDouble(iterable->flist[i]);

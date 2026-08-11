@@ -465,6 +465,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
+    // enumerate(iterable, start) — 2-arg variant
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyBuiltin_Enumerate2", module.get());
+    }
     llvm::FunctionType* zip2Ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(zip2Ty, llvm::Function::ExternalLinkage, "PyBuiltin_Zip2", module.get());
     // min/max: list form takes (iterable, key); 2-value form takes
@@ -601,6 +606,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     for (const char* name : {"PyBuiltin_Sum","PyBuiltin_Any","PyBuiltin_All"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    // sum(iterable, start) — 2-arg variant
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyBuiltin_Sum2", module.get());
     }
     // cmp_to_key(cmp) takes one arg and returns a dict token
     {
