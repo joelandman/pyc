@@ -86,6 +86,14 @@ print(s)
     ("print(7//2)", "3\n"),
     # mixed int/float arithmetic
     ("x=1.5\nprint(x+0.5)", "2.0\n"),
+    # float repr matches CPython: fixed notation for 1e-4 <= |v| < 1e16
+    ("print(20.0)", "20.0\n"),
+    ("print(100.0)", "100.0\n"),
+    ("print(90000.0)", "90000.0\n"),
+    ("print(1e16)", "1e+16\n"),
+    ("print(1e-5)", "1e-05\n"),
+    ("print(0.0001)", "0.0001\n"),
+    ("print(0.0)", "0.0\n"),
     # float comparison in while loop
     ("x=0.0\nwhile x<1.0:\n    x=x+0.25\nprint(x)", "1.0\n"),
     # --- string operations ---
@@ -1956,9 +1964,9 @@ print(collections.most_common(c, 2))
     # (.isoformat()/.weekday()/.total_seconds()) now also work through
     # untyped params (the typeOf gate accepts "boxed" and the runtime
     # type-checks via pyc_as_datetime/pyc_as_timedelta). total_seconds()
-    # uses 93 seconds (not evenly divisible by 10) to sidestep a
-    # separate, pre-existing float-formatting bug where whole floats
-    # divisible by 10 print in scientific notation.
+    # uses 93 seconds for no particular reason now (the float-formatting
+    # bug where whole floats divisible by 10 printed in scientific
+    # notation, e.g. 20.0 -> "2e+01", has been fixed).
     ("""
 import datetime
 from datetime import date, timedelta

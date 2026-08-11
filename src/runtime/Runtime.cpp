@@ -108,14 +108,38 @@ void PYC_ALWAYS_INLINE Py_INCREF(PyObject* obj) {
 }
 
 // Shortest round-trip decimal representation, always with a decimal point.
+// Format a double matching CPython's repr() rules: fixed notation for
+// 1e-4 <= |v| < 1e16, scientific notation otherwise (matching CPython's
+// float repr exactly — verified against real CPython). Uses %.*g to find
+// the shortest round-tripping precision, then converts to fixed notation
+// when CPython would (avoiding the %g default's premature scientific
+// notation for values like 20.0 -> "2e+01").
 static void format_double(char* buf, size_t bufsize, double v) {
     if (v != v)          { snprintf(buf, bufsize, "nan");  return; }
     if (v ==  1.0/0.0)   { snprintf(buf, bufsize, "inf");  return; }
     if (v == -1.0/0.0)   { snprintf(buf, bufsize, "-inf"); return; }
+    double av = v < 0 ? -v : v;
+    bool cpythonFixed = (av >= 1e-4 && av < 1e16);
     for (int prec = 1; prec <= 17; prec++) {
         snprintf(buf, bufsize, "%.*g", prec, v);
         double check;
         if (sscanf(buf, "%lf", &check) == 1 && check == v) break;
+    }
+    // If %g produced scientific notation but CPython would use fixed,
+    // reformat with %.*f using the same precision. This matches CPython's
+    // repr boundary (1e-4 <= |v| < 1e16 uses fixed; outside uses scientific).
+    if (cpythonFixed && (strchr(buf, 'e') || strchr(buf, 'E'))) {
+        // Reformat with fixed notation. Use enough precision to round-trip.
+        for (int prec = 1; prec <= 17; prec++) {
+            snprintf(buf, bufsize, "%.*f", prec, v);
+            double check;
+            if (sscanf(buf, "%lf", &check) == 1 && check == v) break;
+        }
+        // Strip trailing zeros (and the decimal point if all zeros) to
+        // match CPython's repr (20.0 -> "20.0", not "20.00000000000000").
+        size_t len = strlen(buf);
+        while (len > 1 && buf[len-1] == '0') { buf[--len] = '\0'; }
+        if (len > 1 && buf[len-1] == '.') { buf[len] = '0'; buf[len+1] = '\0'; }
     }
     // Guarantee at least one decimal digit so it reads as float, not int.
     if (!strchr(buf, '.') && !strchr(buf, 'e') && !strchr(buf, 'E') &&
