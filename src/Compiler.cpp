@@ -8745,7 +8745,7 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", {"PySet_IsSupersetObj", obj, a}, res, "bool");
             noteType(res, "bool");
         // Dict methods
-        } else if (methodName == "get") {
+        } else if (methodName == "get" && (typeOf(obj) == "dict" || typeOf(obj) == "boxed")) {
             // d.get(k) → PyDict_GetItem(d, k)
             // d.get(k, default) → PyDict_GetItemWithDefault(d, k, default)
             // If no default is given, pass null; the runtime returns null in that case.
