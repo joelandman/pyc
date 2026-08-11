@@ -2943,13 +2943,24 @@ PyObject* PyString_Strip(PyObject* s) {
 }
 
 PyObject* PyString_Split(PyObject* s, PyObject* sep) {
+    return PyString_Split2(s, sep, nullptr);
+}
+
+// str.split(sep, maxsplit) — splits from the left, keeping the leftmost
+// maxsplit+1 pieces (the last piece is the unsplit remainder).
+PyObject* PyString_Split2(PyObject* s, PyObject* sep, PyObject* maxsplitObj) {
+    long maxsplit = (maxsplitObj && (maxsplitObj->type == 0 || maxsplitObj->type == 5))
+        ? maxsplitObj->value : -1;
     PyObject* result = PyList_New(0);
     if (!s || s->type != 3) return result;
     std::string delim = (sep && sep->type == 3) ? sep->str : " ";
     size_t start = 0, pos;
-    while ((pos = s->str.find(delim, start)) != std::string::npos) {
+    long splits = 0;
+    while ((maxsplit < 0 || splits < maxsplit) &&
+           (pos = s->str.find(delim, start)) != std::string::npos) {
         PyList_Append(result, PyUnicode_FromString(s->str.substr(start, pos - start).c_str()));
         start = pos + delim.size();
+        ++splits;
     }
     PyList_Append(result, PyUnicode_FromString(s->str.substr(start).c_str()));
     return result;
@@ -4032,12 +4043,45 @@ PyObject* PyString_RStrip(PyObject* s) {
     return PyUnicode_FromString(s->str.substr(0, r).c_str());
 }
 PyObject* PyString_StartsWith(PyObject* s, PyObject* prefix) {
-    if (!s || s->type != 3 || !prefix || prefix->type != 3) return PyBool_New(0);
+    if (!s || s->type != 3) return PyBool_New(0);
+    // Tuple-of-prefixes form: startswith(("a", "b"))
+    if (prefix && (prefix->type == 1 || prefix->type == 7)) {
+        size_t n = (prefix->type == 7) ? PyTuple_Size(prefix) : PyList_Size(prefix);
+        for (size_t i = 0; i < n; ++i) {
+            PyObject* p = (prefix->type == 7) ? PyTuple_GetItem(prefix, i)
+                                             : PyList_GetItem(prefix, i);
+            if (p && p->type == 3 && p->str.size() <= s->str.size() &&
+                s->str.compare(0, p->str.size(), p->str) == 0) {
+                if (prefix->type == 7) { /* PyTuple_GetItem returns borrowed for boxed */ }
+                else Py_DECREF(p);
+                return PyBool_New(1);
+            }
+            if (p && prefix->type == 1) Py_DECREF(p);
+        }
+        return PyBool_New(0);
+    }
+    if (!prefix || prefix->type != 3) return PyBool_New(0);
     if (prefix->str.size() > s->str.size()) return PyBool_New(0);
     return PyBool_New(s->str.compare(0, prefix->str.size(), prefix->str) == 0);
 }
 PyObject* PyString_EndsWith(PyObject* s, PyObject* suffix) {
-    if (!s || s->type != 3 || !suffix || suffix->type != 3) return PyBool_New(0);
+    if (!s || s->type != 3) return PyBool_New(0);
+    // Tuple-of-suffixes form: endswith((".txt", ".py"))
+    if (suffix && (suffix->type == 1 || suffix->type == 7)) {
+        size_t n = (suffix->type == 7) ? PyTuple_Size(suffix) : PyList_Size(suffix);
+        for (size_t i = 0; i < n; ++i) {
+            PyObject* su = (suffix->type == 7) ? PyTuple_GetItem(suffix, i)
+                                               : PyList_GetItem(suffix, i);
+            if (su && su->type == 3 && su->str.size() <= s->str.size() &&
+                s->str.compare(s->str.size() - su->str.size(), su->str.size(), su->str) == 0) {
+                if (suffix->type == 1) Py_DECREF(su);
+                return PyBool_New(1);
+            }
+            if (su && suffix->type == 1) Py_DECREF(su);
+        }
+        return PyBool_New(0);
+    }
+    if (!suffix || suffix->type != 3) return PyBool_New(0);
     if (suffix->str.size() > s->str.size()) return PyBool_New(0);
     return PyBool_New(s->str.compare(s->str.size() - suffix->str.size(), suffix->str.size(), suffix->str) == 0);
 }
@@ -4090,6 +4134,22 @@ PyObject* PyString_IsSpace(PyObject* s) {
         if (!isspace((unsigned char)c)) return PyBool_New(0);
     }
     return PyBool_New(1);
+}
+// int.bit_length() — number of bits needed to represent the int (excluding sign).
+PyObject* PyInt_BitLength(PyObject* n) {
+    if (!n || (n->type != 0 && n->type != 5)) return PyInt_FromLong(0);
+    int64_t v = n->value;
+    if (v < 0) v = -v;
+    if (v == 0) return PyInt_FromLong(0);
+    long bits = 0;
+    while (v > 0) { ++bits; v >>= 1; }
+    return PyInt_FromLong(bits);
+}
+// float.is_integer() — True if the float has no fractional part.
+PyObject* PyFloat_IsInteger(PyObject* f) {
+    if (!f) return PyBool_New(0);
+    double v = (f->type == 4) ? f->dvalue : (f->type == 0 || f->type == 5) ? (double)f->value : 0.0;
+    return PyBool_New(v == floor(v));
 }
 PyObject* PyString_Casefold(PyObject* s) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;

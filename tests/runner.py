@@ -519,6 +519,21 @@ print(a[0],a[1],a[2])
     # tuple methods (were returning 0/None)
     ("print((1, 2, 2, 3).count(2))", "2\n"),
     ("print((1, 2, 3).index(2))", "1\n"),
+    # str.split with maxsplit (was ignoring maxsplit)
+    ("print('a,b,c,d'.split(',', 2))", "['a', 'b', 'c,d']\n"),
+    # int.bit_length (was returning None)
+    ("print((255).bit_length())", "8\n"),
+    ("print((1).bit_length())", "1\n"),
+    ("print((0).bit_length())", "0\n"),
+    # float.is_integer (was returning None)
+    ("print((3.0).is_integer())", "True\n"),
+    ("print((3.5).is_integer())", "False\n"),
+    # str.startswith/endswith with tuple (was returning False)
+    ("print('hello'.startswith(('he', 'wo')))", "True\n"),
+    ("print('world'.startswith(('he', 'wo')))", "True\n"),
+    ("print('hi.txt'.endswith(('.txt', '.py')))", "True\n"),
+    ("print('hi.py'.endswith(('.txt', '.py')))", "True\n"),
+    ("print('hi.doc'.endswith(('.txt', '.py')))", "False\n"),
 
     # Bug-hunt regression: assigning a native i1 comparison result to a
     # variable crashed LLVM verification ("assign" opcode's native-value

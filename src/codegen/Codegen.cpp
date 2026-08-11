@@ -532,7 +532,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
-    for (const char* name : {"PyString_Find3","PyString_RFind3","PyString_RSplit"}) {
+    for (const char* name : {"PyString_Find3","PyString_RFind3","PyString_RSplit","PyString_Split2"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
@@ -569,7 +569,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                           "PyString_Casefold","PyString_Title",
                           "PyString_LStrip","PyString_RStrip",
                           "PyList_Reverse","PyList_Copy","PyList_Clear",
-                          "PyDict_Copy","PyDict_Clear","PyDict_PopItem"}) {
+                          "PyDict_Copy","PyDict_Clear","PyDict_PopItem",
+                          "PyInt_BitLength","PyFloat_IsInteger"}) {
         llvm::FunctionType* t = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(t, llvm::Function::ExternalLinkage, n, module.get());
     }

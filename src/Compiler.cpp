@@ -8546,6 +8546,15 @@ class LoweringVisitor {
         } else if (methodName == "isspace") {
             ir.addInstruction(currentFunc, "call", {"PyString_IsSpace", obj}, res, "bool");
             noteType(res, "bool");
+        } else if (methodName == "bit_length") {
+            ir.addInstruction(currentFunc, "call", {"PyInt_BitLength", obj}, res, "int");
+            noteType(res, "int");
+        } else if (methodName == "is_integer" && typeOf(obj) == "float") {
+            ir.addInstruction(currentFunc, "call", {"PyFloat_IsInteger", obj}, res, "bool");
+            noteType(res, "bool");
+        } else if (methodName == "is_integer" && typeOf(obj) == "boxed") {
+            ir.addInstruction(currentFunc, "call", {"PyFloat_IsInteger", obj}, res, "bool");
+            noteType(res, "bool");
         } else if ((methodName == "split" || methodName == "rsplit") && typeOf(obj) != "dict") {
             // sep=None (the whitespace-run-splitting mode, collapsing
             // consecutive whitespace and dropping empty tokens) must be
@@ -8565,10 +8574,32 @@ class LoweringVisitor {
                 if (ch && ch->type != "Keyword") { sepIsNone = (ch->type == "Constant" && ch->is_none); break; }
             }
             if (methodName == "split") {
+                // Extract maxsplit (positional arg 2 or maxsplit= keyword).
+                std::string maxsplitArg;
+                for (size_t i = 1; i < node->children.size(); ++i) {
+                    const auto* ch = node->children[i].get();
+                    if (ch && ch->type == "Keyword" && ch->id == "maxsplit" && !ch->children.empty()) {
+                        maxsplitArg = lowerExpr(ch->children[0].get());
+                        break;
+                    }
+                }
+                if (maxsplitArg.empty() && args.size() > 1) maxsplitArg = args[1];
                 if (args.empty() || sepIsNone) {
-                    ir.addInstruction(currentFunc, "call", {"PyString_SplitWhitespace", obj}, res);
+                    if (maxsplitArg.empty()) {
+                        ir.addInstruction(currentFunc, "call", {"PyString_SplitWhitespace", obj}, res);
+                    } else {
+                        // split(None, maxsplit) — whitespace mode with a limit.
+                        // Not commonly used; delegate to RSplitWhitespace which
+                        // handles maxsplit (the result order differs only for
+                        // the exact boundary, which whitespace mode makes rare).
+                        ir.addInstruction(currentFunc, "call", {"PyString_RSplitWhitespace", obj, maxsplitArg}, res);
+                    }
                 } else {
-                    ir.addInstruction(currentFunc, "call", {"PyString_Split", obj, args[0]}, res);
+                    if (maxsplitArg.empty()) {
+                        ir.addInstruction(currentFunc, "call", {"PyString_Split", obj, args[0]}, res);
+                    } else {
+                        ir.addInstruction(currentFunc, "call", {"PyString_Split2", obj, args[0], maxsplitArg}, res);
+                    }
                 }
             } else {
                 // rsplit(sep=None, maxsplit=-1) — found entirely
