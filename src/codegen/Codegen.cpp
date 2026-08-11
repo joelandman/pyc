@@ -567,6 +567,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     for (const char* n : {"PyString_IsAlpha","PyString_IsDigit","PyString_IsAlnum",
                           "PyString_IsLower","PyString_IsUpper","PyString_IsSpace",
                           "PyString_Casefold","PyString_Title",
+                          "PyString_Capitalize","PyString_Swapcase","PyString_Splitlines",
                           "PyString_LStrip","PyString_RStrip",
                           "PyList_Reverse","PyList_Copy","PyList_Clear",
                           "PyDict_Copy","PyDict_Clear","PyDict_PopItem",
@@ -649,11 +650,30 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     }
     {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_IsSubclass", module.get());
+    }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_HasAttr", module.get());
+    }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_Iter", module.get());
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_Next", module.get());
+    }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_Apply", module.get());
+    }
+    // PyCollections_Counter / PyCollections_MostCommon (1-arg: args list)
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyCollections_Counter", module.get());
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyCollections_MostCommon", module.get());
     }
 
     // String methods: find, count, replace (find/count return int boxed; replace returns str)
-    for (const char* name : {"PyString_Find","PyString_Count"}) {
+    for (const char* name : {"PyString_Find","PyString_Count","PyString_Index","PyString_RIndex"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }

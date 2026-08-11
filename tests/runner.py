@@ -1241,6 +1241,20 @@ print(fns[0](1), fns[1](7))
     # without incrementing the index)
     ("for i in range(5):\n    if i == 2:\n        continue\n    print(i)", "0\n1\n3\n4\n"),
     ("for v in [1, 2, 3, 4, 5]:\n    if v == 3:\n        continue\n    if v == 5:\n        break\n    print(v)", "1\n2\n4\n"),
+    # getattr/hasattr/setattr builtins
+    ("class O:\n    pass\no = O()\no.x = 10\nprint(getattr(o, 'x'))\nprint(hasattr(o, 'x'))\nprint(hasattr(o, 'y'))\nsetattr(o, 'y', 20)\nprint(o.y)", "10\nTrue\nFalse\n20\n"),
+    # issubclass builtin
+    ("print(issubclass(bool, int))\nprint(issubclass(int, int))\nprint(issubclass(str, int))", "True\nTrue\nFalse\n"),
+    # String methods: capitalize, swapcase, index, rindex, splitlines
+    ("print('hello world'.capitalize())", "Hello world\n"),
+    ("print('Hello'.swapcase())", "hELLO\n"),
+    ("print('hello'.index('l'))", "2\n"),
+    ("print('hello'.rindex('l'))", "3\n"),
+    ("print('a\\nb\\nc'.splitlines())", "['a', 'b', 'c']\n"),
+    # repr of homogeneous lists and sets
+    ("print(repr([1, 2, 3]))", "[1, 2, 3]\n"),
+    ("print(repr([1.0, 2.0]))", "[1.0, 2.0]\n"),
+    ("print(repr({1, 2, 3}))", "{1, 2, 3}\n"),
     # lambda with *args in its own signature + passed as value
     ("""
 def app(f, xs):
@@ -2016,6 +2030,10 @@ c = collections.Counter(["a", "a", "a", "a", "b", "b", "c"])
 print(collections.most_common(c))
 print(collections.most_common(c, 2))
 """, "[1, 2, 3, 4, 5]\n[(1, 3), (1, 4), (2, 3), (2, 4)]\n[(1, 2), (1, 3), (1, 4), (2, 3), (2, 4), (3, 4)]\n[(1, 2, 3), (1, 3, 2), (2, 1, 3), (2, 3, 1), (3, 1, 2), (3, 2, 1)]\n[(1, 2), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2)]\n[1, 2, 3]\n[3, 7, 11]\n[(1, 10), (2, 20), (3, None)]\n[('a', 4), ('b', 2), ('c', 1)]\n[('a', 4), ('b', 2)]\n"),
+    # Counter.most_common() method syntax — Counter is a plain dict at
+    # runtime; the method dispatch recognizes `most_common` and routes
+    # to PyCollections_MostCommon with [counter, n] as args.
+    ("from collections import Counter\nc = Counter('abracadabra')\nprint(c.most_common(2))\nprint(c.most_common())", "[('a', 5), ('b', 2)]\n[('a', 5), ('b', 2), ('r', 2), ('c', 1), ('d', 1)]\n"),
     # datetime module (synthetic types, tags 14/15 — see IMPLEMENTATION.md).
     # Covers both `import datetime` / `datetime.date(...)`-qualified and
     # `from datetime import date, timedelta` bare-name construction, plus

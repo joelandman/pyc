@@ -4487,7 +4487,8 @@ class LoweringVisitor {
             "int", "float", "abs", "str", "list", "enumerate", "zip",
             "bool", "type", "id", "repr", "hex", "oct", "bin", "ord", "chr", "round",
             "bytes", "bytearray", "tuple", "divmod", "pow", "set", "callable",
-            "map", "filter", "format", "ascii"
+            "map", "filter", "format", "ascii",
+            "getattr", "hasattr", "setattr", "delattr", "issubclass", "iter", "next"
         };
 
         if (!knownDirect0) {
@@ -4501,7 +4502,8 @@ class LoweringVisitor {
                     "int","float","complex","abs","str","list","enumerate","zip","bool","type","id",
                     "repr","hex","oct","bin","ord","chr","round","open","bytes","bytearray",
                     "tuple","divmod","pow","callable",
-                    "map","filter","format","ascii"
+                    "map","filter","format","ascii",
+                    "getattr","hasattr","setattr","delattr","issubclass","iter","next"
                 };
                 if (!theName.empty() && neverDynamic.count(theName) == 0) {
                     // B4 complete: any bare name that is not a known direct IR function *and*
@@ -4552,7 +4554,8 @@ class LoweringVisitor {
                 "print","len","range","min","max","sum","sorted","any","all","isinstance",
                 "int","float","complex","abs","str","list","enumerate","zip","bool","type","id",
                 "repr","hex","oct","bin","ord","chr","round","open","bytes","bytearray",
-                "tuple","divmod","pow","callable","set","map","filter","format","ascii"
+                "tuple","divmod","pow","callable","set","map","filter","format","ascii",
+                "getattr","hasattr","setattr","delattr","issubclass","iter","next"
             };
             if (neverIndirect.count(calleeName) == 0) {
                 useDynamicApply = true;
@@ -5624,6 +5627,71 @@ class LoweringVisitor {
             std::string n = argRes.size() > 1 ? argRes[1] : "";
             std::string res = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_Round", x, n}, res);
+            noteType(res, "boxed");
+            return res;
+        }
+        // getattr(obj, name[, default]) → Pyc_GetAttr(obj, name)
+        if (funcName == "getattr" && argRes.size() >= 2) {
+            std::string obj = argRes[0];
+            std::string name = argRes[1];
+            std::string res = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_GetAttr", obj, name}, res);
+            // If a default was provided and the attribute is missing, the
+            // runtime returns None — we don't have a real AttributeError
+            // mechanism, so just return the result (which may be None).
+            noteType(res, "boxed");
+            return res;
+        }
+        // hasattr(obj, name) → check if Pyc_GetItem succeeds
+        if (funcName == "hasattr" && argRes.size() >= 2) {
+            std::string obj = argRes[0];
+            std::string name = argRes[1];
+            std::string res = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_HasAttr", obj, name}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+        // setattr(obj, name, value) → Pyc_SetItem(obj, name, value)
+        if (funcName == "setattr" && argRes.size() >= 3) {
+            std::string obj = argRes[0];
+            std::string name = argRes[1];
+            std::string val = argRes[2];
+            std::string dummy = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_SetItem", obj, name, val}, dummy);
+            noteType(dummy, "none");
+            return dummy;
+        }
+        // delattr(obj, name) → Pyc_DelItem(obj, name)
+        if (funcName == "delattr" && argRes.size() >= 2) {
+            std::string obj = argRes[0];
+            std::string name = argRes[1];
+            std::string dummy = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_DelItem", obj, name}, dummy);
+            noteType(dummy, "none");
+            return dummy;
+        }
+        // issubclass(cls, parent) → check class hierarchy at runtime
+        if (funcName == "issubclass" && argRes.size() >= 2) {
+            std::string cls = argRes[0];
+            std::string parent = argRes[1];
+            std::string res = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_IsSubclass", cls, parent}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+        // iter(obj) → returns an iterator for the iterable
+        if (funcName == "iter" && argRes.size() >= 1) {
+            std::string arg = argRes[0];
+            std::string res = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_Iter", arg}, res);
+            noteType(res, "boxed");
+            return res;
+        }
+        // next(iter[, default]) → get next item from iterator
+        if (funcName == "next" && argRes.size() >= 1) {
+            std::string iter = argRes[0];
+            std::string res = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_Next", iter}, res);
             noteType(res, "boxed");
             return res;
         }
@@ -8666,7 +8734,12 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", {"PyList_Remove", obj, arg}, res);
         } else if (methodName == "index") {
             std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyList_Index", obj, arg}, res, "int");
+            std::string fn = (typeOf(obj) == "str") ? "PyString_Index" : "PyList_Index";
+            ir.addInstruction(currentFunc, "call", {fn, obj, arg}, res, "int");
+            noteType(res, "int");
+        } else if (methodName == "rindex" && typeOf(obj) == "str") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyString_RIndex", obj, arg}, res, "int");
             noteType(res, "int");
         } else if (methodName == "reverse") {
             ir.addInstruction(currentFunc, "call", {"PyList_Reverse", obj}, res);
@@ -8698,6 +8771,13 @@ class LoweringVisitor {
             noteType(res, "bool");
         } else if (methodName == "casefold") {
             ir.addInstruction(currentFunc, "call", {"PyString_Casefold", obj}, res);
+        } else if (methodName == "capitalize") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Capitalize", obj}, res);
+        } else if (methodName == "swapcase") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Swapcase", obj}, res);
+        } else if (methodName == "splitlines") {
+            ir.addInstruction(currentFunc, "call", {"PyString_Splitlines", obj}, res);
+            noteType(res, "list");
         } else if (methodName == "title") {
             ir.addInstruction(currentFunc, "call", {"PyString_Title", obj}, res);
         } else if (methodName == "zfill") {
@@ -9082,6 +9162,31 @@ class LoweringVisitor {
             callableTokenTemps.insert(res);
             return res;
         } else {
+            // Counter.most_common([n]) — Counter is a plain dict at runtime.
+            // Route to PyCollections_MostCommon with [counter, n] as args.
+            // Only fire when the object is NOT the collections module
+            // (collections.most_common(c) is a function call handled by
+            // the generic dict dispatch below).
+            bool isCollectionsModule = false;
+            if (methodName == "most_common" && attr->children.size() >= 1 && attr->children[0] &&
+                attr->children[0]->type == "Name" && attr->children[0]->id == "collections") {
+                isCollectionsModule = true;
+            }
+            if (methodName == "most_common" && (typeOf(obj) == "dict" || typeOf(obj) == "boxed") && !isCollectionsModule) {
+                std::string zero = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, zero);
+                std::string argList = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, argList);
+                std::string d1 = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, obj}, d1);
+                for (auto& a : args) {
+                    std::string d = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, a}, d);
+                }
+                ir.addInstruction(currentFunc, "call", {"PyCollections_MostCommon", argList}, res);
+                noteType(res, "list");
+                return res;
+            }
             // Chained module attribute call: `mod.path.func(args)`. The
             // dict-path branch handles the simple case (obj is a dict,
             // e.g. sys.stderr = {"write": "pyc_stderr_write"}). The
@@ -9111,25 +9216,6 @@ class LoweringVisitor {
                     ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", argList, idxConst, methodArgs[i]}, setRes);
                 }
                 ir.addInstruction(currentFunc, "call", {"Pyc_Apply", methodLookup, argList}, res);
-                // The generic dict-dispatch call's return value is
-                // statically unknown — could be a plain value, or a
-                // callable bundle (e.g. functools.partial/lru_cache,
-                // operator.itemgetter/attrgetter). Marking it as a
-                // callable-token temp lets lowerAssign's existing
-                // propagation (`callableTokenTemps.count(val) -> mark the
-                // assigned name in namesThatMayHoldCallableTokens`,
-                // Compiler.cpp's lowerAssign) correctly route a later
-                // `name(...)` call through the dynamic Pyc_Apply path
-                // instead of miscompiling it as a direct call to an
-                // unrelated same-shaped IR function. Found and fixed via
-                // `add5 = functools.partial(...); add5(10)` in a file
-                // that also happened to define a lambda: without this,
-                // codegen emitted a direct call to the file's first
-                // lambda (whatever function name conflict resolution
-                // fell back to) instead of dispatching through add5's
-                // actual bundle — an LLVM arity-mismatch verifier error,
-                // not a silent wrong-answer, but still a real compiler
-                // bug, not specific to functools.
                 callableTokenTemps.insert(res);
                 return res;
             }

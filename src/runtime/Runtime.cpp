@@ -4225,6 +4225,62 @@ PyObject* PyString_Casefold(PyObject* s) {
     for (char& c : r) c = (char)tolower((unsigned char)c);
     return PyUnicode_FromString(r.c_str());
 }
+PyObject* PyString_Capitalize(PyObject* s) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    std::string r = s->str;
+    if (!r.empty()) r[0] = (char)toupper((unsigned char)r[0]);
+    for (size_t i = 1; i < r.size(); ++i) r[i] = (char)tolower((unsigned char)r[i]);
+    return PyUnicode_FromString(r.c_str());
+}
+PyObject* PyString_Swapcase(PyObject* s) {
+    if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
+    std::string r = s->str;
+    for (char& c : r) {
+        if (isupper((unsigned char)c)) c = (char)tolower((unsigned char)c);
+        else if (islower((unsigned char)c)) c = (char)toupper((unsigned char)c);
+    }
+    return PyUnicode_FromString(r.c_str());
+}
+PyObject* PyString_Splitlines(PyObject* s) {
+    if (!s || s->type != 3) return PyList_New(0);
+    std::vector<std::string> lines;
+    std::string current;
+    for (size_t i = 0; i < s->str.size(); ++i) {
+        char c = s->str[i];
+        if (c == '\n' || c == '\r') {
+            lines.push_back(current);
+            current.clear();
+            // Handle \r\n (skip the \n after \r)
+            if (c == '\r' && i + 1 < s->str.size() && s->str[i + 1] == '\n') ++i;
+        } else {
+            current += c;
+        }
+    }
+    // Last line (if string doesn't end with newline)
+    if (!current.empty() || (!s->str.empty() && s->str.back() != '\n' && s->str.back() != '\r'))
+        lines.push_back(current);
+    PyObject* result = PyList_New(lines.size());
+    for (size_t i = 0; i < lines.size(); ++i)
+        PyList_SetItem(result, i, PyUnicode_FromString(lines[i].c_str()));
+    return result;
+}
+PyObject* PyString_Index(PyObject* s, PyObject* sub) {
+    if (!s || s->type != 3 || !sub || sub->type != 3)
+        return PyInt_FromLong(-1);
+    size_t pos = s->str.find(sub->str);
+    if (pos == std::string::npos) {
+        // CPython raises ValueError; pyc returns -1 (consistent with find)
+        return PyInt_FromLong(-1L);
+    }
+    return PyInt_FromLong((long)pos);
+}
+PyObject* PyString_RIndex(PyObject* s, PyObject* sub) {
+    if (!s || s->type != 3 || !sub || sub->type != 3)
+        return PyInt_FromLong(-1);
+    size_t pos = s->str.rfind(sub->str);
+    if (pos == std::string::npos) return PyInt_FromLong(-1L);
+    return PyInt_FromLong((long)pos);
+}
 PyObject* PyString_Title(PyObject* s) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
     std::string r = s->str;
@@ -5506,6 +5562,99 @@ PyObject* Pyc_IsInstance(PyObject* obj, PyObject* typecode) {
     bool ok = (obj->type == code) ||
               (code == 0 && obj->type == 5);  // bool is-a int
     return PyBool_New(ok ? 1 : 0);
+}
+
+// Pyc_IsSubclass(cls, parent) — checks if cls is a subclass of parent.
+// In pyc, built-in types are represented as callable token strings
+// (e.g. "pyc_adapt_bool", "pyc_adapt_int", "pyc_adapt_str").
+// Class dicts (type 2) with __bases__ are also supported.
+PyObject* Pyc_IsSubclass(PyObject* cls, PyObject* parent) {
+    if (!cls || !parent) return PyBool_New(0);
+    // String token type names: parse and compare
+    if (cls->type == 3 && parent->type == 3) {
+        // Map token names to type tags
+        static const std::unordered_map<std::string, int> typeTags = {
+            {"pyc_adapt_int", 0}, {"pyc_adapt_bool", 5}, {"pyc_adapt_float", 4},
+            {"pyc_adapt_str", 3}, {"pyc_adapt_list", 1}, {"pyc_adapt_dict", 2},
+            {"pyc_adapt_tuple", 7}, {"pyc_adapt_set", 20}, {"pyc_adapt_bytes", 17},
+            {"pyc_adapt_complex", 13},
+            // Also accept plain type names
+            {"int", 0}, {"bool", 5}, {"float", 4}, {"str", 3}, {"list", 1},
+            {"dict", 2}, {"tuple", 7}, {"set", 20}, {"bytes", 17}, {"complex", 13},
+        };
+        auto cit = typeTags.find(cls->str);
+        auto pit = typeTags.find(parent->str);
+        if (cit != typeTags.end() && pit != typeTags.end()) {
+            int ct = cit->second;
+            int pt = pit->second;
+            // Same type
+            if (ct == pt) return PyBool_New(1);
+            // bool is subclass of int
+            if (ct == 5 && pt == 0) return PyBool_New(1);
+            return PyBool_New(0);
+        }
+    }
+    // Built-in type checks by type tag
+    if (cls->type == 5 && parent->type == 0) return PyBool_New(1);
+    if (cls->type == parent->type) return PyBool_New(1);
+    // Class dict checks: look for __bases__ in both
+    if (cls->type == 2 && parent->type == 2) {
+        if (cls == parent) return PyBool_New(1);
+        for (auto& kv : cls->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == "__bases__" && kv.second) {
+                PyObject* bases = kv.second;
+                if (bases->type == 1) {
+                    for (auto* base : bases->list) {
+                        if (base && Pyc_IsSubclass(base, parent)->value) return PyBool_New(1);
+                    }
+                }
+            }
+        }
+    }
+    return PyBool_New(0);
+}
+
+// Pyc_Iter(obj) — returns an iterator for the given iterable.
+// For lists/tuples/sets/strings, we return a list+index pair as a 2-element list.
+// For dict, we iterate keys.
+PyObject* Pyc_Iter(PyObject* obj) {
+    if (!obj) return PyList_New(0);
+    // Materialize to a list if needed, then return [list, 0_index]
+    PyObject* items = PyBuiltin_List(obj);
+    if (!items) return PyList_New(0);
+    PyObject* iter = PyList_New(2);
+    PyList_SetItem(iter, 0, items);  // steals ref from PyBuiltin_List
+    PyObject* zero = PyInt_FromLong(0);
+    PyList_SetItem(iter, 1, zero);
+    return iter;
+}
+
+// Pyc_Next(iter) — returns the next item from the iterator, or None if exhausted.
+// iter is [list, index]; returns list[index] and increments index.
+PyObject* Pyc_Next(PyObject* iter) {
+    if (!iter || iter->type != 1 || iter->list.size() < 2) return nullptr;
+    PyObject* lst = iter->list[0];
+    PyObject* idxObj = iter->list[1];
+    if (!lst || !idxObj) return nullptr;
+    long idx = idxObj->value;
+    long len = (long)PyList_Size(lst);
+    if (idx >= len) return nullptr;
+    // Get item (new ref)
+    PyObject* item = listGetNewRef(lst, (size_t)idx);
+    // Increment index
+    PyObject* newIdx = PyInt_FromLong(idx + 1);
+    Py_DECREF(idxObj);
+    iter->list[1] = newIdx;
+    return item;
+}
+
+// Pyc_HasAttr(obj, attrName) — returns True if obj has the attribute.
+PyObject* Pyc_HasAttr(PyObject* obj, PyObject* attrName) {
+    if (!obj || !attrName) return PyBool_New(0);
+    PyObject* val = Pyc_GetItem(obj, attrName);
+    bool has = (val != nullptr);
+    if (val) Py_DECREF(val);
+    return PyBool_New(has ? 1 : 0);
 }
 
 PyObject* PyString_Find(PyObject* s, PyObject* sub) {
@@ -9769,10 +9918,14 @@ extern "C" PyObject* PyCollections_Counter(PyObject* args) {
     PyObject* d = PyDict_New();
     if (!args || args->type != 1 || args->list.empty()) return d;
     PyObject* iterable = args->list[0];
-    if (!iterable || iterable->type != 1) return d;
-    size_t n = PyList_Size(iterable);
+    if (!iterable) return d;
+    // Materialize the iterable into a list so we can iterate uniformly.
+    // Counter accepts strings (chars), lists, tuples, sets, dicts (keys), etc.
+    PyObject* items = PyBuiltin_List(iterable);
+    if (!items) return d;
+    size_t n = PyList_Size(items);
     for (size_t i = 0; i < n; ++i) {
-        PyObject* item = pycListItemNewRef(iterable, i);
+        PyObject* item = pycListItemNewRef(items, i);
         PyObject* cur = Pyc_GetItem(d, item);
         long count = (cur && cur->type == 0) ? cur->value + 1 : 1;
         if (cur) Py_DECREF(cur);
@@ -9781,6 +9934,7 @@ extern "C" PyObject* PyCollections_Counter(PyObject* args) {
         Py_DECREF(newCount);
         if (item) Py_DECREF(item);
     }
+    Py_DECREF(items);
     return d;
 }
 
