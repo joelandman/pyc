@@ -620,6 +620,9 @@ existed to catch what fell through):
    'typeOf(obj) != "'` over `Compiler.cpp` returns nothing.
 4. **Add a shadowing checker** for mode (a), which steps 2–3 don't
    address. **Done with caveats**, see below.
+5. **Replace the arms with an ordered (name, receiver kind) table**, so
+   dispatch is data rather than control flow. **Done for every
+   direct-call method**, see below.
 
 #### Step 1: `Pyc_CallBuiltinMethod` (done)
 
@@ -713,6 +716,56 @@ ordered `(name, predicate, emitter)` table in C++ so that
 than a parse. That also kills modes (a) and (b) structurally, since a
 table can be required to be total over receiver types. It is the natural
 step 5 and a much larger change than steps 1–4 combined.
+
+#### Step 5: the builtin method table (done)
+
+`builtinMethodRows()` in `Compiler.cpp` is an ordered
+`(name, receiver kind, arity, runtime fn, result type)` table consulted
+at the head of the builtin-method section — after the structural /
+module-qualified arms, before the remaining name-only arms. It covers
+every method whose emission is a plain `call Fn obj [arg0] [arg1]`:
+**23 arms deleted from the chain**, which fell from 127 to 104.
+
+**Why this was not just tidying.** Steps 2–3 whitelisted the arms with
+known bugs; the rest still fired on name alone, and that was producing
+wrong *types*, not merely `None`. Through a function parameter (always
+`"boxed"`), `.copy()` on a list skipped the typed list arm and fell into
+the name-only **dict** arm below it:
+
+| call | CPython | before step 5 |
+|---|---|---|
+| `f_copy([1, 2])` | `[1, 2]` | `{}` — an empty dict |
+| `f_copy({1, 2})` | `{1, 2}` | `{}` |
+| `f_clear([1, 2])` | `[]` | no-op |
+
+Dispatch is keyed on (name, *proven* receiver type), so a row can only
+fire for the type it was written for, and an unproven receiver matches
+nothing and falls through to `Pyc_CallBuiltinMethod`. Mode (b) is
+structurally impossible for anything in the table.
+
+`validateBuiltinMethodRows()` runs once and aborts on a duplicate
+`(name, receiver kind)`. That is the property the step 4 checker tries to
+recover from source text, except here it is a loop over data: exact, no
+parsing, no exemptions. Every method moved into the table is one the
+checker no longer has to reason about — which is the real reason to
+prefer this over a better parser.
+
+**Still arms, deliberately.** Methods needing more than a direct call
+keep custom emission and individual guards: `split`/`rsplit` (maxsplit
+and kwargs), `replace` (count), `find`/`rfind` (start/end), `sort`
+(`key=`/`reverse=`), `dict.pop`/`get` (default), `dict.values`
+(element-type propagation), `dict.fromkeys` (no self argument),
+`Counter.update`. Also the module-qualified dispatchers (`re.`, `os.path.`,
+`math.`), which match on AST shape rather than receiver type and are a
+different mechanism entirely.
+
+**One regression caught by the suite while doing this**, worth recording
+because it is the trap this whole exercise is about: whitelisting `upper`
+to proven `str` broke `b"hello".upper()`. bytes/bytearray store their
+payload in the same `str` field, so the name-only arm had been serving
+them by accident. Fixed with explicit `RecvKind::Bytes` rows and
+bytes/bytearray cases in `Pyc_CallBuiltinMethod` — an accident that
+happened to work is still a dependency.
 
 ### `collections.Counter` methods
 

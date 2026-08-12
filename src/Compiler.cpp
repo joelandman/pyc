@@ -15,6 +15,8 @@
 #include <filesystem>
 #include <algorithm>
 #include <optional>
+#include <set>
+#include <cstdio>
 
 #ifndef PYC_SOURCE_DIR
 #define PYC_SOURCE_DIR "."
@@ -3446,6 +3448,148 @@ class LoweringVisitor {
         return t == "list" || t == "list_int" || t == "list_float" ||
                t == "deque" || t == "tuple" || t == "match_list" ||
                t == "list_values_typed";
+    }
+
+    // ---- Builtin method table (dispatch chain, step 5) ----
+    //
+    // The if/else chain in lowerMethodCall dispatches on method *name*,
+    // and an arm with no receiver-type guard fires for whatever shows up.
+    // That produced confidently wrong answers, not just Nones: `.copy()`
+    // on a list arriving as a function parameter skipped the typed list
+    // arm, fell into the name-only *dict* arm below it, and returned an
+    // empty dict. `.clear()` on a list was a silent no-op for the same
+    // reason.
+    //
+    // These rows replace that guesswork for every method whose emission
+    // is a plain `call Fn obj [arg0] [arg1]`. Dispatch is keyed on
+    // (name, proven receiver type), so a row can only fire for the type
+    // it was written for; anything unproven matches nothing here and
+    // falls through to the chain's terminal fallback, where
+    // Pyc_CallBuiltinMethod dispatches on the real runtime tag.
+    //
+    // Methods needing more than a direct call -- split/rsplit (maxsplit
+    // and kwargs), replace (count), find/rfind (start/end), sort
+    // (key=/reverse=), dict.pop/get (default), dict.values (element-type
+    // propagation), dict.fromkeys (no self argument), Counter.update --
+    // deliberately stay as chain arms. They are guarded individually; see
+    // IMPLEMENTATION.md.
+    enum class RecvKind { Str, ListLike, Dict, Set, Bytes };
+
+    struct BuiltinMethodRow {
+        const char* name;
+        RecvKind recv;
+        int argc;                // trailing args after obj (missing -> "")
+        const char* fn;
+        const char* resultType;  // "" when the call has no typed result
+    };
+
+    static const std::vector<BuiltinMethodRow>& builtinMethodRows() {
+        static const std::vector<BuiltinMethodRow> rows = {
+            // str, no arguments
+            {"upper",      RecvKind::Str, 0, "PyString_Upper",      ""},
+            {"lower",      RecvKind::Str, 0, "PyString_Lower",      ""},
+            {"strip",      RecvKind::Str, 0, "PyString_Strip",      ""},
+            {"lstrip",     RecvKind::Str, 0, "PyString_LStrip",     ""},
+            {"rstrip",     RecvKind::Str, 0, "PyString_RStrip",     ""},
+            {"casefold",   RecvKind::Str, 0, "PyString_Casefold",   ""},
+            {"capitalize", RecvKind::Str, 0, "PyString_Capitalize", ""},
+            {"swapcase",   RecvKind::Str, 0, "PyString_Swapcase",   ""},
+            {"splitlines", RecvKind::Str, 0, "PyString_Splitlines", ""},
+            {"title",      RecvKind::Str, 0, "PyString_Title",      ""},
+            {"isalpha",    RecvKind::Str, 0, "PyString_IsAlpha",    "bool"},
+            {"isdigit",    RecvKind::Str, 0, "PyString_IsDigit",    "bool"},
+            {"isalnum",    RecvKind::Str, 0, "PyString_IsAlnum",    "bool"},
+            {"islower",    RecvKind::Str, 0, "PyString_IsLower",    "bool"},
+            {"isupper",    RecvKind::Str, 0, "PyString_IsUpper",    "bool"},
+            {"isspace",    RecvKind::Str, 0, "PyString_IsSpace",    "bool"},
+            // str, one argument
+            {"startswith", RecvKind::Str, 1, "PyString_StartsWith", "bool"},
+            {"endswith",   RecvKind::Str, 1, "PyString_EndsWith",   "bool"},
+            {"zfill",      RecvKind::Str, 1, "PyString_ZFill",      ""},
+            {"partition",  RecvKind::Str, 1, "PyString_Partition",  ""},
+            {"rpartition", RecvKind::Str, 1, "PyString_RPartition", ""},
+            {"rindex",     RecvKind::Str, 1, "PyString_RIndex",     "int"},
+            // str, two arguments
+            {"center",     RecvKind::Str, 2, "PyString_Center",     ""},
+            {"ljust",      RecvKind::Str, 2, "PyString_LJust",      ""},
+            {"rjust",      RecvKind::Str, 2, "PyString_RJust",      ""},
+            // bytes/bytearray: content lives in the same `str` field as a
+            // real str, so the PyString_* helpers apply unchanged. These
+            // rows exist because b"x".upper() used to be served by the
+            // name-only `upper` arm; whitelisting that arm to proven str
+            // dropped bytes on the floor (caught by the bytes test case).
+            {"upper",      RecvKind::Bytes, 0, "PyString_Upper", ""},
+            {"lower",      RecvKind::Bytes, 0, "PyString_Lower", ""},
+            // list
+            {"append",     RecvKind::ListLike, 1, "PyList_Append",  ""},
+            {"insert",     RecvKind::ListLike, 2, "PyList_Insert",  ""},
+            {"extend",     RecvKind::ListLike, 1, "PyList_Extend",  ""},
+            {"reverse",    RecvKind::ListLike, 0, "PyList_Reverse", ""},
+            {"copy",       RecvKind::ListLike, 0, "PyList_Copy",    ""},
+            {"clear",      RecvKind::ListLike, 0, "PyList_Clear",   ""},
+            // dict
+            {"keys",       RecvKind::Dict, 0, "PyDict_Keys",       "list"},
+            {"items",      RecvKind::Dict, 0, "PyDict_Items",      "list"},
+            {"copy",       RecvKind::Dict, 0, "PyDict_Copy",       ""},
+            {"clear",      RecvKind::Dict, 0, "PyDict_Clear",      ""},
+            {"popitem",    RecvKind::Dict, 0, "PyDict_PopItem",    ""},
+            {"setdefault", RecvKind::Dict, 2, "PyDict_SetDefault", ""},
+        };
+        return rows;
+    }
+
+    // Structural guarantee this table buys over the chain: a duplicate
+    // (name, receiver kind) is a programming error that used to be
+    // invisible -- the second arm would simply never run. Here it is a
+    // loop over data, checked once, and it aborts rather than silently
+    // preferring whichever row came first.
+    static void validateBuiltinMethodRows() {
+        std::set<std::pair<std::string, int>> seen;
+        for (const auto& r : builtinMethodRows()) {
+            auto key = std::make_pair(std::string(r.name), (int)r.recv);
+            if (!seen.insert(key).second) {
+                std::fprintf(stderr,
+                    "pyc internal error: duplicate builtin method row '%s' "
+                    "for receiver kind %d\n", r.name, (int)r.recv);
+                std::abort();
+            }
+        }
+    }
+
+    bool receiverMatches(RecvKind k, const std::string& v) const {
+        switch (k) {
+            case RecvKind::Str:      return isProvenStr(v);
+            case RecvKind::ListLike: return isProvenListLike(v);
+            case RecvKind::Dict:     return typeOf(v) == "dict";
+            case RecvKind::Set:      return typeOf(v) == "set";
+            case RecvKind::Bytes:    return typeOf(v) == "bytes" ||
+                                            typeOf(v) == "bytearray";
+        }
+        return false;
+    }
+
+    // Returns true when a row handled the call and emitted its IR.
+    bool tryBuiltinMethodTable(const std::string& methodName,
+                               const std::string& obj,
+                               const std::vector<std::string>& args,
+                               const std::string& res) {
+        static const bool validated = (validateBuiltinMethodRows(), true);
+        (void)validated;
+        for (const auto& r : builtinMethodRows()) {
+            if (methodName != r.name || !receiverMatches(r.recv, obj)) continue;
+            std::vector<std::string> call{r.fn, obj};
+            for (int i = 0; i < r.argc; ++i) {
+                call.push_back((size_t)i < args.size() ? args[i] : "");
+            }
+            if (r.resultType[0]) {
+                ir.addInstruction(currentFunc, "call", call, res, r.resultType);
+                noteType(res, r.resultType);
+            } else {
+                ir.addInstruction(currentFunc, "call", call, res);
+            }
+            return true;
+        }
+        return false;
     }
 
     // A2.1: mark a name as no longer eligible for native numeric storage
@@ -8725,6 +8869,15 @@ class LoweringVisitor {
 
         // List methods (count must come before the string `count` case so
         // that `a.count(x)` for a list dispatches to PyList_Count).
+        // Dispatch chain step 5: the (name, receiver kind) table handles
+        // every method whose emission is a plain direct call. Consulted
+        // here -- after the structural / module-qualified arms above, and
+        // before the remaining name-only arms -- so a proven receiver
+        // takes its own row and nothing else can claim it.
+        if (tryBuiltinMethodTable(methodName, obj, args, res)) {
+            return res;
+        }
+
         if (methodName == "count" && (isProvenStr(obj) || isProvenListLike(obj))) {
             // Whitelisted: an unproven ("boxed") receiver used to land on
             // PyList_Count here, so "abc".count("a") through a function
@@ -8756,13 +8909,6 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", {"PyStr_Encode", obj, enc}, res);
             noteType(res, "bytes");
         // Known list methods
-        } else if (methodName == "append") {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyList_Append", obj, arg}, res);
-        } else if (methodName == "insert") {
-            std::string idx = args.size() > 0 ? args[0] : "";
-            std::string item = args.size() > 1 ? args[1] : "";
-            ir.addInstruction(currentFunc, "call", {"PyList_Insert", obj, idx, item}, res);
         } else if (methodName == "remove" && isProvenListLike(obj)) {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyList_Remove", obj, arg}, res);
@@ -8771,30 +8917,7 @@ class LoweringVisitor {
             std::string fn = isProvenStr(obj) ? "PyString_Index" : "PyList_Index";
             ir.addInstruction(currentFunc, "call", {fn, obj, arg}, res, "int");
             noteType(res, "int");
-        } else if (methodName == "rindex" && typeOf(obj) == "str") {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyString_RIndex", obj, arg}, res, "int");
-            noteType(res, "int");
-        } else if (methodName == "reverse") {
-            ir.addInstruction(currentFunc, "call", {"PyList_Reverse", obj}, res);
-        } else if (methodName == "extend") {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyList_Extend", obj, arg}, res);
-        } else if (methodName == "copy" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float" || typeOf(obj) == "deque")) {
-            ir.addInstruction(currentFunc, "call", {"PyList_Copy", obj}, res);
-        } else if (methodName == "clear" && (typeOf(obj) == "list" || typeOf(obj) == "list_int" || typeOf(obj) == "list_float" || typeOf(obj) == "deque")) {
-            ir.addInstruction(currentFunc, "call", {"PyList_Clear", obj}, res);
         // Known string methods
-        } else if (methodName == "upper") {
-            ir.addInstruction(currentFunc, "call", {"PyString_Upper", obj}, res);
-        } else if (methodName == "lower") {
-            ir.addInstruction(currentFunc, "call", {"PyString_Lower", obj}, res);
-        } else if (methodName == "strip") {
-            ir.addInstruction(currentFunc, "call", {"PyString_Strip", obj}, res);
-        } else if (methodName == "lstrip") {
-            ir.addInstruction(currentFunc, "call", {"PyString_LStrip", obj}, res);
-        } else if (methodName == "rstrip") {
-            ir.addInstruction(currentFunc, "call", {"PyString_RStrip", obj}, res);
         } else if (methodName == "startswith") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyString_StartsWith", obj, arg}, res, "bool");
@@ -8803,17 +8926,7 @@ class LoweringVisitor {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyString_EndsWith", obj, arg}, res, "bool");
             noteType(res, "bool");
-        } else if (methodName == "casefold") {
-            ir.addInstruction(currentFunc, "call", {"PyString_Casefold", obj}, res);
-        } else if (methodName == "capitalize") {
-            ir.addInstruction(currentFunc, "call", {"PyString_Capitalize", obj}, res);
-        } else if (methodName == "swapcase") {
-            ir.addInstruction(currentFunc, "call", {"PyString_Swapcase", obj}, res);
-        } else if (methodName == "splitlines") {
-            ir.addInstruction(currentFunc, "call", {"PyString_Splitlines", obj}, res);
             noteType(res, "list");
-        } else if (methodName == "title") {
-            ir.addInstruction(currentFunc, "call", {"PyString_Title", obj}, res);
         } else if (methodName == "zfill") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyString_ZFill", obj, arg}, res);
@@ -9054,12 +9167,6 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyDict_GetItem", obj, keyArg}, res);
             }
             noteType(res, "boxed");
-        } else if (methodName == "keys") {
-            ir.addInstruction(currentFunc, "call", {"PyDict_Keys", obj}, res);
-            noteType(res, "list");
-            // S4: Propagate dict key type if known (for nbody: always "str")
-            // dict keys in nbody module are always string literals
-            (void)typeOf(obj); // obj is the dict
         } else if (methodName == "values") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Values", obj}, res);
             noteType(res, "list");
@@ -9074,26 +9181,13 @@ class LoweringVisitor {
             if (dlit != dictValueLayouts.end() && !dlit->second.empty()) {
                 markStructuredList(res, dlit->second);
             }
-        } else if (methodName == "items") {
-            ir.addInstruction(currentFunc, "call", {"PyDict_Items", obj}, res);
-            noteType(res, "list");
         } else if (methodName == "update") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyDict_Update", obj, arg}, res);
-        } else if (methodName == "setdefault") {
-            std::string key = args.size() > 0 ? args[0] : "";
-            std::string defv = args.size() > 1 ? args[1] : "";
-            ir.addInstruction(currentFunc, "call", {"PyDict_SetDefault", obj, key, defv}, res);
-        } else if (methodName == "copy") {
-            ir.addInstruction(currentFunc, "call", {"PyDict_Copy", obj}, res);
-        } else if (methodName == "clear") {
-            ir.addInstruction(currentFunc, "call", {"PyDict_Clear", obj}, res);
         } else if (methodName == "pop" && typeOf(obj) == "dict") {
             std::string key = args.size() > 0 ? args[0] : "";
             std::string defv = args.size() > 1 ? args[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyDict_Pop", obj, key, defv}, res);
-        } else if (methodName == "popitem") {
-            ir.addInstruction(currentFunc, "call", {"PyDict_PopItem", obj}, res);
         } else if (methodName == "fromkeys") {
             std::string keys = args.size() > 0 ? args[0] : "";
             std::string defv = args.size() > 1 ? args[1] : "";

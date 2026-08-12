@@ -2397,6 +2397,46 @@ dd2['x'] += 2
 print(dd2['x'])
 print(dd2['y'])
 """, "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4, 5]\n0\n[1, 2, 3, 4, 5]\n[5, 1, 2, 3, 4]\n[2, 3, 4, 5, 1]\n[2, 3, 4, 5]\n3 4\n30\n[1, 2]\n[3]\n[]\n7\n0\n"),
+    # Real bug fix (dispatch chain, step 5): name-only arms returned the
+    # WRONG TYPE, not merely None. `.copy()` on a list arriving as a
+    # function parameter skipped the typed list arm (typeOf is "boxed" for
+    # any parameter) and fell into the name-only *dict* arm below it, so
+    # it returned an empty dict; `.clear()` on a list was a silent no-op
+    # for the same reason. Confirmed before the fix:
+    #   f_copy([1, 2])  -> {}      (CPython [1, 2])
+    #   f_copy({1, 2})  -> {}      (CPython {1, 2})
+    #   f_clear([1, 2]) -> [1, 2]  (CPython [])
+    # Fixed by moving every direct-call method into an ordered
+    # (name, receiver kind) table keyed on the *proven* type, so a row can
+    # only fire for the type it was written for and an unproven receiver
+    # falls through to runtime-tag dispatch. The last line checks the
+    # proven-type fast path still works, including bytes (whose payload
+    # shares the str field, so it needs its own rows).
+    ("""
+def f_copy(x):    return x.copy()
+def f_clear(x):   x.clear(); return x
+def f_append(l):  l.append(9); return l
+def f_extend(l):  l.extend([7]); return l
+def f_insert(l):  l.insert(0, 5); return l
+def f_reverse(l): l.reverse(); return l
+def f_keys(d):    return sorted(d.keys())
+def f_items(d):   return sorted(d.items())
+def f_setdef(d):  d.setdefault('n', 1); return sorted(d.items())
+def f_popitem(d): d.popitem(); return len(d)
+def f_upper(s):   return s.upper()
+def f_strip(s):   return s.strip()
+def f_center(s):  return s.center(6, "*")
+def f_starts(s):  return s.startswith("a")
+def f_rindex(s):  return s.rindex("a")
+
+print(f_copy([1, 2]), f_copy({"a": 1}), f_copy({1, 2}))
+print(f_clear([1, 2]), f_clear({"a": 1}))
+print(f_append([1]), f_extend([1]), f_insert([1]), f_reverse([1, 2]))
+print(f_keys({"b": 1, "a": 2}), f_items({"a": 1}))
+print(f_setdef({"a": 1}), f_popitem({"a": 1}))
+print(f_upper("hi"), f_strip("  x  "), f_center("ab"), f_starts("abc"), f_rindex("banana"))
+print([1,2].copy(), {"a":1}.copy(), "hi".upper(), b"hi".upper())
+""", "[1, 2] {'a': 1} {1, 2}\n[] {}\n[1, 9] [1, 7] [5, 1] [2, 1]\n['a', 'b'] [('a', 1)]\n[('a', 1), ('n', 1)] 0\nHI x **ab** True 5\n[1, 2] {'a': 1} HI b'HI'\n"),
     # Real bug fix (dispatch chain, step 2): arms that DID match but chose
     # the wrong implementation for an unproven ("boxed") receiver. Step 1
     # added the runtime-tag fallback; this converts the guards that were

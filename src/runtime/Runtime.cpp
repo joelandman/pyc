@@ -13415,6 +13415,14 @@ extern "C" PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj
             if (m == "index")   return PyList_Index(receiver, a0);
             break;
         }
+        case 17:    // bytes
+        case 18: {  // bytearray -- same `str` payload as a real str, so the
+                    // PyString_* helpers apply; only the case-mapping pair
+                    // is reachable here (decode/hex have their own arms).
+            if (m == "upper") return PyString_Upper(receiver);
+            if (m == "lower") return PyString_Lower(receiver);
+            break;
+        }
         case 3: {   // str
             if (m == "upper")      return PyString_Upper(receiver);
             if (m == "lower")      return PyString_Lower(receiver);
