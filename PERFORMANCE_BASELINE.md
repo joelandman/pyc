@@ -368,3 +368,74 @@ BODIES dict values → body layout
   → for-loop item → unpack → list_float handles + float scalars
   → GetItemDouble / SetItemDouble / fadd/fmul
 ```
+
+---
+
+## Method-Dispatch Rework: Before/After (2026-08-12)
+
+Measured after the six-stage dispatch-chain rework (`93ffd7e..4457356`),
+which moved builtin method dispatch from a name-matching `if/else` chain
+onto a `(name, receiver kind)` table plus a runtime-tag fallback.
+Baseline is `87d874f` (immediately before step 1), built from a separate
+worktree; both compilers run on the same machine, interleaved A/B, 11
+reps, comparing minimum and median.
+
+### No regression on proven-type code
+
+| Benchmark | Baseline (min) | Current (min) | Delta | Noise (sd) |
+|---|---|---|---|---|
+| `nbody.py` n=1,000,000 | 3.2715s | 3.2617s | **−0.30%** | 2.5% |
+| proven-receiver method loop, 2M iters | 0.1811s | 0.1839s | **+1.56%** | 7.9% |
+
+Both deltas sit inside run-to-run noise. `hash.py` was measured but is
+useless as a benchmark here: it runs in ~1.3ms, so process startup
+dominates entirely, and it contains **zero** method calls. `nbody.py`
+contains only two (`.values()` and `.append()`), both in one-time setup
+(`combinations`), not in the hot `advance` loop — so neither of these
+programs meaningfully exercises the changed code. That is itself the
+finding: the rework cannot have hurt them, and did not.
+
+### The real cost: unproven ("boxed") receivers
+
+Where the compiler cannot prove the receiver type — **every function
+parameter** — the call now falls through to `Pyc_CallBuiltinMethod`
+instead of a direct call. Matched pair, identical work, only provability
+differing:
+
+| Receiver | 8M iterations of `l.count(1)` | Per call |
+|---|---|---|
+| proven (table fast path) | 0.1056s | — |
+| unproven (runtime dispatch) | 0.9306s | **+103 ns** |
+
+Against the baseline this is a genuine **7x regression for a boxed list
+receiver** (0.1283s → 0.9274s, +100 ns/call): the old `count` arm
+defaulted to `PyList_Count`, which for a list was both fast and correct.
+It was *not* correct for a boxed str, where it returned 0 — that is the
+trade this bought, and correctness was the right side to take. But the
+cost is real and should not be described as free.
+
+Overhead scales with argument count, which points at the cause:
+
+| Method | Overhead |
+|---|---|
+| `.upper()` (0 args) | 58 ns/call |
+| `.count(x)` (1 arg) | 100 ns/call |
+
+So roughly half is the argument list the fallback allocates per call
+(`PyList_NewBoxed` + `PyList_Append` per argument), and the remainder is
+fixed cost: the empty-list allocation, the method-name constant, and the
+linear `std::string` comparison chain inside `Pyc_CallBuiltinMethod`.
+
+**Two available optimizations, neither done:**
+
+1. **Drop the args list for small arities.** The method name and argument
+   count are both known at lowering time, so the fallback could emit
+   `Pyc_CallBuiltinMethod1(obj, name, a0)` and friends, passing arguments
+   directly instead of boxing them into a list. This removes the
+   allocation, which the 0-arg vs 1-arg gap says is about half the cost.
+2. **Replace the linear name scan** in `Pyc_CallBuiltinMethod` with a
+   lookup keyed on (type tag, name), built once.
+
+Neither matters until something hot actually calls a method through a
+parameter; nothing in the current test suite or benchmark set does. Worth
+revisiting if that changes.
