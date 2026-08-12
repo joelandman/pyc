@@ -2397,6 +2397,67 @@ dd2['x'] += 2
 print(dd2['x'])
 print(dd2['y'])
 """, "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4, 5]\n0\n[1, 2, 3, 4, 5]\n[5, 1, 2, 3, 4]\n[2, 3, 4, 5, 1]\n[2, 3, 4, 5]\n3 4\n30\n[1, 2]\n[3]\n[]\n7\n0\n"),
+    # Real bug fix (dispatch chain, step 2): arms that DID match but chose
+    # the wrong implementation for an unproven ("boxed") receiver. Step 1
+    # added the runtime-tag fallback; this converts the guards that were
+    # preempting it from guesses into whitelists, so an unproven receiver
+    # falls through instead of being assumed.
+    #
+    # Confirmed wrong before this change, all through function parameters:
+    #   s.count("a")   -> 0   -- `(typeOf=="str") ? PyString_Count
+    #                            : PyList_Count` picked PyList_Count
+    #   s.remove(2)    -> no-op on a set -- guard was a BLACKLIST,
+    #                     `!= "dict" && != "set"`, which "boxed" slips
+    #                     through, so it called PyList_Remove
+    #   os.path.join   -> the original blacklist bug, now a str whitelist
+    # split/rsplit/format keep their fast path when keyword arguments are
+    # present: the generic fallback builds its arg list from positional
+    # args only, so falling through would silently drop maxsplit=/**kwargs.
+    # Both spellings are covered below.
+    ("""
+import os
+def f_count(s):    return s.count("a")
+def f_lcount(l):   return l.count(1)
+def f_index(s):    return s.index("b")
+def f_lindex(l):   return l.index(2)
+def f_remove(s):   s.remove(2); return sorted(s)
+def f_lremove(l):  l.remove(2); return l
+def f_join(sep, items): return sep.join(items)
+def f_tcount(t):   return t.count(1)
+
+print(f_count("banana"))
+print(f_lcount([1, 1, 2]))
+print(f_index("abc"))
+print(f_lindex([1, 2, 3]))
+print(f_remove({1, 2, 3}))
+print(f_lremove([1, 2, 3]))
+print(f_join("-", ["a", "b"]))
+print(f_tcount((1, 1, 2)))
+print("banana".count("a"), [1,1].count(1), "-".join(["x","y"]))
+def f_split(s):        return s.split(",")
+def f_split_ws(s):     return s.split()
+def f_split_max(s):    return s.split(",", 1)
+def f_split_kw(s):     return s.split(",", maxsplit=1)
+def f_rsplit(s):       return s.rsplit(",", 1)
+def f_rsplit_ws(s):    return s.rsplit()
+def f_format(t, v):    return t.format(v)
+def f_format_kw(t, v): return t.format(a=v)
+def f_replace(s):      return s.replace("a", "X"), s.replace("a", "X", 1)
+def f_find(s):         return s.find("a"), s.find("a", 2), s.rfind("a"), s.rfind("a", 0, 3)
+
+print(f_split("a,b,c"))
+print(f_split_ws("a b c"))
+print(f_split_max("a,b,c"))
+print(f_split_kw("a,b,c"))
+print(f_rsplit("a,b,c"))
+print(f_rsplit_ws("a b c"))
+print(f_format("<{}>", 7))
+print(f_format_kw("<{a}>", 7))
+print(f_replace("banana"))
+print(f_find("banana"))
+print(os.path.join("x", "y"))
+print(os.path.split("x/y"))
+""", "3\n2\n1\n1\n[1, 3]\n[1, 3]\na-b\n2\n3 2 x-y\n['a', 'b', 'c']\n['a', 'b', 'c']\n['a', 'b,c']\n['a', 'b,c']\n['a,b', 'c']\n['a', 'b', 'c']\n<7>\n<7>\n('bXnXnX', 'bXnana')\n(1, 3, 5, 1)\nx/y\n('x', 'y')\n"),
     # Real bug fix: builtin methods on a "boxed" receiver silently did
     # nothing. lowerMethodCall dispatches on method name with each arm
     # optionally gated on typeOf(obj); a receiver arriving as a function
@@ -3589,6 +3650,26 @@ def main():
             print("SRCFILE:", rel_path)
             print("EXP:", repr(exp))
             print("ACT:", repr(actual))
+
+    # Static check on Compiler.cpp's method-dispatch chain: a catch-all arm
+    # makes any later same-name arm unreachable, which is how Counter.update
+    # shipped a dead runtime function while silently taking the wrong path.
+    # Counted as a case so a violation shows up in the pass/fail totals.
+    total += 1
+    checker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "check_dispatch_chain.py")
+    if os.path.exists(checker):
+        chk = subprocess.run([sys.executable, checker],
+                             capture_output=True, text=True)
+        sys.stdout.write(chk.stdout)
+        if chk.returncode == 0:
+            ok += 1
+        else:
+            file_failures += 1
+            sys.stdout.write(chk.stderr)
+    else:
+        file_failures += 1
+        print("check_dispatch_chain.py missing")
 
     print(f"{ok}/{total} (file_case_failures={file_failures})")
     if ok == total:

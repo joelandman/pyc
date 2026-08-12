@@ -3428,6 +3428,26 @@ class LoweringVisitor {
         return t;
     }
 
+    // Dispatch-chain whitelist predicates (see IMPLEMENTATION.md,
+    // "Method dispatch"). A method arm may only take a compile-time fast
+    // path when the receiver's type is *proven*. Anything unproven --
+    // "boxed", which is every function parameter -- must fall through to
+    // the chain's terminal fallback, where Pyc_CallBuiltinMethod
+    // dispatches on the real runtime type tag.
+    //
+    // Deliberately do NOT accept "boxed" here. That is what makes the
+    // fall-through happen, and it is the whole point: an arm that
+    // accepts "boxed" is guessing, and a wrong guess is a silently wrong
+    // answer rather than a slower-but-correct one.
+    bool isProvenStr(const std::string& v) const { return typeOf(v) == "str"; }
+
+    bool isProvenListLike(const std::string& v) const {
+        const std::string t = typeOf(v);
+        return t == "list" || t == "list_int" || t == "list_float" ||
+               t == "deque" || t == "tuple" || t == "match_list" ||
+               t == "list_values_typed";
+    }
+
     // A2.1: mark a name as no longer eligible for native numeric storage
     // (e.g. assigned a string, list, or unknown value).
     void killNumericLocal(const std::string& name) {
@@ -8137,10 +8157,20 @@ class LoweringVisitor {
         }
 
         std::vector<std::string> args;
+        bool hasKeywordArgs = false;
         for (size_t i = 1; i < node->children.size(); ++i) {
             if (node->children[i] && node->children[i]->type != "Keyword")
                 args.push_back(lowerExpr(node->children[i].get()));
+            else if (node->children[i])
+                hasKeywordArgs = true;
         }
+        // `args` is positional-only; keyword arguments are re-scanned out of
+        // the AST by the individual arms that support them. The terminal
+        // fallback builds its argument list from `args` alone, so it cannot
+        // carry keywords -- which is why arms handling kwargs (split's
+        // maxsplit=, format's **kwargs) must keep their fast path when
+        // hasKeywordArgs is set, even for an unproven receiver. Falling
+        // through would silently drop the keyword.
 
         // B6: Handle super().method() — look up method on parent class
         if (isSuperCall && superProxyTemps.count(obj) && !currentClass.empty()) {
@@ -8695,9 +8725,13 @@ class LoweringVisitor {
 
         // List methods (count must come before the string `count` case so
         // that `a.count(x)` for a list dispatches to PyList_Count).
-        if (methodName == "count") {
+        if (methodName == "count" && (isProvenStr(obj) || isProvenListLike(obj))) {
+            // Whitelisted: an unproven ("boxed") receiver used to land on
+            // PyList_Count here, so "abc".count("a") through a function
+            // parameter returned 0. It now falls through to runtime
+            // dispatch instead of guessing.
             std::string arg = args.empty() ? "" : args[0];
-            std::string fn = (typeOf(obj) == "str") ? "PyString_Count" : "PyList_Count";
+            std::string fn = isProvenStr(obj) ? "PyString_Count" : "PyList_Count";
             ir.addInstruction(currentFunc, "call", {fn, obj, arg}, res, "int");
             noteType(res, "int");
         // bytearray.append(int)/.extend(iterable) — must come before the
@@ -8729,12 +8763,12 @@ class LoweringVisitor {
             std::string idx = args.size() > 0 ? args[0] : "";
             std::string item = args.size() > 1 ? args[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyList_Insert", obj, idx, item}, res);
-        } else if (methodName == "remove" && typeOf(obj) != "dict" && typeOf(obj) != "set") {
+        } else if (methodName == "remove" && isProvenListLike(obj)) {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyList_Remove", obj, arg}, res);
-        } else if (methodName == "index") {
+        } else if (methodName == "index" && (isProvenStr(obj) || isProvenListLike(obj))) {
             std::string arg = args.empty() ? "" : args[0];
-            std::string fn = (typeOf(obj) == "str") ? "PyString_Index" : "PyList_Index";
+            std::string fn = isProvenStr(obj) ? "PyString_Index" : "PyList_Index";
             ir.addInstruction(currentFunc, "call", {fn, obj, arg}, res, "int");
             noteType(res, "int");
         } else if (methodName == "rindex" && typeOf(obj) == "str") {
@@ -8822,7 +8856,8 @@ class LoweringVisitor {
         } else if (methodName == "is_integer" && typeOf(obj) == "boxed") {
             ir.addInstruction(currentFunc, "call", {"PyFloat_IsInteger", obj}, res, "bool");
             noteType(res, "bool");
-        } else if ((methodName == "split" || methodName == "rsplit") && typeOf(obj) != "dict") {
+        } else if ((methodName == "split" || methodName == "rsplit") &&
+                   (isProvenStr(obj) || hasKeywordArgs)) {
             // sep=None (the whitespace-run-splitting mode, collapsing
             // consecutive whitespace and dropping empty tokens) must be
             // detected from the AST, not just "no argument given" — a
@@ -8903,7 +8938,7 @@ class LoweringVisitor {
         } else if (methodName == "rpartition") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyString_RPartition", obj, arg}, res);
-        } else if (methodName == "format" && typeOf(obj) != "dict") {
+        } else if (methodName == "format" && (isProvenStr(obj) || hasKeywordArgs)) {
             // str.format(*args, **kwargs) — found entirely unimplemented
             // while bug hunting. `args` here already has only positional
             // arguments (Keyword children are filtered out at the top of
@@ -8932,7 +8967,7 @@ class LoweringVisitor {
                 }
             }
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_StrFormat", obj, argsListVar, kwargsDictVar}, res);
-        } else if (methodName == "join" && typeOf(obj) != "dict") {
+        } else if (methodName == "join" && isProvenStr(obj)) {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyString_Join", obj, arg}, res);
         } else if (methodName == "find") {
@@ -8952,10 +8987,6 @@ class LoweringVisitor {
                 std::string arg = args.empty() ? "" : args[0];
                 ir.addInstruction(currentFunc, "call", {"PyString_RFind", obj, arg}, res, "int");
             }
-            noteType(res, "int");
-        } else if (methodName == "count") {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyString_Count", obj, arg}, res, "int");
             noteType(res, "int");
         } else if (methodName == "replace") {
             std::string a = args.size() > 0 ? args[0] : "";

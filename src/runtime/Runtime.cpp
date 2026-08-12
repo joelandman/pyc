@@ -13432,17 +13432,50 @@ extern "C" PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj
             if (m == "islower")    return PyString_IsLower(receiver);
             if (m == "isupper")    return PyString_IsUpper(receiver);
             if (m == "isspace")    return PyString_IsSpace(receiver);
-            if (m == "split")      return a0 ? PyString_Split(receiver, a0)
-                                             : PyString_SplitWhitespace(receiver);
+            // split/rsplit/replace/find carry optional extra positional
+            // arguments; the arms in Compiler.cpp support the same shapes,
+            // so these must too or whitelisting those arms would lose
+            // maxsplit/count/start/end for unproven receivers.
+            if (m == "split") {
+                if (!a0) return PyString_SplitWhitespace(receiver);
+                return a1 ? PyString_Split2(receiver, a0, a1) : PyString_Split(receiver, a0);
+            }
+            if (m == "rsplit") {
+                PyObject* ms = a1;
+                PyObject* tmp = nullptr;
+                if (!ms) { tmp = PyInt_FromLong(-1); ms = tmp; }
+                PyObject* r = a0 ? PyString_RSplit(receiver, a0, ms)
+                                 : PyString_RSplitWhitespace(receiver, ms);
+                if (tmp) Py_DECREF(tmp);
+                return r;
+            }
+            // str.format(*args) -- the kwargs form never reaches here; its
+            // arm keeps the fast path precisely because the generic
+            // fallback's arg list cannot carry keyword arguments.
+            if (m == "format") {
+                PyObject* kw = PyDict_New();
+                PyObject* r = PyBuiltin_StrFormat(receiver, argsList, kw);
+                Py_DECREF(kw);
+                return r;
+            }
             if (m == "join")       return PyString_Join(receiver, a0);
             if (m == "count")      return PyString_Count(receiver, a0);
-            if (m == "find")       return PyString_Find(receiver, a0);
-            if (m == "rfind")      return PyString_RFind(receiver, a0);
+            if (m == "find")       return a1 ? PyString_Find3(receiver, a0, a1)
+                                             : PyString_Find(receiver, a0);
+            if (m == "rfind") {
+                PyObject* a2 = pyc_arg_at(argsList, 2);
+                if (a2) return PyString_RFind4(receiver, a0, a1, a2);
+                return a1 ? PyString_RFind3(receiver, a0, a1) : PyString_RFind(receiver, a0);
+            }
             if (m == "index")      return PyString_Index(receiver, a0);
             if (m == "rindex")     return PyString_RIndex(receiver, a0);
             if (m == "startswith") return PyString_StartsWith(receiver, a0);
             if (m == "endswith")   return PyString_EndsWith(receiver, a0);
-            if (m == "replace")    return PyString_Replace(receiver, a0, a1);
+            if (m == "replace") {
+                PyObject* a2 = pyc_arg_at(argsList, 2);
+                return a2 ? PyString_ReplaceN(receiver, a0, a1, a2)
+                          : PyString_Replace(receiver, a0, a1);
+            }
             if (m == "partition")  return PyString_Partition(receiver, a0);
             if (m == "rpartition") return PyString_RPartition(receiver, a0);
             if (m == "zfill")      return PyString_ZFill(receiver, a0);

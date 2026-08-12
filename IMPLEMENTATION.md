@@ -614,14 +614,12 @@ existed to catch what fell through):
 
 1. **Extend the fallback to builtin types** — `Pyc_CallBuiltinMethod`.
    **Done**, see below.
-2. **Flip guards to whitelists**, arm by arm, dropping `"boxed"` from
-   each so unproven receivers reach the runtime path. Full suite between
-   arms.
-3. **Delete the 5 blacklist guards**, unnecessary once arms are
-   whitelisted.
+2. **Flip guards to whitelists**, arm by arm, so unproven receivers
+   reach the runtime path. **Done**, see below.
+3. **Delete the blacklist guards.** **Done** — zero remain; `grep
+   'typeOf(obj) != "'` over `Compiler.cpp` returns nothing.
 4. **Add a shadowing checker** for mode (a), which steps 2–3 don't
-   address: fail the build if an unguarded arm precedes a later arm with
-   the same method name.
+   address. **Done with caveats**, see below.
 
 #### Step 1: `Pyc_CallBuiltinMethod` (done)
 
@@ -645,6 +643,76 @@ receiver still returns `0`, `set.remove` is still a no-op, and unknown
 `str` methods still return `None` (they exit through a different
 `Pyc_Apply` fallback at the callable-token branch, not this one). Those
 are step 2.
+
+#### Steps 2–3: whitelisted guards (done)
+
+The two predicates `isProvenStr` / `isProvenListLike` (`Compiler.cpp`)
+define "proven". They deliberately **do not accept `"boxed"`** — that
+refusal is what produces the fall-through, and it is the whole point: an
+arm that accepts `"boxed"` is guessing, and a wrong guess is a silently
+wrong answer instead of a slower-but-correct one.
+
+Arms converted, each a confirmed wrong answer through a function
+parameter before the change:
+
+| Arm | Was | Symptom | Now |
+|---|---|---|---|
+| `count` | `(typeOf=="str") ? PyString_Count : PyList_Count` | `"banana".count("a")` → `0` | whitelist str/list-like |
+| `index` | same ternary shape | same class of bug | whitelist str/list-like |
+| `remove` | blacklist `!= "dict" && != "set"` | `set.remove` a no-op via `PyList_Remove` | whitelist list-like |
+| `join` | blacklist `!= "dict"` | the original `os.path.join` bug | whitelist str |
+| `split`/`rsplit` | blacklist `!= "dict"` | — | whitelist str, or kwargs present |
+| `format` | blacklist `!= "dict"` | — | whitelist str, or kwargs present |
+
+A dead duplicate `count` arm was deleted at the same time: it was already
+unreachable behind the unconditional arm above it, and whitelisting that
+arm would have brought it to life and sent list receivers to
+`PyString_Count`.
+
+**The keyword-argument constraint.** `args` in `lowerMethodCall` holds
+positional arguments only — `Keyword` children are filtered out and
+re-scanned by the individual arms that support them. The terminal
+fallback builds its argument list from `args` alone, so it cannot carry
+keywords. Arms that accept them (`split(maxsplit=)`, `format(**kwargs)`)
+therefore keep their fast path whenever `hasKeywordArgs` is set, even for
+an unproven receiver; falling through would silently drop the keyword.
+`Pyc_CallBuiltinMethod` was extended to full positional parity first
+(`split`/`rsplit` with maxsplit, `replace` with count, `find`/`rfind`
+with start/end, `format`), since whitelisting an arm without that would
+have lost those argument shapes.
+
+#### Step 4: the shadowing checker (done, with caveats worth reading)
+
+`tests/check_dispatch_chain.py`, run as a case by `tests/runner.py`.
+
+It is a deliberately **syntactic** rule: group arms by brace depth, and
+within a group require every occurrence of a method name except the last
+to carry a narrowing guard. It is not a reachability analysis.
+
+That is a retreat from where this started. Modelling if/else-if chains
+and dominance properly was attempted several times, and each version was
+wrong in one direction or the other — over-permissive ones masked the
+very `Counter.update` bug the checker exists to catch, under-permissive
+ones flagged sequential independent `if`s and arms guarded by an
+enclosing block. Recovering reachability from C++ text needs more than
+brace counting, and a checker that is confidently wrong is worse than no
+checker: a false negative buys false confidence, a false positive trains
+people to ignore the output.
+
+So the shipped rule is blunt and legible, with two **explicit exemptions**
+(`exists`, `compile`) where an enclosing block supplies the guard the arm
+itself lacks. Each exemption carries its justification and is printed on
+every run, so it cannot rot unnoticed. The checker was validated by
+reintroducing the original `Counter.update` shadowing and confirming it
+fails on exactly that arm and nothing else.
+
+**The sound fix, if this ever needs to be more than a smoke detector:**
+stop inferring the property from source text. Build the arms as an
+ordered `(name, predicate, emitter)` table in C++ so that
+"catch-all followed by same name" is a loop over data at startup rather
+than a parse. That also kills modes (a) and (b) structurally, since a
+table can be required to be total over receiver types. It is the natural
+step 5 and a much larger change than steps 1–4 combined.
 
 ### `collections.Counter` methods
 
