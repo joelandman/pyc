@@ -9953,8 +9953,20 @@ extern "C" PyObject* PyCollections_Counter(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) return d;
     PyObject* iterable = args->list[0];
     if (!iterable) return d;
+    // A mapping argument (including another Counter) seeds counts from the
+    // mapping's *values* -- Counter({'a': 10}) is {'a': 10}, not {'a': 1}.
+    // This has to be checked before the iterate-and-tally path below, which
+    // would otherwise walk the dict as a plain sequence of keys and count
+    // each one once, silently discarding the values the caller supplied.
+    if (iterable->type == 2) {
+        for (auto& kv : iterable->dict) {
+            if (!kv.first || !kv.second) continue;
+            PyDict_SetItem(d, kv.first, kv.second);
+        }
+        return d;
+    }
     // Materialize the iterable into a list so we can iterate uniformly.
-    // Counter accepts strings (chars), lists, tuples, sets, dicts (keys), etc.
+    // Counter accepts strings (chars), lists, tuples, sets, etc.
     PyObject* items = PyBuiltin_List(iterable);
     if (!items) return d;
     size_t n = PyList_Size(items);

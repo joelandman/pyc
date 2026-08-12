@@ -2397,6 +2397,29 @@ dd2['x'] += 2
 print(dd2['x'])
 print(dd2['y'])
 """, "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4, 5]\n0\n[1, 2, 3, 4, 5]\n[5, 1, 2, 3, 4]\n[2, 3, 4, 5, 1]\n[2, 3, 4, 5]\n3 4\n30\n[1, 2]\n[3]\n[]\n7\n0\n"),
+    # Real bug fix: Counter(mapping) counted keys instead of reading
+    # values. PyCollections_Counter fed any argument through
+    # PyBuiltin_List and tallied it, and listing a dict yields its keys —
+    # so Counter({'a': 10, 'b': 3}) came out {'a': 1, 'b': 1}, silently
+    # discarding the counts the caller passed in. Confirmed against real
+    # CPython (10 3, not 1 1). Also covers Counter(other_counter), which
+    # is the same mapping path. Fixed by copying key->value straight
+    # across when the argument is a dict, before the tally path.
+    ("""
+from collections import Counter
+
+m = Counter({'a': 10, 'b': 3})
+print(m['a'], m['b'])
+print(sorted(m.keys()))
+print(len(m))
+
+c2 = Counter(m)
+print(c2['a'], c2['b'])
+
+print(sorted(Counter('aab').items()))
+print(Counter({'x': 5}).most_common(1))
+print(sorted(Counter(['a', 'a', 'b']).items()))
+""", "10 3\n['a', 'b']\n2\n10 3\n[('a', 2), ('b', 1)]\n[('x', 5)]\n[('a', 2), ('b', 1)]\n"),
     # Real bug fix: the out-of-band side tables keyed by a dict's pointer
     # (g_pycDefaultFactories, g_pycCounters, g_pycFiles) were never
     # cleared when the dict was freed. A dict is `delete`d and its
