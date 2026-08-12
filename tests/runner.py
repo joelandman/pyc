@@ -2397,6 +2397,63 @@ dd2['x'] += 2
 print(dd2['x'])
 print(dd2['y'])
 """, "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4, 5]\n0\n[1, 2, 3, 4, 5]\n[5, 1, 2, 3, 4]\n[2, 3, 4, 5, 1]\n[2, 3, 4, 5]\n3 4\n30\n[1, 2]\n[3]\n[]\n7\n0\n"),
+    # Real bug fix: builtin methods on a "boxed" receiver silently did
+    # nothing. lowerMethodCall dispatches on method name with each arm
+    # optionally gated on typeOf(obj); a receiver arriving as a function
+    # parameter is always "boxed", so type-gated arms (all the set ones,
+    # dict.pop/setdefault/copy/clear) never fired and the call fell
+    # through to the chain's terminal fallback, which looks up
+    # "__class__" on the receiver, finds nothing for a builtin, and
+    # yielded None. Confirmed wrong before the fix: s.add(v) was a no-op
+    # (len stayed 2, CPython 3), a.union(b) returned [], and d.pop(k)
+    # returned None and left the key in place. Fixed by routing that
+    # fallback through Pyc_CallMethodOrBuiltin, which sends class
+    # instances down the old Pyc_CallMethod path unchanged and dispatches
+    # builtins on their real runtime type tag (Pyc_CallBuiltinMethod).
+    # NOTE: this covers only methods that reach the terminal fallback.
+    # Arms that DO match but pick the wrong implementation for a boxed
+    # receiver are a separate, still-open problem (str.count -> 0 via
+    # PyList_Count; set.remove no-op via PyList_Remove, whose guard is a
+    # blacklist `!= "dict" && != "set"` that "boxed" slips through) --
+    # see IMPLEMENTATION.md for the staged plan to whitelist every arm.
+    ("""
+def add_to(s, v):
+    s.add(v)
+    return len(s)
+
+def set_ops(a, b):
+    return sorted(a.union(b)), sorted(a.intersection(b)), sorted(a.difference(b))
+
+def set_pred(a, b):
+    return a.issubset(b), a.issuperset(b)
+
+def set_discard(s):
+    s.discard(1)
+    s.discard(2)
+    return sorted(s)
+
+def dict_pop(d, k):
+    return d.pop(k), sorted(d.items())
+
+def dict_setdefault(d):
+    d.setdefault('new', 5)
+    return sorted(d.items())
+
+def dict_popitem_copy(d):
+    c = d.copy()
+    c.clear()
+    return len(c), sorted(d.items())
+
+st = {1, 2}
+print(add_to(st, 3))
+print(sorted(st))
+print(set_ops({1, 2}, {2, 3}))
+print(set_pred({1}, {1, 2}))
+print(set_discard({1, 2, 3}))
+print(dict_pop({'a': 1, 'z': 2}, 'z'))
+print(dict_setdefault({'a': 1}))
+print(dict_popitem_copy({'a': 1, 'b': 2}))
+""", "3\n[1, 2, 3]\n([1, 2, 3], [2], [1])\n(True, False)\n[3]\n(2, [('a', 1)])\n[('a', 1), ('new', 5)]\n(0, [('a', 1), ('b', 2)])\n"),
     # Real bug fix: Counter.update(mapping) replaced counts instead of
     # adding them. Counter.update had been given its own runtime function
     # (PyCollections_Update), but the `.update()` arm of the method

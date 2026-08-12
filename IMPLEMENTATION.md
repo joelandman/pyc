@@ -571,6 +571,81 @@ defined next to `g_pycFiles`) drops all three, and is called from
 and `fclose`s a still-open file, matching CPython's collect-closes-the-file
 behavior. **Any future `PyObject*`-keyed table must be dropped here too.**
 
+### Method dispatch: the chain, its failure modes, and the staged fix
+
+`lowerMethodCall` (`Compiler.cpp`) dispatches `obj.method(...)` through a
+long `if/else` chain — **123 arms over 103 distinct method names**, each
+matching on the method *name* and optionally gated on `typeOf(obj)`. The
+chain ends in a sound fallback: look `"__class__"` up on the receiver,
+find the method on the class dict, and call it via `Pyc_CallMethod`.
+
+The fallback is correct. The problem is that the compile-time arms are
+**unsound preemptions** of it — an arm can fire for a receiver it was
+never written for, before the sound path is ever consulted. Three
+distinct failure modes, all confirmed with real wrong output:
+
+| Mode | What happens | Confirmed incident |
+|---|---|---|
+| **(a) Shadowing** | an unguarded catch-all arm makes a later, more specific arm unreachable | `Counter.update` — dedicated runtime fn dead on arrival |
+| **(b) Wrong receiver** | a single arm fires for a type it wasn't written for | `os.path.join` → `PyString_Join`; `str.count` → `PyList_Count` → `0`; `set.remove` → `PyList_Remove` → no-op |
+| **(c) Boxed receiver** | type unprovable, so type-gated arms don't fire at all | set methods and `dict.pop` through function parameters |
+
+Mode (c) is worth dwelling on: **every function parameter is `"boxed"`**,
+because lowering can't prove its type. So `def f(s): s.add(v)` matched no
+arm, fell to the fallback, found no `"__class__"` on a set, and returned
+`None` — a silent no-op. Mode (b) is the nastiest, because it produces a
+confidently wrong answer rather than `None`.
+
+Note the guard styles: 48 arms use a **whitelist** (`typeOf(obj) == "set"`),
+5 use a **blacklist** (`typeOf(obj) != "dict"`). Blacklists are the
+active hazard — they are unbounded, so every future colliding type is a
+latent bug, and `"boxed"` slips through all of them. `set.remove` above
+is exactly this: its guard is `!= "dict" && != "set"`, and `"boxed"` is
+neither.
+
+**The fix direction** is to invert the invariant: an arm should fire only
+when the receiver type is *proven* to be the intended one, and everything
+else should fall through to runtime dispatch. Fast paths then become pure
+optimizations that can cost speed but never correctness.
+
+Staged, because doing this in one step is how the `datetime`/`pathlib`
+regression happened (guards were narrowed before a runtime fallback
+existed to catch what fell through):
+
+1. **Extend the fallback to builtin types** — `Pyc_CallBuiltinMethod`.
+   **Done**, see below.
+2. **Flip guards to whitelists**, arm by arm, dropping `"boxed"` from
+   each so unproven receivers reach the runtime path. Full suite between
+   arms.
+3. **Delete the 5 blacklist guards**, unnecessary once arms are
+   whitelisted.
+4. **Add a shadowing checker** for mode (a), which steps 2–3 don't
+   address: fail the build if an unguarded arm precedes a later arm with
+   the same method name.
+
+#### Step 1: `Pyc_CallBuiltinMethod` (done)
+
+`Pyc_CallBuiltinMethod(receiver, name, args)` (`Runtime.cpp`) resolves a
+method on a builtin receiver by switching on the real runtime type tag —
+str/list/dict/set/tuple — and raises `AttributeError` for an unknown
+method, matching CPython, rather than the silent `None` the fallback used
+to produce.
+
+The chain's terminal fallback now emits `Pyc_CallMethodOrBuiltin(method,
+receiver, args, name)` instead of `Pyc_CallMethod`. That wrapper is
+deliberately trivial: a **non-null** method lookup (a user-class
+instance) takes the byte-identical old path, and only the null case — a
+builtin, which previously always meant `None` — reaches the new tag
+dispatch. So step 1 can only convert wrong answers into right ones; it
+has no regression surface against working code.
+
+What step 1 does **not** fix, by construction: any arm that *does* match
+still wins before the fallback is consulted. `str.count` on a boxed
+receiver still returns `0`, `set.remove` is still a no-op, and unknown
+`str` methods still return `None` (they exit through a different
+`Pyc_Apply` fallback at the callable-token branch, not this one). Those
+are step 2.
+
 ### `collections.Counter` methods
 
 `Counter` is a plain dict plus membership in `g_pycCounters`, so its

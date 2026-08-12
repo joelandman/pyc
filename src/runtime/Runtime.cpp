@@ -13312,6 +13312,167 @@ PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* args
     return result;
 }
 
+// ---- Builtin-type method dispatch ----
+//
+// Pyc_CallBuiltinMethod(receiver, nameObj, argsList) resolves a method on
+// a *builtin* receiver (str/list/dict/set/tuple) using the value's real
+// runtime type tag, rather than whatever the compiler could prove about
+// it at lowering time.
+//
+// Why this exists: Compiler.cpp's lowerMethodCall dispatches a long
+// if/else chain on method *name*, with each arm optionally gated on
+// typeOf(obj). A receiver arriving as a function parameter is always
+// "boxed" (type unprovable), so type-gated arms simply don't fire and the
+// call falls through to the chain's terminal fallback -- which looks up
+// "__class__" on the receiver and, for a builtin, finds nothing and
+// silently yields None. Confirmed wrong answers before this existed:
+// `def f(s): s.add(v)` was a no-op, `a.union(b)` returned [], and
+// `d.pop(k)` returned None and left the key in place.
+//
+// Dispatching on the runtime tag is sound for any receiver, so this is
+// the correct fallback for everything the compile-time fast paths can't
+// prove. Those fast paths remain pure optimizations layered on top; see
+// IMPLEMENTATION.md ("dispatch chain") for the staged plan to make every
+// arm a whitelist that falls through to here.
+//
+// Unknown method on a known builtin type raises AttributeError, matching
+// CPython, instead of the silent None the fallback used to produce.
+static PyObject* pyc_arg_at(PyObject* argsList, size_t i) {
+    if (!argsList || argsList->type != 1 || i >= argsList->list.size()) return nullptr;
+    return argsList->list[i];
+}
+
+static const char* pyc_builtin_type_name(PyObject* o) {
+    if (!o) return "NoneType";
+    switch (o->type) {
+        case 0:  return "int";
+        case 1:  return "list";
+        case 2:  return "dict";
+        case 3:  return "str";
+        case 4:  return "float";
+        case 5:  return "bool";
+        case 7:  return "tuple";
+        case 17: return "bytes";
+        case 18: return "bytearray";
+        case 20: return "set";
+        default: return "object";
+    }
+}
+
+extern "C" PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj,
+                                           PyObject* argsList) {
+    if (!receiver || !nameObj || nameObj->type != 3) return nullptr;
+    const std::string& m = nameObj->str;
+    PyObject* a0 = pyc_arg_at(argsList, 0);
+    PyObject* a1 = pyc_arg_at(argsList, 1);
+
+    switch (receiver->type) {
+        case 20: {  // set
+            if (m == "add")      { PySet_Add(receiver, a0);      return nullptr; }
+            if (m == "remove")   { PySet_Remove(receiver, a0);   return nullptr; }
+            if (m == "discard")  { PySet_Discard(receiver, a0);  return nullptr; }
+            if (m == "clear")    { PySet_Clear(receiver);        return nullptr; }
+            if (m == "update")   { PySet_Update(receiver, a0);   return nullptr; }
+            if (m == "pop")      return PySet_Pop(receiver);
+            if (m == "copy")     return PySet_Copy(receiver);
+            if (m == "union")                return PySet_UnionObj(receiver, a0);
+            if (m == "intersection")         return PySet_IntersectionObj(receiver, a0);
+            if (m == "difference")           return PySet_DifferenceObj(receiver, a0);
+            if (m == "symmetric_difference") return PySet_SymmetricDifferenceObj(receiver, a0);
+            if (m == "issubset")             return PySet_IsSubsetObj(receiver, a0);
+            if (m == "issuperset")           return PySet_IsSupersetObj(receiver, a0);
+            break;
+        }
+        case 2: {   // dict
+            if (m == "keys")    return PyDict_Keys(receiver);
+            if (m == "values")  return PyDict_Values(receiver);
+            if (m == "items")   return PyDict_Items(receiver);
+            if (m == "copy")    return PyDict_Copy(receiver);
+            if (m == "clear")   return PyDict_Clear(receiver);
+            if (m == "popitem") return PyDict_PopItem(receiver);
+            if (m == "get")     return PyDict_GetItemWithDefault(receiver, a0, a1);
+            if (m == "pop")     return PyDict_Pop(receiver, a0, a1);
+            if (m == "setdefault") return PyDict_SetDefault(receiver, a0, a1);
+            if (m == "update")  return PyDict_Update(receiver, a0);
+            break;
+        }
+        case 1: {   // list
+            if (m == "append")  return PyList_Append(receiver, a0);
+            if (m == "extend")  return PyList_Extend(receiver, a0);
+            if (m == "insert")  return PyList_Insert(receiver, a0, a1);
+            if (m == "remove")  return PyList_Remove(receiver, a0);
+            if (m == "reverse") return PyList_Reverse(receiver);
+            if (m == "clear")   return PyList_Clear(receiver);
+            if (m == "copy")    return PyList_Copy(receiver);
+            if (m == "count")   return PyList_Count(receiver, a0);
+            if (m == "index")   return PyList_Index(receiver, a0);
+            if (m == "pop")     return a0 ? PyList_PopAt(receiver, a0) : PyList_Pop(receiver);
+            if (m == "sort")    return PyList_Sort(receiver, nullptr, nullptr);
+            break;
+        }
+        case 7: {   // tuple -- immutable, so only the two read-only methods
+            if (m == "count")   return PyList_Count(receiver, a0);
+            if (m == "index")   return PyList_Index(receiver, a0);
+            break;
+        }
+        case 3: {   // str
+            if (m == "upper")      return PyString_Upper(receiver);
+            if (m == "lower")      return PyString_Lower(receiver);
+            if (m == "strip")      return PyString_Strip(receiver);
+            if (m == "lstrip")     return PyString_LStrip(receiver);
+            if (m == "rstrip")     return PyString_RStrip(receiver);
+            if (m == "capitalize") return PyString_Capitalize(receiver);
+            if (m == "casefold")   return PyString_Casefold(receiver);
+            if (m == "title")      return PyString_Title(receiver);
+            if (m == "swapcase")   return PyString_Swapcase(receiver);
+            if (m == "splitlines") return PyString_Splitlines(receiver);
+            if (m == "isalpha")    return PyString_IsAlpha(receiver);
+            if (m == "isdigit")    return PyString_IsDigit(receiver);
+            if (m == "isalnum")    return PyString_IsAlnum(receiver);
+            if (m == "islower")    return PyString_IsLower(receiver);
+            if (m == "isupper")    return PyString_IsUpper(receiver);
+            if (m == "isspace")    return PyString_IsSpace(receiver);
+            if (m == "split")      return a0 ? PyString_Split(receiver, a0)
+                                             : PyString_SplitWhitespace(receiver);
+            if (m == "join")       return PyString_Join(receiver, a0);
+            if (m == "count")      return PyString_Count(receiver, a0);
+            if (m == "find")       return PyString_Find(receiver, a0);
+            if (m == "rfind")      return PyString_RFind(receiver, a0);
+            if (m == "index")      return PyString_Index(receiver, a0);
+            if (m == "rindex")     return PyString_RIndex(receiver, a0);
+            if (m == "startswith") return PyString_StartsWith(receiver, a0);
+            if (m == "endswith")   return PyString_EndsWith(receiver, a0);
+            if (m == "replace")    return PyString_Replace(receiver, a0, a1);
+            if (m == "partition")  return PyString_Partition(receiver, a0);
+            if (m == "rpartition") return PyString_RPartition(receiver, a0);
+            if (m == "zfill")      return PyString_ZFill(receiver, a0);
+            if (m == "center")     return PyString_Center(receiver, a0, a1);
+            if (m == "ljust")      return PyString_LJust(receiver, a0, a1);
+            if (m == "rjust")      return PyString_RJust(receiver, a0, a1);
+            break;
+        }
+        default: break;
+    }
+    std::string msg = std::string("'") + pyc_builtin_type_name(receiver) +
+                      "' object has no attribute '" + m + "'";
+    pyc_raise_msg("AttributeError", msg.c_str());
+    return nullptr;
+}
+
+// Pyc_CallMethodOrBuiltin(methodVal, receiver, argsList, nameObj) -- the
+// method-dispatch fallback emitted by lowerMethodCall's terminal branch.
+// methodVal is the result of looking "<name>" up on the receiver's
+// __class__; that succeeds for a user-class instance and yields null for
+// every builtin. Previously the null case went straight into
+// Pyc_CallMethod and came back None, which is how a type-gated arm that
+// didn't fire turned into a silently wrong answer. Class instances keep
+// the exact same path they always had.
+extern "C" PyObject* Pyc_CallMethodOrBuiltin(PyObject* methodVal, PyObject* receiver,
+                                             PyObject* argsList, PyObject* nameObj) {
+    if (methodVal) return Pyc_CallMethod(methodVal, receiver, argsList);
+    return Pyc_CallBuiltinMethod(receiver, nameObj, argsList);
+}
+
 // Pyc_GetAttr(obj, attrName) — wraps Pyc_GetItem for plain (non-call)
 // attribute reads (obj.attr, no parens) so a @property getter is
 // invoked automatically instead of returning its raw internal token.

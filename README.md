@@ -6,7 +6,7 @@ LLVM IR, optimizes it, and produces standalone native executables via a minimal
 `PyObject*`-based boxed runtime with refcounting.
 
 Written in C++ with Clang++ and LLVM 18. No C/C++ intermediate language for
-the normal compiler path. **621/621 tests passing** (592 inline cases + 29 file cases, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
+the normal compiler path. **622/622 tests passing** (593 inline cases + 29 file cases, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
 
 ## Build
 

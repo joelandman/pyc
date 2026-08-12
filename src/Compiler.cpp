@@ -9271,7 +9271,17 @@ class LoweringVisitor {
                 std::string d = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, a}, d);
             }
-            ir.addInstruction(currentFunc, "call", {"Pyc_CallMethod", methodLookup, obj, argList}, res);
+            // Pyc_CallMethodOrBuiltin, not Pyc_CallMethod: methodLookup is
+            // null whenever the receiver is not a user-class instance (a
+            // builtin has no "__class__" entry), and that used to fall
+            // straight through to None. Passing methodName along lets the
+            // runtime dispatch on the receiver's real type tag instead --
+            // which is what makes a type-gated arm that did not fire (a
+            // "boxed" receiver, i.e. any function parameter) still reach
+            // the right implementation. Class instances are unaffected:
+            // a non-null methodLookup takes the identical path as before.
+            ir.addInstruction(currentFunc, "call",
+                              {"Pyc_CallMethodOrBuiltin", methodLookup, obj, argList, methodNameConst}, res);
         }
         return res;
     }

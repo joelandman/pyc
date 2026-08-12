@@ -764,6 +764,17 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(callMethodTy, llvm::Function::ExternalLinkage, "Pyc_CallMethod", module.get());
 
+    // Pyc_CallBuiltinMethod(receiver, name, args) — runtime-tag method
+    // dispatch for builtin receivers, and Pyc_CallMethodOrBuiltin(method,
+    // receiver, args, name), the 4-arg fallback lowerMethodCall emits:
+    // class instances go to Pyc_CallMethod, builtins to the tag dispatch.
+    llvm::Function::Create(callMethodTy, llvm::Function::ExternalLinkage,
+                           "Pyc_CallBuiltinMethod", module.get());
+    llvm::FunctionType* callMethodOrBuiltinTy = llvm::FunctionType::get(pyObjectPtrTy,
+        {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(callMethodOrBuiltinTy, llvm::Function::ExternalLinkage,
+                           "Pyc_CallMethodOrBuiltin", module.get());
+
     // B6: Extended attribute lookup (instance dict + class dict fallback)
     llvm::FunctionType* getAttrExtTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(getAttrExtTy, llvm::Function::ExternalLinkage, "PyObject_GetAttrExtended", module.get());
