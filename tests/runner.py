@@ -2397,6 +2397,41 @@ dd2['x'] += 2
 print(dd2['x'])
 print(dd2['y'])
 """, "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4, 5]\n0\n[1, 2, 3, 4, 5]\n[5, 1, 2, 3, 4]\n[2, 3, 4, 5, 1]\n[2, 3, 4, 5]\n3 4\n30\n[1, 2]\n[3]\n[]\n7\n0\n"),
+    # Real bug fix (dispatch chain, step 6): boxed set.update() was a
+    # silent no-op. `update` is shared by dict and set, and the dict arm
+    # was name-only, so it claimed set receivers whose type could not be
+    # proven and called PyDict_Update on them -- which type-checks its
+    # destination and quietly does nothing. s.update({9}) through a
+    # parameter left the set unchanged ([1, 2], CPython [1, 2, 9]).
+    #
+    # Step 6 moved every remaining direct-call method into the table
+    # (all 13 set operations, join/remove, and the count/index ternaries
+    # as per-type rows) and whitelisted the arms that stayed behind
+    # (find/rfind/replace -> str, values/update -> dict, sort ->
+    # list-like or kwargs). Names shared across types -- copy, clear,
+    # pop, update, remove, count, index -- are the dangerous ones, and
+    # this covers each through an unproven receiver.
+    ("""
+def s_update(s): s.update({9}); return sorted(s)
+def s_ops(a, b): return sorted(a.union(b)), sorted(a.intersection(b)), a.issubset(b)
+def s_add(s):    s.add(4); s.discard(1); return sorted(s)
+def s_copy(s):   c = s.copy(); c.clear(); return sorted(s), len(c)
+def l_count(l):  return l.count(1), l.index(2)
+def s_count(x):  return x.count("a"), x.index("b")
+def d_values(d): return sorted(d.values())
+def d_update(d): d.update({"z": 9}); return sorted(d.items())
+def l_sort(l):   l.sort(); return l
+def s_find(x):   return x.find("a"), x.replace("a", "-")
+
+print(s_update({1, 2}))
+print(s_ops({1, 2}, {2, 3}))
+print(s_add({1, 2}))
+print(s_copy({1, 2}))
+print(l_count([1, 1, 2]), s_count("abc"))
+print(d_values({"a": 2, "b": 1}), d_update({"a": 1}))
+print(l_sort([3, 1]), s_find("banana"))
+print({1,2}.union({3}), "ab".count("a"), [1,1].count(1))
+""", "[1, 2, 9]\n([1, 2, 3], [2], False)\n[2, 4]\n([1, 2], 0)\n(2, 2) (1, 1)\n[1, 2] [('a', 1), ('z', 9)]\n[1, 3] (1, 'b-n-n-')\n{1, 2, 3} 1 2\n"),
     # Real bug fix: str.center() put odd padding on the wrong side.
     # PyString_Center used a plain `pad / 2`, but CPython decides the
     # split from the parity of BOTH the margin and the target width

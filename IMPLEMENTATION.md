@@ -623,6 +623,9 @@ existed to catch what fell through):
 5. **Replace the arms with an ordered (name, receiver kind) table**, so
    dispatch is data rather than control flow. **Done for every
    direct-call method**, see below.
+6. **Finish the migration and retire the checker.** Migration **done**;
+   retiring the checker **did not happen**, and the reason is recorded
+   below.
 
 #### Step 1: `Pyc_CallBuiltinMethod` (done)
 
@@ -766,6 +769,59 @@ payload in the same `str` field, so the name-only arm had been serving
 them by accident. Fixed with explicit `RecvKind::Bytes` rows and
 bytes/bytearray cases in `Pyc_CallBuiltinMethod` — an accident that
 happened to work is still a dependency.
+
+#### Step 6: finishing the migration (done) — and why the checker stays
+
+The chain is now **73 arms, down from 127** at the start of step 5.
+
+Three things happened here:
+
+**Step 5 was incomplete against its own table.** Rows existed for
+`startswith`/`endswith`/`zfill`/`center`/`ljust`/`rjust`/`partition`/
+`rpartition` and the `is*` predicates, but their name-only arms were
+never deleted. A proven receiver took the table while an unproven one
+still fell into the arm and guessed — the table was shadowed by the code
+it was meant to replace. 14 arms deleted.
+
+**A bug step 5 introduced, caught here.** Deleting the `splitlines` arm
+had left its trailing `noteType(res, "list")` orphaned inside the
+`endswith` arm, so `endswith` results were typed `list` instead of
+`bool`. The suite stayed green because `noteType` feeds type inference,
+not printed output — a reminder that bulk text deletion of a `}` -
+delimited arm has to account for trailing lines the opening pattern
+doesn't cover.
+
+**16 more arms migrated.** All 13 set operations (each a plain direct
+call), plus `join`/`remove`, plus the `count` and `index` ternaries,
+which became two rows apiece keyed by receiver — the shape the table
+exists for. The row struct gained `noteAs` alongside `irType`, because
+several set operations note `"set"` while emitting no IR result type,
+and collapsing the two would have quietly altered codegen metadata.
+
+Arms that stayed were whitelisted instead: `find`/`rfind`/`replace` →
+str, `values`/`update` → dict, `sort` → list-like or kwargs.
+
+**The bug this uncovered.** `update` is shared by dict and set, and its
+dict arm was name-only, so it claimed boxed set receivers and called
+`PyDict_Update` on them — which type-checks its destination and silently
+does nothing. `s.update({9})` through a parameter left the set
+unchanged. Shared names (`copy`, `clear`, `pop`, `update`, `remove`,
+`count`, `index`) are where this bug class actually lives; single-owner
+names like `sort` or `values` were fine all along, because the arm's
+guess could only ever be right.
+
+**Why `check_dispatch_chain.py` is still here.** The intent was to retire
+it. 35 name-only arms remain: the `re.`/`math.`/`datetime` module
+dispatchers, the pathlib block (guarded by an enclosing `typeOf`), the
+`os.path` and `subprocess` groups, `dict.fromkeys` (a classmethod with no
+self, so the runtime fallback cannot serve it), `int.bit_length`, and
+`__init__`. Those match on AST shape or module identity rather than
+receiver type, so the table's `(name, receiver kind)` key does not apply
+to them, and `exists` still appears in two of them. Shadowing therefore
+remains possible in exactly the region the table cannot cover, and the
+checker keeps earning its place. Retiring it would need a second,
+differently-keyed table for module-qualified dispatch — a separate piece
+of work, not an extension of this one.
 
 ### `collections.Counter` methods
 

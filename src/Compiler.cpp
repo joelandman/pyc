@@ -3480,60 +3480,91 @@ class LoweringVisitor {
         RecvKind recv;
         int argc;                // trailing args after obj (missing -> "")
         const char* fn;
-        const char* resultType;  // "" when the call has no typed result
+        const char* irType;      // IR result type; "" when untyped
+        const char* noteAs;      // typeOf() label; "" to leave unnoted.
+                                 // Distinct from irType on purpose: the set
+                                 // operations note "set" while emitting no
+                                 // IR type, and conflating the two would
+                                 // silently change codegen's type metadata.
     };
 
     static const std::vector<BuiltinMethodRow>& builtinMethodRows() {
         static const std::vector<BuiltinMethodRow> rows = {
             // str, no arguments
-            {"upper",      RecvKind::Str, 0, "PyString_Upper",      ""},
-            {"lower",      RecvKind::Str, 0, "PyString_Lower",      ""},
-            {"strip",      RecvKind::Str, 0, "PyString_Strip",      ""},
-            {"lstrip",     RecvKind::Str, 0, "PyString_LStrip",     ""},
-            {"rstrip",     RecvKind::Str, 0, "PyString_RStrip",     ""},
-            {"casefold",   RecvKind::Str, 0, "PyString_Casefold",   ""},
-            {"capitalize", RecvKind::Str, 0, "PyString_Capitalize", ""},
-            {"swapcase",   RecvKind::Str, 0, "PyString_Swapcase",   ""},
-            {"splitlines", RecvKind::Str, 0, "PyString_Splitlines", ""},
-            {"title",      RecvKind::Str, 0, "PyString_Title",      ""},
-            {"isalpha",    RecvKind::Str, 0, "PyString_IsAlpha",    "bool"},
-            {"isdigit",    RecvKind::Str, 0, "PyString_IsDigit",    "bool"},
-            {"isalnum",    RecvKind::Str, 0, "PyString_IsAlnum",    "bool"},
-            {"islower",    RecvKind::Str, 0, "PyString_IsLower",    "bool"},
-            {"isupper",    RecvKind::Str, 0, "PyString_IsUpper",    "bool"},
-            {"isspace",    RecvKind::Str, 0, "PyString_IsSpace",    "bool"},
+            {"upper",      RecvKind::Str, 0, "PyString_Upper",      "", ""},
+            {"lower",      RecvKind::Str, 0, "PyString_Lower",      "", ""},
+            {"strip",      RecvKind::Str, 0, "PyString_Strip",      "", ""},
+            {"lstrip",     RecvKind::Str, 0, "PyString_LStrip",     "", ""},
+            {"rstrip",     RecvKind::Str, 0, "PyString_RStrip",     "", ""},
+            {"casefold",   RecvKind::Str, 0, "PyString_Casefold",   "", ""},
+            {"capitalize", RecvKind::Str, 0, "PyString_Capitalize", "", ""},
+            {"swapcase",   RecvKind::Str, 0, "PyString_Swapcase",   "", ""},
+            {"splitlines", RecvKind::Str, 0, "PyString_Splitlines", "", ""},
+            {"title",      RecvKind::Str, 0, "PyString_Title",      "", ""},
+            {"isalpha",    RecvKind::Str, 0, "PyString_IsAlpha",    "bool", "bool"},
+            {"isdigit",    RecvKind::Str, 0, "PyString_IsDigit",    "bool", "bool"},
+            {"isalnum",    RecvKind::Str, 0, "PyString_IsAlnum",    "bool", "bool"},
+            {"islower",    RecvKind::Str, 0, "PyString_IsLower",    "bool", "bool"},
+            {"isupper",    RecvKind::Str, 0, "PyString_IsUpper",    "bool", "bool"},
+            {"isspace",    RecvKind::Str, 0, "PyString_IsSpace",    "bool", "bool"},
             // str, one argument
-            {"startswith", RecvKind::Str, 1, "PyString_StartsWith", "bool"},
-            {"endswith",   RecvKind::Str, 1, "PyString_EndsWith",   "bool"},
-            {"zfill",      RecvKind::Str, 1, "PyString_ZFill",      ""},
-            {"partition",  RecvKind::Str, 1, "PyString_Partition",  ""},
-            {"rpartition", RecvKind::Str, 1, "PyString_RPartition", ""},
-            {"rindex",     RecvKind::Str, 1, "PyString_RIndex",     "int"},
+            {"startswith", RecvKind::Str, 1, "PyString_StartsWith", "bool", "bool"},
+            {"endswith",   RecvKind::Str, 1, "PyString_EndsWith",   "bool", "bool"},
+            {"zfill",      RecvKind::Str, 1, "PyString_ZFill",      "", ""},
+            {"partition",  RecvKind::Str, 1, "PyString_Partition",  "", ""},
+            {"rpartition", RecvKind::Str, 1, "PyString_RPartition", "", ""},
+            {"rindex",     RecvKind::Str, 1, "PyString_RIndex",     "int", "int"},
             // str, two arguments
-            {"center",     RecvKind::Str, 2, "PyString_Center",     ""},
-            {"ljust",      RecvKind::Str, 2, "PyString_LJust",      ""},
-            {"rjust",      RecvKind::Str, 2, "PyString_RJust",      ""},
+            {"center",     RecvKind::Str, 2, "PyString_Center",     "", ""},
+            {"ljust",      RecvKind::Str, 2, "PyString_LJust",      "", ""},
+            {"rjust",      RecvKind::Str, 2, "PyString_RJust",      "", ""},
+            // count/index: two rows replace a `(isProvenStr(obj)) ? ... : ...`
+            // ternary. Keying on the receiver is exactly what the table is
+            // for, and the unproven case now falls through instead of
+            // defaulting to the list implementation (which returned 0 for
+            // "banana".count("a") through a parameter).
+            {"count",      RecvKind::Str,      1, "PyString_Count", "int", "int"},
+            {"count",      RecvKind::ListLike, 1, "PyList_Count",   "int", "int"},
+            {"index",      RecvKind::Str,      1, "PyString_Index", "int", "int"},
+            {"index",      RecvKind::ListLike, 1, "PyList_Index",   "int", "int"},
+            {"join",       RecvKind::Str,      1, "PyString_Join",  "", ""},
+            {"remove",     RecvKind::ListLike, 1, "PyList_Remove",  "", ""},
+            // set: every operation is a plain direct call
+            {"add",        RecvKind::Set, 1, "PySet_Add",       "", ""},
+            {"remove",     RecvKind::Set, 1, "PySet_Remove",    "", ""},
+            {"discard",    RecvKind::Set, 1, "PySet_Discard",   "", ""},
+            {"pop",        RecvKind::Set, 0, "PySet_Pop",       "", ""},
+            {"clear",      RecvKind::Set, 0, "PySet_Clear",     "", ""},
+            {"copy",       RecvKind::Set, 0, "PySet_Copy",      "", "set"},
+            {"update",     RecvKind::Set, 1, "PySet_Update",    "", ""},
+            {"union",        RecvKind::Set, 1, "PySet_Union",        "", "set"},
+            {"intersection", RecvKind::Set, 1, "PySet_Intersection", "", "set"},
+            {"difference",   RecvKind::Set, 1, "PySet_Difference",   "", "set"},
+            {"symmetric_difference", RecvKind::Set, 1,
+                                          "PySet_SymmetricDifference", "", "set"},
+            {"issubset",   RecvKind::Set, 1, "PySet_IsSubsetObj",   "bool", "bool"},
+            {"issuperset", RecvKind::Set, 1, "PySet_IsSupersetObj", "bool", "bool"},
             // bytes/bytearray: content lives in the same `str` field as a
             // real str, so the PyString_* helpers apply unchanged. These
             // rows exist because b"x".upper() used to be served by the
             // name-only `upper` arm; whitelisting that arm to proven str
             // dropped bytes on the floor (caught by the bytes test case).
-            {"upper",      RecvKind::Bytes, 0, "PyString_Upper", ""},
-            {"lower",      RecvKind::Bytes, 0, "PyString_Lower", ""},
+            {"upper",      RecvKind::Bytes, 0, "PyString_Upper", "", ""},
+            {"lower",      RecvKind::Bytes, 0, "PyString_Lower", "", ""},
             // list
-            {"append",     RecvKind::ListLike, 1, "PyList_Append",  ""},
-            {"insert",     RecvKind::ListLike, 2, "PyList_Insert",  ""},
-            {"extend",     RecvKind::ListLike, 1, "PyList_Extend",  ""},
-            {"reverse",    RecvKind::ListLike, 0, "PyList_Reverse", ""},
-            {"copy",       RecvKind::ListLike, 0, "PyList_Copy",    ""},
-            {"clear",      RecvKind::ListLike, 0, "PyList_Clear",   ""},
+            {"append",     RecvKind::ListLike, 1, "PyList_Append",  "", ""},
+            {"insert",     RecvKind::ListLike, 2, "PyList_Insert",  "", ""},
+            {"extend",     RecvKind::ListLike, 1, "PyList_Extend",  "", ""},
+            {"reverse",    RecvKind::ListLike, 0, "PyList_Reverse", "", ""},
+            {"copy",       RecvKind::ListLike, 0, "PyList_Copy",    "", ""},
+            {"clear",      RecvKind::ListLike, 0, "PyList_Clear",   "", ""},
             // dict
-            {"keys",       RecvKind::Dict, 0, "PyDict_Keys",       "list"},
-            {"items",      RecvKind::Dict, 0, "PyDict_Items",      "list"},
-            {"copy",       RecvKind::Dict, 0, "PyDict_Copy",       ""},
-            {"clear",      RecvKind::Dict, 0, "PyDict_Clear",      ""},
-            {"popitem",    RecvKind::Dict, 0, "PyDict_PopItem",    ""},
-            {"setdefault", RecvKind::Dict, 2, "PyDict_SetDefault", ""},
+            {"keys",       RecvKind::Dict, 0, "PyDict_Keys",       "list", "list"},
+            {"items",      RecvKind::Dict, 0, "PyDict_Items",      "list", "list"},
+            {"copy",       RecvKind::Dict, 0, "PyDict_Copy",       "", ""},
+            {"clear",      RecvKind::Dict, 0, "PyDict_Clear",      "", ""},
+            {"popitem",    RecvKind::Dict, 0, "PyDict_PopItem",    "", ""},
+            {"setdefault", RecvKind::Dict, 2, "PyDict_SetDefault", "", ""},
         };
         return rows;
     }
@@ -3581,12 +3612,12 @@ class LoweringVisitor {
             for (int i = 0; i < r.argc; ++i) {
                 call.push_back((size_t)i < args.size() ? args[i] : "");
             }
-            if (r.resultType[0]) {
-                ir.addInstruction(currentFunc, "call", call, res, r.resultType);
-                noteType(res, r.resultType);
+            if (r.irType[0]) {
+                ir.addInstruction(currentFunc, "call", call, res, r.irType);
             } else {
                 ir.addInstruction(currentFunc, "call", call, res);
             }
+            if (r.noteAs[0]) noteType(res, r.noteAs);
             return true;
         }
         return false;
@@ -8878,20 +8909,11 @@ class LoweringVisitor {
             return res;
         }
 
-        if (methodName == "count" && (isProvenStr(obj) || isProvenListLike(obj))) {
-            // Whitelisted: an unproven ("boxed") receiver used to land on
-            // PyList_Count here, so "abc".count("a") through a function
-            // parameter returned 0. It now falls through to runtime
-            // dispatch instead of guessing.
-            std::string arg = args.empty() ? "" : args[0];
-            std::string fn = isProvenStr(obj) ? "PyString_Count" : "PyList_Count";
-            ir.addInstruction(currentFunc, "call", {fn, obj, arg}, res, "int");
-            noteType(res, "int");
         // bytearray.append(int)/.extend(iterable) — must come before the
         // unconditional list .append()/.extend() branches below, since
         // bytearray (type 18) stores content in `str`, not `list`/`ilist`/
         // `flist`; PyList_Append would corrupt it.
-        } else if (methodName == "append" && typeOf(obj) == "bytearray") {
+        if (methodName == "append" && typeOf(obj) == "bytearray") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyByteArray_Append", obj, arg}, res);
         } else if (methodName == "extend" && typeOf(obj) == "bytearray") {
@@ -8909,57 +8931,7 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", {"PyStr_Encode", obj, enc}, res);
             noteType(res, "bytes");
         // Known list methods
-        } else if (methodName == "remove" && isProvenListLike(obj)) {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyList_Remove", obj, arg}, res);
-        } else if (methodName == "index" && (isProvenStr(obj) || isProvenListLike(obj))) {
-            std::string arg = args.empty() ? "" : args[0];
-            std::string fn = isProvenStr(obj) ? "PyString_Index" : "PyList_Index";
-            ir.addInstruction(currentFunc, "call", {fn, obj, arg}, res, "int");
-            noteType(res, "int");
         // Known string methods
-        } else if (methodName == "startswith") {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyString_StartsWith", obj, arg}, res, "bool");
-            noteType(res, "bool");
-        } else if (methodName == "endswith") {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyString_EndsWith", obj, arg}, res, "bool");
-            noteType(res, "bool");
-            noteType(res, "list");
-        } else if (methodName == "zfill") {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyString_ZFill", obj, arg}, res);
-        } else if (methodName == "center") {
-            std::string w = args.size() > 0 ? args[0] : "";
-            std::string fill = args.size() > 1 ? args[1] : "";
-            ir.addInstruction(currentFunc, "call", {"PyString_Center", obj, w, fill}, res);
-        } else if (methodName == "ljust") {
-            std::string w = args.size() > 0 ? args[0] : "";
-            std::string fill = args.size() > 1 ? args[1] : "";
-            ir.addInstruction(currentFunc, "call", {"PyString_LJust", obj, w, fill}, res);
-        } else if (methodName == "rjust") {
-            std::string w = args.size() > 0 ? args[0] : "";
-            std::string fill = args.size() > 1 ? args[1] : "";
-            ir.addInstruction(currentFunc, "call", {"PyString_RJust", obj, w, fill}, res);
-        } else if (methodName == "isalpha") {
-            ir.addInstruction(currentFunc, "call", {"PyString_IsAlpha", obj}, res, "bool");
-            noteType(res, "bool");
-        } else if (methodName == "isdigit") {
-            ir.addInstruction(currentFunc, "call", {"PyString_IsDigit", obj}, res, "bool");
-            noteType(res, "bool");
-        } else if (methodName == "isalnum") {
-            ir.addInstruction(currentFunc, "call", {"PyString_IsAlnum", obj}, res, "bool");
-            noteType(res, "bool");
-        } else if (methodName == "islower") {
-            ir.addInstruction(currentFunc, "call", {"PyString_IsLower", obj}, res, "bool");
-            noteType(res, "bool");
-        } else if (methodName == "isupper") {
-            ir.addInstruction(currentFunc, "call", {"PyString_IsUpper", obj}, res, "bool");
-            noteType(res, "bool");
-        } else if (methodName == "isspace") {
-            ir.addInstruction(currentFunc, "call", {"PyString_IsSpace", obj}, res, "bool");
-            noteType(res, "bool");
         } else if (methodName == "bit_length") {
             ir.addInstruction(currentFunc, "call", {"PyInt_BitLength", obj}, res, "int");
             noteType(res, "int");
@@ -9041,16 +9013,6 @@ class LoweringVisitor {
                     ir.addInstruction(currentFunc, "call", {"PyString_RSplit", obj, args[0], maxsplitArg}, res);
                 }
             }
-        } else if (methodName == "partition") {
-            // partition(sep) — found entirely unimplemented while bug
-            // hunting. Returns [before, sep, after] (list; pyc now has a
-            // real tuple type but partition was left as a list — a
-            // narrower remaining gap).
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyString_Partition", obj, arg}, res);
-        } else if (methodName == "rpartition") {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyString_RPartition", obj, arg}, res);
         } else if (methodName == "format" && (isProvenStr(obj) || hasKeywordArgs)) {
             // str.format(*args, **kwargs) — found entirely unimplemented
             // while bug hunting. `args` here already has only positional
@@ -9080,10 +9042,7 @@ class LoweringVisitor {
                 }
             }
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_StrFormat", obj, argsListVar, kwargsDictVar}, res);
-        } else if (methodName == "join" && isProvenStr(obj)) {
-            std::string arg = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PyString_Join", obj, arg}, res);
-        } else if (methodName == "find") {
+        } else if (methodName == "find" && isProvenStr(obj)) {
             if (args.size() >= 2) {
                 ir.addInstruction(currentFunc, "call", {"PyString_Find3", obj, args[0], args[1]}, res, "int");
             } else {
@@ -9091,7 +9050,7 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyString_Find", obj, arg}, res, "int");
             }
             noteType(res, "int");
-        } else if (methodName == "rfind") {
+        } else if (methodName == "rfind" && isProvenStr(obj)) {
             if (args.size() >= 3) {
                 ir.addInstruction(currentFunc, "call", {"PyString_RFind4", obj, args[0], args[1], args[2]}, res, "int");
             } else if (args.size() == 2) {
@@ -9101,7 +9060,7 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyString_RFind", obj, arg}, res, "int");
             }
             noteType(res, "int");
-        } else if (methodName == "replace") {
+        } else if (methodName == "replace" && isProvenStr(obj)) {
             std::string a = args.size() > 0 ? args[0] : "";
             std::string b = args.size() > 1 ? args[1] : "";
             if (args.size() >= 3) {
@@ -9112,49 +9071,6 @@ class LoweringVisitor {
             noteType(res, "str");
         // Set methods (gated on typeOf == "set" so they don't shadow
         // dict/list method names like pop/copy/update/clear).
-        } else if (methodName == "add" && typeOf(obj) == "set") {
-            std::string a = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PySet_Add", obj, a}, res);
-        } else if (methodName == "remove" && typeOf(obj) == "set") {
-            std::string a = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PySet_Remove", obj, a}, res);
-        } else if (methodName == "discard" && typeOf(obj) == "set") {
-            std::string a = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PySet_Discard", obj, a}, res);
-        } else if (methodName == "pop" && typeOf(obj) == "set") {
-            ir.addInstruction(currentFunc, "call", {"PySet_Pop", obj}, res);
-        } else if (methodName == "clear" && typeOf(obj) == "set") {
-            ir.addInstruction(currentFunc, "call", {"PySet_Clear", obj}, res);
-        } else if (methodName == "copy" && typeOf(obj) == "set") {
-            ir.addInstruction(currentFunc, "call", {"PySet_Copy", obj}, res);
-            noteType(res, "set");
-        } else if (methodName == "update" && typeOf(obj) == "set") {
-            std::string a = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PySet_Update", obj, a}, res);
-        } else if (methodName == "union" && typeOf(obj) == "set") {
-            std::string a = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PySet_Union", obj, a}, res);
-            noteType(res, "set");
-        } else if (methodName == "intersection" && typeOf(obj) == "set") {
-            std::string a = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PySet_Intersection", obj, a}, res);
-            noteType(res, "set");
-        } else if (methodName == "difference" && typeOf(obj) == "set") {
-            std::string a = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PySet_Difference", obj, a}, res);
-            noteType(res, "set");
-        } else if (methodName == "symmetric_difference" && typeOf(obj) == "set") {
-            std::string a = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PySet_SymmetricDifference", obj, a}, res);
-            noteType(res, "set");
-        } else if (methodName == "issubset" && typeOf(obj) == "set") {
-            std::string a = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PySet_IsSubsetObj", obj, a}, res, "bool");
-            noteType(res, "bool");
-        } else if (methodName == "issuperset" && typeOf(obj) == "set") {
-            std::string a = args.empty() ? "" : args[0];
-            ir.addInstruction(currentFunc, "call", {"PySet_IsSupersetObj", obj, a}, res, "bool");
-            noteType(res, "bool");
         // Dict methods
         } else if (methodName == "get" && (typeOf(obj) == "dict" || typeOf(obj) == "boxed")) {
             // d.get(k) → PyDict_GetItem(d, k)
@@ -9167,7 +9083,7 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyDict_GetItem", obj, keyArg}, res);
             }
             noteType(res, "boxed");
-        } else if (methodName == "values") {
+        } else if (methodName == "values" && typeOf(obj) == "dict") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Values", obj}, res);
             noteType(res, "list");
             std::string valueType = dictValueTypes[obj];
@@ -9181,7 +9097,7 @@ class LoweringVisitor {
             if (dlit != dictValueLayouts.end() && !dlit->second.empty()) {
                 markStructuredList(res, dlit->second);
             }
-        } else if (methodName == "update") {
+        } else if (methodName == "update" && typeOf(obj) == "dict") {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyDict_Update", obj, arg}, res);
         } else if (methodName == "pop" && typeOf(obj) == "dict") {
@@ -9223,7 +9139,7 @@ class LoweringVisitor {
                 noteType(res, "str");
             }
         // List methods
-        } else if (methodName == "sort") {
+        } else if (methodName == "sort" && (isProvenListLike(obj) || hasKeywordArgs)) {
             // key=/reverse= — found completely unimplemented (silently
             // ignored) while hunting for more bugs; extracted the same
             // way other keyword-only args are pulled from the raw AST
