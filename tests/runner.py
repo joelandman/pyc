@@ -2397,6 +2397,23 @@ dd2['x'] += 2
 print(dd2['x'])
 print(dd2['y'])
 """, "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4, 5]\n0\n[1, 2, 3, 4, 5]\n[5, 1, 2, 3, 4]\n[2, 3, 4, 5, 1]\n[2, 3, 4, 5]\n3 4\n30\n[1, 2]\n[3]\n[]\n7\n0\n"),
+    # Real bug fix: str.center() put odd padding on the wrong side.
+    # PyString_Center used a plain `pad / 2`, but CPython decides the
+    # split from the parity of BOTH the margin and the target width
+    # (Objects/unicodeobject.c): left = marg // 2 + (marg & width & 1).
+    # Flooring gets half the odd cases backwards -- "ab".center(7, "*")
+    # is "***ab**", not "**ab***". Found while testing the dispatch-table
+    # work; pre-existing and unrelated to dispatch. Widths 5..9 cover
+    # both parities of margin and width; the last line checks the same
+    # path through an unproven (function-parameter) receiver.
+    ("""
+for w in (5, 6, 7, 8, 9):
+    print(repr("ab".center(w, "*")), repr("abc".center(w, "*")))
+print(repr("ab".center(2, "*")), repr("ab".center(1, "*")))
+print(repr("x".center(4)))
+def f(s, w): return s.center(w, "-")
+print(f("ab", 7), f("abc", 7))
+""", "'**ab*' '*abc*'\n'**ab**' '*abc**'\n'***ab**' '**abc**'\n'***ab***' '**abc***'\n'****ab***' '***abc***'\n'ab' 'ab'\n' x  '\n---ab-- --abc--\n"),
     # Real bug fix (dispatch chain, step 5): name-only arms returned the
     # WRONG TYPE, not merely None. `.copy()` on a list arriving as a
     # function parameter skipped the typed list arm (typeOf is "boxed" for

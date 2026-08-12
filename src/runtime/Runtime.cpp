@@ -4372,7 +4372,13 @@ PyObject* PyString_Center(PyObject* s, PyObject* w, PyObject* fill) {
     std::string fc = (fill && fill->type == 3 && !fill->str.empty()) ? fill->str.substr(0, 1) : " ";
     if ((long)s->str.size() >= width) { Py_INCREF(s); return s; }
     long pad = width - s->str.size();
-    long lp = pad / 2;
+    // When the padding is odd, CPython does NOT simply floor: the extra
+    // fill character goes left or right depending on the parity of BOTH
+    // the margin and the target width (Objects/unicodeobject.c):
+    //   left = marg // 2 + (marg & width & 1)
+    // A plain `pad / 2` gets half the odd cases backwards --
+    // "ab".center(7, "*") is "***ab**", not "**ab***".
+    long lp = pad / 2 + (pad & width & 1);
     long rp = pad - lp;
     std::string r;
     r.append(lp, fc[0]);
