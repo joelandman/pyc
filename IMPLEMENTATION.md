@@ -541,6 +541,67 @@ raw-pointer hash was never used for the actual value comparison);
 insertion position. `Point(x=3, y=4)` now correctly prints
 `{'x': 3, 'y': 4}`.
 
+### Dict-identity side tables (`defaultdict`, `Counter`, open files)
+
+Three runtime tables hang per-instance state off a dict's own address,
+because the things they support (`defaultdict`'s factory, `Counter`-ness,
+an open `FILE*`) have nowhere to live in a plain dict and a visible
+marker key would leak into `print`/`len`/iteration/`.items()`:
+
+| Table | Holds | Consulted by |
+|---|---|---|
+| `g_pycDefaultFactories` | zero-arg factory callable | `Pyc_Subscript` dict-miss → autovivify |
+| `g_pycCounters` | membership only | `Pyc_Subscript` miss → `0`; `PyDict_Update` → add, not replace |
+| `g_pycFiles` | path, mode, `FILE*` | file `write`/`readlines`/`__exit__` adapters |
+
+**These must be cleared when the dict is freed.** A dict is plain-`delete`d
+in `Py_DECREF` and the allocator hands the same address straight back to
+the next `PyDict_New`, so a stale entry is not a leak — it silently
+reclassifies an unrelated new dict. This was a real, confirmed bug, not a
+theoretical one: after churning `defaultdict`s in a loop, a fresh
+`plain = {}` inherited a dead `defaultdict`'s factory, so `plain['b']`
+autovivified (len 1 → 2) instead of raising `KeyError`. The `Counter`
+equivalent makes a missing key return `0`; the file equivalent aims
+writes at a `FILE*` the new dict never opened.
+
+`pyc_forget_dict_sidetables` (forward-declared next to `Py_DECREF`,
+defined next to `g_pycFiles`) drops all three, and is called from
+`Py_DECREF`'s type-2 branch before the address becomes reusable. It also
+`Py_DECREF`s the stored factory — that reference is owned by the table —
+and `fclose`s a still-open file, matching CPython's collect-closes-the-file
+behavior. **Any future `PyObject*`-keyed table must be dropped here too.**
+
+### `collections.Counter` methods
+
+`Counter` is a plain dict plus membership in `g_pycCounters`, so its
+methods split across two dispatch routes, and the split is dictated by
+the method-dispatch chain in `Compiler.cpp` rather than by preference:
+
+- `.most_common()`, `.elements()`, `.subtract()` lower to dedicated
+  runtime functions (`PyCollections_MostCommon`/`_Elements`/`_Subtract`)
+  in the chain's terminal `else` branch.
+- `.update()` **cannot**. The chain has an earlier, untyped
+  `methodName == "update"` arm that resolves first, so any Counter-aware
+  `.update()` arm added further down is unreachable. An earlier draft did
+  exactly that, adding a `PyCollections_Update` that was dead on arrival
+  while every `Counter.update()` silently fell into `PyDict_Update`'s
+  plain replacing merge — `c['a']==2` then `c.update(Counter({'a': 10}))`
+  gave `10` where CPython gives `12`. The fix was to delete the dead
+  function and make `PyDict_Update` itself Counter-aware: sum values for
+  a mapping, tally elements for any other iterable, plain replacing merge
+  for non-Counters. This is the right home regardless of arm ordering,
+  since Counter-ness is a *runtime* property and lowering cannot see it.
+
+`Counter(mapping)` seeds counts from the mapping's **values**
+(`Counter({'a': 10})` is `{'a': 10}`, not `{'a': 1}`). This is checked
+before the iterate-and-tally path, which would otherwise walk the dict as
+a sequence of keys and count each once — a real bug that silently
+discarded the caller's counts until it was fixed.
+
+Tie-breaking in `.most_common()` follows insertion order and matches
+CPython, since the dict payload is a vector of pairs rather than a hash
+map (see the `namedtuple` limitation above).
+
 ### `re.IGNORECASE` — Severe Pre-Existing Bug, Found and Fixed
 `PyBuiltin_ReSearch` (`Runtime.cpp`, the function backing both
 `re.search` and `re.match` — the latter is aliased to it, a separate
@@ -2051,6 +2112,16 @@ errors.
   individually discovered and guarded the same way. Always smoke-test a
   new synthetic module's every dict key name against this dispatch chain,
   not just against ImportError/basic call success.
+
+  The same hazard bites in the other direction — an *earlier* untyped arm
+  shadowing a *later* typed one. `Counter.update()` was implemented as a
+  `PyCollections_Update` branch in the chain's terminal `else`, but the
+  untyped `methodName == "update"` arm resolves first, so the new branch
+  was unreachable and every `Counter.update()` fell into the plain
+  replacing dict merge (wrong: it must add). Fixed by moving the behavior
+  into `PyDict_Update` itself. **Before adding a method branch, grep the
+  chain for an earlier arm with the same name** — a new branch that never
+  runs looks exactly like a working one until the semantics differ.
 - **`datetime`/`pathlib`/`Match` method calls now work through untyped
   function parameters** (fixed): previously `.isoformat()`/`.weekday()`/
   `.total_seconds()`/`.exists()`/`.is_dir()`/`.joinpath()`/`.group()`
@@ -2125,11 +2196,15 @@ errors.
   `__getitem__`/`__setitem__` partially worked but silently dropped output
   on at least one path (`print(x[missing_key])` produced nothing at all).
   This is why `collections.Counter` returns a plain dict instead of a
-  custom class instance, and why `defaultdict`/`namedtuple`/`deque` aren't
-  implemented — `defaultdict` needs a per-instance "factory" slot dicts
-  don't have, and `namedtuple` needs either attribute-style field access
-  on a raw dict (unverified whether pyc supports this at all) or a new
-  type, neither investigated in depth yet.
+  custom class instance. `defaultdict`/`namedtuple`/`deque` were
+  originally shelved for the same reason, but have since been
+  implemented without a custom class — see
+  "`collections.deque`/`namedtuple`/`defaultdict`" above. The
+  per-instance state a `defaultdict` needs (and that dicts don't have)
+  is held out-of-band in a side table keyed by the dict's own pointer,
+  the same mechanism `Counter` now uses; those tables must be cleared
+  when the dict is freed, or a recycled address silently reclassifies an
+  unrelated dict (see "Dict-identity side tables" above).
 - **Dict iteration order is now insertion-order-preserving** (CPython 3.7+
   guarantee). The dict payload was changed from
   `std::unordered_map<PyObject*, PyObject*>` (hash-bucket order, never

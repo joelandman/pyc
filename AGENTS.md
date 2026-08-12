@@ -30,14 +30,14 @@ PYC_BINARY=./build/pyc python3 tests/runner.py                  # full suite
 
 `tests/runner.py` has **two** sections, and they fail differently:
 
-- `CASES` (lines 7–3018): ~hundreds of inline source/expected pairs. Compiled at
+- `CASES` (lines 7–3409): 592 inline source/expected pairs. Compiled at
   **`-O0`** and compared against CPython output. The hardcoded `expected` string
   is the source of truth; python3 is only a sanity check. **CASES failures are
   tolerated** by `make check` (`|| true` in CMakeLists.txt:127) and by the
   runner (exits 0 if `ok==total` even with CASES failures? — no: exits 0 only
   if `ok==total`, but `make check` swallows non-zero). Do not treat a green
   `make check` as "all CASES pass."
-- `FILE_CASES` (lines 3020–3058): real `.py` programs in `tests/`, each compiled
+- `FILE_CASES` (lines 3410–3451): 29 real `.py` programs in `tests/`, each compiled
   at `-O0` and compared to CPython. **A mismatch is a real regression**: the
   runner prints a `DIFF` block and exits 1. CI-relevant.
 
@@ -47,8 +47,8 @@ with reasons in comments (`modifiers.py` loop bug at -O0, `mbs.py` too slow
 for the 5s timeout) — read the comments before re-enabling.
 
 The runner auto-discovers the binary via `PYC_BINARY` env, then `./pyc`,
-`./build/pyc`, etc. (runner.py:3064–3082). The 5s per-command `timeout` in
-`run()` (runner.py:3061) bites slow programs.
+`./build/pyc`, etc. (runner.py:3457–3475). The 5s per-command `timeout` in
+`run()` (runner.py:3454) bites slow programs.
 
 ## Architecture / where things live
 

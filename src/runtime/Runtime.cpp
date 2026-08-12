@@ -1349,11 +1349,11 @@ static PyObject* pyc_new_timedelta(int64_t days, int64_t seconds, int64_t micros
 }
 
 // Drops any out-of-band side-table state keyed by a dict's identity
-// (defaultdict factories, open files). Defined further down, next to the
-// last of those tables; forward-declared here because Py_DECREF is the
-// single dealloc path for type-2 objects and must call it before the
-// address becomes reusable. See the definition for why skipping this is
-// a correctness bug and not just a leak.
+// (defaultdict factories, Counter membership, open files). Defined
+// further down, next to the last of those tables; forward-declared here
+// because Py_DECREF is the single dealloc path for type-2 objects and
+// must call it before the address becomes reusable. See the definition
+// for why skipping this is a correctness bug and not just a leak.
 static void pyc_forget_dict_sidetables(PyObject* d);
 
 void Py_DECREF(PyObject* obj) {
@@ -3697,9 +3697,59 @@ PyObject* PyList_PopAt(PyObject* list, PyObject* idx) {
 }
 
 // ---- Dict helper methods ----
+// Counter dicts: out-of-band set of dicts created by PyCollections_Counter.
+// Declared early (before PyDict_Update) so the Counter-aware update path
+// can check membership. Like defaultdict factories, a visible marker key
+// would leak into print()/len()/iteration/.items() on every Counter.
+static std::unordered_set<PyObject*> g_pycCounters;
+
+// dict.update(src) and, for a Counter destination, Counter.update(src).
+// Both spellings land here: the `.update()` arm of the method-dispatch
+// chain in Compiler.cpp is untyped and resolves before the Counter-aware
+// arms further down, so a Counter receiver cannot be routed elsewhere at
+// compile time -- and it shouldn't be, since Counter-ness is a runtime
+// property (g_pycCounters), not something lowering can see. Keeping the
+// two behaviors in this one function is deliberate: an earlier draft put
+// Counter.update in a separate PyCollections_Update, which the dispatch
+// order made unreachable.
 PyObject* PyDict_Update(PyObject* dst, PyObject* src) {
     if (!dst || dst->type != 2) return nullptr;
-    if (src && src->type == 2) {
+    if (!src) return PyInt_FromLong(0);
+    if (g_pycCounters.count(dst)) {
+        // Counter.update ADDS to the existing counts rather than
+        // replacing them -- for a mapping it sums the values, for any
+        // other iterable it tallies elements. Checked before the plain
+        // dict-merge below, which would overwrite instead: c['a'] was 2
+        // and c.update(Counter({'a': 10})) must leave 12, not 10.
+        if (src->type == 2) {
+            for (auto& kv : src->dict) {
+                if (!kv.first) continue;
+                PyObject* cur = Pyc_GetItem(dst, kv.first);
+                long c = (cur && cur->type == 0) ? cur->value : 0;
+                if (cur) Py_DECREF(cur);
+                long add = (kv.second && kv.second->type == 0) ? kv.second->value : 0;
+                PyObject* nv = PyInt_FromLong(c + add);
+                PyDict_SetItem(dst, kv.first, nv);
+                Py_DECREF(nv);
+            }
+            return PyInt_FromLong(0);
+        }
+        PyObject* items = PyBuiltin_List(src);
+        if (!items) return PyInt_FromLong(0);
+        for (size_t i = 0; i < items->list.size(); ++i) {
+            PyObject* item = items->list[i];
+            if (!item) continue;
+            PyObject* cur = Pyc_GetItem(dst, item);
+            long c = (cur && cur->type == 0) ? cur->value : 0;
+            if (cur) Py_DECREF(cur);
+            PyObject* nv = PyInt_FromLong(c + 1);
+            PyDict_SetItem(dst, item, nv);
+            Py_DECREF(nv);
+        }
+        Py_DECREF(items);
+        return PyInt_FromLong(0);
+    }
+    if (src->type == 2) {
         for (auto& p : src->dict) {
             PyDict_SetItem(dst, p.first, p.second);
         }
@@ -4920,6 +4970,14 @@ PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
                 Py_DECREF(emptyArgs);
                 PyDict_SetItem(obj, key, made);
                 return made;
+            }
+        }
+        // Counter: missing keys return 0 (Counter.__missing__ returns 0).
+        // Unlike defaultdict, we do NOT insert the key into the dict —
+        // real Counter.__missing__ returns 0 without mutating the dict.
+        {
+            if (g_pycCounters.count(obj)) {
+                return PyInt_FromLong(0);
             }
         }
         // Raw key as the message; pyc_exc_message adds the repr quoting for
@@ -8486,10 +8544,12 @@ static std::unordered_map<PyObject*, PycFile> g_pycFiles;
 // freed dict's address is immediately reusable by the next PyDict_New —
 // so a stale entry is not a leak, it silently reclassifies an unrelated
 // new dict. A recycled defaultdict address makes a plain dict
-// autovivify; a recycled file address aims writes at a FILE* the new
-// dict never opened. Any future PyObject*-keyed table must be dropped
-// here too.
+// autovivify; a recycled Counter address makes a missing key return 0
+// instead of raising KeyError; a recycled file address aims writes at a
+// FILE* the new dict never opened. Any future PyObject*-keyed table
+// must be dropped here too.
 static void pyc_forget_dict_sidetables(PyObject* d) {
+    g_pycCounters.erase(d);
     auto fit = g_pycDefaultFactories.find(d);
     if (fit != g_pycDefaultFactories.end()) {
         if (fit->second) Py_DECREF(fit->second);   // the table's own reference
@@ -9947,9 +10007,17 @@ static PyObject* makeItertoolsModuleDict() {
 // __getitem__/__setitem__ dunders silently dropped output in at least one
 // tested path). most_common(counter, n) is a plain companion function,
 // not counter.most_common(n) method syntax, for the same reason.
-// defaultdict/namedtuple/deque are not implemented (see IMPLEMENTATION.md).
+//
+// Because a Counter is indistinguishable from a plain dict at runtime,
+// Counter-ness is tracked out-of-band in g_pycCounters (keyed by the
+// dict's pointer, the same mechanism as defaultdict's factory table).
+// That set is what drives __missing__-returns-0 in Pyc_Subscript and
+// the adding-rather-than-replacing behavior of .update() in
+// PyDict_Update, and it must be cleared when the dict is freed -- see
+// pyc_forget_dict_sidetables.
 extern "C" PyObject* PyCollections_Counter(PyObject* args) {
     PyObject* d = PyDict_New();
+    g_pycCounters.insert(d);
     if (!args || args->type != 1 || args->list.empty()) return d;
     PyObject* iterable = args->list[0];
     if (!iterable) return d;
@@ -9987,10 +10055,13 @@ extern "C" PyObject* PyCollections_Counter(PyObject* args) {
 extern "C" PyObject* PyCollections_MostCommon(PyObject* args) {
     // most_common(counter) or most_common(counter, n). Returns a list of
     // (element, count) 2-tuples, matching CPython. Ties (equal counts)
-    // are broken by the counter dict's iteration order, which — like
-    // real Python dicts — should be insertion order, but pyc's dict
-    // iteration order is not currently insertion-order-preserving (see
-    // IMPLEMENTATION.md); tie-breaking may not match CPython exactly.
+    // are broken by the counter dict's iteration order, which is
+    // insertion order -- the dict payload is a vector of pairs, not a
+    // hash map (see IMPLEMENTATION.md), so this matches CPython. An
+    // earlier version of this comment claimed otherwise, left over from
+    // before the unordered_map -> vector change; verified against real
+    // CPython: Counter('bbaaccz').most_common() gives
+    // [('b', 2), ('a', 2), ('c', 2), ('z', 1)] in both.
     PyObject* out = PyList_New(0);
     if (!args || args->type != 1 || args->list.empty()) return out;
     PyObject* counter = args->list[0];
@@ -10015,6 +10086,60 @@ extern "C" PyObject* PyCollections_MostCommon(PyObject* args) {
         Py_DECREF(pairTuple);
     }
     return out;
+}
+
+// Counter.elements() — returns an iterator over elements repeating each
+// key by its count. Order follows dict iteration order.
+extern "C" PyObject* PyCollections_Elements(PyObject* counter) {
+    PyObject* out = PyList_New(0);
+    if (!counter || counter->type != 2) return out;
+    for (auto& kv : counter->dict) {
+        if (!kv.first || !kv.second || kv.second->type != 0) continue;
+        long count = kv.second->value;
+        if (count <= 0) continue;
+        for (long i = 0; i < count; ++i) {
+            Py_INCREF(kv.first);
+            PyList_Append(out, kv.first);
+        }
+    }
+    return out;
+}
+
+// Counter.subtract(iterable_or_mapping) — subtracts counts.
+// Counter.update(iterable_or_mapping) — adds counts.
+extern "C" PyObject* PyCollections_Subtract(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* counter = args->list[0];
+    PyObject* other = args->list[1];
+    if (!counter || counter->type != 2) return nullptr;
+    if (other && other->type == 2) {
+        for (auto& kv : other->dict) {
+            PyObject* cur = Pyc_GetItem(counter, kv.first);
+            long c = (cur && cur->type == 0) ? cur->value : 0;
+            if (cur) Py_DECREF(cur);
+            long sub = (kv.second && kv.second->type == 0) ? kv.second->value : 0;
+            long newVal = c - sub;
+            PyObject* nv = PyInt_FromLong(newVal);
+            PyDict_SetItem(counter, kv.first, nv);
+            Py_DECREF(nv);
+        }
+    } else if (other) {
+        PyObject* items = PyBuiltin_List(other);
+        if (!items) return nullptr;
+        for (size_t i = 0; i < items->list.size(); ++i) {
+            PyObject* item = items->list[i];
+            if (!item) continue;
+            PyObject* cur = Pyc_GetItem(counter, item);
+            long c = (cur && cur->type == 0) ? cur->value : 0;
+            if (cur) Py_DECREF(cur);
+            long newVal = c - 1;
+            PyObject* nv = PyInt_FromLong(newVal);
+            PyDict_SetItem(counter, item, nv);
+            Py_DECREF(nv);
+        }
+        Py_DECREF(items);
+    }
+    return nullptr;
 }
 
 // collections.deque(iterable=[]) — a plain list (type 1, no new type
@@ -11122,6 +11247,8 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("PyItertools_ZipLongest",   PyItertools_ZipLongest);
     pyc_register_callable("PyCollections_Counter",    PyCollections_Counter);
     pyc_register_callable("PyCollections_MostCommon", PyCollections_MostCommon);
+    pyc_register_callable("PyCollections_Elements",  PyCollections_Elements);
+    pyc_register_callable("PyCollections_Subtract",   PyCollections_Subtract);
     pyc_register_callable("PyCollections_Namedtuple",          PyCollections_Namedtuple);
     pyc_register_callable("PyCollections_NamedtupleConstruct", PyCollections_NamedtupleConstruct);
     pyc_register_callable("PyCollections_Defaultdict",         PyCollections_Defaultdict);

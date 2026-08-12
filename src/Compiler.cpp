@@ -9187,6 +9187,32 @@ class LoweringVisitor {
                 noteType(res, "list");
                 return res;
             }
+            // Counter.elements() — returns an iterator over elements.
+            if (methodName == "elements" && (typeOf(obj) == "dict" || typeOf(obj) == "boxed") && !isCollectionsModule) {
+                ir.addInstruction(currentFunc, "call", {"PyCollections_Elements", obj}, res);
+                noteType(res, "list");
+                return res;
+            }
+            // Counter.subtract(other) — mutates the counter in place,
+            // returns None. Counter.update() is deliberately absent: the
+            // untyped `.update()` arm earlier in this chain resolves
+            // first, so anything added here would be unreachable. That
+            // arm's PyDict_Update is Counter-aware at runtime instead.
+            if (methodName == "subtract" &&
+                (typeOf(obj) == "dict" || typeOf(obj) == "boxed") && !isCollectionsModule) {
+                std::string zero = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, zero);
+                std::string argList = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, argList);
+                std::string d1 = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, obj}, d1);
+                for (auto& a : args) {
+                    std::string d = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, a}, d);
+                }
+                ir.addInstruction(currentFunc, "call", {"PyCollections_Subtract", argList}, res);
+                return res;
+            }
             // Chained module attribute call: `mod.path.func(args)`. The
             // dict-path branch handles the simple case (obj is a dict,
             // e.g. sys.stderr = {"write": "pyc_stderr_write"}). The

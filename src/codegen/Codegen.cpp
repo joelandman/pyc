@@ -666,10 +666,18 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_Apply", module.get());
     }
     // PyCollections_Counter / PyCollections_MostCommon (1-arg: args list)
+    // PyCollections_Elements (1-arg: counter dict)
     {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyCollections_Counter", module.get());
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyCollections_MostCommon", module.get());
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyCollections_Elements", module.get());
+    }
+    // PyCollections_Subtract (1-arg: args list). Counter.update() has no
+    // entry here: it lowers to PyDict_Update like plain dict.update().
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyCollections_Subtract", module.get());
     }
 
     // String methods: find, count, replace (find/count return int boxed; replace returns str)

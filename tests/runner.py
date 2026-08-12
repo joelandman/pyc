@@ -2397,6 +2397,48 @@ dd2['x'] += 2
 print(dd2['x'])
 print(dd2['y'])
 """, "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4, 5]\n0\n[1, 2, 3, 4, 5]\n[5, 1, 2, 3, 4]\n[2, 3, 4, 5, 1]\n[2, 3, 4, 5]\n3 4\n30\n[1, 2]\n[3]\n[]\n7\n0\n"),
+    # Real bug fix: Counter.update(mapping) replaced counts instead of
+    # adding them. Counter.update had been given its own runtime function
+    # (PyCollections_Update), but the `.update()` arm of the method
+    # dispatch chain in Compiler.cpp is untyped and resolves before the
+    # Counter-aware arms further down — so that function was unreachable
+    # and every Counter.update() went to PyDict_Update, whose dict branch
+    # does a plain replacing merge. c['a']==2 then c.update(Counter({'a':
+    # 10})) gave 10, where CPython gives 12. Fixed by deleting the dead
+    # PyCollections_Update and making PyDict_Update Counter-aware for
+    # both mappings (sum values) and other iterables (tally elements);
+    # Counter-ness is a runtime property (g_pycCounters), so it cannot be
+    # dispatched at lowering time anyway. The plain dict case at the end
+    # guards the regression in the other direction: a non-Counter
+    # dict.update must still replace.
+    ("""
+from collections import Counter
+
+c = Counter('aab')
+c.update('abc')
+print(c['a'], c['b'], c['c'])
+
+d = Counter('aab')
+d.update(Counter({'a': 10}))
+print(d['a'], d['b'])
+
+e = Counter('aab')
+e.update({'b': 4, 'z': 2})
+print(e['a'], e['b'], e['z'])
+
+f = Counter('aaab')
+f.subtract('ab')
+print(f['a'], f['b'])
+f.subtract({'a': 2})
+print(f['a'])
+
+g = Counter('aab')
+print(sorted(g.elements()))
+
+p = {'a': 1}
+p.update({'a': 9, 'b': 2})
+print(sorted(p.items()))
+""", "3 2 1\n12 1\n2 5 2\n2 0\n0\n['a', 'a', 'b']\n[('a', 9), ('b', 2)]\n"),
     # Real bug fix: Counter(mapping) counted keys instead of reading
     # values. PyCollections_Counter fed any argument through
     # PyBuiltin_List and tallied it, and listing a dict yields its keys —
