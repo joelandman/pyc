@@ -2397,6 +2397,52 @@ dd2['x'] += 2
 print(dd2['x'])
 print(dd2['y'])
 """, "[1, 2, 3, 4, 5]\n[0, 1, 2, 3, 4, 5]\n0\n[1, 2, 3, 4, 5]\n[5, 1, 2, 3, 4]\n[2, 3, 4, 5, 1]\n[2, 3, 4, 5]\n3 4\n30\n[1, 2]\n[3]\n[]\n7\n0\n"),
+    # Real bug fix: the out-of-band side tables keyed by a dict's pointer
+    # (g_pycDefaultFactories, g_pycCounters, g_pycFiles) were never
+    # cleared when the dict was freed. A dict is `delete`d and its
+    # address handed straight back out by the next PyDict_New, so a stale
+    # entry didn't leak — it silently reclassified an unrelated new dict.
+    # Confirmed before the fix with exactly this program: after churning
+    # defaultdicts in a loop, the plain dict below inherited a dead
+    # defaultdict's factory, so `plain['b']` autovivified (len 1 -> 2)
+    # instead of raising KeyError. Same shape for Counter, whose recycled
+    # address made a missing key return 0 rather than raise. Fixed by
+    # pyc_forget_dict_sidetables(), called from Py_DECREF's type-2 branch
+    # before the address becomes reusable.
+    ("""
+from collections import defaultdict, Counter
+
+def churn_dd():
+    d = defaultdict(list)
+    d['seed'].append(1)
+    return len(d)
+
+def churn_ctr():
+    c = Counter('aab')
+    return c['a']
+
+for i in range(5):
+    churn_dd()
+    churn_ctr()
+
+plain = {}
+plain['a'] = 1
+print(len(plain))
+try:
+    plain['b']
+    print('no error')
+except KeyError:
+    print('KeyError')
+print(len(plain))
+
+plain2 = {}
+plain2['k'] = 7
+try:
+    print(plain2['missing'])
+except KeyError:
+    print('KeyError')
+print(sorted(plain2.keys()))
+""", "1\nKeyError\n1\nKeyError\n['k']\n"),
     # re: real bug fix — re.search/re.match used to hardcode PCRE2_CASELESS
     # unconditionally, so every match was case-insensitive regardless of
     # any flag (confirmed against real CPython: re.search("Hello","hello")

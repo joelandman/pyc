@@ -1348,6 +1348,14 @@ static PyObject* pyc_new_timedelta(int64_t days, int64_t seconds, int64_t micros
     return o;
 }
 
+// Drops any out-of-band side-table state keyed by a dict's identity
+// (defaultdict factories, open files). Defined further down, next to the
+// last of those tables; forward-declared here because Py_DECREF is the
+// single dealloc path for type-2 objects and must call it before the
+// address becomes reusable. See the definition for why skipping this is
+// a correctness bug and not just a leak.
+static void pyc_forget_dict_sidetables(PyObject* d);
+
 void Py_DECREF(PyObject* obj) {
     if (obj && obj->refcount != IMMORTAL_REFCOUNT && --obj->refcount == 0) {
         if (obj->type == 0 || obj->type == 4) {
@@ -1360,6 +1368,7 @@ void Py_DECREF(PyObject* obj) {
                 for (PyObject* item : obj->list) if (item) Py_DECREF(item);
             }
         } else if (obj->type == 2) {
+            pyc_forget_dict_sidetables(obj);
             for (auto& pair : obj->dict) {
                 Py_DECREF(pair.first);
                 Py_DECREF(pair.second);
@@ -8471,6 +8480,31 @@ struct PycFile {
     FILE* fp;
 };
 static std::unordered_map<PyObject*, PycFile> g_pycFiles;
+
+// Forward-declared up next to Py_DECREF, which calls this as a dict is
+// being freed. Every table below is keyed by the dict's address, and a
+// freed dict's address is immediately reusable by the next PyDict_New —
+// so a stale entry is not a leak, it silently reclassifies an unrelated
+// new dict. A recycled defaultdict address makes a plain dict
+// autovivify; a recycled file address aims writes at a FILE* the new
+// dict never opened. Any future PyObject*-keyed table must be dropped
+// here too.
+static void pyc_forget_dict_sidetables(PyObject* d) {
+    auto fit = g_pycDefaultFactories.find(d);
+    if (fit != g_pycDefaultFactories.end()) {
+        if (fit->second) Py_DECREF(fit->second);   // the table's own reference
+        g_pycDefaultFactories.erase(fit);
+    }
+    auto oit = g_pycFiles.find(d);
+    if (oit != g_pycFiles.end()) {
+        // Matches CPython: a file object still open when it is collected
+        // gets closed. fp is always a fopen() result (never std*), so
+        // closing it here is safe. __exit__/close erase their own entry,
+        // in which case there is nothing left to find.
+        if (oit->second.fp) std::fclose(oit->second.fp);
+        g_pycFiles.erase(oit);
+    }
+}
 
 static PyObject* pyc_file_write_adapter(PyObject* args) {
     if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
