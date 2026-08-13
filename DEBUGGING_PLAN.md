@@ -283,68 +283,71 @@ usage tip.
 
 ### Phase 1: IR line number propagation (Compiler.cpp + IR.h + IR.cpp)
 
-- [ ] Add `lineno` field to `IRInstruction` and `IRFunction`
-- [ ] Add `currentLineno` member to `LoweringVisitor`
-- [ ] Set `currentLineno` from `node->lineno` at the start of `lower()` and
+- [x] Add `lineno` field to `IRInstruction` and `IRFunction`
+- [x] Add `currentLineno` member to `LoweringVisitor`
+- [x] Set `currentLineno` from `node->lineno` at the start of `lower()` and
       `lowerExpr()` (if non-zero)
-- [ ] Have `addInstruction` read `currentLineno` from the visitor (via a
+- [x] Have `addInstruction` read `currentLineno` from the visitor (via a
       visitor-level method or by passing it through)
-- [ ] Set `fnr.defLineno` and `fnr.sourceFile` during `FunctionDef` lowering
-- [ ] Verify: dump IR with line numbers for a test file
+- [x] Set `fnr.defLineno` and `fnr.sourceFile` during `FunctionDef` lowering
+- [x] Verify: dump IR with line numbers for a test file
 
 **Scope**: ~3 files, ~50 lines of new code. No call-site changes if the
 visitor injects `currentLineno` automatically.
 
 ### Phase 2: DIBuilder infrastructure (Codegen.cpp + Codegen.h)
 
-- [ ] Add `debugInfo` parameter to `Codegen::generate()`
-- [ ] Create `DIBuilder`, `DICompileUnit`, `DIFile` at module start
-- [ ] Create `DISubprogram` per function with the function's `defLineno`
-- [ ] Create `DILexicalBlock` per function
-- [ ] After each IR instruction is lowered to LLVM IR, set `DebugLoc` from
+- [x] Add `debugInfo` parameter to `Codegen::generate()`
+- [x] Create `DIBuilder`, `DICompileUnit`, `DIFile` at module start
+- [x] Create `DISubprogram` per function with the function's `defLineno`
+- [x] Create `DILexicalBlock` per function
+- [x] After each IR instruction is lowered to LLVM IR, set `DebugLoc` from
       `inst.lineno`
-- [ ] Call `dib.finalize()` before returning the module
-- [ ] Verify: `llvm-dwarfdump` shows line tables on the output object
+- [x] Call `dib.finalize()` before returning the module
+- [x] Verify: `llvm-dwarfdump` shows line tables on the output object
 
 **Scope**: ~1 file (Codegen.cpp), ~80 lines of new code. The instruction
 loop already exists; this adds a `setDebugLoc` call per instruction.
 
 ### Phase 3: Variable tracking (Codegen.cpp)
 
-- [ ] For each alloca created for a user variable (params, locals, globals),
+- [x] For each alloca created for a user variable (params, locals, globals),
       emit `llvm::DbgDeclareInst` with the variable's Python name
-- [ ] Map the alloca name back to the Python variable name (strip `.slot`
+- [x] Map the alloca name back to the Python variable name (strip `.slot`
       suffix, map `__pyc_global_X` → `X`)
-- [ ] Create DI types: `PyObject*` for boxed, `i64` for int natives,
+- [x] Create DI types: `PyObject*` for boxed, `i64` for int natives,
       `double` for float natives
-- [ ] Verify: `gdb` shows local variables in frame info
+- [x] Verify: `gdb` shows local variables in frame info
 
 **Scope**: ~1 file, ~60 lines. The allocas are created in a known location
 (function entry block setup); insert declare calls there.
 
 ### Phase 4: CLI + link flags (main.cpp + Compiler.cpp)
 
-- [ ] Add `-g` flag to `main.cpp`
-- [ ] Add `debugInfo` parameter to `Compiler::compile()`
-- [ ] Pass `debugInfo` to `Codegen::generate()`
-- [ ] Add `-g` to the clang++ link command
-- [ ] Update usage text and README
-- [ ] Verify: `gdb` can `break fib`, `step`, `next`, `print n` on a compiled
+- [x] Add `-g` flag to `main.cpp`
+- [x] Add `debugInfo` parameter to `Compiler::compile()`
+- [x] Pass `debugInfo` to `Codegen::generate()`
+- [x] Add `-g` to the clang++ link command
+- [x] Update usage text and README
+- [x] Verify: `gdb` can `break fib`, `step`, `next`, `print n` on a compiled
       binary
 
 **Scope**: ~2 files, ~15 lines.
 
 ### Phase 5: Testing and documentation
 
-- [ ] Test: compile `tests/fibn.py` with `-g -O0`, run under `gdb`
+- [x] Test: compile `tests/fibn.py` with `-g -O0`, run under `gdb`
   - `break fib` → stops at the Python `def fib` line
   - `step` → steps through Python source lines
   - `print n` → shows the `PyObject*` (or i64 in specialized variant)
   - `backtrace` → shows `fib`, `pyc_user_main`, `main`
-- [ ] Test: `-g -O2` still works (debug info may be less precise but present)
-- [ ] Test: no `-g` → binary is identical to today (no debug sections)
-- [ ] Test: 300/300 runner tests pass with and without `-g`
-- [ ] Document `-g` in README.md and IMPLEMENTATION.md
+- [x] Test: `-g -O2` still works (debug info may be less precise but present)
+- [x] Test: no `-g` → binary is identical to today (no debug sections)
+- [x] Runner stays green with and without `-g` (count in README, not “300/300”)
+- [x] Document `-g` in README.md and IMPLEMENTATION.md
+
+Leftovers (not Phase 5): GDB pretty-printer, A6 `FlagArtificial`, `-g` on
+`runtime.bc` — ISSUES I-019.
 
 ## Constraints and Considerations
 

@@ -5,7 +5,18 @@
 set -e
 
 TEST_DIR="$(cd "$(dirname "$0")" && pwd)"
-PYC_BIN="${TEST_DIR}/../../build/pyc"
+# Honor PYC_BIN / PYC_BINARY so out-of-tree builds (build_debug, cmake -B)
+# do not silently pick a stale repo-root build/pyc. Always resolve to an
+# absolute path: this script cds into fixture directories.
+if [ -z "${PYC_BIN:-}" ]; then
+    PYC_BIN="${PYC_BINARY:-${TEST_DIR}/../../build/pyc}"
+fi
+if [ ! -x "$PYC_BIN" ]; then
+    echo "ERROR: pyc binary not found or not executable: $PYC_BIN"
+    echo "Set PYC_BIN or PYC_BINARY to an absolute path, or build ./build/pyc."
+    exit 1
+fi
+PYC_BIN="$(cd "$(dirname "$PYC_BIN")" && pwd)/$(basename "$PYC_BIN")"
 PASS=0
 FAIL=0
 TOTAL=0

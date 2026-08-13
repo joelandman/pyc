@@ -98,43 +98,67 @@ set(PYC_CORRECTNESS_TEST_FILES
   tests/opt_numeric_lists.py
   tests/opt_args_defaults.py
   tests/opt_nested_destructuring.py
+  tests/opt_numeric_loop.py
+  tests/opt_homogeneous_list.py
+  tests/opt_function_call.py
+  tests/opt_mixed_code.py
   tests/nbody.py
-  # New test files for completeness
   tests/fib.py
   tests/fibn.py
   tests/hello.py
   tests/hash.py
   tests/sprintf.py
   tests/range.py
-  # modifiers.py has a loop bug - temporarily excluded
-  # tests/modifiers.py
+  tests/modifiers.py
   # mbs.py is too slow for the 5s runner timeout
   # tests/mbs.py
   tests/builtins2.py
   tests/regex_g.py
-  tests/builtins.py     # uses re module (now PCRE2-backed)
-  tests/regex.py        # uses re module (now PCRE2-backed)
-  tests/closures.py     # nonlocal/closure support (B5)
-  tests/features.py     # uses os.environ/subprocess - segfault
+  tests/builtins.py
+  tests/regex.py
+  tests/closures.py
+  tests/features.py
+  tests/unpack_comp.py
+  tests/sets.py
+  tests/generators.py
+  tests/b7_import.py
+  tests/b7_importfrom.py
+  tests/b7_importstar.py
 )
 
-# Convenience target: make check (or make pyc-check)
+# Convenience target: make check
+# Exit code is real (no || true). Runs the -O0 runner, the import suite,
+# and a thin -O2 smoke so LTO/runtime.bc regressions cannot hide.
 add_custom_target(check
-  # Run the runner; tolerate non-zero exit for now while optimizer-sensitive
-  # FILE_CASES (nbody, opt_*) are exercised at -O0 to keep the suite green
-  # during separate A-side unboxing/native work. B4/B8 (lambdas as values etc.)
-  # is complete; the curated cases in CASES are strictly validated at -O0.
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/runner.py || true
+  COMMAND ${CMAKE_COMMAND} -E env PYC_BINARY=$<TARGET_FILE:pyc>
+          ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/runner.py
+  COMMAND ${CMAKE_COMMAND} -E env PYC_BIN=$<TARGET_FILE:pyc>
+          ${CMAKE_SOURCE_DIR}/test/import_tests/run_import_tests.sh
+  COMMAND ${CMAKE_COMMAND} -E env PYC_BINARY=$<TARGET_FILE:pyc>
+          ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/o2_smoke.py
   DEPENDS pyc ${PYC_CORRECTNESS_TEST_FILES}
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  COMMENT "Running pyc test suite"
+  COMMENT "Running pyc test suite (runner + import + -O2 smoke)"
   USES_TERMINAL
 )
 
 # Also register with CTest so "make test" / ctest works
 add_test(
   NAME pyc_basic_tests
-  COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/runner.py
+  COMMAND ${CMAKE_COMMAND} -E env PYC_BINARY=$<TARGET_FILE:pyc>
+          ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/runner.py
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+add_test(
+  NAME pyc_import_tests
+  COMMAND ${CMAKE_COMMAND} -E env PYC_BIN=$<TARGET_FILE:pyc>
+          ${CMAKE_SOURCE_DIR}/test/import_tests/run_import_tests.sh
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+)
+add_test(
+  NAME pyc_o2_smoke
+  COMMAND ${CMAKE_COMMAND} -E env PYC_BINARY=$<TARGET_FILE:pyc>
+          ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/o2_smoke.py
   WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
 )
 

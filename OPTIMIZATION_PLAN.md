@@ -1,5 +1,10 @@
 # pyc Optimization Plan
 
+The **live build** is Clang++ + `find_package(LLVM)` (`CMakeLists.txt`).
+This development machine currently configures against LLVM 22. Mentions
+of a pinned `clang++-22` toolchain later in this file are still a plan
+for O4/O5 experiments, not a second required compiler.
+
 Multi-level optimization strategy for pyc compiler output binaries.
 Each level encompasses all lower-level optimizations with additional passes.
 

@@ -2,16 +2,18 @@
 
 Compact guide for OpenCode sessions working on **pyc**, an AOT compiler for a
 Python subset (Python source → AST → IR → LLVM IR → native executable via a
-boxed `PyObject*` runtime with refcounting). C++20, Clang++, LLVM 18.
+boxed `PyObject*` runtime with refcounting). C++20, Clang++.
+LLVM via `find_package(LLVM)` (docs historically said 18; this tree
+currently configures against LLVM 22 on the development machine).
 
 ## Build & test
 
 ```bash
 mkdir -p build && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && make -C build -j$(nproc)
-make -C build check          # runs tests/runner.py via ctest (tolerates CASES failures, NOT FILE_CASES)
+make -C build check          # runner + import suite + -O2 smoke; exit code is real
 ```
 
-Dependencies: LLVM 18, `libmpdec-dev` (mpdecimal, backs `decimal.Decimal`),
+Dependencies: LLVM (`find_package(LLVM)`; 18 historically, 22 on this machine), `libmpdec-dev` (mpdecimal, backs `decimal.Decimal`),
 PCRE2 (backs `re`), Python3 dev headers. The build hard-codes
 `clang++` as the C++ compiler (CMakeLists.txt:24).
 
@@ -21,7 +23,8 @@ Single-test / focused verification (use these, not `make check`, when iterating)
 PYC_BINARY=./build/pyc python3 tests/runner.py                  # full suite
 ./build/pyc tests/nbody.py -o /tmp/t.bin -O0 && /tmp/t.bin 100  # one FILE_CASE
 ./build/pyc tests/hello.py --emit-llvm -o /tmp/x && head /tmp/x.ll  # inspect IR
-./test/import_tests/run_import_tests.sh                         # import system suite (NOT in `make check`)
+./test/import_tests/run_import_tests.sh                         # import system suite (also in `make check`)
+PYC_BINARY=./build/pyc python3 tests/o2_smoke.py                # hello.py + nbody.py 100 at -O2
 ```
 
 `build.sh` wraps configure+build+test; `--clean` wipes `build/`, `--install PREFIX` installs.
@@ -32,14 +35,12 @@ PYC_BINARY=./build/pyc python3 tests/runner.py                  # full suite
 
 - `CASES` (lines 7–3619): 597 inline source/expected pairs. Compiled at
   **`-O0`** and compared against CPython output. The hardcoded `expected` string
-  is the source of truth; python3 is only a sanity check. **CASES failures are
-  tolerated** by `make check` (`|| true` in CMakeLists.txt:127) and by the
-  runner (exits 0 if `ok==total` even with CASES failures? — no: exits 0 only
-  if `ok==total`, but `make check` swallows non-zero). Do not treat a green
-  `make check` as "all CASES pass."
+  is the source of truth; python3 is only a sanity check. The runner exits 0
+  only if `ok==total`. `make check` no longer swallows that exit (`|| true`
+  was removed in Wave 0).
 - `FILE_CASES` (lines 3620–3661): 29 real `.py` programs in `tests/`, each compiled
   at `-O0` and compared to CPython. **A mismatch is a real regression**: the
-  runner prints a `DIFF` block and exits 1. CI-relevant.
+  runner prints a `DIFF` block and exits 1.
 
 A third check runs after both sections: `tests/check_dispatch_chain.py`,
 a static guard against unreachable arms in `Compiler.cpp`'s
@@ -50,9 +51,10 @@ the run. It prints its documented exemptions on every run; read them
 rather than adding new ones reflexively.
 
 When adding a feature, add to `CASES` for inline coverage and to `FILE_CASES`
-+ a real file for end-to-end coverage. Several files are deliberately excluded
-with reasons in comments (`modifiers.py` loop bug at -O0, `mbs.py` too slow
-for the 5s timeout) — read the comments before re-enabling.
++ a real file for end-to-end coverage. `modifiers.py` is included (the `-O0`
+continue bug is fixed). `mbs.py` is excluded because it exceeds the 5s
+timeout — `time.perf_counter` itself is supported. Read the comments before
+re-enabling anything.
 
 The runner auto-discovers the binary via `PYC_BINARY` env, then `./pyc`,
 `./build/pyc`, etc. (runner.py:3667–3685). The 5s per-command `timeout` in
@@ -101,7 +103,8 @@ are advanced/experimental — don't assume they're exercised by the test suite,
 which runs everything at `-O0`.
 
 The runner compiles FILE_CASES at **`-O0`**, so a program that only works at
-`-O2` will show as a DIFF (this is why `modifiers.py` is excluded).
+`-O2` will show as a DIFF. `make check` also runs `tests/o2_smoke.py` so an
+LTO-only regression cannot hide completely. Verify both levels on feature work.
 
 ## Conventions & gotchas
 
@@ -143,14 +146,30 @@ The runner compiles FILE_CASES at **`-O0`**, so a program that only works at
   `-DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"` and link
   the runtime accordingly.
 - **No formal lint/typecheck step.** There's no `.clang-tidy`/CI workflow in
-  the repo; verification = `make -C build check` + running the import suite
-  by hand. Trust the runner, not prose.
+  the repo; verification = `make -C build check` (runner + import suite +
+  `-O2` smoke). Trust the runner, not prose.
 - **Doc files are large and partially historical.** README.md (build/usage),
-  FEATURES.md (feature list), IMPLEMENTATION.md (design + a long log of past
-  bug hunts), FIXES.md, DEBUGGING_PLAN.md, OPTIMIZATION_PLAN.md,
-  PERFORMANCE_*.md exist. IMPLEMENTATION.md is the most useful for "why is X
-  like this"; PERFORMANCE_BASELINE.md has benchmarks. When docs conflict with
-  CMakeLists.txt or the runner, trust the executable.
+  FEATURES.md (capability list), ISSUES.md (living register),
+  IMPLEMENTATION.md (design + a long log of past bug hunts), FIXES.md,
+  DEBUGGING_PLAN.md, OPTIMIZATION_PLAN.md, PERFORMANCE_*.md exist.
+  IMPLEMENTATION.md is the most useful for "why is X like this" after you
+  read its Current Status header. When docs conflict with CMakeLists.txt or
+  the runner, trust the executable.
+
+## Multi-agent roles
+
+See `agents/swe.md`, `agents/swr.md`, `agents/coordinator.md`.
+
+- **SWE** implements one ticket. Exclusive lock on `Compiler.cpp` /
+  `Runtime.cpp` / `Codegen.cpp` as named. Does not edit ISSUES.md or
+  `tests/runner.py` unless the ticket says so.
+- **SWR** is read-only on sources. Owns `ISSUES.md`. Classifies findings;
+  only crash/wrong-answer on this slice blocks merge.
+- **Coordinator** writes tickets and failing tests, runs harnesses, updates
+  docs, merges. Never two writers on the same lock file.
+
+Do not edit the legacy OpenCode stubs `agents/coding.md` / `review.md` /
+`debug.md` as if they were the source of truth — they redirect here.
 
 ## Adding a feature: checklist
 

@@ -1,5 +1,16 @@
 # Performance Baselines
 
+**Read this file in two layers.** The opening nbody/fibn tables (pyc 15×
+slower than CPython) are **pre-A2/A6/P0** historical numbers. Later sections
+and [PERFORMANCE_OPT_LEVELS.md](PERFORMANCE_OPT_LEVELS.md) /
+[PROFILE_NBODY.md](PROFILE_NBODY.md) show pyc **faster** than CPython on
+those same programs after native opts landed (nbody ~3.3×, fibn ~40×).
+The method-dispatch section at the end is current.
+
+`time.perf_counter` **is** a synthetic builtin. `tests/mbs.py` is excluded
+from the runner because it exceeds the 5s per-command timeout, not because
+`time` is missing.
+
 ## Python Interpreter Baselines (~60-120s range)
 
 | Benchmark | Argument | Time | Memory (RSS) |
@@ -9,8 +20,8 @@
 | fibn.py | 42 | ~69s | ~12 MB |
 | mbs.py | N/A | excluded (uses `time` module) |
 
-**Note:** mbs.py uses `from time import perf_counter` which isn't supported by pyc.
-The benchmark is deliberately excluded from the test runner (see runner.py comment).
+**Note:** `mbs.py` is excluded from the runner for timeout, not missing `time`.
+It is still a valid local benchmark if you raise the timeout.
 
 ---
 

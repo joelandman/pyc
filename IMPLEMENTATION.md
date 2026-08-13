@@ -2,6 +2,25 @@
 
 Design choices, known limitations, optimization status, and implementation notes.
 
+## Current Status
+
+This file is a **historical design log**. It still contains “still not fixed”
+paragraphs that later commits reversed. For what compiles today, read
+[FEATURES.md](FEATURES.md). For the living issue list, read [ISSUES.md](ISSUES.md).
+When this file disagrees with the `pyc` binary or `tests/runner.py`, **trust the executable**.
+
+Confirmed later and closed (do not re-open from a paragraph below):
+
+- Gap 1 — `**dict` unmatched keys → `**kwargs`: `Pyc_RouteSpreadKwargs` (ISSUES I-100).
+- Gap 2 — list/set-comp unpack `for a, b in pairs`: fixed (`86e9fd5`, I-101).
+- Gap 3 — `re.match` anchoring: `PyBuiltin_ReMatch` (I-102).
+- Gap 4 — `t0`/`c0` temp collision: `$`-prefixed temps (I-103).
+- Real tuple type (tag 7) and tuple-shaped stdlib returns (I-104).
+- Float `20.0` scientific-notation print: fixed (`93e222a`, I-105).
+- Dict insertion order: vector-of-pairs, CPython 3.7+ order (I-106).
+- `modifiers.py` `continue` at `-O0`: fixed; file is a FILE_CASE (I-107).
+- `-g` DWARF: implemented (I-108; leftovers I-019).
+
 ## Design Choices of Omission
 
 ### `exec()` / `eval()` — Intentionally Unsupported
@@ -18,7 +37,7 @@ Real CPython stdlib modules beyond the synthetic implementations (`sys`, `re`,
 compiled — pyc can't compile arbitrary CPython stdlib source — and always
 report a clear ImportError instead of attempting to.
 
-### `**kwargs` — Now Mostly Working; Two Narrow Gaps Remain
+### `**kwargs` — Working (historical section; remaining gap is closed)
 This entry has accumulated fixes across several passes of the same bug
 hunt; kept as one section since all four findings below are different
 facets of the same feature.
@@ -193,16 +212,12 @@ new errors (fewer than before, thanks to the leak fix above).
   regressions. Full suite and import tests stay green; `valgrind
   --tool=memcheck` shows 0 errors.
 
-**Still not fixed (a separate, narrower, distinct gap from the indirect-
-call fix above)**: a `**dict` spread's own unmatched entries (keys that
-don't name any regular parameter) are not routed into a `**kwargs`
-catch-all parameter either, even though direct `key=value` arguments now
-are — routing them would need a *runtime* set-difference between the
-spread dict's keys and the callee's named parameters, since (unlike
-direct keyword arguments) the dict's actual keys aren't known until
-runtime. Confirmed still present: `def f(**kwargs): ...` called
-directly as `f(**{"p": 1, "q": 2})` gives `kwargs == {}`, not `{'p': 1,
-'q': 2}`.
+**Later fixed (do not treat the next sentences as current):** a `**dict`
+spread's unmatched entries are now routed into `**kwargs` by
+`Pyc_RouteSpreadKwargs` (Runtime + Compiler dict-spread path + Codegen
+extern). `def f(**kwargs): ...` / `f(**{"p": 1, "q": 2})` yields
+`{'p': 1, 'q': 2}`. See KnownGapsPlan Gap 1 and ISSUES I-100. The
+paragraph that used to live here described the pre-fix behavior.
 
 Verified fixes added as permanent `tests/runner.py` regressions. Full
 suite and import tests stay green after each fix; `valgrind
@@ -430,13 +445,20 @@ that reads a list's `.list` field directly needs this call, and it's
 easy to forget for a *nested* list (the outer list here was already
 correctly boxed, going through it caught nothing).
 
-### Newly Discovered, General, Pre-Existing Bug: List Comprehensions Don't Support Multi-Variable `for a, b in pairs` Unpacking
+### List Comprehensions Multi-Variable `for a, b in pairs` Unpacking — Fixed
+**Status: fixed** (`86e9fd5`; KnownGapsPlan Gap 2; ISSUES I-101).
+`[k for k, g in [["a", 1], ["b", 2]]]` returns `['a', 'b']`.
+`tests/unpack_comp.py` is a FILE_CASE. The historical write-up below
+describes the bug and an intermediate “still [None, None]” episode that
+was a stale `build/pyc` (missing `libmpdec-dev` blocked rebuild), not a
+failed fix.
+
 Found while verifying `itertools.groupby`'s output via `[(k, list(g)) for
 k, g in groupby_result]` — completely unrelated to `groupby` or any
 other feature in this session. `[k for k, g in [["a", 1], ["b", 2]]]`
-returns `[None, None]` instead of `['a', 'b']`; a **plain `for` loop**
+**used to** return `[None, None]` instead of `['a', 'b']`; a **plain `for` loop**
 with the identical unpacking (`for k, g in pairs: print(k, g)`) works
-correctly and prints the right values. So the bug is specific to
+correctly and prints the right values. So the bug was specific to
 *comprehension*-form `for`-clauses with more than one loop target, not
 tuple/list unpacking in general (which plain `for` loops, plain
 assignment (`a, b = pair`), and function parameters all handle
@@ -450,20 +472,12 @@ updated to check if target is Name or tuple/list pattern, calling
 `lowerDictComp`). `build_list_comp` and `build_set_comp` in `ir/builder.cpp`
 updated to handle unpack targets with element-by-element stores.
 
-**Current issue:** Despite the fix being in place, runtime unpacking still
-not working — `[None, None]` output persists. Debug investigation revealed:
-- `lowerListComp` debug output not appearing (file not created despite
-  fopen calls in code)
-- LLVM IR shows comprehension lowered, but `lowerUnpackTarget` NOT being
-  called (no `PyList_Unpack2` calls in IR)
-- Target node type check at `Compiler.cpp:9381-9386` may not be matching
-  actual AST node type
-- AST from `parse_helper.py` shows target is `Tuple` node with `Name`
-  children — should match non-Name branch
-
-Workaround: use a plain `for` loop instead of a comprehension whenever
-destructuring multiple values per iteration, until this is fully fixed.
-See KnownGapsPlan.md for detailed tracking.
+**Stale-build episode (resolved):** an intermediate check still saw
+`[None, None]` because `build/pyc` was stale — `libmpdec-dev` had gone
+missing, CMake reconfigure failed, and `make` never recompiled. The
+source fix was already correct. See KnownGapsPlan.md Gap 2. A remaining
+distinct quirk (nested-comp subscript on the iteration variable) is
+ISSUES I-005, not this unpack mechanism.
 
 ### `collections.deque`/`namedtuple`/`defaultdict`
 `deque` reuses `pathlib.Path`'s pattern exactly: construction is
@@ -1885,8 +1899,8 @@ above).
   the AST (`Constant` node with `is_none` set), not just argument
   absence.
 - **`.partition(sep)` / `.rpartition(sep)`**: return a 3-element
-  `[before, sep, after]` (list, not a tuple — pyc's existing, unrelated
-  "no distinct tuple type" architectural choice, not a new gap);
+  `(before, sep, after)` tuple (upgraded when the real tuple type landed;
+  ISSUES I-104);
   `partition` finds the first occurrence of `sep`, `rpartition` the
   last. Real CPython raises `ValueError` for an empty separator; this
   takes the more lenient "no match" fallback instead (`[s, "", ""]` /
@@ -2473,19 +2487,11 @@ errors.
   (both looked like a null `PyObject*` from `Pyc_GetItem`). Now scans the
   dict directly so a `None` value is returned correctly — needed for
   `json.loads('{"k": null}')["k"]` to work.
-- **Float formatting sometimes uses scientific notation where CPython
-  wouldn't**: e.g. `print(180.0)` prints `1.8e+02` instead of `180.0` —
-  reproducible with a bare float literal, so it's a general `str()`/`print()`
-  formatting bug, not specific to any particular computation. **Narrowed
-  while adding `datetime`** (`timedelta.total_seconds()` kept tripping it):
-  the trigger is exactly "whole-valued float whose integer part is evenly
-  divisible by 10" — `10.0`, `20.0`, `50.0`, `100.0`, `9900.0`, `100000.0`
-  all print in scientific notation, while `11.0`, `15.0`, `99.0`, `9999.0`,
-  and any float with a nonzero fractional part (`50.5`) print correctly.
-  Root cause not yet investigated (likely a trailing-zero-stripping
-  heuristic in the printer that misfires into choosing `%g`-style output);
-  avoid float values divisible by 10 in new CPython-output-comparison
-  tests until this is root-caused.
+- **Float formatting of whole values divisible by 10 — fixed**
+  (`93e222a`, ISSUES I-105). `print(20.0)` / `print(180.0)` now match
+  CPython (`20.0`, `180.0`). A runner case guards `print(20.0)`. The
+  historical note: those values used to print as `2e+01` / `1.8e+02`
+  via a trailing-zero-stripping heuristic that picked `%g`.
 
 ### Type System
 - **Conservative type tracking**: `widenLoopTypes()` widens to "boxed" on any type divergence at loop back-edges
@@ -2638,10 +2644,10 @@ errors.
 #### Planned (not implemented)
 - IR-level constant folding
 - Full arena allocator beyond scalar freelist
-- Dead code elimination at IR level
-- Full insertion-ordered dicts
+- Dead code elimination at pyc-IR level (`src/ir/LLVMDCE.cpp` is LLVM-IR DCE, already landed)
 - Native `**` / rsqrt and full mass/mag float chain in nbody
 - Extend recursive specialization to mutual recursion and float-returning functions
+- Insertion-ordered dicts — **landed** (vector-of-pairs; ISSUES I-106). Left here only so old “planned” checklists are not re-read as open work.
 - **Generalized multi-dispatch specialization**: generate one specialized variant
   per distinct call-site type signature (e.g. `__specialized_add_ii` and
   `__specialized_add_ff` for a function called with both `(int, int)` and

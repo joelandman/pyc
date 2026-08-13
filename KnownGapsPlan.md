@@ -122,12 +122,12 @@ limitations:
   Also fixed: nested set comprehension iterators are now evaluated lazily
   inside the parent body (same fix as `lowerListComp`), so nested set
   comprehensions with outer-variable-dependent iterables work correctly.
-- **Dict iteration order is not insertion-preserved** —
-  `{a: b for a, b in pairs}` produces the right values in the wrong key
-  order (the `unordered_map`-backed dict limitation, see IMPLEMENTATION.md).
+- ~~**Dict iteration order is not insertion-preserved**~~ **Now insertion-ordered**
+  (CPython 3.7+). Dict payload is a `std::vector` of pairs, not
+  `unordered_map`. See IMPLEMENTATION.md and ISSUES I-106.
 - **Nested-comp subscript-on-iteration-variable** produces float-promoted
   / tuple-collapsed values — a compound of pre-existing type-tracking
-  quirks, not the unpack-target mechanism.
+  quirks, not the unpack-target mechanism. Tracked as ISSUES I-005.
 
 ---
 

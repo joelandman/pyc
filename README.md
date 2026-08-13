@@ -5,7 +5,8 @@ source using the Python C API, lowers the AST through a visitor-based IR, genera
 LLVM IR, optimizes it, and produces standalone native executables via a minimal
 `PyObject*`-based boxed runtime with refcounting.
 
-Written in C++ with Clang++ and LLVM 18. No C/C++ intermediate language for
+Written in C++ with Clang++ and LLVM (`find_package(LLVM)`; 18 historically,
+22 on the current development machine). No C/C++ intermediate language for
 the normal compiler path. **627/627 tests passing** (597 inline cases + 29 file cases + 1 dispatch-chain check, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
 
 ## Build
@@ -39,6 +40,7 @@ pyc hello.py -O2 -o hello      # with O2 optimisation
 | `--opt=N` | Alias for `-ON` (deprecated) |
 | `--emit-llvm` | Emit LLVM IR to `output.ll` instead of binary |
 | `--emit-asm` / `-S` | Emit assembly to `output.s` instead of binary |
+| `-g` | Emit DWARF debug info (source line mapping for gdb/lldb). Use with `-O0` |
 | `--verbose` | Print verbose compilation information |
 
 ## Testing
@@ -47,22 +49,23 @@ pyc hello.py -O2 -o hello      # with O2 optimisation
 cd build && make check   # or: ctest
 ```
 
-The test suite in `tests/runner.py` compiles each case and compares output
-against CPython. It also runs file-based regression programs in `tests/` that
-cover optimization-sensitive behavior such as native `range` loops, numeric
-locals, numeric list mutation and aliasing, command-line arguments, default
-arguments, nested destructuring, and `tests/nbody.py`.
-
-The import/package system (dotted imports, nested and namespace packages,
-relative imports) has its own suite, `test/import_tests/run_import_tests.sh`
-(not yet wired into `make check`), which asserts real output against CPython
-for each case.
-
-### Running Tests Directly
+`make check` runs `tests/runner.py` (inline `CASES` + `FILE_CASES` + dispatch-chain
+check, all at `-O0`), the import suite, and a thin `-O2` smoke (`tests/o2_smoke.py`).
+Its exit code is the suite's exit code — a green `make check` means those steps
+passed. For a single focused run:
 
 ```bash
 PYC_BINARY=./build/pyc python3 tests/runner.py
+./test/import_tests/run_import_tests.sh
+PYC_BINARY=./build/pyc python3 tests/o2_smoke.py
 ```
+
+The runner compiles each case and compares output against CPython. File-based
+programs in `tests/` cover optimization-sensitive behavior such as native
+`range` loops, numeric locals, numeric list mutation and aliasing, command-line
+arguments, default arguments, nested destructuring, `tests/modifiers.py`, and
+`tests/nbody.py`. `tests/mbs.py` is excluded because it exceeds the runner's
+5s per-command timeout (`time.perf_counter` itself is supported).
 
 ## What Compiles Today
 
@@ -70,7 +73,7 @@ See [FEATURES.md](FEATURES.md) for a complete list of supported features.
 
 ### Quick Summary
 
-- **Types**: int, float, bool, str, list, dict, tuple, None, complex, bytes, bytearray, decimal.Decimal
+- **Types**: int, float, bool, str, list, dict, tuple, set, None, complex, bytes, bytearray, decimal.Decimal
 - **Operators**: `+ - * / // % **`, `== != < > <= >=`, `is`, `in`, `and`, `or`, `not`, unary `-`
 - **Control flow**: `if/elif/else`, `while`, `for`, `break`, `continue`, ternary
 - **Functions**: `def`, `lambda`, nested functions, closures (`nonlocal`), decorators
@@ -118,9 +121,14 @@ type metadata (`int`, `float`, `bool`, `str`, or `boxed`).
 ## Documentation
 
 - [README.md](README.md) — This file: build, usage, options, quick feature summary
-- [FEATURES.md](FEATURES.md) — Complete feature list and capabilities
-- [IMPLEMENTATION.md](IMPLEMENTATION.md) — Design choices, limitations, architecture details
-- [KnownGapsPlan.md](KnownGapsPlan.md) — Implementation plans for known gaps (all fixed)
+- [FEATURES.md](FEATURES.md) — Capability list (what compiles today)
+- [ISSUES.md](ISSUES.md) — Open bugs, latent issues, and closed-but-don't-reopen items
+- [IMPLEMENTATION.md](IMPLEMENTATION.md) — Design choices and a historical log of bug hunts
+- [KnownGapsPlan.md](KnownGapsPlan.md) — Gaps 1–4 (all fixed)
+- [AGENTS.md](AGENTS.md) — Build/test gotchas; SWE / SWR / Coordinator roles
+- [DEBUGGING_PLAN.md](DEBUGGING_PLAN.md) — `-g` DWARF (implemented; leftovers in ISSUES I-019)
+
+When a doc disagrees with `tests/runner.py` or the `pyc` binary, trust the executable.
 
 ## License
 
