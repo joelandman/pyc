@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): ~608 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): ~614 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627) are stale.
 
 ---
 
@@ -83,7 +83,7 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 - Decorators: `@deco`, `@deco(args)` factories, stacked
 - `@classmethod` / `@property` / `@staticmethod` on methods
 - First-class functions: identity, `print(f)` → `<function f at 0x...>`
-- Missing required arguments currently bind `None` instead of raising `TypeError` ([I-002](ISSUES.md))
+- Missing required positional arguments raise `TypeError` with CPython's message (`f() missing 1 required positional argument: 'a'`). Dynamic `*args` and indirect `g(**{})` leftovers: [I-023](ISSUES.md), [I-024](ISSUES.md).
 
 ---
 

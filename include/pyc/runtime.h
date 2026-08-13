@@ -32,6 +32,15 @@ PyObject* Pyc_DictGetOrDefault(PyObject* dict, PyObject* key, PyObject* fallback
 // Route unmatched **dict spread keys into a **kwargs catch-all parameter.
 void Pyc_RouteSpreadKwargs(PyObject* spread_dict, PyObject* param_names_list,
                            PyObject* kwargs_dict);
+// TypeError: f() missing N required positional argument(s): ...
+// `names` is a list of missing parameter names in declaration order.
+// No-op if `names` is null or empty (raise longjmps / exits otherwise).
+void Pyc_RaiseMissingArgs(const char* func, PyObject* names);
+// Compiler-facing: raise if any name in `required` is missing.
+// `dicts` is a list of **spread dicts; a name present in any of them is
+// bound. An empty/null `dicts` means every name in `required` is missing
+// (direct-call compile-time list). `func` is a str (Python-visible name).
+void Pyc_CheckMissingArgs(PyObject* func, PyObject* required, PyObject* dicts);
 PyObject* PyDict_GetItemWithDefault(PyObject* dict, PyObject* key, PyObject* defaultVal);
 PyObject* PyDict_DelItem(PyObject* dict, PyObject* key);
 PyObject* PyList_Append(PyObject* list, PyObject* item);

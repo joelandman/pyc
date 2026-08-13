@@ -713,6 +713,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     // routes unmatched **dict spread keys into a **kwargs catch-all.
     llvm::FunctionType* routeSpreadKwargsTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(routeSpreadKwargsTy, llvm::Function::ExternalLinkage, "Pyc_RouteSpreadKwargs", module.get());
+    llvm::FunctionType* raiseMissingTy = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(context), {int8PtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(raiseMissingTy, llvm::Function::ExternalLinkage, "Pyc_RaiseMissingArgs", module.get());
+    llvm::FunctionType* checkMissingTy = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(context), {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(checkMissingTy, llvm::Function::ExternalLinkage, "Pyc_CheckMissingArgs", module.get());
 
     llvm::FunctionType* dictDelItemTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(dictDelItemTy, llvm::Function::ExternalLinkage, "PyDict_DelItem", module.get());
@@ -1050,6 +1056,44 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // Recompute ndef/firstDef from the (possibly probed) defSlots for this adapter.
         ndef = defSlots.size();
         size_t firstDef = (userFixed > ndef) ? (userFixed - ndef) : 0;
+        // Missing required positional args (userLen < firstDef): raise
+        // TypeError listing ALL missing names, then unreachable. Do not
+        // pass a null PyObject* (which prints as None).
+        if (firstDef > 0) {
+            llvm::Value* firstDefV = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), firstDef);
+            llvm::Value* needRaise = abuilder.CreateICmpSLT(userLen, firstDefV, "need.miss");
+            llvm::BasicBlock* raiseB = llvm::BasicBlock::Create(context, "missargs", adapter);
+            llvm::BasicBlock* okB = llvm::BasicBlock::Create(context, "args.ok", adapter);
+            abuilder.CreateCondBr(needRaise, raiseB, okB);
+            abuilder.SetInsertPoint(raiseB);
+            llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
+            llvm::Function* raiseFn = module->getFunction("Pyc_RaiseMissingArgs");
+            llvm::Value* zeroSz = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
+            llvm::Value* mlist = listNew
+                ? (llvm::Value*)abuilder.CreateCall(listNew, {zeroSz}, "miss.names")
+                : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            for (size_t i = 0; i < firstDef; ++i) {
+                llvm::Value* iV = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i);
+                llvm::Value* isMiss = abuilder.CreateICmpSLE(userLen, iV, "miss.i" + std::to_string(i));
+                llvm::BasicBlock* appB = llvm::BasicBlock::Create(context, "miss.app" + std::to_string(i), adapter);
+                llvm::BasicBlock* nxtB = llvm::BasicBlock::Create(context, "miss.nxt" + std::to_string(i), adapter);
+                abuilder.CreateCondBr(isMiss, appB, nxtB);
+                abuilder.SetInsertPoint(appB);
+                if (fromStr && listAppend && i < pnames.size()) {
+                    llvm::Value* nm = abuilder.CreateGlobalStringPtr(pnames[i], "miss.n" + std::to_string(i));
+                    llvm::Value* s = abuilder.CreateCall(fromStr, {nm}, "miss.s" + std::to_string(i));
+                    abuilder.CreateCall(listAppend, {mlist, s});
+                }
+                abuilder.CreateBr(nxtB);
+                abuilder.SetInsertPoint(nxtB);
+            }
+            if (raiseFn) {
+                llvm::Value* fns = abuilder.CreateGlobalStringPtr(f.name, "miss.fn");
+                abuilder.CreateCall(raiseFn, {fns, mlist});
+            }
+            abuilder.CreateUnreachable();
+            abuilder.SetInsertPoint(okB);
+        }
         for (size_t i = 0; i < userFixed; ++i) {
             llvm::Value* iV = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i);
             llvm::Value* have = abuilder.CreateICmpSGT(userLen, iV);

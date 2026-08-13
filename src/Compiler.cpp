@@ -382,6 +382,9 @@ class LoweringVisitor {
             // No additional addFunction here; the early-return in IR would have ignored
             // a second insert anyway. We just ensure the starred view is recorded.
             funcParamNames[node->id] = node->args;
+            funcParamNames[defIRName] = node->args;
+            funcDisplayNames[node->id] = node->id;
+            funcDisplayNames[defIRName] = node->id;
 
             // B5: record this function's nonlocal declarations (declaration-only; cells later).
             funcNonlocals[defIRName] = scanFuncNonlocals(node);
@@ -2889,6 +2892,8 @@ class LoweringVisitor {
     std::unordered_map<std::string, int> funcDefaultCount;
     std::unordered_map<std::string, std::vector<std::string>> funcDefaultValues;
     std::unordered_map<std::string, std::vector<std::string>> funcParamNames;
+    // Python-visible def name for TypeError messages (f, not __nesteddef_0).
+    std::unordered_map<std::string, std::string> funcDisplayNames;
     std::unordered_map<std::string, std::string> valueTypes;
      // A2.1: names proven to stay numeric (int/i64/float) for their live range.
      // These get native i64/double slots instead of boxed PyObject*.
@@ -4302,6 +4307,41 @@ class LoweringVisitor {
         return res;
     }
 
+    // Emit Pyc_CheckMissingArgs(func, required_names, dicts).
+    // `dicts` empty ⇒ every name in `required` is treated as missing.
+    void emitMissingArgsCheck(const std::string& displayName,
+                              const std::vector<std::string>& required,
+                              const std::vector<std::string>& dictTemps) {
+        if (required.empty()) return;
+        std::string namesList = "$t" + std::to_string(tempCounter++);
+        std::string zNames = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, zNames, "int");
+        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zNames}, namesList, "boxed");
+        for (const auto& nm : required) {
+            std::string sc = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"" + nm + "\""}, sc, "str");
+            std::string d = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_Append", namesList, sc}, d);
+        }
+        std::string dictsList = "$t" + std::to_string(tempCounter++);
+        std::string zDicts = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, zDicts, "int");
+        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zDicts}, dictsList, "boxed");
+        for (const auto& dv : dictTemps) {
+            std::string d = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_Append", dictsList, dv}, d);
+        }
+        std::string fnConst = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"\"" + displayName + "\""}, fnConst, "str");
+        ir.addInstruction(currentFunc, "call", {"Pyc_CheckMissingArgs", fnConst, namesList, dictsList}, "");
+    }
+
+    std::string callDisplayName(const std::string& funcName) const {
+        auto it = funcDisplayNames.find(funcName);
+        if (it != funcDisplayNames.end() && !it->second.empty()) return it->second;
+        return funcName;
+    }
+
     std::string lowerCall(const ASTNode* node) {
         // Method call: obj.method(args) — func is an Attribute node
          if (!node->children.empty() && node->children[0] &&
@@ -5053,6 +5093,23 @@ class LoweringVisitor {
                 // map onto it). Routing a **dict spread's own unmatched
                 // entries into a **kwargs catch-all is a further,
                 // separate, still-open gap — not attempted here.
+                auto ddit0 = funcDefaultValues.find(funcName);
+                size_t nregular0 = params.size();
+                for (size_t k = 0; k < params.size(); ++k) {
+                    if (!params[k].empty() && params[k][0] == '*') { nregular0 = k; break; }
+                }
+                size_t ndefaults0 = (ddit0 != funcDefaultValues.end()) ? ddit0->second.size() : 0;
+                if (!kwargDicts.empty() && !buildingIndirectArgs) {
+                    std::vector<std::string> reqUnbound;
+                    for (size_t j = 0; j < nregular0; ++j) {
+                        bool bound = j < argRes.size() && !argRes[j].empty();
+                        bool hasDef = ndefaults0 > 0 && j >= nregular0 - ndefaults0;
+                        if (!bound && !hasDef) reqUnbound.push_back(params[j]);
+                    }
+                    if (!reqUnbound.empty()) {
+                        emitMissingArgsCheck(callDisplayName(funcName), reqUnbound, kwargDicts);
+                    }
+                }
                 for (auto& dictVal : kwargDicts) {
                     auto ddit = funcDefaultValues.find(funcName);
                     size_t nregular = params.size();
@@ -5226,6 +5283,40 @@ class LoweringVisitor {
                             }
                         }
                         while (!argRes.empty() && argRes.back().empty()) argRes.pop_back();
+                    }
+                }
+            }
+            // Required regular param slots still empty after default
+            // injection: raise TypeError (do not emit a short LLVM call).
+            // Skip indirect Pyc_Apply sites — argRes is not the apply list
+            // (the adapter does this check).
+            if (!buildingIndirectArgs) {
+                auto pit = funcParamNames.find(funcName);
+                if (pit != funcParamNames.end()) {
+                    const auto& params = pit->second;
+                    size_t nregular = params.size();
+                    for (size_t j = 0; j < params.size(); ++j) {
+                        if (!params[j].empty() && params[j][0] == '*') { nregular = j; break; }
+                    }
+                    size_t ndefaults = 0;
+                    auto dit = funcDefaultValues.find(funcName);
+                    if (dit != funcDefaultValues.end()) ndefaults = dit->second.size();
+                    size_t nrequired = (nregular > ndefaults) ? (nregular - ndefaults) : 0;
+                    std::vector<std::string> missing;
+                    for (size_t j = 0; j < nrequired; ++j) {
+                        if (j >= argRes.size() || argRes[j].empty())
+                            missing.push_back(params[j]);
+                    }
+                    if (!missing.empty()) {
+                        emitMissingArgsCheck(callDisplayName(funcName), missing, {});
+                        if (argRes.size() < nregular) argRes.resize(nregular, "");
+                        for (size_t j = 0; j < nregular; ++j) {
+                            if (argRes[j].empty()) {
+                                std::string none = "$c" + std::to_string(tempCounter++);
+                                ir.addInstruction(currentFunc, "nconst", {}, none, "none");
+                                argRes[j] = none;
+                            }
+                        }
                     }
                 }
             }

@@ -3635,6 +3635,53 @@ print(sorted(r))
     ("print(['a\\x01b'])", "['a\\x01b']\n"),
     ("print(['ok'])", "['ok']\n"),
     ("print('a\\nb')", "a\nb\n"),
+    # W1.2 / I-002: missing required arguments raise TypeError, not None
+    # and not an LLVM verify failure. Messages must match CPython
+    # (the runner uses live python3 stdout when it succeeds).
+    ("""def f(a):
+    return a
+try:
+    print(f())
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+""", "TypeError: f() missing 1 required positional argument: 'a'\n"),
+    ("""def f(a, b):
+    return a
+try:
+    print(f(1))
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+""", "TypeError: f() missing 1 required positional argument: 'b'\n"),
+    ("""def f(a, b=2):
+    return a, b
+try:
+    print(f())
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+print(f(1))
+""", "TypeError: f() missing 1 required positional argument: 'a'\n(1, 2)\n"),
+    ("""def f(a, b, c):
+    return a
+try:
+    print(f())
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+""", "TypeError: f() missing 3 required positional arguments: 'a', 'b', and 'c'\n"),
+    ("""def f(a):
+    return a
+try:
+    print(f(**{}))
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+""", "TypeError: f() missing 1 required positional argument: 'a'\n"),
+    ("""def f(a):
+    return a
+g = f
+try:
+    print(g())
+except TypeError as e:
+    print(type(e).__name__ + ":", e)
+""", "TypeError: f() missing 1 required positional argument: 'a'\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

@@ -200,8 +200,8 @@ new errors (fewer than before, thanks to the leak fix above).
   argument, or a `key=value` keyword argument matched earlier in the
   same call) takes priority, then the parameter's registered default (if
   any), then boxed `None` (matching the existing, separate,
-  undocumented gap of not raising `TypeError` for a genuinely missing
-  required argument — not attempted here). This eliminated the whole
+  later-closed gap of not raising `TypeError` for a genuinely missing
+  required argument — now I-002 / `Pyc_CheckMissingArgs`). This eliminated the whole
   batch-unpack step entirely rather than patching around its
   unconditional-overwrite behavior. Verified against real CPython:
   omitted-defaulted-parameter, all-parameters-present (unaffected,

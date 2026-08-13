@@ -13665,6 +13665,66 @@ PyObject* Pyc_DictGetOrDefault(PyObject* dict, PyObject* key, PyObject* fallback
     return fallback;
 }
 
+// TypeError: f() missing N required positional argument(s): ...
+// `names` is a list of str in declaration order. No-op if empty.
+void Pyc_RaiseMissingArgs(const char* func, PyObject* names) {
+    if (!func) func = "";
+    std::vector<std::string> ns;
+    if (names && names->type == 1) {
+        for (auto& item : names->list) {
+            if (item && item->type == 3) ns.push_back(item->str);
+        }
+    }
+    if (ns.empty()) return;
+    std::string msg;
+    msg += func;
+    msg += "() missing ";
+    msg += std::to_string(ns.size());
+    if (ns.size() == 1) {
+        msg += " required positional argument: '";
+        msg += ns[0];
+        msg += "'";
+    } else {
+        msg += " required positional arguments: ";
+        for (size_t i = 0; i < ns.size(); ++i) {
+            if (i > 0) {
+                if (i + 1 == ns.size())
+                    msg += (ns.size() == 2) ? " and " : ", and ";
+                else
+                    msg += ", ";
+            }
+            msg += "'";
+            msg += ns[i];
+            msg += "'";
+        }
+    }
+    pyc_raise_msg("TypeError", msg.c_str());
+}
+
+// Raise if any name in `required` is absent from every dict in `dicts`.
+// Empty/null `dicts` means every required name is missing.
+void Pyc_CheckMissingArgs(PyObject* func, PyObject* required, PyObject* dicts) {
+    if (!required || required->type != 1) return;
+    const char* fname = (func && func->type == 3) ? func->str.c_str() : "";
+    bool haveDicts = dicts && dicts->type == 1 && !dicts->list.empty();
+    PyObject* missing = PyList_New(0);
+    if (!missing) return;
+    for (auto& name : required->list) {
+        if (!name) continue;
+        bool found = false;
+        if (haveDicts) {
+            for (auto& d : dicts->list) {
+                if (!d || d->type != 2) continue;
+                PyObject* v = PyDict_GetItem(d, name);
+                if (v) { Py_DECREF(v); found = true; break; }
+            }
+        }
+        if (!found) PyList_Append(missing, name);
+    }
+    Pyc_RaiseMissingArgs(fname, missing);
+    Py_DECREF(missing);
+}
+
 // Pyc_RouteSpreadKwargs(spread_dict, param_names_list, kwargs_dict) —
 // routes unmatched keys from a **dict spread into a **kwargs catch-all.
 // Called at call sites when the callee has a **kwargs parameter: iterates
