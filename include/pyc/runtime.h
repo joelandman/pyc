@@ -111,6 +111,7 @@ PyObject* PyString_Count(PyObject* s, PyObject* sub);
 PyObject* PyString_Replace(PyObject* s, PyObject* old_, PyObject* new_);
 PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step);
 void      Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step, PyObject* value);
+void      Pyc_DelSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step);
 PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b, PyObject* key);
 PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b, PyObject* key);
 PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal);

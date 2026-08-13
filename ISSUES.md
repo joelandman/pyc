@@ -20,14 +20,6 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 
 ## Open
 
-### I-003  Incomplete `pyc_ensure_boxed_list` audit
-- Status: open
-- Severity: latent
-- Evidence: IMPLEMENTATION.md Runtime notes. Homogeneous int/float list literals live in `ilist`/`flist`. Readers of `lst->list` without the helper silently no-op (`.sort()`/`.index()` class of bug, already fixed for the eight methods that were audited).
-- Files: `src/runtime/Runtime.cpp`
-- Blocks merge: no
-- Notes: Wave 1 W1.3. Audit remaining `lst->list` readers; do not “fix” by disabling A4.
-
 ### I-004  `allocObject()` calloc on a C++ PyObject
 - Status: open
 - Severity: latent
@@ -202,9 +194,32 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Found reviewing W1.2 / I-002. Current CASES are top-level `f` (IR name == Python name), so they would not see this. File so a later nested/lambda CASE against live python3 does not look like an I-002 miss.
 
+### I-026  `del t[1:3]` on tuple/str/dict is a silent no-op
+- Status: open
+- Severity: wrong-answer
+- Evidence: `Pyc_DelSlice` (`src/runtime/Runtime.cpp:6056`) returns immediately unless `obj->type == 1`. CPython `del (5,1,8,3)[1:3]` is `TypeError: 'tuple' object doesn't support item deletion`; same for `str` / `dict`. pyc leaves the object unchanged. Pre-fix `Pyc_DelItem` was also a no-op on a slice key, so this is leftover of W1.3 scope, not a regression.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_DelSlice`)
+- Blocks merge: no
+- Notes: Found reviewing W1.3 / I-003. Ticket asked to classify: **out of slice** (I-003 is A4 `lst->list` readers; the confirmed hole was list slice delete). Do not demand a TypeError in W1.3.
+
+### I-027  `Pyc_DelSlice` reverse-step start underflow; step 0 silent
+- Status: open
+- Severity: wrong-answer
+- Evidence: `h=[0,1,2,3,4]; del h[-10::-1]`. CPython `PySlice_AdjustIndices` with step<0 clamps an under-range start to `-1` → slicelength 0 → list unchanged. pyc (`Runtime.cpp:6065-6068`, `6089-6095`) does `s += n` then `if (ss < 0) ss = 0`, so the loop `i > e` (`e` is the omitted-stop sentinel `-1`) visits index 0 and yields `[1, 2, 3, 4]`. Same clamp as pre-existing `Pyc_GetSlice`/`Pyc_SetSlice`. `del h[::0]` is `if (stp == 0) return` (`6063`) vs CPython `ValueError: slice step cannot be zero`. Common reverse cases `del h[::-1]` / `[::-2]` / `[3::-1]` / `[3:0:-1]` compute the right positions.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_DelSlice`)
+- Blocks merge: no
+- Notes: Found reviewing W1.3 / I-003. Off-by-one only when start < `-len` with a negative step (the ticket's `::2` / basic slice / omitted-start reverse are fine). Non-int step is ignored and `stp` stays 1, so `del h[::2.0]` becomes a full basic delete rather than TypeError — same class, same helper. Not a merge blocker.
+
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
+
+### I-003  Incomplete `pyc_ensure_boxed_list` audit
+- Status: fixed
+- Severity: latent / wrong-answer
+- Evidence: `Pyc_DelSlice` + `PyDict_FromKeys` ensure. CASES under `W1.3 / I-003`. Runner 649/649. Focused 14/14 at -O0 and -O2.
+- Files: `src/Compiler.cpp`, `src/runtime/Runtime.cpp`, `include/pyc/runtime.h`, `src/codegen/Codegen.cpp`
+- Notes: Wave 1 W1.3. Most A4 consumers were already safe. Real hole: `del lst[s:e]` silent no-op. SWR: no merge blockers. Leftovers I-026 / I-027.
 
 ### I-002  Missing required arguments raise TypeError
 - Status: fixed

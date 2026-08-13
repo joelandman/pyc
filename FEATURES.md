@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): ~614 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): ~619 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627) are stale.
 
 ---
 
@@ -171,15 +171,16 @@ Container / `repr` of `str` escapes `\n`, `\t`, `\r`, `\\`, quotes, and other AS
 ## List / Dict / Set / Tuple Methods
 
 - **list**: `append`, `sort` (`key=`, `reverse=`), `pop`/`pop(i)`, `insert`, `remove`,
-  `index`, `count`, `reverse`, `extend`, `copy`, `clear`, `+`
+  `index`, `count`, `reverse`, `extend`, `copy`, `clear`, `+`, `del lst[i]`, `del lst[s:e]` / `del lst[::2]`
 - **dict**: `keys`, `values` (lists), `items` (list of 2-tuples), `get`, `pop`, `update`, `copy`, `clear`
 - **set**: `add`, `remove`, `discard`, `pop`, `clear`, `copy`, `update`,
   `union`/`intersection`/`difference`/`symmetric_difference`,
   `issubset`/`issuperset`; operators `|` `&` `-` `^`; subset comparisons
 - **tuple**: indexing, slicing (→ tuple), `+`, `*`, `in`, `count`, `index`, unpacking
 
-Homogeneous int/float list literals use unboxed `ilist`/`flist` storage. Methods that
-forget `pyc_ensure_boxed_list()` silently no-op ([I-003](ISSUES.md)).
+Homogeneous int/float list literals use unboxed `ilist`/`flist` storage. User-list
+consumers either call `pyc_ensure_boxed_list()` or branch on `list_item_type`
+(I-003 audit). `del` of a tuple/str/dict slice is still a no-op ([I-026](ISSUES.md)).
 
 ---
 

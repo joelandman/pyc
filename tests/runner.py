@@ -3682,6 +3682,14 @@ try:
 except TypeError as e:
     print(type(e).__name__ + ":", e)
 """, "TypeError: f() missing 1 required positional argument: 'a'\n"),
+    # W1.3 / I-003: del of a list slice was a silent no-op (Pyc_DelItem
+    # only handles int keys). Homogeneous A4 lists and boxed lists both
+    # failed. Pyc_SetSlice already boxes A4; del must take the same path.
+    ("h=[5,1,8,3]\ndel h[1:3]\nprint(h)", "[5, 3]\n"),
+    ("h=[5,1,8,3,9]\ndel h[::2]\nprint(h)", "[1, 3]\n"),
+    ("h=[5,'x',8,3]\ndel h[1:3]\nprint(h)", "[5, 3]\n"),
+    ("h=[1.0,2.0,3.0,4.0]\ndel h[1:3]\nprint(h)", "[1.0, 4.0]\n"),
+    ("h=[]\nh.append(5)\nh.append(1)\nh.append(8)\nh.append(3)\ndel h[1:3]\nprint(h)", "[5, 3]\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

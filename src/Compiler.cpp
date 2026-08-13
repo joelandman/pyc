@@ -7727,6 +7727,9 @@ class LoweringVisitor {
     //                     list silently did nothing at all; found while
     //                     hunting for more instances of the truthiness
     //                     bug's underlying pattern, see IMPLEMENTATION.md)
+    //   del lst[s:e]    — call Pyc_DelSlice (Pyc_DelItem only accepts int
+    //                     keys; empty-replacement SetSlice is not delete
+    //                     for an extended slice like [::2])
     //   del obj.attr    — best-effort: del obj's instance/class attr via the same machinery
     //                     used for getattr. If the attribute is missing this is a no-op,
     //                     which differs from CPython's AttributeError but keeps the compiler
@@ -7747,10 +7750,24 @@ class LoweringVisitor {
             noteType(name, "none");
             killNumericLocal(name);
         } else if (target->type == "Subscript") {
-            // del d[k]
+            // del d[k]  or  del lst[s:e] / del lst[::step]
+            // Slice indices must not go through Pyc_DelItem: that helper
+            // only accepts int keys, so del lst[1:3] was a silent no-op
+            // on every list (A4 and boxed). Same start/stop/step lowering
+            // as get/set slice.
             if (target->children.size() < 2) return;
             std::string obj = lowerExpr(target->children[0].get());
-            std::string idx = lowerExpr(target->children[1].get());
+            const ASTNode* idxnode = target->children[1].get();
+            if (idxnode && idxnode->type == "Slice") {
+                std::string start = lowerExpr(idxnode->children.size() > 0 ? idxnode->children[0].get() : nullptr);
+                std::string stop  = lowerExpr(idxnode->children.size() > 1 ? idxnode->children[1].get() : nullptr);
+                std::string step  = (idxnode->children.size() > 2 && idxnode->children[2])
+                                       ? lowerExpr(idxnode->children[2].get()) : "";
+                std::string dummy = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"Pyc_DelSlice", obj, start, stop, step}, dummy);
+                return;
+            }
+            std::string idx = lowerExpr(idxnode);
             std::string dummy = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_DelItem", obj, idx}, dummy);
         } else if (target->type == "Attribute") {

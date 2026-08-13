@@ -3857,6 +3857,7 @@ PyObject* PyDict_FromKeys(PyObject* keys, PyObject* defval) {
     PyObject* r = PyDict_New();
     if (!keys) return r;
     if (keys->type == 1) {
+        pyc_ensure_boxed_list(keys);
         for (auto* k : keys->list) {
             PyObject* v = defval;
             if (v) Py_INCREF(v);
@@ -6044,6 +6045,64 @@ void Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step
     // release any unconsumed replacement refs we bumped
     for (; k < m; ++k) {
         if (repl[k]) Py_DECREF(repl[k]);
+    }
+}
+
+// del lst[s:e] / del lst[::step]. Empty-replacement SetSlice is only
+// equivalent for a basic (no-step) slice; an extended slice assignment
+// is length-preserving, so del lst[::2] needs a real delete. Converts
+// A4 ilist/flist first (same as SetSlice).
+void Pyc_DelSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step) {
+    if (!obj || obj->type != 1) return;
+    pyc_ensure_boxed_list(obj);
+
+    bool explicit_step = (step != nullptr);
+    long n = (long)obj->list.size();
+    long stp = 1;
+    if (explicit_step && (step->type == 0 || step->type == 5)) stp = step->value;
+    if (stp == 0) return;
+
+    long s = (start && (start->type == 0 || start->type == 5)) ? start->value : (stp > 0 ? 0 : n - 1);
+    long e = (stop  && (stop->type == 0 || stop->type == 5)) ? stop->value : (stp > 0 ? n : -1);
+    if (s < 0) s += n;
+    if (e < 0 && (stop && (stop->type == 0 || stop->type == 5))) e += n;
+
+    if (!explicit_step || stp == 1) {
+        if (s < 0) s = 0;
+        if (s > n) s = n;
+        if (e < 0) e = 0;
+        if (e > n) e = n;
+        if (s >= e) return;
+        for (long i = s; i < e; ++i) {
+            if (obj->list[i]) Py_DECREF(obj->list[i]);
+        }
+        obj->list.erase(obj->list.begin() + s, obj->list.begin() + e);
+        return;
+    }
+
+    std::vector<long> positions;
+    if (stp > 0) {
+        long ss = s, ee = e;
+        if (ss < 0) ss = 0; if (ss > n) ss = n;
+        if (ee < 0) ee = 0; if (ee > n) ee = n;
+        for (long i = ss; i < ee; i += stp) positions.push_back(i);
+    } else {
+        long ss = s;
+        if (ss < 0) ss = 0;
+        if (ss >= n) ss = n - 1;
+        for (long i = ss; i > e && i >= 0; i += stp) {
+            if ((size_t)i < (size_t)n) positions.push_back(i);
+        }
+    }
+
+    std::sort(positions.begin(), positions.end());
+    positions.erase(std::unique(positions.begin(), positions.end()), positions.end());
+    for (auto it = positions.rbegin(); it != positions.rend(); ++it) {
+        long pos = *it;
+        if (pos >= 0 && (size_t)pos < obj->list.size()) {
+            if (obj->list[pos]) Py_DECREF(obj->list[pos]);
+            obj->list.erase(obj->list.begin() + pos);
+        }
     }
 }
 
