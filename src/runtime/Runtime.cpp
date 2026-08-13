@@ -1526,6 +1526,38 @@ static std::string pyc_format_bytes_repr(const std::string& s, bool isBytearray)
     return out;
 }
 
+// Formats a str as CPython unicode_repr. Default quote is '; switch to "
+// if the string contains ' and not ". Escapes \\, \n, \t, \r, the chosen
+// quote, and other ASCII controls 0x00-0x1F/0x7F as \xHH. Printable ASCII
+// and non-ASCII UTF-8 pass through.
+static std::string pyc_format_str_repr(const std::string& s) {
+    bool has_sq = false, has_dq = false;
+    for (unsigned char c : s) {
+        if (c == '\'') has_sq = true;
+        else if (c == '"') has_dq = true;
+    }
+    char quote = (has_sq && !has_dq) ? '"' : '\'';
+    std::string out;
+    out.reserve(s.size() + 2);
+    out += quote;
+    for (unsigned char c : s) {
+        if (c == '\\') out += "\\\\";
+        else if (c == (unsigned char)quote) { out += '\\'; out += quote; }
+        else if (c == '\n') out += "\\n";
+        else if (c == '\t') out += "\\t";
+        else if (c == '\r') out += "\\r";
+        else if (c < 0x20 || c == 0x7f) {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "\\x%02x", (unsigned)c);
+            out += buf;
+        } else {
+            out += (char)c;
+        }
+    }
+    out += quote;
+    return out;
+}
+
 static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
     // Like PyObject_PrintBase but writes NO trailing newline. Used by
     // container printers (list/dict) so we get "[1, 2, 3]" instead of
@@ -1628,8 +1660,9 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
         return fprintf(fp, "}");
     }
     if (obj->type == 3) {
-        // String element inside a container: use repr-style quotes.
-        return fprintf(fp, "'%s'", obj->str.c_str());
+        // String element inside a container: CPython repr quotes/escapes.
+        std::string r = pyc_format_str_repr(obj->str);
+        return fprintf(fp, "%s", r.c_str());
     }
     if (obj->type == 17 || obj->type == 18) {
         std::string r = pyc_format_bytes_repr(obj->str, obj->type == 18);
@@ -1764,9 +1797,10 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
             // boxed list
             for (size_t i = 0; i < obj->list.size(); ++i) {
                 if (i > 0) fprintf(fp, ", ");
-                if (obj->list[i] && obj->list[i]->type == 3)
-                    fprintf(fp, "'%s'", obj->list[i]->str.c_str());
-                else
+                if (obj->list[i] && obj->list[i]->type == 3) {
+                    std::string r = pyc_format_str_repr(obj->list[i]->str);
+                    fprintf(fp, "%s", r.c_str());
+                } else
                     PyObject_PrintElement(obj->list[i], fp);
             }
         }
@@ -1798,9 +1832,10 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         } else {
             for (size_t i = 0; i < obj->list.size(); ++i) {
                 if (i > 0) fprintf(fp, ", ");
-                if (obj->list[i] && obj->list[i]->type == 3)
-                    fprintf(fp, "'%s'", obj->list[i]->str.c_str());
-                else
+                if (obj->list[i] && obj->list[i]->type == 3) {
+                    std::string r = pyc_format_str_repr(obj->list[i]->str);
+                    fprintf(fp, "%s", r.c_str());
+                } else
                     PyObject_PrintElement(obj->list[i], fp);
             }
         }
@@ -2709,9 +2744,8 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
         return PyUnicode_FromString(s.c_str());
     }
     if (obj->type == 3) {
-        // String: wrap in single quotes (simplified — no escaping).
-        std::string r = "'" + obj->str + "'";
-        return PyUnicode_FromString(r.c_str());
+        std::string r = pyc_format_str_repr(obj->str);
+        return PyUnicode_FromStringAndSize(r.data(), r.size());
     }
     if (obj->type == 17 || obj->type == 18) {
         std::string r = pyc_format_bytes_repr(obj->str, obj->type == 18);
@@ -2769,7 +2803,7 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
             for (auto* item : obj->list) {
                 if (!first) r += ", ";
                 first = false;
-                if (item && item->type == 3) { r += "'" + item->str + "'"; }
+                if (item && item->type == 3) { r += pyc_format_str_repr(item->str); }
                 else if (item) {
                     PyObject* s = PyBuiltin_Repr(item);
                     if (s) { r += s->str; Py_DECREF(s); }
@@ -2802,7 +2836,7 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
             for (auto* item : obj->list) {
                 if (!first) r += ", ";
                 first = false;
-                if (item && item->type == 3) { r += "'" + item->str + "'"; }
+                if (item && item->type == 3) { r += pyc_format_str_repr(item->str); }
                 else if (item) {
                     PyObject* s = PyBuiltin_Repr(item);
                     if (s) { r += s->str; Py_DECREF(s); }
@@ -2820,7 +2854,7 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
         for (auto* e : obj->setElems) {
             if (!first) r += ", ";
             first = false;
-            if (e && e->type == 3) r += "'" + e->str + "'";
+            if (e && e->type == 3) r += pyc_format_str_repr(e->str);
             else if (e) {
                 PyObject* s = PyBuiltin_Repr(e);
                 if (s) { r += s->str; Py_DECREF(s); }
@@ -2868,13 +2902,13 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
         for (auto& pair : obj->dict) {
             if (!first) r += ", ";
             first = false;
-            if (pair.first && pair.first->type == 3) r += "'" + pair.first->str + "'";
+            if (pair.first && pair.first->type == 3) r += pyc_format_str_repr(pair.first->str);
             else if (pair.first) {
                 PyObject* s = PyBuiltin_Repr(pair.first);
                 if (s) { r += s->str; Py_DECREF(s); }
             }
             r += ": ";
-            if (pair.second && pair.second->type == 3) r += "'" + pair.second->str + "'";
+            if (pair.second && pair.second->type == 3) r += pyc_format_str_repr(pair.second->str);
             else if (pair.second) {
                 PyObject* s = PyBuiltin_Repr(pair.second);
                 if (s) { r += s->str; Py_DECREF(s); }
@@ -6426,13 +6460,14 @@ PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
                 break;
             }
             case 'r': {
+                if (arg && arg->type == 3) {
+                    std::string body = pyc_format_str_repr(arg->str);
+                    snprintf(buf, sizeof(buf), "%s", body.c_str());
+                    break;
+                }
                 PyObject* s = arg ? PyStr_FromAny(arg) : PyUnicode_FromString("");
                 std::string body = s ? s->str : std::string();
                 if (s) Py_DECREF(s);
-                // repr: add quotes for strings (limited — we don't escape)
-                if (arg && arg->type == 3) {
-                    body = "'" + body + "'";
-                }
                 snprintf(buf, sizeof(buf), "%s", body.c_str());
                 break;
             }

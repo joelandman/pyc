@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): ~597 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): ~608 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627) are stale.
 
 ---
 
@@ -164,7 +164,7 @@ Nested-comp subscript on the iteration variable still has a type-tracking quirk 
 Nested fields (`"{0.attr}"`, `"{0[1]}"`) are not supported ([I-010](ISSUES.md)).
 `partition("")` is lenient (no `ValueError`) ([I-010](ISSUES.md)).
 
-Container `repr` does not escape specials: `print(["a\nb"])` embeds a real newline ([I-001](ISSUES.md)).
+Container / `repr` of `str` escapes `\n`, `\t`, `\r`, `\\`, quotes, and other ASCII controls (`\xHH`), with CPython quote-switching. Bare `print("a\nb")` is still `str` (real newline). NUL in a str *literal* is still truncated at parse/codegen ([I-021](ISSUES.md)); KeyError/`Path` wrappers still quote raw ([I-022](ISSUES.md)).
 
 ---
 

@@ -2598,15 +2598,13 @@ errors.
   produced. Worth running new file/object-lifecycle-touching runtime
   code through `valgrind --tool=memcheck` before considering it verified,
   not just diffing stdout against CPython.
-- **Newly discovered, pre-existing, general bug: string repr inside a
-  container doesn't escape special characters.** `print(["a\nb", "c"])`
-  prints a literal embedded newline instead of CPython's `['a\nb', 'c']`
-  (with a visible backslash-n). Reproducible with a bare list literal —
-  unrelated to `readlines()` (which is what surfaced it, since a line's
-  trailing `\n` inside a `print()`ed list is an easy way to trigger it)
-  or any other feature in this session. Not fixed (out of scope here);
-  new permanent tests should avoid asserting on `print()` of
-  newline-containing strings inside a container until this is addressed.
+- **String repr inside a container — fixed (W1.1 / I-001).**
+  `print(["a\nb", "c"])` now matches CPython (`['a\nb', 'c']`).
+  `pyc_format_str_repr` implements CPython `unicode_repr` (quote-switch,
+  `\\`/`\n`/`\t`/`\r`/chosen quote, other ASCII controls as `\xHH`).
+  Wired into PrintElement, PrintBase list/tuple shortcuts, `repr()`, and
+  `%r`. Bare `print("a\nb")` is still str (real newline). NUL-in-literal
+  truncation and KeyError/Path wrappers are I-021 / I-022.
 
 ### IR
 - **Linear instruction list per function**: No CFG in IR; control flow is represented via labels and branches

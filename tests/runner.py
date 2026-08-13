@@ -3616,6 +3616,25 @@ print(sorted(r))
 ("print(sorted(set([3, 1, 2, 1])))", "[1, 2, 3]\n"),
 ("print(set())", "set()\n"),
 ("print(len(set(range(5))))", "5\n"),
+    # W1.1 / I-001: container / repr escaping. print() of a container uses
+    # repr() of each element, so newlines/tabs/backslashes/quotes must be
+    # escaped. Top-level print of a bare str stays unescaped (str, not repr).
+    # Quote style must match CPython: single quotes unless the string
+    # contains ' and not ", in which case CPython switches to ".
+    ("print(['a\\nb', 'c'])", "['a\\nb', 'c']\n"),
+    ("print(repr('a\\nb'))", "'a\\nb'\n"),
+    ("print(['a\\tb', 'x\\ry'])", "['a\\tb', 'x\\ry']\n"),
+    ("print(['a\\\\b'])", "['a\\\\b']\n"),
+    ("print(['it\\'s'])", '["it\'s"]\n'),
+    ("print(('a\\nb',))", "('a\\nb',)\n"),
+    ("print({'k\\n': 1})", "{'k\\n': 1}\n"),
+    ("print(repr({'a\\nb': 'c\\td'}))", "{'a\\nb': 'c\\td'}\n"),
+    # \x01 not \x00: a NUL in a str literal is still truncated at
+    # parse/codegen (PyUnicode_AsUTF8 + strlen). That is a separate
+    # gap, not this repr ticket.
+    ("print(['a\\x01b'])", "['a\\x01b']\n"),
+    ("print(['ok'])", "['ok']\n"),
+    ("print('a\\nb')", "a\nb\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
