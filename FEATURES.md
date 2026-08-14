@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): ~619 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): ~620 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627) are stale.
 
 ---
 
@@ -18,7 +18,7 @@ Test inventory (see `tests/runner.py` and `test/import_tests/`): ~619 inline `CA
 | `bool` / `None` | 5 | Same tag. `True`/`False`/`None` singletons |
 | `cell` | 6 | Closures / `nonlocal` |
 | `tuple` | 7 | Distinct type (also used internally for `super` proxies — see ISSUES) |
-| compiled regex / match | 8 / 9 | PCRE2. `allocObject()` still uses `calloc` (latent; ISSUES) |
+| compiled regex / match | 8 / 9 | PCRE2. Boxes allocated with `new PyObject()` (I-004) |
 | exception instance | 10 | |
 | function | 11 | Identity + repr; no `__name__`/`__doc__`/`__call__` attrs |
 | exception class | 12 | |

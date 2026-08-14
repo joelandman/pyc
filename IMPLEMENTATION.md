@@ -2505,18 +2505,13 @@ errors.
 - **Callables dispatch through a registry**: `Pyc_Apply(token, list)` with `__apply__` adapters
 - **Newly discovered while designing `datetime`**: the existing opaque-handle
   allocator `allocObject()` (`Runtime.cpp`, used by `CompiledRegex`/
-  `MatchObj`, types 8/9) allocates the `PyObject` via `calloc()`, which is
-  undefined behavior for a struct whose `dict` member is a non-trivial
-  `std::unordered_map` (`calloc` never runs the map's constructor — any
-  code path that later touches `obj->dict` on such an object relies on
-  zeroed memory happening to look like a valid empty map, which isn't
-  guaranteed by the standard even if it works in practice with current
-  libstdc++). Not fixed — out of scope for the datetime work that found
-  it, and `CompiledRegex`/`MatchObj` don't appear to read `.dict` in
-  practice, so this is latent rather than an observed failure. The new
-  datetime types (14/15) deliberately avoid `allocObject()`, using
-  `new PyObject()` instead — the same safe pattern `PyDict_New`/
-  `PyList_New`/`PyUnicode_FromString` already use.
+  `MatchObj`, types 8/9) used to allocate the `PyObject` via `calloc()`,
+  which is undefined behavior for a struct whose `dict`/`list`/`str`
+  members are non-trivial C++ objects. **Fixed (W1.4 / I-004):**
+  `allocObject` is `new PyObject()`; `Py_DECREF` already `delete`s the
+  box. Dead `freeObject` (calloc/free) removed. The datetime types
+  (14/15) already used `new PyObject()` — the same pattern
+  `PyDict_New`/`PyList_New`/`PyUnicode_FromString` use.
 - **Fixed while adding `struct`**: `PyUnicode_FromString(const char* s)` —
   the primary `str` constructor, used almost everywhere a `str` is
   created — takes a bare `const char*` and assigns it into `PyObject.str`

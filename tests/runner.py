@@ -3690,6 +3690,19 @@ except TypeError as e:
     ("h=[5,'x',8,3]\ndel h[1:3]\nprint(h)", "[5, 3]\n"),
     ("h=[1.0,2.0,3.0,4.0]\ndel h[1:3]\nprint(h)", "[1.0, 4.0]\n"),
     ("h=[]\nh.append(5)\nh.append(1)\nh.append(8)\nh.append(3)\ndel h[1:3]\nprint(h)", "[5, 3]\n"),
+    # W1.4 / I-004: type 8/9 (compiled regex / match) must be new PyObject()
+    # so C++ members are constructed and Py_DECREF's delete is valid.
+    # Create and drop many match objects plus a compiled pattern.
+    ("""import re
+m = re.search("a+", "xxaaa")
+print(m.group(0))
+print(re.findall("x+", "xx a xxx"))
+p = re.compile("[0-9]+")
+print(re.search("12", "ab12cd") is not None)
+for i in range(8):
+    re.findall("a", "aaa")
+print("ok")
+""", "aaa\n['xx', 'xxx']\nTrue\nok\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

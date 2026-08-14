@@ -1321,11 +1321,12 @@ static PycDateTime* pyc_as_datetime(PyObject* o) {
 static PycTimedelta* pyc_as_timedelta(PyObject* o) {
     return (o && o->type == 15) ? reinterpret_cast<PycTimedelta*>(o->value) : nullptr;
 }
-// Constructors use `new PyObject()` (not the calloc-based allocObject()
-// used by CompiledRegex/MatchObj below) so PyObject's std::unordered_map
-// `dict` member is validly constructed — safe to read (always empty, so
-// generic dict-fallback code paths that touch it see "not found" rather
-// than undefined behavior from a calloc'd non-trivial C++ member.
+// Constructors use `new PyObject()` so non-trivial C++ members
+// (std::vector list/ilist/flist/setElems/dict, std::string str) are
+// constructed. Type 8/9 (CompiledRegex/MatchObj) go through the same
+// allocObject() path for the same reason. Generic dict-fallback code
+// that touches `.dict` then sees an empty constructed vector ("not
+// found") rather than UB from an unconstructed member.
 static PyObject* pyc_new_datetime(int y, int mo, int d, int h, int mi, int s, bool hasTime) {
     PyObject* o = new PyObject();
     o->refcount = 1;
@@ -6695,30 +6696,17 @@ PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
 // (Forward-declared near pyc_import_failed above.)
 static PyObject* g_sys_argv = nullptr;
 
-// Allocator: PyObject* is a flat struct (see above). For the regex
-// types (8 and 9) we set `value` to the pointer to a heap-allocated
-// CompiledRegex* or MatchObj*. We never use `list`, `dict`, or `str`
-// for these types. Py_DECREF on a type 8/9 object frees the embedded
-// payload.
+// Allocator for type 8/9 (compiled regex / match). `value` holds a
+// pointer to a separately new'd CompiledRegex* or MatchObj*. The
+// PyObject box itself must be `new` (not calloc): it has non-trivial
+// C++ members, and Py_DECREF frees it with `delete obj` after deleting
+// the payload. Same construction as pyc_new_datetime / pyc_new_timedelta.
 
 static PyObject* allocObject(int type) {
-    PyObject* o = (PyObject*)calloc(1, sizeof(PyObject));
-    if (!o) return nullptr;
+    PyObject* o = new PyObject();
     o->refcount = 1;
     o->type = type;
     return o;
-}
-
-static void freeObject(PyObject* o) {
-    if (!o) return;
-    if (o->type == 8) {
-        CompiledRegex* cr = reinterpret_cast<CompiledRegex*>(o->value);
-        delete cr;
-    } else if (o->type == 9) {
-        MatchObj* mo = reinterpret_cast<MatchObj*>(o->value);
-        delete mo;
-    }
-    free(o);
 }
 
 static CompiledRegex* asCompiledRegex(PyObject* o) {

@@ -20,14 +20,6 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 
 ## Open
 
-### I-004  `allocObject()` calloc on a C++ PyObject
-- Status: open
-- Severity: latent
-- Evidence: IMPLEMENTATION.md Runtime. Types 8/9 (compiled regex / match) allocate via `calloc`. `dict` is a non-trivial `std::unordered_map`/`vector` member — constructor never runs. Safe today only because those types do not touch `.dict`.
-- Files: `src/runtime/Runtime.cpp` (`allocObject`)
-- Blocks merge: no
-- Notes: Wave 1 W1.4. Switch to `new PyObject()` like datetime/list/dict.
-
 ### I-005  Nested-comp subscript on the iteration variable
 - Status: open
 - Severity: wrong-answer
@@ -210,9 +202,24 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Found reviewing W1.3 / I-003. Off-by-one only when start < `-len` with a negative step (the ticket's `::2` / basic slice / omitted-start reverse are fine). Non-int step is ignored and `stp` stays 1, so `del h[::2.0]` becomes a full basic delete rather than TypeError — same class, same helper. Not a merge blocker.
 
+### I-028  Dead OOM checks after `allocObject` switched to `new`
+- Status: open
+- Severity: latent
+- Evidence: `allocObject` is `new PyObject()` (`Runtime.cpp:6705-6709`), which throws `std::bad_alloc` (or terminates under `-fno-exceptions`) and never returns null. Four calloc-era arms are now dead: `runRegexAll` `if (!m)` (`6782`), `PyBuiltin_ReSearch` (`6913`), `PyBuiltin_ReMatch` (`6954`), `PyBuiltin_ReCompile` (`6969`). On OOM the `pcre2_*` handle allocated just above leaks and a C++ exception can escape `extern "C"` — same as every other `new PyObject()` in this file.
+- Files: `src/runtime/Runtime.cpp` (`allocObject` callers)
+- Blocks merge: no
+- Notes: Found reviewing W1.4 / I-004. Not this slice. Drop the checks, or use `nothrow` if anyone wants the old cleanup path. Datetime/list/dict already omit the null test.
+
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
+
+### I-004  `allocObject()` calloc on a C++ PyObject
+- Status: fixed
+- Severity: latent
+- Evidence: `allocObject` is `new PyObject()`. Runner 650/650. Valgrind memcheck 0 errors on a create/drop regex program. Focused cases match CPython at -O0 and -O2.
+- Files: `src/runtime/Runtime.cpp`
+- Notes: Wave 1 W1.4. Dead `freeObject` removed. SWR: no merge blockers. Leftover I-028 (dead OOM null-checks).
 
 ### I-003  Incomplete `pyc_ensure_boxed_list` audit
 - Status: fixed
