@@ -3932,6 +3932,120 @@ try:
 except AttributeError as e:
     print(type(e).__name__)
 """, "[1, 2, 3, 9]\n(1, 3)\n3 1\nb'AB'\nAttributeError\n"),
+    # W5.1 / I-022: KeyError.__str__ is repr(args[0]); Path container
+    # print uses PosixPath({!r}), not raw interpolation.
+    ("""try:
+    raise KeyError('a\\nb')
+except KeyError as e:
+    print(str(e))
+from pathlib import Path
+print([Path('a\\nb')])
+""", "'a\\nb'\n[PosixPath('a\\nb')]\n"),
+    # W5.1 / I-026: del slice on tuple/str is TypeError, not a no-op.
+    # dict is omitted: 3.14 hashes slices, so del d[0:1] is KeyError via
+    # __delitem__, not slice-delete TypeError. Pyc_DelSlice never builds
+    # a slice key.
+    ("""try:
+    t = (5, 1, 8, 3)
+    del t[1:3]
+    print(t)
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    s = "abcd"
+    del s[1:3]
+    print(s)
+except TypeError as e:
+    print(type(e).__name__)
+""", "TypeError\nTypeError\n"),
+    # W5.1 / I-027: reverse start < -len is empty; step 0 is ValueError.
+    ("""h = [0, 1, 2, 3, 4]
+del h[-10::-1]
+print(h)
+h = [0, 1, 2, 3, 4]
+try:
+    del h[::0]
+    print(h)
+except ValueError as e:
+    print(type(e).__name__)
+""", "[0, 1, 2, 3, 4]\nValueError\n"),
+    # W5.1 / I-039: super().__init__ on a builtin exception returns None.
+    ("""class E(Exception):
+    def __init__(self, m):
+        print(super().__init__(m))
+E('x')
+""", "None\n"),
+    # W5.1 / I-040: non-str partition sep is TypeError, not ValueError.
+    ("""try:
+    print('abc'.partition(None))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print('abc'.rpartition(1))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print('abc'.partition(''))
+except ValueError as e:
+    print(type(e).__name__)
+""", "TypeError\nTypeError\nValueError\n"),
+    # W5.1 / I-041: format nested miss raises, not prints None.
+    ("""try:
+    print('{0[999]}'.format([1, 2]))
+except IndexError as e:
+    print(type(e).__name__)
+try:
+    print('{0[k]}'.format({}))
+except KeyError as e:
+    print(type(e).__name__)
+class C:
+    pass
+try:
+    print('{0.missing}'.format(C()))
+except AttributeError as e:
+    print(type(e).__name__)
+""", "IndexError\nKeyError\nAttributeError\n"),
+    # W5.1 / I-042: : and ! inside [ ] are index chars, not format/conv.
+    ("""print('{0[a:b]}'.format({'a:b': 1}))
+print('{0[a!b]}'.format({'a!b': 1}))
+try:
+    print('{0[1]foo}'.format([0, 1]))
+except ValueError as e:
+    print(type(e).__name__)
+""", "1\n1\nValueError\n"),
+    # W5.1 / I-046: boxed split(None)/rsplit(None) is whitespace-run.
+    ("""def fs(s):
+    return s.split(None)
+def fr(s):
+    return s.rsplit(None)
+print(fs("a  b"))
+print(fr("a  b  c"))
+print(fs("  a b  "))
+""", "['a', 'b']\n['a', 'b', 'c']\n['a', 'b']\n"),
+    # W5.1 / I-047: None receiver is AttributeError, not silent None.
+    ("""def f(x):
+    return x.bit_length()
+try:
+    print(f(None))
+except AttributeError as e:
+    print(type(e).__name__)
+def g(x):
+    return x.nope()
+try:
+    print(g(None))
+except AttributeError as e:
+    print(type(e).__name__)
+""", "AttributeError\nAttributeError\n"),
+    # W5.1 / I-048: boxed super proxy has no tuple count/index.
+    ("""class C:
+    def f(self):
+        s = super()
+        return s.count(1)
+try:
+    print(C().f())
+except AttributeError as e:
+    print(type(e).__name__)
+""", "AttributeError\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

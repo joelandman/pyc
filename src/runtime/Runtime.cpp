@@ -101,6 +101,7 @@ static constexpr int IMMORTAL_REFCOUNT = 0x3fffffff;
 struct TryFrame;
 static thread_local TryFrame* g_try_stack = nullptr;
 static void pyc_raise_msg(const char* type, const char* msg);
+static const char* pyc_builtin_type_name(PyObject* o);
 
 #define PYC_ALWAYS_INLINE __attribute__((always_inline))
 
@@ -1692,7 +1693,7 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
     if (obj->type == 16) {
         // Matches CPython's PosixPath repr when nested inside a container
         // (e.g. `print([Path("a/b")])` -> `[PosixPath('a/b')]`).
-        return fprintf(fp, "PosixPath('%s')", obj->str.c_str());
+        return fprintf(fp, "PosixPath(%s)", pyc_format_str_repr(obj->str).c_str());
     }
     return fprintf(fp, "<object>");
 }
@@ -3270,7 +3271,12 @@ PyObject* Pyc_FormatValue(PyObject* value, PyObject* specObj) {
 // ValueError: empty separator (same as CPython).
 PyObject* PyString_Partition(PyObject* s, PyObject* sep) {
     std::string str = (s && s->type == 3) ? s->str : "";
-    std::string delim = (sep && sep->type == 3) ? sep->str : "";
+    if (!sep || sep->type != 3) {
+        std::string msg = std::string("must be str, not ") + pyc_builtin_type_name(sep);
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
+    std::string delim = sep->str;
     if (delim.empty()) {
         pyc_raise_msg("ValueError", "empty separator");
         return nullptr;
@@ -3290,7 +3296,12 @@ PyObject* PyString_Partition(PyObject* s, PyObject* sep) {
 }
 PyObject* PyString_RPartition(PyObject* s, PyObject* sep) {
     std::string str = (s && s->type == 3) ? s->str : "";
-    std::string delim = (sep && sep->type == 3) ? sep->str : "";
+    if (!sep || sep->type != 3) {
+        std::string msg = std::string("must be str, not ") + pyc_builtin_type_name(sep);
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
+    std::string delim = sep->str;
     if (delim.empty()) {
         pyc_raise_msg("ValueError", "empty separator");
         return nullptr;
@@ -3351,6 +3362,14 @@ static PyObject* pyc_format_resolve_field(const std::string& fieldName,
             PyObject* nameStr = PyUnicode_FromString(attr.c_str());
             PyObject* next = Pyc_GetAttr(val, nameStr);
             Py_DECREF(nameStr);
+            if (!next) {
+                std::string msg = std::string("'") + pyc_builtin_type_name(val) +
+                                  "' object has no attribute '" + attr + "'";
+                if (ownVal && val) Py_DECREF(val);
+                ownVal = false;
+                pyc_raise_msg("AttributeError", msg.c_str());
+                return nullptr;
+            }
             if (ownVal && val) Py_DECREF(val);
             val = next;
             ownVal = true;
@@ -3371,13 +3390,20 @@ static PyObject* pyc_format_resolve_field(const std::string& fieldName,
             }
             PyObject* keyObj = isInt ? PyInt_FromLong(std::atol(key.c_str()))
                                      : PyUnicode_FromString(key.c_str());
-            PyObject* next = Pyc_GetItem(val, keyObj);
+            PyObject* next = Pyc_Subscript(val, keyObj);
             Py_DECREF(keyObj);
             if (ownVal && val) Py_DECREF(val);
+            if (!next) {
+                ownVal = false;
+                return nullptr;
+            }
             val = next;
             ownVal = true;
         } else {
-            break;
+            if (ownVal && val) Py_DECREF(val);
+            ownVal = false;
+            pyc_raise_msg("ValueError", "Only '.' or '[' may follow ']'");
+            return nullptr;
         }
     }
     return val;
@@ -3407,15 +3433,31 @@ PyObject* PyBuiltin_StrFormat(PyObject* templateStr, PyObject* argsList, PyObjec
             size_t close = tmpl.find('}', i);
             if (close == std::string::npos) { out += tmpl.substr(i); break; }
             std::string inner = tmpl.substr(i + 1, close - i - 1);
+            // CPython field_name: ':' / '!' inside [...] are index chars.
+            // Only a colon/bang at bracket-depth 0 starts format_spec / conversion.
+            size_t colon = std::string::npos;
+            int colonDepth = 0;
+            for (size_t j = 0; j < inner.size(); ++j) {
+                char ch = inner[j];
+                if (ch == '[') colonDepth++;
+                else if (ch == ']' && colonDepth > 0) colonDepth--;
+                else if (ch == ':' && colonDepth == 0) { colon = j; break; }
+            }
             std::string fieldPart = inner, formatSpecStr;
-            size_t colon = inner.find(':');
             if (colon != std::string::npos) {
                 fieldPart = inner.substr(0, colon);
                 formatSpecStr = inner.substr(colon + 1);
             }
             std::string fieldName = fieldPart;
             char conv = 0;
-            size_t bang = fieldPart.find('!');
+            size_t bang = std::string::npos;
+            int bangDepth = 0;
+            for (size_t j = 0; j < fieldPart.size(); ++j) {
+                char ch = fieldPart[j];
+                if (ch == '[') bangDepth++;
+                else if (ch == ']' && bangDepth > 0) bangDepth--;
+                else if (ch == '!' && bangDepth == 0) { bang = j; break; }
+            }
             if (bang != std::string::npos) {
                 if (bang + 1 < fieldPart.size()) conv = fieldPart[bang + 1];
                 fieldName = fieldPart.substr(0, bang);
@@ -6112,18 +6154,30 @@ void Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step
 // is length-preserving, so del lst[::2] needs a real delete. Converts
 // A4 ilist/flist first (same as SetSlice).
 void Pyc_DelSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step) {
-    if (!obj || obj->type != 1) return;
+    if (!obj) return;
+    if (obj->type != 1) {
+        std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
+                          "' object does not support item deletion";
+        pyc_raise_msg("TypeError", msg.c_str());
+        return;
+    }
     pyc_ensure_boxed_list(obj);
 
     bool explicit_step = (step != nullptr);
     long n = (long)obj->list.size();
     long stp = 1;
     if (explicit_step && (step->type == 0 || step->type == 5)) stp = step->value;
-    if (stp == 0) return;
+    if (stp == 0) {
+        pyc_raise_msg("ValueError", "slice step cannot be zero");
+        return;
+    }
 
     long s = (start && (start->type == 0 || start->type == 5)) ? start->value : (stp > 0 ? 0 : n - 1);
     long e = (stop  && (stop->type == 0 || stop->type == 5)) ? stop->value : (stp > 0 ? n : -1);
     if (s < 0) s += n;
+    // CPython PySlice_AdjustIndices: under-range start with step<0 clamps to -1
+    // (slicelength 0), not 0 (which would delete index 0).
+    if (s < 0) s = (stp < 0) ? -1 : 0;
     if (e < 0 && (stop && (stop->type == 0 || stop->type == 5))) e += n;
 
     if (!explicit_step || stp == 1) {
@@ -6147,7 +6201,7 @@ void Pyc_DelSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step
         for (long i = ss; i < ee; i += stp) positions.push_back(i);
     } else {
         long ss = s;
-        if (ss < 0) ss = 0;
+        if (ss < 0) ss = -1;
         if (ss >= n) ss = n - 1;
         for (long i = ss; i > e && i >= 0; i += stp) {
             if ((size_t)i < (size_t)n) positions.push_back(i);
@@ -6837,7 +6891,6 @@ static PyObject* runRegexAll(pcre2_code* code, const std::string& subject) {
         PCRE2_SIZE* dst_ov = pcre2_get_ovector_pointer(mdcopy);
         for (int k = 0; k < 2 * (capture_count + 1); ++k) dst_ov[k] = ovector[k];
         PyObject* m = allocObject(9);
-        if (!m) { pcre2_match_data_free(mdcopy); break; }
         MatchObj* mo = new MatchObj();
         mo->md = mdcopy;
         mo->subject = subject;
@@ -6968,7 +7021,6 @@ extern "C" PyObject* PyBuiltin_ReSearch(PyObject* pattern, PyObject* subject, Py
     pcre2_match_data_free(md);
     pcre2_code_free(code);
     PyObject* m = allocObject(9);
-    if (!m) { pcre2_match_data_free(mdcopy); return nullptr; }
     MatchObj* mo = new MatchObj();
     mo->md = mdcopy;
     mo->subject = subject->str;
@@ -7009,7 +7061,6 @@ extern "C" PyObject* PyBuiltin_ReMatch(PyObject* pattern, PyObject* subject, PyO
     pcre2_match_data_free(md);
     pcre2_code_free(code);
     PyObject* m = allocObject(9);
-    if (!m) { pcre2_match_data_free(mdcopy); return nullptr; }
     MatchObj* mo = new MatchObj();
     mo->md = mdcopy;
     mo->subject = subject->str;
@@ -7024,7 +7075,6 @@ extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern, PyObject* flags) {
     pcre2_code* code = compileRegex(pattern->str, err, pyc_re_unbox_flags(flags));
     if (!code) { std::fprintf(stderr, "re.error: %s\n", err.c_str()); return nullptr; }
     PyObject* o = allocObject(8);
-    if (!o) { pcre2_code_free(code); return nullptr; }
     CompiledRegex* cr = new CompiledRegex();
     cr->code = code;
     cr->pattern = pattern->str;
@@ -12688,7 +12738,7 @@ static std::string pyc_exc_message(PyObject* exc) {
         if (!exc->cell_content) return "";
         // KeyError displays the repr of its argument (str(KeyError('k')) == "'k'").
         if (exc->str == "KeyError" && exc->cell_content->type == 3)
-            return "'" + exc->cell_content->str + "'";
+            return pyc_format_str_repr(exc->cell_content->str);
         PyObject* s = PyStr_FromAny(exc->cell_content);
         std::string r = s ? s->str : "";
         if (s) Py_DECREF(s);
@@ -13261,7 +13311,9 @@ extern "C" PyObject* PyBuiltin_Super(void) {
     super->str = "";
     super->list = {};
     super->dict = {};
-    super->cell_content = nullptr;  // will be set by compiler to parent class
+    // Non-null marker: tag 7 is also tuple (cell_content stays null).
+    // Compiler does not currently overwrite this; used to skip tuple count/index.
+    super->cell_content = super;
     return super;
 }
 
@@ -13406,11 +13458,7 @@ extern "C" PyObject* PyBuiltin_SuperMethod(PyObject* args) {
                 Pyc_SetItem(self, argsKey, stored);
                 Py_DECREF(argsKey);
                 Py_DECREF(stored);
-                PyObject* none = new PyObject();
-                none->refcount = 1;
-                none->type = 5;
-                none->str = "None";
-                return none;
+                return nullptr;
             }
         }
         return nullptr;
@@ -13889,12 +13937,24 @@ static PycBuiltinMethodFn pyc_lookup_builtin_method(int tag, const std::string& 
 
 static PyObject* pyc_call_builtin_method(PyObject* receiver, PyObject* nameObj,
                                          PyObject* a0, PyObject* a1, PyObject* argsList) {
-    if (!receiver || !nameObj || nameObj->type != 3) return nullptr;
-    const std::string& m = nameObj->str;
-    if (PycBuiltinMethodFn fn = pyc_lookup_builtin_method(receiver->type, m)) {
-        return fn(receiver, a0, a1, argsList);
+    if (!nameObj || nameObj->type != 3) return nullptr;
+    if (!receiver) {
+        std::string msg = std::string("'") + pyc_builtin_type_name(nullptr) +
+                          "' object has no attribute '" + nameObj->str + "'";
+        pyc_raise_msg("AttributeError", msg.c_str());
+        return nullptr;
     }
-    std::string msg = std::string("'") + pyc_builtin_type_name(receiver) +
+    const std::string& m = nameObj->str;
+    // Tag 7 is tuple and super proxy. Super has non-null cell_content;
+    // do not serve tuple count/index.
+    bool isSuper = (receiver->type == 7 && receiver->cell_content);
+    if (!isSuper) {
+        if (PycBuiltinMethodFn fn = pyc_lookup_builtin_method(receiver->type, m)) {
+            return fn(receiver, a0, a1, argsList);
+        }
+    }
+    const char* tname = isSuper ? "super" : pyc_builtin_type_name(receiver);
+    std::string msg = std::string("'") + tname +
                       "' object has no attribute '" + m + "'";
     pyc_raise_msg("AttributeError", msg.c_str());
     return nullptr;

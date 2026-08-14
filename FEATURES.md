@@ -162,18 +162,22 @@ List-comp `name[const]` is typed only when proven int/float; otherwise boxed (I-
 `format(*args, **kwargs)`, `str % value`.
 
 `.format()` supports positional/index/keyword fields, format specs, `!r`/`!s`/`!a`,
-and nested `{0.attr}` / `{0[k]}` ([I-010](ISSUES.md)). `partition("")` /
-`rpartition("")` raise `ValueError: empty separator`. Misses still print `None`
-([I-041](ISSUES.md)); non-str sep is `ValueError` not `TypeError` ([I-040](ISSUES.md)).
+and nested `{0.attr}` / `{0[k]}` ([I-010](ISSUES.md)). Nested misses raise
+IndexError/KeyError/AttributeError ([I-041](ISSUES.md)). `:` / `!` inside `[…]`
+are index characters ([I-042](ISSUES.md)). Base-field misses still print `None`
+([I-053](ISSUES.md)). `partition("")` / `rpartition("")` raise
+`ValueError: empty separator`. Non-str sep is `TypeError` ([I-040](ISSUES.md)).
 
-Container / `repr` of `str` escapes `\n`, `\t`, `\r`, `\\`, quotes, and other ASCII controls (`\xHH`), with CPython quote-switching. Bare `print("a\nb")` is still `str` (real newline). NUL in a str *literal* is still truncated at parse/codegen ([I-021](ISSUES.md)); KeyError/`Path` wrappers still quote raw ([I-022](ISSUES.md)).
+Container / `repr` of `str` escapes `\n`, `\t`, `\r`, `\\`, quotes, and other ASCII controls (`\xHH`), with CPython quote-switching. Bare `print("a\nb")` is still `str` (real newline). NUL in a str *literal* is still truncated at parse/codegen ([I-021](ISSUES.md)). `KeyError` / nested `Path` print use `repr` ([I-022](ISSUES.md)).
 
 ---
 
 ## List / Dict / Set / Tuple Methods
 
 - **list**: `append`, `sort` (`key=`, `reverse=`), `pop`/`pop(i)`, `insert`, `remove`,
-  `index`, `count`, `reverse`, `extend`, `copy`, `clear`, `+`, `del lst[i]`, `del lst[s:e]` / `del lst[::2]`
+  `index`, `count`, `reverse`, `extend`, `copy`, `clear`, `+`, `del lst[i]`, `del lst[s:e]` / `del lst[::2]`.
+  `del` of a tuple/str slice is `TypeError` ([I-026](ISSUES.md)); `del lst[::0]` is
+  `ValueError` ([I-027](ISSUES.md)).
 - **dict**: `keys`, `values` (lists), `items` (list of 2-tuples), `get`, `pop`, `update`, `copy`, `clear`
 - **set**: `add`, `remove`, `discard`, `pop`, `clear`, `copy`, `update`,
   `union`/`intersection`/`difference`/`symmetric_difference`,
