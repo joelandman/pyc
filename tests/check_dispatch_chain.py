@@ -58,9 +58,10 @@ NARROWING = ("typeOf(", "isProven", "isCollectionsModule", "args.size()",
 # model. Each entry must say which enclosing guard makes it safe. Every
 # exemption is printed on each run; if one stops being needed, delete it.
 EXEMPT = {
-    "exists": "enclosed by `if (typeOf(obj) == \"path\" || typeOf(obj) == "
-              "\"boxed\")`, so a dict receiver (os.path.exists) still "
-              "reaches the later arm",
+    # `exists` was removed in W2.3: pathlib exists is now
+    # `methodName == "exists" && typeOf(obj) == "path"` (narrowed), and
+    # os.path.exists is gated on AST module identity. The exemption no
+    # longer fired after I-006.
     "compile": "both arms are inside the `re.`-module block and run in "
                "sequence (the first picks the runtime fn, the second adds "
                "flags handling) -- independent `if`s, not an else-chain",

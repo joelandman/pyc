@@ -22,6 +22,7 @@ Confirmed later and closed (do not re-open from a paragraph below):
 - `-g` DWARF: implemented (I-108; leftovers I-019).
 - Name-only `lowerMethodCall` steal of user `call`/`exists`/`bit_length`/`fromkeys`/`unlink`/`isfile`/`isdir`/`check_output`: gated (I-006). Leftovers I-030 / I-031.
 - `module.get()` / user `.get()` no longer dict `.get()` (I-007). Leftovers I-032–I-035.
+- `check_dispatch_chain.py` `exists` exemption retired (W2.3); `compile` remains. The checker itself stays.
 
 ## Design Choices of Omission
 
