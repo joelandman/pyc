@@ -6016,6 +6016,24 @@ PyObject* PyString_Find3(PyObject* s, PyObject* sub, PyObject* start) {
     return PyInt_FromLong(pos == std::string::npos ? -1L : (long)pos);
 }
 
+PyObject* PyString_Find4(PyObject* s, PyObject* sub, PyObject* start, PyObject* end) {
+    if (!s || s->type != 3) return PyInt_FromLong(-1);
+    if (!sub || sub->type != 3) {
+        std::string msg = std::string("must be str, not ") + pyc_builtin_type_name(sub);
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
+    long st = start ? start->value : 0;
+    long en = end ? end->value : (long)s->str.size();
+    if (st < 0) st = 0;
+    if (en > (long)s->str.size()) en = (long)s->str.size();
+    if (en <= st) return PyInt_FromLong(-1L);
+    size_t pos = s->str.find(sub->str, (size_t)st);
+    if (pos == std::string::npos || (long)pos + (long)sub->str.size() > en)
+        return PyInt_FromLong(-1L);
+    return PyInt_FromLong((long)pos);
+}
+
 PyObject* PyString_RFind(PyObject* s, PyObject* sub) {
     if (!s || s->type != 3) return PyInt_FromLong(-1);
     if (!sub || sub->type != 3) {
@@ -14050,7 +14068,10 @@ static PyObject* pyc_bm_str_format(PyObject* recv, PyObject* a0, PyObject* a1,
     if (owned) Py_DECREF(owned);
     return r;
 }
-static PyObject* pyc_bm_str_find(PyObject* recv, PyObject* a0, PyObject* a1, PyObject*) {
+static PyObject* pyc_bm_str_find(PyObject* recv, PyObject* a0, PyObject* a1,
+                                PyObject* argsList) {
+    PyObject* a2 = pyc_arg_at(argsList, 2);
+    if (a2) return PyString_Find4(recv, a0, a1, a2);
     return a1 ? PyString_Find3(recv, a0, a1) : PyString_Find(recv, a0);
 }
 static PyObject* pyc_bm_str_rfind(PyObject* recv, PyObject* a0, PyObject* a1,

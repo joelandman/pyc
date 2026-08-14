@@ -9270,7 +9270,9 @@ class LoweringVisitor {
             }
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_StrFormat", obj, argsListVar, kwargsDictVar}, res);
         } else if (methodName == "find" && isProvenStr(obj)) {
-            if (args.size() >= 2) {
+            if (args.size() >= 3) {
+                ir.addInstruction(currentFunc, "call", {"PyString_Find4", obj, args[0], args[1], args[2]}, res, "int");
+            } else if (args.size() >= 2) {
                 ir.addInstruction(currentFunc, "call", {"PyString_Find3", obj, args[0], args[1]}, res, "int");
             } else {
                 std::string arg = args.empty() ? "" : args[0];

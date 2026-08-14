@@ -4166,6 +4166,14 @@ d = D()
 d.x = None
 print('{0.x}'.format(d))
 """, "None\nNone\n"),
+    # W5.2 / I-045: str.find keeps the end argument (proven and boxed).
+    ("""print("banana".find("a", 2, 3))
+print("banana".find("a", 2, 6))
+def f(s):
+    return s.find("a", 2, 3)
+print(f("banana"))
+print("banana".rfind("n", 0, 3))
+""", "-1\n3\n-1\n2\n"),
     # W5.1b / I-056: del None[s:e] is TypeError, not a no-op.
     ("""try:
     del None[1:3]

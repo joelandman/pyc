@@ -563,6 +563,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_RFind4", module.get());
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_Find4", module.get());
     }
     // Additional list / dict / string methods added for completeness.
     // 2-arg: insert(list, idx, item), extend(list, other), center/ljust/rjust(s, w, fill),

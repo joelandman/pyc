@@ -83,12 +83,17 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Split from I-019 after W3.4. Does not retype user-local DI (I-043).
 
 ### I-045  `str.find` drops `end` (proven and boxed)
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: CPython `"banana".find("a", 2, 3)` → `-1`. pyc → `3`. Proven arm `Compiler.cpp` `find` (`args.size() >= 2` → `PyString_Find3` only; no Find4). Boxed fallback `pyc_bm_str_find` (W4.2 table) still uses a0/a1 only. `rfind` already has `PyString_RFind4` and reads `pyc_arg_at(argsList, 2)` on the arity-3+ list path. Same result for a literal `"banana".find(...)` (table/arm) and `def f(s): return s.find("a", 2, 3)`.
-- Files: `src/Compiler.cpp` (`find` arm), `src/runtime/Runtime.cpp` (`PyString_Find3`, `pyc_bm_str_find`)
+- Evidence: W5.2 CASE (`tests/runner.py` banner `# W5.2 / I-045`):
+  `"banana".find("a", 2, 3)` / `"banana".find("a", 2, 6)` / `def f(s): return s.find("a", 2, 3); f("banana")` / `"banana".rfind("n", 0, 3)` → `-1\n3\n-1\n2\n`.
+  Proven: `Compiler.cpp` find arm `args.size() >= 3` → `PyString_Find4` (no longer `>= 2` → Find3 only).
+  Boxed: `pyc_bm_str_find` reads `pyc_arg_at(argsList, 2)` and calls Find4 — same a2 probe as `rfind`.
+  Codegen: 4-arg extern `PyString_Find4` next to `PyString_RFind4`; header is `extern "C"`.
+  Ticket inputs through Find4: st=2 en=3, `find("a", 2)` is 3, `3+1 > 3` → `-1`; st=2 en=6 → `3`. Boxed arity-3 goes through `Pyc_CallMethodOrBuiltin` + argsList, not `CallBuiltinMethod2`.
+- Files: `src/Compiler.cpp` (`find` arm), `src/runtime/Runtime.cpp` (`PyString_Find4`, `pyc_bm_str_find`), `src/codegen/Codegen.cpp`, `include/pyc/runtime.h`
 - Blocks merge: no
-- Notes: Found reviewing W4.1 / I-015. W4.2 copied the same handler. Not this ticket — 3-arg `rfind`/`replace` still go through the list path and keep `end`/`count`. Fix is a `PyString_Find4` plus the same a2 probe `rfind` already has.
+- Notes: Wave 5 W5.2. SWR: no merge blockers on this CASE. Empty-sub + start==end is I-061. `count`/`index`/`startswith`/`endswith` still drop start/end (I-062).
 
 ### I-046  Boxed `split(None)` / `rsplit(None)` is space-split, not whitespace-run
 - Status: fixed
@@ -447,6 +452,28 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/runtime/Runtime.cpp` (`PyString_RIndex`)
 - Blocks merge: no
 - Notes: Found reviewing W5.1b / I-052. Same sentinel class; not in the ticket CASE (`index`/`find` only). Do not demand in W5.1b.
+
+### I-061  `str.find`/`rfind` empty-sub + start==end returns -1
+- Status: open
+- Severity: wrong-answer
+- Evidence: CPython empty string is found at every index in `[start, end]` including `start == end` when `0 <= start <= len`:
+  - `"banana".find("", 2, 2)` → `2`; `"banana".find("", 6, 6)` → `6`; `"banana".rfind("", 2, 2)` → `2`.
+  `PyString_Find4` (`Runtime.cpp` ~6030) and `PyString_RFind4` (~6074) both `if (en <= st) return -1` before the search. Non-empty `"banana".find("a", 3, 3)` is `-1` on both (not a bug). Empty-sub with `start < end` already matches (`find("", 2, 3)` → `2`).
+- Files: `src/runtime/Runtime.cpp` (`PyString_Find4`, `PyString_RFind4`)
+- Blocks merge: no
+- Notes: Found reviewing W5.2 / I-045. Same clamp also treats a negative end as an empty range (`"banana".find("a", 0, -1)` — CPython `1`; pyc `-1`) and does not do `start += len`. Pre-existing on RFind4; new on Find4. Not the ticket CASE (`"a", 2, 3`). Do not demand in W5.2.
+
+### I-062  `str.count`/`index`/`startswith`/`endswith` drop start/end
+- Status: open
+- Severity: wrong-answer
+- Evidence: Same class as I-045 before the fix. Table rows are arity-1 (`Compiler.cpp` `builtinMethodRows`: startswith/endswith/count/index → `PyString_Count` / `PyString_Index` / `PyString_StartsWith` / `PyString_EndsWith`). Boxed handlers are `PYC_WRAP1` (a1 and argsList ignored).
+  - `"banana".count("a", 2, 3)` — CPython `0`; pyc `3`.
+  - `"banana".index("a", 2, 3)` — CPython `ValueError`; pyc `1` (first `'a'`).
+  - `"banana".startswith("n", 2, 3)` — CPython `True`; pyc `False`.
+  - `"banana".endswith("n", 0, 3)` — CPython `True`; pyc `False`.
+- Files: `src/Compiler.cpp` (`builtinMethodRows`), `src/runtime/Runtime.cpp` (`pyc_bm_str_count` / `_index` / `_startswith` / `_endswith`)
+- Blocks merge: no
+- Notes: Found reviewing W5.2 / I-045. `find`/`rfind` now keep end; these four still do not. Not this ticket. Do not demand in W5.2.
 
 ---
 

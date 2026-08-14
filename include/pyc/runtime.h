@@ -104,6 +104,7 @@ PyObject* Pyc_Iter(PyObject* obj);
 PyObject* Pyc_Next(PyObject* iter);
 PyObject* PyString_Find(PyObject* s, PyObject* sub);
 PyObject* PyString_Find3(PyObject* s, PyObject* sub, PyObject* start);
+PyObject* PyString_Find4(PyObject* s, PyObject* sub, PyObject* start, PyObject* end);
 PyObject* PyString_RFind(PyObject* s, PyObject* sub);
 PyObject* PyString_RFind3(PyObject* s, PyObject* sub, PyObject* start);
 PyObject* PyString_RFind4(PyObject* s, PyObject* sub, PyObject* start, PyObject* end);
