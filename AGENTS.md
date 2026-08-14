@@ -165,14 +165,19 @@ LTO-only regression cannot hide completely. Verify both levels on feature work.
 ## Multi-agent roles
 
 See `agents/swe.md`, `agents/swr.md`, `agents/coordinator.md`.
+Grok types live in `.grok/agents/` (`swe`, `swr`, `debug`) plus
+`.grok/skills/coordinator/` for this conversation's cadence.
 
-- **SWE** implements one ticket. Exclusive lock on `Compiler.cpp` /
-  `Runtime.cpp` / `Codegen.cpp` as named. Does not edit ISSUES.md or
-  `tests/runner.py` unless the ticket says so.
-- **SWR** is read-only on sources. Owns `ISSUES.md`. Classifies findings;
-  only crash/wrong-answer on this slice blocks merge.
-- **Coordinator** writes tickets and failing tests, runs harnesses, updates
-  docs, merges. Never two writers on the same lock file.
+- **SWE** (`subagent_type: swe`) implements one ticket. Exclusive lock on
+  `Compiler.cpp` / `Runtime.cpp` / `Codegen.cpp` as named. Does not edit
+  ISSUES.md or `tests/runner.py` unless the ticket says so.
+- **SWR** (`subagent_type: swr`) is read-only on sources. Drafts `ISSUES.md`
+  updates; Coordinator applies them. Classifies findings; only
+  crash/wrong-answer on this slice blocks merge.
+- **Debug** (`subagent_type: debug`) root-causes; returns a ticket-shaped
+  note. Does not implement.
+- **Coordinator** (this conversation) writes tickets and failing tests, runs
+  harnesses, updates docs, merges. Never two writers on the same lock file.
 
 Do not edit the legacy OpenCode stubs `agents/coding.md` / `review.md` /
 `debug.md` as if they were the source of truth — they redirect here.

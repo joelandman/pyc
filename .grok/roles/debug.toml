@@ -1,0 +1,4 @@
+# Debug — root-cause only; returns a ticket-shaped note
+description = "Root-causes a pyc crash or wrong-answer; does not implement the fix"
+default_capability_mode = "all"
+reasoning_effort = "high"

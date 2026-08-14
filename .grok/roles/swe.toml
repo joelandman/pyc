@@ -1,0 +1,4 @@
+# SWE — exclusive implementer for one pyc ticket
+description = "Implements one pyc ticket under a named Compiler/Runtime/Codegen lock"
+default_capability_mode = "all"
+reasoning_effort = "high"
