@@ -23,6 +23,7 @@ Confirmed later and closed (do not re-open from a paragraph below):
 - Name-only `lowerMethodCall` steal of user `call`/`exists`/`bit_length`/`fromkeys`/`unlink`/`isfile`/`isdir`/`check_output`: gated (I-006). Leftovers I-030 / I-031.
 - `module.get()` / user `.get()` no longer dict `.get()` (I-007). Leftovers I-032–I-035.
 - `check_dispatch_chain.py` `exists` exemption retired (W2.3); `compile` remains. The checker itself stays.
+- Uncaught tracebacks print `File "…", line N, in <name>` (I-009). Leftovers: reraise/nomatch snapshot (I-036), IR frame names (I-037).
 
 ## Design Choices of Omission
 
@@ -2066,8 +2067,8 @@ list-vs-tuple architectural choice — not a new gap); and a non-matching
 handler rather than swallowing the exception. Two pre-existing,
 already-established differences remain, both applying equally to
 *every* exception in pyc, not specific to this fix: uncaught tracebacks
-don't include the `File "...", line N` detail CPython shows (still
-true), and `type(e).__name__` on any caught exception instance printed
+don't include the `File "...", line N` detail CPython shows (fixed
+later, I-009; leftovers I-036 / I-037), and `type(e).__name__` on any caught exception instance printed
 `None` — fixed on a later pass, see the dedicated entry further down.
 Added as permanent `tests/runner.py` regressions. Full suite and import
 tests stay green; `valgrind --tool=memcheck` shows 0 errors.

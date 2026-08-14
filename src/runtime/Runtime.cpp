@@ -12122,11 +12122,54 @@ void PyErr_Print(void) { fprintf(stderr, "Python error occurred\n"); }
 // handler in linear IR without per-instruction exception checks.
 #include <csetjmp>
 static thread_local PyObject* g_current_exception = nullptr;
+
+// Python-level traceback frames (I-009). Thread-local C structs, not
+// PyObjects. Codegen emits Push/Pop around user function bodies and
+// SetLineno before IR ops with lineno > 0. The live stack is unwound
+// on longjmp (via TryFrame::tb_depth) so a *caught* exception cannot
+// leak frames into a later uncaught one. The printed snapshot is a
+// separate copy taken at raise time.
+struct PycTbFrame {
+    const char* file;
+    const char* func;
+    int line;
+};
+static thread_local std::vector<PycTbFrame> g_tb_stack;
+static thread_local std::vector<PycTbFrame> g_tb_snapshot;
+
+void Pyc_PushFrame(const char* file, const char* func) {
+    g_tb_stack.push_back({
+        file ? file : "<unknown>",
+        func ? func : "<unknown>",
+        0
+    });
+}
+
+void Pyc_PopFrame(void) {
+    if (!g_tb_stack.empty())
+        g_tb_stack.pop_back();
+}
+
+void Pyc_SetLineno(int line) {
+    if (!g_tb_stack.empty())
+        g_tb_stack.back().line = line;
+}
+
+static void pyc_tb_snapshot(void) {
+    g_tb_snapshot = g_tb_stack;
+}
+
+static void pyc_tb_unwind(size_t depth) {
+    if (g_tb_stack.size() > depth)
+        g_tb_stack.resize(depth);
+}
+
 struct TryFrame {
     jmp_buf jmp;
     PyObject* filterType;   // not used for dispatch in the simple model
     PyObject* exc;          // the exception that triggered this frame
     TryFrame* next;
+    size_t tb_depth;        // g_tb_stack.size() at pyc_try_push
 };
 // g_try_stack is forward-declared at the top of the file.
 
@@ -12135,6 +12178,7 @@ void pyc_try_push(void* jmpBuf, PyObject* filterType) {
     f->filterType = filterType;          // not used currently
     f->exc = nullptr;
     f->next = g_try_stack;
+    f->tb_depth = g_tb_stack.size();
     g_try_stack = f;
     if (jmpBuf) memcpy(f->jmp, jmpBuf, sizeof(jmp_buf));
 }
@@ -12676,10 +12720,18 @@ PyObject* pyc_exc_matches(PyObject* exc, PyObject* typeName) {
 static thread_local PyObject* g_last_exception = nullptr;
 
 // Uncaught exception: report like CPython (type: message on stderr) and exit.
+// Frames are oldest-first (CPython "most recent call last").
 static void pyc_fatal_exception(PyObject* exc) {
     std::string tn = pyc_exc_type_name(exc);
     std::string msg = pyc_exc_message(exc);
     fprintf(stderr, "Traceback (most recent call last):\n");
+    for (const PycTbFrame& fr : g_tb_snapshot) {
+        int line = fr.line > 0 ? fr.line : 1;
+        fprintf(stderr, "  File \"%s\", line %d, in %s\n",
+                fr.file ? fr.file : "<unknown>",
+                line,
+                fr.func ? fr.func : "<unknown>");
+    }
     if (msg.empty()) fprintf(stderr, "%s\n", tn.c_str());
     else fprintf(stderr, "%s: %s\n", tn.c_str(), msg.c_str());
     exit(1);
@@ -12687,6 +12739,9 @@ static void pyc_fatal_exception(PyObject* exc) {
 
 void pyc_raise(PyObject* exc) {
     if (!exc) return;
+    // Snapshot the live Python frame stack before longjmp or fatal so the
+    // printer is independent of the try-frame unwind below.
+    pyc_tb_snapshot();
     // Exception class objects (type 12): instantiate to a structured
     // exception (type 10) before raising.
     if (exc->type == 12) {
@@ -12703,6 +12758,7 @@ void pyc_raise(PyObject* exc) {
         if (g_try_stack) {
             TryFrame* f = g_try_stack;
             g_try_stack = f->next;
+            pyc_tb_unwind(f->tb_depth);
             if (g_current_exception) Py_DECREF(g_current_exception);
             g_current_exception = instantiated;
             Py_INCREF(instantiated);
@@ -12725,9 +12781,12 @@ void pyc_raise(PyObject* exc) {
         // Pop the frame BEFORE the jump: handler dispatch runs in generated
         // code on the exception path, and a raise from a handler / no-match
         // re-raise must target the next outer try. The exception itself
-        // travels in g_current_exception.
+        // travels in g_current_exception. Resize the live tb stack to the
+        // depth recorded at pyc_try_push so frames from functions that
+        // longjmp'd out do not leak into a later uncaught raise.
         TryFrame* f = g_try_stack;
         g_try_stack = f->next;
+        pyc_tb_unwind(f->tb_depth);
         if (g_current_exception) Py_DECREF(g_current_exception);
         g_current_exception = exc;
         Py_INCREF(exc);

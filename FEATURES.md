@@ -106,7 +106,7 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 - `except (A, B)`, bare re-raise, `raise ValueError("msg")`
 - User subclasses: `class MyError(Exception): pass` (no custom `super().__init__`)
 - `finally` on fall-through, exception, `return`, `break`/`continue`
-- Uncaught exceptions print a traceback line to stderr and exit 1 — **without** `File …, line N` ([I-009](ISSUES.md))
+- Uncaught exceptions print a traceback to stderr and exit 1, including `File "…", line N, in <name>` frames ([I-009](ISSUES.md)). Reraise/nomatch drops callee frames ([I-036](ISSUES.md)); methods print IR names (`C__foo`, [I-037](ISSUES.md)).
 
 ---
 

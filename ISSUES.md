@@ -28,14 +28,6 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Wave 3 W3.2.
 
-### I-009  Uncaught tracebacks lack File/line
-- Status: open
-- Severity: limitation
-- Evidence: IMPLEMENTATION.md exceptions. IR already carries `lineno` for `-g`.
-- Files: Runtime exception printer; possibly Codegen
-- Blocks merge: no
-- Notes: Wave 3 W3.1.
-
 ### I-010  str.format nested fields; partition("") is lenient
 - Status: open
 - Severity: limitation
@@ -238,9 +230,36 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Found reviewing W2.2 / I-007. `__init__` already had this pattern; the slice copied it for regular methods so `C().get("x")` can omit `default=None`. Top-level `default=None` / `default=1` work. Historic shared-slot bug is not back: slots are `__default_<Class>__<method>_<i>`. Do not demand in W2.2.
 
+### I-036  Traceback snapshot overwritten on reraise / nomatch
+- Status: open
+- Severity: wrong-answer
+- Evidence: `pyc_raise` always does `g_tb_snapshot = g_tb_stack` then, if a try is active, `pyc_tb_unwind(try.tb_depth)` before `longjmp`. A later `pyc_raise` of the same exception (nomatch `pyc_raise(exc)` in `Compiler.cpp` ~8508, bare `pyc_reraise`, or `pyc_materialize_iterator_protocol` propagate) re-snapshots the already-unwound live stack and drops callee frames.
+  - `def f(): raise ValueError('inner')` / `try: f()` / `except TypeError: pass` — CPython frames `<module>` + `f`; pyc prints only `<module>`.
+  - `try: f()` / `except ValueError: raise` — CPython keeps `f`; pyc bare-reraise snapshots only the catching frame.
+- Files: `src/runtime/Runtime.cpp` (`pyc_raise`, `pyc_reraise`, `pyc_tb_snapshot`)
+- Blocks merge: no
+- Notes: Found reviewing W3.1 / I-009. Caused by this slice; **not** the ticket cases (no `try`). New raise after a successful catch is fine (`tb_depth` unwind prevents stale `f`). Fix is snapshot-once / attach the first snapshot to the exception (CPython) and skip overwrite on reraise. Do not demand in W3.1.
+
+### I-037  Traceback frame names are IR names, not Python names
+- Status: open
+- Severity: wrong-answer
+- Evidence: Codegen `Pyc_PushFrame` uses `f.name` with only `__module__` → `<module>` and `__specialized_*` stripping (`Codegen.cpp` ~1911–1919). Methods are `Class__method` (`Compiler.cpp` ~9797). Nested defs are `__nesteddef_N`. Lambdas are `__lambda_N`.
+  - `class C: def foo(self): raise ValueError('m')` / `C().foo()` — CPython `in foo`; pyc `in C__foo`.
+  - `def outer():` / `def inner(): raise ValueError('n')` / `inner()` / `outer()` — CPython `in inner`; pyc `in __nesteddef_0`.
+- Files: `src/codegen/Codegen.cpp` (I-009 displayName), `src/Compiler.cpp` (`methodFuncName`, nested/lambda IR names)
+- Blocks merge: no
+- Notes: Found reviewing W3.1 / I-009. Ticket cases are top-level `f` and `<module>` (IR name == Python name). Same class as I-025 (missing-arg TypeError uses IR name). Do not demand in W3.1.
+
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
+
+### I-009  Uncaught tracebacks lack File/line
+- Status: fixed
+- Severity: limitation
+- Evidence: Runner 668/668, `file_case_failures=0`. `tests/check_traceback.py` 3/3 (`module_raise`, `func_raise`, `index_error`) at -O0; o2_smoke 2/2. Parent printed only the header + `Type: msg`. Frames are now `File "…", line N, in <name>` via a thread-local C stack (`Pyc_PushFrame` / `Pyc_PopFrame` / `Pyc_SetLineno`), snapshotted in `pyc_raise`, printed oldest-first in `pyc_fatal_exception`.
+- Files: `src/runtime/Runtime.cpp`, `include/pyc/runtime.h`, `src/codegen/Codegen.cpp`, `tests/check_traceback.py`
+- Notes: Wave 3 W3.1. SWR: no merge blockers. Leftovers I-036 (reraise/nomatch overwrite snapshot) / I-037 (IR frame names).
 
 ### I-007  `module.get()` dispatched as dict.get
 - Status: fixed

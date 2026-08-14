@@ -3953,6 +3953,27 @@ def main():
         file_failures += 1
         print("check_dispatch_chain.py missing")
 
+    # W3.1 / I-009: uncaught exceptions must print File/line frames.
+    # Compared against stderr of a compiled program, not CPython stdout.
+    total += 1
+    tb_checker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "check_traceback.py")
+    if os.path.exists(tb_checker):
+        chk = subprocess.run(
+            [sys.executable, tb_checker],
+            capture_output=True, text=True,
+            env={**os.environ, "PYC_BINARY": pyc},
+        )
+        sys.stdout.write(chk.stdout)
+        if chk.returncode == 0:
+            ok += 1
+        else:
+            file_failures += 1
+            sys.stdout.write(chk.stderr)
+    else:
+        file_failures += 1
+        print("check_traceback.py missing")
+
     print(f"{ok}/{total} (file_case_failures={file_failures})")
     if ok == total:
         sys.exit(0)

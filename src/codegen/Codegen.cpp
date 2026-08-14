@@ -88,6 +88,21 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         module->addModuleFlag(llvm::Module::Error, "Debug Info Version", 3);
     }
 
+    // I-009: fallback source path for functions whose IR sourceFile is empty
+    // (__module__ is never given one by lowering). Prefer the first real
+    // sourceFile (same scan DI uses), else ir.moduleName + ".py", else
+    // "<unknown>". The test harness accepts the compiled path or its basename.
+    std::string tbFallbackFile = "<unknown>";
+    for (const auto& f : ir.functions) {
+        if (!f.sourceFile.empty()) {
+            tbFallbackFile = f.sourceFile;
+            break;
+        }
+    }
+    if (tbFallbackFile == "<unknown>" && !ir.moduleName.empty()) {
+        tbFallbackFile = ir.moduleName + ".py";
+    }
+
     // PyObject struct layout (must match Runtime.cpp flat struct)
     // Fields: refcount(i32), type(i32), value(i64), dvalue(double)
     llvm::StructType* pyObjectTy = llvm::StructType::create(context, {
@@ -319,6 +334,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::Function::Create(pycTryPopTy, llvm::Function::ExternalLinkage, "pyc_try_pop", module.get());
     llvm::FunctionType* pycReraiseTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
     llvm::Function::Create(pycReraiseTy, llvm::Function::ExternalLinkage, "pyc_reraise", module.get());
+    // I-009 traceback frames. Emitted even when -g is off.
+    llvm::FunctionType* pycPushFrameTy = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(context), {int8PtrTy, int8PtrTy}, false);
+    llvm::Function::Create(pycPushFrameTy, llvm::Function::ExternalLinkage, "Pyc_PushFrame", module.get());
+    llvm::FunctionType* pycPopFrameTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
+    llvm::Function::Create(pycPopFrameTy, llvm::Function::ExternalLinkage, "Pyc_PopFrame", module.get());
+    llvm::FunctionType* pycSetLinenoTy = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(context), {llvm::Type::getInt32Ty(context)}, false);
+    llvm::Function::Create(pycSetLinenoTy, llvm::Function::ExternalLinkage, "Pyc_SetLineno", module.get());
     llvm::FunctionType* pycMakeExcTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(pycMakeExcTy, llvm::Function::ExternalLinkage, "pyc_make_exc", module.get());
     llvm::FunctionType* pycExcMatchesTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
@@ -1879,7 +1903,35 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             }
         }
 
+        // I-009: push a Python-level frame once the entry block will actually
+        // run. __apply__ adapters are generated in a separate loop and are
+        // not instrumented. Display name matches DWARF: <module> for the
+        // module body, original name for __specialized_* variants.
+        {
+            std::string displayName = f.name;
+            if (displayName == "__module__") {
+                displayName = "<module>";
+            } else if (displayName.find("__specialized_") == 0) {
+                size_t prefixLen = 14; // "__specialized_"
+                size_t sigStart = displayName.rfind('_');
+                if (sigStart != std::string::npos && sigStart > prefixLen) {
+                    displayName = displayName.substr(prefixLen, sigStart - prefixLen);
+                }
+            }
+            std::string tbFile = !f.sourceFile.empty() ? f.sourceFile : tbFallbackFile;
+            if (llvm::Function* pushFn = module->getFunction("Pyc_PushFrame")) {
+                llvm::Value* fileStr = builder.CreateGlobalStringPtr(tbFile, "tb.file." + f.name);
+                llvm::Value* funcStr = builder.CreateGlobalStringPtr(displayName, "tb.func." + f.name);
+                builder.CreateCall(pushFn, {fileStr, funcStr});
+            }
+        }
+        auto emitPopFrame = [&]() {
+            if (llvm::Function* popFn = module->getFunction("Pyc_PopFrame"))
+                builder.CreateCall(popFn, {});
+        };
+
         llvm::BasicBlock* curBlock = entry;
+        int lastTbLine = 0;
         for (const auto& inst : f.body) {
             // Debug info: set the current debug location from the IR instruction's
             // lineno. Same logic as the pre-pass loop above — keep the last known
@@ -1908,6 +1960,20 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     builder.SetInsertPoint(target);
                     curBlock = target;
                 }
+            }
+            // I-009: update the top frame's line before the op runs so a
+            // raise (explicit or runtime) records this statement. Skip if
+            // the block is already terminated or the line did not change.
+            if (!curBlock->getTerminator() && inst.lineno > 0 && inst.lineno != lastTbLine) {
+                lastTbLine = inst.lineno;
+                if (llvm::Function* setLn = module->getFunction("Pyc_SetLineno")) {
+                    builder.CreateCall(setLn, {
+                        llvm::ConstantInt::get(llvm::Type::getInt32Ty(context),
+                                               static_cast<uint64_t>(inst.lineno), false)
+                    });
+                }
+            }
+            if (inst.op == "label") {
                 continue;
             } else if (inst.op == "br") {
                 if (inst.operands.size() >= 3) {
@@ -3552,8 +3618,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                             }
                         }
                     }
-                    if (!curBlock->getTerminator())
+                    if (!curBlock->getTerminator()) {
+                        emitPopFrame();
                         builder.CreateRet(nativeRetVal);
+                    }
                     continue;  // skip the boxed return path below
                 }
 
@@ -3599,8 +3667,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     }
                 }
 
-                if (!curBlock->getTerminator())
+                if (!curBlock->getTerminator()) {
+                    emitPopFrame();
                     builder.CreateRet(retVal);
+                }
                 // No break — continue processing labels/branches for other paths
             }
         }
@@ -3628,6 +3698,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         }
                     }
                 }
+                emitPopFrame();
                 builder.CreateRet(zero);
             } else {
                 // Return a boxed 0 as a sensible default instead of null
@@ -3652,6 +3723,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         }
                     }
                 }
+                emitPopFrame();
                 builder.CreateRet(zero);
             }
         }

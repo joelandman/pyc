@@ -227,6 +227,12 @@ void      pyc_try_push(void* jmpBuf, PyObject* filterType);
 void      pyc_try_pop(void);
 void      pyc_raise(PyObject* exc);
 void      pyc_reraise(void);
+// Python-level traceback frames (I-009). Codegen emits these around user
+// function bodies; the runtime snapshots the stack on raise and prints it
+// from pyc_fatal_exception. file/func are interned C strings.
+void      Pyc_PushFrame(const char* file, const char* func);
+void      Pyc_PopFrame(void);
+void      Pyc_SetLineno(int line);
 PyObject* pyc_current_exception(void);
 void      pyc_clear_exception(void);
 // Structured exceptions (type 10): typeName + optional message object.
