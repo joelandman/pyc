@@ -2408,7 +2408,8 @@ PyObject* PyBuiltin_Chr(PyObject* obj) {
     if (!obj) return PyUnicode_FromString("");
     long v = (obj->type == 0 || obj->type == 5) ? obj->value : (long)obj->dvalue;
     char buf[2] = {(char)(v & 0xFF), '\0'};
-    return PyUnicode_FromString(buf);
+    // Explicit length: FromString(buf) is strlen, so chr(0) was empty.
+    return PyUnicode_FromStringAndSize(buf, 1);
 }
 
 PyObject* PyBuiltin_Float(PyObject* obj) {

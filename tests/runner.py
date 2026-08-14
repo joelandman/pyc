@@ -4166,6 +4166,13 @@ d = D()
 d.x = None
 print('{0.x}'.format(d))
 """, "None\nNone\n"),
+    # W5.3 / I-021: NUL in str literals and chr(0) is not truncated.
+    ("""print(len('a\\x00b'))
+print(['a\\x00b'])
+print(len(chr(0)))
+print(repr(chr(0)))
+print(ord(chr(0)))
+""", "3\n['a\\x00b']\n1\n'\\x00'\n0\n"),
     # W5.2 / I-045: str.find keeps the end argument (proven and boxed).
     ("""print("banana".find("a", 2, 3))
 print("banana".find("a", 2, 6))

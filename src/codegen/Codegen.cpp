@@ -219,6 +219,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* unicodeFromStrTy = llvm::FunctionType::get(pyObjectPtrTy, {int8PtrTy}, false);
     llvm::Function::Create(unicodeFromStrTy, llvm::Function::ExternalLinkage, "PyUnicode_FromString", module.get());
 
+    // Length-aware constructor: "const" str literals with interior NUL
+    // (and chr(0)) must not go through strlen. Same (ptr, i64) shape as
+    // PyBytes_FromStringAndSize used by "bytesconst".
+    llvm::FunctionType* unicodeFromStrAndSizeTy = llvm::FunctionType::get(pyObjectPtrTy,
+        {int8PtrTy, llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(unicodeFromStrAndSizeTy, llvm::Function::ExternalLinkage,
+                           "PyUnicode_FromStringAndSize", module.get());
+
     llvm::FunctionType* getAttrTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, int8PtrTy}, false);
     llvm::Function::Create(getAttrTy, llvm::Function::ExternalLinkage, "PyObject_GetAttr", module.get());
 
@@ -2309,13 +2317,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 valueMap[inst.result] = i64alloca;
                 builder.CreateStore(newVal, i64alloca);
             } else if (inst.op == "bytesconst") {
-                // b"..." literal. Unlike "const"'s str path, this passes an
-                // explicit length (computed from the in-memory operand
-                // std::string, which is not NUL-terminated-assumption-based)
-                // to PyBytes_FromStringAndSize, so embedded \x00 bytes
-                // survive correctly — "const" can't be reused here because
-                // it hands the global string pointer to PyUnicode_FromString,
-                // which truncates at the first NUL via strlen semantics.
+                // b"..." literal. Passes an explicit length (from the
+                // in-memory operand std::string) to
+                // PyBytes_FromStringAndSize so embedded \x00 bytes
+                // survive. CreateGlobalStringPtr emits the full bytes
+                // (LLVM uses size) plus a terminator; pass s.size().
                 const std::string& s = inst.operands.empty() ? std::string() : inst.operands[0].name;
                 llvm::Function* fromBytes = module->getFunction("PyBytes_FromStringAndSize");
                 if (fromBytes) {
@@ -2328,11 +2334,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             } else if (inst.op == "const") {
                 std::string val = inst.operands.empty() ? "0" : inst.operands[0].name;
                 if (!val.empty() && (val[0] == '"' || val[0] == '\'')) {
-                    llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
+                    // Length-explicit like bytesconst: FromString
+                    // truncates at the first NUL via strlen.
+                    // CreateGlobalStringPtr already emits a terminator;
+                    // pass s.size(), not strlen.
+                    llvm::Function* fromStr = module->getFunction("PyUnicode_FromStringAndSize");
                     if (fromStr) {
                         std::string s = val.substr(1, val.size() - 2);
                         llvm::Value* strConst = builder.CreateGlobalStringPtr(s, "str");
-                        llvm::Value* boxed = builder.CreateCall(fromStr, {strConst}, inst.result);
+                        llvm::Value* lenConst = llvm::ConstantInt::get(context, llvm::APInt(64, (uint64_t)s.size()));
+                        llvm::Value* boxed = builder.CreateCall(fromStr, {strConst, lenConst}, inst.result);
                         valueMap[inst.result] = boxed;
                         markOwned(inst.result);
                     }

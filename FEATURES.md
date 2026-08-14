@@ -168,7 +168,7 @@ are index characters ([I-042](ISSUES.md)). Base-field misses raise
 IndexError/KeyError ([I-053](ISSUES.md)). `partition("")` / `rpartition("")` raise
 `ValueError: empty separator`. Non-str sep is `TypeError` ([I-040](ISSUES.md)).
 
-Container / `repr` of `str` escapes `\n`, `\t`, `\r`, `\\`, quotes, and other ASCII controls (`\xHH`), with CPython quote-switching. Bare `print("a\nb")` is still `str` (real newline). NUL in a str *literal* is still truncated at parse/codegen ([I-021](ISSUES.md)). `KeyError` / nested `Path` print use `repr` ([I-022](ISSUES.md)).
+Container / `repr` of `str` escapes `\n`, `\t`, `\r`, `\\`, quotes, and other ASCII controls (`\xHH`), with CPython quote-switching. Bare `print("a\nb")` is still `str` (real newline). Embedded NUL in a str literal and `chr(0)` keep their length ([I-021](ISSUES.md)); bare `print` / some rebuilds still stop at the first NUL ([I-063](ISSUES.md)). `KeyError` / nested `Path` print use `repr` ([I-022](ISSUES.md)).
 
 ---
 

@@ -146,12 +146,18 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Do not whitelist those arms for unproven receivers without carrying kwargs.
 
 ### I-021  NUL in str literals is truncated at parse/codegen
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `print(['a\\x00b'])` → `['a']` (SWE W1.1 note; Coordinator swapped the I-001 CASE to `\\x01` for this reason). CPython keeps the embedded NUL (`['a\\x00b']`, `len('a\\x00b')==3`). Parser `src/frontend/PythonParser.cpp:69-70`: `PyUnicode_AsUTF8` + `std::string(const char*)` (strlen). Codegen `const` handler `src/codegen/Codegen.cpp:2190-2198`: `CreateGlobalStringPtr` + `PyUnicode_FromString`. Bytes already use the length-explicit `bytesconst` / `PyBytes_FromStringAndSize` path; the comment there calls out that `const` cannot be reused for this reason. Related sink: `PyBuiltin_Chr` (`src/runtime/Runtime.cpp:2404-2409`) does `char buf[2]={(char)(v&0xFF),0}` then `PyUnicode_FromString`, so `chr(0)` is the empty string, not `\\x00`.
-- Files: `src/frontend/PythonParser.cpp` (Constant unicode), `src/codegen/Codegen.cpp` (`const` handler), `src/runtime/Runtime.cpp` (`PyUnicode_FromString` / `PyBuiltin_Chr`)
+- Evidence: W5.3 CASE (`tests/runner.py` banner `# W5.3 / I-021`):
+  `print(len('a\\x00b'))` / `print(['a\\x00b'])` / `len(chr(0))` / `repr(chr(0))` / `ord(chr(0))` → `3\n['a\\x00b']\n1\n'\\x00'\n0\n`.
+  Parser Constant unicode (`PythonParser.cpp` ~69–75): `PyUnicode_AsUTF8AndSize` + `assign(ptr,len)` (same pattern as the bytes branch).
+  Codegen `const` handler (`Codegen.cpp` ~2334–2348): `CreateGlobalStringPtr` + `PyUnicode_FromStringAndSize(ptr, s.size())`; LLVM extern `{i8*, i64}` next to `FromString` (~222–228). Same shape as `bytesconst`.
+  `PyBuiltin_Chr` (`Runtime.cpp` ~2407–2412): `FromStringAndSize(buf, 1)` so `chr(0)` is length 1, not empty.
+  `include/pyc/runtime.h:26` declares it inside `extern "C"`.
+  Parent: `AsUTF8` + `std::string(const char*)`; const used `FromString`; `chr(0)` was `''`.
+- Files: `src/frontend/PythonParser.cpp`, `src/codegen/Codegen.cpp`, `src/runtime/Runtime.cpp`, `include/pyc/runtime.h`
 - Blocks merge: no
-- Notes: Found reviewing W1.1 / I-001. Not this ticket — `pyc_format_str_repr` would emit `\\x00` if a NUL ever reached the runtime (`std::string` walks by length). Fix is `PyUnicode_AsUTF8AndSize` + `PyUnicode_FromStringAndSize` (bytes already have the analogue).
+- Notes: Wave 5 W5.3. SWR: no merge blockers on this CASE. `print(['a\\x00b'])` / `repr(chr(0))` go through `pyc_format_str_repr` (walks by length, emits `\\x00`), so they are not the `%s` sink. Bare `print('a\\x00b')` and Concat/Repeat rebuilds still strlen-truncate — I-063. FEATURES.md still says literals are truncated; Coordinator should flip that on merge. Empty `''`, boxed `def f(n): return chr(n); f(0)`, and `-O2` use the same three helpers (no native-local gate on this path).
 
 ### I-022  Leftover unescaped string quoting after I-001
 - Status: fixed
@@ -474,6 +480,19 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/Compiler.cpp` (`builtinMethodRows`), `src/runtime/Runtime.cpp` (`pyc_bm_str_count` / `_index` / `_startswith` / `_endswith`)
 - Blocks merge: no
 - Notes: Found reviewing W5.2 / I-045. `find`/`rfind` now keep end; these four still do not. Not this ticket. Do not demand in W5.2.
+
+### I-063  Bare print / C-string rebuild still truncates NUL strs
+- Status: open
+- Severity: wrong-answer
+- Evidence: After I-021, a NUL can live in `obj->str`. These sinks still use strlen:
+  - `PyObject_PrintBase` type 3 (`Runtime.cpp:1886`): `fprintf(fp, "%s\n", obj->str.c_str())`.
+  - `pyc_print` (`3712–3745`): tmpfile + `out += buf` (`operator+=(const char*)` is strlen) then `fwrite(out.data(), 1, out.size())`.
+  - `PyStr_FromAny` (`2040`): same tmpfile read then `PyUnicode_FromString(buf)`.
+  Repro: `print('a\\x00b')` — CPython writes 4 bytes (`a`, NUL, `b`, newline); pyc writes `a\n`.
+  Same class on rebuild: `PyString_Concat` (`2311`) / `PyString_Repeat` (`2318`) / `PyString_Lower` (`3049`) / `PyString_Split*` (`3082`) use `FromString(...c_str())`. `len('a\\x00'+'b')` — CPython `3`; pyc `1`. `lowerJoinedStr` (`Compiler.cpp` ~10162) joins f-string parts via Concat, so `f'a\\x00{x}'` loses the suffix.
+- Files: `src/runtime/Runtime.cpp` (`PyObject_PrintBase`, `pyc_print`, `PyStr_FromAny`, `PyString_Concat` / `Repeat` / `Lower` / `Split*`)
+- Blocks merge: no
+- Notes: Found reviewing W5.3 / I-021. SWE flagged print. Not the ticket CASE (`len` / list-repr / `chr` / `repr` / `ord`). Do not demand in W5.3. Fix is `fwrite(data, 1, size)` on print and `FromStringAndSize` on rebuilds; `pyc_print` must `out.append(buf, n)`, not `+= buf`.
 
 ---
 

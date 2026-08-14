@@ -66,8 +66,12 @@ void buildAST(PyObject* pyNode, ASTNode* node) {
                 node->value = buf;
                 node->is_float = true;
             } else if (PyUnicode_Check(v)) {
-                const char* utf8 = PyUnicode_AsUTF8(v);
-                node->value = utf8 ? utf8 : "";
+                // AsUTF8AndSize + assign(ptr,len), not a C-string, so
+                // embedded NUL ('a\x00b') survives. Same pattern as
+                // the bytes branch below.
+                Py_ssize_t len = 0;
+                const char* utf8 = PyUnicode_AsUTF8AndSize(v, &len);
+                if (utf8) node->value.assign(utf8, (size_t)len);
                 node->is_str = true;
             } else if (PyBytes_Check(v)) {
                 // b"..." literal. Must check before falling through to the
