@@ -100,6 +100,9 @@ struct IRFunction {
     int defLineno = 0;
     // Debug info: source file path for this function (empty = unknown).
     std::string sourceFile;
+    // Python-visible name for TypeError / frames (qualname or "<lambda>").
+    // Empty means use `name` (the IR symbol).
+    std::string displayName;
 };
 
  class ModuleIR {

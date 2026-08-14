@@ -4166,6 +4166,52 @@ d = D()
 d.x = None
 print('{0.x}'.format(d))
 """, "None\nNone\n"),
+    # W5.4 / I-023: dynamic *args still TypeError on missing required.
+    ("""def f(a):
+    return a
+def mk():
+    return []
+try:
+    print(f(*mk()))
+except TypeError as e:
+    print(type(e).__name__)
+""", "TypeError\n"),
+    # W5.4 / I-024: indirect g(**{}) is missing-arg, not bind {}.
+    ("""def f(a):
+    return a
+g = f
+try:
+    print(g(**{}))
+except TypeError as e:
+    print(type(e).__name__)
+print(g({}))
+print(g({1: 2}))
+""", "TypeError\n{}\n{1: 2}\n"),
+    # W5.4 / I-025: missing-arg TypeError uses CPython qualname.
+    ("""def outer():
+    def inner(a):
+        return a
+    try:
+        inner()
+    except TypeError as e:
+        print(e)
+outer()
+f = lambda a: a
+try:
+    f()
+except TypeError as e:
+    print(e)
+""", "outer.<locals>.inner() missing 1 required positional argument: 'a'\n<lambda>() missing 1 required positional argument: 'a'\n"),
+    # W5.4 / I-033: adapter default slot is default-index, not param index.
+    ("""class C:
+    def foo(self, a=1, b=2):
+        return (a, b)
+print(C().foo())
+def f(x, a=1, b=2):
+    return (a, b)
+g = f
+print(g(0))
+""", "(1, 2)\n(1, 2)\n"),
     # W5.3 / I-021: NUL in str literals and chr(0) is not truncated.
     ("""print(len('a\\x00b'))
 print(['a\\x00b'])

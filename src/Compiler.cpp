@@ -383,8 +383,18 @@ class LoweringVisitor {
             // a second insert anyway. We just ensure the starred view is recorded.
             funcParamNames[node->id] = node->args;
             funcParamNames[defIRName] = node->args;
-            funcDisplayNames[node->id] = node->id;
-            funcDisplayNames[defIRName] = node->id;
+            // CPython TypeError / qualname: "outer.<locals>.inner", else the def id.
+            std::string qn = node->id;
+            if (funcQualNameStack.size() > 1) {
+                qn.clear();
+                for (size_t i = 0; i < funcQualNameStack.size(); ++i) {
+                    if (i > 0) qn += ".<locals>.";
+                    qn += funcQualNameStack[i];
+                }
+            }
+            funcDisplayNames[node->id] = qn;
+            funcDisplayNames[defIRName] = qn;
+            for (auto& fnr : ir.functions) if (fnr.name == defIRName) { fnr.displayName = qn; break; }
 
             // B5: record this function's nonlocal declarations (declaration-only; cells later).
             funcNonlocals[defIRName] = scanFuncNonlocals(node);
@@ -2267,6 +2277,7 @@ class LoweringVisitor {
                 variant.defaultGlobals = origFunc->defaultGlobals;
                 variant.cellVars = origFunc->cellVars;
                 variant.freeCellVars = origFunc->freeCellVars;
+                variant.displayName = origFunc->displayName;
 
                 // Copy instructions — variants have the same body as original.
                 // Codegen uses the variant name to allocate native param slots.
@@ -4228,12 +4239,39 @@ class LoweringVisitor {
         auto pit = funcParamNames.find(targetFunc);
         size_t fixed = 0;
         bool hasVar = false;
+        std::vector<std::string> reqNames;
         if (pit != funcParamNames.end()) {
             const auto& ps = pit->second;
             for (size_t j = 0; j < ps.size(); ++j) {
                 if (!ps[j].empty() && ps[j][0] == '*') { hasVar = true; break; }
                 ++fixed;
+                reqNames.push_back(ps[j]);
             }
+        }
+        // Dynamic *args skips call-site default injection / missing-arg
+        // checks (hadRuntimeStar). Enforce required positionals here so
+        // f(*mk()) with mk()==[] is TypeError, not GetItem OOB → None.
+        size_t ndef = 0;
+        auto dit = funcDefaultValues.find(targetFunc);
+        if (dit != funcDefaultValues.end()) ndef = dit->second.size();
+        size_t nrequired = (fixed > ndef) ? (fixed - ndef) : 0;
+        if (reqNames.size() > nrequired) reqNames.resize(nrequired);
+        if (nrequired > 0) {
+            std::string ln = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", listVal}, ln);
+            std::string lnSlot = "__sl_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {ln}, lnSlot);
+            std::string reqC = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(nrequired)}, reqC);
+            std::string cm = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "icmp", {"Lt", lnSlot, reqC}, cm);
+            int sc = tempCounter++;
+            std::string missL = "va_miss_" + std::to_string(sc);
+            std::string okL = "va_ok_" + std::to_string(sc);
+            ir.addInstruction(currentFunc, "br", {cm, missL, okL});
+            ir.addInstruction(currentFunc, "label", {}, missL);
+            emitMissingArgsCheck(callDisplayName(targetFunc), reqNames, {});
+            ir.addInstruction(currentFunc, "label", {}, okL);
         }
         std::vector<std::string> fwd;
         for (size_t k = 0; k < fixed; ++k) {
@@ -6554,7 +6592,12 @@ class LoweringVisitor {
         }
         ir.addFunction(lamName, cleaned);
         funcParamNames[lamName] = node->args;
-        for (auto& fnr : ir.functions) if (fnr.name == lamName) { fnr.paramNames = node->args; break; }
+        funcDisplayNames[lamName] = "<lambda>";
+        for (auto& fnr : ir.functions) if (fnr.name == lamName) {
+            fnr.paramNames = node->args;
+            fnr.displayName = "<lambda>";
+            break;
+        }
         ir.setFunctionGlobals(lamName, ir.moduleGlobals);
         knownIRFunctions.insert(lamName);
         lastLambdaSynthetic = lamName;
@@ -7604,11 +7647,29 @@ class LoweringVisitor {
             // If the RHS value is a synthetic lambda name (or we just lowered a lambda
             // expression and captured its synthetic), remember the alias so future
             // calls through 'node->id' can resolve to the nested IR function.
-            if (!val.empty() && val.rfind("__lambda_", 0) == 0) {
-                lambdaAliases[node->id] = val;
-            } else if (!lastLambdaSynthetic.empty()) {
-                lambdaAliases[node->id] = lastLambdaSynthetic;
-                lastLambdaSynthetic.clear();
+            // Same for `g = f` where f is a user FunctionDef: resolve g(...) as
+            // a known-shape call so g(**{}) uses the direct missing-arg path
+            // (I-024) instead of treating the empty kwargs dict as positional.
+            // Do not alias class names (`X = Foo`) — those stay in
+            // knownIRFunctions for instantiation, not userDefFunctions.
+            {
+                std::string aliasTo;
+                if (!val.empty() && val.rfind("__lambda_", 0) == 0) {
+                    aliasTo = val;
+                } else if (!lastLambdaSynthetic.empty()) {
+                    aliasTo = lastLambdaSynthetic;
+                    lastLambdaSynthetic.clear();
+                } else if (auto cit = callableTokenToSynthetic.find(val); cit != callableTokenToSynthetic.end()) {
+                    aliasTo = cit->second;
+                } else if (auto ait = lambdaAliases.find(val); ait != lambdaAliases.end()) {
+                    aliasTo = ait->second;
+                } else if (!val.empty() && userDefFunctions.count(val) && !knownClasses.count(val)) {
+                    aliasTo = val;
+                }
+                if (!aliasTo.empty() && !knownClasses.count(aliasTo))
+                    lambdaAliases[node->id] = aliasTo;
+                else
+                    lambdaAliases.erase(node->id);
             }
             // B4 token propagation for bare names:
             // - If the value is a tracked callable token temp (or the token const itself),

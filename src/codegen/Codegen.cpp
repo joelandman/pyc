@@ -1142,7 +1142,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 abuilder.SetInsertPoint(nxtB);
             }
             if (raiseFn) {
-                llvm::Value* fns = abuilder.CreateGlobalStringPtr(f.name, "miss.fn");
+                std::string missName = !f.displayName.empty() ? f.displayName : f.name;
+                llvm::Value* fns = abuilder.CreateGlobalStringPtr(missName, "miss.fn");
                 abuilder.CreateCall(raiseFn, {fns, mlist});
             }
             abuilder.CreateUnreachable();
@@ -1168,8 +1169,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             // We also try the mapped dk and any recorded defSlots.
             {
                 std::vector<size_t> cands;
-                cands.push_back(i);
+                // Default slots are 0..ndef-1 (Compiler __default_<fn>_<k>).
+                // Probe that index first: param index i equals a later slot
+                // when firstDef > 0 and ndef > 1 (I-033).
                 if (ndef > 0 && i >= firstDef) cands.push_back(i - firstDef);
+                cands.push_back(i);
                 for (size_t candk : cands) {
                     // conventional using the IR/python name
                     std::string conv = "__default_" + f.name + "_" + std::to_string(candk);
@@ -1197,22 +1201,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             cargs.push_back(phi);
         }
 
-        // Real bug found and fixed while bug hunting: an indirect call to a
-        // target with a **kwargs catch-all always got an always-empty LIST
-        // (wrong type — should be a dict — and never populated with the
-        // caller's actual keyword arguments regardless). Compiler.cpp's
-        // indirect-call lowering now appends the caller's merged keyword
-        // arguments as a single trailing dict onto the flat Pyc_Apply list
-        // (only when the call site actually had keyword arguments/dict
-        // spreads — an ordinary positional-only indirect call is
-        // unaffected). This adapter now looks for that trailing dict: if
-        // hasKwVar and the incoming list has one more element than the
-        // minimum required (ncells + userFixed [+ *args tail, disambiguated
-        // below]) AND that last element is actually a dict (type 2), it is
-        // used as the kwargs value and excluded from the *args tail;
-        // otherwise (a plain positional-only call, or a target that wasn't
-        // called with keyword args) kwargs defaults to a fresh empty dict,
-        // matching Python's own `f()` with no kwargs behavior.
+        // Trailing kwargs dict on the apply list is used only when the
+        // target has **kwargs (hasKwVar). Do not peel empty dicts for
+        // functions without **kwargs — that made g({}) look like g(**{}).
         llvm::Function* dictNewFn = module->getFunction("PyDict_New");
         llvm::Value* kwargsVal = nullptr;
         llvm::Value* varEndIdx = ln;  // upper bound (exclusive) for the *args tail below
@@ -1941,7 +1932,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // not instrumented. Display name matches DWARF: <module> for the
         // module body, original name for __specialized_* variants.
         {
-            std::string displayName = f.name;
+            std::string displayName = !f.displayName.empty() ? f.displayName : f.name;
             if (displayName == "__module__") {
                 displayName = "<module>";
             } else if (displayName.find("__specialized_") == 0) {

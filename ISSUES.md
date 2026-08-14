@@ -168,28 +168,28 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 5 W5.1. KeyError arm (`12740–12741`) and Path PrintElement (`1696`) both use `pyc_format_str_repr` (quote-switch + `\\n`). `repr(Path)` still `<object>` (I-017). Decimal `'%s'` unchanged.
 
 ### I-023  Dynamic `*args` still binds None for missing required
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: `hadRuntimeStar` skips default injection *and* the new `Pyc_CheckMissingArgs` emit (`Compiler.cpp:5225`, `5293`). `__va_*` then unpacks via `emitForwardCallFromList` → `PyList_GetItemObj` (`Compiler.cpp:4120-4126`); OOB returns `nullptr` (`Runtime.cpp:614-620`), which prints as `None`. CPython `def f(a): f(*mk())` with `mk` returning `[]` is `TypeError: f() missing 1 required positional argument: 'a'`.
 - Files: `src/Compiler.cpp` (`ensureVaWrapper` / `emitForwardCallFromList`), `src/runtime/Runtime.cpp` (`PyList_GetItemObj`)
 - Blocks merge: no
-- Notes: Found reviewing W1.2 / I-002. SWE listed this as out of slice. Literal `f(*[])` / tracked `xs=[]; f(*xs)` statically expand (`Compiler.cpp:4847-4857`, `7307-7312`) so they *should* hit the new check — do not treat those as this ID. Repro is a non-literal star (`def mk(): return []` / `xs=list()`). No LLVM verify fail (wrapper still passes `fixed` operands). Unexpected kwargs / too-many positionals stay out of scope.
+- Notes: Wave 5 W5.4. `emitForwardCallFromList` now compares `PyList_SizeBoxed` to `nrequired` (`fixed - ndef`) and emits `Pyc_CheckMissingArgs` with `callDisplayName`. Ticket CASE `f(*mk())` / `mk()==[]` is TypeError (name only). Same SizeBoxed+icmp pattern as the existing `*args` tail loop. Leftover: omitted defaults still GetItem OOB → None (I-065). Unexpected kwargs / too-many stay out of scope.
 
 ### I-024  Indirect `g(**{})` treats the empty kwargs dict as a positional
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: Indirect lowering appends the merged kwargs dict as the last apply-list element (`Compiler.cpp:5188-5202`). Adapter missing-arg check uses `userLen = list_len - ncells` (`Codegen.cpp:1051-1064`) and does not exclude that trailing dict unless the *target* has `**kwargs` (`hasKwVar` peel is later, `1165-1202`). `def f(a): g=f; g(**{})` → `userLen==1`, `firstDef==1`, no raise; slot 0 is bound to `{}`. Direct `f(**{})` is fine (I-002 dict-spread check). CPython: `TypeError: f() missing 1 required positional argument: 'a'`.
 - Files: `src/codegen/Codegen.cpp` (adapter `userLen` / `need.miss`), `src/Compiler.cpp` (indirect kwargs append)
 - Blocks merge: no
-- Notes: Found reviewing W1.2 / I-002. Combination of two ticket surfaces (`f(**{})` and `g=f; g()`), not in the runner CASES. Same class as I-002; do not demand it in W1.2.
+- Notes: Wave 5 W5.4. First try peeled empty trailing dicts in the adapter and made `g({})` look like `g(**{})`. Reverted: peel only when `hasKwVar`. Follow-up aliases `g=f` via `lambdaAliases` (Assign of a `userDefFunctions` / `callableTokenToSynthetic` RHS) so `g(**{})` is the known-shape I-002 path. CASE now includes `g({})` then `g({1:2})`. First-class / boxed `fn(**{})` still appends the merged dict (I-064). `accumulate` / positional-dict first-class calls are not peeled.
 
 ### I-025  Missing-arg TypeError uses IR / bare name, not CPython `__qualname__`
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: Adapter always passes `f.name` (`Codegen.cpp:1091`). Compiler `callDisplayName` is `funcDisplayNames` (the def id) or the IR name (`Compiler.cpp:4339-4342`). Lambdas never register a display name (`lowerLambda` ~6429-6439). Direct nested `inner()` → `inner()`; CPython is `outer.<locals>.inner()`. Indirect nested (`g=inner; g()`) → `__nesteddef_N()`. `f=lambda a: a; f()` is a *direct* call via `lambdaAliases` → `__lambda_N()`; CPython is `<lambda>()`. `emitFuncValue` already builds the qualname for `repr` (`Compiler.cpp:3348-3365`) and does not share it with this path.
 - Files: `src/codegen/Codegen.cpp` (adapter `miss.fn`), `src/Compiler.cpp` (`callDisplayName`, `funcDisplayNames`, `lowerLambda`)
 - Blocks merge: no
-- Notes: Found reviewing W1.2 / I-002. Current CASES are top-level `f` (IR name == Python name), so they would not see this. File so a later nested/lambda CASE against live python3 does not look like an I-002 miss.
+- Notes: Wave 5 W5.4. `IRFunction.displayName` + `funcDisplayNames` store FunctionDef qualname (`outer.<locals>.inner`) and `"<lambda>"`. Adapter `miss.fn` and `emitMissingArgsCheck` use that. Ticket CASE matches CPython. Methods never set `displayName` (still `C__foo`); a def nested in a method does not push the class/method onto `funcQualNameStack` (I-066). I-037 is a different name (`__name__` vs qualname).
 
 ### I-026  `del t[1:3]` on tuple/str/dict is a silent no-op
 - Status: fixed
@@ -244,12 +244,12 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found reviewing W2.2 / I-007. SWE flagged `m = os` (I-031 class) and user-module silent None. Ticket CASES are `C().get` / boxed `f(C())` / `os.get` / `import os as ox` / shadowed `time = {…}; time.get` — those pass. Same hole as I-031, different name. Do not demand in W2.2.
 
 ### I-033  Adapter default probe uses param index first
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: `__apply__` tries `__default_<fn>_<paramIndex>` before `__default_<fn>_<i-firstDef>` (`Codegen.cpp:1119-1121`). Slots are numbered by default-child index 0..ndef-1 (`Compiler.cpp:9816-9817`, same as FunctionDef / `__init__`). When `firstDef > 0` and `ndef > 1`, the first defaulted param’s index equals a later slot: `class C: def foo(self, a=1, b=2): return (a, b); print(C().foo())` — CPython `(1, 2)`; pyc `(2, 2)` at -O0 and -O2. Pre-existing on the same adapter: `def f(x, a=1, b=2): return (a, b); g=f; print(g(0))` → `(2, 2)`; `T=A; T()` for `def __init__(self, a=1, b=2)` → `2 2`. Ticket shape `get(self, k, default=None)` and `get(self, k, default=None, extra=5)` hit `i-firstDef` after a miss and are correct. Two classes with one default each (`A` n=1 / `B` n=2) do not clobber (per-class `methodFuncName` slots).
 - Files: `src/codegen/Codegen.cpp` (adapter miss candidates), `src/Compiler.cpp` (method / FunctionDef / `__init__` default slot names)
 - Blocks merge: no
-- Notes: Found reviewing W2.2 / I-007. Exposed for every instance method because methods now always go through `Pyc_Apply` with newly registered `defaultGlobals`. Not a merge blocker: the ticket CASE has one trailing default. Fix is to probe default-slot index first (or stop probing param index). SWE’s empty-`paramNames`+`CreateUnreachable` trap is gone for regular methods (this slice sets `paramNames`); `__init__` still leaves `paramNames` empty.
+- Notes: Wave 5 W5.4. Adapter now pushes `i-firstDef` before param index (`Codegen.cpp` ~1174). `C().foo()` → `(1, 2)`. `C().get("x")` still works: `ndef==1` never had a `__default_*_2` hit, so the old second candidate was already slot 0. CASE `g=f; g(0)` is now a *direct* call via the I-024 alias (defaults injected at the call site); the adapter path is still the `C().foo()` half. `T=A; T()` stays a class-name miss (no `lambdaAliases` for `knownClasses`).
 
 ### I-034  Remaining dict methods on module namespaces
 - Status: open
@@ -280,12 +280,12 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 ### I-037  Traceback frame names are IR names, not Python names
 - Status: open
 - Severity: wrong-answer
-- Evidence: Codegen `Pyc_PushFrame` uses `f.name` with only `__module__` → `<module>` and `__specialized_*` stripping (`Codegen.cpp` ~1911–1919). Methods are `Class__method` (`Compiler.cpp` ~9797). Nested defs are `__nesteddef_N`. Lambdas are `__lambda_N`.
+- Evidence: Codegen `Pyc_PushFrame` uses `f.displayName` if set else `f.name`, with `__module__` → `<module>` and `__specialized_*` stripping (`Codegen.cpp` ~1935–1948). Methods never set `displayName` (`lowerClass` ~9870) so they stay `Class__method`. Nested FunctionDefs now store the I-025 qualname, which is still not CPython's frame `__name__`.
   - `class C: def foo(self): raise ValueError('m')` / `C().foo()` — CPython `in foo`; pyc `in C__foo`.
-  - `def outer():` / `def inner(): raise ValueError('n')` / `inner()` / `outer()` — CPython `in inner`; pyc `in __nesteddef_0`.
+  - `def outer():` / `def inner(): raise ValueError('n')` / `inner()` / `outer()` — CPython `in inner`; pyc `in outer.<locals>.inner` (was `__nesteddef_0`).
 - Files: `src/codegen/Codegen.cpp` (I-009 displayName), `src/Compiler.cpp` (`methodFuncName`, nested/lambda IR names)
 - Blocks merge: no
-- Notes: Found reviewing W3.1 / I-009. Ticket cases are top-level `f` and `<module>` (IR name == Python name). Same class as I-025 (missing-arg TypeError uses IR name). Do not demand in W3.1.
+- Notes: Found reviewing W3.1 / I-009. W5.4 did wire `displayName` into `Pyc_PushFrame`, but that string is the TypeError qualname (`outer.<locals>.inner`, `<lambda>`), not `co_name`. Methods still have an empty `displayName`. Leave open for W5.6. Do not mark fixed just because PushFrame reads the field.
 
 ### I-038  SuperMethod builtin fallback is Exception.__init__ only
 - Status: open
@@ -494,6 +494,37 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Found reviewing W5.3 / I-021. SWE flagged print. Not the ticket CASE (`len` / list-repr / `chr` / `repr` / `ord`). Do not demand in W5.3. Fix is `fwrite(data, 1, size)` on print and `FromStringAndSize` on rebuilds; `pyc_print` must `out.append(buf, n)`, not `+= buf`.
 
+### I-064  First-class / boxed `fn(**{})` still binds `{}` as positional
+- Status: open
+- Severity: wrong-answer
+- Evidence: I-024 only aliases a *Name* assigned from a known def (`lambdaAliases` on Assign, `Compiler.cpp` ~7650–7672). A subscript / parameter / call-result callee is still `buildingIndirectArgs`: merged kwargs dict is appended to the apply list (`Compiler.cpp` ~5344–5358). Adapter peels a trailing dict only when the *target* has `**kwargs` (`Codegen.cpp` ~1204–1210). For `def f(a)`:
+  - `hs = [f]; print(repr(hs[0](**{})))` — CPython `TypeError: f() missing 1 required positional argument: 'a'`; pyc prints `{}`.
+  - `def apply(fn): return fn(**{})` / `apply(f)` — same bind-as-positional.
+  `hs[0]({})` (positional) is fine: no kwargs append, `userLen==1` fills slot 0. Direct `g=f; g(**{})` is the I-024 CASE.
+- Files: `src/Compiler.cpp` (indirect kwargs append), `src/codegen/Codegen.cpp` (adapter `hasKwVar` peel / `userLen`)
+- Blocks merge: no
+- Notes: Found reviewing W5.4 / I-024. Same class as the ticket; not the ticket CASE (`g=f` is now a known-shape call). Do not demand in W5.4. Re-peeling empty dicts for `!hasKwVar` is what broke `g({})` — do not revive that.
+
+### I-065  Dynamic `*args` still skips default injection
+- Status: open
+- Severity: wrong-answer
+- Evidence: `emitForwardCallFromList` (`Compiler.cpp` ~4251–4283) now TypeErrors when `len < nrequired`, then still `PyList_GetItemObj` for every *fixed* param. OOB is `nullptr` → None (`Runtime.cpp` ~616–622). `hadRuntimeStar` still skips call-site default injection (`Compiler.cpp` ~5381).
+  - `def f(a, b=2): return (a, b)` / `def mk(): return [1]` / `print(f(*mk()))` — CPython `(1, 2)`; pyc `(1, None)`.
+  - `def f(a=1): return a` / `mk()==[]` / `print(f(*mk()))` — CPython `1`; pyc `None` (`nrequired==0`, no check, GetItem 0 OOB).
+- Files: `src/Compiler.cpp` (`emitForwardCallFromList`, `hadRuntimeStar` default skip)
+- Blocks merge: no
+- Notes: Found reviewing W5.4 / I-023. Ticket CASE is required-only `def f(a)` + empty star. Do not demand in W5.4. Fix is to fill `defaults[i]` when `k >= nrequired` and GetItem is OOB (or pass the default slot names into the `__va_` wrapper).
+
+### I-066  Method missing-arg TypeError still uses IR name
+- Status: open
+- Severity: wrong-answer
+- Evidence: `lowerClass` never writes `IRFunction.displayName` or `funcDisplayNames` (`Compiler.cpp` ~9869–9908). Adapter `miss.fn` is then `C__foo` (`Codegen.cpp` ~1145). A FunctionDef nested in a method only pushes its own id onto `funcQualNameStack` (methods are not FunctionDef-lowered), so the qualname is the bare `inner`.
+  - `class C: def foo(self, a): return a` / `C().foo()` — CPython `C.foo() missing 1 required positional argument: 'a'`; pyc `C__foo() missing … 'a'`.
+  - `class C: def foo(self):` / `def inner(a): return a` / `inner()` — CPython `C.foo.<locals>.inner() missing … 'a'`; pyc `inner() missing … 'a'`.
+- Files: `src/Compiler.cpp` (`lowerClass` method / `__init__`), `src/codegen/Codegen.cpp` (adapter `miss.fn`)
+- Blocks merge: no
+- Notes: Found reviewing W5.4 / I-025. Ticket CASE is module-level `outer.inner` and `<lambda>`. Same class; do not demand in W5.4. Setting method `displayName` to `C.foo` would also be the I-037 method-frame leftover if PushFrame used `__name__` (`foo`) rather than qualname.
+
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
@@ -580,7 +611,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Severity: wrong-answer
 - Evidence: `Pyc_RaiseMissingArgs` / `Pyc_CheckMissingArgs`. CASES under `W1.2 / I-002`. Runner 644/644. Focused cases match CPython at -O0 and -O2 (14/14).
 - Files: `src/Compiler.cpp`, `src/runtime/Runtime.cpp`, `include/pyc/runtime.h`, `src/codegen/Codegen.cpp`
-- Notes: Wave 1 W1.2. Direct `f()`, `f(**{})`, `g=f; g()`. SWR: no merge blockers. Leftovers I-023 / I-024 / I-025.
+- Notes: Wave 1 W1.2. Direct `f()`, `f(**{})`, `g=f; g()`. SWR: no merge blockers. Leftovers I-023 / I-024 / I-025 closed in W5.4 (new leftovers I-064 / I-065 / I-066).
 
 ### I-001  Container repr does not escape special characters
 - Status: fixed

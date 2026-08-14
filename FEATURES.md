@@ -83,7 +83,7 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 - Decorators: `@deco`, `@deco(args)` factories, stacked
 - `@classmethod` / `@property` / `@staticmethod` on methods
 - First-class functions: identity, `print(f)` → `<function f at 0x...>`
-- Missing required positional arguments raise `TypeError` with CPython's message (`f() missing 1 required positional argument: 'a'`). Dynamic `*args` and indirect `g(**{})` leftovers: [I-023](ISSUES.md), [I-024](ISSUES.md).
+- Missing required positional arguments raise `TypeError` with CPython's message (`f() missing 1 required positional argument: 'a'`), including dynamic `*args` ([I-023](ISSUES.md)) and aliased `g(**{})` ([I-024](ISSUES.md)). Nested/lambda names use CPython qualname ([I-025](ISSUES.md)). Method default slots use default-index, not param index ([I-033](ISSUES.md)).
 
 ---
 
