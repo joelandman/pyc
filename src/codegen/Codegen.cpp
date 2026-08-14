@@ -1993,6 +1993,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
         llvm::BasicBlock* curBlock = entry;
         int lastTbLine = 0;
+        int specUnboxSeq = 0;
         for (const auto& inst : f.body) {
             // Debug info: set the current debug location from the IR instruction's
             // lineno. Same logic as the pre-pass loop above — keep the last known
@@ -3528,21 +3529,34 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                         // to specialized variants themselves — the latter enables native
                         // self-recursion (e.g. __specialized_fib_i calling itself for
                         // recursive fib(n-1)/fib(n-2) without boxing).
+                        //
+                        // I-014 / W5.8: if some args are still boxed PyObject*, speculate
+                        // with a runtime tag check (type==0 int / type==4 float) and call
+                        // the matching variant; wrong tag or null falls back to the boxed
+                        // callee. Indirect calls (Pyc_Apply) never reach this arm.
                         bool useSpecialized = false;
                         std::string specializedName;
+                        llvm::Type* i64TyCall = llvm::Type::getInt64Ty(context);
+                        llvm::Type* doubleTyCall = llvm::Type::getDoubleTy(context);
+                        llvm::Type* i32TyCall = llvm::Type::getInt32Ty(context);
+                        size_t numCallArgs = inst.operands.size() - 1;
+                        std::vector<std::string> argTypes; // "i64", "double", or "boxed"
+                        std::vector<llvm::Value*> rawArgVals;
+                        bool specShapesOk = true;
                         {
-                            size_t numArgs = inst.operands.size() - 1;
-                            if (numArgs > 0) {
-                                // Collect compile-time types of all arguments
-                                std::vector<std::string> argTypes; // "i64", "double", or "boxed"
+                            if (numCallArgs > 0) {
                                 for (size_t i = 1; i < inst.operands.size(); ++i) {
                                     llvm::Value* raw = getOrLoad(inst.operands[i].name);
-                                    if (raw && raw->getType() == llvm::Type::getInt64Ty(context)) {
+                                    rawArgVals.push_back(raw);
+                                    if (raw && raw->getType() == i64TyCall) {
                                         argTypes.push_back("i64");
                                     } else if (raw && raw->getType()->isDoubleTy()) {
                                         argTypes.push_back("double");
+                                    } else if (raw && raw->getType()->isPointerTy()) {
+                                        argTypes.push_back("boxed");
                                     } else {
                                         argTypes.push_back("boxed");
+                                        specShapesOk = false;
                                     }
                                 }
 
@@ -3568,6 +3582,75 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                                         specializedName = candidate;
                                         callee = spec;
                                     }
+                                }
+                            }
+                        }
+
+                        // Collect specialized-variant candidates for mixed boxed/native args.
+                        const IRFunction* calleeIR = nullptr;
+                        for (const auto& cf : ir.functions) {
+                            if (cf.name == funcName) { calleeIR = &cf; break; }
+                        }
+                        size_t ncells = calleeIR ? calleeIR->freeCellVars.size() : 0;
+                        if (ncells >= numCallArgs) ncells = 0;
+                        size_t nuser = (numCallArgs >= ncells) ? (numCallArgs - ncells) : 0;
+                        struct SpecCand { std::string sig; llvm::Function* fn; };
+                        std::vector<SpecCand> specCands;
+                        if (!useSpecialized && specShapesOk && nuser > 0 && !callee->getReturnType()->isVoidTy()) {
+                            bool anyBoxedUser = false;
+                            for (size_t u = 0; u < nuser; ++u) {
+                                if (argTypes[ncells + u] == "boxed") anyBoxedUser = true;
+                            }
+                            if (anyBoxedUser) {
+                                std::vector<std::string> trySigs;
+                                if (calleeIR && !calleeIR->specializedSignatures.empty()) {
+                                    for (const auto& s : calleeIR->specializedSignatures)
+                                        trySigs.push_back(s);
+                                } else {
+                                    std::vector<size_t> boxedIdx;
+                                    for (size_t u = 0; u < nuser; ++u) {
+                                        if (argTypes[ncells + u] == "boxed") boxedIdx.push_back(u);
+                                    }
+                                    if (boxedIdx.size() <= 8) {
+                                        size_t ncomb = size_t{1} << boxedIdx.size();
+                                        for (size_t mask = 0; mask < ncomb; ++mask) {
+                                            std::string sig(nuser, 'i');
+                                            for (size_t u = 0; u < nuser; ++u) {
+                                                if (argTypes[ncells + u] == "double") sig[u] = 'f';
+                                                else if (argTypes[ncells + u] == "i64") sig[u] = 'i';
+                                            }
+                                            for (size_t bi = 0; bi < boxedIdx.size(); ++bi)
+                                                sig[boxedIdx[bi]] = (mask & (size_t{1} << bi)) ? 'f' : 'i';
+                                            trySigs.push_back(sig);
+                                        }
+                                    }
+                                }
+                                for (const auto& sig : trySigs) {
+                                    if (sig.size() != nuser) continue;
+                                    bool compat = true;
+                                    for (size_t u = 0; u < nuser; ++u) {
+                                        const std::string& at = argTypes[ncells + u];
+                                        if (at == "i64" && sig[u] != 'i') compat = false;
+                                        else if (at == "double" && sig[u] != 'f') compat = false;
+                                        else if (at == "boxed" && sig[u] != 'i' && sig[u] != 'f') compat = false;
+                                    }
+                                    if (!compat) continue;
+                                    std::string candName = "__specialized_" + funcName + "_" + sig;
+                                    llvm::Function* spec = module->getFunction(candName);
+                                    if (!spec) continue;
+                                    if (spec->arg_size() != ncells + nuser) continue;
+                                    llvm::FunctionType* sty = spec->getFunctionType();
+                                    bool argsOk = true;
+                                    for (size_t c = 0; c < ncells; ++c) {
+                                        if (!sty->getParamType(c)->isPointerTy()) argsOk = false;
+                                    }
+                                    for (size_t u = 0; u < nuser; ++u) {
+                                        llvm::Type* pt = sty->getParamType(ncells + u);
+                                        if (sig[u] == 'i' && pt != i64TyCall) argsOk = false;
+                                        if (sig[u] == 'f' && !pt->isDoubleTy()) argsOk = false;
+                                    }
+                                    if (!argsOk) continue;
+                                    specCands.push_back({sig, spec});
                                 }
                             }
                         }
@@ -3600,10 +3683,240 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                                     }
                                 }
                             }
+                        } else if (!specCands.empty()) {
+                            // I-014 speculative unbox: runtime tag check, then variant or boxed fallback.
+                            llvm::Function* boxedCallee = callee;
+                            std::string sid = inst.result.empty()
+                                ? ("s" + std::to_string(specUnboxSeq++))
+                                : inst.result;
+
+                            // Native join only when every candidate returns the same native type
+                            // AND the call result is assigned to a proven local (never a module global).
+                            bool allSpecI64 = true, allSpecF64 = true;
+                            for (const auto& c : specCands) {
+                                if (c.fn->getReturnType() != i64TyCall) allSpecI64 = false;
+                                if (!c.fn->getReturnType()->isDoubleTy()) allSpecF64 = false;
+                            }
+                            std::string assignDest;
+                            for (const auto& later : f.body) {
+                                if (later.op == "assign" && !later.operands.empty()
+                                    && later.operands[0].name == inst.result) {
+                                    assignDest = later.result;
+                                    break;
+                                }
+                            }
+                            bool destIsGlobal = !assignDest.empty()
+                                && module->getNamedGlobal("pyc_global_" + assignDest) != nullptr;
+                            bool destProvenInt = false, destProvenFloat = false;
+                            if (!assignDest.empty() && !destIsGlobal) {
+                                auto vit = valueMap.find(assignDest);
+                                if (vit != valueMap.end()) {
+                                    if (auto* a = llvm::dyn_cast<llvm::AllocaInst>(vit->second)) {
+                                        if (a->getAllocatedType() == i64TyCall) destProvenInt = true;
+                                        if (a->getAllocatedType()->isDoubleTy()) destProvenFloat = true;
+                                    }
+                                }
+                                for (const auto& nl : f.numericLocals)
+                                    if (nl == assignDest) destProvenInt = true;
+                                for (const auto& nfl : f.numericFloatLocals)
+                                    if (nfl == assignDest) destProvenFloat = true;
+                            }
+                            enum class JoinKind { Boxed, I64, F64 };
+                            JoinKind joinKind = JoinKind::Boxed;
+                            if (destProvenInt && !destProvenFloat && allSpecI64)
+                                joinKind = JoinKind::I64;
+                            else if (destProvenFloat && allSpecF64)
+                                joinKind = JoinKind::F64;
+                            llvm::Type* joinTy = pyObjectPtrTy;
+                            if (joinKind == JoinKind::I64) joinTy = i64TyCall;
+                            else if (joinKind == JoinKind::F64) joinTy = doubleTyCall;
+
+                            auto convertToJoin = [&](llvm::Value* v) -> llvm::Value* {
+                                if (!v) return llvm::Constant::getNullValue(joinTy);
+                                if (joinKind == JoinKind::Boxed) {
+                                    if (v->getType() == i64TyCall)
+                                        return boxI64(v, sid + ".specbox");
+                                    if (v->getType()->isDoubleTy())
+                                        return boxDouble(v, sid + ".specbox");
+                                    return v;
+                                }
+                                if (joinKind == JoinKind::I64) {
+                                    if (v->getType() == i64TyCall) return v;
+                                    if (v->getType()->isDoubleTy())
+                                        return builder.CreateFPToSI(v, i64TyCall, sid + ".f2i");
+                                    return unboxToI64(v);
+                                }
+                                if (v->getType()->isDoubleTy()) return v;
+                                if (v->getType() == i64TyCall)
+                                    return builder.CreateSIToFP(v, doubleTyCall, sid + ".i2f");
+                                return unboxToDouble(v);
+                            };
+
+                            llvm::BasicBlock* originBB = builder.GetInsertBlock();
+                            std::vector<std::string> boxedTempsToDecref;
+                            for (size_t i = 1; i < inst.operands.size(); ++i) {
+                                llvm::Value* raw = rawArgVals[i - 1];
+                                bool isNat = raw && (raw->getType() == i64TyCall
+                                                     || raw->getType()->isDoubleTy());
+                                if (isNat) continue;
+                                const std::string& nm = inst.operands[i].name;
+                                if (!ownedTemps.count(nm)) continue;
+                                auto bit = tempDefBlock.find(nm);
+                                if (bit != tempDefBlock.end() && bit->second == originBB)
+                                    boxedTempsToDecref.push_back(nm);
+                            }
+
+                            llvm::BasicBlock* joinBB = llvm::BasicBlock::Create(
+                                context, "spec.join." + sid, func);
+                            llvm::BasicBlock* fallbackBB = llvm::BasicBlock::Create(
+                                context, "spec.fallback." + sid, func);
+                            std::vector<std::pair<llvm::Value*, llvm::BasicBlock*>> phiInc;
+
+                            auto emitNullAndTag = [&](llvm::Value* obj, char expect,
+                                                      llvm::BasicBlock* passBB,
+                                                      llvm::BasicBlock* failBB,
+                                                      const std::string& tag) {
+                                llvm::BasicBlock* tagBB = llvm::BasicBlock::Create(
+                                    context, tag + ".tag", func);
+                                llvm::Value* isnull = builder.CreateICmpEQ(
+                                    obj, llvm::ConstantPointerNull::get(pyObjectPtrTy),
+                                    tag + ".isnull");
+                                builder.CreateCondBr(isnull, failBB, tagBB);
+                                builder.SetInsertPoint(tagBB);
+                                llvm::Value* typePtr = builder.CreateStructGEP(
+                                    pyObjectTy, obj, 1, tag + ".tptr");
+                                llvm::Value* typeVal = builder.CreateAlignedLoad(
+                                    i32TyCall, typePtr, llvm::Align(4), tag + ".type");
+                                unsigned expectTag = (expect == 'f') ? 4u : 0u;
+                                llvm::Value* ok = builder.CreateICmpEQ(
+                                    typeVal,
+                                    llvm::ConstantInt::get(i32TyCall, expectTag),
+                                    tag + ".ok");
+                                builder.CreateCondBr(ok, passBB, failBB);
+                            };
+
+                            llvm::BasicBlock* tryBB = originBB;
+                            for (size_t ci = 0; ci < specCands.size(); ++ci) {
+                                const std::string& sig = specCands[ci].sig;
+                                llvm::Function* specFn = specCands[ci].fn;
+                                bool last = (ci + 1 == specCands.size());
+                                llvm::BasicBlock* nextTry = last ? fallbackBB
+                                    : llvm::BasicBlock::Create(context,
+                                        "spec.try." + sid + "." + std::to_string(ci), func);
+                                llvm::BasicBlock* specBB = llvm::BasicBlock::Create(
+                                    context, "spec.then." + sid + "." + std::to_string(ci), func);
+
+                                builder.SetInsertPoint(tryBB);
+                                llvm::BasicBlock* passSoFar = tryBB;
+                                bool anyCheck = false;
+                                for (size_t u = 0; u < nuser; ++u) {
+                                    if (argTypes[ncells + u] != "boxed") continue;
+                                    llvm::BasicBlock* nextPass = specBB;
+                                    // If more boxed user args remain after this one, land in a new block.
+                                    bool more = false;
+                                    for (size_t u2 = u + 1; u2 < nuser; ++u2) {
+                                        if (argTypes[ncells + u2] == "boxed") { more = true; break; }
+                                    }
+                                    if (more) {
+                                        nextPass = llvm::BasicBlock::Create(
+                                            context,
+                                            "spec.chk." + sid + "." + std::to_string(ci)
+                                                + "." + std::to_string(u),
+                                            func);
+                                    }
+                                    builder.SetInsertPoint(passSoFar);
+                                    emitNullAndTag(
+                                        rawArgVals[ncells + u], sig[u], nextPass, nextTry,
+                                        "spec." + sid + "." + std::to_string(ci) + "." + std::to_string(u));
+                                    passSoFar = nextPass;
+                                    anyCheck = true;
+                                }
+                                if (!anyCheck) {
+                                    builder.SetInsertPoint(tryBB);
+                                    builder.CreateBr(specBB);
+                                }
+
+                                builder.SetInsertPoint(specBB);
+                                std::vector<llvm::Value*> specArgs;
+                                for (size_t c = 0; c < ncells; ++c)
+                                    specArgs.push_back(rawArgVals[c]);
+                                for (size_t u = 0; u < nuser; ++u) {
+                                    llvm::Value* raw = rawArgVals[ncells + u];
+                                    if (argTypes[ncells + u] == "i64") {
+                                        specArgs.push_back(raw);
+                                    } else if (argTypes[ncells + u] == "double") {
+                                        specArgs.push_back(raw);
+                                    } else {
+                                        if (sig[u] == 'f') {
+                                            llvm::Value* dptr = builder.CreateStructGEP(
+                                                pyObjectTy, raw, 3, sid + ".fptr");
+                                            specArgs.push_back(builder.CreateAlignedLoad(
+                                                doubleTyCall, dptr, llvm::Align(8), sid + ".f"));
+                                        } else {
+                                            llvm::Value* iptr = builder.CreateStructGEP(
+                                                pyObjectTy, raw, 2, sid + ".iptr");
+                                            specArgs.push_back(builder.CreateAlignedLoad(
+                                                i64TyCall, iptr, llvm::Align(8), sid + ".i"));
+                                        }
+                                    }
+                                }
+                                llvm::Value* specRes = builder.CreateCall(
+                                    specFn, specArgs, sid + ".spec");
+                                llvm::Value* conv = convertToJoin(specRes);
+                                llvm::BasicBlock* specEnd = builder.GetInsertBlock();
+                                builder.CreateBr(joinBB);
+                                phiInc.push_back({conv, specEnd});
+                                tryBB = nextTry;
+                            }
+
+                            builder.SetInsertPoint(fallbackBB);
+                            std::vector<llvm::Value*> boxedArgs;
+                            std::vector<bool> fbWasNative;
+                            for (size_t i = 1; i < inst.operands.size(); ++i) {
+                                llvm::Value* raw = rawArgVals[i - 1];
+                                bool isNat = raw && (raw->getType() == i64TyCall
+                                                     || raw->getType()->isDoubleTy());
+                                fbWasNative.push_back(isNat);
+                                boxedArgs.push_back(getAsPyObject(inst.operands[i].name));
+                            }
+                            llvm::Value* fbRes = builder.CreateCall(
+                                boxedCallee, boxedArgs, sid + ".boxed");
+                            llvm::Function* argDecrefFb = module->getFunction("Py_DECREF");
+                            for (size_t i = 0; i < fbWasNative.size(); ++i) {
+                                if (fbWasNative[i] && argDecrefFb)
+                                    builder.CreateCall(argDecrefFb, {boxedArgs[i]});
+                            }
+                            llvm::Value* fbConv = convertToJoin(fbRes);
+                            llvm::BasicBlock* fbEnd = builder.GetInsertBlock();
+                            builder.CreateBr(joinBB);
+                            phiInc.push_back({fbConv, fbEnd});
+
+                            builder.SetInsertPoint(joinBB);
+                            curBlock = joinBB;
+                            llvm::PHINode* phi = builder.CreatePHI(joinTy, phiInc.size(), inst.result);
+                            for (auto& inc : phiInc)
+                                phi->addIncoming(inc.first, inc.second);
+                            if (!inst.result.empty()) {
+                                valueMap[inst.result] = phi;
+                                if (joinKind == JoinKind::Boxed) {
+                                    bool isUserFunc = !boxedCallee->isDeclaration()
+                                                     || userFunctionNames.count(funcName) > 0;
+                                    if (tempUseCounts.count(inst.result) == 0 && isUserFunc) {
+                                        llvm::Function* decref2 = module->getFunction("Py_DECREF");
+                                        if (decref2) builder.CreateCall(decref2, {phi});
+                                    } else {
+                                        markOwned(inst.result);
+                                    }
+                                }
+                            }
+                            for (const auto& nm : boxedTempsToDecref)
+                                emitDecRefIfOwned(nm);
                         } else {
                             // Original boxed path.
                             for (size_t i = 1; i < inst.operands.size(); ++i) {
-                                llvm::Value* raw = getOrLoad(inst.operands[i].name);
+                                llvm::Value* raw = rawArgVals.empty()
+                                    ? getOrLoad(inst.operands[i].name)
+                                    : rawArgVals[i - 1];
                                 bool isNative = raw && (raw->getType() == llvm::Type::getInt64Ty(context)
                                                         || raw->getType()->isDoubleTy());
                                 argWasNative.push_back(isNative);

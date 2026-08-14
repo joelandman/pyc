@@ -48,12 +48,25 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Do not add a new type without reading this. Splitting shared tags is a dedicated design, not a drive-by. W4.2 table keeps both collisions on purpose (bool `bit_length` on tag 5; tuple `count`/`index` on tag 7). Concrete leftovers: I-048 (boxed super proxy methods) / I-054 (len/in/subscript/`list()`, W5.1b) / I-057 (`GetSlice` / `tuple()` / map/filter). Type-5 fake-None `bit_length` is the same class; real `None` is a null pointer (I-047), not this tag.
 
 ### I-014  A6 speculative unbox / multi-dispatch
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: IMPLEMENTATION.md Planned + W4.3 design. Prototype generates per-sig variants (`__specialized_add_ii` / `_ff`). Codegen dispatch (`Codegen.cpp` ~3485–3531) only routes when **every** arg is already LLVM i64/double. A loop `s = add(s, i)` boxes the first result, so later iterations never hit the variant. Recursive `fib` works because `n` is a native param inside the variant.
-- Files: `src/codegen/Codegen.cpp` (call-site dispatch), `src/Compiler.cpp` `generateSpecializedVariants`
+- Evidence: W5.8. Boxed direct calls with a matching `__specialized_*` emit
+  null + `type==0/4` guards (`Codegen.cpp` `emitNullAndTag`) then unbox
+  field 2/3; miss is the boxed callee. `check_speculative_unbox.py` is the
+  IR lock (`pyc_user_main` calls `__specialized_add_ii` behind a type==0
+  check). `w58_unbox.py` / CASE banner `# W5.8 / I-014` lock answers
+  (bool, indirect `g=add`, mixed float, `global s`). All-native / fib
+  self-recursion unchanged. Coordinator: runner 720/720, o2_smoke 2/2,
+  nbody 100 matches CPython at `-O0` and `-O2`.
+- Files: `src/codegen/Codegen.cpp` (call-site dispatch)
 - Blocks merge: no
-- Notes: Wave 4 W4.3 **design accepted, not implemented**. See IMPLEMENTATION.md “W4.3 Design Decision”. Do not start as a quick win. Next SWE needs a dedicated ticket: runtime tag-check + unbox, native result slots, no global native stores. I-016 is a later follow-on, not a substitute.
+- Notes: Wave 5 W5.8. Apply / `__apply__N` / tag 5 / `pyc_global_*` native
+  slots not touched. Native join is effectively dead (look-ahead is
+  `assign` only; proven locals are `i64assign`/`f64assign`) — leftover
+  landmine is I-112. Sig cascade is `std::set` lex order (`fi` before
+  `ii`); extra checks, not wrong. Closures usually have no variants
+  (arity mismatch in `generateSpecializedVariants`). I-016 not in this
+  slice. I-111 still open (Runtime TypeError).
 
 ### I-016  Arena allocator / escape analysis / float-return A6
 - Status: open
@@ -553,6 +566,42 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/runtime/Runtime.cpp` (`Pyc_CallBuiltinMethod` tag 2, `Pyc_GetAttr`)
 - Blocks merge: no
 - Notes: Found finishing W5.5 / I-032. Modules are type-2 dicts at runtime; distinguishing them from user dicts is a layout change (I-013 class). Do not demand in W5.5.
+
+### I-111  PyNumber_* unsupported operands print None
+- Status: open
+- Severity: wrong-answer
+- Evidence: `def add(a,b): return a+b; print(add(None,1)); print(add([1],2))`
+  CPython: `TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'`
+  / `'list' and 'int'`.
+  pyc: prints `None` / `None`.
+  `PyNumber_Add` (`src/runtime/Runtime.cpp:7001`): `if (!a || !b) return NULL;`
+  then `if (!is_numeric(a) || !is_numeric(b)) return NULL;` (`7052`).
+  Real `None` is a null `PyObject*` (`nconst`), not tag 5.
+  Same NULL convention on `PyNumber_Subtract` / `Multiply` / `Divide`.
+- Files: `src/runtime/Runtime.cpp` (`PyNumber_Add` and siblings)
+- Blocks merge: no
+- Notes: Pre-existing. Found on the W5.8 / I-014 adjacent hunt.
+  Not this Codegen slice. Speculate must still refuse null and tag≠0/4
+  (blind `unboxToI64` on `None` would print `1`, a new wrong-answer).
+  Runtime fix is raise `TypeError`, not return NULL.
+
+### I-112  Speculative native join look-ahead misses i64assign; fallback unbox unguarded
+- Status: open
+- Severity: latent
+- Evidence: `Codegen.cpp` ~3701–3752. Join dest is the first `op=="assign"`
+  whose source is the call temp. Proven locals use `i64assign` /
+  `f64assign` (`Compiler.cpp` 7766–7774, 8248), so `joinKind` stays Boxed
+  and `convertToJoin` never unboxes today. If that look-ahead is widened
+  without changing `convertToJoin`, fallback (tag miss → generic call)
+  still does `unboxToI64` / `unboxToDouble` on the boxed result:
+  `None` → 0 (`unboxToI64` dummy) or GEP-null crash (`unboxToDouble`);
+  a float box through an i64 join reads field 2, not `dvalue`.
+  Also leaks the fallback new-ref when join is native.
+- Files: `src/codegen/Codegen.cpp` (`convertToJoin`, assign look-ahead)
+- Blocks merge: no
+- Notes: Found reviewing W5.8 / I-014. Not hit by `w58_unbox` /
+  `check_speculative_unbox`. Do not enable native join without a
+  tag-checked convert and a DECREF of the boxed fallback result.
 
 ---
 

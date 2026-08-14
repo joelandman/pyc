@@ -28,7 +28,10 @@ Confirmed later and closed (do not re-open from a paragraph below):
 - `partition("")` raises ValueError; `str.format` nested `{0.attr}` / `{0[k]}` (I-010). Leftovers I-040–I-042.
 - GDB `PyObject*` pretty-printer (`tools/pyc_gdb.py`) and A6 `FlagArtificial` (I-019). Leftovers I-043 / I-044.
 - Boxed method fallback: arity-specific `Pyc_CallMethodOrBuiltin0/1/2` and `(tag, name)` lookup (I-015). Leftovers I-045–I-049.
-- I-014 / W4.3: design accepted, **not implemented**. Dispatch still requires LLVM-native args. See “W4.3 Design Decision” below.
+- I-014 / W4.3: **implemented** in W5.8. Boxed direct calls tag-check
+  (`type==0/4`) then call `__specialized_*`; miss is the boxed callee.
+  See “W4.3 Design Decision” below for the original review. Leftover
+  native-join look-ahead is I-112.
 
 ## Design Choices of Omission
 

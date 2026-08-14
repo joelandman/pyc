@@ -4377,6 +4377,30 @@ print("banana".rfind("n", 0, 3))
 except TypeError as e:
     print(type(e).__name__)
 """, "TypeError\n"),
+    # W5.8 / I-014: boxed accumulator + edges the speculate path must not steal.
+    # Tag 5 (bool/None) and non-int receivers stay on the boxed call.
+    ("""def add(a, b):
+    return a + b
+def loop(start):
+    s = start
+    for i in range(5):
+        s = add(s, i)
+    return s
+print(loop(0))
+print(add(True, 1))
+print(add(1, True))
+g = add
+print(g(3, 4))
+print(add(1.5, 2))
+print(add(1, 2.5))
+s = 0
+def bump():
+    global s
+    s = add(s, 1)
+bump()
+bump()
+print(s)
+""", "10\n2\n2\n7\n3.5\n3.5\n2\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -4389,6 +4413,8 @@ FILE_CASES = [
     ("opt_homogeneous_list.py", []),
     ("opt_function_call.py", []),
     ("opt_mixed_code.py", []),
+    # W5.8 / I-014: boxed-param accumulator + bool/None/list/indirect/global.
+    ("w58_unbox.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),
@@ -4564,6 +4590,28 @@ def main():
     else:
         file_failures += 1
         print("check_gdb.py missing")
+
+    # W5.8 / I-014: boxed call sites must speculate into __specialized_*
+    # behind a type-tag check. Fails on the parent (dispatch is LLVM-native
+    # args only). Counted as a FILE_CASE-class failure.
+    total += 1
+    unbox_checker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "check_speculative_unbox.py")
+    if os.path.exists(unbox_checker):
+        chk = subprocess.run(
+            [sys.executable, unbox_checker],
+            capture_output=True, text=True,
+            env={**os.environ, "PYC_BINARY": pyc},
+        )
+        sys.stdout.write(chk.stdout)
+        if chk.returncode == 0:
+            ok += 1
+        else:
+            file_failures += 1
+            sys.stdout.write(chk.stderr)
+    else:
+        file_failures += 1
+        print("check_speculative_unbox.py missing")
 
     print(f"{ok}/{total} (file_case_failures={file_failures})")
     if ok == total:

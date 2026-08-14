@@ -267,8 +267,10 @@ specialization · A7 allocation counters · container typing · P0 structured
 unpack · P1 scalar freelist · Phase 27 param/return inference.
 
 A6 generates a native variant only when **all** call sites agree. Mixed
-int/float sites stay boxed. Multi-dispatch + speculative unbox has an
-accepted design and is **not** product work ([I-014](ISSUES.md) W4.3).
+int/float sites stay boxed. Direct calls with a boxed `PyObject*` arg
+speculate into `__specialized_*` behind a `type==0/4` tag check
+([I-014](ISSUES.md) W5.8); miss stays on the boxed callee. `Pyc_Apply`
+is still boxed. Native join of the variant result is leftover I-112.
 
 Boxed-receiver methods (function parameters) use arity-specific
 `Pyc_CallMethodOrBuiltin0/1/2` and a `(tag, name)` lookup
