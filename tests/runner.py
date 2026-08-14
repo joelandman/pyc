@@ -4236,6 +4236,42 @@ try:
 except AttributeError as e:
     print(type(e).__name__)
 """, "AttributeError\nAttributeError\n"),
+    # W5.6 / I-035: class-method defaults evaluate in the class / enclosing scope.
+    # Distinct class names: pyc keys IR as ClassName__method (same-name
+    # nested classes would share one __init__).
+    ("""def outer():
+    class C42:
+        def get(self, k, default=42):
+            return default
+    return C42().get("x")
+print(outer())
+def outer2():
+    class C05:
+        def get(self, k, default=0.5):
+            return default
+    return C05().get("x")
+print(outer2())
+def outer3():
+    class CInit:
+        def __init__(self, n=42):
+            self.n = n
+    return CInit().n
+print(outer3())
+class CAttr:
+    x = 7
+    def get(self, k, default=x):
+        return default
+print(CAttr().get("x"))
+""", "42\n0.5\n42\n7\n"),
+    # W5.6 / I-037 / I-066: method TypeError uses C.foo, not C__foo.
+    ("""class C:
+    def foo(self, a):
+        return a
+try:
+    C().foo()
+except TypeError as e:
+    print(e)
+""", "C.foo() missing 1 required positional argument: 'a'\n"),
     # W5.5 / I-020: kwargs reach boxed method fallback.
     ("""def fs(s):
     return s.split(maxsplit=1)

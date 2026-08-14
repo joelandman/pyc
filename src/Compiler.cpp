@@ -1587,6 +1587,8 @@ class LoweringVisitor {
             }
             return res;
         } else if (node->type == "Name") {
+            auto cbit = classBodyNames.find(node->id);
+            if (cbit != classBodyNames.end()) return cbit->second;
             // B5: if this bare name is a cell-backed name in the current function, emit
             // a PyCell_Get to obtain the value for expression use. The result is a fresh
             // PyObject* (new reference) which is safe for the expression context.
@@ -2977,6 +2979,10 @@ class LoweringVisitor {
     // `C().format(a=1)` can map kwargs onto `C__format` instead of
     // taking the str.format hasKeywordArgs arm (I-030 / I-020).
     std::unordered_map<std::string, std::string> instanceClassOf;
+    // Class-body names visible while lowering method defaults
+    // (`class C: x = 7; def get(self, k, default=x)` — I-035).
+    // Cleared before method bodies so `return x` is still a global.
+    std::unordered_map<std::string, std::string> classBodyNames;
     // Local names bound via `from pathlib import Path [as X]` — same
     // rationale as datetimeCtorAliases, but a plain set since Path has
     // only one constructor (no date/datetime/timedelta-style variants).
@@ -3662,6 +3668,30 @@ class LoweringVisitor {
         auto iit = instanceClassOf.find(val);
         if (iit != instanceClassOf.end()) instanceClassOf[target] = iit->second;
         else instanceClassOf.erase(target);
+    }
+
+    // Method / __init__ defaults must be lowered in `__module__` — the
+    // same function the slot assign is emitted into — so a nested
+    // `class C: def get(self, k, default=42)` does not store a temp that
+    // only exists in the enclosing function (I-035).
+    std::vector<std::string> lowerClassMethodDefaults(const ASTNode* fn,
+                                                      const std::string& funcIRName) {
+        std::vector<std::string> defaults;
+        size_t defaultIndex = 0;
+        std::string savedCF = currentFunc;
+        currentFunc = "__module__";
+        for (const auto& cc : fn->children) {
+            if (cc && cc->type == "Default") {
+                std::string defVal = lowerExpr(cc.get());
+                std::string slot = "__default_" + funcIRName + "_" +
+                                   std::to_string(defaultIndex++);
+                ir.addModuleGlobal(slot);
+                ir.addInstruction("__module__", "assign", {defVal}, slot);
+                defaults.push_back(slot);
+            }
+        }
+        currentFunc = savedCF;
+        return defaults;
     }
 
     bool isProvenListLike(const std::string& v) const {
@@ -9904,6 +9934,20 @@ class LoweringVisitor {
         // Process all methods
         std::string savedClass = currentClass;
         currentClass = className;
+        // Class attributes first so method defaults can see them
+        // (`class C: x = 7; def get(self, k, default=x)` — I-035).
+        classBodyNames.clear();
+        for (const auto& c : node->children) {
+            if (!c || c->type != "Assign") continue;
+            std::string attrName = c->id.empty() ? (c->args.empty() ? "" : c->args[0]) : c->id;
+            if (attrName.empty()) continue;
+            std::string attrValue = lowerExpr(c->children.empty() ? nullptr : c->children[0].get());
+            classBodyNames[attrName] = attrValue;
+            std::string attrKeyConst = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "const", {"\"" + attrName + "\""}, attrKeyConst, "str");
+            std::string dummy = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, attrKeyConst, attrValue}, dummy);
+        }
         for (const auto& c : node->children) {
             if (!c || c->type != "FunctionDef") continue;
             std::string methodName = c->id;
@@ -9948,22 +9992,11 @@ class LoweringVisitor {
                 // (slot names, funcDefaultCount/funcDefaultValues, and the
                 // IRFunction's defaultGlobals) by the per-class initFuncName
                 // instead of the shared literal "__init__".
-                std::vector<std::string> initDefaults;
-                {
-                    size_t defaultIndex = 0;
-                    for (const auto& cc : c->children) {
-                        if (cc && cc->type == "Default") {
-                            std::string defVal = lowerExpr(cc.get());
-                            std::string slot = "__default_" + initFuncName + "_" + std::to_string(defaultIndex++);
-                            ir.addModuleGlobal(slot);
-                            ir.addInstruction("__module__", "assign", {defVal}, slot);
-                            initDefaults.push_back(slot);
-                        }
-                    }
-                    if (!initDefaults.empty()) {
-                        funcDefaultCount[initFuncName] = initDefaults.size();
-                        funcDefaultValues[initFuncName] = initDefaults;
-                    }
+                std::vector<std::string> initDefaults =
+                    lowerClassMethodDefaults(c.get(), initFuncName);
+                if (!initDefaults.empty()) {
+                    funcDefaultCount[initFuncName] = initDefaults.size();
+                    funcDefaultValues[initFuncName] = initDefaults;
                 }
                 std::vector<std::string> initFuncParams;
                 std::stringstream ss(initParams);
@@ -9972,13 +10005,22 @@ class LoweringVisitor {
                     initFuncParams.push_back(param);
                 }
                 ir.addFunction(initFuncName, initFuncParams);
-                if (!initDefaults.empty()) {
+                {
+                    std::string qn = className + ".__init__";
+                    funcDisplayNames[initFuncName] = qn;
                     for (auto& fnr : ir.functions) {
-                        if (fnr.name == initFuncName) { fnr.defaultGlobals = initDefaults; break; }
+                        if (fnr.name == initFuncName) {
+                            fnr.displayName = qn;
+                            if (!initDefaults.empty()) fnr.defaultGlobals = initDefaults;
+                            break;
+                        }
                     }
                 }
                 // Lower __init__ body into the init function
                 std::string savedFunc = currentFunc;
+                auto savedBN = std::move(classBodyNames);
+                classBodyNames.clear();
+                funcQualNameStack.push_back(className + ".__init__");
                 currentFunc = initFuncName;
                 for (size_t i = 0; i < c->children.size(); ++i) {
                     if (c->children[i] && c->children[i]->type != "Default" && c->children[i]->type != "Decorator") {
@@ -9996,6 +10038,8 @@ class LoweringVisitor {
                 // Store the function name string in the class dict
                 std::string dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
+                funcQualNameStack.pop_back();
+                classBodyNames = std::move(savedBN);
                 currentFunc = savedFunc;
            } else {
                 // Lower regular method
@@ -10012,36 +10056,32 @@ class LoweringVisitor {
                 // CreateUnreachable (paramNames is also empty so the
                 // missing-args raise has no names and returns). Needed for
                 // user `C().get("x")` once the get arm no longer intercepts.
-                std::vector<std::string> methodDefaults;
-                {
-                    size_t defaultIndex = 0;
-                    for (const auto& cc : c->children) {
-                        if (cc && cc->type == "Default") {
-                            std::string defVal = lowerExpr(cc.get());
-                            std::string slot = "__default_" + methodFuncName + "_" +
-                                               std::to_string(defaultIndex++);
-                            ir.addModuleGlobal(slot);
-                            ir.addInstruction("__module__", "assign", {defVal}, slot);
-                            methodDefaults.push_back(slot);
-                        }
-                    }
-                    if (!methodDefaults.empty()) {
-                        funcDefaultCount[methodFuncName] = (int)methodDefaults.size();
-                        funcDefaultValues[methodFuncName] = methodDefaults;
-                    }
+                std::vector<std::string> methodDefaults =
+                    lowerClassMethodDefaults(c.get(), methodFuncName);
+                if (!methodDefaults.empty()) {
+                    funcDefaultCount[methodFuncName] = (int)methodDefaults.size();
+                    funcDefaultValues[methodFuncName] = methodDefaults;
                 }
                 ir.addFunction(methodFuncName, methodParams);
                 knownIRFunctions.insert(methodFuncName);
                 funcParamNames[methodFuncName] = c->args;
-                for (auto& fnr : ir.functions) {
-                    if (fnr.name == methodFuncName) {
-                        fnr.paramNames = c->args;
-                        if (!methodDefaults.empty()) fnr.defaultGlobals = methodDefaults;
-                        break;
+                {
+                    std::string qn = className + "." + methodName;
+                    funcDisplayNames[methodFuncName] = qn;
+                    for (auto& fnr : ir.functions) {
+                        if (fnr.name == methodFuncName) {
+                            fnr.paramNames = c->args;
+                            fnr.displayName = qn;
+                            if (!methodDefaults.empty()) fnr.defaultGlobals = methodDefaults;
+                            break;
+                        }
                     }
                 }
            // Lower method body
                 std::string savedFunc = currentFunc;
+                auto savedBN = std::move(classBodyNames);
+                classBodyNames.clear();
+                funcQualNameStack.push_back(className + "." + methodName);
                 currentFunc = methodFuncName;
                 // @staticmethod/@classmethod/@property — found and fixed
                 // while bug hunting: these decorators used to be
@@ -10092,21 +10132,12 @@ class LoweringVisitor {
                 } else {
                     ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, methodConst, methodToken}, dummy);
                 }
+                funcQualNameStack.pop_back();
+                classBodyNames = std::move(savedBN);
                  currentFunc = savedFunc;
              }
          }
-         // B6: Process class attributes (non-FunctionDef children)
-         for (const auto& c : node->children) {
-             if (!c || c->type != "Assign") continue;
-             // For simple assignments (Name target), the target id is stored in c->id
-             std::string attrName = c->id.empty() ? (c->args.empty() ? "" : c->args[0]) : c->id;
-             if (attrName.empty()) continue;
-             std::string attrValue = lowerExpr(c->children.empty() ? nullptr : c->children[0].get());
-             std::string attrKeyConst = "$c" + std::to_string(tempCounter++);
-             ir.addInstruction("__module__", "const", {"\"" + attrName + "\""}, attrKeyConst, "str");
-             std::string dummy = "$t" + std::to_string(tempCounter++);
-             ir.addInstruction("__module__", "call", {"Pyc_SetItem", classDictTemp, attrKeyConst, attrValue}, dummy);
-         }
+         classBodyNames.clear();
          currentClass = savedClass;
         // B6b: Store MRO in class dict for runtime super() support
         const auto& mro = classMRO[className];

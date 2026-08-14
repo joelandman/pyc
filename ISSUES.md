@@ -271,32 +271,36 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 5 W5.5. Same gate as I-032. `check_dispatch_chain.py` NARROWING now includes `isRealDictReceiver` so the dict `pop` arm does not look like a catch-all in front of list `pop`.
 
 ### I-035  Class-method defaults lowered in the wrong scope
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: Method / `__init__` defaults are `lowerExpr`’d in `currentFunc` then `assign`’d to `__module__` (`Compiler.cpp:9751-9754`, `9815-9819`). FunctionDef switches to the outer `saved` scope for both (`Compiler.cpp:352-359`). Nested class: `def outer(): class C: def get(self, k, default=42): return default; return C().get("x")` — CPython `42`; pyc `None`. Same for `default=0.5` and for nested `__init__(self, n=42)` (`C().n` is None). Class body: `class C: x = 7; def get(self, k, default=x): return default` — CPython `7`; pyc `None` (FunctionDefs are lowered before Assign children, so `x` is not the class attr).
-- Files: `src/Compiler.cpp` (`lowerClass` method / `__init__` default block)
+- Evidence: W5.6 CASE (`tests/runner.py` banner `# W5.6 / I-035`):
+  nested `default=42` / `default=0.5` / `__init__(self, n=42)` and
+  `class CAttr: x = 7; def get(self, k, default=x)` → `42\n0.5\n42\n7`.
+  Parent: defaults were lowered in `currentFunc` then assigned in `__module__`;
+  FunctionDefs ran before Assign children.
+- Files: `src/Compiler.cpp` (`lowerClassMethodDefaults`, `classBodyNames`, Assign-before-methods)
 - Blocks merge: no
-- Notes: Found reviewing W2.2 / I-007. `__init__` already had this pattern; the slice copied it for regular methods so `C().get("x")` can omit `default=None`. Top-level `default=None` / `default=1` work. Historic shared-slot bug is not back: slots are `__default_<Class>__<method>_<i>`. Do not demand in W2.2.
+- Notes: Wave 5 W5.6. Defaults switch to `__module__` like FunctionDef's outer `saved`. Class attrs are lowered first and bound in `classBodyNames` only while defaults run (method bodies still treat `x` as a global). CASE uses distinct class names — same-name nested classes still share `Class__method` IR (pre-existing).
 
 ### I-036  Traceback snapshot overwritten on reraise / nomatch
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `pyc_raise` always does `g_tb_snapshot = g_tb_stack` then, if a try is active, `pyc_tb_unwind(try.tb_depth)` before `longjmp`. A later `pyc_raise` of the same exception (nomatch `pyc_raise(exc)` in `Compiler.cpp` ~8508, bare `pyc_reraise`, or `pyc_materialize_iterator_protocol` propagate) re-snapshots the already-unwound live stack and drops callee frames.
-  - `def f(): raise ValueError('inner')` / `try: f()` / `except TypeError: pass` — CPython frames `<module>` + `f`; pyc prints only `<module>`.
-  - `try: f()` / `except ValueError: raise` — CPython keeps `f`; pyc bare-reraise snapshots only the catching frame.
-- Files: `src/runtime/Runtime.cpp` (`pyc_raise`, `pyc_reraise`, `pyc_tb_snapshot`)
+- Evidence: W5.6 `tests/check_traceback.py` `nomatch_keeps_callee` / `bare_reraise_keeps_callee`:
+  `try: f()` / `except TypeError: pass` and `except ValueError: raise` keep frames `<module>` + `f`.
+  Parent: `pyc_raise` always copied `g_tb_stack` after the try-frame unwind had dropped `f`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_raise`)
 - Blocks merge: no
-- Notes: Found reviewing W3.1 / I-009. Caused by this slice; **not** the ticket cases (no `try`). New raise after a successful catch is fine (`tb_depth` unwind prevents stale `f`). Fix is snapshot-once / attach the first snapshot to the exception (CPython) and skip overwrite on reraise. Do not demand in W3.1.
+- Notes: Wave 5 W5.6. Snapshot only when `g_last_exception != exc` or the snapshot is empty. A new exception still takes a fresh copy. Leftover: two in-flight exceptions (inner raise overwrites the global snapshot of an outer one that is later re-raised) — CPython attaches the traceback to the exception object. Not this CASE.
 
 ### I-037  Traceback frame names are IR names, not Python names
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: Codegen `Pyc_PushFrame` uses `f.displayName` if set else `f.name`, with `__module__` → `<module>` and `__specialized_*` stripping (`Codegen.cpp` ~1935–1948). Methods never set `displayName` (`lowerClass` ~9870) so they stay `Class__method`. Nested FunctionDefs now store the I-025 qualname, which is still not CPython's frame `__name__`.
-  - `class C: def foo(self): raise ValueError('m')` / `C().foo()` — CPython `in foo`; pyc `in C__foo`.
-  - `def outer():` / `def inner(): raise ValueError('n')` / `inner()` / `outer()` — CPython `in inner`; pyc `in outer.<locals>.inner` (was `__nesteddef_0`).
-- Files: `src/codegen/Codegen.cpp` (I-009 displayName), `src/Compiler.cpp` (`methodFuncName`, nested/lambda IR names)
+- Evidence: W5.6 `tests/check_traceback.py` `method_frame_is_co_name` / `nested_frame_is_co_name`:
+  `C().foo()` → `in foo`; `outer/inner` → `in inner`.
+  Parent: methods had empty `displayName` (`C__foo`); nested defs used the I-025 qualname.
+- Files: `src/Compiler.cpp` (`lowerClass` `displayName` = `C.foo`), `src/codegen/Codegen.cpp` (`Pyc_PushFrame` last dotted component)
 - Blocks merge: no
-- Notes: Found reviewing W3.1 / I-009. W5.4 did wire `displayName` into `Pyc_PushFrame`, but that string is the TypeError qualname (`outer.<locals>.inner`, `<lambda>`), not `co_name`. Methods still have an empty `displayName`. Leave open for W5.6. Do not mark fixed just because PushFrame reads the field.
+- Notes: Wave 5 W5.6. TypeError still uses the qualname (`C.foo()`, `outer.<locals>.inner()`). PushFrame takes the last `.` component so frames are `co_name`. Also closes I-066 (`C().foo()` missing-arg is `C.foo()` not `C__foo()`). Methods push `C.foo` onto `funcQualNameStack` so a def nested in a method gets `C.foo.<locals>.inner`.
 
 ### I-038  SuperMethod builtin fallback is Exception.__init__ only
 - Status: open
@@ -527,14 +531,14 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found reviewing W5.4 / I-023. Ticket CASE is required-only `def f(a)` + empty star. Do not demand in W5.4. Fix is to fill `defaults[i]` when `k >= nrequired` and GetItem is OOB (or pass the default slot names into the `__va_` wrapper).
 
 ### I-066  Method missing-arg TypeError still uses IR name
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `lowerClass` never writes `IRFunction.displayName` or `funcDisplayNames` (`Compiler.cpp` ~9869–9908). Adapter `miss.fn` is then `C__foo` (`Codegen.cpp` ~1145). A FunctionDef nested in a method only pushes its own id onto `funcQualNameStack` (methods are not FunctionDef-lowered), so the qualname is the bare `inner`.
-  - `class C: def foo(self, a): return a` / `C().foo()` — CPython `C.foo() missing 1 required positional argument: 'a'`; pyc `C__foo() missing … 'a'`.
-  - `class C: def foo(self):` / `def inner(a): return a` / `inner()` — CPython `C.foo.<locals>.inner() missing … 'a'`; pyc `inner() missing … 'a'`.
-- Files: `src/Compiler.cpp` (`lowerClass` method / `__init__`), `src/codegen/Codegen.cpp` (adapter `miss.fn`)
+- Evidence: W5.6 CASE (`tests/runner.py` banner `# W5.6 / I-037 / I-066`):
+  `C().foo()` with `def foo(self, a)` → `C.foo() missing 1 required positional argument: 'a'`.
+  Parent: methods never set `displayName`; adapter used `C__foo`.
+- Files: `src/Compiler.cpp` (`lowerClass` `displayName` / `funcQualNameStack`)
 - Blocks merge: no
-- Notes: Found reviewing W5.4 / I-025. Ticket CASE is module-level `outer.inner` and `<lambda>`. Same class; do not demand in W5.4. Setting method `displayName` to `C.foo` would also be the I-037 method-frame leftover if PushFrame used `__name__` (`foo`) rather than qualname.
+- Notes: Wave 5 W5.6. Same displayName write as I-037. Nested-in-method FunctionDefs now see `C.foo` on the qualname stack.
 
 ### I-067  Boxed module `.get` / `getattr(os, "get")` still dict
 - Status: open

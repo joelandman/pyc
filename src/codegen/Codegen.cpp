@@ -1946,6 +1946,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     displayName = displayName.substr(prefixLen, sigStart - prefixLen);
                 }
             }
+            // Traceback `in` names are co_name, not qualname (I-037).
+            // `outer.<locals>.inner` → `inner`; `C.foo` → `foo`.
+            {
+                size_t dot = displayName.rfind('.');
+                if (dot != std::string::npos && dot + 1 < displayName.size())
+                    displayName = displayName.substr(dot + 1);
+            }
             std::string tbFile = !f.sourceFile.empty() ? f.sourceFile : tbFallbackFile;
             if (llvm::Function* pushFn = module->getFunction("Pyc_PushFrame")) {
                 llvm::Value* fileStr = builder.CreateGlobalStringPtr(tbFile, "tb.file." + f.name);

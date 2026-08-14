@@ -110,6 +110,30 @@ def main():
             ["<module>"],
             "IndexError",
         ),
+        (
+            "nomatch_keeps_callee",
+            "def f():\n    raise ValueError('inner')\ntry:\n    f()\nexcept TypeError:\n    pass\n",
+            ["<module>", "f"],
+            "ValueError: inner",
+        ),
+        (
+            "bare_reraise_keeps_callee",
+            "def f():\n    raise ValueError('inner')\ntry:\n    f()\nexcept ValueError:\n    raise\n",
+            ["<module>", "f"],
+            "ValueError: inner",
+        ),
+        (
+            "method_frame_is_co_name",
+            "class C:\n    def foo(self):\n        raise ValueError('m')\nC().foo()\n",
+            ["<module>", "foo"],
+            "ValueError: m",
+        ),
+        (
+            "nested_frame_is_co_name",
+            "def outer():\n    def inner():\n        raise ValueError('n')\n    inner()\nouter()\n",
+            ["<module>", "outer", "inner"],
+            "ValueError: n",
+        ),
     ]
     failed = 0
     for label, src, names, needle in cases:

@@ -13136,9 +13136,11 @@ static void pyc_fatal_exception(PyObject* exc) {
 
 void pyc_raise(PyObject* exc) {
     if (!exc) return;
-    // Snapshot the live Python frame stack before longjmp or fatal so the
-    // printer is independent of the try-frame unwind below.
-    pyc_tb_snapshot();
+    // Snapshot once per exception object (I-036). A nomatch re-raise or
+    // bare `raise` would otherwise copy the already-unwound live stack
+    // and drop callee frames. A new exception still takes a fresh copy.
+    if (g_last_exception != exc || g_tb_snapshot.empty())
+        pyc_tb_snapshot();
     // Exception class objects (type 12): instantiate to a structured
     // exception (type 10) before raising.
     if (exc->type == 12) {
