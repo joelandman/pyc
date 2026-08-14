@@ -9604,21 +9604,6 @@ class LoweringVisitor {
             std::string classRef = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", obj, classKeyConst}, classRef);
             ir.addInstruction(currentFunc, "call", {"Pyc_GetItem", classRef, methodNameConst}, methodLookup);
-            // Build the args list (NOT including self/cls — Pyc_CallMethod
-            // below decides whether/what to prepend based on the looked-up
-            // method's shape, replacing what used to be an unconditional
-            // "prepend obj" here regardless of @staticmethod/@classmethod —
-            // see Pyc_CallMethod's comment in Runtime.cpp).
-            std::string argList = "$t" + std::to_string(tempCounter++);
-            {
-                std::string z = "$c" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "const", {"0"}, z);
-                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
-            }
-            for (auto& a : args) {
-                std::string d = "$t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, a}, d);
-            }
             // Pyc_CallMethodOrBuiltin, not Pyc_CallMethod: methodLookup is
             // null whenever the receiver is not a user-class instance (a
             // builtin has no "__class__" entry), and that used to fall
@@ -9628,8 +9613,33 @@ class LoweringVisitor {
             // "boxed" receiver, i.e. any function parameter) still reach
             // the right implementation. Class instances are unaffected:
             // a non-null methodLookup takes the identical path as before.
-            ir.addInstruction(currentFunc, "call",
-                              {"Pyc_CallMethodOrBuiltin", methodLookup, obj, argList, methodNameConst}, res);
+            //
+            // Arity 0/1/2: Pyc_CallMethodOrBuiltinN(method, obj, name, a0, a1)
+            // — no args list. Arity 3+ still builds one (rfind 4-arg,
+            // replace-with-count). self/cls is NOT prepended; Pyc_CallMethod
+            // decides that from the looked-up method's shape.
+            if (args.size() <= 2) {
+                std::vector<std::string> callOps;
+                callOps.push_back("Pyc_CallMethodOrBuiltin" + std::to_string(args.size()));
+                callOps.push_back(methodLookup);
+                callOps.push_back(obj);
+                callOps.push_back(methodNameConst);
+                for (auto& a : args) callOps.push_back(a);
+                ir.addInstruction(currentFunc, "call", callOps, res);
+            } else {
+                std::string argList = "$t" + std::to_string(tempCounter++);
+                {
+                    std::string z = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, z);
+                    ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
+                }
+                for (auto& a : args) {
+                    std::string d = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, a}, d);
+                }
+                ir.addInstruction(currentFunc, "call",
+                                  {"Pyc_CallMethodOrBuiltin", methodLookup, obj, argList, methodNameConst}, res);
+            }
         }
         return res;
     }

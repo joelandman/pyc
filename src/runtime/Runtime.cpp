@@ -13551,10 +13551,13 @@ PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* args
 
 // ---- Builtin-type method dispatch ----
 //
-// Pyc_CallBuiltinMethod(receiver, nameObj, argsList) resolves a method on
-// a *builtin* receiver (str/list/dict/set/tuple) using the value's real
-// runtime type tag, rather than whatever the compiler could prove about
-// it at lowering time.
+// pyc_call_builtin_method resolves a method on a *builtin* receiver
+// (str/list/dict/set/tuple) using the value's real runtime type tag.
+// a0/a1 are the first two positional args (nullptr if absent). argsList
+// is optional: the 4-arg list-form entry point passes it so format /
+// rfind's 3rd arg / replace's count can read past a1; the N-ary entry
+// points pass nullptr (format synthesizes a 0/1/2-element list from
+// a0/a1 in that case).
 //
 // Why this exists: Compiler.cpp's lowerMethodCall dispatches a long
 // if/else chain on method *name*, with each arm optionally gated on
@@ -13596,12 +13599,10 @@ static const char* pyc_builtin_type_name(PyObject* o) {
     }
 }
 
-extern "C" PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj,
-                                           PyObject* argsList) {
+static PyObject* pyc_call_builtin_method(PyObject* receiver, PyObject* nameObj,
+                                         PyObject* a0, PyObject* a1, PyObject* argsList) {
     if (!receiver || !nameObj || nameObj->type != 3) return nullptr;
     const std::string& m = nameObj->str;
-    PyObject* a0 = pyc_arg_at(argsList, 0);
-    PyObject* a1 = pyc_arg_at(argsList, 1);
 
     switch (receiver->type) {
         case 20: {  // set
@@ -13709,10 +13710,22 @@ extern "C" PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj
             // str.format(*args) -- the kwargs form never reaches here; its
             // arm keeps the fast path precisely because the generic
             // fallback's arg list cannot carry keyword arguments.
+            // N-ary callers pass argsList == nullptr; synthesize a tiny
+            // list from a0/a1 so '{ }'.format(x) through a parameter still
+            // works. C nullptr means "absent"; a Python None is non-null.
             if (m == "format") {
+                PyObject* owned = nullptr;
+                PyObject* fmtArgs = argsList;
+                if (!fmtArgs) {
+                    owned = PyList_New(0);
+                    if (a0) PyList_Append(owned, a0);
+                    if (a1) PyList_Append(owned, a1);
+                    fmtArgs = owned;
+                }
                 PyObject* kw = PyDict_New();
-                PyObject* r = PyBuiltin_StrFormat(receiver, argsList, kw);
+                PyObject* r = PyBuiltin_StrFormat(receiver, fmtArgs, kw);
                 Py_DECREF(kw);
+                if (owned) Py_DECREF(owned);
                 return r;
             }
             if (m == "join")       return PyString_Join(receiver, a0);
@@ -13749,18 +13762,72 @@ extern "C" PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj
     return nullptr;
 }
 
+extern "C" PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj,
+                                           PyObject* argsList) {
+    return pyc_call_builtin_method(receiver, nameObj,
+                                   pyc_arg_at(argsList, 0), pyc_arg_at(argsList, 1),
+                                   argsList);
+}
+
+extern "C" PyObject* Pyc_CallBuiltinMethod0(PyObject* receiver, PyObject* nameObj) {
+    return pyc_call_builtin_method(receiver, nameObj, nullptr, nullptr, nullptr);
+}
+
+extern "C" PyObject* Pyc_CallBuiltinMethod1(PyObject* receiver, PyObject* nameObj,
+                                            PyObject* a0) {
+    return pyc_call_builtin_method(receiver, nameObj, a0, nullptr, nullptr);
+}
+
+extern "C" PyObject* Pyc_CallBuiltinMethod2(PyObject* receiver, PyObject* nameObj,
+                                            PyObject* a0, PyObject* a1) {
+    return pyc_call_builtin_method(receiver, nameObj, a0, a1, nullptr);
+}
+
 // Pyc_CallMethodOrBuiltin(methodVal, receiver, argsList, nameObj) -- the
-// method-dispatch fallback emitted by lowerMethodCall's terminal branch.
-// methodVal is the result of looking "<name>" up on the receiver's
-// __class__; that succeeds for a user-class instance and yields null for
-// every builtin. Previously the null case went straight into
-// Pyc_CallMethod and came back None, which is how a type-gated arm that
-// didn't fire turned into a silently wrong answer. Class instances keep
-// the exact same path they always had.
+// method-dispatch fallback emitted by lowerMethodCall's terminal branch
+// for arity >= 3. methodVal is the result of looking "<name>" up on the
+// receiver's __class__; that succeeds for a user-class instance and
+// yields null for every builtin. Previously the null case went straight
+// into Pyc_CallMethod and came back None, which is how a type-gated arm
+// that didn't fire turned into a silently wrong answer. Class instances
+// keep the exact same path they always had.
+//
+// Arity 0/1/2 use Pyc_CallMethodOrBuiltinN instead, which pass a0/a1 as
+// PyObject* so the builtin path never allocates an args list. User-class
+// instances still go through Pyc_CallMethod; those wrappers build a tiny
+// list for that path only.
 extern "C" PyObject* Pyc_CallMethodOrBuiltin(PyObject* methodVal, PyObject* receiver,
                                              PyObject* argsList, PyObject* nameObj) {
     if (methodVal) return Pyc_CallMethod(methodVal, receiver, argsList);
     return Pyc_CallBuiltinMethod(receiver, nameObj, argsList);
+}
+
+static PyObject* pyc_call_user_method_n(PyObject* methodVal, PyObject* receiver,
+                                        PyObject* a0, PyObject* a1) {
+    PyObject* argsList = PyList_New(0);
+    if (a0) PyList_Append(argsList, a0);
+    if (a1) PyList_Append(argsList, a1);
+    PyObject* r = Pyc_CallMethod(methodVal, receiver, argsList);
+    Py_DECREF(argsList);
+    return r;
+}
+
+extern "C" PyObject* Pyc_CallMethodOrBuiltin0(PyObject* methodVal, PyObject* receiver,
+                                              PyObject* nameObj) {
+    if (methodVal) return pyc_call_user_method_n(methodVal, receiver, nullptr, nullptr);
+    return Pyc_CallBuiltinMethod0(receiver, nameObj);
+}
+
+extern "C" PyObject* Pyc_CallMethodOrBuiltin1(PyObject* methodVal, PyObject* receiver,
+                                              PyObject* nameObj, PyObject* a0) {
+    if (methodVal) return pyc_call_user_method_n(methodVal, receiver, a0, nullptr);
+    return Pyc_CallBuiltinMethod1(receiver, nameObj, a0);
+}
+
+extern "C" PyObject* Pyc_CallMethodOrBuiltin2(PyObject* methodVal, PyObject* receiver,
+                                              PyObject* nameObj, PyObject* a0, PyObject* a1) {
+    if (methodVal) return pyc_call_user_method_n(methodVal, receiver, a0, a1);
+    return Pyc_CallBuiltinMethod2(receiver, nameObj, a0, a1);
 }
 
 // Pyc_GetAttr(obj, attrName) — wraps Pyc_GetItem for plain (non-call)

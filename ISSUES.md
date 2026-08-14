@@ -55,9 +55,9 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Status: open
 - Severity: limitation
 - Evidence: PERFORMANCE_BASELINE.md “The real cost: unproven receivers.” 8M `.count(1)`: proven 0.11s vs boxed 0.93s. Two unused opts: arity-specific `Pyc_CallBuiltinMethodN`; `(tag, name)` lookup.
-- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp` fallback emit
+- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp` fallback emit, `src/codegen/Codegen.cpp` externs, `include/pyc/runtime.h`
 - Blocks merge: no
-- Notes: Wave 4 W4.1 / W4.2.
+- Notes: Wave 4 W4.1 / W4.2. **W4.1 landed** (this slice): `lowerMethodCall` terminal fallback emits `Pyc_CallMethodOrBuiltin0/1/2` for arity 0/1/2 (no compiler-side `PyList_NewBoxed`/`Append`); arity 3+ still builds a list into `Pyc_CallMethodOrBuiltin`. Builtin path passes a0/a1 as `PyObject*` with `argsList == nullptr`; `format` synthesizes a tiny list from a0/a1 and DECREFs it. User methods (`methodVal` non-null) still work: 1/2-arg wrappers build a temp list and DECREF; 0-arg passes nullptr into `Pyc_CallMethod` (n=0). Kwargs still not on this path (I-020). W4.2 — `(tag, name)` lookup instead of the linear `std::string` scan — remains. SWR W4.1: no merge blockers. Leftovers I-045 / I-046.
 
 ### I-016  Arena allocator / escape analysis / float-return A6
 - Status: open
@@ -89,6 +89,22 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: CMake `runtime.bc` target, `src/runtime/Runtime.cpp`
 - Blocks merge: no
 - Notes: Split from I-019 after W3.4. Does not retype user-local DI (I-043).
+
+### I-045  `str.find` drops `end` (proven and boxed)
+- Status: open
+- Severity: wrong-answer
+- Evidence: CPython `"banana".find("a", 2, 3)` → `-1`. pyc → `3`. Proven arm `Compiler.cpp` `find` (`args.size() >= 2` → `PyString_Find3` only; no Find4). Boxed fallback `pyc_call_builtin_method` `find` uses a0/a1 only (`Runtime.cpp`). `rfind` already has `PyString_RFind4` and reads `pyc_arg_at(argsList, 2)` on the arity-3+ list path. Same result for a literal `"banana".find(...)` (table/arm) and `def f(s): return s.find("a", 2, 3)`.
+- Files: `src/Compiler.cpp` (`find` arm), `src/runtime/Runtime.cpp` (`PyString_Find3`, `pyc_call_builtin_method` `find`)
+- Blocks merge: no
+- Notes: Found reviewing W4.1 / I-015. Not this ticket — 3-arg `rfind`/`replace` still go through the list path and keep `end`/`count`. Fix is a `PyString_Find4` plus the same a2 probe `rfind` already has.
+
+### I-046  Boxed `split(None)` / `rsplit(None)` is space-split, not whitespace-run
+- Status: open
+- Severity: wrong-answer
+- Evidence: CPython `def f(s): return s.split(None)` ; `f("a  b")` → `['a', 'b']`. pyc boxed fallback: a0 is a type-5 None object (non-null), so `if (!a0)` misses and `PyString_Split2` uses `delim = (sep && sep->type == 3) ? sep->str : " "` → `['a', '', 'b']`. Same for `rsplit(None)` (`a0 ? PyString_RSplit : RSplitWhitespace`). Proven path already has `sepIsNone` and takes `PyString_SplitWhitespace`. `s.split()` / `s.split(",")` (no explicit None) match CPython on both paths.
+- Files: `src/runtime/Runtime.cpp` (`pyc_call_builtin_method` split/rsplit; `PyString_Split2`)
+- Blocks merge: no
+- Notes: Found reviewing W4.1 / I-015. The new N-ary wrappers made the nullptr-vs-None distinction load-bearing (`format` comment: “C nullptr means absent; a Python None is non-null”) but split still treats only C nullptr as whitespace mode. Pre-existing; W4.1 did not introduce it. Not this ticket.
 
 ### I-020  Keyword args dropped by method-call fallback
 - Status: open

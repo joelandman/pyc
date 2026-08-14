@@ -204,6 +204,17 @@ PyObject* PyObject_TruthBoxed(PyObject* obj);
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key);
 PyObject* Pyc_GetAttr(PyObject* obj, PyObject* attrName);
 PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* argsList);
+PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj, PyObject* argsList);
+PyObject* Pyc_CallBuiltinMethod0(PyObject* receiver, PyObject* nameObj);
+PyObject* Pyc_CallBuiltinMethod1(PyObject* receiver, PyObject* nameObj, PyObject* a0);
+PyObject* Pyc_CallBuiltinMethod2(PyObject* receiver, PyObject* nameObj, PyObject* a0, PyObject* a1);
+PyObject* Pyc_CallMethodOrBuiltin(PyObject* methodVal, PyObject* receiver,
+                                 PyObject* argsList, PyObject* nameObj);
+PyObject* Pyc_CallMethodOrBuiltin0(PyObject* methodVal, PyObject* receiver, PyObject* nameObj);
+PyObject* Pyc_CallMethodOrBuiltin1(PyObject* methodVal, PyObject* receiver,
+                                  PyObject* nameObj, PyObject* a0);
+PyObject* Pyc_CallMethodOrBuiltin2(PyObject* methodVal, PyObject* receiver,
+                                  PyObject* nameObj, PyObject* a0, PyObject* a1);
 PyObject* Pyc_Subscript(PyObject* obj, PyObject* key);
 PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val);
 PyObject* Pyc_SubscriptSetItem(PyObject* obj, PyObject* key, PyObject* val);

@@ -3882,6 +3882,33 @@ print('{0.x}'.format(C()))
 """, "9\n"),
     ("print('{name[0]}'.format(name='ab'))", "a\n"),
     ("print('{0[1][0]}'.format([[9, 8], [7, 6]]))", "7\n"),
+    # W4.1 / I-015: boxed-receiver fallback (function parameter) must
+    # keep working at arities 0/1/2 (new Pyc_CallMethodOrBuiltinN path)
+    # and 3+ (existing args-list path). User methods still win.
+    ("""
+def f0(s):
+    return s.upper(), s.lower()
+def f1(s, x):
+    return s.count(x), s.find(x)
+def f2(s, a, b):
+    return s.replace(a, b), s.center(5, b)
+def f3(s, a, b, n):
+    return s.replace(a, b, n)
+def fl(l, x):
+    l.append(x)
+    return l.copy()
+class C:
+    def ping(self, x):
+        return "user:" + str(x)
+def fp(o, x):
+    return o.ping(x)
+print(f0("Ab"))
+print(f1("banana", "a"))
+print(f2("ab", "a", "-"))
+print(f3("aaa", "a", "X", 2))
+print(fl([1], 2))
+print(fp(C(), 9))
+""", "('AB', 'ab')\n(3, 1)\n('-b', '--ab-')\nXXa\n[1, 2]\nuser:9\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
