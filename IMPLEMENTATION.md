@@ -475,9 +475,9 @@ updated to handle unpack targets with element-by-element stores.
 **Stale-build episode (resolved):** an intermediate check still saw
 `[None, None]` because `build/pyc` was stale — `libmpdec-dev` had gone
 missing, CMake reconfigure failed, and `make` never recompiled. The
-source fix was already correct. See KnownGapsPlan.md Gap 2. A remaining
+source fix was already correct. See KnownGapsPlan.md Gap 2. The remaining
 distinct quirk (nested-comp subscript on the iteration variable) is
-ISSUES I-005, not this unpack mechanism.
+fixed as I-005 / I-029.
 
 ### `collections.deque`/`namedtuple`/`defaultdict`
 `deque` reuses `pathlib.Path`'s pattern exactly: construction is

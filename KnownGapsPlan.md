@@ -125,9 +125,9 @@ limitations:
 - ~~**Dict iteration order is not insertion-preserved**~~ **Now insertion-ordered**
   (CPython 3.7+). Dict payload is a `std::vector` of pairs, not
   `unordered_map`. See IMPLEMENTATION.md and ISSUES I-106.
-- **Nested-comp subscript-on-iteration-variable** produces float-promoted
-  / tuple-collapsed values — a compound of pre-existing type-tracking
-  quirks, not the unpack-target mechanism. Tracked as ISSUES I-005.
+- ~~**Nested-comp subscript-on-iteration-variable**~~ **Fixed (I-005 / I-029).**
+  `detectCompElementType` no longer treats every `Name[Constant]` as float.
+  Nested listcomps stay boxed lists.
 
 ---
 

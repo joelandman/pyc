@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): ~620 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): ~632 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627) are stale.
 
 ---
 
@@ -149,7 +149,7 @@ Many of these are first-class values (`sorted(words, key=len)`, `funcs = [abs, s
 (x*2 for x in range(5))        # generator expressions, eagerly materialized
 ```
 
-Nested-comp subscript on the iteration variable still has a type-tracking quirk ([I-005](ISSUES.md)).
+List-comp `name[const]` is typed only when proven int/float; otherwise boxed (I-005). Nested listcomps are always lists, not scalars (I-029).
 
 ---
 

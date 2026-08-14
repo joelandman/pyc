@@ -3703,6 +3703,23 @@ for i in range(8):
     re.findall("a", "aaa")
 print("ok")
 """, "aaa\n['xx', 'xxx']\nTrue\nok\n"),
+    # W1.5 / I-005: detectCompElementType treats Name[Constant] as float,
+    # so [r[0] for r in int_rows] promotes to float and list/str elements
+    # collapse to 0.0. Variable-index and plain for-loops are already OK.
+    ("h=[[10,20],[30,40]]\nprint([r[0] for r in h])", "[10, 30]\n"),
+    ("h=[[10,20],[30,40]]\nprint([r[1] for r in h])", "[20, 40]\n"),
+    ("h=[[10,20],[30,40]]\ni=0\nprint([r[i] for r in h])", "[10, 30]\n"),
+    ("h=[[[1,2],[3,4]],[[5,6],[7,8]]]\nprint([r[0] for r in h])", "[[1, 2], [5, 6]]\n"),
+    ("h=[['ab','cd'],['ef','gh']]\nprint([r[0] for r in h])", "['ab', 'ef']\n"),
+    ("print([[x[0] for x in [[1,2],[3,4]]] for _ in [0]])", "[[1, 3]]\n"),
+    ("m=[[[1,2],[3,4]],[[5,6],[7,8]]]\nprint([[row[0] for row in block] for block in m])", "[[1, 3], [5, 7]]\n"),
+    ("rows=[[1,2],[3,4],[5,6]]\nprint([r[0] for r in rows if r[1]>3])", "[3, 5]\n"),
+    ("bodies=[[[0.0,0.0],[1.0,0.0],1.0],[[1.0,0.0],[0.0,1.0],2.0]]\nprint([b[0] for b in bodies])", "[[0.0, 0.0], [1.0, 0.0]]\n"),
+    # I-029: a ListComp expression is a list. Do not type the outer
+    # result as int/float just because the inner elt is scalar.
+    ("print([[1 for _ in [0]] for __ in [0]])", "[[1]]\n"),
+    ("print([[1.0 for _ in [0]] for __ in [0]])", "[[1.0]]\n"),
+    ("print([[len(x) for x in ['ab']] for _ in [0]])", "[[2]]\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

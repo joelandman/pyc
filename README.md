@@ -7,7 +7,7 @@ LLVM IR, optimizes it, and produces standalone native executables via a minimal
 
 Written in C++ with Clang++ and LLVM (`find_package(LLVM)`; 18 historically,
 22 on the current development machine). No C/C++ intermediate language for
-the normal compiler path. **650/650 tests passing** (620 inline cases + 29 file cases + 1 dispatch-chain check, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
+the normal compiler path. **662/662 tests passing** (632 inline cases + 29 file cases + 1 dispatch-chain check, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
 
 ## Build
 

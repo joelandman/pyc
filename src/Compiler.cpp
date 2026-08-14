@@ -3063,6 +3063,72 @@ class LoweringVisitor {
           noteType(name, "list");
       }
 
+      // Look up a proven per-index element type for `name[idx]` in the current
+      // function. Empty if unknown. list_float / float_list mean the *element*
+      // is a float list, not a scalar float.
+      std::string provenSubscriptElemType(const std::string& name, size_t idx) const {
+          if (name.empty()) return "";
+          for (const auto& fn : ir.functions) {
+              if (fn.name != currentFunc) continue;
+              auto sit = fn.subscriptElementTypes.find(name);
+              if (sit != fn.subscriptElementTypes.end()) {
+                  auto iit = sit->second.find(idx);
+                  if (iit != sit->second.end()) return iit->second;
+              }
+              break;
+          }
+          return "";
+      }
+
+      // After GetItemObj → list-comp loop var, copy the iterable's element
+      // maps onto the target. The loop var is a list_float only when every
+      // iterable element is itself a float list.
+      void propagateCompLoopVarTypes(const std::string& iterName, const std::string& target) {
+          if (iterName.empty() || target.empty()) return;
+          copyLayoutMaps(iterName, target);
+          if (structuredElementLayout.count(iterName)) {
+              applyTupleLayout(target, structuredElementLayout[iterName]);
+              return;
+          }
+          for (auto& fn : ir.functions) {
+              if (fn.name != currentFunc) continue;
+              auto sel = fn.structuredElementLayout.find(iterName);
+              if (sel != fn.structuredElementLayout.end() && !sel->second.empty()) {
+                  applyTupleLayout(target, sel->second);
+                  break;
+              }
+              auto markIfHomogeneousLists = [&](const std::unordered_map<size_t, std::string>& m) -> bool {
+                  if (m.empty()) return false;
+                  bool allFloatList = true, allIntList = true;
+                  for (const auto& [idx, et] : m) {
+                      (void)idx;
+                      if (et != "list_float" && et != "float_list") allFloatList = false;
+                      if (et != "list_int" && et != "int_list") allIntList = false;
+                  }
+                  if (allFloatList) {
+                      noteType(target, "list_float");
+                      knownFloatLists.insert(target);
+                      for (size_t i = 0; i <= 20; i++) fn.subscriptElementTypes[target][i] = "float";
+                      return true;
+                  }
+                  if (allIntList) {
+                      noteType(target, "list_int");
+                      knownIntLists.insert(target);
+                      for (size_t i = 0; i <= 20; i++) fn.subscriptElementTypes[target][i] = "int";
+                      return true;
+                  }
+                  return false;
+              };
+              auto cit = fn.containerElementTypes.find(iterName);
+              if (cit != fn.containerElementTypes.end() && markIfHomogeneousLists(cit->second))
+                  break;
+              auto sit = fn.subscriptElementTypes.find(iterName);
+              if (sit != fn.subscriptElementTypes.end() && markIfHomogeneousLists(sit->second))
+                  break;
+              break;
+          }
+      }
+
       // Copy layout maps from src → dst (assign / call result propagation).
       void copyLayoutMaps(const std::string& src, const std::string& dst) {
           if (src.empty() || dst.empty() || src == dst) return;
@@ -3685,22 +3751,49 @@ class LoweringVisitor {
             return "int";
         }
         if (node->type == "Subscript") {
-            // Try to infer element type from the subscript expression.
-            // This handles patterns like bodies[i][j] in list comprehensions.
+            // Infer only from proven container types. Name[const] is not
+            // float by default — that promoted ints and collapsed lists/strs.
             if (node->children.size() >= 2) {
                 const ASTNode* objNode = node->children[0].get();
                 const ASTNode* idxNode = node->children[1].get();
-                // Check if objNode is a nested subscript - recurse to infer type
                 if (objNode && objNode->type == "Subscript") {
                     std::string innerType = detectCompElementType(objNode);
                     if (innerType == "float" || innerType == "int") {
                         return innerType;
                     }
                 }
-                // Simple subscript with constant index - conservative: treat as float
-                // This handles patterns like [x, y, z] where x = container[k]
                 if (objNode && objNode->type == "Name" && idxNode && idxNode->type == "Constant") {
-                    return "float";
+                    const std::string& name = objNode->id;
+                    std::string objT = typeOf(name);
+                    if (objT == "list_float" || knownFloatLists.count(name))
+                        return "float";
+                    if (objT == "list_int" || knownIntLists.count(name))
+                        return "int";
+                    std::string idxValue;
+                    if (!idxNode->value.empty())
+                        idxValue = idxNode->value;
+                    else if (idxNode->args.size() == 1)
+                        idxValue = idxNode->args[0];
+                    size_t idxVal = 0;
+                    bool hasLiteralIndex = !idxValue.empty()
+                        && !idxNode->is_float && !idxNode->is_str
+                        && !idxNode->is_none && !idxNode->is_bytes;
+                    if (hasLiteralIndex) {
+                        try {
+                            if (!idxValue.empty() && idxValue[0] == '-')
+                                hasLiteralIndex = false;
+                            else
+                                idxVal = std::stoull(idxValue);
+                        } catch (...) {
+                            hasLiteralIndex = false;
+                        }
+                    }
+                    if (hasLiteralIndex) {
+                        std::string et = provenSubscriptElemType(name, idxVal);
+                        if (et == "float") return "float";
+                        if (et == "int" || et == "i64" || et == "bool") return "int";
+                    }
+                    return "boxed";
                 }
             }
             return "boxed";
@@ -3732,13 +3825,10 @@ class LoweringVisitor {
         if (node->type == "JoinedStr" || node->type == "FormattedValue") return "boxed";
         if (node->type == "BoolOp") return "boxed";  // returns actual value, could be anything
         if (node->type == "Attribute") return "boxed";
-        // Comprehension nested inside comprehension
-        if (node->type == "ListComp") {
-            // Check the inner element type
-            if (node->children.size() >= 2)
-                return detectCompElementType(node->children[0].get());
-            return "boxed";
-        }
+        // Nested ListComp is always a list, never a scalar. Inheriting
+        // the inner elt type made [[1 for _ in [0]] for __ in [0]]
+        // allocate PyList_NewIntBoxed and store the inner list as 0.
+        if (node->type == "ListComp") return "boxed";
         return "boxed";
     }
 
@@ -10024,16 +10114,21 @@ class LoweringVisitor {
         // body, because they may reference the outer loop variable
         // (e.g. [... for row in a for x in [(row[0], row[1])]]).
         std::vector<std::string> iterSlots(gens.size());
+        std::vector<std::string> iterSrcs(gens.size());
         std::vector<std::string> lenSlots(gens.size());
         {
             const ASTNode* genNode = node->children[1].get();
             std::string iterVal = lowerExpr(genNode->children[1].get());
+            iterSrcs[0] = iterVal;
             std::string iterSlot = "__lci_0_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {iterVal}, iterSlot);
+            copyLayoutMaps(iterVal, iterSlot);
             std::string listified = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", iterSlot}, listified);
+            copyLayoutMaps(iterSlot, listified);
             std::string listifiedSlot = "__lcmat_0_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {listified}, listifiedSlot);
+            copyLayoutMaps(listified, listifiedSlot);
             iterSlots[0] = listifiedSlot;
         }
 
@@ -10086,6 +10181,8 @@ class LoweringVisitor {
             if (g.targetNode) {
                 if (g.targetNode->type == "Name") {
                     ir.addInstruction(currentFunc, "assign", {item}, g.targetNode->id);
+                    const std::string& src = !iterSrcs[gi].empty() ? iterSrcs[gi] : iterSlots[gi];
+                    propagateCompLoopVarTypes(src, g.targetNode->id);
                 } else {
                     // tuple/list target unpack (reuse the unpack helper)
                     lowerUnpackTarget(g.targetNode, item);
@@ -10108,12 +10205,16 @@ class LoweringVisitor {
                 for (size_t gj = gi + 1; gj < gens.size(); ++gj) {
                     const ASTNode* genNode = node->children[gj + 1].get();
                     std::string iterVal = lowerExpr(genNode->children[1].get());
+                    iterSrcs[gj] = iterVal;
                     std::string iterSlot = "__lci_" + std::to_string(gj) + "_" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "assign", {iterVal}, iterSlot);
+                    copyLayoutMaps(iterVal, iterSlot);
                     std::string listified = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", iterSlot}, listified);
+                    copyLayoutMaps(iterSlot, listified);
                     std::string listifiedSlot = "__lcmat_" + std::to_string(gj) + "_" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "assign", {listified}, listifiedSlot);
+                    copyLayoutMaps(listified, listifiedSlot);
                     iterSlots[gj] = listifiedSlot;
 
                     std::string lenRes = "$t" + std::to_string(tempCounter++);

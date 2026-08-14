@@ -20,14 +20,6 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 
 ## Open
 
-### I-005  Nested-comp subscript on the iteration variable
-- Status: open
-- Severity: wrong-answer
-- Evidence: KnownGapsPlan.md “Related remaining gaps.” Float-promoted / tuple-collapsed values. Distinct from list-comp unpack (I-102, fixed).
-- Files: `src/Compiler.cpp` (comprehension lowering / type tracking)
-- Blocks merge: no
-- Notes: Wave 1 W1.5.
-
 ### I-006  Remaining name-only `lowerMethodCall` arms
 - Status: open
 - Severity: latent
@@ -213,6 +205,20 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
+
+### I-005  Nested-comp subscript on the iteration variable
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: `detectCompElementType` no longer guesses float for Name[Constant]. I-029 ListComp arm always boxed. Runner 662/662. Focused cases + nbody match CPython at -O0/-O2.
+- Files: `src/Compiler.cpp`
+- Notes: Wave 1 W1.5. SWR found I-029 in the first pass; Coordinator applied `return "boxed"` for nested ListComp. Both closed in this slice.
+
+### I-029  Nested ListComp inherit treats a list as a scalar int/float
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: `[[1 for _ in [0]] for __ in [0]]` → `[[1]]`. CASES under I-029.
+- Files: `src/Compiler.cpp` (`detectCompElementType` ListComp arm)
+- Notes: Introduced and fixed in W1.5.
 
 ### I-004  `allocObject()` calloc on a C++ PyObject
 - Status: fixed
