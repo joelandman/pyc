@@ -3858,6 +3858,30 @@ class C:
         self.ok = 1
 print(C().ok)
 """, "1\n"),
+    # W3.3 / I-010: partition("") must raise ValueError; str.format
+    # nested fields {0.attr} / {0[k]} must resolve like CPython.
+    ("""
+try:
+    print('abc'.partition(''))
+except ValueError as e:
+    print(type(e).__name__ + ":", e)
+try:
+    print('abc'.rpartition(''))
+except ValueError as e:
+    print(type(e).__name__ + ":", e)
+print('abc'.partition('b')[0])
+""", "ValueError: empty separator\nValueError: empty separator\na\n"),
+    ("print('{0[1]}'.format([10, 20, 30]))", "20\n"),
+    ("print('{0.real}'.format(3+4j))", "3.0\n"),
+    ("print('{0[k]}'.format({'k': 7}))", "7\n"),
+    ("""
+class C:
+    def __init__(self):
+        self.x = 9
+print('{0.x}'.format(C()))
+""", "9\n"),
+    ("print('{name[0]}'.format(name='ab'))", "a\n"),
+    ("print('{0[1][0]}'.format([[9, 8], [7, 6]]))", "7\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

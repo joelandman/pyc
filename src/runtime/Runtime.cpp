@@ -3265,15 +3265,16 @@ PyObject* Pyc_FormatValue(PyObject* value, PyObject* specObj) {
 
 // str.partition(sep) / str.rpartition(sep) — return a 3-tuple
 // (before, sep, after), matching CPython. partition finds the first
-// occurrence of sep; rpartition finds the last. Real CPython raises
-// ValueError for an empty separator; this takes the more lenient "no
-// match" fallback instead (documented, not treated as an error case
-// here — matches this codebase's general preference for graceful
-// fallback over raising in edge cases).
+// occurrence of sep; rpartition finds the last. Empty separator raises
+// ValueError: empty separator (same as CPython).
 PyObject* PyString_Partition(PyObject* s, PyObject* sep) {
     std::string str = (s && s->type == 3) ? s->str : "";
     std::string delim = (sep && sep->type == 3) ? sep->str : "";
-    size_t pos = delim.empty() ? std::string::npos : str.find(delim);
+    if (delim.empty()) {
+        pyc_raise_msg("ValueError", "empty separator");
+        return nullptr;
+    }
+    size_t pos = str.find(delim);
     PyObject* r = PyTuple_New(3);
     if (pos == std::string::npos) {
         PyTuple_SetItem(r, 0, PyUnicode_FromString(str.c_str()));
@@ -3289,7 +3290,11 @@ PyObject* PyString_Partition(PyObject* s, PyObject* sep) {
 PyObject* PyString_RPartition(PyObject* s, PyObject* sep) {
     std::string str = (s && s->type == 3) ? s->str : "";
     std::string delim = (sep && sep->type == 3) ? sep->str : "";
-    size_t pos = delim.empty() ? std::string::npos : str.rfind(delim);
+    if (delim.empty()) {
+        pyc_raise_msg("ValueError", "empty separator");
+        return nullptr;
+    }
+    size_t pos = str.rfind(delim);
     PyObject* r = PyTuple_New(3);
     if (pos == std::string::npos) {
         PyTuple_SetItem(r, 0, PyUnicode_FromString(""));
@@ -3303,19 +3308,91 @@ PyObject* PyString_RPartition(PyObject* s, PyObject* sep) {
     return r;
 }
 
+// Resolve a str.format field_name: arg_name, then zero or more
+// ".attr" / "[index]" suffixes (CPython field_name grammar).
+// ownVal is true when the returned object is a new ref.
+static PyObject* pyc_format_resolve_field(const std::string& fieldName,
+                                          PyObject* argsList, PyObject* kwargsDict,
+                                          long& autoIdx, bool& ownVal) {
+    ownVal = false;
+    size_t i = 0, n = fieldName.size();
+    while (i < n && fieldName[i] != '.' && fieldName[i] != '[') i++;
+    std::string base = fieldName.substr(0, i);
+
+    PyObject* val = nullptr;
+    if (base.empty()) {
+        if (argsList && argsList->type == 1 && autoIdx < (long)PyList_Size(argsList)) {
+            val = PyList_GetItemI64(argsList, autoIdx);
+            ownVal = true;
+        }
+        autoIdx++;
+    } else if (isdigit((unsigned char)base[0])) {
+        long idx = std::atol(base.c_str());
+        if (argsList && argsList->type == 1 && idx >= 0 && idx < (long)PyList_Size(argsList)) {
+            val = PyList_GetItemI64(argsList, idx);
+            ownVal = true;
+        }
+    } else if (kwargsDict && kwargsDict->type == 2) {
+        for (auto& pair : kwargsDict->dict) {
+            if (pair.first && pair.first->type == 3 && pair.first->str == base) {
+                val = pair.second; // borrowed — kwargsDict outlives this call
+                break;
+            }
+        }
+    }
+
+    while (i < n) {
+        if (fieldName[i] == '.') {
+            i++;
+            size_t start = i;
+            while (i < n && (isalnum((unsigned char)fieldName[i]) || fieldName[i] == '_')) i++;
+            std::string attr = fieldName.substr(start, i - start);
+            PyObject* nameStr = PyUnicode_FromString(attr.c_str());
+            PyObject* next = Pyc_GetAttr(val, nameStr);
+            Py_DECREF(nameStr);
+            if (ownVal && val) Py_DECREF(val);
+            val = next;
+            ownVal = true;
+        } else if (fieldName[i] == '[') {
+            i++;
+            size_t start = i;
+            while (i < n && fieldName[i] != ']') i++;
+            std::string key = fieldName.substr(start, i - start);
+            if (i < n && fieldName[i] == ']') i++;
+            bool isInt = !key.empty();
+            size_t di = 0;
+            if (isInt && key[0] == '-') {
+                if (key.size() == 1) isInt = false;
+                else di = 1;
+            }
+            for (; isInt && di < key.size(); ++di) {
+                if (!isdigit((unsigned char)key[di])) isInt = false;
+            }
+            PyObject* keyObj = isInt ? PyInt_FromLong(std::atol(key.c_str()))
+                                     : PyUnicode_FromString(key.c_str());
+            PyObject* next = Pyc_GetItem(val, keyObj);
+            Py_DECREF(keyObj);
+            if (ownVal && val) Py_DECREF(val);
+            val = next;
+            ownVal = true;
+        } else {
+            break;
+        }
+    }
+    return val;
+}
+
 // str.format(*args, **kwargs) — found entirely unimplemented while bug
 // hunting (calling it silently printed None). Implements the
 // {field[!conv][:format_spec]} template mini-language: "{{"/"}}" are
 // literal braces; an empty field ("{}") auto-numbers through argsList in
 // order; a digit-only field is an explicit positional index; any other
 // field is a keyword lookup in kwargsDict. Nested field access
-// (attribute/index lookups inside the braces, e.g. "{0.attr}"/"{0[1]}")
-// is not supported — a narrower, documented gap; real Python also
-// raises for mixing auto-numbered and explicit-positional fields in one
-// template, which this doesn't enforce (harmless leniency, not a
-// correctness gap for well-formed templates). Formatting itself is
-// delegated to Pyc_FormatValue, the same Format Spec Mini-Language
-// implementation f-strings use.
+// ({0.attr}, {0[1]}, {0[k]}, chained) is resolved after the base field.
+// Real Python also raises for mixing auto-numbered and explicit-positional
+// fields in one template, which this doesn't enforce (harmless leniency).
+// Formatting itself is delegated to Pyc_FormatValue, the same Format Spec
+// Mini-Language implementation f-strings use.
 PyObject* PyBuiltin_StrFormat(PyObject* templateStr, PyObject* argsList, PyObject* kwargsDict) {
     if (!templateStr || templateStr->type != 3) return PyUnicode_FromString("");
     const std::string& tmpl = templateStr->str;
@@ -3342,28 +3419,8 @@ PyObject* PyBuiltin_StrFormat(PyObject* templateStr, PyObject* argsList, PyObjec
                 if (bang + 1 < fieldPart.size()) conv = fieldPart[bang + 1];
                 fieldName = fieldPart.substr(0, bang);
             }
-            PyObject* val = nullptr;
             bool ownVal = false;
-            if (fieldName.empty()) {
-                if (argsList && argsList->type == 1 && autoIdx < (long)PyList_Size(argsList)) {
-                    val = PyList_GetItemI64(argsList, autoIdx);
-                    ownVal = true;
-                }
-                autoIdx++;
-            } else if (isdigit((unsigned char)fieldName[0])) {
-                long idx = std::atol(fieldName.c_str());
-                if (argsList && argsList->type == 1 && idx >= 0 && idx < (long)PyList_Size(argsList)) {
-                    val = PyList_GetItemI64(argsList, idx);
-                    ownVal = true;
-                }
-            } else if (kwargsDict && kwargsDict->type == 2) {
-                for (auto& pair : kwargsDict->dict) {
-                    if (pair.first && pair.first->type == 3 && pair.first->str == fieldName) {
-                        val = pair.second; // borrowed — kwargsDict outlives this call
-                        break;
-                    }
-                }
-            }
+            PyObject* val = pyc_format_resolve_field(fieldName, argsList, kwargsDict, autoIdx, ownVal);
             if (conv == 'r' || conv == 'a') {
                 PyObject* r = PyBuiltin_Repr(val);
                 if (ownVal && val) Py_DECREF(val);

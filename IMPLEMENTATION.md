@@ -25,6 +25,7 @@ Confirmed later and closed (do not re-open from a paragraph below):
 - `check_dispatch_chain.py` `exists` exemption retired (W2.3); `compile` remains. The checker itself stays.
 - Uncaught tracebacks print `File "…", line N, in <name>` (I-009). Leftovers: reraise/nomatch snapshot (I-036), IR frame names (I-037).
 - `super().__init__` into a builtin exception base stores `self.args` (I-008). Leftovers I-038 / I-039.
+- `partition("")` raises ValueError; `str.format` nested `{0.attr}` / `{0[k]}` (I-010). Leftovers I-040–I-042.
 
 ## Design Choices of Omission
 

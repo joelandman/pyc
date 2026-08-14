@@ -20,14 +20,6 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 
 ## Open
 
-### I-010  str.format nested fields; partition("") is lenient
-- Status: open
-- Severity: limitation
-- Evidence: IMPLEMENTATION.md / FEATURES.md. `"{0.attr}"` / `"{0[1]}"` unsupported. Empty separator does not raise `ValueError`.
-- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_StrFormat`, partition)
-- Blocks merge: no
-- Notes: Wave 3 W3.3.
-
 ### I-011  `type()` is a display string, not a type object
 - Status: open
 - Severity: limitation
@@ -261,9 +253,40 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Found reviewing W3.2 / I-008. Caused by this slice. Ticket CASES discard the return (`raise` / `print(e, e.extra)` / `.args`). Fix is `return nullptr` (the file-wide None convention; see `Pyc_Apply` comment ~5003–5005). Do not demand in W3.2.
 
+### I-040  partition/rpartition non-str sep is ValueError, not TypeError
+- Status: open
+- Severity: wrong-answer
+- Evidence: `PyString_Partition` / `PyString_RPartition` (`Runtime.cpp` ~3272–3296): any non-str `sep` (including `None`) becomes `delim=""` then `pyc_raise_msg("ValueError", "empty separator")`. CPython ` 'abc'.partition(None) ` / ` .rpartition(1) ` is `TypeError: must be str, not NoneType` / `not int`. Empty *str* sep is correct (`ValueError: empty separator`).
+- Files: `src/runtime/Runtime.cpp` (`PyString_Partition`, `PyString_RPartition`)
+- Blocks merge: no
+- Notes: Found reviewing W3.3 / I-010. Caused by this slice’s empty-sep check treating “not a str” as empty. Ticket CASES use `''`. Do not demand in W3.3.
+
+### I-041  str.format nested lookup misses print None
+- Status: open
+- Severity: wrong-answer
+- Evidence: `pyc_format_resolve_field` (`Runtime.cpp` ~3351, ~3373) uses non-raising `Pyc_GetAttr` / `Pyc_GetItem`. Miss → `val=nullptr` → `Pyc_FormatValue` → `PyStr_FromAny(nullptr)` → `"None"`. CPython: `'{0[999]}'.format([1,2])` is `IndexError: list index out of range`; `'{0[k]}'.format({})` is `KeyError`; `'{0.missing}'.format(C())` is `AttributeError`. Quoted `'{0[\'k\']}'` is the same miss class (CPython key is the literal `\'k\'`, including quotes — SWE matches that; only the raise is missing).
+- Files: `src/runtime/Runtime.cpp` (`pyc_format_resolve_field`)
+- Blocks merge: no
+- Notes: Found reviewing W3.3 / I-010. Ticket CASES are hits. `{0[1]!r}` is fine (bang is stripped before the walk). Fix is `Pyc_Subscript` for `[…]` and raise `AttributeError` on a `.attr` miss. Do not demand in W3.3.
+
+### I-042  str.format still splits on `:` / `!` inside `[…]`
+- Status: open
+- Severity: wrong-answer
+- Evidence: `PyBuiltin_StrFormat` still does `inner.find(':')` then `fieldPart.find('!')` (`Runtime.cpp` ~3410–3420) before `pyc_format_resolve_field`. CPython field_name grammar treats `:` / `!` inside `[…]` as index characters: `'{0[a:b]}'.format({'a:b': 1})` → `1`; `'{0[a!b]}'.format({'a!b': 1})` → `1`. pyc takes format_spec `b` / conversion `b` and looks up key `a`. Same parser: `{0[1]foo}` after a closed `]` is silently ignored (CPython `ValueError: Only '.' or '[' may follow ']'`).
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_StrFormat`)
+- Blocks merge: no
+- Notes: Found reviewing W3.3 / I-010. Pre-existing colon/bang split; the new walker never sees the full field. Ticket CASES have no `:`/`!` inside brackets. Do not demand in W3.3.
+
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
+
+### I-010  str.format nested fields; partition("") is lenient
+- Status: fixed
+- Severity: limitation
+- Evidence: Runner 681/681, `file_case_failures=0`. W3.3 CASES match CPython at -O0; o2_smoke 2/2. Parent: empty partition returned 3-tuples; nested format printed the container.
+- Files: `src/runtime/Runtime.cpp` (`PyString_Partition`, `PyString_RPartition`, `pyc_format_resolve_field`, `PyBuiltin_StrFormat`)
+- Notes: Wave 3 W3.3. SWR: no merge blockers. Leftovers I-040 / I-041 / I-042.
 
 ### I-008  `super().__init__` into a builtin base
 - Status: fixed
