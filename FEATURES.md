@@ -267,8 +267,8 @@ int/float sites stay boxed. Multi-dispatch + speculative unbox is planned
 ([I-014](ISSUES.md)), not started as product work.
 
 Boxed-receiver methods (function parameters) use arity-specific
-`Pyc_CallMethodOrBuiltin0/1/2` and skip the per-call args list
-([I-015](ISSUES.md) W4.1). `(tag, name)` lookup is W4.2.
+`Pyc_CallMethodOrBuiltin0/1/2` and a `(tag, name)` lookup
+([I-015](ISSUES.md)).
 
 `-O0` = no LTO, no LLVM passes (what the runner uses). `-O2` is the user default
 (LTO of `runtime.bc` + LLVM O2). Verify both.

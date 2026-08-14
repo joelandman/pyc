@@ -21,6 +21,7 @@
 #include <string>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
@@ -13553,11 +13554,12 @@ PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* args
 //
 // pyc_call_builtin_method resolves a method on a *builtin* receiver
 // (str/list/dict/set/tuple) using the value's real runtime type tag.
-// a0/a1 are the first two positional args (nullptr if absent). argsList
-// is optional: the 4-arg list-form entry point passes it so format /
-// rfind's 3rd arg / replace's count can read past a1; the N-ary entry
-// points pass nullptr (format synthesizes a 0/1/2-element list from
-// a0/a1 in that case).
+// Lookup is (tag, name) via a table filled once (W4.2 / I-015); the
+// previous linear `if (m == "count")` chain is gone. a0/a1 are the
+// first two positional args (nullptr if absent). argsList is optional:
+// the 4-arg list-form entry point passes it so format / rfind's 3rd
+// arg / replace's count can read past a1; the N-ary entry points pass
+// nullptr (format synthesizes a 0/1/2-element list from a0/a1).
 //
 // Why this exists: Compiler.cpp's lowerMethodCall dispatches a long
 // if/else chain on method *name*, with each arm optionally gated on
@@ -13599,162 +13601,298 @@ static const char* pyc_builtin_type_name(PyObject* o) {
     }
 }
 
+// (type tag, method name) → handler. Index is the receiver type tag
+// (0..20). Filled once; per-call work is a hash lookup, not a linear
+// name scan. Dual-tagged types (int/bool, bytes/bytearray) register
+// the same handler on both tags. Tag 5 is also None and tag 7 is also
+// the super proxy — keep the old switch's accidental coverage rather
+// than inventing a new type tag (I-013).
+using PycBuiltinMethodFn = PyObject* (*)(PyObject* recv, PyObject* a0,
+                                         PyObject* a1, PyObject* argsList);
+
+// Named wrappers (this TU is inside extern "C", so function templates
+// are illegal). Lambdas-as-map-values plus function-local
+// std::unordered_map construction SEGV'd under runtime.bc LTO.
+#define PYC_WRAP0(name, fn) \
+    static PyObject* name(PyObject* recv, PyObject*, PyObject*, PyObject*) { return (fn)(recv); }
+#define PYC_WRAP1(name, fn) \
+    static PyObject* name(PyObject* recv, PyObject* a0, PyObject*, PyObject*) { return (fn)(recv, a0); }
+#define PYC_WRAP2(name, fn) \
+    static PyObject* name(PyObject* recv, PyObject* a0, PyObject* a1, PyObject*) { return (fn)(recv, a0, a1); }
+
+PYC_WRAP0(pyc_bm_set_pop, PySet_Pop)
+PYC_WRAP0(pyc_bm_set_copy, PySet_Copy)
+PYC_WRAP1(pyc_bm_set_union, PySet_UnionObj)
+PYC_WRAP1(pyc_bm_set_intersection, PySet_IntersectionObj)
+PYC_WRAP1(pyc_bm_set_difference, PySet_DifferenceObj)
+PYC_WRAP1(pyc_bm_set_symdiff, PySet_SymmetricDifferenceObj)
+PYC_WRAP1(pyc_bm_set_issubset, PySet_IsSubsetObj)
+PYC_WRAP1(pyc_bm_set_issuperset, PySet_IsSupersetObj)
+PYC_WRAP0(pyc_bm_dict_keys, PyDict_Keys)
+PYC_WRAP0(pyc_bm_dict_values, PyDict_Values)
+PYC_WRAP0(pyc_bm_dict_items, PyDict_Items)
+PYC_WRAP0(pyc_bm_dict_copy, PyDict_Copy)
+PYC_WRAP0(pyc_bm_dict_clear, PyDict_Clear)
+PYC_WRAP0(pyc_bm_dict_popitem, PyDict_PopItem)
+PYC_WRAP2(pyc_bm_dict_get, PyDict_GetItemWithDefault)
+PYC_WRAP2(pyc_bm_dict_pop, PyDict_Pop)
+PYC_WRAP2(pyc_bm_dict_setdefault, PyDict_SetDefault)
+PYC_WRAP1(pyc_bm_dict_update, PyDict_Update)
+PYC_WRAP1(pyc_bm_list_append, PyList_Append)
+PYC_WRAP1(pyc_bm_list_extend, PyList_Extend)
+PYC_WRAP2(pyc_bm_list_insert, PyList_Insert)
+PYC_WRAP1(pyc_bm_list_remove, PyList_Remove)
+PYC_WRAP0(pyc_bm_list_reverse, PyList_Reverse)
+PYC_WRAP0(pyc_bm_list_clear, PyList_Clear)
+PYC_WRAP0(pyc_bm_list_copy, PyList_Copy)
+PYC_WRAP1(pyc_bm_list_count, PyList_Count)
+PYC_WRAP1(pyc_bm_list_index, PyList_Index)
+PYC_WRAP0(pyc_bm_str_upper, PyString_Upper)
+PYC_WRAP0(pyc_bm_str_lower, PyString_Lower)
+PYC_WRAP0(pyc_bm_str_strip, PyString_Strip)
+PYC_WRAP0(pyc_bm_str_lstrip, PyString_LStrip)
+PYC_WRAP0(pyc_bm_str_rstrip, PyString_RStrip)
+PYC_WRAP0(pyc_bm_str_capitalize, PyString_Capitalize)
+PYC_WRAP0(pyc_bm_str_casefold, PyString_Casefold)
+PYC_WRAP0(pyc_bm_str_title, PyString_Title)
+PYC_WRAP0(pyc_bm_str_swapcase, PyString_Swapcase)
+PYC_WRAP0(pyc_bm_str_splitlines, PyString_Splitlines)
+PYC_WRAP0(pyc_bm_str_isalpha, PyString_IsAlpha)
+PYC_WRAP0(pyc_bm_str_isdigit, PyString_IsDigit)
+PYC_WRAP0(pyc_bm_str_isalnum, PyString_IsAlnum)
+PYC_WRAP0(pyc_bm_str_islower, PyString_IsLower)
+PYC_WRAP0(pyc_bm_str_isupper, PyString_IsUpper)
+PYC_WRAP0(pyc_bm_str_isspace, PyString_IsSpace)
+PYC_WRAP1(pyc_bm_str_join, PyString_Join)
+PYC_WRAP1(pyc_bm_str_count, PyString_Count)
+PYC_WRAP1(pyc_bm_str_index, PyString_Index)
+PYC_WRAP1(pyc_bm_str_rindex, PyString_RIndex)
+PYC_WRAP1(pyc_bm_str_startswith, PyString_StartsWith)
+PYC_WRAP1(pyc_bm_str_endswith, PyString_EndsWith)
+PYC_WRAP1(pyc_bm_str_partition, PyString_Partition)
+PYC_WRAP1(pyc_bm_str_rpartition, PyString_RPartition)
+PYC_WRAP1(pyc_bm_str_zfill, PyString_ZFill)
+PYC_WRAP2(pyc_bm_str_center, PyString_Center)
+PYC_WRAP2(pyc_bm_str_ljust, PyString_LJust)
+PYC_WRAP2(pyc_bm_str_rjust, PyString_RJust)
+PYC_WRAP0(pyc_bm_int_bit_length, PyInt_BitLength)
+PYC_WRAP0(pyc_bm_path_exists, PyPathlib_Exists)
+#undef PYC_WRAP0
+#undef PYC_WRAP1
+#undef PYC_WRAP2
+
+static PyObject* pyc_bm_set_add(PyObject* recv, PyObject* a0, PyObject*, PyObject*) {
+    PySet_Add(recv, a0);
+    return nullptr;
+}
+static PyObject* pyc_bm_set_remove(PyObject* recv, PyObject* a0, PyObject*, PyObject*) {
+    PySet_Remove(recv, a0);
+    return nullptr;
+}
+static PyObject* pyc_bm_set_discard(PyObject* recv, PyObject* a0, PyObject*, PyObject*) {
+    PySet_Discard(recv, a0);
+    return nullptr;
+}
+static PyObject* pyc_bm_set_clear(PyObject* recv, PyObject*, PyObject*, PyObject*) {
+    PySet_Clear(recv);
+    return nullptr;
+}
+static PyObject* pyc_bm_set_update(PyObject* recv, PyObject* a0, PyObject*, PyObject*) {
+    PySet_Update(recv, a0);
+    return nullptr;
+}
+static PyObject* pyc_bm_dict_fromkeys(PyObject*, PyObject* a0, PyObject* a1, PyObject*) {
+    return PyDict_FromKeys(a0, a1);
+}
+static PyObject* pyc_bm_list_pop(PyObject* recv, PyObject* a0, PyObject*, PyObject*) {
+    return a0 ? PyList_PopAt(recv, a0) : PyList_Pop(recv);
+}
+static PyObject* pyc_bm_list_sort(PyObject* recv, PyObject*, PyObject*, PyObject*) {
+    return PyList_Sort(recv, nullptr, nullptr);
+}
+// split/rsplit/replace/find carry optional extra positional arguments;
+// the arms in Compiler.cpp support the same shapes, so these must too
+// or whitelisting those arms would lose maxsplit/count/start/end for
+// unproven receivers.
+static PyObject* pyc_bm_str_split(PyObject* recv, PyObject* a0, PyObject* a1, PyObject*) {
+    if (!a0) return PyString_SplitWhitespace(recv);
+    return a1 ? PyString_Split2(recv, a0, a1) : PyString_Split(recv, a0);
+}
+static PyObject* pyc_bm_str_rsplit(PyObject* recv, PyObject* a0, PyObject* a1, PyObject*) {
+    PyObject* ms = a1;
+    PyObject* tmp = nullptr;
+    if (!ms) { tmp = PyInt_FromLong(-1); ms = tmp; }
+    PyObject* r = a0 ? PyString_RSplit(recv, a0, ms)
+                     : PyString_RSplitWhitespace(recv, ms);
+    if (tmp) Py_DECREF(tmp);
+    return r;
+}
+// str.format(*args) -- the kwargs form never reaches here; its arm
+// keeps the fast path precisely because the generic fallback's arg
+// list cannot carry keyword arguments. N-ary callers pass
+// argsList == nullptr; synthesize a tiny list from a0/a1 so
+// '{ }'.format(x) through a parameter still works. C nullptr means
+// "absent"; a Python None is non-null.
+static PyObject* pyc_bm_str_format(PyObject* recv, PyObject* a0, PyObject* a1,
+                                  PyObject* argsList) {
+    PyObject* owned = nullptr;
+    PyObject* fmtArgs = argsList;
+    if (!fmtArgs) {
+        owned = PyList_New(0);
+        if (a0) PyList_Append(owned, a0);
+        if (a1) PyList_Append(owned, a1);
+        fmtArgs = owned;
+    }
+    PyObject* kw = PyDict_New();
+    PyObject* r = PyBuiltin_StrFormat(recv, fmtArgs, kw);
+    Py_DECREF(kw);
+    if (owned) Py_DECREF(owned);
+    return r;
+}
+static PyObject* pyc_bm_str_find(PyObject* recv, PyObject* a0, PyObject* a1, PyObject*) {
+    return a1 ? PyString_Find3(recv, a0, a1) : PyString_Find(recv, a0);
+}
+static PyObject* pyc_bm_str_rfind(PyObject* recv, PyObject* a0, PyObject* a1,
+                                 PyObject* argsList) {
+    PyObject* a2 = pyc_arg_at(argsList, 2);
+    if (a2) return PyString_RFind4(recv, a0, a1, a2);
+    return a1 ? PyString_RFind3(recv, a0, a1) : PyString_RFind(recv, a0);
+}
+static PyObject* pyc_bm_str_replace(PyObject* recv, PyObject* a0, PyObject* a1,
+                                   PyObject* argsList) {
+    PyObject* a2 = pyc_arg_at(argsList, 2);
+    return a2 ? PyString_ReplaceN(recv, a0, a1, a2)
+              : PyString_Replace(recv, a0, a1);
+}
+
+static void pyc_init_builtin_method_tables(
+        std::unordered_map<std::string, PycBuiltinMethodFn>* tables) {
+    auto& setm = tables[20];
+    setm["add"] = pyc_bm_set_add;
+    setm["remove"] = pyc_bm_set_remove;
+    setm["discard"] = pyc_bm_set_discard;
+    setm["clear"] = pyc_bm_set_clear;
+    setm["update"] = pyc_bm_set_update;
+    setm["pop"] = pyc_bm_set_pop;
+    setm["copy"] = pyc_bm_set_copy;
+    setm["union"] = pyc_bm_set_union;
+    setm["intersection"] = pyc_bm_set_intersection;
+    setm["difference"] = pyc_bm_set_difference;
+    setm["symmetric_difference"] = pyc_bm_set_symdiff;
+    setm["issubset"] = pyc_bm_set_issubset;
+    setm["issuperset"] = pyc_bm_set_issuperset;
+
+    auto& dictm = tables[2];
+    dictm["keys"] = pyc_bm_dict_keys;
+    dictm["values"] = pyc_bm_dict_values;
+    dictm["items"] = pyc_bm_dict_items;
+    dictm["copy"] = pyc_bm_dict_copy;
+    dictm["clear"] = pyc_bm_dict_clear;
+    dictm["popitem"] = pyc_bm_dict_popitem;
+    dictm["get"] = pyc_bm_dict_get;
+    dictm["pop"] = pyc_bm_dict_pop;
+    dictm["setdefault"] = pyc_bm_dict_setdefault;
+    dictm["update"] = pyc_bm_dict_update;
+    dictm["fromkeys"] = pyc_bm_dict_fromkeys;
+
+    auto& listm = tables[1];
+    listm["append"] = pyc_bm_list_append;
+    listm["extend"] = pyc_bm_list_extend;
+    listm["insert"] = pyc_bm_list_insert;
+    listm["remove"] = pyc_bm_list_remove;
+    listm["reverse"] = pyc_bm_list_reverse;
+    listm["clear"] = pyc_bm_list_clear;
+    listm["copy"] = pyc_bm_list_copy;
+    listm["count"] = pyc_bm_list_count;
+    listm["index"] = pyc_bm_list_index;
+    listm["pop"] = pyc_bm_list_pop;
+    listm["sort"] = pyc_bm_list_sort;
+
+    // tuple -- immutable, so only the two read-only methods.
+    // Tag 7 is also the super proxy; the old switch served count/index
+    // on that tag, so super.count/index still land here.
+    auto& tupm = tables[7];
+    tupm["count"] = pyc_bm_list_count;
+    tupm["index"] = pyc_bm_list_index;
+
+    // bytes / bytearray -- same `str` payload as a real str, so the
+    // PyString_* helpers apply; only the case-mapping pair is reachable
+    // here (decode/hex have their own arms).
+    for (int tag : {17, 18}) {
+        tables[tag]["upper"] = pyc_bm_str_upper;
+        tables[tag]["lower"] = pyc_bm_str_lower;
+    }
+
+    // int + bool. Type 5 is also the None tag in some paths;
+    // PyInt_BitLength already treats type 5 as int, including None.
+    for (int tag : {0, 5}) {
+        tables[tag]["bit_length"] = pyc_bm_int_bit_length;
+    }
+
+    // pathlib.Path — boxed Path.exists() after the compile-time arm
+    // stopped accepting "boxed".
+    tables[16]["exists"] = pyc_bm_path_exists;
+
+    auto& strm = tables[3];
+    strm["upper"] = pyc_bm_str_upper;
+    strm["lower"] = pyc_bm_str_lower;
+    strm["strip"] = pyc_bm_str_strip;
+    strm["lstrip"] = pyc_bm_str_lstrip;
+    strm["rstrip"] = pyc_bm_str_rstrip;
+    strm["capitalize"] = pyc_bm_str_capitalize;
+    strm["casefold"] = pyc_bm_str_casefold;
+    strm["title"] = pyc_bm_str_title;
+    strm["swapcase"] = pyc_bm_str_swapcase;
+    strm["splitlines"] = pyc_bm_str_splitlines;
+    strm["isalpha"] = pyc_bm_str_isalpha;
+    strm["isdigit"] = pyc_bm_str_isdigit;
+    strm["isalnum"] = pyc_bm_str_isalnum;
+    strm["islower"] = pyc_bm_str_islower;
+    strm["isupper"] = pyc_bm_str_isupper;
+    strm["isspace"] = pyc_bm_str_isspace;
+    strm["split"] = pyc_bm_str_split;
+    strm["rsplit"] = pyc_bm_str_rsplit;
+    strm["format"] = pyc_bm_str_format;
+    strm["join"] = pyc_bm_str_join;
+    strm["count"] = pyc_bm_str_count;
+    strm["find"] = pyc_bm_str_find;
+    strm["rfind"] = pyc_bm_str_rfind;
+    strm["index"] = pyc_bm_str_index;
+    strm["rindex"] = pyc_bm_str_rindex;
+    strm["startswith"] = pyc_bm_str_startswith;
+    strm["endswith"] = pyc_bm_str_endswith;
+    strm["replace"] = pyc_bm_str_replace;
+    strm["partition"] = pyc_bm_str_partition;
+    strm["rpartition"] = pyc_bm_str_rpartition;
+    strm["zfill"] = pyc_bm_str_zfill;
+    strm["center"] = pyc_bm_str_center;
+    strm["ljust"] = pyc_bm_str_ljust;
+    strm["rjust"] = pyc_bm_str_rjust;
+}
+
+static std::unordered_map<std::string, PycBuiltinMethodFn>* g_pyc_bm_tables = nullptr;
+static std::once_flag g_pyc_bm_once;
+
+static PycBuiltinMethodFn pyc_lookup_builtin_method(int tag, const std::string& name) {
+    // Heap-allocate: a function-local std::unordered_map[21] needs a
+    // compiler-emitted ctor, and that ctor did not run under runtime.bc
+    // LTO (-O2), so operator[] / find SEGV'd on a zeroed object. A POD
+    // pointer is BSS-zero; new[] constructs for real.
+    std::call_once(g_pyc_bm_once, []() {
+        g_pyc_bm_tables = new std::unordered_map<std::string, PycBuiltinMethodFn>[21];
+        pyc_init_builtin_method_tables(g_pyc_bm_tables);
+    });
+    if (tag < 0 || tag >= 21) return nullptr;
+    auto it = g_pyc_bm_tables[tag].find(name);
+    return it == g_pyc_bm_tables[tag].end() ? nullptr : it->second;
+}
+
 static PyObject* pyc_call_builtin_method(PyObject* receiver, PyObject* nameObj,
                                          PyObject* a0, PyObject* a1, PyObject* argsList) {
     if (!receiver || !nameObj || nameObj->type != 3) return nullptr;
     const std::string& m = nameObj->str;
-
-    switch (receiver->type) {
-        case 20: {  // set
-            if (m == "add")      { PySet_Add(receiver, a0);      return nullptr; }
-            if (m == "remove")   { PySet_Remove(receiver, a0);   return nullptr; }
-            if (m == "discard")  { PySet_Discard(receiver, a0);  return nullptr; }
-            if (m == "clear")    { PySet_Clear(receiver);        return nullptr; }
-            if (m == "update")   { PySet_Update(receiver, a0);   return nullptr; }
-            if (m == "pop")      return PySet_Pop(receiver);
-            if (m == "copy")     return PySet_Copy(receiver);
-            if (m == "union")                return PySet_UnionObj(receiver, a0);
-            if (m == "intersection")         return PySet_IntersectionObj(receiver, a0);
-            if (m == "difference")           return PySet_DifferenceObj(receiver, a0);
-            if (m == "symmetric_difference") return PySet_SymmetricDifferenceObj(receiver, a0);
-            if (m == "issubset")             return PySet_IsSubsetObj(receiver, a0);
-            if (m == "issuperset")           return PySet_IsSupersetObj(receiver, a0);
-            break;
-        }
-        case 2: {   // dict
-            if (m == "keys")    return PyDict_Keys(receiver);
-            if (m == "values")  return PyDict_Values(receiver);
-            if (m == "items")   return PyDict_Items(receiver);
-            if (m == "copy")    return PyDict_Copy(receiver);
-            if (m == "clear")   return PyDict_Clear(receiver);
-            if (m == "popitem") return PyDict_PopItem(receiver);
-            if (m == "get")     return PyDict_GetItemWithDefault(receiver, a0, a1);
-            if (m == "pop")     return PyDict_Pop(receiver, a0, a1);
-            if (m == "setdefault") return PyDict_SetDefault(receiver, a0, a1);
-            if (m == "update")  return PyDict_Update(receiver, a0);
-            if (m == "fromkeys") return PyDict_FromKeys(a0, a1);
-            break;
-        }
-        case 1: {   // list
-            if (m == "append")  return PyList_Append(receiver, a0);
-            if (m == "extend")  return PyList_Extend(receiver, a0);
-            if (m == "insert")  return PyList_Insert(receiver, a0, a1);
-            if (m == "remove")  return PyList_Remove(receiver, a0);
-            if (m == "reverse") return PyList_Reverse(receiver);
-            if (m == "clear")   return PyList_Clear(receiver);
-            if (m == "copy")    return PyList_Copy(receiver);
-            if (m == "count")   return PyList_Count(receiver, a0);
-            if (m == "index")   return PyList_Index(receiver, a0);
-            if (m == "pop")     return a0 ? PyList_PopAt(receiver, a0) : PyList_Pop(receiver);
-            if (m == "sort")    return PyList_Sort(receiver, nullptr, nullptr);
-            break;
-        }
-        case 7: {   // tuple -- immutable, so only the two read-only methods
-            if (m == "count")   return PyList_Count(receiver, a0);
-            if (m == "index")   return PyList_Index(receiver, a0);
-            break;
-        }
-        case 17:    // bytes
-        case 18: {  // bytearray -- same `str` payload as a real str, so the
-                    // PyString_* helpers apply; only the case-mapping pair
-                    // is reachable here (decode/hex have their own arms).
-            if (m == "upper") return PyString_Upper(receiver);
-            if (m == "lower") return PyString_Lower(receiver);
-            break;
-        }
-        case 0:   // int
-        case 5: { // bool (type 5 is also the None tag in some paths;
-                  // PyInt_BitLength already treats type 5 as int)
-            if (m == "bit_length") return PyInt_BitLength(receiver);
-            break;
-        }
-        case 16: { // pathlib.Path — boxed Path.exists() after the
-                   // compile-time arm stopped accepting "boxed"
-            if (m == "exists") return PyPathlib_Exists(receiver);
-            break;
-        }
-        case 3: {   // str
-            if (m == "upper")      return PyString_Upper(receiver);
-            if (m == "lower")      return PyString_Lower(receiver);
-            if (m == "strip")      return PyString_Strip(receiver);
-            if (m == "lstrip")     return PyString_LStrip(receiver);
-            if (m == "rstrip")     return PyString_RStrip(receiver);
-            if (m == "capitalize") return PyString_Capitalize(receiver);
-            if (m == "casefold")   return PyString_Casefold(receiver);
-            if (m == "title")      return PyString_Title(receiver);
-            if (m == "swapcase")   return PyString_Swapcase(receiver);
-            if (m == "splitlines") return PyString_Splitlines(receiver);
-            if (m == "isalpha")    return PyString_IsAlpha(receiver);
-            if (m == "isdigit")    return PyString_IsDigit(receiver);
-            if (m == "isalnum")    return PyString_IsAlnum(receiver);
-            if (m == "islower")    return PyString_IsLower(receiver);
-            if (m == "isupper")    return PyString_IsUpper(receiver);
-            if (m == "isspace")    return PyString_IsSpace(receiver);
-            // split/rsplit/replace/find carry optional extra positional
-            // arguments; the arms in Compiler.cpp support the same shapes,
-            // so these must too or whitelisting those arms would lose
-            // maxsplit/count/start/end for unproven receivers.
-            if (m == "split") {
-                if (!a0) return PyString_SplitWhitespace(receiver);
-                return a1 ? PyString_Split2(receiver, a0, a1) : PyString_Split(receiver, a0);
-            }
-            if (m == "rsplit") {
-                PyObject* ms = a1;
-                PyObject* tmp = nullptr;
-                if (!ms) { tmp = PyInt_FromLong(-1); ms = tmp; }
-                PyObject* r = a0 ? PyString_RSplit(receiver, a0, ms)
-                                 : PyString_RSplitWhitespace(receiver, ms);
-                if (tmp) Py_DECREF(tmp);
-                return r;
-            }
-            // str.format(*args) -- the kwargs form never reaches here; its
-            // arm keeps the fast path precisely because the generic
-            // fallback's arg list cannot carry keyword arguments.
-            // N-ary callers pass argsList == nullptr; synthesize a tiny
-            // list from a0/a1 so '{ }'.format(x) through a parameter still
-            // works. C nullptr means "absent"; a Python None is non-null.
-            if (m == "format") {
-                PyObject* owned = nullptr;
-                PyObject* fmtArgs = argsList;
-                if (!fmtArgs) {
-                    owned = PyList_New(0);
-                    if (a0) PyList_Append(owned, a0);
-                    if (a1) PyList_Append(owned, a1);
-                    fmtArgs = owned;
-                }
-                PyObject* kw = PyDict_New();
-                PyObject* r = PyBuiltin_StrFormat(receiver, fmtArgs, kw);
-                Py_DECREF(kw);
-                if (owned) Py_DECREF(owned);
-                return r;
-            }
-            if (m == "join")       return PyString_Join(receiver, a0);
-            if (m == "count")      return PyString_Count(receiver, a0);
-            if (m == "find")       return a1 ? PyString_Find3(receiver, a0, a1)
-                                             : PyString_Find(receiver, a0);
-            if (m == "rfind") {
-                PyObject* a2 = pyc_arg_at(argsList, 2);
-                if (a2) return PyString_RFind4(receiver, a0, a1, a2);
-                return a1 ? PyString_RFind3(receiver, a0, a1) : PyString_RFind(receiver, a0);
-            }
-            if (m == "index")      return PyString_Index(receiver, a0);
-            if (m == "rindex")     return PyString_RIndex(receiver, a0);
-            if (m == "startswith") return PyString_StartsWith(receiver, a0);
-            if (m == "endswith")   return PyString_EndsWith(receiver, a0);
-            if (m == "replace") {
-                PyObject* a2 = pyc_arg_at(argsList, 2);
-                return a2 ? PyString_ReplaceN(receiver, a0, a1, a2)
-                          : PyString_Replace(receiver, a0, a1);
-            }
-            if (m == "partition")  return PyString_Partition(receiver, a0);
-            if (m == "rpartition") return PyString_RPartition(receiver, a0);
-            if (m == "zfill")      return PyString_ZFill(receiver, a0);
-            if (m == "center")     return PyString_Center(receiver, a0, a1);
-            if (m == "ljust")      return PyString_LJust(receiver, a0, a1);
-            if (m == "rjust")      return PyString_RJust(receiver, a0, a1);
-            break;
-        }
-        default: break;
+    if (PycBuiltinMethodFn fn = pyc_lookup_builtin_method(receiver->type, m)) {
+        return fn(receiver, a0, a1, argsList);
     }
     std::string msg = std::string("'") + pyc_builtin_type_name(receiver) +
                       "' object has no attribute '" + m + "'";

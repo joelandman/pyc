@@ -41,7 +41,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Evidence: `include/pyc/object_struct.h`. Tag 5 = bool **and** None. Tag 7 = tuple **and** super proxy. Tags 8–9 unused by “real” Python types (used by regex/match).
 - Files: `include/pyc/object_struct.h`, Runtime type switches, Codegen field GEPs
 - Blocks merge: no
-- Notes: Do not add a new type without reading this. Splitting shared tags is a dedicated design, not a drive-by.
+- Notes: Do not add a new type without reading this. Splitting shared tags is a dedicated design, not a drive-by. W4.2 table keeps both collisions on purpose (bool `bit_length` on tag 5; tuple `count`/`index` on tag 7). Concrete leftovers: I-048 (boxed super proxy). Type-5 fake-None `bit_length` is the same class; real `None` is a null pointer (I-047), not this tag.
 
 ### I-014  A6 speculative unbox / multi-dispatch
 - Status: open
@@ -50,14 +50,6 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/codegen/Codegen.cpp`, `src/Compiler.cpp` A6
 - Blocks merge: no
 - Notes: Wave 4 W4.3. **Design review required** before SWE writes it.
-
-### I-015  Boxed-receiver method fallback ~7× slower
-- Status: open
-- Severity: limitation
-- Evidence: PERFORMANCE_BASELINE.md “The real cost: unproven receivers.” 8M `.count(1)`: proven 0.11s vs boxed 0.93s. Two unused opts: arity-specific `Pyc_CallBuiltinMethodN`; `(tag, name)` lookup.
-- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp` fallback emit, `src/codegen/Codegen.cpp` externs, `include/pyc/runtime.h`
-- Blocks merge: no
-- Notes: Wave 4 W4.1 / W4.2. **W4.1 landed** (this slice): `lowerMethodCall` terminal fallback emits `Pyc_CallMethodOrBuiltin0/1/2` for arity 0/1/2 (no compiler-side `PyList_NewBoxed`/`Append`); arity 3+ still builds a list into `Pyc_CallMethodOrBuiltin`. Builtin path passes a0/a1 as `PyObject*` with `argsList == nullptr`; `format` synthesizes a tiny list from a0/a1 and DECREFs it. User methods (`methodVal` non-null) still work: 1/2-arg wrappers build a temp list and DECREF; 0-arg passes nullptr into `Pyc_CallMethod` (n=0). Kwargs still not on this path (I-020). W4.2 — `(tag, name)` lookup instead of the linear `std::string` scan — remains. SWR W4.1: no merge blockers. Leftovers I-045 / I-046.
 
 ### I-016  Arena allocator / escape analysis / float-return A6
 - Status: open
@@ -93,18 +85,52 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 ### I-045  `str.find` drops `end` (proven and boxed)
 - Status: open
 - Severity: wrong-answer
-- Evidence: CPython `"banana".find("a", 2, 3)` → `-1`. pyc → `3`. Proven arm `Compiler.cpp` `find` (`args.size() >= 2` → `PyString_Find3` only; no Find4). Boxed fallback `pyc_call_builtin_method` `find` uses a0/a1 only (`Runtime.cpp`). `rfind` already has `PyString_RFind4` and reads `pyc_arg_at(argsList, 2)` on the arity-3+ list path. Same result for a literal `"banana".find(...)` (table/arm) and `def f(s): return s.find("a", 2, 3)`.
-- Files: `src/Compiler.cpp` (`find` arm), `src/runtime/Runtime.cpp` (`PyString_Find3`, `pyc_call_builtin_method` `find`)
+- Evidence: CPython `"banana".find("a", 2, 3)` → `-1`. pyc → `3`. Proven arm `Compiler.cpp` `find` (`args.size() >= 2` → `PyString_Find3` only; no Find4). Boxed fallback `pyc_bm_str_find` (W4.2 table) still uses a0/a1 only. `rfind` already has `PyString_RFind4` and reads `pyc_arg_at(argsList, 2)` on the arity-3+ list path. Same result for a literal `"banana".find(...)` (table/arm) and `def f(s): return s.find("a", 2, 3)`.
+- Files: `src/Compiler.cpp` (`find` arm), `src/runtime/Runtime.cpp` (`PyString_Find3`, `pyc_bm_str_find`)
 - Blocks merge: no
-- Notes: Found reviewing W4.1 / I-015. Not this ticket — 3-arg `rfind`/`replace` still go through the list path and keep `end`/`count`. Fix is a `PyString_Find4` plus the same a2 probe `rfind` already has.
+- Notes: Found reviewing W4.1 / I-015. W4.2 copied the same handler. Not this ticket — 3-arg `rfind`/`replace` still go through the list path and keep `end`/`count`. Fix is a `PyString_Find4` plus the same a2 probe `rfind` already has.
 
 ### I-046  Boxed `split(None)` / `rsplit(None)` is space-split, not whitespace-run
 - Status: open
 - Severity: wrong-answer
 - Evidence: CPython `def f(s): return s.split(None)` ; `f("a  b")` → `['a', 'b']`. pyc boxed fallback: a0 is a type-5 None object (non-null), so `if (!a0)` misses and `PyString_Split2` uses `delim = (sep && sep->type == 3) ? sep->str : " "` → `['a', '', 'b']`. Same for `rsplit(None)` (`a0 ? PyString_RSplit : RSplitWhitespace`). Proven path already has `sepIsNone` and takes `PyString_SplitWhitespace`. `s.split()` / `s.split(",")` (no explicit None) match CPython on both paths.
-- Files: `src/runtime/Runtime.cpp` (`pyc_call_builtin_method` split/rsplit; `PyString_Split2`)
+- Files: `src/runtime/Runtime.cpp` (`pyc_bm_str_split` / `pyc_bm_str_rsplit`; `PyString_Split2`)
 - Blocks merge: no
-- Notes: Found reviewing W4.1 / I-015. The new N-ary wrappers made the nullptr-vs-None distinction load-bearing (`format` comment: “C nullptr means absent; a Python None is non-null”) but split still treats only C nullptr as whitespace mode. Pre-existing; W4.1 did not introduce it. Not this ticket.
+- Notes: Found reviewing W4.1 / I-015. W4.2 copied the same handlers. The N-ary wrappers made the nullptr-vs-None distinction load-bearing (`format` comment: “C nullptr means absent; a Python None is non-null”) but split still treats only C nullptr as whitespace mode. Pre-existing. Not this ticket.
+
+### I-047  Null `None` receiver in builtin method fallback is silent None
+- Status: open
+- Severity: wrong-answer
+- Evidence: CPython `None` is pyc’s null `PyObject*` (`nconst` / Codegen.cpp). `pyc_call_builtin_method` returns nullptr on `!receiver` before the miss path. `pyc_builtin_type_name(nullptr)` already returns `"NoneType"` but is never reached.
+  - `def f(x): return x.bit_length(); f(None)` — CPython `AttributeError: 'NoneType' object has no attribute 'bit_length'`; pyc prints `None`.
+  - Same for `x.nope()` (W4.2 CASE only covers `bad(1)`).
+- Files: `src/runtime/Runtime.cpp` (`pyc_call_builtin_method` early return)
+- Blocks merge: no
+- Notes: Found reviewing W4.2 / I-015. Pre-existing; W4.2 kept the early return. Type-5 fake-None objects (I-039 / `PyObject_GetAttrExtended`) are a different I-013 hit: they enter the table as bool and serve `bit_length` → 0.
+
+### I-048  Boxed super proxy `.count`/`.index` is tuple
+- Status: open
+- Severity: wrong-answer
+- Evidence: Tag 7 is tuple **and** super proxy (I-013). Table (and the old switch) registers `(7, count)` / `(7, index)` → `PyList_Count`/`Index`. Syntactic `super().count(...)` does **not** reach this function (`PyBuiltin_SuperMethod`, I-038). A stored/boxed proxy does:
+  ```
+  class C:
+      def f(self):
+          s = super()
+          return s.count(1)
+  C().f()
+  ```
+  CPython: `AttributeError: 'super' object has no attribute 'count'`. pyc: `0` (proxy `list` is empty). `Pyc_GetItem` on tag 7 only accepts an int key, so `__class__` lookup is null and the fallback fires.
+- Files: `src/runtime/Runtime.cpp` (`tables[7]` count/index)
+- Blocks merge: no
+- Notes: Found reviewing W4.2 / I-015. SWE kept this on purpose (“accidental coverage”). Not this ticket. Distinct from I-038 (SuperMethod miss → None).
+
+### I-049  Function-local C++ objects in Runtime.cpp are unconstructed under runtime.bc LTO
+- Status: open
+- Severity: latent
+- Evidence: W4.2 first used `static std::unordered_map tables[21]` + `std::call_once` inside `pyc_call_builtin_method`. `-O0` (libpycrt.a) was fine. `-O2` (runtime.bc LTO) SEGV’d on every boxed method: the compiler-emitted ctor for that array does not run on the bitcode path, so `find` hit a zeroed object. Shipped fix: `new[]` behind a BSS pointer. Any future function-local / static C++ object with a ctor in Runtime.cpp has the same `-O2`-only landmine.
+- Files: `src/runtime/Runtime.cpp`, CMake `runtime.bc`
+- Blocks merge: no
+- Notes: Found implementing W4.2. Do not treat the heap table as a general fix.
 
 ### I-020  Keyword args dropped by method-call fallback
 - Status: open
@@ -306,6 +332,13 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
+
+### I-015  Boxed-receiver method fallback ~7× slower
+- Status: fixed
+- Severity: limitation
+- Evidence: Runner 684/684. W4.1: `Pyc_CallMethodOrBuiltin0/1/2` skips the compiler-side args list. W4.2: `(tag, name)` hash lookup, heap tables (function-local static maps SEGV under runtime.bc LTO — I-049). o2_smoke 2/2. SWE measured boxed `.count` ~3.5× proven (was ~7×).
+- Files: `src/Compiler.cpp`, `src/runtime/Runtime.cpp`, `src/codegen/Codegen.cpp`, `include/pyc/runtime.h`
+- Notes: Wave 4 W4.1 + W4.2. SWR: no merge blockers. Leftovers I-045–I-049.
 
 ### I-019  Debug-info leftovers
 - Status: fixed

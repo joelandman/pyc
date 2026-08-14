@@ -3909,6 +3909,29 @@ print(f3("aaa", "a", "X", 2))
 print(fl([1], 2))
 print(fp(C(), 9))
 """, "('AB', 'ab')\n(3, 1)\n('-b', '--ab-')\nXXa\n[1, 2]\nuser:9\n"),
+    # W4.2 / I-015: (tag, name) lookup must match the old switch for
+    # every builtin tag the fallback serves. Through function parameters.
+    ("""
+def fs(s, x):
+    s.add(x)
+    return sorted(s.union({9}))
+def fd(d, k):
+    return d.get(k), d.get("z", 3)
+def fi(n):
+    return n.bit_length()
+def fb(b):
+    return b.upper()
+print(fs({1, 2}, 3))
+print(fd({"a": 1}, "a"))
+print(fi(7), fi(True))
+print(fb(b"ab"))
+try:
+    def bad(x):
+        return x.nope()
+    print(bad(1))
+except AttributeError as e:
+    print(type(e).__name__)
+""", "[1, 2, 3, 9]\n(1, 3)\n3 1\nb'AB'\nAttributeError\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
