@@ -355,7 +355,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::Function::Create(pycMakeExcTy, llvm::Function::ExternalLinkage, "pyc_make_exc", module.get());
     llvm::FunctionType* pycExcMatchesTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(pycExcMatchesTy, llvm::Function::ExternalLinkage, "pyc_exc_matches", module.get());
-    llvm::FunctionType* pycMakeFuncTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::FunctionType* pycMakeFuncTy = llvm::FunctionType::get(pyObjectPtrTy,
+        {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(pycMakeFuncTy, llvm::Function::ExternalLinkage, "pyc_make_func", module.get());
     // Complex numbers (type 13): PyComplex_New(real: double, imag: double) -> ptr
     llvm::FunctionType* pyComplexNewTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getDoubleTy(context), llvm::Type::getDoubleTy(context)}, false);
@@ -669,8 +670,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyBuiltin_CmpToKey", module.get());
     }
-    // sorted_with_cmp(lst, cmp) takes 2 args; sorted(lst, key, reverse) takes 3.
-    llvm::FunctionType* sortedTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    // sorted / sorted_with_cmp both take (lst, key-or-cmp, reverse).
+    llvm::FunctionType* sortedTy = llvm::FunctionType::get(pyObjectPtrTy,
+        {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(sortedTy, llvm::Function::ExternalLinkage, "PyBuiltin_SortedWithCmp", module.get());
     {
         llvm::FunctionType* sorted3Ty = llvm::FunctionType::get(pyObjectPtrTy,
@@ -1390,11 +1392,35 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     p.parent_path().empty() ? "." : p.parent_path().string());
             }
             int dlv = f.defLineno > 0 ? f.defLineno : 1;
-            // PyObject* as a pointer to an unspecified type (64-bit pointer).
-            llvm::DIType* pyObjUnspec = diBuilder->createBasicType(
-                "PyObject", 64, llvm::dwarf::DW_ATE_address);
+            // 4-field composite matching Codegen's LLVM PyObject (I-043).
+            // GDB can then v["type"] / v["value"] / v["dvalue"] on user locals
+            // compiled -g -O0. Later C++ fields (list/str/cell_content) are
+            // only visible if runtime.bc was built with -g (I-044).
+            llvm::DIType* diI32 = diBuilder->createBasicType(
+                "int", 32, llvm::dwarf::DW_ATE_signed);
+            llvm::DIType* diI64 = diBuilder->createBasicType(
+                "int64_t", 64, llvm::dwarf::DW_ATE_signed);
+            llvm::DIType* diF64 = diBuilder->createBasicType(
+                "double", 64, llvm::dwarf::DW_ATE_float);
+            llvm::SmallVector<llvm::Metadata*, 4> pyMembers;
+            pyMembers.push_back(diBuilder->createMemberType(
+                diCU, "refcount", funcDiFileForVars, 0, 32, 32, 0,
+                llvm::DINode::FlagZero, diI32));
+            pyMembers.push_back(diBuilder->createMemberType(
+                diCU, "type", funcDiFileForVars, 0, 32, 32, 32,
+                llvm::DINode::FlagZero, diI32));
+            pyMembers.push_back(diBuilder->createMemberType(
+                diCU, "value", funcDiFileForVars, 0, 64, 64, 64,
+                llvm::DINode::FlagZero, diI64));
+            pyMembers.push_back(diBuilder->createMemberType(
+                diCU, "dvalue", funcDiFileForVars, 0, 64, 64, 128,
+                llvm::DINode::FlagZero, diF64));
+            llvm::DIType* pyObjStruct = diBuilder->createStructType(
+                diCU, "PyObject", funcDiFileForVars, 0, 192, 64,
+                llvm::DINode::FlagZero, nullptr,
+                diBuilder->getOrCreateArray(pyMembers));
             diPyObjPtrDI = diBuilder->createPointerType(
-                pyObjUnspec, 64, 64, std::nullopt, "PyObject*");
+                pyObjStruct, 64, 64, std::nullopt, "PyObject*");
             // int64_t and double base types.
             diIntDI = diBuilder->createBasicType(
                 "int64_t", 64, llvm::dwarf::DW_ATE_signed);

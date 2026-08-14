@@ -50,6 +50,19 @@ def main():
         print("FAIL Codegen.cpp does not set FlagArtificial on specialized variants")
         failed += 1
 
+    if "createStructType" in src and "createMemberType" in src:
+        print("PASS DI composite PyObject")
+    else:
+        print("FAIL Codegen.cpp has no DI composite PyObject (I-043)")
+        failed += 1
+
+    prn = open(printer, encoding="utf-8").read()
+    if "cell_content" in prn and "tag == 7" in prn:
+        print("PASS printer tag-7 uses cell_content")
+    else:
+        print("FAIL pyc_gdb.py tag 7 does not use cell_content (I-043)")
+        failed += 1
+
     gdb = None
     for cand in ("gdb",):
         r = subprocess.run(["which", cand], capture_output=True, text=True)

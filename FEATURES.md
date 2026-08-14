@@ -20,7 +20,7 @@ Test inventory (see `tests/runner.py` and `test/import_tests/`): ~637 inline `CA
 | `tuple` | 7 | Distinct type (also used internally for `super` proxies — see ISSUES) |
 | compiled regex / match | 8 / 9 | PCRE2. Boxes allocated with `new PyObject()` (I-004) |
 | exception instance | 10 | |
-| function | 11 | Identity + repr; no `__name__`/`__doc__`/`__call__` attrs |
+| function | 11 | Identity + repr; `__name__` / `__doc__` / `__call__` |
 | exception class | 12 | |
 | `complex` | 13 | Literals, arithmetic, pow, abs, `complex()` |
 | `date` / `datetime` | 14 | No microseconds, no tz, not a `date` subclass |
@@ -133,7 +133,7 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 
 Many of these are first-class values (`sorted(words, key=len)`, `funcs = [abs, str]`).
 
-`cmp_to_key` + `sorted(..., reverse=)` together is still a gap ([I-018](ISSUES.md)).
+`cmp_to_key` + `sorted(..., reverse=)` is supported.
 
 `type(x)` returns a **display string** (`<class 'int'>`), not a type object.
 `type(x).__name__` is parsed out of that string ([I-011](ISSUES.md)).
@@ -253,9 +253,9 @@ runtime module dicts. Keep them in sync.
 locals. `gdb`/`lldb` can `break`, `next`, `info locals`, `backtrace`.
 A6 specialized variants are `DW_AT_artificial`. Load
 [tools/pyc_gdb.py](tools/pyc_gdb.py) in gdb to pretty-print `PyObject*`
-when the type is a real struct (null prints `None`; scalar field access
-is [I-043](ISSUES.md)). See [DEBUGGING_PLAN.md](DEBUGGING_PLAN.md).
-Optional leftover: `-g` on `runtime.bc` ([I-044](ISSUES.md)).
+when the type is a real struct (null prints `None`; `-g -O0` locals
+have a 4-field `PyObject` composite). See [DEBUGGING_PLAN.md](DEBUGGING_PLAN.md).
+Optional: `-DPYC_RUNTIME_BC_DEBUG=ON` adds `-g` to `runtime.bc` ([I-044](ISSUES.md)).
 
 ---
 

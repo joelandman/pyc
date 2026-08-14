@@ -4272,6 +4272,32 @@ try:
 except TypeError as e:
     print(e)
 """, "C.foo() missing 1 required positional argument: 'a'\n"),
+    # W5.7 / I-012: function __name__ / __doc__ / __call__.
+    ("""def f():
+    \"\"\"hello\"\"\"
+    return 3
+print(f.__name__)
+print(f.__doc__)
+print(f.__call__())
+g = lambda: 1
+print(g.__name__)
+print(g.__doc__)
+""", "f\nhello\n3\n<lambda>\nNone\n"),
+    # W5.7 / I-018: sorted(..., key=cmp_to_key(cmp), reverse=True).
+    ("""from functools import cmp_to_key
+def cmp(a, b):
+    return (a > b) - (a < b)
+print(sorted([3, 1, 2], key=cmp_to_key(cmp), reverse=True))
+""", "[3, 2, 1]\n"),
+    # W5.7 / I-038: super().__str__ on an Exception subclass.
+    ("""class E(Exception):
+    def __init__(self, m):
+        super().__init__(m)
+    def __str__(self):
+        return 'wrap:' + super().__str__()
+print(E('boom'))
+print(E('boom').__str__())
+""", "wrap:boom\nwrap:boom\n"),
     # W5.5 / I-020: kwargs reach boxed method fallback.
     ("""def fs(s):
     return s.split(maxsplit=1)

@@ -29,11 +29,15 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Architectural. Not scheduled before Wave 3.
 
 ### I-012  Functions lack `__name__` / `__doc__` / `__call__` attributes
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: IMPLEMENTATION.md “Full First-Class Function Objects — Partial.”
-- Files: Runtime function objects, `Pyc_GetAttr`
+- Evidence: W5.7 CASE (`tests/runner.py` banner `# W5.7 / I-012`):
+  `def f(): """hello"""; return 3` → `__name__` `f`, `__doc__` `hello`, `__call__()` `3`.
+  `lambda: 1` → `__name__` `<lambda>`, `__doc__` `None`.
+  Parent: `Pyc_GetAttr` had no type-11 arms; `noteType(f, "str")` sent `f.__call__()` through the string-token `Pyc_Apply` path.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_GetAttr`, `pyc_make_func`, `pyc_call_builtin_method`), `src/Compiler.cpp` (`funcDocstrings`, `noteType(..., "function")`), `src/codegen/Codegen.cpp`, `include/pyc/runtime.h`
 - Blocks merge: no
+- Notes: Wave 5 W5.7. `__name__` is the last dotted component of the display name. Docstring is the first body `Expr` Constant str. `__call__` is `Pyc_Apply` without prepending self. Method `__name__` on a bound method object is still I-011-class.
 
 ### I-013  Type-tag collisions
 - Status: open
@@ -68,19 +72,22 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: New modules are deferred. Expand an existing subset only with an explicit ticket.
 
 ### I-018  `sorted(..., reverse=)` + `cmp_to_key` combination
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: IMPLEMENTATION.md sorted/key/reverse write-up.
-- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sorted` / cmp_to_key path)
+- Evidence: W5.7 CASE (`tests/runner.py` banner `# W5.7 / I-018`):
+  `sorted([3, 1, 2], key=cmp_to_key(cmp), reverse=True)` → `[3, 2, 1]`.
+  Parent: `PyBuiltin_SortedWithCmp` took only `(lst, cmp)` and the compile-time arm dropped `reverseName`.
+- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp`, `src/codegen/Codegen.cpp`, `include/pyc/runtime.h`
 - Blocks merge: no
+- Notes: Wave 5 W5.7. Third arg is reverse; applied after the cmp sort, same as `PyBuiltin_Sorted`.
 
 ### I-044  Optional `-g` on `runtime.bc`
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: DEBUGGING_PLAN leftover. User programs compiled `-g -O0` have no LTO of `runtime.bc`; stepping into runtime helpers has no line tables unless the bitcode itself is built with debug info.
-- Files: CMake `runtime.bc` target, `src/runtime/Runtime.cpp`
+- Evidence: CMake `option(PYC_RUNTIME_BC_DEBUG "Compile runtime.bc with -g" OFF)`. Default stays off so every `-O2` user binary does not inherit Runtime.cpp line tables.
+- Files: `CMakeLists.txt`
 - Blocks merge: no
-- Notes: Split from I-019 after W3.4. Does not retype user-local DI (I-043).
+- Notes: Wave 5 W5.7. `-DPYC_RUNTIME_BC_DEBUG=ON` adds `-g` to the bitcode compile. Does not retype user-local DI (I-043).
 
 ### I-045  `str.find` drops `end` (proven and boxed)
 - Status: fixed
@@ -130,12 +137,12 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 5 W5.1. `PyBuiltin_Super` sets `cell_content = super` (self-pointer). `pyc_call_builtin_method` skips the tag-7 table when `type==7 && cell_content`; AttributeError uses `"super"`. Compiler never wrote this field (`Compiler.cpp` has no `cell_content`). Tuples: `new PyObject()` zero-inits it; `PyTuple_New` never sets it. Type-7 free does **not** `DECREF` `cell_content` (only types 10/11 do) — cycle is safe today; do not add type 7 to that branch without dropping the self-pointer. W5.1b closed I-054 (`len`/`in`/subscript/`list()`). Leftover GetSlice/`tuple()`/map/filter is I-057. Not I-038.
 
 ### I-049  Function-local C++ objects in Runtime.cpp are unconstructed under runtime.bc LTO
-- Status: open
+- Status: fixed
 - Severity: latent
-- Evidence: W4.2 first used `static std::unordered_map tables[21]` + `std::call_once` inside `pyc_call_builtin_method`. `-O0` (libpycrt.a) was fine. `-O2` (runtime.bc LTO) SEGV’d on every boxed method: the compiler-emitted ctor for that array does not run on the bitcode path, so `find` hit a zeroed object. Shipped fix: `new[]` behind a BSS pointer. Any future function-local / static C++ object with a ctor in Runtime.cpp has the same `-O2`-only landmine.
-- Files: `src/runtime/Runtime.cpp`, CMake `runtime.bc`
+- Evidence: Guard comment above `g_pyc_bm_tables` in `Runtime.cpp`; AGENTS.md gotcha. The W4.2 heap-table fix is unchanged.
+- Files: `src/runtime/Runtime.cpp`, `AGENTS.md`
 - Blocks merge: no
-- Notes: Found implementing W4.2. Do not treat the heap table as a general fix.
+- Notes: Wave 5 W5.7. Documentation / guard only. The landmine is still real for any new function-local C++ object.
 
 ### I-020  Keyword args dropped by method-call fallback
 - Status: fixed
@@ -303,15 +310,14 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 5 W5.6. TypeError still uses the qualname (`C.foo()`, `outer.<locals>.inner()`). PushFrame takes the last `.` component so frames are `co_name`. Also closes I-066 (`C().foo()` missing-arg is `C.foo()` not `C__foo()`). Methods push `C.foo` onto `funcQualNameStack` so a def nested in a method gets `C.foo.<locals>.inner`.
 
 ### I-038  SuperMethod builtin fallback is Exception.__init__ only
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `PyBuiltin_SuperMethod` (`src/runtime/Runtime.cpp` ~13326–13358) special-cases only `__init__` plus a leftover MRO name in `pyc_str_is_builtin_exc_name`. Anything else still `return nullptr`.
-  - `class E(Exception): def __init__(self, m): super().__init__(m)` / `def __str__(self): return 'wrap:' + super().__str__()` / `print(E('boom'))` — CPython `wrap:boom`. pyc: `super().__str__` is not `__init__`, returns None; `'wrap:' + None` is None; `PyObject_Print` then falls through to `pyc_exc_message` → `boom` (or `print(E('boom').__str__())` → `None`).
-  - `class L(list): def __init__(self, xs): super().__init__(xs)` / `print(list(L([1,2])))` — CPython `[1, 2]`. pyc: `"list"` is not a builtin-exc name, no-op; instance stays a type-2 dict.
-  - `class L(list): def append(self, x): super().append(x)` / `L().append(1)` — CPython mutates the list. pyc: `super().append` is not `__init__`, silent None. Same for `dict` / `super().update`.
+- Evidence: W5.7 CASE (`tests/runner.py` banner `# W5.7 / I-038`):
+  `class E(Exception): def __str__(self): return 'wrap:' + super().__str__()` / `print(E('boom'))` → `wrap:boom`.
+  Parent: only `__init__` was implemented; `__str__` returned None.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_SuperMethod`)
 - Blocks merge: no
-- Notes: Found reviewing W3.2 / I-008. Same class as the ticket (super() into a builtin with no classRegistry entry), **not** this ticket’s cases (`Exception`/`ValueError` `__init__` only). User classes are dict-backed, so list/dict inheritance is also an instance-layout limitation; `__str__` is the clean leftover now that I-008 stores `args`. Do not demand in W3.2.
+- Notes: Wave 5 W5.7. `__str__` uses `pyc_exc_message(self)` when a leftover MRO name is a builtin exception. list/dict `super().__init__` / `super().append` is instance-layout (I-013 class), not this ID.
 
 ### I-039  SuperMethod builtin `__init__` returns a type-5 False, not None
 - Status: fixed
@@ -346,14 +352,12 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 5 W5.1. Colon/bang scan uses bracket depth; `{0[a:b]}` / `{0[a!b]}` / `{0[1]foo}` match the CASE. `{0[a:b]:d}` and `{0[a!b]!s}` also work (spec/conv at depth 0). Nested `{0:{1}}` is still a different production.
 
 ### I-043  GDB printer cannot field-access user locals; tag 7 heuristic inverted
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence:
-  - Codegen DI for boxed locals is a 64-bit `DIBasicType` named `"PyObject"`, not a `DICompositeType` (`Codegen.cpp:1371-1375`; no `createStructType` / `createMemberType` anywhere). `tools/pyc_gdb.py` then does `v.dereference()` + `v["type"]` / `v["value"]` / `v["str"]` on that type. GDB will not grow struct fields on a base type. The printer never `gdb.lookup_type("PyObject").pointer()` / `cast`s to the C++ layout from `include/pyc/object_struct.h`. Null `PyObject*` → `"None"` still works (no fields). Type 0/4/5 and containers do not, unless gdb happens to be stopped in a `Runtime.cpp` frame compiled with `-g`.
-  - Tag 7: printer treats a **non-empty** `str` as super (`pyc_gdb.py:132-137`). `PyBuiltin_Super` sets `type=7` and `str=""`; `PyTuple_New` also leaves `str` empty. Super therefore prints as `<tuple len=0>`. Distinguisher that matches the runtime (W5.1): tag 7 + non-null `cell_content` is the proxy (`PyBuiltin_Super` sets a self-pointer; compiler never filled this field); tuples leave `cell_content` null.
-- Files: `tools/pyc_gdb.py`, `src/codegen/Codegen.cpp` (DI types), `src/runtime/Runtime.cpp` (`PyBuiltin_Super` / `PyTuple_New`)
+- Evidence: W5.7 `tests/check_gdb.py`: `createStructType` / `createMemberType` in Codegen; printer uses `cell_content` for tag 7. Codegen DI is a 4-field composite (refcount/type/value/dvalue). Printer casts to `gdb.lookup_type("PyObject")` when the full C++ type is present.
+- Files: `src/codegen/Codegen.cpp`, `tools/pyc_gdb.py`, `tests/check_gdb.py`
 - Blocks merge: no
-- Notes: Found reviewing W3.4 / I-019. `tests/check_gdb.py` only compiles the printer, greps `FlagArtificial`, and (if gdb exists) checks `_lookup` registered — it never `print`s a live local, so this is invisible to the ticket check. FEATURES.md `print x` → `42` is optimistic. `-g` on `runtime.bc` (I-019 leftover) would expose the C++ struct under LTO but would still not retype user-local DI; the printer needs a cast or Codegen needs a 4-field composite (refcount/type/value/dvalue) for scalars. Do not demand in W3.4.
+- Notes: Wave 5 W5.7. User-local `-g -O0` can field-access the four scalar fields. list/str/cell_content still need runtime.bc `-g` (I-044 option). Tag 7 + non-null `cell_content` is super; empty-str is not.
 
 ### I-050  `Pyc_GetSlice` / `Pyc_SetSlice` share I-027's reverse underflow and step-0 silent
 - Status: fixed

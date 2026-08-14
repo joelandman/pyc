@@ -110,6 +110,12 @@ LTO-only regression cannot hide completely. Verify both levels on feature work.
 
 - **Compiler is C++20, force-built with `clang++`** (not g++). CMake exports
   `compile_commands.json` in `build/` for tooling.
+- **No function-local C++ constructors in `Runtime.cpp` (I-049).**
+  `runtime.bc` LTO (`-O2`) does not run compiler-emitted ctors for
+  function-local / function-static objects. A `static std::unordered_map`
+  inside a helper is a zeroed object and SEGVs. Heap-allocate behind a BSS
+  pointer (`new[]`) or use a file-scope `thread_local`. `libpycrt.a` (`-O0`)
+  does run those ctors, so the bug is `-O2`-only.
 - **Boxed-everything by default.** Most values are `PyObject*`; a value's
   type is carried in the box, not in LLVM types. `Codegen.cpp` has
   "native-local" fast paths for `int`/`float` that bypass boxing — these are

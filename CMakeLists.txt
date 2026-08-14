@@ -34,6 +34,14 @@ llvm_map_components_to_libnames(llvm_libs
 )
 
 # === runtime.bc: Compile Runtime.cpp to LLVM bitcode for LTO ===
+# PYC_RUNTIME_BC_DEBUG=ON adds -g so -O2 LTO binaries can step into
+# runtime helpers (I-044). Off by default: debug info in the bitcode
+# is copied into every -O2 user program.
+option(PYC_RUNTIME_BC_DEBUG "Compile runtime.bc with -g" OFF)
+set(RUNTIME_BC_DEBUG_FLAG "")
+if(PYC_RUNTIME_BC_DEBUG)
+    set(RUNTIME_BC_DEBUG_FLAG -g)
+endif()
 set(RUNTIME_BC "${CMAKE_BINARY_DIR}/runtime.bc")
 add_custom_command(
     OUTPUT "${RUNTIME_BC}"
@@ -43,6 +51,7 @@ add_custom_command(
         -I /usr/include/pcre2-16
         -DNDEBUG
         -O2
+        ${RUNTIME_BC_DEBUG_FLAG}
         -emit-llvm
         -c ${CMAKE_SOURCE_DIR}/src/runtime/Runtime.cpp
         -o "${RUNTIME_BC}"

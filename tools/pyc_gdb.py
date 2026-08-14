@@ -13,10 +13,12 @@ Or add to ``~/.gdbinit``:
     source /path/to/pyc/tools/pyc_gdb.py
 
 Scalars (int / float / bool / None) read the C fields of PyObject.
-str / list / dict / tuple use libstdc++ pretty-printers when GDB has
-them; otherwise they print as ``<str>`` / ``<list>``. Tag 5 is both
-bool and None (I-013): ``str == "None"`` wins. Tag 7 is both tuple
-and super-proxy: a non-empty ``str`` is treated as super.
+User locals compiled ``-g -O0`` have a 4-field DI composite
+(refcount/type/value/dvalue). If a full C++ ``PyObject`` is in the
+binary (``runtime.bc -g`` / libpycrt), the printer casts to that type
+for later fields. Tag 5 is both bool and None (I-013): ``str == "None"``
+wins. Tag 7 is both tuple and super-proxy: non-null ``cell_content``
+is the proxy (W5.1 / I-043).
 """
 
 import gdb
@@ -92,6 +94,11 @@ class PyObjectPrinter:
             if int(v) == 0:
                 return "None"
             try:
+                full = gdb.lookup_type("PyObject").pointer()
+                v = v.cast(full)
+            except (gdb.error, RuntimeError):
+                pass
+            try:
                 v = v.dereference()
             except gdb.error:
                 return "<PyObject* %s>" % self.val
@@ -130,9 +137,15 @@ class PyObjectPrinter:
                 return "<complex>"
 
         if tag == 7:
-            s = _cpp_string(v["str"])
-            if s:
-                return "<super>"
+            # Super proxy: PyBuiltin_Super sets cell_content to self.
+            # Tuples leave it null. A non-empty str is NOT the distinguisher
+            # (both leave str empty) — I-043.
+            try:
+                cell = v["cell_content"]
+                if cell.type.code == gdb.TYPE_CODE_PTR and int(cell) != 0:
+                    return "<super>"
+            except (gdb.error, ValueError, TypeError, KeyError):
+                pass
             n = _vec_size(v["list"])
             return "<tuple len=%d>" % n if n is not None else "<tuple>"
 

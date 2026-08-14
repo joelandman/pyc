@@ -283,6 +283,14 @@ class LoweringVisitor {
             ir.addFunction(defIRName, bareParams);
             knownIRFunctions.insert(defIRName);
             userDefFunctions.insert(defIRName);
+            for (const auto& c : node->children) {
+                if (!c || c->type == "Default" || c->type == "Decorator") continue;
+                if (c->type == "Expr" && !c->children.empty() && c->children[0] &&
+                    c->children[0]->type == "Constant" && c->children[0]->is_str) {
+                    funcDocstrings[defIRName] = c->children[0]->value;
+                }
+                break;
+            }
             for (auto& fnr : ir.functions) if (fnr.name == defIRName) {
                 fnr.paramNames = node->args;
                 fnr.defLineno = node->lineno;
@@ -969,7 +977,7 @@ class LoweringVisitor {
                 std::string displayNm = nestedQualName.empty() ? node->id : nestedQualName;
                 std::string fv = emitFuncValue(defIRName, displayNm);
                 ir.addInstruction(currentFunc, "assign", {fv}, node->id);
-                noteType(node->id, "str");
+                noteType(node->id, "function");
                 // Decorators, bottom-up: name = decoN(...(deco1(name))...).
                 // Each application: lower the decorator expression (a Name or a
                 // factory Call), then Pyc_Apply it to the current value.
@@ -3474,10 +3482,20 @@ class LoweringVisitor {
         std::string disp = "cfv" + std::to_string(n) + "d";
         ir.addInstruction(currentFunc, "const", {"\"" + qualName + "\""}, disp, "str");
         std::string res = "tfv" + std::to_string(n);
-        ir.addInstruction(currentFunc, "call", {"pyc_make_func", tok, disp}, res);
+        std::string docOp = "cfv" + std::to_string(n) + "doc";
+        auto dit = funcDocstrings.find(irName);
+        if (dit != funcDocstrings.end()) {
+            ir.addInstruction(currentFunc, "const", {"\"" + dit->second + "\""}, docOp, "str");
+        } else {
+            ir.addInstruction(currentFunc, "nconst", {}, docOp, "none");
+        }
+        ir.addInstruction(currentFunc, "call", {"pyc_make_func", tok, disp, docOp}, res);
+        noteType(res, "function");
         return res;
     }
     int fvCounter = 0;
+    // IR name -> first-statement docstring (I-012). Empty / missing → None.
+    std::unordered_map<std::string, std::string> funcDocstrings;
     // Stack of Python-level function names for qualified repr
     // (outer.<locals>.inner). Pushed/popped in lower() for FunctionDef.
     std::vector<std::string> funcQualNameStack;
@@ -5956,7 +5974,8 @@ class LoweringVisitor {
                 // is rare enough not to have been hit by this bug hunt;
                 // the far more common sorted(x, reverse=True) and
                 // sorted(x, key=..., reverse=True) forms are fixed above).
-                ir.addInstruction(currentFunc, "call", {"PyBuiltin_SortedWithCmp", arg, cmpArg}, res);
+                ir.addInstruction(currentFunc, "call",
+                                  {"PyBuiltin_SortedWithCmp", arg, cmpArg, reverseName}, res);
             } else {
                 std::string keyArg = keyName.empty() ? "" : keyName;
                 ir.addInstruction(currentFunc, "call", {"PyBuiltin_Sorted", arg, keyArg, reverseName}, res);

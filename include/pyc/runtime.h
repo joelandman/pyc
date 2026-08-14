@@ -89,7 +89,7 @@ PyObject* PyBool_New(int v);
 PyObject* PyBuiltin_Sum(PyObject* lst);
 PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start);
 PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse);
-PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp);
+PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp, PyObject* reverse);
 PyObject* PyBuiltin_Any(PyObject* lst);
 PyObject* PyBuiltin_All(PyObject* lst);
 PyObject* PyBuiltin_Map(PyObject* func, PyObject* iterable);
@@ -255,7 +255,7 @@ void      pyc_clear_exception(void);
 // Structured exceptions (type 10): typeName + optional message object.
 PyObject* pyc_make_exc(PyObject* typeName, PyObject* msg);
 // Function objects (type 11): callable token + display name for repr.
-PyObject* pyc_make_func(PyObject* token, PyObject* displayName);
+PyObject* pyc_make_func(PyObject* token, PyObject* displayName, PyObject* doc);
 // Exception class objects (type 12): callable, constructs exceptions via pyc_make_exc.
 PyObject* pyc_make_exc_class(PyObject* excName);
 // Complex numbers (type 13): real and imaginary parts as doubles.

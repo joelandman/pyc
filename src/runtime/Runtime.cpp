@@ -5620,13 +5620,11 @@ PyObject* PyBuiltin_CmpToKey(PyObject* cmp) {
     return d;
 }
 
-// PyBuiltin_SortedWithCmp(iterable, cmp) — like sorted but takes a
-// 2-arg comparator function instead of a key function. The comparator
-// is invoked as cmp(a, b) for each pair; a negative return means
-// a < b, zero means a == b, positive means a > b. This is the
-// internal fast-path for sorted(..., key=cmp_to_key(cmp)).
-PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp) {
-    if (!lst || !cmp) return PyBuiltin_Sorted(lst, nullptr, nullptr);
+// PyBuiltin_SortedWithCmp(iterable, cmp, reverse) — like sorted but
+// takes a 2-arg comparator instead of a key. reverse= is applied after
+// the cmp sort (I-018); the compile-time arm used to drop it.
+PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp, PyObject* reverse) {
+    if (!lst || !cmp) return PyBuiltin_Sorted(lst, nullptr, reverse);
     std::vector<PyObject*> items;
     if (lst->type == 1) {
         // Handle homogeneous int lists
@@ -5682,6 +5680,7 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp) {
         PyList_SetItem(r, i, items[i]);
     }
     for (auto* it : items) if (it) Py_DECREF(it);
+    if (PyObject_TruthValue(reverse)) std::reverse(r->list.begin(), r->list.end());
     return r;
 }
 
@@ -12929,7 +12928,7 @@ extern "C" PyObject* PyDecimal_Quantize(PyObject* self, PyObject* q) {
 // directly in PyObject_PrintBase/PyBuiltin_Int/PyBuiltin_Float above —
 // no separate PyDecimal_ToStr/ToInt/ToFloat needed.
 
-PyObject* pyc_make_func(PyObject* token, PyObject* displayName) {
+PyObject* pyc_make_func(PyObject* token, PyObject* displayName, PyObject* doc) {
     std::string tokStr = (token && token->type == 3) ? token->str : "";
     std::string dispStr = (displayName && displayName->type == 3) ? displayName->str : "";
     auto key = std::make_pair(tokStr, dispStr);
@@ -12947,6 +12946,11 @@ PyObject* pyc_make_func(PyObject* token, PyObject* displayName) {
     if (displayName && displayName->type == 3) {
         f->cell_content = displayName;
         Py_INCREF(displayName);
+    }
+    if (doc) {
+        PyObject* k = PyUnicode_FromString("__doc__");
+        Py_INCREF(doc);
+        f->dict.push_back({k, doc});
     }
     g_funcValueCache[key] = f;
     return f;
@@ -13752,6 +13756,23 @@ extern "C" PyObject* PyBuiltin_SuperMethod(PyObject* args) {
                 return nullptr;
             }
         }
+        // Exception.__str__ is the message (I-038). list/dict inheritance
+        // is a layout limitation, not this arm.
+        if (pyObjStrEqualsLiteral(methodName, "__str__")) {
+            bool isBuiltinExc = false;
+            for (size_t i = definingIndex + 1; i < mroSize; ++i) {
+                PyObject* mroItem = PyList_GetItemInt(mroList, i);
+                if (mroItem && mroItem->type == 3 &&
+                    pyc_str_is_builtin_exc_name(mroItem->str)) {
+                    isBuiltinExc = true;
+                    break;
+                }
+            }
+            if (isBuiltinExc) {
+                std::string msg = pyc_exc_message(self);
+                return PyUnicode_FromString(msg.c_str());
+            }
+        }
         return nullptr;
     }
     
@@ -14279,6 +14300,13 @@ static void pyc_init_builtin_method_tables(
     strm["rjust"] = pyc_bm_str_rjust;
 }
 
+// I-049: do NOT put function-local / function-static C++ objects with
+// constructors in this file. runtime.bc is compiled to bitcode and LTO'd
+// into -O2 programs; those compiler-emitted ctors do not run on that
+// path, so a function-local std::unordered_map is a zeroed object and
+// find/[] SEGV. File-scope thread_local containers used elsewhere are
+// constructed by the linked binary. Heap-allocate behind a BSS pointer
+// (below) if you need a table that must exist on both -O0 and -O2.
 static std::unordered_map<std::string, PycBuiltinMethodFn>* g_pyc_bm_tables = nullptr;
 static std::once_flag g_pyc_bm_once;
 
@@ -14306,6 +14334,20 @@ static PyObject* pyc_call_builtin_method(PyObject* receiver, PyObject* nameObj,
         return nullptr;
     }
     const std::string& m = nameObj->str;
+    // f.__call__(...) is Pyc_Apply(f, args), not a bound method (I-012).
+    if (receiver->type == 11 && m == "__call__") {
+        PyObject* owned = nullptr;
+        PyObject* args = argsList;
+        if (!args) {
+            owned = PyList_New(0);
+            if (a0) PyList_Append(owned, a0);
+            if (a1) PyList_Append(owned, a1);
+            args = owned;
+        }
+        PyObject* r = Pyc_Apply(receiver, args);
+        if (owned) Py_DECREF(owned);
+        return r;
+    }
     // Tag 7 is tuple and super proxy. Super has non-null cell_content;
     // do not serve tuple count/index.
     bool isSuper = (receiver->type == 7 && receiver->cell_content);
@@ -14458,6 +14500,33 @@ extern "C" PyObject* Pyc_CallMethodOrBuiltinKw(PyObject* methodVal, PyObject* re
 // deliberately untouched, since those are never meant to trigger
 // property auto-invocation.
 PyObject* Pyc_GetAttr(PyObject* obj, PyObject* attrName) {
+    // Function objects (I-012): __name__ / __qualname__ / __doc__ / __call__.
+    if (obj && obj->type == 11 && attrName && attrName->type == 3) {
+        const std::string& a = attrName->str;
+        if (a == "__name__" || a == "__qualname__") {
+            std::string qn = (obj->cell_content && obj->cell_content->type == 3)
+                ? obj->cell_content->str : obj->str;
+            if (a == "__name__") {
+                size_t dot = qn.rfind('.');
+                if (dot != std::string::npos && dot + 1 < qn.size())
+                    qn = qn.substr(dot + 1);
+            }
+            return PyUnicode_FromString(qn.c_str());
+        }
+        if (a == "__doc__") {
+            for (auto& kv : obj->dict) {
+                if (kv.first && kv.first->type == 3 && kv.first->str == "__doc__") {
+                    if (kv.second) Py_INCREF(kv.second);
+                    return kv.second;
+                }
+            }
+            return nullptr;
+        }
+        if (a == "__call__") {
+            Py_INCREF(obj);
+            return obj;
+        }
+    }
     // type(x).__name__ — found and fixed while bug hunting: confirmed
     // broken for every type, not just a caught exception instance as
     // originally documented (type(5).__name__ printed None too).
