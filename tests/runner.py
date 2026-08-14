@@ -4401,6 +4401,280 @@ bump()
 bump()
 print(s)
 """, "10\n2\n2\n7\n3.5\n3.5\n2\n"),
+    # W6.1 / I-057 I-058 I-059 I-060 I-061 I-063 I-111: Runtime leftovers.
+    ("""class C057:
+    def f(self):
+        s = super()
+        try:
+            print(repr(s[1:3]))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(repr(tuple(s)))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(list(map(str, s)))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(list(filter(None, s)))
+        except TypeError as e:
+            print(type(e).__name__)
+C057().f()
+try:
+    None[1:3] = [1]
+    print('setslice-ok')
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    None[0] = 1
+    print('setitem-ok')
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print('{0.x}'.format({'x': None}))
+except AttributeError as e:
+    print(type(e).__name__)
+try:
+    print('abc'.rindex(1))
+except TypeError as e:
+    print(type(e).__name__)
+print("banana".find("", 2, 2))
+print("banana".find("", 6, 6))
+print("banana".rfind("", 2, 2))
+print("banana".find("a", 0, -1))
+print(repr('a\\x00b'))
+print(len('a\\x00'+'b'))
+print('a\\x00b')
+def add(a, b):
+    return a + b
+try:
+    print(add(None, 1))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(add([1], 2))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(add(1, None))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(1 - [1])
+except TypeError as e:
+    print(type(e).__name__)
+""", "TypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nAttributeError\nTypeError\n2\n6\n2\n1\n'a\\x00b'\n3\na\x00b\nTypeError\nTypeError\nTypeError\nTypeError\n"),
+    # W6.1b / I-121 I-122 I-123 I-124 I-125: Runtime leftovers after W6.1.
+    ("""class C121:
+    def f(self):
+        s = super()
+        try:
+            print(sorted(s))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(list(reversed(s)))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(any(s))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(all(s))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(sum(s))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(list(enumerate(s)))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(list(zip(s, [1])))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(min(s))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(bool(s))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(s + (1,))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(s * 2)
+        except TypeError as e:
+            print(type(e).__name__)
+C121().f()
+try:
+    1[0] = 2
+    print('int-ok')
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    True[0] = 1
+    print('bool-ok')
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    {1}[0] = 2
+    print('set-ok')
+except TypeError as e:
+    print(type(e).__name__)
+print("banana".find("n", -3))
+print("a\\x00b".upper())
+print("".join(["a\\x00", "b"]))
+def div(a, b):
+    return a // b
+try:
+    print(div(1, [1]))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(1 / None)
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(1 % [1])
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(pow(None, 1))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(-None)
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(None << 1)
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print([1] & 2)
+except TypeError as e:
+    print(type(e).__name__)
+print(1 // 2)
+print(1 << 2)
+print({1} | {2})
+""", "TypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTrue\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\n4\nA\x00B\na\x00b\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\n0\n4\n{1, 2}\n"),
+    # W6.1c / I-126 I-127 I-128: remaining Runtime str/super/SetItem leftovers.
+    ("""class C127:
+    def f(self):
+        s = super()
+        try:
+            print(set(s))
+        except TypeError as e:
+            print('set', type(e).__name__)
+        try:
+            print(repr(''.join(s)))
+        except TypeError as e:
+            print('join', type(e).__name__)
+        print('eq', s == ())
+        print('bool', bool(s))
+C127().f()
+print(repr('a\\x00b'.casefold()))
+print(repr('a\\x00b'.ljust(5)))
+print(repr('a\\x00b'.capitalize()))
+try:
+    1[None] = 2
+    print('nonekey-ok')
+except TypeError as e:
+    print('nonekey', type(e).__name__)
+""", "set TypeError\njoin TypeError\neq False\nbool True\n'a\\x00b'\n'a\\x00b  '\n'A\\x00b'\nnonekey TypeError\n"),
+    # W6.2 / I-062: count/index/startswith/endswith keep start/end.
+    ("""print("banana".count("a", 2, 3))
+try:
+    print("banana".index("a", 2, 3))
+except ValueError as e:
+    print(type(e).__name__)
+print("banana".startswith("n", 2, 3))
+print("banana".endswith("n", 0, 3))
+print("banana".count("a"))
+print("banana".index("a"))
+print("banana".startswith("ba"))
+print("banana".endswith("na"))
+def f(s):
+    return (s.count("a", 2, 3), s.startswith("n", 2, 3), s.endswith("n", 0, 3))
+print(f("banana"))
+try:
+    print("banana".index("a", 2, 3))
+except ValueError:
+    print('idx')
+""", "0\nValueError\nTrue\nTrue\n3\n1\nTrue\nTrue\n(0, True, True)\nidx\n"),
+    # W6.3 / I-064 I-065: boxed **{} and dynamic *args defaults.
+    ("""def f(a):
+    return a
+hs = [f]
+try:
+    print(repr(hs[0](**{})))
+except TypeError as e:
+    print(type(e).__name__)
+def apply(fn):
+    return fn(**{})
+try:
+    print(apply(f))
+except TypeError as e:
+    print(type(e).__name__)
+print(repr(hs[0]({})))
+def g(a, b=2):
+    return (a, b)
+def mk():
+    return [1]
+print(g(*mk()))
+def h(a=1):
+    return a
+def empty():
+    return []
+print(h(*empty()))
+""", "TypeError\nTypeError\n{}\n(1, 2)\n1\n"),
+    # W6.4 / I-067 I-129 I-130: module .get, super type/repr, re NUL.
+    ("""import os
+def f(m):
+    try:
+        print(m.get("path"))
+    except AttributeError as e:
+        print(type(e).__name__)
+f(os)
+try:
+    print(getattr(os, "get"))
+except AttributeError as e:
+    print(type(e).__name__)
+class C129:
+    def f(self):
+        s = super()
+        print(type(s).__name__)
+        r = repr(s)
+        print(r[:12] if len(r) >= 12 else r)
+C129().f()
+import re
+print(repr(re.findall("a.b", "a\\x00b")))
+""", "AttributeError\nAttributeError\nsuper\n<super: <cla\n['a\\x00b']\n"),
+    # W6.2b / I-131 I-132: rindex + list/tuple index start/end.
+    ("""print("banana".rindex("n", 0, 3))
+print("banana".rindex("a", 2, 4))
+print("banana".rindex("a"))
+print([1, 2, 1].index(1, 1))
+print((1, 2, 1).index(1, 1))
+print([1, 2, 1].index(1))
+print([1, 2, 1].count(1))
+try:
+    print([1, 2, 1].index(1, 1, 2))
+except ValueError as e:
+    print(type(e).__name__)
+def f(xs):
+    return xs.index(1, 1)
+print(f([1, 2, 1]))
+""", "2\n3\n5\n2\n2\n0\n2\nValueError\n2\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -4415,6 +4689,15 @@ FILE_CASES = [
     ("opt_mixed_code.py", []),
     # W5.8 / I-014: boxed-param accumulator + bool/None/list/indirect/global.
     ("w58_unbox.py", []),
+    # W6.1: Runtime wrong-answers I-057–I-061, I-063, I-111.
+    ("w61_runtime.py", []),
+    # W6.1b: I-121–I-125 leftovers.
+    ("w61b_runtime.py", []),
+    ("w61c_runtime.py", []),
+    ("w62_str_range.py", []),
+    ("w62b_index.py", []),
+    ("w63_call.py", []),
+    ("w64_mod_super.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

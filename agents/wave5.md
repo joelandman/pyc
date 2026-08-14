@@ -84,7 +84,7 @@ design if you want it later.
 | I-013 | **accepted** (design only) | Splitting tag 5/7 is a dedicated redesign of every type switch + Codegen GEP. I-047/I-048 are the concrete symptoms we *do* fix. |
 | I-014 | **fixed** (W5.8) | Speculative unbox landed in Codegen. Native-join leftover is I-112. |
 | I-016 | **wontfix** this wave | Arena / escape analysis is a new allocator. After I-014, not in a close-out. |
-| I-017 | **wontfix** this wave | Subset expansions (µs/tz, Path multi-arg, hashlib.update, …) are feature work. Original plan: expand only with an explicit ticket. |
+| I-017 | **accepted** (umbrella) | Split into feature tickets I-113–I-120. Not this close-out. |
 
 ---
 

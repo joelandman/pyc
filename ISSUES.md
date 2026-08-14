@@ -77,12 +77,12 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 4, after W4.1/W4.2.
 
 ### I-017  Datetime / pathlib / bytes / hashlib / struct / decimal subsets
-- Status: open
+- Status: accepted
 - Severity: limitation
-- Evidence: FEATURES.md synthetic-module table. No µs/tz; Path single-arg; no `open(..., "rb")`; hashlib no `.update()`; decimal no `getcontext`.
+- Evidence: FEATURES.md synthetic-module table. Split into later feature tickets I-113–I-120.
 - Files: Runtime synthetic modules
 - Blocks merge: no
-- Notes: New modules are deferred. Expand an existing subset only with an explicit ticket.
+- Notes: Umbrella only. Do not implement as one slice. Children: I-113 µs, I-114 tz, I-115 datetime⊂date, I-116 strptime/strftime/fromisoformat, I-117 pathlib remaining, I-118 open read/readline/close/rb, I-119 hashlib.update, I-120 decimal getcontext.
 
 ### I-018  `sorted(..., reverse=)` + `cmp_to_key` combination
 - Status: fixed
@@ -453,56 +453,49 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 5 W5.1b. `if (!obj || (type != 1 && type != 18))` TypeError via `pyc_builtin_type_name(nullptr)` → `"NoneType"`. SetSlice still `if (!obj) return` (I-058).
 
 ### I-057  Tag-7 super still a tuple for `GetSlice` / `tuple()` / map/filter
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: W5.1b I-054 gated `Len` / `Contains` / `Subscript` / `List` on `type==7 && cell_content`. Same marker is missing on:
-  - `Pyc_GetSlice` (`Runtime.cpp` type-7 branch): `n = PyTuple_Size` (0) → empty tuple. `s = super(); s[1:3]` / `s[::-1]` — CPython `TypeError: 'super' object is not subscriptable`; pyc `()`.
-  - `PyBuiltin_Tuple` (`888`): `if (type == 7) INCREF; return obj` **before** `PyBuiltin_List`. `tuple(super())` — CPython TypeError; pyc the proxy (prints `()`).
-  - `PyBuiltin_Map` / `Filter` type-7 arms: scan the empty `list` → `[]`.
+- Evidence: W6.1 CASE / `tests/w61_runtime.py`: `s[1:3]` / `tuple(s)` / `map` / `filter` → TypeError.
+  Parent: empty tuple / `()`. Gate is `type==7 && cell_content` (I-048 marker). Real tuples unchanged.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_GetSlice`, `PyBuiltin_Tuple`, `PyBuiltin_Map`, `PyBuiltin_Filter`)
 - Blocks merge: no
-- Notes: Found reviewing W5.1b / I-054. SWE flagged GetSlice. Not the ticket CASE (`s[0]` / `list(s)`). `pyc_builtin_type_name` type 7 is still `"tuple"` (DelItem/SetSlice on a proxy would say `'tuple'`). Do not demand in W5.1b.
+- Notes: Wave 6 W6.1. Leftover consumers are I-121. `pyc_builtin_type_name` type 7 is still `"tuple"`.
 
 ### I-058  `Pyc_SetSlice` / leftover `Pyc_SetItem` on None still silent
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: I-056 taught `Pyc_DelSlice` to TypeError on `!obj`. Assignment helpers still return:
-  - `Pyc_SetSlice` (`6203`): `if (!obj) return;` then type 1/18 only. `None[1:3] = [1]` — CPython `TypeError: 'NoneType' object does not support item assignment`; pyc no-op.
-  - `Pyc_SetItem` (`5246`): `if (!obj || !key) return nullptr;` TypeError only for type 3/7/17. `None[0] = 1` / `(1)[0] = 2` — CPython TypeError; pyc no-op.
+- Evidence: W6.1 CASE: `None[1:3]=[1]` / `None[0]=1` → TypeError (parent printed setslice-ok / setitem-ok).
 - Files: `src/runtime/Runtime.cpp` (`Pyc_SetSlice`, `Pyc_SetItem`)
 - Blocks merge: no
-- Notes: Found reviewing W5.1b / I-051 / I-056. DelItem leftover types now TypeError (that suspicion matches CPython; not a bug). GetSlice on None still returns `[]` (pre-existing). Do not demand in W5.1b.
+- Notes: Wave 6 W6.1. Leftover SetItem types (`1[0]=2`) are I-122. GetSlice on None still `[]`.
 
 ### I-059  `pyc_format_attr_present` treats a plain dict as an instance
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: I-055 probe (`Runtime.cpp:3337`) is `obj->type == 2` then any key hit, including a plain dict (no `__class__`). `Pyc_GetAttr` is `Pyc_GetItem`, so `{0.x}` on a mapping already finds keys.
-  - `'{0.x}'.format({'x': None})` — CPython `AttributeError: 'dict' object has no attribute 'x'`. After I-041 this AttributeError'd (`!next`). After I-055 the probe says present → prints `None`.
-  - Ticket CASE is a class instance (`__class__` + class-dict `x = None`) and is correct.
+- Evidence: W6.1 CASE: `'{0.x}'.format({'x': None})` → AttributeError (parent printed `None`).
+  Probe now requires a `__class__` entry, then walks instance dict + class dict.
 - Files: `src/runtime/Runtime.cpp` (`pyc_format_attr_present`)
 - Blocks merge: no
-- Notes: Found reviewing W5.1b / I-055. Caused by this slice; not a W5.1b CASE. `{0.x}.format({'x': 1})` already printed `1` (GetAttr=GetItem; pre-existing). Probe does not walk `__mro__`; neither does `Pyc_GetItem`'s class fallback. Do not demand in W5.1b.
+- Notes: Wave 6 W6.1. I-055 instance present-None still matches.
 
 ### I-060  `str.rindex` non-str sub still returns -1
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: I-052 raised TypeError on `PyString_Index` / `Find*` / `Count`. `PyString_RIndex` (`4561`) is still `if (!sub || type != 3) return -1`. `'abc'.rindex(1)` — CPython `TypeError: must be str, not int`; pyc `-1`.
+- Evidence: W6.1 CASE: `'abc'.rindex(1)` → TypeError (parent `-1`).
 - Files: `src/runtime/Runtime.cpp` (`PyString_RIndex`)
 - Blocks merge: no
-- Notes: Found reviewing W5.1b / I-052. Same sentinel class; not in the ticket CASE (`index`/`find` only). Do not demand in W5.1b.
+- Notes: Wave 6 W6.1. start/end still dropped (I-062).
 
 ### I-061  `str.find`/`rfind` empty-sub + start==end returns -1
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: CPython empty string is found at every index in `[start, end]` including `start == end` when `0 <= start <= len`:
-  - `"banana".find("", 2, 2)` → `2`; `"banana".find("", 6, 6)` → `6`; `"banana".rfind("", 2, 2)` → `2`.
-  `PyString_Find4` (`Runtime.cpp` ~6030) and `PyString_RFind4` (~6074) both `if (en <= st) return -1` before the search. Non-empty `"banana".find("a", 3, 3)` is `-1` on both (not a bug). Empty-sub with `start < end` already matches (`find("", 2, 3)` → `2`).
-- Files: `src/runtime/Runtime.cpp` (`PyString_Find4`, `PyString_RFind4`)
+- Evidence: W6.1 CASE: `find("",2,2)` / `find("",6,6)` / `rfind("",2,2)` / `find("a",0,-1)` → `2 6 2 1`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_adjust_str_indices`, `PyString_Find4`, `PyString_RFind4`)
 - Blocks merge: no
-- Notes: Found reviewing W5.2 / I-045. Same clamp also treats a negative end as an empty range (`"banana".find("a", 0, -1)` — CPython `1`; pyc `-1`) and does not do `start += len`. Pre-existing on RFind4; new on Find4. Not the ticket CASE (`"a", 2, 3`). Do not demand in W5.2.
+- Notes: Wave 6 W6.1. Find3/RFind3 leftover is I-123.
 
 ### I-062  `str.count`/`index`/`startswith`/`endswith` drop start/end
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: Same class as I-045 before the fix. Table rows are arity-1 (`Compiler.cpp` `builtinMethodRows`: startswith/endswith/count/index → `PyString_Count` / `PyString_Index` / `PyString_StartsWith` / `PyString_EndsWith`). Boxed handlers are `PYC_WRAP1` (a1 and argsList ignored).
   - `"banana".count("a", 2, 3)` — CPython `0`; pyc `3`.
@@ -514,20 +507,15 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found reviewing W5.2 / I-045. `find`/`rfind` now keep end; these four still do not. Not this ticket. Do not demand in W5.2.
 
 ### I-063  Bare print / C-string rebuild still truncates NUL strs
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: After I-021, a NUL can live in `obj->str`. These sinks still use strlen:
-  - `PyObject_PrintBase` type 3 (`Runtime.cpp:1886`): `fprintf(fp, "%s\n", obj->str.c_str())`.
-  - `pyc_print` (`3712–3745`): tmpfile + `out += buf` (`operator+=(const char*)` is strlen) then `fwrite(out.data(), 1, out.size())`.
-  - `PyStr_FromAny` (`2040`): same tmpfile read then `PyUnicode_FromString(buf)`.
-  Repro: `print('a\\x00b')` — CPython writes 4 bytes (`a`, NUL, `b`, newline); pyc writes `a\n`.
-  Same class on rebuild: `PyString_Concat` (`2311`) / `PyString_Repeat` (`2318`) / `PyString_Lower` (`3049`) / `PyString_Split*` (`3082`) use `FromString(...c_str())`. `len('a\\x00'+'b')` — CPython `3`; pyc `1`. `lowerJoinedStr` (`Compiler.cpp` ~10162) joins f-string parts via Concat, so `f'a\\x00{x}'` loses the suffix.
-- Files: `src/runtime/Runtime.cpp` (`PyObject_PrintBase`, `pyc_print`, `PyStr_FromAny`, `PyString_Concat` / `Repeat` / `Lower` / `Split*`)
+- Evidence: W6.1 CASE: `print('a\\x00b')` writes a,NUL,b; `len('a\\x00'+'b')` is 3.
+- Files: `src/runtime/Runtime.cpp`
 - Blocks merge: no
-- Notes: Found reviewing W5.3 / I-021. SWE flagged print. Not the ticket CASE (`len` / list-repr / `chr` / `repr` / `ord`). Do not demand in W5.3. Fix is `fwrite(data, 1, size)` on print and `FromStringAndSize` on rebuilds; `pyc_print` must `out.append(buf, n)`, not `+= buf`.
+- Notes: Wave 6 W6.1. Remaining `FromString(c_str())` rebuilds are I-124.
 
 ### I-064  First-class / boxed `fn(**{})` still binds `{}` as positional
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: I-024 only aliases a *Name* assigned from a known def (`lambdaAliases` on Assign, `Compiler.cpp` ~7650–7672). A subscript / parameter / call-result callee is still `buildingIndirectArgs`: merged kwargs dict is appended to the apply list (`Compiler.cpp` ~5344–5358). Adapter peels a trailing dict only when the *target* has `**kwargs` (`Codegen.cpp` ~1204–1210). For `def f(a)`:
   - `hs = [f]; print(repr(hs[0](**{})))` — CPython `TypeError: f() missing 1 required positional argument: 'a'`; pyc prints `{}`.
@@ -538,7 +526,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found reviewing W5.4 / I-024. Same class as the ticket; not the ticket CASE (`g=f` is now a known-shape call). Do not demand in W5.4. Re-peeling empty dicts for `!hasKwVar` is what broke `g({})` — do not revive that.
 
 ### I-065  Dynamic `*args` still skips default injection
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: `emitForwardCallFromList` (`Compiler.cpp` ~4251–4283) now TypeErrors when `len < nrequired`, then still `PyList_GetItemObj` for every *fixed* param. OOB is `nullptr` → None (`Runtime.cpp` ~616–622). `hadRuntimeStar` still skips call-site default injection (`Compiler.cpp` ~5381).
   - `def f(a, b=2): return (a, b)` / `def mk(): return [1]` / `print(f(*mk()))` — CPython `(1, 2)`; pyc `(1, None)`.
@@ -558,7 +546,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 5 W5.6. Same displayName write as I-037. Nested-in-method FunctionDefs now see `C.foo` on the qualname stack.
 
 ### I-067  Boxed module `.get` / `getattr(os, "get")` still dict
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: I-032 closed the compile-time `Name` / alias / `os.path` gates. A parameter or `getattr` still sees a tag-2 dict:
   - `def f(m): return m.get("path"); f(os)` — CPython `AttributeError`; pyc returns the os.path mapping (`Pyc_CallBuiltinMethod` tables[2]["get"]).
@@ -568,22 +556,12 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found finishing W5.5 / I-032. Modules are type-2 dicts at runtime; distinguishing them from user dicts is a layout change (I-013 class). Do not demand in W5.5.
 
 ### I-111  PyNumber_* unsupported operands print None
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `def add(a,b): return a+b; print(add(None,1)); print(add([1],2))`
-  CPython: `TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'`
-  / `'list' and 'int'`.
-  pyc: prints `None` / `None`.
-  `PyNumber_Add` (`src/runtime/Runtime.cpp:7001`): `if (!a || !b) return NULL;`
-  then `if (!is_numeric(a) || !is_numeric(b)) return NULL;` (`7052`).
-  Real `None` is a null `PyObject*` (`nconst`), not tag 5.
-  Same NULL convention on `PyNumber_Subtract` / `Multiply` / `Divide`.
-- Files: `src/runtime/Runtime.cpp` (`PyNumber_Add` and siblings)
+- Evidence: W6.1 CASE: `add(None,1)` / `add([1],2)` / `add(1,None)` / `1-[1]` → TypeError.
+- Files: `src/runtime/Runtime.cpp` (`pyc_unsupported_binop`, `PyNumber_Add`/`Subtract`/`Multiply`/`Divide`)
 - Blocks merge: no
-- Notes: Pre-existing. Found on the W5.8 / I-014 adjacent hunt.
-  Not this Codegen slice. Speculate must still refuse null and tag≠0/4
-  (blind `unboxToI64` on `None` would print `1`, a new wrong-answer).
-  Runtime fix is raise `TypeError`, not return NULL.
+- Notes: Wave 6 W6.1. `//` `/` `%` `**` `Negate` / bitwise leftovers are I-125.
 
 ### I-112  Speculative native join look-ahead misses i64assign; fallback unbox unguarded
 - Status: open
@@ -602,6 +580,240 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found reviewing W5.8 / I-014. Not hit by `w58_unbox` /
   `check_speculative_unbox`. Do not enable native join without a
   tag-checked convert and a DECREF of the boxed fallback result.
+
+### I-121  Remaining tag-7 super consumers after I-057
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: I-057 gated GetSlice / tuple() / map / filter. Still treating super as an
+  empty tuple / non-list: `sorted`/`reversed`/`any`/`all`/`sum`/`enumerate`/`zip`/
+  `min`/`max`/`MapN`/`super()+(1,)` / `super()*2` / `bool(super())`.
+  CPython: TypeError not iterable (bool is True).
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.1 / I-057. Same `cell_content` marker. Do not TypeError real tuples.
+
+### I-122  `Pyc_SetItem` leftover types still silent
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: I-058 TypeErrors `!obj` and type 3/7/17. Type 0/4/5/20 still
+  `return nullptr`. `1[0] = 2` / `True[0] = 1` / `{1}[0] = 2` —
+  CPython TypeError; pyc no-op.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_SetItem` tail)
+- Blocks merge: no
+- Notes: Found reviewing W6.1 / I-058.
+
+### I-123  `str.find`/`rfind` 2-arg negative start still clamps to 0
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: I-061 fixed Find4/RFind4. Find3/RFind3 still `if (st < 0) st = 0`.
+  `"banana".find("n", -3)` — CPython `4`; pyc `2`.
+- Files: `src/runtime/Runtime.cpp` (`PyString_Find3`, `PyString_RFind3`)
+- Blocks merge: no
+- Notes: Found reviewing W6.1 / I-061. Reuse `pyc_adjust_str_indices`.
+
+### I-124  Remaining C-string str rebuilds after I-063
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: I-063 fixed print / Concat / Repeat / FromAny / Lower / Split*.
+  Upper/Strip/Title/ZFill/Center/Replace/Partition/Join/Splitlines still
+  `FromString(c_str())`. `"a\\x00b".upper()` / `"".join(["a\\x00","b"])` truncate.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.1 / I-063.
+
+### I-125  Remaining PyNumber_* unsupported operands
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: I-111 TypeErrors Add/Sub/Mul. Still silent:
+  `1 // [1]` / `1 / None` / `1 % [1]` / `pow(None, 1)` / `-None` print None;
+  `None << 1` / `[1] & 2` print 0.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.1 / I-111. Reuse `pyc_unsupported_binop`. Do not
+  break `1//2`, `1/2`, `"%s" % x`, `1<<2`, `{1}|{2}`.
+
+### I-126  Remaining C-string str rebuilds after I-124
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: I-124 closed the listed rebuilds. Still `FromString(c_str())`:
+  Casefold/Capitalize/Swapcase/LJust/RJust. `"a\\x00b".ljust(5)` / `.casefold()`
+  truncate. format/`%` rebuilds same hole.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.1b / I-124. Sweep remaining str rebuilds.
+
+### I-127  Remaining tag-7 super consumers after I-121
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: `set(super())` → set(); `"".join(super())` → `""`; `super()==()` → True.
+  CPython TypeError / False.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.1b / I-121. Same `cell_content` marker.
+
+### I-128  `Pyc_SetItem` None key still silent
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: `if (!key) return nullptr` before the I-122 catch-all. `1[None]=2` —
+  CPython TypeError; pyc no-op.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_SetItem`)
+- Blocks merge: no
+- Notes: Found reviewing W6.1b / I-122.
+
+### I-129  print/repr/type of super still an empty tuple
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: `print(super())` / `repr(super())` / `type(super())` → `()` / `'()'` / `<class 'tuple'>`.
+  CPython: `<super: <class 'C'>, <C object>>` / `<class 'super'>`.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.1c / I-127.
+
+### I-130  Remaining C-string rebuilds after I-126 (re / textwrap / subprocess)
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: `re.findall` / `m.group` / `re.split` / `re.sub`, `textwrap`, subprocess capture
+  still `FromString(c_str())`. `re.findall("a.b", "a\\x00b")` truncates.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.1c / I-126.
+
+### I-131  `str.rindex` still drops start/end
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: `"banana".rindex("n", 0, 3)` — CPython `2`; pyc `4`.
+- Files: `src/Compiler.cpp`, `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.2 / I-062. Mirror Index 3/4.
+
+### I-132  `list`/`tuple` `.index` drop start/end
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: `[1,2,1].index(1, 1)` / `(1,2,1).index(1, 1)` — CPython `2`; pyc `0`.
+  `list.count` is 1-arg only in CPython — do not add start/end to count.
+- Files: `src/Compiler.cpp`, `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.2 / I-062. `deque.count` is 1-arg only.
+
+### I-133  Boxed `fn(*[...])` literal star is dropped
+- Status: open
+- Severity: wrong-answer
+- Evidence: `hs[0](*[1])` — CPython `1`; pyc TypeError missing `a`.
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.3 / I-064.
+
+### I-134  First-class named kwargs / non-empty `**dict` still bind the dict
+- Status: open
+- Severity: wrong-answer
+- Evidence: `hs[0](a=1)` / `hs[0](**{'a': 1})` — CPython `1`; pyc `{'a': 1}`.
+- Files: `src/Compiler.cpp`, `src/codegen/Codegen.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.3 / I-064. Do not peel empty dicts.
+
+### I-135  `__va_` first-star-wins: `**kwargs` is `*args`
+- Status: open
+- Severity: crash
+- Evidence: `def f(a, *args, **kw)` / `f(*[1])` LLVM arity mismatch.
+- Files: `src/Compiler.cpp` (`emitForwardCallFromList`)
+- Blocks merge: no
+- Notes: Found reviewing W6.3 / I-065.
+
+### I-136  Dynamic `*` splice only walks type-1 lists
+- Status: open
+- Severity: wrong-answer
+- Evidence: `f(*mk())` when `mk` returns `(1,)` — CPython `1`; pyc TypeError.
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.3 / I-065.
+
+### I-137  Dynamic `*args` plus keywords are dropped
+- Status: open
+- Severity: wrong-answer
+- Evidence: `g(*mk(), b=3)` — CPython `(1, 3)`; after I-065 still `(1, 2)`.
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.3 / I-065.
+
+### I-138  Remaining C-string rebuilds after I-130 (os.path / pathlib)
+- Status: open
+- Severity: wrong-answer
+- Evidence: `os.path.basename("a\\x00b")` — CPython keeps NUL; pyc truncates.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.4 / I-130.
+
+### I-139  `getattr(module, name, default)` still drops default
+- Status: open
+- Severity: wrong-answer
+- Evidence: `getattr(os, "missing", 99)` — CPython `99`; after I-067 AttributeError.
+- Files: `src/Compiler.cpp`, `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W6.4 / I-067. Ticket getattr had no default.
+
+### I-113  datetime / timedelta microseconds
+- Status: open
+- Severity: limitation
+- Evidence: FEATURES.md. Tag 14/15 store no µs. `timedelta.microseconds` is always 0. `datetime(..., microsecond=)` is dropped.
+- Files: `src/runtime/Runtime.cpp` (datetime/timedelta layout)
+- Blocks merge: no
+- Notes: I-017 child. Feature work; not a close-out. Needs an explicit implement ticket.
+
+### I-114  datetime timezones
+- Status: open
+- Severity: limitation
+- Evidence: FEATURES.md. No `tzinfo` / `timezone` / aware datetimes. `.astimezone` / `utcnow` aware forms unsupported.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: I-017 child. Feature work.
+
+### I-115  `datetime` is not a `date` subclass
+- Status: open
+- Severity: limitation
+- Evidence: FEATURES.md. `isinstance(datetime.now(), date)` is False. Shared tag 14, no MRO.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: I-017 child. Touches I-011/I-013-class type objects. Feature work.
+
+### I-116  datetime `strptime` / `strftime` / `fromisoformat`
+- Status: open
+- Severity: limitation
+- Evidence: FEATURES.md. `.isoformat` exists; parse/format counterparts do not.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: I-017 child. Feature work.
+
+### I-117  pathlib PurePath / parts / resolve / glob / multi-arg ctor
+- Status: open
+- Severity: limitation
+- Evidence: FEATURES.md. `Path` is single-arg; no `PurePath`, `.parts`, `.resolve`, `.glob`.
+- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp` (`syntheticModuleExports`)
+- Blocks merge: no
+- Notes: I-017 child. Feature work. Keep Compiler exports in sync.
+
+### I-118  `open()` `.read` / `.readline` / `.close` / `"rb"`
+- Status: open
+- Severity: limitation
+- Evidence: FEATURES.md File I/O. `open` + `.write` / `.readlines` / `with` work. No `.read()`, `.readline()`, `.close()`, or `open(..., "rb")`.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: I-017 child. Feature work. `"rb"` is the bytes-I/O half of the old I-017 umbrella.
+
+### I-119  hashlib `.update()`
+- Status: open
+- Severity: limitation
+- Evidence: FEATURES.md. md5/sha1/sha256 digest at construction only. No incremental `.update()`.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: I-017 child. Feature work.
+
+### I-120  decimal `getcontext` / `localcontext`
+- Status: open
+- Severity: limitation
+- Evidence: FEATURES.md. libmpdec, 28 digits, `ROUND_HALF_EVEN`. No `getcontext()` / `localcontext()`.
+- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp` (`syntheticModuleExports`)
+- Blocks merge: no
+- Notes: I-017 child. Feature work. Keep Compiler exports in sync.
 
 ---
 

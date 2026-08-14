@@ -102,6 +102,30 @@ struct TryFrame;
 static thread_local TryFrame* g_try_stack = nullptr;
 static void pyc_raise_msg(const char* type, const char* msg);
 static const char* pyc_builtin_type_name(PyObject* o);
+static PyObject* pyc_unsupported_binop(const char* op, PyObject* a, PyObject* b);
+
+// Tag 7 is tuple (cell_content null) and the super proxy (I-013 / I-048).
+static bool pyc_is_super(PyObject* o) {
+    return o && o->type == 7 && o->cell_content;
+}
+static bool pyc_super_not_iterable(PyObject* o) {
+    if (!pyc_is_super(o)) return false;
+    pyc_raise_msg("TypeError", "'super' object is not iterable");
+    return true;
+}
+
+// Tag 2 is a user dict (list_item_type 0) or a synthetic module / module-like
+// namespace (list_item_type 3). 3 is unused on dicts (lists/tuples use 0/1/2).
+// Do not split type tags (I-013 / I-067).
+static PyObject* pyc_mark_module(PyObject* d) {
+    if (d && d->type == 2) d->list_item_type = 3;
+    return d;
+}
+static bool pyc_is_module(PyObject* o) {
+    return o && o->type == 2 && o->list_item_type == 3;
+}
+// CPython super repr starts "<super: <cla"; the boxed proxy has no class.
+static const char kPycSuperRepr[] = "<super: <class 'object'>, <object object>>";
 
 #define PYC_ALWAYS_INLINE __attribute__((always_inline))
 
@@ -503,6 +527,7 @@ int PyObject_TruthValue(PyObject* obj) {
     if (obj->type == 19) return !mpd_iszero(pyc_as_decimal(obj));
     if (obj->type == 20) return !obj->setElems.empty();
     if (obj->type == 7) {
+        if (obj->cell_content) return 1;  // super is always truthy (I-121)
         if (obj->list_item_type == 1) return !obj->ilist.empty();
         if (obj->list_item_type == 2) return !obj->flist.empty();
         return !obj->list.empty();
@@ -887,6 +912,10 @@ PyObject* PyTuple_Repeat(PyObject* tuple, long n) {
 // PyBuiltin_List's dispatch but wraps the result as type 7.
 PyObject* PyBuiltin_Tuple(PyObject* obj) {
     if (!obj) return PyTuple_New(0);
+    if (obj->type == 7 && obj->cell_content) {
+        pyc_raise_msg("TypeError", "'super' object is not iterable");
+        return nullptr;
+    }
     if (obj->type == 7) { Py_INCREF(obj); return obj; }
     // Reuse PyBuiltin_List's full materialization (str/bytes/dict/set/
     // iterator-protocol/class-instance) then convert the list to a tuple.
@@ -1612,6 +1641,7 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
         return fprintf(fp, "]");
     }
     if (obj->type == 7) {
+        if (pyc_is_super(obj)) return fprintf(fp, "%s", kPycSuperRepr);
         // Nested tuple — open paren, recurse, close. Single-element tuples
         // get a trailing comma: (1,). Empty tuple: ().
         size_t n;
@@ -1812,6 +1842,11 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         return 0;
     }
     if (obj->type == 7) {
+        if (pyc_is_super(obj)) {
+            int r = fprintf(fp, "%s\n", kPycSuperRepr);
+            fflush(fp);
+            return r;
+        }
         // Top-level tuple print: paren format, single-element trailing comma.
         size_t n;
         if (obj->list_item_type == 1) n = obj->ilist.size();
@@ -1883,7 +1918,12 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         fflush(fp);
         return 0;
     }
-    if (obj->type == 3) { int r = fprintf(fp, "%s\n", obj->str.c_str()); fflush(fp); return r; }
+    if (obj->type == 3) {
+        size_t nw = fwrite(obj->str.data(), 1, obj->str.size(), fp);
+        int nl = fputc('\n', fp);
+        fflush(fp);
+        return (nl == EOF) ? (int)nw : (int)nw + 1;
+    }
     if (obj->type == 17 || obj->type == 18) {
         // Unlike str/Path, bytes has no bare __str__ — print() shows the
         // same b'...' repr form CPython does (print(b"hi") -> b'hi').
@@ -2037,7 +2077,7 @@ PyObject* PyStr_FromAny(PyObject* obj) {
         buf[n] = '\0';
         if (n > 0 && buf[n-1] == '\n') buf[--n] = '\0';
         std::fclose(tmp);
-        return PyUnicode_FromString(buf);
+        return PyUnicode_FromStringAndSize(buf, n);
     }
     // Fallback for the rare tmpfile() failure.
     if (obj->type == 5) return PyUnicode_FromString(obj->value ? "True" : "False");
@@ -2308,14 +2348,15 @@ PyObject* Pyc_SubprocessCheckOutput(PyObject* cmdList) {
 
 PyObject* PyString_Concat(PyObject* a, PyObject* b) {
     if (!a || !b || a->type != 3 || b->type != 3) return nullptr;
-    return PyUnicode_FromString((a->str + b->str).c_str());
+    std::string r = a->str + b->str;
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 
 PyObject* PyString_Repeat(PyObject* s, PyObject* n) {
     if (!s || !n || s->type != 3 || n->type != 0) return nullptr;
     std::string r;
     for (long i = 0; i < n->value; ++i) r += s->str;
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 
 PyObject* PyObject_TruthBoxed(PyObject* obj) {
@@ -2327,11 +2368,10 @@ PyObject* PyObject_Not(PyObject* obj) {
 }
 
 PyObject* PyNumber_Negate(PyObject* obj) {
-    if (!obj) return NULL;
-    if (obj->type == 0 || obj->type == 5) return PyInt_FromLong(-obj->value);
-    if (obj->type == 4) return PyFloat_FromDouble(-obj->dvalue);
-    if (obj->type == 13) return PyComplex_New(-obj->complex_real, -obj->complex_imag);
-    if (obj->type == 19) {
+    if (obj && (obj->type == 0 || obj->type == 5)) return PyInt_FromLong(-obj->value);
+    if (obj && obj->type == 4) return PyFloat_FromDouble(-obj->dvalue);
+    if (obj && obj->type == 13) return PyComplex_New(-obj->complex_real, -obj->complex_imag);
+    if (obj && obj->type == 19) {
         mpd_t* r = mpd_qnew();
         uint32_t status = 0;
         mpd_qcopy_negate(r, pyc_as_decimal(obj), &status);
@@ -2339,11 +2379,14 @@ PyObject* PyNumber_Negate(PyObject* obj) {
     }
     // __neg__ dispatch for a class instance — found and fixed while bug
     // hunting: -instance previously always returned None.
-    if (obj->type == 2) {
+    if (obj && obj->type == 2) {
         PyObject* negMethod = pyc_lookup_dunder(obj, "__neg__");
         if (negMethod) return pyc_call_dunder1(negMethod, obj);
     }
-    return NULL;
+    std::string msg = std::string("bad operand type for unary -: '") +
+                      pyc_builtin_type_name(obj) + "'";
+    pyc_raise_msg("TypeError", msg.c_str());
+    return nullptr;
 }
 
 // Strict full-string integer parse (Python semantics): the whole string,
@@ -2536,7 +2579,8 @@ PyObject* PyBuiltin_Type(PyObject* obj) {
     switch (obj->type) {
         case 0: return PyUnicode_FromString("<class 'int'>");
         case 1: return PyUnicode_FromString("<class 'list'>");
-        case 7: return PyUnicode_FromString("<class 'tuple'>");
+        case 7: return PyUnicode_FromString(
+            pyc_is_super(obj) ? "<class 'super'>" : "<class 'tuple'>");
         case 2: {
             // Class instance (has a "__class__" entry) vs a genuine
             // plain dict — found and fixed while bug hunting: type(e)
@@ -2818,6 +2862,7 @@ PyObject* PyBuiltin_Repr(PyObject* obj) {
         return PyUnicode_FromString(r.c_str());
     }
     if (obj->type == 7) {
+        if (pyc_is_super(obj)) return PyUnicode_FromString(kPycSuperRepr);
         // Tuple repr: paren format, single-element trailing comma.
         size_t n = PyTuple_Size(obj);
         std::string r = "(";
@@ -2985,7 +3030,10 @@ PyObject* PyBuiltin_Round(PyObject* x, PyObject* n) {
 // (a**b) which already works; for float we use pow(); otherwise fall
 // back to a generic multiplicative loop for positive int exponents.
 PyObject* PyBuiltin_Pow(PyObject* a, PyObject* b) {
-    if (!a || !b) return nullptr;
+    if (!a || !b ||
+        !((a->type == 0 || a->type == 4 || a->type == 5) &&
+          (b->type == 0 || b->type == 4 || b->type == 5)))
+        return pyc_unsupported_binop("**", a, b);
     if (a->type == 4 || b->type == 4) {
         double av = (a->type == 0 || a->type == 5) ? (double)a->value : a->dvalue;
         double bv = (b->type == 0 || b->type == 5) ? (double)b->value : b->dvalue;
@@ -3036,7 +3084,7 @@ PyObject* PyString_Upper(PyObject* s) {
     if (s->type == 17) return PyBytes_FromStringAndSize(r.data(), r.size());
     if (s->type == 18) return PyByteArray_FromStringAndSize(r.data(), r.size());
     if (s->type != 3) { Py_INCREF(s); return s; }
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 
 PyObject* PyString_Lower(PyObject* s) {
@@ -3046,7 +3094,7 @@ PyObject* PyString_Lower(PyObject* s) {
     if (s->type == 17) return PyBytes_FromStringAndSize(r.data(), r.size());
     if (s->type == 18) return PyByteArray_FromStringAndSize(r.data(), r.size());
     if (s->type != 3) { Py_INCREF(s); return s; }
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 
 PyObject* PyString_Strip(PyObject* s) {
@@ -3054,7 +3102,7 @@ PyObject* PyString_Strip(PyObject* s) {
     size_t l = 0, r = s->str.size();
     while (l < r && isspace((unsigned char)s->str[l])) ++l;
     while (r > l && isspace((unsigned char)s->str[r-1])) --r;
-    return PyUnicode_FromString(s->str.substr(l, r - l).c_str());
+    return PyUnicode_FromStringAndSize(s->str.data() + l, r - l);
 }
 
 PyObject* PyString_Split(PyObject* s, PyObject* sep) {
@@ -3079,11 +3127,13 @@ PyObject* PyString_Split2(PyObject* s, PyObject* sep, PyObject* maxsplitObj) {
     long splits = 0;
     while ((maxsplit < 0 || splits < maxsplit) &&
            (pos = s->str.find(delim, start)) != std::string::npos) {
-        PyList_Append(result, PyUnicode_FromString(s->str.substr(start, pos - start).c_str()));
+        std::string piece = s->str.substr(start, pos - start);
+        PyList_Append(result, PyUnicode_FromStringAndSize(piece.data(), piece.size()));
         start = pos + delim.size();
         ++splits;
     }
-    PyList_Append(result, PyUnicode_FromString(s->str.substr(start).c_str()));
+    std::string tail = s->str.substr(start);
+    PyList_Append(result, PyUnicode_FromStringAndSize(tail.data(), tail.size()));
     return result;
 }
 
@@ -3104,13 +3154,15 @@ PyObject* PyString_SplitWhitespace2(PyObject* s, PyObject* maxsplitObj) {
         while (i < n && isspace((unsigned char)s->str[i])) ++i;
         if (i >= n) break;
         if (maxsplit >= 0 && splits >= maxsplit) {
-            PyList_Append(result, PyUnicode_FromString(s->str.substr(i).c_str()));
+            std::string rest = s->str.substr(i);
+            PyList_Append(result, PyUnicode_FromStringAndSize(rest.data(), rest.size()));
             break;
         }
         size_t j = i;
         while (j < n && !isspace((unsigned char)s->str[j])) ++j;
         if (j > i) {
-            PyList_Append(result, PyUnicode_FromString(s->str.substr(i, j - i).c_str()));
+            std::string piece = s->str.substr(i, j - i);
+            PyList_Append(result, PyUnicode_FromStringAndSize(piece.data(), piece.size()));
             ++splits;
         }
         i = j;
@@ -3148,7 +3200,7 @@ PyObject* PyString_RSplit(PyObject* s, PyObject* sep, PyObject* maxsplitObj) {
         ++count;
     }
     parts.insert(parts.begin(), remaining);
-    for (auto& p : parts) PyList_Append(result, PyUnicode_FromString(p.c_str()));
+    for (auto& p : parts) PyList_Append(result, PyUnicode_FromStringAndSize(p.data(), p.size()));
     return result;
 }
 
@@ -3183,7 +3235,7 @@ PyObject* PyString_RSplitWhitespace(PyObject* s, PyObject* maxsplitObj) {
     while (remEnd > 0 && isspace((unsigned char)str[remEnd - 1])) --remEnd;
     if (remEnd > 0) parts.push_back(str.substr(0, (size_t)remEnd));
     std::reverse(parts.begin(), parts.end());
-    for (auto& p : parts) PyList_Append(result, PyUnicode_FromString(p.c_str()));
+    for (auto& p : parts) PyList_Append(result, PyUnicode_FromStringAndSize(p.data(), p.size()));
     return result;
 }
 
@@ -3291,7 +3343,7 @@ PyObject* Pyc_FormatValue(PyObject* value, PyObject* specObj) {
     char align = f.align ? f.align : defaultAlign;
     long width = f.width >= 0 ? f.width : 0;
     std::string padded = pyc_fmt_pad(body, width, f.fill, align, signPrefixLen);
-    return PyUnicode_FromString(padded.c_str());
+    return PyUnicode_FromStringAndSize(padded.data(), padded.size());
 }
 
 // str.partition(sep) / str.rpartition(sep) — return a 3-tuple
@@ -3313,13 +3365,14 @@ PyObject* PyString_Partition(PyObject* s, PyObject* sep) {
     size_t pos = str.find(delim);
     PyObject* r = PyTuple_New(3);
     if (pos == std::string::npos) {
-        PyTuple_SetItem(r, 0, PyUnicode_FromString(str.c_str()));
-        PyTuple_SetItem(r, 1, PyUnicode_FromString(""));
-        PyTuple_SetItem(r, 2, PyUnicode_FromString(""));
+        PyTuple_SetItem(r, 0, PyUnicode_FromStringAndSize(str.data(), str.size()));
+        PyTuple_SetItem(r, 1, PyUnicode_FromStringAndSize("", 0));
+        PyTuple_SetItem(r, 2, PyUnicode_FromStringAndSize("", 0));
     } else {
-        PyTuple_SetItem(r, 0, PyUnicode_FromString(str.substr(0, pos).c_str()));
-        PyTuple_SetItem(r, 1, PyUnicode_FromString(delim.c_str()));
-        PyTuple_SetItem(r, 2, PyUnicode_FromString(str.substr(pos + delim.size()).c_str()));
+        PyTuple_SetItem(r, 0, PyUnicode_FromStringAndSize(str.data(), pos));
+        PyTuple_SetItem(r, 1, PyUnicode_FromStringAndSize(delim.data(), delim.size()));
+        PyTuple_SetItem(r, 2, PyUnicode_FromStringAndSize(str.data() + pos + delim.size(),
+                                                         str.size() - pos - delim.size()));
     }
     return r;
 }
@@ -3338,13 +3391,14 @@ PyObject* PyString_RPartition(PyObject* s, PyObject* sep) {
     size_t pos = str.rfind(delim);
     PyObject* r = PyTuple_New(3);
     if (pos == std::string::npos) {
-        PyTuple_SetItem(r, 0, PyUnicode_FromString(""));
-        PyTuple_SetItem(r, 1, PyUnicode_FromString(""));
-        PyTuple_SetItem(r, 2, PyUnicode_FromString(str.c_str()));
+        PyTuple_SetItem(r, 0, PyUnicode_FromStringAndSize("", 0));
+        PyTuple_SetItem(r, 1, PyUnicode_FromStringAndSize("", 0));
+        PyTuple_SetItem(r, 2, PyUnicode_FromStringAndSize(str.data(), str.size()));
     } else {
-        PyTuple_SetItem(r, 0, PyUnicode_FromString(str.substr(0, pos).c_str()));
-        PyTuple_SetItem(r, 1, PyUnicode_FromString(delim.c_str()));
-        PyTuple_SetItem(r, 2, PyUnicode_FromString(str.substr(pos + delim.size()).c_str()));
+        PyTuple_SetItem(r, 0, PyUnicode_FromStringAndSize(str.data(), pos));
+        PyTuple_SetItem(r, 1, PyUnicode_FromStringAndSize(delim.data(), delim.size()));
+        PyTuple_SetItem(r, 2, PyUnicode_FromStringAndSize(str.data() + pos + delim.size(),
+                                                         str.size() - pos - delim.size()));
     }
     return r;
 }
@@ -3354,18 +3408,22 @@ PyObject* PyString_RPartition(PyObject* s, PyObject* sep) {
 // cannot tell that apart from a miss (I-055).
 static bool pyc_format_attr_present(PyObject* obj, PyObject* key) {
     if (!obj || !key || obj->type != 2) return false;
+    // Plain mappings have no __class__; '{0.x}'.format({'x': None}) must
+    // AttributeError (I-059). Instances do (I-055 present-None).
+    PyObject* classDict = nullptr;
+    for (auto& kv : obj->dict) {
+        if (kv.first && kv.first->type == 3 && kv.first->str == "__class__") {
+            classDict = kv.second;
+            break;
+        }
+    }
+    if (!classDict) return false;
     for (auto& pair : obj->dict) {
         if (PyObject_CompareBool(pair.first, key, 0)) return true;
     }
-    for (auto& kv : obj->dict) {
-        if (kv.first && kv.first->type == 3 && kv.first->str == "__class__") {
-            PyObject* classDict = kv.second;
-            if (classDict && classDict->type == 2) {
-                for (auto& ck : classDict->dict) {
-                    if (PyObject_CompareBool(ck.first, key, 0)) return true;
-                }
-            }
-            break;
+    if (classDict->type == 2) {
+        for (auto& ck : classDict->dict) {
+            if (PyObject_CompareBool(ck.first, key, 0)) return true;
         }
     }
     return false;
@@ -3548,7 +3606,7 @@ PyObject* PyBuiltin_StrFormat(PyObject* templateStr, PyObject* argsList, PyObjec
                 val = r;
                 ownVal = true;
             }
-            PyObject* specObj = PyUnicode_FromString(formatSpecStr.c_str());
+            PyObject* specObj = PyUnicode_FromStringAndSize(formatSpecStr.data(), formatSpecStr.size());
             PyObject* formatted = Pyc_FormatValue(val, specObj);
             Py_DECREF(specObj);
             if (formatted) { out += formatted->str; Py_DECREF(formatted); }
@@ -3563,16 +3621,20 @@ PyObject* PyBuiltin_StrFormat(PyObject* templateStr, PyObject* argsList, PyObjec
             i++;
         }
     }
-    return PyUnicode_FromString(out.c_str());
+    return PyUnicode_FromStringAndSize(out.data(), out.size());
 }
 
 PyObject* PyString_Join(PyObject* sep, PyObject* iterable) {
-    if (!sep || sep->type != 3 || !iterable || iterable->type != 1)
+    if (pyc_super_not_iterable(iterable)) return nullptr;
+    if (!sep || sep->type != 3)
+        return PyUnicode_FromString("");
+    if (!iterable || (iterable->type != 1 && iterable->type != 7))
         return PyUnicode_FromString("");
     std::string r;
-    size_t n = PyList_Size(iterable);
+    size_t n = (iterable->type == 7) ? PyTuple_Size(iterable) : PyList_Size(iterable);
     for (size_t i = 0; i < n; ++i) {
-        PyObject* item = listGetNewRef(iterable, i);
+        PyObject* item = (iterable->type == 7) ? tupleGetNewRef(iterable, i)
+                                               : listGetNewRef(iterable, i);
         if (!item || item->type != 3) {
             std::string msg = std::string("sequence item ") + std::to_string(i) +
                               ": expected str instance, " + pyc_builtin_type_name(item) + " found";
@@ -3584,7 +3646,7 @@ PyObject* PyString_Join(PyObject* sep, PyObject* iterable) {
         r += item->str;
         Py_DECREF(item);
     }
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 
 PyObject* PyDict_Keys(PyObject* d) {
@@ -3750,8 +3812,8 @@ void pyc_print(PyObject* argList, PyObject* sep, PyObject* end) {
                 size_t n = std::fread(buf, 1, sizeof(buf) - 1, tmp);
                 buf[n] = '\0';
                 // Strip a single trailing newline (PyObject_Print adds one).
-                if (n > 0 && buf[n-1] == '\n') buf[--n] = '\0';
-                out += buf;
+                if (n > 0 && buf[n-1] == '\n') --n;
+                out.append(buf, n);
                 std::fclose(tmp);
             } else {
                 out += "<print-error>";
@@ -3810,6 +3872,42 @@ PyObject* PyList_Index(PyObject* list, PyObject* item) {
         if (eq) return PyInt_FromLong((long)i);
     }
     return PyInt_FromLong(-1);
+}
+// CPython list/tuple.index(x, start, end): slice-adjust start/stop,
+// search [start, stop), raise ValueError on miss. 1-arg PyList_Index
+// still returns -1 (documented simplification).
+static PyObject* pyc_seq_index_range(PyObject* seq, PyObject* item,
+                                     PyObject* start, PyObject* end) {
+    if (!seq) return nullptr;
+    if (seq->type != 1 && seq->type != 7) return nullptr;
+    if (seq->type == 1) pyc_ensure_boxed_list(seq);
+    long n = (long)seq->list.size();
+    long st = start ? start->value : 0;
+    long en = end ? end->value : n;
+    if (st < 0) {
+        st += n;
+        if (st < 0) st = 0;
+    }
+    if (en < 0) {
+        en += n;
+        if (en < 0) en = 0;
+    }
+    for (long i = st; i < en && i < n; ++i) {
+        bool eq = (seq->list[(size_t)i] == item) ||
+                  (seq->list[(size_t)i] && item &&
+                   PyObject_CompareBool(seq->list[(size_t)i], item, 0));
+        if (eq) return PyInt_FromLong(i);
+    }
+    pyc_raise_msg("ValueError",
+                  seq->type == 7 ? "tuple.index(x): x not in tuple"
+                                 : "is not in list");
+    return nullptr;
+}
+PyObject* PyList_Index4(PyObject* list, PyObject* item, PyObject* start, PyObject* end) {
+    return pyc_seq_index_range(list, item, start, end);
+}
+PyObject* PyList_Index3(PyObject* list, PyObject* item, PyObject* start) {
+    return pyc_seq_index_range(list, item, start, nullptr);
 }
 PyObject* PyList_Count(PyObject* list, PyObject* item) {
     if (!list) return PyInt_FromLong(0);
@@ -4067,9 +4165,10 @@ PyObject* PyDict_FromKeys(PyObject* keys, PyObject* defval) {
 
 static PyObject* pyc_set_iter_to_list(PyObject* iterable) {
     // Materialize any supported iterable into a fresh list. Mirrors the
-    // `PyBuiltin_List` shapes (list/str/dict/set) without depending on it.
+    // `PyBuiltin_List` shapes (list/tuple/str/dict/set) without depending on it.
     if (!iterable) return PyList_New(0);
-    if (iterable->type == 1) {
+    if (pyc_super_not_iterable(iterable)) return nullptr;
+    if (iterable->type == 1 || iterable->type == 7) {
         size_t n = (iterable->list_item_type == 1) ? iterable->ilist.size()
                   : (iterable->list_item_type == 2) ? iterable->flist.size()
                   : iterable->list.size();
@@ -4098,7 +4197,7 @@ static PyObject* pyc_set_iter_to_list(PyObject* iterable) {
                 // One code point per element (UTF-8-aware would be ideal; pyc's
                 // str is byte-based for non-ASCII in practice — matches existing
                 // str iteration behavior elsewhere in the runtime).
-                PyList_SetItem(r, i, PyUnicode_FromString(iterable->str.substr(i, 1).c_str()));
+                PyList_SetItem(r, i, PyUnicode_FromStringAndSize(iterable->str.data() + i, 1));
             } else {
                 PyList_SetItem(r, i, PyInt_FromLong((unsigned char)iterable->str[i]));
             }
@@ -4242,6 +4341,7 @@ static PyObject* pyc_set_from_iter(PyObject* iterable) {
     PyObject* r = PySet_New();
     if (!iterable) return r;
     PyObject* elems = pyc_set_iter_to_list(iterable);
+    if (!elems) { Py_DECREF(r); return nullptr; }
     for (auto* e : elems->list) PySet_Add(r, e);
     Py_DECREF(elems);
     return r;
@@ -4385,18 +4485,24 @@ PyObject* PyString_LStrip(PyObject* s) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
     size_t l = 0;
     while (l < s->str.size() && isspace((unsigned char)s->str[l])) ++l;
-    return PyUnicode_FromString(s->str.substr(l).c_str());
+    return PyUnicode_FromStringAndSize(s->str.data() + l, s->str.size() - l);
 }
 PyObject* PyString_RStrip(PyObject* s) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
     size_t r = s->str.size();
     while (r > 0 && isspace((unsigned char)s->str[r-1])) --r;
-    return PyUnicode_FromString(s->str.substr(0, r).c_str());
+    return PyUnicode_FromStringAndSize(s->str.data(), r);
 }
 PyObject* PyString_StartsWith(PyObject* s, PyObject* prefix) {
     if (!s || s->type != 3) return PyBool_New(0);
     // Tuple-of-prefixes form: startswith(("a", "b"))
     if (prefix && prefix->type == 7) {
+        if (pyc_is_super(prefix)) {
+            std::string msg = std::string("startswith first arg must be str or a tuple of str, not ") +
+                              pyc_builtin_type_name(prefix);
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
         size_t n = PyTuple_Size(prefix);
         for (size_t i = 0; i < n; ++i) {
             PyObject* p = PyTuple_GetItem(prefix, i);
@@ -4426,6 +4532,12 @@ PyObject* PyString_EndsWith(PyObject* s, PyObject* suffix) {
     if (!s || s->type != 3) return PyBool_New(0);
     // Tuple-of-suffixes form: endswith((".txt", ".py"))
     if (suffix && suffix->type == 7) {
+        if (pyc_is_super(suffix)) {
+            std::string msg = std::string("endswith first arg must be str or a tuple of str, not ") +
+                              pyc_builtin_type_name(suffix);
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
         size_t n = PyTuple_Size(suffix);
         for (size_t i = 0; i < n; ++i) {
             PyObject* su = PyTuple_GetItem(suffix, i);
@@ -4521,14 +4633,14 @@ PyObject* PyString_Casefold(PyObject* s) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
     std::string r = s->str;
     for (char& c : r) c = (char)tolower((unsigned char)c);
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 PyObject* PyString_Capitalize(PyObject* s) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
     std::string r = s->str;
     if (!r.empty()) r[0] = (char)toupper((unsigned char)r[0]);
     for (size_t i = 1; i < r.size(); ++i) r[i] = (char)tolower((unsigned char)r[i]);
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 PyObject* PyString_Swapcase(PyObject* s) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
@@ -4537,7 +4649,7 @@ PyObject* PyString_Swapcase(PyObject* s) {
         if (isupper((unsigned char)c)) c = (char)tolower((unsigned char)c);
         else if (islower((unsigned char)c)) c = (char)toupper((unsigned char)c);
     }
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 PyObject* PyString_Splitlines(PyObject* s) {
     if (!s || s->type != 3) return PyList_New(0);
@@ -4559,7 +4671,7 @@ PyObject* PyString_Splitlines(PyObject* s) {
         lines.push_back(current);
     PyObject* result = PyList_New(lines.size());
     for (size_t i = 0; i < lines.size(); ++i)
-        PyList_SetItem(result, i, PyUnicode_FromString(lines[i].c_str()));
+        PyList_SetItem(result, i, PyUnicode_FromStringAndSize(lines[i].data(), lines[i].size()));
     return result;
 }
 PyObject* PyString_Index(PyObject* s, PyObject* sub) {
@@ -4577,8 +4689,12 @@ PyObject* PyString_Index(PyObject* s, PyObject* sub) {
     return PyInt_FromLong((long)pos);
 }
 PyObject* PyString_RIndex(PyObject* s, PyObject* sub) {
-    if (!s || s->type != 3 || !sub || sub->type != 3)
-        return PyInt_FromLong(-1);
+    if (!s || s->type != 3) return PyInt_FromLong(-1);
+    if (!sub || sub->type != 3) {
+        std::string msg = std::string("must be str, not ") + pyc_builtin_type_name(sub);
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
     size_t pos = s->str.rfind(sub->str);
     if (pos == std::string::npos) return PyInt_FromLong(-1L);
     return PyInt_FromLong((long)pos);
@@ -4592,7 +4708,7 @@ PyObject* PyString_Title(PyObject* s) {
         else if (atWord) { c = (char)toupper((unsigned char)c); atWord = false; }
         else c = (char)tolower((unsigned char)c);
     }
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 PyObject* PyString_ZFill(PyObject* s, PyObject* w) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
@@ -4607,7 +4723,7 @@ PyObject* PyString_ZFill(PyObject* s, PyObject* w) {
         r.append(width - s->str.size(), '0');
         r += s->str;
     }
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 PyObject* PyString_Center(PyObject* s, PyObject* w, PyObject* fill) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
@@ -4627,7 +4743,7 @@ PyObject* PyString_Center(PyObject* s, PyObject* w, PyObject* fill) {
     r.append(lp, fc[0]);
     r += s->str;
     r.append(rp, fc[0]);
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 PyObject* PyString_LJust(PyObject* s, PyObject* w, PyObject* fill) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
@@ -4636,7 +4752,7 @@ PyObject* PyString_LJust(PyObject* s, PyObject* w, PyObject* fill) {
     if ((long)s->str.size() >= width) { Py_INCREF(s); return s; }
     std::string r = s->str;
     r.append(width - s->str.size(), fc[0]);
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 PyObject* PyString_RJust(PyObject* s, PyObject* w, PyObject* fill) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
@@ -4646,7 +4762,7 @@ PyObject* PyString_RJust(PyObject* s, PyObject* w, PyObject* fill) {
     std::string r;
     r.append(width - s->str.size(), fc[0]);
     r += s->str;
-    return PyUnicode_FromString(r.c_str());
+    return PyUnicode_FromStringAndSize(r.data(), r.size());
 }
 PyObject* PyString_ReplaceN(PyObject* s, PyObject* old_, PyObject* new_, PyObject* count) {
     if (!s || s->type != 3) {
@@ -4673,7 +4789,7 @@ PyObject* PyString_ReplaceN(PyObject* s, PyObject* old_, PyObject* new_, PyObjec
         pos += to.size();
         ++n;
     }
-    return PyUnicode_FromString(result.c_str());
+    return PyUnicode_FromStringAndSize(result.data(), result.size());
 }
 // diagnostic to stderr for an `import` of a module pyc does not support.
 // The compiler treats all `import` statements as best-effort: this is
@@ -4692,7 +4808,7 @@ PyObject* PyString_ReplaceN(PyObject* s, PyObject* old_, PyObject* new_, PyObjec
 // emits the direct call to PyBuiltin_Re*; the tokens themselves are
 // never read by Pyc_Apply, so their values are arbitrary sentinels).
 static PyObject* makeReModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto add = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -4767,7 +4883,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
                 Py_INCREF(g_sys_module);
                 return g_sys_module;
             }
-            return PyDict_New();
+            return pyc_mark_module(PyDict_New());
         }
         if (modName->str == "functools") {
             // cmp_to_key is needed by the sorted-with-comparator idiom
@@ -4792,7 +4908,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
             addTok("partial",    "PyFunctools_Partial");
             addTok("wraps",      "PyFunctools_Wraps");
             addTok("lru_cache",  "PyFunctools_LruCache");
-            return d;
+            return pyc_mark_module(d);
         }
         if (modName->str == "operator") {
             PyObject* d = PyDict_New();
@@ -4817,7 +4933,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
             addTok("neg",        "PyOperator_Neg");
             addTok("itemgetter", "PyOperator_Itemgetter");
             addTok("attrgetter", "PyOperator_Attrgetter");
-            return d;
+            return pyc_mark_module(d);
         }
         if (modName->str == "os") {
             return makeOsModuleDict();
@@ -4849,7 +4965,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
             // datetime.now()) — Path has exactly one constructor, always
             // intercepted structurally in Compiler.cpp. This dict exists
             // only so `import pathlib` doesn't report ImportError.
-            return PyDict_New();
+            return pyc_mark_module(PyDict_New());
         }
         if (modName->str == "hashlib") {
             return makeHashlibModuleDict();
@@ -4896,7 +5012,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
             // pathlib.Path above — Decimal has exactly one constructor).
             // This dict exists only so `import decimal` doesn't report
             // ImportError.
-            return PyDict_New();
+            return pyc_mark_module(PyDict_New());
         }
         if (modName->str == "cmath") {
             PyObject* d = PyDict_New();
@@ -4913,7 +5029,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
             add("sin", "PyCmath_Sin");
             add("cos", "PyCmath_Cos");
             add("tan", "PyCmath_Tan");
-            return d;
+            return pyc_mark_module(d);
         }
         if (modName->str == "time") {
             // time module - C extension, return module with basic attributes and perf_counter
@@ -4927,7 +5043,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
             v = PyUnicode_FromString("Pyc_Time_PerfCounter");
             PyDict_SetItem(d, k, v);
             Py_DECREF(k); Py_DECREF(v);
-            return d;
+            return pyc_mark_module(d);
         }
     }
     const char* name = (modName && modName->type == 3) ? modName->str.c_str() : "?";
@@ -5147,10 +5263,8 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
     if (obj->type == 3 && (key->type == 0 || key->type == 5)) {
         long idx = key->value;
         if (idx < 0) idx += (long)obj->str.size();
-        if (idx >= 0 && (size_t)idx < obj->str.size()) {
-            char buf[2] = {obj->str[(size_t)idx], '\0'};
-            return PyUnicode_FromString(buf);
-        }
+        if (idx >= 0 && (size_t)idx < obj->str.size())
+            return PyUnicode_FromStringAndSize(obj->str.data() + (size_t)idx, 1);
     }
     // bytes/bytearray indexing returns an int (0-255) — real Python
     // semantics differ from str indexing here (str[i] is a length-1 str);
@@ -5261,9 +5375,22 @@ PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
 }
 
 PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
-    if (!obj || !key) return nullptr;
-    if (obj->type == 1) { PyList_SetItemBoxed(obj, key, val); return nullptr; }
+    if (!obj) {
+        std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
+                          "' object does not support item assignment";
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
+    // CPython allows None dict keys. None is the null PyObject* here, so
+    // handle dicts before the !key TypeError (I-128).
     if (obj->type == 2) { PyDict_SetItem(obj, key, val); return nullptr; }
+    if (!key) {
+        std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
+                          "' object does not support item assignment";
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
+    if (obj->type == 1) { PyList_SetItemBoxed(obj, key, val); return nullptr; }
     // bytearray index assignment: ba[i] = x, x an int 0-255 (bytes, type
     // 17, is immutable — real Python raises TypeError on `b"x"[0]=1`,
     // not reachable here since only bytearray's typeOf tag routes
@@ -5276,12 +5403,9 @@ PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
         }
         return nullptr;
     }
-    if (obj->type == 3 || obj->type == 7 || obj->type == 17) {
-        std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
-                          "' object does not support item assignment";
-        pyc_raise_msg("TypeError", msg.c_str());
-        return nullptr;
-    }
+    std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
+                      "' object does not support item assignment";
+    pyc_raise_msg("TypeError", msg.c_str());
     return nullptr;
 }
 
@@ -5447,7 +5571,7 @@ PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
 }
 
 PyObject* Pyc_Pow(PyObject* a, PyObject* b) {
-    if (!a || !b) return nullptr;
+    if (!a || !b) return pyc_unsupported_binop("**", a, b);
     // Complex pow: if either operand is complex, promote and use std::pow.
     if (has_complex(a, b)) {
         double ar, ai, br, bi;
@@ -5457,7 +5581,7 @@ PyObject* Pyc_Pow(PyObject* a, PyObject* b) {
             return PyComplex_New(result.real(), result.imag());
         }
     }
-    if (!is_numeric(a) || !is_numeric(b)) return nullptr;
+    if (!is_numeric(a) || !is_numeric(b)) return pyc_unsupported_binop("**", a, b);
     if (both_integral(a, b) && b->value >= 0) {
         long result = 1, base = a->value, exp = b->value;
         for (long i = 0; i < exp; ++i) result *= base;
@@ -5497,6 +5621,7 @@ PyObject* PyBuiltin_Sum(PyObject* lst) {
 }
 PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
     if (!lst) return start ? (Py_INCREF(start), start) : PyInt_FromLong(0);
+    if (pyc_super_not_iterable(lst)) return nullptr;
     PyObject* total = start ? (Py_INCREF(start), start) : PyInt_FromLong(0);
     auto addOne = [&](PyObject* item) {
         if (!item) return;
@@ -5530,6 +5655,7 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
 // branches below.
 PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse) {
     if (!lst) return PyList_New(0);
+    if (pyc_super_not_iterable(lst)) return nullptr;
     std::vector<PyObject*> items;
     if (lst->type == 1) {
         // Handle homogeneous int lists
@@ -5625,6 +5751,7 @@ PyObject* PyBuiltin_CmpToKey(PyObject* cmp) {
 // the cmp sort (I-018); the compile-time arm used to drop it.
 PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp, PyObject* reverse) {
     if (!lst || !cmp) return PyBuiltin_Sorted(lst, nullptr, reverse);
+    if (pyc_super_not_iterable(lst)) return nullptr;
     std::vector<PyObject*> items;
     if (lst->type == 1) {
         // Handle homogeneous int lists
@@ -5686,6 +5813,7 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp, PyObject* revers
 
 PyObject* PyBuiltin_Any(PyObject* lst) {
     if (!lst) return PyBool_New(0);
+    if (pyc_super_not_iterable(lst)) return nullptr;
     if (lst->type == 20) {
         for (auto* e : lst->setElems) if (PyObject_TruthValue(e)) return PyBool_New(1);
         return PyBool_New(0);
@@ -5706,6 +5834,7 @@ PyObject* PyBuiltin_Any(PyObject* lst) {
 
 PyObject* PyBuiltin_All(PyObject* lst) {
     if (!lst) return PyBool_New(1);
+    if (pyc_super_not_iterable(lst)) return nullptr;
     if (lst->type == 20) {
         for (auto* e : lst->setElems) if (!PyObject_TruthValue(e)) return PyBool_New(0);
         return PyBool_New(1);
@@ -5740,6 +5869,10 @@ PyObject* PyBuiltin_Map(PyObject* func, PyObject* iterable) {
             for (auto* item : iterable->list) { if (item) Py_INCREF(item); items.push_back(item); }
         }
     } else if (iterable->type == 7) {
+        if (iterable->cell_content) {
+            pyc_raise_msg("TypeError", "'super' object is not iterable");
+            return nullptr;
+        }
         if (iterable->list_item_type == 1) {
             for (long v : iterable->ilist) items.push_back(PyInt_FromLong(v));
         } else if (iterable->list_item_type == 2) {
@@ -5752,10 +5885,8 @@ PyObject* PyBuiltin_Map(PyObject* func, PyObject* iterable) {
     } else if (iterable->type == 2) {
         for (auto& pair : iterable->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
     } else if (iterable->type == 3) {
-        for (char c : iterable->str) {
-            char s[2] = {c, 0};
-            items.push_back(PyUnicode_FromString(s));
-        }
+        for (size_t i = 0; i < iterable->str.size(); ++i)
+            items.push_back(PyUnicode_FromStringAndSize(iterable->str.data() + i, 1));
     } else {
         return PyList_New(0);
     }
@@ -5786,6 +5917,9 @@ PyObject* PyBuiltin_MapN(PyObject* func, PyObject* iterables) {
     if (!iterables || iterables->type != 1 || iterables->list.empty())
         return PyList_New(0);
     size_t nIters = iterables->list.size();
+    for (size_t i = 0; i < nIters; ++i) {
+        if (pyc_super_not_iterable(iterables->list[i])) return nullptr;
+    }
 
     // Collect items from each iterable into a vector of vectors.
     std::vector<std::vector<PyObject*>> allItems(nIters);
@@ -5811,10 +5945,8 @@ PyObject* PyBuiltin_MapN(PyObject* func, PyObject* iterables) {
                 for (auto* item : iter->list) { if (item) Py_INCREF(item); items.push_back(item); }
             }
         } else if (iter->type == 3) {
-            for (char c : iter->str) {
-                char s[2] = {c, 0};
-                items.push_back(PyUnicode_FromString(s));
-            }
+            for (size_t k = 0; k < iter->str.size(); ++k)
+                items.push_back(PyUnicode_FromStringAndSize(iter->str.data() + k, 1));
         } else if (iter->type == 20) {
             for (auto* e : iter->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
         } else if (iter->type == 2) {
@@ -5856,6 +5988,10 @@ PyObject* PyBuiltin_Filter(PyObject* func, PyObject* iterable) {
             for (auto* item : iterable->list) { if (item) Py_INCREF(item); items.push_back(item); }
         }
     } else if (iterable->type == 7) {
+        if (iterable->cell_content) {
+            pyc_raise_msg("TypeError", "'super' object is not iterable");
+            return nullptr;
+        }
         if (iterable->list_item_type == 1) {
             for (long v : iterable->ilist) items.push_back(PyInt_FromLong(v));
         } else if (iterable->list_item_type == 2) {
@@ -5868,10 +6004,8 @@ PyObject* PyBuiltin_Filter(PyObject* func, PyObject* iterable) {
     } else if (iterable->type == 2) {
         for (auto& pair : iterable->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
     } else if (iterable->type == 3) {
-        for (char c : iterable->str) {
-            char s[2] = {c, 0};
-            items.push_back(PyUnicode_FromString(s));
-        }
+        for (size_t i = 0; i < iterable->str.size(); ++i)
+            items.push_back(PyUnicode_FromStringAndSize(iterable->str.data() + i, 1));
     } else {
         return PyList_New(0);
     }
@@ -6020,6 +6154,21 @@ PyObject* PyString_Find(PyObject* s, PyObject* sub) {
     return PyInt_FromLong(pos == std::string::npos ? -1L : (long)pos);
 }
 
+// CPython ADJUST_INDICES: clamp end to [0, n], add n to negative start/end.
+// start > n is left as-is so find("", n+1) stays -1 (I-061).
+static void pyc_adjust_str_indices(long n, long& start, long& end) {
+    if (end > n)
+        end = n;
+    else if (end < 0) {
+        end += n;
+        if (end < 0) end = 0;
+    }
+    if (start < 0) {
+        start += n;
+        if (start < 0) start = 0;
+    }
+}
+
 PyObject* PyString_Find3(PyObject* s, PyObject* sub, PyObject* start) {
     if (!s || s->type != 3) return PyInt_FromLong(-1);
     if (!sub || sub->type != 3) {
@@ -6027,10 +6176,15 @@ PyObject* PyString_Find3(PyObject* s, PyObject* sub, PyObject* start) {
         pyc_raise_msg("TypeError", msg.c_str());
         return nullptr;
     }
+    long n = (long)s->str.size();
     long st = start ? start->value : 0;
-    if (st < 0) st = 0;
+    long en = n;
+    pyc_adjust_str_indices(n, st, en);
+    if (en < st) return PyInt_FromLong(-1L);
     size_t pos = s->str.find(sub->str, (size_t)st);
-    return PyInt_FromLong(pos == std::string::npos ? -1L : (long)pos);
+    if (pos == std::string::npos || (long)pos + (long)sub->str.size() > en)
+        return PyInt_FromLong(-1L);
+    return PyInt_FromLong((long)pos);
 }
 
 PyObject* PyString_Find4(PyObject* s, PyObject* sub, PyObject* start, PyObject* end) {
@@ -6040,11 +6194,11 @@ PyObject* PyString_Find4(PyObject* s, PyObject* sub, PyObject* start, PyObject* 
         pyc_raise_msg("TypeError", msg.c_str());
         return nullptr;
     }
+    long n = (long)s->str.size();
     long st = start ? start->value : 0;
-    long en = end ? end->value : (long)s->str.size();
-    if (st < 0) st = 0;
-    if (en > (long)s->str.size()) en = (long)s->str.size();
-    if (en <= st) return PyInt_FromLong(-1L);
+    long en = end ? end->value : n;
+    pyc_adjust_str_indices(n, st, en);
+    if (en < st) return PyInt_FromLong(-1L);
     size_t pos = s->str.find(sub->str, (size_t)st);
     if (pos == std::string::npos || (long)pos + (long)sub->str.size() > en)
         return PyInt_FromLong(-1L);
@@ -6069,12 +6223,15 @@ PyObject* PyString_RFind3(PyObject* s, PyObject* sub, PyObject* start) {
         pyc_raise_msg("TypeError", msg.c_str());
         return nullptr;
     }
+    long n = (long)s->str.size();
     long st = start ? start->value : 0;
-    if (st < 0) st = 0;
-    size_t endpos = s->str.size();
-    size_t pos = s->str.rfind(sub->str, endpos);
-    if (pos == std::string::npos || (long)pos < st) return PyInt_FromLong(-1L);
-    return PyInt_FromLong((long)pos);
+    long en = n;
+    pyc_adjust_str_indices(n, st, en);
+    if (en < st) return PyInt_FromLong(-1L);
+    std::string haystack = s->str.substr((size_t)st, (size_t)(en - st));
+    size_t pos = haystack.rfind(sub->str);
+    if (pos == std::string::npos) return PyInt_FromLong(-1L);
+    return PyInt_FromLong((long)pos + st);
 }
 
 PyObject* PyString_RFind4(PyObject* s, PyObject* sub, PyObject* start, PyObject* end) {
@@ -6084,11 +6241,11 @@ PyObject* PyString_RFind4(PyObject* s, PyObject* sub, PyObject* start, PyObject*
         pyc_raise_msg("TypeError", msg.c_str());
         return nullptr;
     }
+    long n = (long)s->str.size();
     long st = start ? start->value : 0;
-    long en = end ? end->value : (long)s->str.size();
-    if (st < 0) st = 0;
-    if (en > (long)s->str.size()) en = (long)s->str.size();
-    if (en <= st) return PyInt_FromLong(-1L);
+    long en = end ? end->value : n;
+    pyc_adjust_str_indices(n, st, en);
+    if (en < st) return PyInt_FromLong(-1L);
     std::string haystack = s->str.substr((size_t)st, (size_t)(en - st));
     size_t pos = haystack.rfind(sub->str);
     if (pos == std::string::npos) return PyInt_FromLong(-1L);
@@ -6111,6 +6268,156 @@ PyObject* PyString_Count(PyObject* s, PyObject* sub) {
     return PyInt_FromLong(count);
 }
 
+PyObject* PyString_Count4(PyObject* s, PyObject* sub, PyObject* start, PyObject* end) {
+    if (!s || s->type != 3) return PyInt_FromLong(0);
+    if (!sub || sub->type != 3) {
+        std::string msg = std::string("must be str, not ") + pyc_builtin_type_name(sub);
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
+    long n = (long)s->str.size();
+    long st = start ? start->value : 0;
+    long en = end ? end->value : n;
+    pyc_adjust_str_indices(n, st, en);
+    if (en < st) return PyInt_FromLong(0);
+    if (sub->str.empty()) return PyInt_FromLong(0);
+    long count = 0;
+    size_t pos = (size_t)st;
+    size_t last = (size_t)en;
+    while (pos + sub->str.size() <= last) {
+        size_t found = s->str.find(sub->str, pos);
+        if (found == std::string::npos || found + sub->str.size() > last) break;
+        ++count;
+        pos = found + sub->str.size();
+    }
+    return PyInt_FromLong(count);
+}
+
+PyObject* PyString_Count3(PyObject* s, PyObject* sub, PyObject* start) {
+    return PyString_Count4(s, sub, start, nullptr);
+}
+
+static PyObject* pyc_str_index_from_find(PyObject* found) {
+    if (!found) return nullptr;
+    if (found->value < 0) {
+        Py_DECREF(found);
+        pyc_raise_msg("ValueError", "substring not found");
+        return nullptr;
+    }
+    return found;
+}
+
+PyObject* PyString_Index4(PyObject* s, PyObject* sub, PyObject* start, PyObject* end) {
+    return pyc_str_index_from_find(PyString_Find4(s, sub, start, end));
+}
+
+PyObject* PyString_Index3(PyObject* s, PyObject* sub, PyObject* start) {
+    return pyc_str_index_from_find(PyString_Find3(s, sub, start));
+}
+
+PyObject* PyString_RIndex4(PyObject* s, PyObject* sub, PyObject* start, PyObject* end) {
+    return pyc_str_index_from_find(PyString_RFind4(s, sub, start, end));
+}
+
+PyObject* PyString_RIndex3(PyObject* s, PyObject* sub, PyObject* start) {
+    return pyc_str_index_from_find(PyString_RFind3(s, sub, start));
+}
+
+static bool pyc_str_startswith_at(const std::string& hay, const std::string& pre,
+                                 long st, long en) {
+    if (st > en) return false;
+    if ((unsigned long)(en - st) < pre.size()) return false;
+    if (st < 0 || (size_t)st > hay.size()) return false;
+    return hay.compare((size_t)st, pre.size(), pre) == 0;
+}
+
+static bool pyc_str_endswith_at(const std::string& hay, const std::string& suf,
+                               long st, long en) {
+    if (st > en) return false;
+    if ((unsigned long)(en - st) < suf.size()) return false;
+    long pos = en - (long)suf.size();
+    if (pos < 0 || (size_t)pos > hay.size()) return false;
+    return hay.compare((size_t)pos, suf.size(), suf) == 0;
+}
+
+PyObject* PyString_StartsWith4(PyObject* s, PyObject* prefix, PyObject* start, PyObject* end) {
+    if (!s || s->type != 3) return PyBool_New(0);
+    long n = (long)s->str.size();
+    long st = start ? start->value : 0;
+    long en = end ? end->value : n;
+    pyc_adjust_str_indices(n, st, en);
+    if (prefix && prefix->type == 7) {
+        if (pyc_is_super(prefix)) {
+            std::string msg = std::string("startswith first arg must be str or a tuple of str, not ") +
+                              pyc_builtin_type_name(prefix);
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
+        size_t nt = PyTuple_Size(prefix);
+        for (size_t i = 0; i < nt; ++i) {
+            PyObject* p = PyTuple_GetItem(prefix, i);
+            if (!p || p->type != 3) {
+                std::string msg = std::string("tuple for startswith must only contain str, not ") +
+                                  pyc_builtin_type_name(p);
+                pyc_raise_msg("TypeError", msg.c_str());
+                return nullptr;
+            }
+            if (pyc_str_startswith_at(s->str, p->str, st, en)) return PyBool_New(1);
+        }
+        return PyBool_New(0);
+    }
+    if (!prefix || prefix->type != 3) {
+        std::string msg = std::string("startswith first arg must be str or a tuple of str, not ") +
+                          pyc_builtin_type_name(prefix);
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
+    return PyBool_New(pyc_str_startswith_at(s->str, prefix->str, st, en) ? 1 : 0);
+}
+
+PyObject* PyString_StartsWith3(PyObject* s, PyObject* prefix, PyObject* start) {
+    return PyString_StartsWith4(s, prefix, start, nullptr);
+}
+
+PyObject* PyString_EndsWith4(PyObject* s, PyObject* suffix, PyObject* start, PyObject* end) {
+    if (!s || s->type != 3) return PyBool_New(0);
+    long n = (long)s->str.size();
+    long st = start ? start->value : 0;
+    long en = end ? end->value : n;
+    pyc_adjust_str_indices(n, st, en);
+    if (suffix && suffix->type == 7) {
+        if (pyc_is_super(suffix)) {
+            std::string msg = std::string("endswith first arg must be str or a tuple of str, not ") +
+                              pyc_builtin_type_name(suffix);
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
+        size_t nt = PyTuple_Size(suffix);
+        for (size_t i = 0; i < nt; ++i) {
+            PyObject* su = PyTuple_GetItem(suffix, i);
+            if (!su || su->type != 3) {
+                std::string msg = std::string("tuple for endswith must only contain str, not ") +
+                                  pyc_builtin_type_name(su);
+                pyc_raise_msg("TypeError", msg.c_str());
+                return nullptr;
+            }
+            if (pyc_str_endswith_at(s->str, su->str, st, en)) return PyBool_New(1);
+        }
+        return PyBool_New(0);
+    }
+    if (!suffix || suffix->type != 3) {
+        std::string msg = std::string("endswith first arg must be str or a tuple of str, not ") +
+                          pyc_builtin_type_name(suffix);
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
+    return PyBool_New(pyc_str_endswith_at(s->str, suffix->str, st, en) ? 1 : 0);
+}
+
+PyObject* PyString_EndsWith3(PyObject* s, PyObject* suffix, PyObject* start) {
+    return PyString_EndsWith4(s, suffix, start, nullptr);
+}
+
 PyObject* PyString_Replace(PyObject* s, PyObject* old_, PyObject* new_) {
     if (!s || s->type != 3) return s ? (Py_INCREF(s), s) : nullptr;
     if (!old_ || old_->type != 3 || !new_ || new_->type != 3) {
@@ -6122,17 +6429,21 @@ PyObject* PyString_Replace(PyObject* s, PyObject* old_, PyObject* new_) {
     std::string result = s->str;
     const std::string& from = old_->str;
     const std::string& to   = new_->str;
-    if (from.empty()) return PyUnicode_FromString(result.c_str());
+    if (from.empty()) return PyUnicode_FromStringAndSize(result.data(), result.size());
     size_t pos = 0;
     while ((pos = result.find(from, pos)) != std::string::npos) {
         result.replace(pos, from.size(), to);
         pos += to.size();
     }
-    return PyUnicode_FromString(result.c_str());
+    return PyUnicode_FromStringAndSize(result.data(), result.size());
 }
 
 PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step) {
     if (!obj) return PyList_New(0);
+    if (obj->type == 7 && obj->cell_content) {
+        pyc_raise_msg("TypeError", "'super' object is not subscriptable");
+        return nullptr;
+    }
     long n;
     if (obj->type == 1) {
         // Handle homogeneous lists
@@ -6235,8 +6546,7 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
 }
 
 void Pyc_SetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step, PyObject* value) {
-    if (!obj) return;
-    if (obj->type != 1 && obj->type != 18) {
+    if (!obj || (obj->type != 1 && obj->type != 18)) {
         std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
                           "' object does not support item assignment";
         pyc_raise_msg("TypeError", msg.c_str());
@@ -6537,6 +6847,7 @@ PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b, PyObject* key) {
     return aWins ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
 }
 PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) {
+    if (pyc_super_not_iterable(lst)) return nullptr;
     if (!lst || lst->type != 1) {
         if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
         return nullptr;
@@ -6571,6 +6882,7 @@ PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
     return r;
 }
 PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal) {
+    if (pyc_super_not_iterable(lst)) return nullptr;
     if (!lst || lst->type != 1) {
         if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
         return nullptr;
@@ -6622,10 +6934,8 @@ PyObject* PyBuiltin_List(PyObject* obj) {
     }
     if (obj->type == 3) {
         PyObject* r = PyList_New(obj->str.size());
-        for (size_t i = 0; i < obj->str.size(); ++i) {
-            char buf[2] = {obj->str[i], '\0'};
-            PyList_SetItem(r, i, PyUnicode_FromString(buf));
-        }
+        for (size_t i = 0; i < obj->str.size(); ++i)
+            PyList_SetItem(r, i, PyUnicode_FromStringAndSize(obj->str.data() + i, 1));
         return r;
     }
     if (obj->type == 2) {
@@ -6669,6 +6979,7 @@ PyObject* PyBuiltin_List(PyObject* obj) {
 // runtime), strings, and ranges.
 PyObject* PyBuiltin_Reversed(PyObject* obj) {
     if (!obj) return PyList_New(0);
+    if (pyc_super_not_iterable(obj)) return nullptr;
     PyObject* r = nullptr;
     if (obj->type == 1) {
         // Handle homogeneous int lists
@@ -6700,8 +7011,8 @@ PyObject* PyBuiltin_Reversed(PyObject* obj) {
         // String: reverse the characters.
         r = PyList_New(obj->str.size());
         for (size_t i = 0; i < obj->str.size(); ++i) {
-            char buf[2] = {obj->str[obj->str.size() - 1 - i], '\0'};
-            PyList_SetItem(r, i, PyUnicode_FromString(buf));
+            size_t ri = obj->str.size() - 1 - i;
+            PyList_SetItem(r, i, PyUnicode_FromStringAndSize(obj->str.data() + ri, 1));
         }
     } else if (obj->type == 20) {
         r = PyList_New(obj->setElems.size());
@@ -6719,6 +7030,7 @@ PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
     return PyBuiltin_Enumerate2(iterable, nullptr);
 }
 PyObject* PyBuiltin_Enumerate2(PyObject* iterable, PyObject* startObj) {
+    if (pyc_super_not_iterable(iterable)) return nullptr;
     if (!iterable || iterable->type != 1) return PyList_New(0);
     long startVal = 0;
     if (startObj && (startObj->type == 0 || startObj->type == 5)) startVal = startObj->value;
@@ -6740,6 +7052,7 @@ PyObject* PyBuiltin_Enumerate2(PyObject* iterable, PyObject* startObj) {
     return r;
 }
 PyObject* PyBuiltin_Zip2(PyObject* a, PyObject* b) {
+    if (pyc_super_not_iterable(a) || pyc_super_not_iterable(b)) return nullptr;
     if (!a || !b) return PyList_New(0);
     size_t na = 0, nb = 0;
     if (a->type == 1) {
@@ -6867,6 +7180,7 @@ PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
         char buf[512] = {};
         PyObject* arg = getArg(argIdx++);
         bool consumed = true;
+        bool usedBuf = true;
 
         switch (spec) {
             case 'd': case 'i': case 'u': {
@@ -6900,9 +7214,8 @@ PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
             }
             case 's': {
                 // %s honours width and flags (- left-align, others right-align).
-                // We build a custom right-padding here because snprintf %s
-                // with a * width DOES work, but the runtime's snprintf
-                // may not always be available — so we always do it manually.
+                // Append the std::string body directly: snprintf %s would
+                // truncate at the first embedded NUL (I-126).
                 PyObject* s = arg ? PyStr_FromAny(arg) : PyUnicode_FromString("");
                 std::string body = s ? s->str : std::string();
                 if (s) Py_DECREF(s);
@@ -6916,25 +7229,27 @@ PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
                         body.insert(0, (size_t)pad, ' ');
                     }
                 }
-                snprintf(buf, sizeof(buf), "%s", body.c_str());
+                result += body;
+                usedBuf = false;
                 break;
             }
             case 'r': {
+                std::string body;
                 if (arg && arg->type == 3) {
-                    std::string body = pyc_format_str_repr(arg->str);
-                    snprintf(buf, sizeof(buf), "%s", body.c_str());
-                    break;
+                    body = pyc_format_str_repr(arg->str);
+                } else {
+                    PyObject* s = arg ? PyStr_FromAny(arg) : PyUnicode_FromString("");
+                    body = s ? s->str : std::string();
+                    if (s) Py_DECREF(s);
                 }
-                PyObject* s = arg ? PyStr_FromAny(arg) : PyUnicode_FromString("");
-                std::string body = s ? s->str : std::string();
-                if (s) Py_DECREF(s);
-                snprintf(buf, sizeof(buf), "%s", body.c_str());
+                result += body;
+                usedBuf = false;
                 break;
             }
             case 'c': {
                 long v = arg ? ((arg->type==0||arg->type==5) ? arg->value : (arg->type==4 ? (long)arg->dvalue : 0)) : 0;
-                buf[0] = (char)(v & 0x7f);
-                buf[1] = '\0';
+                result += (char)(v & 0x7f);
+                usedBuf = false;
                 break;
             }
             default:
@@ -6943,10 +7258,10 @@ PyObject* PyString_Format(PyObject* fmt, PyObject* args) {
                 consumed = false;
                 break;
         }
-        if (consumed) result += buf;
+        if (consumed && usedBuf) result += buf;
         i = j + 1;
     }
-    return PyUnicode_FromString(result.c_str());
+    return PyUnicode_FromStringAndSize(result.data(), result.size());
 }
 
 // date/datetime/timedelta arithmetic helpers. Implemented via the shared
@@ -6998,8 +7313,16 @@ static PyObject* pyc_timedelta_mul(const PycTimedelta* a, int64_t n) {
     return pyc_new_timedelta(a->days * n, a->seconds * n, a->microseconds * n);
 }
 
+static PyObject* pyc_unsupported_binop(const char* op, PyObject* a, PyObject* b) {
+    std::string msg = std::string("unsupported operand type(s) for ") + op +
+                      ": '" + pyc_builtin_type_name(a) + "' and '" +
+                      pyc_builtin_type_name(b) + "'";
+    pyc_raise_msg("TypeError", msg.c_str());
+    return nullptr;
+}
+
 PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
-    if (!a || !b) return NULL;
+    if (!a || !b) return pyc_unsupported_binop("+", a, b);
     // __add__ dispatch for a class instance — found and fixed while bug
     // hunting: a + b for a class defining __add__ previously always
     // returned None. Only the left operand's dunder is consulted
@@ -7017,7 +7340,9 @@ PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
     // returned None unconditionally, confirmed against real CPython).
     if (a->type == 1 && b->type == 1) return PyList_Concat(a, b);
     // tuple + tuple -> tuple (CPython: TypeError for tuple + list).
-    if (a->type == 7 && b->type == 7) return PyTuple_Concat(a, b);
+    // Super shares tag 7; do not treat the proxy as an empty tuple (I-121).
+    if (a->type == 7 && b->type == 7 && !a->cell_content && !b->cell_content)
+        return PyTuple_Concat(a, b);
     // bytes/bytearray concatenation. Result type follows the left
     // operand (matches real Python: bytearray + bytes -> bytearray,
     // bytes + bytearray -> bytes).
@@ -7049,7 +7374,7 @@ PyObject* PyNumber_Add(PyObject* a, PyObject* b) {
         if (to_complex(a, ar, ai) && to_complex(b, br, bi))
             return PyComplex_New(ar + br, ai + bi);
     }
-    if (!is_numeric(a) || !is_numeric(b)) return NULL;
+    if (!is_numeric(a) || !is_numeric(b)) return pyc_unsupported_binop("+", a, b);
     if (both_integral(a, b)) return PyInt_FromLong(a->value + b->value);
     return PyFloat_FromDouble(numeric_val(a) + numeric_val(b));
 }
@@ -7085,7 +7410,7 @@ PyObject* PyNumber_Subtract(PyObject* a, PyObject* b) {
         if (to_complex(a, ar, ai) && to_complex(b, br, bi))
             return PyComplex_New(ar - br, ai - bi);
     }
-    if (!is_numeric(a) || !is_numeric(b)) return NULL;
+    if (!is_numeric(a) || !is_numeric(b)) return pyc_unsupported_binop("-", a, b);
     if (both_integral(a, b)) return PyInt_FromLong(a->value - b->value);
     return PyFloat_FromDouble(numeric_val(a) - numeric_val(b));
 }
@@ -7231,18 +7556,18 @@ extern "C" PyObject* PyBuiltin_ReFindall(PyObject* pattern, PyObject* subject, P
         // not counted in rc's "highest pair" sense).
         int num_capture_groups = rc - 1;
         if (num_capture_groups <= 0) {
-            std::string m = subject->str.substr(ovector[0], ovector[1] - ovector[0]);
-            PyObject* s = PyUnicode_FromString(m.c_str());
+            PCRE2_SIZE a = ovector[0], b = ovector[1];
+            PyObject* s = PyUnicode_FromStringAndSize(subject->str.data() + a, b - a);
             result->list.push_back(s);
         } else if (num_capture_groups == 1) {
-            std::string g = subject->str.substr(ovector[2], ovector[3] - ovector[2]);
-            PyObject* s = PyUnicode_FromString(g.c_str());
+            PCRE2_SIZE a = ovector[2], b = ovector[3];
+            PyObject* s = PyUnicode_FromStringAndSize(subject->str.data() + a, b - a);
             result->list.push_back(s);
         } else {
             PyObject* tup = PyList_New(num_capture_groups);
             for (int g = 1; g <= num_capture_groups; ++g) {
-                std::string gs = subject->str.substr(ovector[2*g], ovector[2*g+1] - ovector[2*g]);
-                PyObject* s = PyUnicode_FromString(gs.c_str());
+                PCRE2_SIZE a = ovector[2*g], b = ovector[2*g+1];
+                PyObject* s = PyUnicode_FromStringAndSize(subject->str.data() + a, b - a);
                 tup->list[g-1] = s;
             }
             result->list.push_back(tup);
@@ -7269,7 +7594,7 @@ extern "C" PyObject* PyBuiltin_ReMatchGroup(PyObject* m, PyObject* idxObj) {
     PCRE2_SIZE start = ovector[2*i];
     PCRE2_SIZE end   = ovector[2*i+1];
     if (start == PCRE2_UNSET || end == PCRE2_UNSET) return nullptr;
-    return PyUnicode_FromString(mo->subject.substr(start, end - start).c_str());
+    return PyUnicode_FromStringAndSize(mo->subject.data() + start, end - start);
 }
 
 // re.search(pattern, subject, flags=0) — return a Match object (type 9)
@@ -7373,54 +7698,39 @@ extern "C" PyObject* PyBuiltin_ReCompile(PyObject* pattern, PyObject* flags) {
 // Integer left shift. Unboxes a, applies a<<b (assumes b is int), and
 // re-boxes the result. Returns nullptr on error.
 extern "C" PyObject* PyNumber_Lshift(PyObject* a, PyObject* b) {
-    long av = 0, bv = 0;
-    if (a && a->type == 0) av = (long)a->value;
-    else if (a && a->type == 5) av = (long)a->value;
-    if (b && b->type == 0) bv = (long)b->value;
-    else if (b && b->type == 5) bv = (long)b->value;
-    return PyInt_FromLong(av << bv);
+    if (!a || !b || !((a->type == 0 || a->type == 5) && (b->type == 0 || b->type == 5)))
+        return pyc_unsupported_binop("<<", a, b);
+    return PyInt_FromLong((long)a->value << (long)b->value);
 }
 
 extern "C" PyObject* PyNumber_Rshift(PyObject* a, PyObject* b) {
-    long av = 0, bv = 0;
-    if (a && a->type == 0) av = (long)a->value;
-    else if (a && a->type == 5) av = (long)a->value;
-    if (b && b->type == 0) bv = (long)b->value;
-    else if (b && b->type == 5) bv = (long)b->value;
-    return PyInt_FromLong(av >> bv);
+    if (!a || !b || !((a->type == 0 || a->type == 5) && (b->type == 0 || b->type == 5)))
+        return pyc_unsupported_binop(">>", a, b);
+    return PyInt_FromLong((long)a->value >> (long)b->value);
 }
 
 extern "C" PyObject* PyNumber_BitOr(PyObject* a, PyObject* b) {
     if (a && a->type == 20) return PySet_Union(a, b);
     if (b && b->type == 20) return PySet_Union(a, b);
-    long av = 0, bv = 0;
-    if (a && a->type == 0) av = (long)a->value;
-    else if (a && a->type == 5) av = (long)a->value;
-    if (b && b->type == 0) bv = (long)b->value;
-    else if (b && b->type == 5) bv = (long)b->value;
-    return PyInt_FromLong(av | bv);
+    if (!a || !b || !((a->type == 0 || a->type == 5) && (b->type == 0 || b->type == 5)))
+        return pyc_unsupported_binop("|", a, b);
+    return PyInt_FromLong((long)a->value | (long)b->value);
 }
 
 extern "C" PyObject* PyNumber_BitAnd(PyObject* a, PyObject* b) {
     if (a && a->type == 20) return PySet_Intersection(a, b);
     if (b && b->type == 20) return PySet_Intersection(a, b);
-    long av = 0, bv = 0;
-    if (a && a->type == 0) av = (long)a->value;
-    else if (a && a->type == 5) av = (long)a->value;
-    if (b && b->type == 0) bv = (long)b->value;
-    else if (b && b->type == 5) bv = (long)b->value;
-    return PyInt_FromLong(av & bv);
+    if (!a || !b || !((a->type == 0 || a->type == 5) && (b->type == 0 || b->type == 5)))
+        return pyc_unsupported_binop("&", a, b);
+    return PyInt_FromLong((long)a->value & (long)b->value);
 }
 
 extern "C" PyObject* PyNumber_BitXor(PyObject* a, PyObject* b) {
     if (a && a->type == 20) return PySet_SymmetricDifference(a, b);
     if (b && b->type == 20) return PySet_SymmetricDifference(a, b);
-    long av = 0, bv = 0;
-    if (a && a->type == 0) av = (long)a->value;
-    else if (a && a->type == 5) av = (long)a->value;
-    if (b && b->type == 0) bv = (long)b->value;
-    else if (b && b->type == 5) bv = (long)b->value;
-    return PyInt_FromLong(av ^ bv);
+    if (!a || !b || !((a->type == 0 || a->type == 5) && (b->type == 0 || b->type == 5)))
+        return pyc_unsupported_binop("^", a, b);
+    return PyInt_FromLong((long)a->value ^ (long)b->value);
 }
 
 // os.path.exists(path) -> bool : True if the file or directory exists
@@ -8635,7 +8945,7 @@ extern "C" PyObject* PyTextwrap_Wrap(PyObject* args) {
     long width = 70;
     if (args->list.size() > 1 && args->list[1] && args->list[1]->type == 0) width = (long)args->list[1]->value;
     for (auto& line : pyc_textwrap_wrap(textObj->str, width)) {
-        PyObject* s = PyUnicode_FromString(line.c_str());
+        PyObject* s = PyUnicode_FromStringAndSize(line.data(), line.size());
         PyList_Append(out, s);
         Py_DECREF(s);
     }
@@ -8653,7 +8963,7 @@ extern "C" PyObject* PyTextwrap_Fill(PyObject* args) {
         if (i > 0) out += '\n';
         out += lines[i];
     }
-    return PyUnicode_FromString(out.c_str());
+    return PyUnicode_FromStringAndSize(out.data(), out.size());
 }
 
 // uuid.uuid4() -> str, RFC 4122 version-4 UUID. Uses real OS entropy
@@ -9473,7 +9783,7 @@ extern "C" PyObject* PyBuiltin_SubprocessCheckOutput(PyObject* args) {
     while (char* r = ::fgets(buf, sizeof(buf), fp)) out += r;
     ::pclose(fp);
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
-    return PyUnicode_FromString(out.c_str());
+    return PyUnicode_FromStringAndSize(out.data(), out.size());
 }
 
 // ---- math module ----
@@ -9542,7 +9852,7 @@ extern "C" PyObject* PyMath_Factorial(PyObject* args) {
 // are string tokens (dispatched via Pyc_Apply/g_callableRegistry, see
 // pyc_register_callable below); pi/e/tau are plain float values.
 static PyObject* makeMathModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -9837,7 +10147,7 @@ extern "C" PyObject* PyJson_Loads(PyObject* args) {
 // makeJsonModuleDict: builds a dict emulating the json module (dumps/loads
 // only — no indent/sort_keys/separators kwargs, no custom encoders).
 static PyObject* makeJsonModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -10045,7 +10355,7 @@ extern "C" PyObject* PyRandom_Shuffle(PyObject* args) {
 }
 
 static PyObject* makeRandomModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -10459,7 +10769,7 @@ extern "C" PyObject* PyItertools_ChainFromIterable(PyObject* outer) {
 }
 
 static PyObject* makeItertoolsModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -10745,7 +11055,7 @@ extern "C" PyObject* PyBuiltin_StrFactory(PyObject*)   { return PyUnicode_FromSt
 extern "C" PyObject* PyBuiltin_SetFactory(PyObject*)   { return PySet_New(); }
 
 static PyObject* makeCollectionsModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -10854,20 +11164,20 @@ extern "C" PyObject* PyDateTime_Now(PyObject* args) {
 // they take no constructor-shaped arguments) resolve normally. Nested
 // under `date`/`datetime` sub-dicts to match the real attribute path.
 static PyObject* makeDatetimeModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](PyObject* target, const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
         PyDict_SetItem(target, k, v);
         Py_DECREF(k); Py_DECREF(v);
     };
-    PyObject* dateSub = PyDict_New();
+    PyObject* dateSub = pyc_mark_module(PyDict_New());
     addTok(dateSub, "today", "PyDateTime_Today");
     PyObject* dateKey = PyUnicode_FromString("date");
     PyDict_SetItem(d, dateKey, dateSub);
     Py_DECREF(dateKey); Py_DECREF(dateSub);
 
-    PyObject* datetimeSub = PyDict_New();
+    PyObject* datetimeSub = pyc_mark_module(PyDict_New());
     addTok(datetimeSub, "now", "PyDateTime_Now");
     PyObject* datetimeKey = PyUnicode_FromString("datetime");
     PyDict_SetItem(d, datetimeKey, datetimeSub);
@@ -10880,11 +11190,11 @@ static PyObject* makeDatetimeModuleDict() {
 // date/datetime/timedelta), never looked up via this dict at runtime.
 // Exists only so `import hashlib` doesn't report ImportError.
 static PyObject* makeHashlibModuleDict() {
-    return PyDict_New();
+    return pyc_mark_module(PyDict_New());
 }
 
 static PyObject* makeBase64ModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -10897,7 +11207,7 @@ static PyObject* makeBase64ModuleDict() {
 }
 
 static PyObject* makeStructModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -10910,7 +11220,7 @@ static PyObject* makeStructModuleDict() {
 }
 
 static PyObject* makeHeapqModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -10928,7 +11238,7 @@ static PyObject* makeHeapqModuleDict() {
 }
 
 static PyObject* makeBisectModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -10945,7 +11255,7 @@ static PyObject* makeBisectModuleDict() {
 }
 
 static PyObject* makeStatisticsModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -10967,7 +11277,7 @@ static PyObject* makeStatisticsModuleDict() {
 // string: pure constants (no functions) — values matching CPython's
 // string module exactly.
 static PyObject* makeStringModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addConst = [&](const char* name, const char* value) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(value);
@@ -10989,7 +11299,7 @@ static PyObject* makeStringModuleDict() {
 }
 
 static PyObject* makeTextwrapModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -11002,7 +11312,7 @@ static PyObject* makeTextwrapModuleDict() {
 }
 
 static PyObject* makeUuidModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     PyObject* k = PyUnicode_FromString("uuid4");
     PyObject* v = PyUnicode_FromString("PyUuid_Uuid4");
     PyDict_SetItem(d, k, v);
@@ -11015,11 +11325,11 @@ static PyObject* makeUuidModuleDict() {
 // why this can't be a token+registry dict entry like other modules).
 // This dict exists only so `import copy` doesn't report ImportError.
 static PyObject* makeCopyModuleDict() {
-    return PyDict_New();
+    return pyc_mark_module(PyDict_New());
 }
 
 static PyObject* makeShutilModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -11033,7 +11343,7 @@ static PyObject* makeShutilModuleDict() {
 }
 
 static PyObject* makeGlobModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     PyObject* k = PyUnicode_FromString("glob");
     PyObject* v = PyUnicode_FromString("PyGlob_Glob");
     PyDict_SetItem(d, k, v);
@@ -11046,7 +11356,7 @@ static PyObject* makeGlobModuleDict() {
 // same as pathlib.Path/hashlib.md5 construction never being looked up
 // via their module dicts either.
 static PyObject* makeCsvModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     PyObject* k = PyUnicode_FromString("reader");
     PyObject* v = PyUnicode_FromString("PyCsv_Reader");
     PyDict_SetItem(d, k, v);
@@ -11060,7 +11370,7 @@ static PyObject* makeCsvModuleDict() {
 // string tokens naming runtime helpers; `os.unlink`/`os.remove`/etc. are
 // also top-level tokens.
 static PyObject* makeOsModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     // os.environ -> real dict populated from the process environment.
     // Values set/mutated by user code afterward don't propagate back to
     // the actual process environment (no os.putenv/os.environ[k]=v write
@@ -11081,7 +11391,7 @@ static PyObject* makeOsModuleDict() {
     // os.path -> dict with exists/isfile/isdir/unlink/join/basename/
     // dirname/splitext/abspath tokens
     PyObject* path_key = PyUnicode_FromString("path");
-    PyObject* path_val = PyDict_New();
+    PyObject* path_val = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -11118,7 +11428,7 @@ static PyObject* makeOsModuleDict() {
 
 // makeSubprocessModuleDict: builds the subprocess module dict.
 static PyObject* makeSubprocessModuleDict() {
-    PyObject* d = PyDict_New();
+    PyObject* d = pyc_mark_module(PyDict_New());
     auto addTok = [&](const char* name, const char* token) {
         PyObject* k = PyUnicode_FromString(name);
         PyObject* v = PyUnicode_FromString(token);
@@ -11207,7 +11517,7 @@ extern "C" PyObject* PyBuiltin_ReSub(PyObject* pattern, PyObject* repl,
     }
     pcre2_match_data_free(md);
     pcre2_code_free(code);
-    return PyUnicode_FromString(out.c_str());
+    return PyUnicode_FromStringAndSize(out.data(), out.size());
 }
 
 // re.split(pattern, subject, maxsplit, flags) — split subject on regex
@@ -11243,7 +11553,7 @@ extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject,
             // Empty match: append the empty string and advance one.
             if (offset <= subject->str.size()) {
                 std::string piece = subject->str.substr(offset, (start - offset));
-                PyObject* s = PyUnicode_FromString(piece.c_str());
+                PyObject* s = PyUnicode_FromStringAndSize(piece.data(), piece.size());
                 result->list.push_back(s);
                 ++splitsDone;
             }
@@ -11254,7 +11564,7 @@ extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject,
         }
         // Non-empty match: append the text before the match.
         std::string piece = subject->str.substr(offset, start - offset);
-        PyObject* s = PyUnicode_FromString(piece.c_str());
+        PyObject* s = PyUnicode_FromStringAndSize(piece.data(), piece.size());
         result->list.push_back(s);
         ++splitsDone;
         offset = end;
@@ -11265,7 +11575,7 @@ extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject,
     // match at all).
     if (offset <= subject->str.size()) {
         std::string rest = subject->str.substr(offset);
-        PyObject* s = PyUnicode_FromString(rest.c_str());
+        PyObject* s = PyUnicode_FromStringAndSize(rest.data(), rest.size());
         result->list.push_back(s);
     }
     pcre2_match_data_free(md);
@@ -11308,7 +11618,7 @@ void pyc_setup_sys(int argc, char** argv) {
     initSmallInts();
 
     // sys = a dict with key "argv" (and a few other keys for compatibility).
-    g_sys_module = PyDict_New();
+    g_sys_module = pyc_mark_module(PyDict_New());
 
     // sys.argv = list of PyObject* strings
     {
@@ -11812,6 +12122,7 @@ PyObject* pyc_get_sys_modules(void) {
 // B7: Add a module to sys.modules (increments refcount of module_dict).
 void pyc_register_module(const char* name, PyObject* module_dict) {
     if (!g_sys_modules || !module_dict) return;
+    pyc_mark_module(module_dict);
     PyObject* nameKey = PyUnicode_FromString(name);
     Py_INCREF(module_dict);
     PyDict_SetItem(g_sys_modules, nameKey, module_dict);
@@ -11819,7 +12130,7 @@ void pyc_register_module(const char* name, PyObject* module_dict) {
 }
 
 PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
-    if (!a || !b) return NULL;
+    if (!a || !b) return pyc_unsupported_binop("*", a, b);
     // __mul__ dispatch for a class instance — see PyNumber_Add's comment.
     if (a->type == 2) {
         PyObject* method = pyc_lookup_dunder(a, "__mul__");
@@ -11830,8 +12141,11 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
     if (a->type == 1 && b->type == 0) return PyList_Repeat(a, b->value);
     if (a->type == 0 && b->type == 1) return PyList_Repeat(b, a->value);
     // tuple * int / int * tuple -> tuple (CPython semantics).
-    if (a->type == 7 && (b->type == 0 || b->type == 5)) return PyTuple_Repeat(a, b->value);
-    if ((a->type == 0 || a->type == 5) && b->type == 7) return PyTuple_Repeat(b, a->value);
+    // Super shares tag 7; repeating the proxy is TypeError (I-121).
+    if (a->type == 7 && !a->cell_content && (b->type == 0 || b->type == 5))
+        return PyTuple_Repeat(a, b->value);
+    if ((a->type == 0 || a->type == 5) && b->type == 7 && !b->cell_content)
+        return PyTuple_Repeat(b, a->value);
     if (a->type == 15 && (b->type == 0 || b->type == 5)) return pyc_timedelta_mul(pyc_as_timedelta(a), b->value);
     if ((a->type == 0 || a->type == 5) && b->type == 15) return pyc_timedelta_mul(pyc_as_timedelta(b), a->value);
     if (a->type == 19 || b->type == 19) {
@@ -11857,7 +12171,7 @@ PyObject* PyNumber_Multiply(PyObject* a, PyObject* b) {
             return PyComplex_New(r, i);
         }
     }
-    if (!is_numeric(a) || !is_numeric(b)) return NULL;
+    if (!is_numeric(a) || !is_numeric(b)) return pyc_unsupported_binop("*", a, b);
     if (both_integral(a, b)) return PyInt_FromLong(a->value * b->value);
     return PyFloat_FromDouble(numeric_val(a) * numeric_val(b));
 }
@@ -11888,7 +12202,7 @@ PyObject* PyNumber_Divide(PyObject* a, PyObject* b) {
         if (bTemp) mpd_del(db);
         return result;
     }
-    if (!is_numeric(a) || !is_numeric(b)) return NULL;
+    if (!is_numeric(a) || !is_numeric(b)) return pyc_unsupported_binop("//", a, b);
     if (both_integral(a, b)) {
         if (b->value == 0) {
             { pyc_raise_msg("ZeroDivisionError", "integer division or modulo by zero"); return NULL; }
@@ -11967,7 +12281,7 @@ PyObject* PyNumber_TrueDivide(PyObject* a, PyObject* b) {
             return PyComplex_New(r, i);
         }
     }
-    if (!is_numeric(a) || !is_numeric(b)) return NULL;
+    if (!is_numeric(a) || !is_numeric(b)) return pyc_unsupported_binop("/", a, b);
     double bv = numeric_val(b);
     if (bv == 0.0) {
         { pyc_raise_msg("ZeroDivisionError", "float division by zero"); return NULL; }
@@ -11985,7 +12299,7 @@ PyObject* PyNumber_Remainder(PyObject* a, PyObject* b) {
         PyObject* method = pyc_lookup_dunder(a, "__mod__");
         if (method) return pyc_call_dunder2(method, a, b);
     }
-    if (!is_numeric(a) || !is_numeric(b)) return NULL;
+    if (!is_numeric(a) || !is_numeric(b)) return pyc_unsupported_binop("%", a, b);
     if (both_integral(a, b)) {
         if (b->value == 0) {
             { pyc_raise_msg("ZeroDivisionError", "integer division or modulo by zero"); return NULL; }
@@ -12142,6 +12456,14 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
     // Tuples are always boxed-storage from the compiler's lowering, but
     // handle homogeneous storage defensively.
     if (a->type == 7 && b->type == 7) {
+        // Super shares tag 7; it is not an empty tuple (I-127).
+        if (pyc_is_super(a) || pyc_is_super(b)) {
+            switch (op) {
+                case 0: return a == b;
+                case 1: return a != b;
+                default: return 0;
+            }
+        }
         if (a->list_item_type != 0) pyc_ensure_boxed_list(a);
         if (b->list_item_type != 0) pyc_ensure_boxed_list(b);
         const auto& al = a->list;
@@ -13953,7 +14275,7 @@ static const char* pyc_builtin_type_name(PyObject* o) {
         case 3:  return "str";
         case 4:  return "float";
         case 5:  return "bool";
-        case 7:  return "tuple";
+        case 7:  return pyc_is_super(o) ? "super" : "tuple";
         case 17: return "bytes";
         case 18: return "bytearray";
         case 20: return "set";
@@ -14006,7 +14328,6 @@ PYC_WRAP0(pyc_bm_list_reverse, PyList_Reverse)
 PYC_WRAP0(pyc_bm_list_clear, PyList_Clear)
 PYC_WRAP0(pyc_bm_list_copy, PyList_Copy)
 PYC_WRAP1(pyc_bm_list_count, PyList_Count)
-PYC_WRAP1(pyc_bm_list_index, PyList_Index)
 PYC_WRAP0(pyc_bm_str_upper, PyString_Upper)
 PYC_WRAP0(pyc_bm_str_lower, PyString_Lower)
 PYC_WRAP0(pyc_bm_str_strip, PyString_Strip)
@@ -14024,11 +14345,6 @@ PYC_WRAP0(pyc_bm_str_islower, PyString_IsLower)
 PYC_WRAP0(pyc_bm_str_isupper, PyString_IsUpper)
 PYC_WRAP0(pyc_bm_str_isspace, PyString_IsSpace)
 PYC_WRAP1(pyc_bm_str_join, PyString_Join)
-PYC_WRAP1(pyc_bm_str_count, PyString_Count)
-PYC_WRAP1(pyc_bm_str_index, PyString_Index)
-PYC_WRAP1(pyc_bm_str_rindex, PyString_RIndex)
-PYC_WRAP1(pyc_bm_str_startswith, PyString_StartsWith)
-PYC_WRAP1(pyc_bm_str_endswith, PyString_EndsWith)
 PYC_WRAP1(pyc_bm_str_partition, PyString_Partition)
 PYC_WRAP1(pyc_bm_str_rpartition, PyString_RPartition)
 PYC_WRAP1(pyc_bm_str_zfill, PyString_ZFill)
@@ -14160,11 +14476,47 @@ static PyObject* pyc_bm_str_find(PyObject* recv, PyObject* a0, PyObject* a1,
     if (a2) return PyString_Find4(recv, a0, a1, a2);
     return a1 ? PyString_Find3(recv, a0, a1) : PyString_Find(recv, a0);
 }
+static PyObject* pyc_bm_str_count(PyObject* recv, PyObject* a0, PyObject* a1,
+                                 PyObject* argsList) {
+    PyObject* a2 = pyc_arg_at(argsList, 2);
+    if (a2) return PyString_Count4(recv, a0, a1, a2);
+    return a1 ? PyString_Count3(recv, a0, a1) : PyString_Count(recv, a0);
+}
+static PyObject* pyc_bm_str_index(PyObject* recv, PyObject* a0, PyObject* a1,
+                                 PyObject* argsList) {
+    PyObject* a2 = pyc_arg_at(argsList, 2);
+    if (a2) return PyString_Index4(recv, a0, a1, a2);
+    return a1 ? PyString_Index3(recv, a0, a1) : PyString_Index(recv, a0);
+}
+static PyObject* pyc_bm_str_startswith(PyObject* recv, PyObject* a0, PyObject* a1,
+                                      PyObject* argsList) {
+    PyObject* a2 = pyc_arg_at(argsList, 2);
+    if (a2) return PyString_StartsWith4(recv, a0, a1, a2);
+    return a1 ? PyString_StartsWith3(recv, a0, a1) : PyString_StartsWith(recv, a0);
+}
+static PyObject* pyc_bm_str_endswith(PyObject* recv, PyObject* a0, PyObject* a1,
+                                    PyObject* argsList) {
+    PyObject* a2 = pyc_arg_at(argsList, 2);
+    if (a2) return PyString_EndsWith4(recv, a0, a1, a2);
+    return a1 ? PyString_EndsWith3(recv, a0, a1) : PyString_EndsWith(recv, a0);
+}
 static PyObject* pyc_bm_str_rfind(PyObject* recv, PyObject* a0, PyObject* a1,
                                  PyObject* argsList) {
     PyObject* a2 = pyc_arg_at(argsList, 2);
     if (a2) return PyString_RFind4(recv, a0, a1, a2);
     return a1 ? PyString_RFind3(recv, a0, a1) : PyString_RFind(recv, a0);
+}
+static PyObject* pyc_bm_str_rindex(PyObject* recv, PyObject* a0, PyObject* a1,
+                                  PyObject* argsList) {
+    PyObject* a2 = pyc_arg_at(argsList, 2);
+    if (a2) return PyString_RIndex4(recv, a0, a1, a2);
+    return a1 ? PyString_RIndex3(recv, a0, a1) : PyString_RIndex(recv, a0);
+}
+static PyObject* pyc_bm_list_index(PyObject* recv, PyObject* a0, PyObject* a1,
+                                  PyObject* argsList) {
+    PyObject* a2 = pyc_arg_at(argsList, 2);
+    if (a2) return PyList_Index4(recv, a0, a1, a2);
+    return a1 ? PyList_Index3(recv, a0, a1) : PyList_Index(recv, a0);
 }
 static PyObject* pyc_bm_str_replace(PyObject* recv, PyObject* a0, PyObject* a1,
                                    PyObject* argsList) {
@@ -14349,14 +14701,16 @@ static PyObject* pyc_call_builtin_method(PyObject* receiver, PyObject* nameObj,
         return r;
     }
     // Tag 7 is tuple and super proxy. Super has non-null cell_content;
-    // do not serve tuple count/index.
-    bool isSuper = (receiver->type == 7 && receiver->cell_content);
-    if (!isSuper) {
+    // do not serve tuple count/index. Tag-2 modules are marked (I-067);
+    // do not serve dict get/keys/items/values/pop/...
+    bool isSuper = pyc_is_super(receiver);
+    bool isMod = pyc_is_module(receiver);
+    if (!isSuper && !isMod) {
         if (PycBuiltinMethodFn fn = pyc_lookup_builtin_method(receiver->type, m)) {
             return fn(receiver, a0, a1, argsList);
         }
     }
-    const char* tname = isSuper ? "super" : pyc_builtin_type_name(receiver);
+    const char* tname = isSuper ? "super" : isMod ? "module" : pyc_builtin_type_name(receiver);
     std::string msg = std::string("'") + tname +
                       "' object has no attribute '" + m + "'";
     pyc_raise_msg("AttributeError", msg.c_str());
@@ -14555,6 +14909,25 @@ PyObject* Pyc_GetAttr(PyObject* obj, PyObject* attrName) {
         PyObject* result = Pyc_Apply(realToken, argList);
         Py_DECREF(argList);
         return result;
+    }
+    // Missing name on a module is AttributeError, not None (I-067).
+    // A stored None (nullptr value) is still present — only a true miss raises.
+    if (!val && pyc_is_module(obj)) {
+        bool present = false;
+        if (attrName) {
+            for (auto& pair : obj->dict) {
+                if (PyObject_CompareBool(pair.first, attrName, 0)) {
+                    present = true;
+                    break;
+                }
+            }
+        }
+        if (!present) {
+            const char* aname = (attrName && attrName->type == 3) ? attrName->str.c_str() : "?";
+            std::string msg = std::string("'module' object has no attribute '") + aname + "'";
+            pyc_raise_msg("AttributeError", msg.c_str());
+            return nullptr;
+        }
     }
     return val;
 }

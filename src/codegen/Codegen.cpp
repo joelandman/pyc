@@ -565,7 +565,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
-    for (const char* name : {"PyString_Find3","PyString_RFind3","PyString_RSplit","PyString_Split2"}) {
+    for (const char* name : {"PyString_Find3","PyString_RFind3","PyString_RSplit","PyString_Split2",
+                              "PyString_Count3","PyString_Index3","PyString_RIndex3",
+                              "PyString_StartsWith3","PyString_EndsWith3","PyList_Index3"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
@@ -573,6 +575,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_RFind4", module.get());
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_Find4", module.get());
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_Count4", module.get());
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_Index4", module.get());
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_RIndex4", module.get());
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_StartsWith4", module.get());
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyString_EndsWith4", module.get());
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "PyList_Index4", module.get());
     }
     // Additional list / dict / string methods added for completeness.
     // 2-arg: insert(list, idx, item), extend(list, other), center/ljust/rjust(s, w, fill),

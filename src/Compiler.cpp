@@ -3737,11 +3737,12 @@ class LoweringVisitor {
     // Pyc_CallBuiltinMethod dispatches on the real runtime tag.
     //
     // Methods needing more than a direct call -- split/rsplit (maxsplit
-    // and kwargs), replace (count), find/rfind (start/end), sort
-    // (key=/reverse=), dict.pop/get (default), dict.values (element-type
-    // propagation), dict.fromkeys (no self argument), Counter.update --
-    // deliberately stay as chain arms. They are guarded individually; see
-    // IMPLEMENTATION.md.
+    // and kwargs), replace (count), find/rfind/rindex/count/index/startswith/
+    // endswith (start/end), list/tuple index (start/end), sort (key=/reverse=),
+    // dict.pop/get (default),
+    // dict.values (element-type propagation), dict.fromkeys (no self
+    // argument), Counter.update -- deliberately stay as chain arms. They
+    // are guarded individually; see IMPLEMENTATION.md.
     enum class RecvKind { Str, ListLike, Dict, Set, Bytes, Int };
 
     struct BuiltinMethodRow {
@@ -3777,25 +3778,16 @@ class LoweringVisitor {
             {"isupper",    RecvKind::Str, 0, "PyString_IsUpper",    "bool", "bool"},
             {"isspace",    RecvKind::Str, 0, "PyString_IsSpace",    "bool", "bool"},
             // str, one argument
-            {"startswith", RecvKind::Str, 1, "PyString_StartsWith", "bool", "bool"},
-            {"endswith",   RecvKind::Str, 1, "PyString_EndsWith",   "bool", "bool"},
             {"zfill",      RecvKind::Str, 1, "PyString_ZFill",      "", ""},
             {"partition",  RecvKind::Str, 1, "PyString_Partition",  "", ""},
             {"rpartition", RecvKind::Str, 1, "PyString_RPartition", "", ""},
-            {"rindex",     RecvKind::Str, 1, "PyString_RIndex",     "int", "int"},
             // str, two arguments
             {"center",     RecvKind::Str, 2, "PyString_Center",     "", ""},
             {"ljust",      RecvKind::Str, 2, "PyString_LJust",      "", ""},
             {"rjust",      RecvKind::Str, 2, "PyString_RJust",      "", ""},
-            // count/index: two rows replace a `(isProvenStr(obj)) ? ... : ...`
-            // ternary. Keying on the receiver is exactly what the table is
-            // for, and the unproven case now falls through instead of
-            // defaulting to the list implementation (which returned 0 for
-            // "banana".count("a") through a parameter).
-            {"count",      RecvKind::Str,      1, "PyString_Count", "int", "int"},
+            // list.count stays 1-arg (CPython list/deque.count is 1-arg).
+            // str rindex and list/tuple index keep start/end via chain arms.
             {"count",      RecvKind::ListLike, 1, "PyList_Count",   "int", "int"},
-            {"index",      RecvKind::Str,      1, "PyString_Index", "int", "int"},
-            {"index",      RecvKind::ListLike, 1, "PyList_Index",   "int", "int"},
             {"join",       RecvKind::Str,      1, "PyString_Join",  "", ""},
             {"remove",     RecvKind::ListLike, 1, "PyList_Remove",  "", ""},
             // set: every operation is a plain direct call
@@ -4442,13 +4434,46 @@ class LoweringVisitor {
             emitMissingArgsCheck(callDisplayName(targetFunc), reqNames, {});
             ir.addInstruction(currentFunc, "label", {}, okL);
         }
+        // I-065: omitted defaults used to GetItem OOB → None. For each
+        // defaulted slot (k >= nrequired), use the registered default when
+        // the list is short; an in-range item still wins (g(*[1, 3])).
+        std::string sizeForDef;
+        if (ndef > 0 && nrequired < fixed) {
+            std::string ln2 = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", listVal}, ln2);
+            sizeForDef = "__sl_" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "assign", {ln2}, sizeForDef);
+        }
         std::vector<std::string> fwd;
         for (size_t k = 0; k < fixed; ++k) {
             std::string ck = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {std::to_string(k)}, ck);
-            std::string el = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, ck}, el);
-            fwd.push_back(el);
+            size_t di = (k >= nrequired) ? (k - nrequired) : (size_t)-1;
+            if (!sizeForDef.empty() && di != (size_t)-1 &&
+                dit != funcDefaultValues.end() && di < dit->second.size()) {
+                std::string cm = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "icmp", {"Lt", ck, sizeForDef}, cm);
+                int sc = tempCounter++;
+                std::string haveL = "va_hv_" + std::to_string(sc);
+                std::string defL = "va_df_" + std::to_string(sc);
+                std::string mgL = "va_mg_" + std::to_string(sc);
+                std::string elSlot = "__vael_" + std::to_string(sc);
+                ir.addInstruction(currentFunc, "br", {cm, haveL, defL});
+                ir.addInstruction(currentFunc, "label", {}, haveL);
+                std::string elH = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, ck}, elH);
+                ir.addInstruction(currentFunc, "assign", {elH}, elSlot);
+                ir.addInstruction(currentFunc, "br", {}, mgL);
+                ir.addInstruction(currentFunc, "label", {}, defL);
+                ir.addInstruction(currentFunc, "assign", {dit->second[di]}, elSlot);
+                ir.addInstruction(currentFunc, "br", {}, mgL);
+                ir.addInstruction(currentFunc, "label", {}, mgL);
+                fwd.push_back(elSlot);
+            } else {
+                std::string el = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, ck}, el);
+                fwd.push_back(el);
+            }
         }
         std::string rest;
         if (hasVar) {
@@ -5511,6 +5536,13 @@ class LoweringVisitor {
                 // dict). An ordinary positional-only indirect call (no
                 // keyword args at this call site) is unaffected: nothing
                 // is appended, matching prior behavior exactly.
+                //
+                // I-064: a kwargs-append is not a positional. Adapter-side
+                // "peel last if empty dict" made hs[0]({}) look like
+                // hs[0](**{}) — the call site knows which one this is.
+                // Omit the merged dict when it is empty (**{} / **d with
+                // d=={}). Named keywords / non-empty spreads still append
+                // (hasKwVar peel / existing non-empty path).
                 if (!kwArgs.empty() || !kwargDicts.empty()) {
                     std::string kwDict = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyDict_New"}, kwDict);
@@ -5524,8 +5556,21 @@ class LoweringVisitor {
                         std::string dummySet = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", kwDict, keyConst, kw.second}, dummySet);
                     }
+                    std::string dsz = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_Len", kwDict}, dsz);
+                    std::string zero = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, zero);
+                    std::string nonempty = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "icmp", {"Gt", dsz, zero}, nonempty);
+                    int sc = tempCounter++;
+                    std::string appL = "kw_app_" + std::to_string(sc);
+                    std::string skipL = "kw_sk_" + std::to_string(sc);
+                    ir.addInstruction(currentFunc, "br", {nonempty, appL, skipL});
+                    ir.addInstruction(currentFunc, "label", {}, appL);
                     std::string dAppend = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, kwDict}, dAppend);
+                    ir.addInstruction(currentFunc, "br", {}, skipL);
+                    ir.addInstruction(currentFunc, "label", {}, skipL);
                 }
             } else {
                 // Fallback: append keyword values
@@ -9491,6 +9536,56 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyString_Find", obj, arg}, res, "int");
             }
             noteType(res, "int");
+        } else if (methodName == "count" && isProvenStr(obj)) {
+            if (args.size() >= 3) {
+                ir.addInstruction(currentFunc, "call", {"PyString_Count4", obj, args[0], args[1], args[2]}, res, "int");
+            } else if (args.size() >= 2) {
+                ir.addInstruction(currentFunc, "call", {"PyString_Count3", obj, args[0], args[1]}, res, "int");
+            } else {
+                std::string arg = args.empty() ? "" : args[0];
+                ir.addInstruction(currentFunc, "call", {"PyString_Count", obj, arg}, res, "int");
+            }
+            noteType(res, "int");
+        } else if (methodName == "index" && isProvenStr(obj)) {
+            if (args.size() >= 3) {
+                ir.addInstruction(currentFunc, "call", {"PyString_Index4", obj, args[0], args[1], args[2]}, res, "int");
+            } else if (args.size() >= 2) {
+                ir.addInstruction(currentFunc, "call", {"PyString_Index3", obj, args[0], args[1]}, res, "int");
+            } else {
+                std::string arg = args.empty() ? "" : args[0];
+                ir.addInstruction(currentFunc, "call", {"PyString_Index", obj, arg}, res, "int");
+            }
+            noteType(res, "int");
+        } else if (methodName == "index" && isProvenListLike(obj)) {
+            if (args.size() >= 3) {
+                ir.addInstruction(currentFunc, "call", {"PyList_Index4", obj, args[0], args[1], args[2]}, res, "int");
+            } else if (args.size() >= 2) {
+                ir.addInstruction(currentFunc, "call", {"PyList_Index3", obj, args[0], args[1]}, res, "int");
+            } else {
+                std::string arg = args.empty() ? "" : args[0];
+                ir.addInstruction(currentFunc, "call", {"PyList_Index", obj, arg}, res, "int");
+            }
+            noteType(res, "int");
+        } else if (methodName == "startswith" && isProvenStr(obj)) {
+            if (args.size() >= 3) {
+                ir.addInstruction(currentFunc, "call", {"PyString_StartsWith4", obj, args[0], args[1], args[2]}, res, "bool");
+            } else if (args.size() >= 2) {
+                ir.addInstruction(currentFunc, "call", {"PyString_StartsWith3", obj, args[0], args[1]}, res, "bool");
+            } else {
+                std::string arg = args.empty() ? "" : args[0];
+                ir.addInstruction(currentFunc, "call", {"PyString_StartsWith", obj, arg}, res, "bool");
+            }
+            noteType(res, "bool");
+        } else if (methodName == "endswith" && isProvenStr(obj)) {
+            if (args.size() >= 3) {
+                ir.addInstruction(currentFunc, "call", {"PyString_EndsWith4", obj, args[0], args[1], args[2]}, res, "bool");
+            } else if (args.size() >= 2) {
+                ir.addInstruction(currentFunc, "call", {"PyString_EndsWith3", obj, args[0], args[1]}, res, "bool");
+            } else {
+                std::string arg = args.empty() ? "" : args[0];
+                ir.addInstruction(currentFunc, "call", {"PyString_EndsWith", obj, arg}, res, "bool");
+            }
+            noteType(res, "bool");
         } else if (methodName == "rfind" && isProvenStr(obj)) {
             if (args.size() >= 3) {
                 ir.addInstruction(currentFunc, "call", {"PyString_RFind4", obj, args[0], args[1], args[2]}, res, "int");
@@ -9499,6 +9594,16 @@ class LoweringVisitor {
             } else {
                 std::string arg = args.empty() ? "" : args[0];
                 ir.addInstruction(currentFunc, "call", {"PyString_RFind", obj, arg}, res, "int");
+            }
+            noteType(res, "int");
+        } else if (methodName == "rindex" && isProvenStr(obj)) {
+            if (args.size() >= 3) {
+                ir.addInstruction(currentFunc, "call", {"PyString_RIndex4", obj, args[0], args[1], args[2]}, res, "int");
+            } else if (args.size() >= 2) {
+                ir.addInstruction(currentFunc, "call", {"PyString_RIndex3", obj, args[0], args[1]}, res, "int");
+            } else {
+                std::string arg = args.empty() ? "" : args[0];
+                ir.addInstruction(currentFunc, "call", {"PyString_RIndex", obj, arg}, res, "int");
             }
             noteType(res, "int");
         } else if (methodName == "replace" && isProvenStr(obj)) {
