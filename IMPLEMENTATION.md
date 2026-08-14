@@ -24,6 +24,7 @@ Confirmed later and closed (do not re-open from a paragraph below):
 - `module.get()` / user `.get()` no longer dict `.get()` (I-007). Leftovers I-032–I-035.
 - `check_dispatch_chain.py` `exists` exemption retired (W2.3); `compile` remains. The checker itself stays.
 - Uncaught tracebacks print `File "…", line N, in <name>` (I-009). Leftovers: reraise/nomatch snapshot (I-036), IR frame names (I-037).
+- `super().__init__` into a builtin exception base stores `self.args` (I-008). Leftovers I-038 / I-039.
 
 ## Design Choices of Omission
 
@@ -2037,9 +2038,8 @@ dict, using metadata every class already carries:
   `instance.args`, mirroring CPython's own
   `BaseException.__init__(self, *args)`. A class with its own explicit
   `__init__` (even one that calls `super().__init__(...)`) is unaffected
-  by this branch; that remains a separate, narrower, still-unsupported
-  case (calling into a builtin base's `__init__` via `super()` isn't
-  implemented).
+  by this branch; that case is now handled in `PyBuiltin_SuperMethod`
+  (I-008).
 - **Runtime-side fix** (`Runtime.cpp`): `pyc_exc_type_name`,
   `pyc_exc_matches`, and `pyc_exc_message` each gained a `type == 2`
   branch alongside their existing `type == 10` (structured) and

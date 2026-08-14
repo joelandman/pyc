@@ -3806,6 +3806,58 @@ try:
 except Exception as e:
     print(type(e).__name__)
 """, "AttributeError\n"),
+    # W3.2 / I-008: super().__init__ into a builtin exception base must
+    # store args like BaseException.__init__. class E(Exception): pass
+    # already works; a custom __init__ that calls super() did not.
+    ("""
+class MyError(Exception):
+    def __init__(self, m):
+        super().__init__(m)
+try:
+    raise MyError('boom')
+except MyError as e:
+    print(type(e).__name__ + ":", e)
+""", "MyError: boom\n"),
+    ("""
+class MyError(Exception):
+    def __init__(self, m):
+        super().__init__(m)
+        self.extra = 7
+e = MyError('x')
+print(e, e.extra)
+""", "x 7\n"),
+    ("""
+class E(ValueError):
+    def __init__(self, m):
+        super().__init__(m)
+try:
+    raise E('v')
+except ValueError as e:
+    print(type(e).__name__, e)
+""", "E v\n"),
+    ("""
+class E(Exception):
+    def __init__(self, a, b):
+        super().__init__(a, b)
+e = E('a', 'b')
+print(e.args[0], e.args[1])
+""", "a b\n"),
+    ("""
+class A:
+    def __init__(self, name):
+        self.name = name
+class B(A):
+    def __init__(self, name):
+        super().__init__(name)
+print(B('rex').name)
+""", "rex\n"),
+    ("""
+class C:
+    def __init__(self):
+        super().__init__()
+        self.ok = 1
+print(C().ok)
+""", "1\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

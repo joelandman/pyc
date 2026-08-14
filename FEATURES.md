@@ -95,7 +95,7 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 - Instantiation via a variable or container (`X = Foo; X()`, `registry["foo"](7)`)
 - Unpacking onto attributes: `self.x, self.y = x, y`
 - User methods named `call` / `exists` / `bit_length` / `fromkeys` / `unlink` / `isfile` / `isdir` / `check_output` are no longer stolen by name-only builtin/module arms ([I-006](ISSUES.md)). `C().get` / `os.get` are no longer dict `.get()` ([I-007](ISSUES.md)). Leftover boxed-accepting arms (`is_file`, `isoformat`, …): [I-030](ISSUES.md). Alias/`m = os` leftovers: [I-032](ISSUES.md).
-- `super().__init__` into a **builtin** base (`class E(Exception): def __init__(self, m): super().__init__(m)`) is still unsupported ([I-008](ISSUES.md))
+- `super().__init__` into a builtin exception base stores `self.args` ([I-008](ISSUES.md)). Other builtin bases (`list`/`dict`) and `super().__str__` remain ([I-038](ISSUES.md)).
 
 ---
 
@@ -104,7 +104,7 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 - `try` / `except` / `except … as e` / `else` / `finally`
 - Builtin hierarchy (`ArithmeticError`, `LookupError`, `OSError`, `Exception`)
 - `except (A, B)`, bare re-raise, `raise ValueError("msg")`
-- User subclasses: `class MyError(Exception): pass` (no custom `super().__init__`)
+- User subclasses: `class MyError(Exception): pass` and custom `super().__init__(m)` ([I-008](ISSUES.md))
 - `finally` on fall-through, exception, `return`, `break`/`continue`
 - Uncaught exceptions print a traceback to stderr and exit 1, including `File "…", line N, in <name>` frames ([I-009](ISSUES.md)). Reraise/nomatch drops callee frames ([I-036](ISSUES.md)); methods print IR names (`C__foo`, [I-037](ISSUES.md)).
 

@@ -13323,7 +13323,40 @@ extern "C" PyObject* PyBuiltin_SuperMethod(PyObject* args) {
             }
         }
     }
-    if (!method) return nullptr;
+    if (!method) {
+        // Remaining MRO has no user method. BaseException.__init__ is not
+        // in classRegistry(); implement it here when a leftover name is a
+        // builtin exception. Store positional args as self.args (list —
+        // same representation as the Compiler no-__init__ path).
+        // object.__init__ and other missing methods still return nullptr.
+        if (pyObjStrEqualsLiteral(methodName, "__init__")) {
+            bool isBuiltinExc = false;
+            for (size_t i = definingIndex + 1; i < mroSize; ++i) {
+                PyObject* mroItem = PyList_GetItemInt(mroList, i);
+                if (mroItem && mroItem->type == 3 &&
+                    pyc_str_is_builtin_exc_name(mroItem->str)) {
+                    isBuiltinExc = true;
+                    break;
+                }
+            }
+            if (isBuiltinExc) {
+                size_t argSize = PyList_Size(args);
+                PyObject* stored = PyList_New(0);
+                for (size_t i = 3; i < argSize; ++i)
+                    PyList_Append(stored, PyList_GetItemInt(args, i));
+                PyObject* argsKey = PyUnicode_FromString("args");
+                Pyc_SetItem(self, argsKey, stored);
+                Py_DECREF(argsKey);
+                Py_DECREF(stored);
+                PyObject* none = new PyObject();
+                none->refcount = 1;
+                none->type = 5;
+                none->str = "None";
+                return none;
+            }
+        }
+        return nullptr;
+    }
     
     // Build args list with self prepended
     size_t argSize = PyList_Size(args);

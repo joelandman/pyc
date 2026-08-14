@@ -20,14 +20,6 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 
 ## Open
 
-### I-008  `super().__init__` into a builtin base
-- Status: open
-- Severity: limitation
-- Evidence: IMPLEMENTATION.md user-defined exception subclasses. `class MyError(Exception): def __init__(self, m): super().__init__(m)` is unsupported. `class MyError(Exception): pass` works.
-- Files: `src/Compiler.cpp` (class / super), Runtime exception construction
-- Blocks merge: no
-- Notes: Wave 3 W3.2.
-
 ### I-010  str.format nested fields; partition("") is lenient
 - Status: open
 - Severity: limitation
@@ -250,9 +242,35 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Found reviewing W3.1 / I-009. Ticket cases are top-level `f` and `<module>` (IR name == Python name). Same class as I-025 (missing-arg TypeError uses IR name). Do not demand in W3.1.
 
+### I-038  SuperMethod builtin fallback is Exception.__init__ only
+- Status: open
+- Severity: wrong-answer
+- Evidence: `PyBuiltin_SuperMethod` (`src/runtime/Runtime.cpp` ~13326–13358) special-cases only `__init__` plus a leftover MRO name in `pyc_str_is_builtin_exc_name`. Anything else still `return nullptr`.
+  - `class E(Exception): def __init__(self, m): super().__init__(m)` / `def __str__(self): return 'wrap:' + super().__str__()` / `print(E('boom'))` — CPython `wrap:boom`. pyc: `super().__str__` is not `__init__`, returns None; `'wrap:' + None` is None; `PyObject_Print` then falls through to `pyc_exc_message` → `boom` (or `print(E('boom').__str__())` → `None`).
+  - `class L(list): def __init__(self, xs): super().__init__(xs)` / `print(list(L([1,2])))` — CPython `[1, 2]`. pyc: `"list"` is not a builtin-exc name, no-op; instance stays a type-2 dict.
+  - `class L(list): def append(self, x): super().append(x)` / `L().append(1)` — CPython mutates the list. pyc: `super().append` is not `__init__`, silent None. Same for `dict` / `super().update`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_SuperMethod`)
+- Blocks merge: no
+- Notes: Found reviewing W3.2 / I-008. Same class as the ticket (super() into a builtin with no classRegistry entry), **not** this ticket’s cases (`Exception`/`ValueError` `__init__` only). User classes are dict-backed, so list/dict inheritance is also an instance-layout limitation; `__str__` is the clean leftover now that I-008 stores `args`. Do not demand in W3.2.
+
+### I-039  SuperMethod builtin `__init__` returns a type-5 False, not None
+- Status: open
+- Severity: wrong-answer
+- Evidence: Fallback arm (`Runtime.cpp` ~13351–13355) does `new PyObject(); type=5; str="None"`. Tag 5 is bool **and** None (I-013); `PyObject_PrintBase` (`~1702`) prints type 5 as `value ? True : False`. Default `value` is 0 → `False`. Repro: `class E(Exception): def __init__(self, m): print(super().__init__(m))` / `E('x')` — CPython `None`; pyc `False`. The `object.__init__` / method-miss path still returns `nullptr`, which *does* print as `None`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_SuperMethod` fallback return)
+- Blocks merge: no
+- Notes: Found reviewing W3.2 / I-008. Caused by this slice. Ticket CASES discard the return (`raise` / `print(e, e.extra)` / `.args`). Fix is `return nullptr` (the file-wide None convention; see `Pyc_Apply` comment ~5003–5005). Do not demand in W3.2.
+
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
+
+### I-008  `super().__init__` into a builtin base
+- Status: fixed
+- Severity: limitation
+- Evidence: Runner 674/674, `file_case_failures=0`. W3.2 CASES match CPython at -O0; o2_smoke 2/2. Parent: `MyError:` / ` 7` / `E` / `None None`. `PyBuiltin_SuperMethod` now implements BaseException.__init__ when remaining MRO names include a builtin exception.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_SuperMethod`)
+- Notes: Wave 3 W3.2. SWR: no merge blockers. Leftovers I-038 (other builtin supers) / I-039 (return prints False).
 
 ### I-009  Uncaught tracebacks lack File/line
 - Status: fixed
