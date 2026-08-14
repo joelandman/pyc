@@ -3780,6 +3780,32 @@ print(f_dfk({}))
 import os
 print(os.path.exists("."), os.path.isdir("."), os.path.isfile("."))
 """, "True True False\n"),
+    # W2.2 / I-007: module.get() and user .get() must not be dict.get.
+    # Confirmed on parent: C().get("x") -> None; os.get("path") returns
+    # the os.path mapping (dict.get). Regular dict.get must keep working.
+    ("""
+class C:
+    def get(self, k, default=None):
+        return "user-get:" + str(k)
+
+c = C()
+print(c.get("x"))
+def f(o):
+    return o.get("x")
+print(f(c))
+d = {"a": 1}
+print(d.get("a"), d.get("z"), d.get("z", 9))
+def g(x):
+    return x.get("a"), x.get("z"), x.get("z", 9)
+print(g(d))
+""", "user-get:x\nuser-get:x\n1 None 9\n(1, None, 9)\n"),
+    ("""
+import os
+try:
+    print(os.get("path"))
+except Exception as e:
+    print(type(e).__name__)
+""", "AttributeError\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

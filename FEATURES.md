@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): ~635 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): ~637 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632) are stale.
 
 ---
 
@@ -94,7 +94,7 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 - `__str__` / `__repr__`
 - Instantiation via a variable or container (`X = Foo; X()`, `registry["foo"](7)`)
 - Unpacking onto attributes: `self.x, self.y = x, y`
-- User methods named `call` / `exists` / `bit_length` / `fromkeys` / `unlink` / `isfile` / `isdir` / `check_output` are no longer stolen by name-only builtin/module arms ([I-006](ISSUES.md)). Leftover boxed-accepting arms (`is_file`, `isoformat`, …): [I-030](ISSUES.md). `module.get()` is still dict `.get()` ([I-007](ISSUES.md)).
+- User methods named `call` / `exists` / `bit_length` / `fromkeys` / `unlink` / `isfile` / `isdir` / `check_output` are no longer stolen by name-only builtin/module arms ([I-006](ISSUES.md)). `C().get` / `os.get` are no longer dict `.get()` ([I-007](ISSUES.md)). Leftover boxed-accepting arms (`is_file`, `isoformat`, …): [I-030](ISSUES.md). Alias/`m = os` leftovers: [I-032](ISSUES.md).
 - `super().__init__` into a **builtin** base (`class E(Exception): def __init__(self, m): super().__init__(m)`) is still unsupported ([I-008](ISSUES.md))
 
 ---

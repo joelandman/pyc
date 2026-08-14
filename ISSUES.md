@@ -20,14 +20,6 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 
 ## Open
 
-### I-007  `module.get()` dispatched as dict.get
-- Status: open
-- Severity: wrong-answer
-- Evidence: IMPLEMENTATION.md Known Limitations. Any synthetic module function named `get` becomes dict `.get()` and returns `None`.
-- Files: `src/Compiler.cpp` (`lowerMethodCall`)
-- Blocks merge: no
-- Notes: Wave 2 W2.2. Same lock as I-006.
-
 ### I-008  `super().__init__` into a builtin base
 - Status: open
 - Severity: limitation
@@ -200,7 +192,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Evidence: `class C` with `is_file`/`is_dir`/`mkdir`/`joinpath`/`isoformat`/`weekday`/`isoweekday`/`total_seconds`/`group`/`is_integer`/`most_common`/`elements`/`subtract`; also `format(a=1)` / `sort(key=len)`. CPython returns the user methods. pyc: `False`/`False`/`None`/`x`, empty isoformat, `0`/`1`/`0.0`, `None`, `True`, `[('__class__', 0)]`, `[]`, `None`; kwargs `format`/`sort` also stolen. Same result as a direct `C().is_file()` — user instances are `typeOf` `"boxed"`, not only through a parameter.
 - Files: `src/Compiler.cpp` (`lowerMethodCall` pathlib block ~9043–9070; datetime ~9078–9096; `group` ~9102; boxed `is_integer` ~9145; `format`/`sort` `hasKeywordArgs` ~9220 / ~9403; Counter ~9477–9516)
 - Blocks merge: no
-- Notes: Found reviewing W2.1 / I-006. SWE flagged pathlib `is_file`/`is_dir`/`mkdir`/`joinpath`. Same class as the ticket, **not** this ticket’s cases (`exists`/`call`/`bit_length`/`fromkeys`/`unlink`/`isfile`/`isdir`/`check_output` all pass). `.get()` is I-007. Do not demand in W2.1. Fix is the exists pattern: proven type only at compile time; runtime tag in `Pyc_CallBuiltinMethod`.
+- Notes: Found reviewing W2.1 / I-006. SWE flagged pathlib `is_file`/`is_dir`/`mkdir`/`joinpath`. Same class as the ticket, **not** this ticket’s cases (`exists`/`call`/`bit_length`/`fromkeys`/`unlink`/`isfile`/`isdir`/`check_output` all pass). `.get()` was I-007 (now fixed); leftovers I-032 / I-034. Do not demand in W2.1. Fix is the exists pattern: proven type only at compile time; runtime tag in `Pyc_CallBuiltinMethod`.
 
 ### I-031  `fromkeys` / `os.path` AST gates miss aliases and from-imports
 - Status: open
@@ -208,11 +200,54 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Evidence: `D = dict; D.fromkeys([3])` — CPython `{3: None}`; pyc `AttributeError: 'str' object has no attribute 'fromkeys'` (`dict` is the token `PyBuiltin_DictFactory`). `from os import path; path.exists(".")` — CPython `True`; pyc `AttributeError: 'dict' object has no attribute 'exists'`. `import os as ox; ox.path.exists(".")` and `q = os.path; q.exists(".")` work.
 - Files: `src/Compiler.cpp` (`fromkeys` Name==`"dict"` ~9311; `exists`/`isfile`/`isdir` AST `os.path` ~9324)
 - Blocks merge: no
-- Notes: Found reviewing W2.1 / I-006. The fromkeys miss is caused by this slice (parent name-only `fromkeys` served `D.fromkeys` by accident). `from os import path` was already wrong on the parent (boxed pathlib `exists` → `False`). Ticket CASES use `dict.fromkeys` and `import os` / `import os as`. Not a merge blocker.
+- Notes: Found reviewing W2.1 / I-006. The fromkeys miss is caused by this slice (parent name-only `fromkeys` served `D.fromkeys` by accident). `from os import path` was already wrong on the parent (boxed pathlib `exists` → `False`). Ticket CASES use `dict.fromkeys` and `import os` / `import os as`. Not a merge blocker. W2.2 leftover of the same alias/from-import class: I-032.
+
+### I-032  `.get` still stolen / silent on dict-typed non-user-dicts
+- Status: open
+- Severity: wrong-answer
+- Evidence: Gate is AST `Name` + `isImportedModuleName` only (`Compiler.cpp` ~9302–9321). Rebind / boxed / class / submodule / unlisted module all miss it:
+  - `m = os; m.get("path")` and `def f(m): return m.get("path"); f(os)` — CPython `AttributeError`; pyc dict.get → the os.path mapping. Runtime tag 2 (`Pyc_CallBuiltinMethod` ~13481) also serves boxed modules as dicts.
+  - `C.get(c, "x")` with user `def get(self, k, default=None)` — CPython `user-get:x`; pyc `x` (`typeOf(C)=="dict"`, so the proven-dict arm fires; lookup of the instance as a key misses and the default `"x"` is returned).
+  - `os.path.get("exists")` / `from os import path; path.get("exists")` — CPython `AttributeError`; pyc `PyBuiltin_OsPathExists` (path mapping is a dict).
+  - `import sys; sys.get("x")`, `getattr(os, "get")`, compiled user module with no `get` — CPython `AttributeError`; pyc `None` (`sys` / user modules are not in `syntheticModuleExports()`, so the raise arm does not fire; dict `Pyc_GetItem`+`Pyc_Apply` yields None). `import math; math.get("pi")` and `import os; os.get("path")` raise, as intended.
+- Files: `src/Compiler.cpp` (`get` arms, `isImportedModuleName`, `moduleKnownMissingExport`, `syntheticModuleExports`), `src/runtime/Runtime.cpp` (`Pyc_CallBuiltinMethod` case 2)
+- Blocks merge: no
+- Notes: Found reviewing W2.2 / I-007. SWE flagged `m = os` (I-031 class) and user-module silent None. Ticket CASES are `C().get` / boxed `f(C())` / `os.get` / `import os as ox` / shadowed `time = {…}; time.get` — those pass. Same hole as I-031, different name. Do not demand in W2.2.
+
+### I-033  Adapter default probe uses param index first
+- Status: open
+- Severity: wrong-answer
+- Evidence: `__apply__` tries `__default_<fn>_<paramIndex>` before `__default_<fn>_<i-firstDef>` (`Codegen.cpp:1119-1121`). Slots are numbered by default-child index 0..ndef-1 (`Compiler.cpp:9816-9817`, same as FunctionDef / `__init__`). When `firstDef > 0` and `ndef > 1`, the first defaulted param’s index equals a later slot: `class C: def foo(self, a=1, b=2): return (a, b); print(C().foo())` — CPython `(1, 2)`; pyc `(2, 2)` at -O0 and -O2. Pre-existing on the same adapter: `def f(x, a=1, b=2): return (a, b); g=f; print(g(0))` → `(2, 2)`; `T=A; T()` for `def __init__(self, a=1, b=2)` → `2 2`. Ticket shape `get(self, k, default=None)` and `get(self, k, default=None, extra=5)` hit `i-firstDef` after a miss and are correct. Two classes with one default each (`A` n=1 / `B` n=2) do not clobber (per-class `methodFuncName` slots).
+- Files: `src/codegen/Codegen.cpp` (adapter miss candidates), `src/Compiler.cpp` (method / FunctionDef / `__init__` default slot names)
+- Blocks merge: no
+- Notes: Found reviewing W2.2 / I-007. Exposed for every instance method because methods now always go through `Pyc_Apply` with newly registered `defaultGlobals`. Not a merge blocker: the ticket CASE has one trailing default. Fix is to probe default-slot index first (or stop probing param index). SWE’s empty-`paramNames`+`CreateUnreachable` trap is gone for regular methods (this slice sets `paramNames`); `__init__` still leaves `paramNames` empty.
+
+### I-034  Remaining dict methods on module namespaces
+- Status: open
+- Severity: wrong-answer
+- Evidence: `import os; os.keys()` / `os.items()` / `os.values()` / `os.pop("path")` — CPython `AttributeError`; pyc `list` / `list` / `list` / the os.path mapping. Arms are `typeOf=="dict"` with no `isImportedModuleName` exclusion (`Compiler.cpp` ~9336 values, ~9350 update, ~9353 pop). `os.environ.get("PATH")` is correctly dict.get (environ is a mapping).
+- Files: `src/Compiler.cpp` (`lowerMethodCall` dict arms)
+- Blocks merge: no
+- Notes: Found reviewing W2.2 / I-007. Pre-existing; this slice only special-cased `.get`. Same class, not this ticket’s cases. Do not demand in W2.2.
+
+### I-035  Class-method defaults lowered in the wrong scope
+- Status: open
+- Severity: wrong-answer
+- Evidence: Method / `__init__` defaults are `lowerExpr`’d in `currentFunc` then `assign`’d to `__module__` (`Compiler.cpp:9751-9754`, `9815-9819`). FunctionDef switches to the outer `saved` scope for both (`Compiler.cpp:352-359`). Nested class: `def outer(): class C: def get(self, k, default=42): return default; return C().get("x")` — CPython `42`; pyc `None`. Same for `default=0.5` and for nested `__init__(self, n=42)` (`C().n` is None). Class body: `class C: x = 7; def get(self, k, default=x): return default` — CPython `7`; pyc `None` (FunctionDefs are lowered before Assign children, so `x` is not the class attr).
+- Files: `src/Compiler.cpp` (`lowerClass` method / `__init__` default block)
+- Blocks merge: no
+- Notes: Found reviewing W2.2 / I-007. `__init__` already had this pattern; the slice copied it for regular methods so `C().get("x")` can omit `default=None`. Top-level `default=None` / `default=1` work. Historic shared-slot bug is not back: slots are `__default_<Class>__<method>_<i>`. Do not demand in W2.2.
 
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
+
+### I-007  `module.get()` dispatched as dict.get
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: Runner 667/667, `file_case_failures=0`. W2.2 CASES (banner `# W2.2 / I-007` in `tests/runner.py`) match CPython at -O0 and -O2: user `C().get("x")` / boxed `f(C())` → `user-get:x`; `d.get` / boxed `g(d)` keep `1 None 9`; `os.get("path")` → `AttributeError`. Coordinator extras `import os as ox; ox.get("path")` and `time = {"a":1}; time.get("a")` also match. Parent (post I-006, `10cc798`) accepted `"boxed"` on the `get` arm: `C().get("x")` → `None`, `os.get("path")` → the os.path mapping. `check_dispatch_chain.py`: 73 arms, 1 exemption (`compile`).
+- Files: `src/Compiler.cpp` (`lowerMethodCall` `get` arms, `isImportedModuleName`, `moduleKnownMissingExport`, class-method default/`paramNames` registration)
+- Notes: Wave 2 W2.2. Dropped `"boxed"` from the dict.get arm; imported synthetic modules whose export list lacks `get` raise AttributeError instead of generic GetItem+Apply None. Regular methods now register per-class `defaultGlobals` + `paramNames` (same unique `Class__method` keying as `__init__` after the shared-slot fix) so `Pyc_Apply` can omit `default=None`. SWR: no merge blockers. Leftovers I-032 / I-033 / I-034 / I-035. I-006 stays closed; I-030 stays open.
 
 ### I-006  Remaining name-only `lowerMethodCall` arms
 - Status: fixed

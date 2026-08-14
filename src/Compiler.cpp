@@ -3514,6 +3514,29 @@ class LoweringVisitor {
     // answer rather than a slower-but-correct one.
     bool isProvenStr(const std::string& v) const { return typeOf(v) == "str"; }
 
+    // `import X [as Y]` binds Y (or X) in moduleNameAliases. A bare
+    // synthetic name with no import is only a module if it is not a
+    // local (`time`/`os`/`copy` as dicts must still .get()).
+    bool isImportedModuleName(const std::string& id) const {
+        if (moduleNameAliases.find(id) != moduleNameAliases.end()) return true;
+        return syntheticModuleExports().count(id) && !isShadowedLocal(id);
+    }
+
+    // True only when the bound name resolves to a synthetic module whose
+    // export list is known and does not contain `attr`. Compiled user
+    // modules are not in that table; they fall through to generic lookup.
+    bool moduleKnownMissingExport(const std::string& boundName,
+                                  const std::string& attr) const {
+        std::string orig = boundName;
+        auto it = moduleNameAliases.find(boundName);
+        if (it != moduleNameAliases.end()) orig = it->second;
+        auto expIt = syntheticModuleExports().find(orig);
+        if (expIt == syntheticModuleExports().end()) return false;
+        for (const auto& e : expIt->second)
+            if (e == attr) return false;
+        return true;
+    }
+
     bool isProvenListLike(const std::string& v) const {
         const std::string t = typeOf(v);
         return t == "list" || t == "list_int" || t == "list_float" ||
@@ -9276,10 +9299,14 @@ class LoweringVisitor {
         // Set methods (gated on typeOf == "set" so they don't shadow
         // dict/list method names like pop/copy/update/clear).
         // Dict methods
-        } else if (methodName == "get" && (typeOf(obj) == "dict" || typeOf(obj) == "boxed")) {
-            // d.get(k) → PyDict_GetItem(d, k)
-            // d.get(k, default) → PyDict_GetItemWithDefault(d, k, default)
-            // If no default is given, pass null; the runtime returns null in that case.
+        } else if (methodName == "get" && typeOf(obj) == "dict" &&
+                   !(attr->children.size() >= 1 && attr->children[0] &&
+                     attr->children[0]->type == "Name" &&
+                     isImportedModuleName(attr->children[0]->id))) {
+            // Proven user dict only. Do not accept "boxed" (user instances
+            // and boxed dicts fall through to Pyc_CallMethodOrBuiltin /
+            // Pyc_CallBuiltinMethod case 2). Do not fire for an imported
+            // module namespace (typeOf is "dict" after import).
             std::string keyArg = args.empty() ? "" : args[0];
             if (args.size() >= 2) {
                 ir.addInstruction(currentFunc, "call", {"PyDict_GetItemWithDefault", obj, keyArg, args[1]}, res);
@@ -9287,6 +9314,25 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyDict_GetItem", obj, keyArg}, res);
             }
             noteType(res, "boxed");
+        } else if (methodName == "get" &&
+                   attr->children.size() >= 1 && attr->children[0] &&
+                   attr->children[0]->type == "Name" &&
+                   isImportedModuleName(attr->children[0]->id) &&
+                   moduleKnownMissingExport(attr->children[0]->id, "get")) {
+            // os.get(...) etc. Generic Pyc_GetItem+Pyc_Apply would yield
+            // None; CPython raises AttributeError.
+            const std::string& baseId = attr->children[0]->id;
+            auto aliasIt = moduleNameAliases.find(baseId);
+            const std::string& orig =
+                (aliasIt != moduleNameAliases.end()) ? aliasIt->second : baseId;
+            std::string nameConst = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"\"AttributeError\""}, nameConst, "str");
+            std::string msgConst = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const",
+                              {"\"module '" + orig + "' has no attribute 'get'\""},
+                              msgConst, "str");
+            ir.addInstruction(currentFunc, "call", {"pyc_make_exc", nameConst, msgConst}, res);
+            ir.addInstruction(currentFunc, "call", {"pyc_raise", res}, "");
         } else if (methodName == "values" && typeOf(obj) == "dict") {
             ir.addInstruction(currentFunc, "call", {"PyDict_Values", obj}, res);
             noteType(res, "list");
@@ -9755,8 +9801,39 @@ class LoweringVisitor {
                     if (!pname.empty() && pname[0] == '*') pname = pname.substr(1);
                     methodParams.push_back(pname);
                 }
+                // Same default-slot registration as __init__ above. Without
+                // defaultGlobals, Pyc_Apply's adapter treats every param as
+                // required; a call that omits `default=None` then hits
+                // CreateUnreachable (paramNames is also empty so the
+                // missing-args raise has no names and returns). Needed for
+                // user `C().get("x")` once the get arm no longer intercepts.
+                std::vector<std::string> methodDefaults;
+                {
+                    size_t defaultIndex = 0;
+                    for (const auto& cc : c->children) {
+                        if (cc && cc->type == "Default") {
+                            std::string defVal = lowerExpr(cc.get());
+                            std::string slot = "__default_" + methodFuncName + "_" +
+                                               std::to_string(defaultIndex++);
+                            ir.addModuleGlobal(slot);
+                            ir.addInstruction("__module__", "assign", {defVal}, slot);
+                            methodDefaults.push_back(slot);
+                        }
+                    }
+                    if (!methodDefaults.empty()) {
+                        funcDefaultCount[methodFuncName] = (int)methodDefaults.size();
+                        funcDefaultValues[methodFuncName] = methodDefaults;
+                    }
+                }
                 ir.addFunction(methodFuncName, methodParams);
                 knownIRFunctions.insert(methodFuncName);
+                for (auto& fnr : ir.functions) {
+                    if (fnr.name == methodFuncName) {
+                        fnr.paramNames = c->args;
+                        if (!methodDefaults.empty()) fnr.defaultGlobals = methodDefaults;
+                        break;
+                    }
+                }
            // Lower method body
                 std::string savedFunc = currentFunc;
                 currentFunc = methodFuncName;

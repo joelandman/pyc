@@ -20,7 +20,8 @@ Confirmed later and closed (do not re-open from a paragraph below):
 - Dict insertion order: vector-of-pairs, CPython 3.7+ order (I-106).
 - `modifiers.py` `continue` at `-O0`: fixed; file is a FILE_CASE (I-107).
 - `-g` DWARF: implemented (I-108; leftovers I-019).
-- Name-only `lowerMethodCall` steal of user `call`/`exists`/`bit_length`/`fromkeys`/`unlink`/`isfile`/`isdir`/`check_output`: gated (I-006). Leftovers I-030 / I-031. `module.get()` still I-007.
+- Name-only `lowerMethodCall` steal of user `call`/`exists`/`bit_length`/`fromkeys`/`unlink`/`isfile`/`isdir`/`check_output`: gated (I-006). Leftovers I-030 / I-031.
+- `module.get()` / user `.get()` no longer dict `.get()` (I-007). Leftovers I-032–I-035.
 
 ## Design Choices of Omission
 
