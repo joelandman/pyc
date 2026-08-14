@@ -28,6 +28,7 @@ Confirmed later and closed (do not re-open from a paragraph below):
 - `partition("")` raises ValueError; `str.format` nested `{0.attr}` / `{0[k]}` (I-010). Leftovers I-040–I-042.
 - GDB `PyObject*` pretty-printer (`tools/pyc_gdb.py`) and A6 `FlagArtificial` (I-019). Leftovers I-043 / I-044.
 - Boxed method fallback: arity-specific `Pyc_CallMethodOrBuiltin0/1/2` and `(tag, name)` lookup (I-015). Leftovers I-045–I-049.
+- I-014 / W4.3: design accepted, **not implemented**. Dispatch still requires LLVM-native args. See “W4.3 Design Decision” below.
 
 ## Design Choices of Omission
 
@@ -2690,6 +2691,66 @@ errors.
   in (2) are the deeper changes that require modifying the codegen call-site
   dispatch to look up variants by inferred type rather than by runtime LLVM IR
   type.
+
+### W4.3 Design Decision (I-014) — accepted, not implemented
+
+Wave 4 required a design review before SWE writes this. Decision: **do not
+implement in Wave 4.** The prototype already generates variants. Shipping
+speculative unbox as a “quick” follow-on would touch the same Codegen
+call-site path that historically caused null derefs on module-level float
+globals (`"assign"` gating).
+
+**What is true today**
+
+- `generateSpecializedVariants` (`Compiler.cpp`) already emits one
+  `__specialized_<name>_<sig>` per numeric signature when call sites agree
+  *or* (in the prototype) per observed sig.
+- Codegen only calls a variant when `getOrLoad(arg)` is already LLVM
+  `i64`/`double` (`Codegen.cpp` ~3496–3531). That is a property of the
+  SSA value, not of `typeOf` / `IRFunction::specializedSignatures`.
+- Self-recursion works (`fib`) because the specialized frame’s params
+  *are* native. Non-recursive `s = add(s, i)` boxes the return, so `s`
+  is a `PyObject*` on the next iteration and the check fails.
+
+**What a correct implementation must do**
+
+1. **Speculate with a runtime tag check, never a blind unbox.**
+   If the callee has a matching `specializedSignatures` entry and the
+   argument is a boxed `PyObject*`, emit:
+   `if (obj && obj->type == 0) unbox i64; call variant; else boxed call`.
+   Same for float (`type == 4`). A wrong tag must take the boxed path,
+   not crash or silently read `value` as an int.
+2. **Native result slots for proven locals only.** When the variant
+   returns i64/double, store into a sibling native alloca for that
+   Python name so the next iteration stays native. **Never** a native
+   slot for `pyc_global_*` / module-level names (AGENTS.md assign
+   gating).
+3. **Leave indirect calls alone.** `Pyc_Apply` / `__apply__N` stay
+   boxed. Variants are direct-call only.
+4. **Measure.** Before/after on `tests/fibn.py`, `tests/opt_numeric_loop.py`,
+   and `tests/nbody.py` at `-O2`. If nbody does not move, the work did
+   not hit the hot loop (it usually will not — nbody’s hot path is
+   already native arithmetic).
+
+**What must not happen**
+
+- Unbox without a tag check.
+- Native store into a module global.
+- Treating tag 5 (bool/None) as int without an explicit decision.
+- Changing `Pyc_Apply` adapters in the same ticket.
+- Combining this with I-016 (arena / escape analysis) in one slice.
+
+**Recommended next ticket** (when someone asks to implement I-014)
+
+- Lock: `src/codegen/Codegen.cpp` only, plus tests. Compiler already
+  records `specializedSignatures`.
+- In scope: (1) + (2) for direct calls to functions that already have
+  variants. Out of scope: generating new variants, I-016, Apply path.
+- Verify `-O0` runner (must not change answers) and `-O2` of the three
+  programs above.
+
+Until that ticket exists, I-014 stays **open**. W4.3 is the review, not
+the code.
 
 ### Correctness Guarantees
 - Every optimization preserves a boxed fallback path

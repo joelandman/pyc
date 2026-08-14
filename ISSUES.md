@@ -46,10 +46,10 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 ### I-014  A6 speculative unbox / multi-dispatch
 - Status: open
 - Severity: limitation
-- Evidence: IMPLEMENTATION.md Planned. Prototype generated per-sig variants; non-recursive sites stay boxed because dispatch checks LLVM IR nativeness, not inferred types.
-- Files: `src/codegen/Codegen.cpp`, `src/Compiler.cpp` A6
+- Evidence: IMPLEMENTATION.md Planned + W4.3 design. Prototype generates per-sig variants (`__specialized_add_ii` / `_ff`). Codegen dispatch (`Codegen.cpp` ~3485–3531) only routes when **every** arg is already LLVM i64/double. A loop `s = add(s, i)` boxes the first result, so later iterations never hit the variant. Recursive `fib` works because `n` is a native param inside the variant.
+- Files: `src/codegen/Codegen.cpp` (call-site dispatch), `src/Compiler.cpp` `generateSpecializedVariants`
 - Blocks merge: no
-- Notes: Wave 4 W4.3. **Design review required** before SWE writes it.
+- Notes: Wave 4 W4.3 **design accepted, not implemented**. See IMPLEMENTATION.md “W4.3 Design Decision”. Do not start as a quick win. Next SWE needs a dedicated ticket: runtime tag-check + unbox, native result slots, no global native stores. I-016 is a later follow-on, not a substitute.
 
 ### I-016  Arena allocator / escape analysis / float-return A6
 - Status: open
