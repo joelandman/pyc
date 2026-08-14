@@ -3720,6 +3720,66 @@ print("ok")
     ("print([[1 for _ in [0]] for __ in [0]])", "[[1]]\n"),
     ("print([[1.0 for _ in [0]] for __ in [0]])", "[[1.0]]\n"),
     ("print([[len(x) for x in ['ab']] for _ in [0]])", "[[2]]\n"),
+    # W2.1 / I-006: remaining name-only lowerMethodCall arms steal any
+    # matching method name. Confirmed on parent: C().call(1) -> -1
+    # (subprocess.call), C().exists() -> False (os.path.exists),
+    # C().bit_length() -> 0 (PyInt_BitLength on a non-int),
+    # C().fromkeys([1]) -> {1: None} (PyDict_FromKeys). User methods
+    # must win; proven/boxed builtins and os.path.* must keep working.
+    ("""
+class C:
+    def call(self, x):
+        return "user-call:" + str(x)
+    def exists(self):
+        return "user-exists"
+    def bit_length(self):
+        return 99
+    def fromkeys(self, k):
+        return "user-fromkeys"
+    def unlink(self):
+        return "user-unlink"
+    def isfile(self):
+        return "user-isfile"
+    def isdir(self):
+        return "user-isdir"
+    def check_output(self, x):
+        return "user-co"
+
+c = C()
+print(c.call(1), c.exists(), c.bit_length(), c.fromkeys([1]))
+print(c.unlink(), c.isfile(), c.isdir(), c.check_output("x"))
+""", "user-call:1 user-exists 99 user-fromkeys\nuser-unlink user-isfile user-isdir user-co\n"),
+    ("""
+class C:
+    def bit_length(self):
+        return 99
+    def call(self, x):
+        return "U"
+    def fromkeys(self, k):
+        return "F"
+    def exists(self):
+        return "E"
+
+def f_bl(o):
+    return o.bit_length()
+def f_call(o):
+    return o.call(1)
+def f_fk(o):
+    return o.fromkeys([1])
+def f_ex(o):
+    return o.exists()
+
+c = C()
+print(f_bl(c), f_bl(7), f_call(c), f_fk(c), f_ex(c))
+print((7).bit_length(), dict.fromkeys([1, 2], 0))
+def f_dfk(d):
+    return d.fromkeys(["a"], 1)
+print(f_dfk({}))
+""", "99 3 U F E\n3 {1: 0, 2: 0}\n{'a': 1}\n"),
+    ("""
+import os
+print(os.path.exists("."), os.path.isdir("."), os.path.isfile("."))
+""", "True True False\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),

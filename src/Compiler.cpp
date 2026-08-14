@@ -3544,7 +3544,7 @@ class LoweringVisitor {
     // propagation), dict.fromkeys (no self argument), Counter.update --
     // deliberately stay as chain arms. They are guarded individually; see
     // IMPLEMENTATION.md.
-    enum class RecvKind { Str, ListLike, Dict, Set, Bytes };
+    enum class RecvKind { Str, ListLike, Dict, Set, Bytes, Int };
 
     struct BuiltinMethodRow {
         const char* name;
@@ -3636,6 +3636,9 @@ class LoweringVisitor {
             {"clear",      RecvKind::Dict, 0, "PyDict_Clear",      "", ""},
             {"popitem",    RecvKind::Dict, 0, "PyDict_PopItem",    "", ""},
             {"setdefault", RecvKind::Dict, 2, "PyDict_SetDefault", "", ""},
+            // int/bool. Proven only — do not accept "boxed" (that would
+            // steal user-class .bit_length() through a parameter).
+            {"bit_length", RecvKind::Int, 0, "PyInt_BitLength", "int", "int"},
         };
         return rows;
     }
@@ -3666,6 +3669,8 @@ class LoweringVisitor {
             case RecvKind::Set:      return typeOf(v) == "set";
             case RecvKind::Bytes:    return typeOf(v) == "bytes" ||
                                             typeOf(v) == "bytearray";
+            case RecvKind::Int:      return typeOf(v) == "int" ||
+                                            typeOf(v) == "bool";
         }
         return false;
     }
@@ -9026,7 +9031,11 @@ class LoweringVisitor {
         // so emitting the call unconditionally for "boxed" values is safe
         // and fixes the silent-None bug for Path values passed as params.
         if (typeOf(obj) == "path" || typeOf(obj) == "boxed") {
-            if (methodName == "exists") {
+            if (methodName == "exists" && typeOf(obj) == "path") {
+                // Proven Path only. "boxed" here stole user-class
+                // .exists() (direct and through a parameter); Path
+                // values arriving as parameters fall through to
+                // Pyc_CallBuiltinMethod (type 16).
                 ir.addInstruction(currentFunc, "call", {"PyPathlib_Exists", obj}, res, "bool");
                 noteType(res, "bool");
                 return res;
@@ -9130,9 +9139,6 @@ class LoweringVisitor {
             noteType(res, "bytes");
         // Known list methods
         // Known string methods
-        } else if (methodName == "bit_length") {
-            ir.addInstruction(currentFunc, "call", {"PyInt_BitLength", obj}, res, "int");
-            noteType(res, "int");
         } else if (methodName == "is_integer" && typeOf(obj) == "float") {
             ir.addInstruction(currentFunc, "call", {"PyFloat_IsInteger", obj}, res, "bool");
             noteType(res, "bool");
@@ -9302,40 +9308,97 @@ class LoweringVisitor {
             std::string key = args.size() > 0 ? args[0] : "";
             std::string defv = args.size() > 1 ? args[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyDict_Pop", obj, key, defv}, res);
-        } else if (methodName == "fromkeys") {
+        } else if (methodName == "fromkeys" &&
+                   (typeOf(obj) == "dict" ||
+                    (attr->children.size() >= 1 && attr->children[0] &&
+                     attr->children[0]->type == "Name" &&
+                     attr->children[0]->id == "dict"))) {
+            // Classmethod: no self. Proven dict, or the AST `dict` type
+            // name (`dict.fromkeys(...)`). Do not accept "boxed".
             std::string keys = args.size() > 0 ? args[0] : "";
             std::string defv = args.size() > 1 ? args[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyDict_FromKeys", keys, defv}, res);
-        // os.path stub methods
-        } else if (methodName == "exists") {
+        // os.path stub methods — gate on AST `os.path.<name>` (or an
+        // `import os as X` alias). The earlier pathlib exists/is_file/
+        // is_dir block is a different name set / enclosing typeOf.
+        } else if (methodName == "exists" &&
+                   attr->children.size() >= 1 && attr->children[0] &&
+                   attr->children[0]->type == "Attribute" &&
+                   attr->children[0]->id == "path" &&
+                   !attr->children[0]->children.empty() &&
+                   attr->children[0]->children[0] &&
+                   attr->children[0]->children[0]->type == "Name" &&
+                   (attr->children[0]->children[0]->id == "os" ||
+                    (moduleNameAliases.find(attr->children[0]->children[0]->id) !=
+                         moduleNameAliases.end() &&
+                     moduleNameAliases.find(attr->children[0]->children[0]->id)->second ==
+                         "os"))) {
             std::string pathArg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"Pyc_OsPathExists", pathArg}, res, "bool");
             noteType(res, "bool");
-        } else if (methodName == "isfile") {
+        } else if (methodName == "isfile" &&
+                   attr->children.size() >= 1 && attr->children[0] &&
+                   attr->children[0]->type == "Attribute" &&
+                   attr->children[0]->id == "path" &&
+                   !attr->children[0]->children.empty() &&
+                   attr->children[0]->children[0] &&
+                   attr->children[0]->children[0]->type == "Name" &&
+                   (attr->children[0]->children[0]->id == "os" ||
+                    (moduleNameAliases.find(attr->children[0]->children[0]->id) !=
+                         moduleNameAliases.end() &&
+                     moduleNameAliases.find(attr->children[0]->children[0]->id)->second ==
+                         "os"))) {
             std::string pathArg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"Pyc_OsPathIsFile", pathArg}, res, "bool");
             noteType(res, "bool");
-        } else if (methodName == "isdir") {
+        } else if (methodName == "isdir" &&
+                   attr->children.size() >= 1 && attr->children[0] &&
+                   attr->children[0]->type == "Attribute" &&
+                   attr->children[0]->id == "path" &&
+                   !attr->children[0]->children.empty() &&
+                   attr->children[0]->children[0] &&
+                   attr->children[0]->children[0]->type == "Name" &&
+                   (attr->children[0]->children[0]->id == "os" ||
+                    (moduleNameAliases.find(attr->children[0]->children[0]->id) !=
+                         moduleNameAliases.end() &&
+                     moduleNameAliases.find(attr->children[0]->children[0]->id)->second ==
+                         "os"))) {
             std::string pathArg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"Pyc_OsPathIsDir", pathArg}, res, "bool");
             noteType(res, "bool");
-        } else if (methodName == "unlink") {
+        } else if (methodName == "unlink" &&
+                   attr->children.size() >= 1 && attr->children[0] &&
+                   attr->children[0]->type == "Name" &&
+                   (attr->children[0]->id == "os" ||
+                    (moduleNameAliases.find(attr->children[0]->id) !=
+                         moduleNameAliases.end() &&
+                     moduleNameAliases.find(attr->children[0]->id)->second == "os"))) {
             std::string pathArg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"Pyc_OsUnlink", pathArg}, res, "int");
             noteType(res, "int");
         // subprocess stub methods
-        } else if (methodName == "call") {
+        } else if (methodName == "call" && !args.empty() &&
+                   attr->children.size() >= 1 && attr->children[0] &&
+                   attr->children[0]->type == "Name" &&
+                   (attr->children[0]->id == "subprocess" ||
+                    (moduleNameAliases.find(attr->children[0]->id) !=
+                         moduleNameAliases.end() &&
+                     moduleNameAliases.find(attr->children[0]->id)->second ==
+                         "subprocess"))) {
             // subprocess.call(cmd) -> exit status (<< 8)
-            if (!args.empty()) {
-                ir.addInstruction(currentFunc, "call", {"Pyc_SubprocessCall", args[0]}, res, "int");
-                noteType(res, "int");
-            }
-        } else if (methodName == "check_output") {
+            ir.addInstruction(currentFunc, "call", {"Pyc_SubprocessCall", args[0]}, res, "int");
+            noteType(res, "int");
+        } else if (methodName == "check_output" && !args.empty() &&
+                   attr->children.size() >= 1 && attr->children[0] &&
+                   attr->children[0]->type == "Name" &&
+                   (attr->children[0]->id == "subprocess" ||
+                    (moduleNameAliases.find(attr->children[0]->id) !=
+                         moduleNameAliases.end() &&
+                     moduleNameAliases.find(attr->children[0]->id)->second ==
+                         "subprocess"))) {
             // subprocess.check_output(cmd) -> stdout as string
-            if (!args.empty()) {
-                ir.addInstruction(currentFunc, "call", {"Pyc_SubprocessCheckOutput", args[0]}, res, "str");
-                noteType(res, "str");
-            }
+            ir.addInstruction(currentFunc, "call", {"Pyc_SubprocessCheckOutput", args[0]}, res, "str");
+            noteType(res, "str");
         // List methods
         } else if (methodName == "sort" && (isProvenListLike(obj) || hasKeywordArgs)) {
             // key=/reverse= — found completely unimplemented (silently

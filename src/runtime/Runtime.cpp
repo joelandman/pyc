@@ -13482,6 +13482,7 @@ extern "C" PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj
             if (m == "pop")     return PyDict_Pop(receiver, a0, a1);
             if (m == "setdefault") return PyDict_SetDefault(receiver, a0, a1);
             if (m == "update")  return PyDict_Update(receiver, a0);
+            if (m == "fromkeys") return PyDict_FromKeys(a0, a1);
             break;
         }
         case 1: {   // list
@@ -13509,6 +13510,17 @@ extern "C" PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj
                     // is reachable here (decode/hex have their own arms).
             if (m == "upper") return PyString_Upper(receiver);
             if (m == "lower") return PyString_Lower(receiver);
+            break;
+        }
+        case 0:   // int
+        case 5: { // bool (type 5 is also the None tag in some paths;
+                  // PyInt_BitLength already treats type 5 as int)
+            if (m == "bit_length") return PyInt_BitLength(receiver);
+            break;
+        }
+        case 16: { // pathlib.Path — boxed Path.exists() after the
+                   // compile-time arm stopped accepting "boxed"
+            if (m == "exists") return PyPathlib_Exists(receiver);
             break;
         }
         case 3: {   // str

@@ -20,14 +20,6 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 
 ## Open
 
-### I-006  Remaining name-only `lowerMethodCall` arms
-- Status: open
-- Severity: latent
-- Evidence: IMPLEMENTATION.md method-dispatch write-up. ~35 name-only arms remain after the table migration. A catch-all still shadows later same-name arms (`Counter.update` shipped dead). `tests/check_dispatch_chain.py` is a syntactic smoke detector, not a reachability analysis. Exemptions: `exists`, `compile`.
-- Files: `src/Compiler.cpp` (`lowerMethodCall`, `builtinMethodRows`)
-- Blocks merge: no
-- Notes: Wave 2 W2.1. Compiler locked for the whole wave.
-
 ### I-007  `module.get()` dispatched as dict.get
 - Status: open
 - Severity: wrong-answer
@@ -202,9 +194,32 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Found reviewing W1.4 / I-004. Not this slice. Drop the checks, or use `nothrow` if anyone wants the old cleanup path. Datetime/list/dict already omit the null test.
 
+### I-030  Remaining boxed-accepting `lowerMethodCall` arms steal user methods
+- Status: open
+- Severity: wrong-answer
+- Evidence: `class C` with `is_file`/`is_dir`/`mkdir`/`joinpath`/`isoformat`/`weekday`/`isoweekday`/`total_seconds`/`group`/`is_integer`/`most_common`/`elements`/`subtract`; also `format(a=1)` / `sort(key=len)`. CPython returns the user methods. pyc: `False`/`False`/`None`/`x`, empty isoformat, `0`/`1`/`0.0`, `None`, `True`, `[('__class__', 0)]`, `[]`, `None`; kwargs `format`/`sort` also stolen. Same result as a direct `C().is_file()` — user instances are `typeOf` `"boxed"`, not only through a parameter.
+- Files: `src/Compiler.cpp` (`lowerMethodCall` pathlib block ~9043–9070; datetime ~9078–9096; `group` ~9102; boxed `is_integer` ~9145; `format`/`sort` `hasKeywordArgs` ~9220 / ~9403; Counter ~9477–9516)
+- Blocks merge: no
+- Notes: Found reviewing W2.1 / I-006. SWE flagged pathlib `is_file`/`is_dir`/`mkdir`/`joinpath`. Same class as the ticket, **not** this ticket’s cases (`exists`/`call`/`bit_length`/`fromkeys`/`unlink`/`isfile`/`isdir`/`check_output` all pass). `.get()` is I-007. Do not demand in W2.1. Fix is the exists pattern: proven type only at compile time; runtime tag in `Pyc_CallBuiltinMethod`.
+
+### I-031  `fromkeys` / `os.path` AST gates miss aliases and from-imports
+- Status: open
+- Severity: wrong-answer
+- Evidence: `D = dict; D.fromkeys([3])` — CPython `{3: None}`; pyc `AttributeError: 'str' object has no attribute 'fromkeys'` (`dict` is the token `PyBuiltin_DictFactory`). `from os import path; path.exists(".")` — CPython `True`; pyc `AttributeError: 'dict' object has no attribute 'exists'`. `import os as ox; ox.path.exists(".")` and `q = os.path; q.exists(".")` work.
+- Files: `src/Compiler.cpp` (`fromkeys` Name==`"dict"` ~9311; `exists`/`isfile`/`isdir` AST `os.path` ~9324)
+- Blocks merge: no
+- Notes: Found reviewing W2.1 / I-006. The fromkeys miss is caused by this slice (parent name-only `fromkeys` served `D.fromkeys` by accident). `from os import path` was already wrong on the parent (boxed pathlib `exists` → `False`). Ticket CASES use `dict.fromkeys` and `import os` / `import os as`. Not a merge blocker.
+
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
+
+### I-006  Remaining name-only `lowerMethodCall` arms
+- Status: fixed
+- Severity: latent
+- Evidence: Runner 665/665, `file_case_failures=0`. W2.1 CASES (banner in `tests/runner.py`) match CPython at -O0 and -O2: user `C().call/exists/bit_length/fromkeys/unlink/isfile/isdir/check_output`, boxed `f(C())` for those names, boxed `(7).bit_length` / `dict.fromkeys` / `{}.fromkeys`, `os.path.exists/isdir/isfile(".")`, `import os as ox; ox.path.exists`, `Path.exists()` direct and through a parameter, `True.bit_length()`. `check_dispatch_chain.py`: 72 arms, 1 documented exemption (`compile` only; `exists` exemption no longer fires). Coordinator added the CASES first; they failed on the parent (`C().call(1)` → `-1`, `C().exists()` → `False`, `C().bit_length()` → `0`, `C().fromkeys([1])` → `{1: None}`).
+- Files: `src/Compiler.cpp` (`lowerMethodCall`, `builtinMethodRows`, `RecvKind::Int`), `src/runtime/Runtime.cpp` (`Pyc_CallBuiltinMethod` tags 0/5/2/16)
+- Notes: Wave 2 W2.1. Gated: `bit_length` (proven int/bool table row, not `"boxed"`); `fromkeys` (proven dict or AST Name `"dict"`); `exists`/`isfile`/`isdir` (AST `os.path`, including `import os as`); `unlink` (AST Name os/alias); `call`/`check_output` (AST Name subprocess/alias). Name-only `bit_length` deleted. Pathlib `exists` inner arm is now `typeOf=="path"` only — parent `C().exists()` was `PyPathlib_Exists` (the boxed pathlib arm), not `Pyc_OsPathExists`. Leftovers I-030 / I-031. SWR: no merge blockers.
 
 ### I-005  Nested-comp subscript on the iteration variable
 - Status: fixed
@@ -296,7 +311,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 ### I-109  Method-dispatch table migration (steps 1–6)
 - Status: fixed
 - Commits: `a8ffcf0` … `4457356`
-- Evidence: `builtinMethodRows()`, `Pyc_CallBuiltinMethod`, `tests/check_dispatch_chain.py`. Remaining arms: I-006.
+- Evidence: `builtinMethodRows()`, `Pyc_CallBuiltinMethod`, `tests/check_dispatch_chain.py`. Name-only leftovers closed in I-006; remaining boxed-accepting steals are I-030.
 
 ### I-110  `time.perf_counter` missing
 - Status: fixed
