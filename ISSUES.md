@@ -41,7 +41,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Evidence: `include/pyc/object_struct.h`. Tag 5 = bool **and** None. Tag 7 = tuple **and** super proxy. Tags 8–9 unused by “real” Python types (used by regex/match).
 - Files: `include/pyc/object_struct.h`, Runtime type switches, Codegen field GEPs
 - Blocks merge: no
-- Notes: Do not add a new type without reading this. Splitting shared tags is a dedicated design, not a drive-by. W4.2 table keeps both collisions on purpose (bool `bit_length` on tag 5; tuple `count`/`index` on tag 7). Concrete leftovers: I-048 (boxed super proxy methods) / I-054 (len/in/subscript/`list()`). Type-5 fake-None `bit_length` is the same class; real `None` is a null pointer (I-047), not this tag.
+- Notes: Do not add a new type without reading this. Splitting shared tags is a dedicated design, not a drive-by. W4.2 table keeps both collisions on purpose (bool `bit_length` on tag 5; tuple `count`/`index` on tag 7). Concrete leftovers: I-048 (boxed super proxy methods) / I-054 (len/in/subscript/`list()`, W5.1b) / I-057 (`GetSlice` / `tuple()` / map/filter). Type-5 fake-None `bit_length` is the same class; real `None` is a null pointer (I-047), not this tag.
 
 ### I-014  A6 speculative unbox / multi-dispatch
 - Status: open
@@ -122,7 +122,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   CPython: `AttributeError: 'super' object has no attribute 'count'`. pyc: `0` (proxy `list` is empty). `Pyc_GetItem` on tag 7 only accepts an int key, so `__class__` lookup is null and the fallback fires.
 - Files: `src/runtime/Runtime.cpp` (`tables[7]` count/index)
 - Blocks merge: no
-- Notes: Wave 5 W5.1. `PyBuiltin_Super` sets `cell_content = super` (self-pointer). `pyc_call_builtin_method` skips the tag-7 table when `type==7 && cell_content`; AttributeError uses `"super"`. Compiler never wrote this field (`Compiler.cpp` has no `cell_content`). Tuples: `new PyObject()` zero-inits it; `PyTuple_New` never sets it. Type-7 free does **not** `DECREF` `cell_content` (only types 10/11 do) — cycle is safe today; do not add type 7 to that branch without dropping the self-pointer. Other tag-7 ops (`len`/`in`/subscript/`list()`) remain I-054. Not I-038.
+- Notes: Wave 5 W5.1. `PyBuiltin_Super` sets `cell_content = super` (self-pointer). `pyc_call_builtin_method` skips the tag-7 table when `type==7 && cell_content`; AttributeError uses `"super"`. Compiler never wrote this field (`Compiler.cpp` has no `cell_content`). Tuples: `new PyObject()` zero-inits it; `PyTuple_New` never sets it. Type-7 free does **not** `DECREF` `cell_content` (only types 10/11 do) — cycle is safe today; do not add type 7 to that branch without dropping the self-pointer. W5.1b closed I-054 (`len`/`in`/subscript/`list()`). Leftover GetSlice/`tuple()`/map/filter is I-057. Not I-038.
 
 ### I-049  Function-local C++ objects in Runtime.cpp are unconstructed under runtime.bc LTO
 - Status: open
@@ -186,7 +186,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Evidence: `Pyc_DelSlice` (`src/runtime/Runtime.cpp:6056`) returns immediately unless `obj->type == 1`. CPython `del (5,1,8,3)[1:3]` is `TypeError: 'tuple' object doesn't support item deletion`; same for `str` / `dict`. pyc leaves the object unchanged. Pre-fix `Pyc_DelItem` was also a no-op on a slice key, so this is leftover of W1.3 scope, not a regression.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_DelSlice`)
 - Blocks merge: no
-- Notes: Wave 5 W5.1. `Pyc_DelSlice` raises `TypeError: '…' object does not support item deletion` via `pyc_builtin_type_name` when `type != 1`. Dict omitted from the CASE (3.14 hashes slices). `!obj` still returns — `del None[1:3]` is I-056. Item-delete / bytearray / assignment remain I-051 (bytearray slice now TypeErrors instead of silently no-opping).
+- Notes: Wave 5 W5.1. `Pyc_DelSlice` raises `TypeError: '…' object does not support item deletion` via `pyc_builtin_type_name` when `type != 1`. Dict omitted from the CASE (3.14 hashes slices). W5.1b closed I-051 / I-056 (`!obj` and leftover types TypeError; bytearray mutates). SetSlice/SetItem on None still silent (I-058).
 
 ### I-027  `Pyc_DelSlice` reverse-step start underflow; step 0 silent
 - Status: fixed
@@ -194,7 +194,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Evidence: `h=[0,1,2,3,4]; del h[-10::-1]`. CPython `PySlice_AdjustIndices` with step<0 clamps an under-range start to `-1` → slicelength 0 → list unchanged. pyc (`Runtime.cpp:6065-6068`, `6089-6095`) does `s += n` then `if (ss < 0) ss = 0`, so the loop `i > e` (`e` is the omitted-stop sentinel `-1`) visits index 0 and yields `[1, 2, 3, 4]`. Same clamp as pre-existing `Pyc_GetSlice`/`Pyc_SetSlice`. `del h[::0]` is `if (stp == 0) return` (`6063`) vs CPython `ValueError: slice step cannot be zero`. Common reverse cases `del h[::-1]` / `[::-2]` / `[3::-1]` / `[3:0:-1]` compute the right positions.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_DelSlice`)
 - Blocks merge: no
-- Notes: Wave 5 W5.1. `stp == 0` → `ValueError: slice step cannot be zero`. After `s += n`, `s < 0` clamps to `-1` (step<0) or `0` (step>0); reverse loop uses `ss = -1` not `0`. GetSlice/SetSlice still have the old clamp (I-050). Non-int step still ignored (`stp` stays 1).
+- Notes: Wave 5 W5.1. `stp == 0` → `ValueError: slice step cannot be zero`. After `s += n`, `s < 0` clamps to `-1` (step<0) or `0` (step>0); reverse loop uses `ss = -1` not `0`. W5.1b closed I-050 (same clamp on GetSlice/SetSlice; extended assign exact-length). Non-int step still ignored (`stp` stays 1).
 
 ### I-028  Dead OOM checks after `allocObject` switched to `new`
 - Status: fixed
@@ -301,7 +301,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Evidence: `PyString_Partition` / `PyString_RPartition` (`Runtime.cpp` ~3272–3296): any non-str `sep` (including `None`) becomes `delim=""` then `pyc_raise_msg("ValueError", "empty separator")`. CPython ` 'abc'.partition(None) ` / ` .rpartition(1) ` is `TypeError: must be str, not NoneType` / `not int`. Empty *str* sep is correct (`ValueError: empty separator`).
 - Files: `src/runtime/Runtime.cpp` (`PyString_Partition`, `PyString_RPartition`)
 - Blocks merge: no
-- Notes: Wave 5 W5.1. `!sep || type != 3` → `TypeError: must be str, not …` (`pyc_builtin_type_name`). Empty str sep still `ValueError`. split/find/… remain I-052.
+- Notes: Wave 5 W5.1. `!sep || type != 3` → `TypeError: must be str, not …` (`pyc_builtin_type_name`). Empty str sep still `ValueError`. W5.1b closed I-052 (split/find/count/replace/startswith/index/join). `rindex` leftover is I-060.
 
 ### I-041  str.format nested lookup misses print None
 - Status: fixed
@@ -309,7 +309,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Evidence: `pyc_format_resolve_field` (`Runtime.cpp` ~3351, ~3373) uses non-raising `Pyc_GetAttr` / `Pyc_GetItem`. Miss → `val=nullptr` → `Pyc_FormatValue` → `PyStr_FromAny(nullptr)` → `"None"`. CPython: `'{0[999]}'.format([1,2])` is `IndexError: list index out of range`; `'{0[k]}'.format({})` is `KeyError`; `'{0.missing}'.format(C())` is `AttributeError`. Quoted `'{0[\'k\']}'` is the same miss class (CPython key is the literal `\'k\'`, including quotes — SWE matches that; only the raise is missing).
 - Files: `src/runtime/Runtime.cpp` (`pyc_format_resolve_field`)
 - Blocks merge: no
-- Notes: Wave 5 W5.1. `.attr` miss → AttributeError; `[…]` uses `Pyc_Subscript` (IndexError/KeyError); leftover after `]` → ValueError. Base-field miss is I-053. Present-and-None `.attr` is I-055 (null == None). `{0[k]}` with a None value still prints `None` (`Pyc_Subscript` returns nullptr without raising; FormatValue stringifies it).
+- Notes: Wave 5 W5.1. `.attr` miss → AttributeError; `[…]` uses `Pyc_Subscript` (IndexError/KeyError); leftover after `]` → ValueError. W5.1b closed I-053 (base-field miss) and I-055 (present-and-None `.attr`). Plain-dict present-None `.attr` is I-059. `{0[k]}` with a None value still prints `None` (`Pyc_Subscript` returns nullptr without raising; FormatValue stringifies it).
 
 ### I-042  str.format still splits on `:` / `!` inside `[…]`
 - Status: fixed
@@ -330,7 +330,7 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found reviewing W3.4 / I-019. `tests/check_gdb.py` only compiles the printer, greps `FlagArtificial`, and (if gdb exists) checks `_lookup` registered — it never `print`s a live local, so this is invisible to the ticket check. FEATURES.md `print x` → `42` is optimistic. `-g` on `runtime.bc` (I-019 leftover) would expose the C++ struct under LTO but would still not retype user-local DI; the printer needs a cast or Codegen needs a 4-field composite (refcount/type/value/dvalue) for scalars. Do not demand in W3.4.
 
 ### I-050  `Pyc_GetSlice` / `Pyc_SetSlice` share I-027's reverse underflow and step-0 silent
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: Same clamp as `Pyc_DelSlice` (`Runtime.cpp` GetSlice 5920–5946, SetSlice 6032–6090). `s < 0` then `if (s < 0) s = 0` on a negative step visits index 0; `stp == 0` returns empty / no-op.
   - `[0,1,2,3,4][-10::-1]` — CPython `[]`; pyc `[0]`. `"abcde"[-10::-1]` — CPython `''`; pyc `'a'`.
@@ -339,10 +339,10 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   - `h[::0] = []` — CPython `ValueError`; pyc `if (stp == 0) return`, list unchanged.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_GetSlice`, `Pyc_SetSlice`)
 - Blocks merge: no
-- Notes: Found reviewing W5.1 / I-027. I-027 already named this clamp. Do not demand in W5.1 — SWE owns `Pyc_DelSlice`. Non-int step stays 1 on all three helpers (already in I-027 notes).
+- Notes: Wave 5 W5.1b. `stp == 0` → `ValueError`. After `s += n`, `s < 0` clamps to `-1` (step<0) or `0`. Reverse loop starts at `-1`, not `0`. Extended `SetSlice` requires `repl.size() == positions.size()`. Existing `b[1:4]=[…]` / `c[4:1:-1]=[…]` / `d[1:4:2]=[…]` CASES stay exact-length. Super slice is I-057. Non-int step still stays 1.
 
 ### I-051  `Pyc_DelItem` / `Pyc_SetSlice` silent on immutables; bytearray del is a no-op
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: Compiler always emits `Pyc_DelItem` / `Pyc_DelSlice` / `Pyc_SetSlice` (`Compiler.cpp` 7453–7459, 7879–7890). Runtime then:
   - `Pyc_DelItem` (`Runtime.cpp:5154–5169`): only type 2 (dict) and type 1+int (list). Else `return PyBool_New(0)`. `del (5,1,8,3)[1]` / `del "abcd"[1]` / `del b"abcd"[1]` — CPython `TypeError: '…' object doesn't support item deletion`; pyc leaves the object unchanged.
@@ -351,10 +351,10 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   - `Pyc_SetItem` (`5100–5116`): list/dict/bytearray-index only. `t[1] = 9` / `s[1] = "x"` / `b"x"[0] = 1` — CPython TypeError; pyc no-op. `ba[i] = n` already works.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_DelItem`, `Pyc_DelSlice`, `Pyc_SetSlice`, `Pyc_SetItem`)
 - Blocks merge: no
-- Notes: Found reviewing W5.1 / I-026. Same class (unsupported mutation is silent). After W5.1, `Pyc_DelSlice` TypeErrors on non-list (tuple/str/bytes match CPython; **bytearray** should mutate and now TypeErrors — still this ID). `Pyc_DelItem` / `Pyc_SetSlice` / `Pyc_SetItem` unchanged. `del None[s:e]` is I-056. Not I-038.
+- Notes: Wave 5 W5.1b. `Pyc_DelItem` leftover types TypeError (`pyc_builtin_type_name`); type 18 erases one byte. `Pyc_SetItem` TypeError on type 3/7/17. `Pyc_SetSlice` TypeError unless type 1 or 18; type 18 mutates `obj->str` (basic replace / extended exact-length). `Pyc_DelSlice` now accepts type 18. Wording is `does not` (CPython `doesn't`) — CASE only checks the type name. `None[s:e] = …` / leftover `SetItem` still silent (I-058). Dict slice assign omitted (3.14 hashes slices; I-026).
 
 ### I-052  Non-str args to split/find/count/replace/startswith/index/join are silent
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: I-040 is partition treating non-str as empty → `ValueError`. Same sentinel pattern elsewhere, both proven (`PyString_*`) and boxed (`pyc_bm_str_*`):
   - `PyString_Split2` / `RSplit` (`3069`, `3108`): `delim = (sep && sep->type == 3) ? sep->str : " "`. `'a b'.split(1)` / `.rsplit(1)` — CPython `TypeError: must be str or None, not int`; pyc `['a', 'b']`.
@@ -364,10 +364,10 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   - `PyString_Join` (`3450–3456`): non-str items are skipped. `','.join([1, 2])` — CPython TypeError; pyc `','`.
 - Files: `src/runtime/Runtime.cpp` (`PyString_Split2`, `PyString_RSplit`, `PyString_Find*`, `PyString_Count`, `PyString_Index`, `PyString_Replace`, `PyString_StartsWith`, `PyString_Join`)
 - Blocks merge: no
-- Notes: Found reviewing W5.1 / I-040. `split(None)` via nconst is I-046 (already matches as a guard). Do not demand in W5.1.
+- Notes: Wave 5 W5.1b. Non-str → `TypeError` via `pyc_builtin_type_name`. `split`/`rsplit` still accept None (`must be str or None`). startswith/endswith keep the tuple-of-str form; a list prefix is now TypeError (matches CPython; existing CASES are tuples). Boxed `pyc_bm_str_*` wrap the same helpers. `rindex` still returns `-1` (I-060).
 
 ### I-053  `str.format` base-field miss prints None
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: `pyc_format_resolve_field` (`Runtime.cpp:3323–3343`) leaves `val=nullptr` on OOB auto/index or missing kwargs key. `Pyc_FormatValue` → `PyStr_FromAny(nullptr)` → `"None"`. I-041 is the nested `.attr` / `[…]` walk (non-raising `Pyc_GetAttr`/`Pyc_GetItem`). Base field is the same miss class:
   - `'{1}'.format('a')` — CPython `IndexError`; pyc `'None'`.
@@ -375,10 +375,10 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   - `'{} {}'.format(1)` — CPython `IndexError`; pyc `'1None'`.
 - Files: `src/runtime/Runtime.cpp` (`pyc_format_resolve_field`, `PyBuiltin_StrFormat`)
 - Blocks merge: no
-- Notes: Found reviewing W5.1 / I-041. W5.1 CASE covers nested miss only. Fix is raise on a null base before `Pyc_FormatValue`. Do not demand in W5.1.
+- Notes: Wave 5 W5.1b. OOB auto/index → `IndexError: Replacement index out of range for positional args tuple`. Missing kw → `pyc_raise_msg("KeyError", base)` (raw field name; `pyc_exc_message` still repr-quotes string KeyErrors). CASE only prints `type(e).__name__`. FEATURES.md still says base-field misses print None — doc-drift, not this file.
 
 ### I-054  Tag-7 super proxy accepts tuple `len` / `in` / subscript / `list()`
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: Tag 7 is tuple **and** super (`I-013`). I-048 is the method table `(7, count)`/`(7, index)`. Operators use the same tag:
   - `PyBuiltin_Len` (`4793`) type 7 → `PyTuple_Size` (empty proxy list) → `0`. CPython `TypeError: object of type 'super' has no len()`.
@@ -388,10 +388,10 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   Distinguisher matches I-043 / I-048: tag 7 + non-null `cell_content` is the proxy.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Len`, `Pyc_Contains`, `Pyc_Subscript`, `PyBuiltin_List`)
 - Blocks merge: no
-- Notes: Found reviewing W5.1 / I-048. Do not demand in W5.1. Marker is now a self-pointer (I-048 notes). Not I-038 (SuperMethod builtin fallback / list subclassing).
+- Notes: Wave 5 W5.1b. Marker is `cell_content` self-pointer (I-048). Hardcoded `'super'` messages (not `pyc_builtin_type_name`, which still says `"tuple"`). `Pyc_Iter` goes through `PyBuiltin_List`, so `for x in super()` TypeErrors as a bonus. Leftover `GetSlice` / `tuple()` / map/filter is I-057. Not I-038.
 
 ### I-055  `str.format` `{0.attr}` raises when the attribute exists and is None
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: W5.1 I-041 does `next = Pyc_GetAttr(val, name); if (!next) AttributeError`. `Pyc_GetItem` on a type-2 instance/class dict returns `pair.second` even when that pointer is nullptr (present None). Class `class C: x = None` stores `nconst` via `Pyc_SetItem` → `PyDict_SetItem` keeps the key with a null value.
   - `'{0.x}'.format(C())` and `c.x = None; '{0.x}'.format(c)` — CPython `'None'`; pyc `AttributeError: 'dict' object has no attribute 'x'`.
@@ -399,15 +399,54 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   - `{0[k]}` with `{'k': None}` is fine: `Pyc_Subscript` returns nullptr without raising; FormatValue prints `None`.
 - Files: `src/runtime/Runtime.cpp` (`pyc_format_resolve_field` `.attr` arm)
 - Blocks merge: no
-- Notes: Found reviewing W5.1 / I-041. Caused by this slice. Null == None is file-wide; the new `!next` raise cannot tell miss from a stored None. Fix is a has-attr probe (or `Pyc_HasAttr`) before raising. Do not block W5.1.
+- Notes: Wave 5 W5.1b. `pyc_format_attr_present` walks a type-2 dict then its `__class__` dict and treats a hit with a null value as present-None. Ticket CASE (class attr + instance attr) matches. Probe is type-2 only and does not require `__class__` — plain dict leftover is I-059.
 
 ### I-056  `del None[s:e]` is still a silent no-op
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
 - Evidence: W5.1 `Pyc_DelSlice` (`Runtime.cpp:6157–6162`): `if (!obj) return;` then `type != 1` raises TypeError. `None` is nullptr, so `del None[1:3]` returns. CPython `TypeError: 'NoneType' object does not support item deletion`.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_DelSlice`)
 - Blocks merge: no
-- Notes: Found reviewing W5.1 / I-026. Leftover of the new TypeError arm. Same helper; not the tuple/str CASE. Do not block W5.1.
+- Notes: Wave 5 W5.1b. `if (!obj || (type != 1 && type != 18))` TypeError via `pyc_builtin_type_name(nullptr)` → `"NoneType"`. SetSlice still `if (!obj) return` (I-058).
+
+### I-057  Tag-7 super still a tuple for `GetSlice` / `tuple()` / map/filter
+- Status: open
+- Severity: wrong-answer
+- Evidence: W5.1b I-054 gated `Len` / `Contains` / `Subscript` / `List` on `type==7 && cell_content`. Same marker is missing on:
+  - `Pyc_GetSlice` (`Runtime.cpp` type-7 branch): `n = PyTuple_Size` (0) → empty tuple. `s = super(); s[1:3]` / `s[::-1]` — CPython `TypeError: 'super' object is not subscriptable`; pyc `()`.
+  - `PyBuiltin_Tuple` (`888`): `if (type == 7) INCREF; return obj` **before** `PyBuiltin_List`. `tuple(super())` — CPython TypeError; pyc the proxy (prints `()`).
+  - `PyBuiltin_Map` / `Filter` type-7 arms: scan the empty `list` → `[]`.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_GetSlice`, `PyBuiltin_Tuple`, `PyBuiltin_Map`, `PyBuiltin_Filter`)
+- Blocks merge: no
+- Notes: Found reviewing W5.1b / I-054. SWE flagged GetSlice. Not the ticket CASE (`s[0]` / `list(s)`). `pyc_builtin_type_name` type 7 is still `"tuple"` (DelItem/SetSlice on a proxy would say `'tuple'`). Do not demand in W5.1b.
+
+### I-058  `Pyc_SetSlice` / leftover `Pyc_SetItem` on None still silent
+- Status: open
+- Severity: wrong-answer
+- Evidence: I-056 taught `Pyc_DelSlice` to TypeError on `!obj`. Assignment helpers still return:
+  - `Pyc_SetSlice` (`6203`): `if (!obj) return;` then type 1/18 only. `None[1:3] = [1]` — CPython `TypeError: 'NoneType' object does not support item assignment`; pyc no-op.
+  - `Pyc_SetItem` (`5246`): `if (!obj || !key) return nullptr;` TypeError only for type 3/7/17. `None[0] = 1` / `(1)[0] = 2` — CPython TypeError; pyc no-op.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_SetSlice`, `Pyc_SetItem`)
+- Blocks merge: no
+- Notes: Found reviewing W5.1b / I-051 / I-056. DelItem leftover types now TypeError (that suspicion matches CPython; not a bug). GetSlice on None still returns `[]` (pre-existing). Do not demand in W5.1b.
+
+### I-059  `pyc_format_attr_present` treats a plain dict as an instance
+- Status: open
+- Severity: wrong-answer
+- Evidence: I-055 probe (`Runtime.cpp:3337`) is `obj->type == 2` then any key hit, including a plain dict (no `__class__`). `Pyc_GetAttr` is `Pyc_GetItem`, so `{0.x}` on a mapping already finds keys.
+  - `'{0.x}'.format({'x': None})` — CPython `AttributeError: 'dict' object has no attribute 'x'`. After I-041 this AttributeError'd (`!next`). After I-055 the probe says present → prints `None`.
+  - Ticket CASE is a class instance (`__class__` + class-dict `x = None`) and is correct.
+- Files: `src/runtime/Runtime.cpp` (`pyc_format_attr_present`)
+- Blocks merge: no
+- Notes: Found reviewing W5.1b / I-055. Caused by this slice; not a W5.1b CASE. `{0.x}.format({'x': 1})` already printed `1` (GetAttr=GetItem; pre-existing). Probe does not walk `__mro__`; neither does `Pyc_GetItem`'s class fallback. Do not demand in W5.1b.
+
+### I-060  `str.rindex` non-str sub still returns -1
+- Status: open
+- Severity: wrong-answer
+- Evidence: I-052 raised TypeError on `PyString_Index` / `Find*` / `Count`. `PyString_RIndex` (`4561`) is still `if (!sub || type != 3) return -1`. `'abc'.rindex(1)` — CPython `TypeError: must be str, not int`; pyc `-1`.
+- Files: `src/runtime/Runtime.cpp` (`PyString_RIndex`)
+- Blocks merge: no
+- Notes: Found reviewing W5.1b / I-052. Same sentinel class; not in the ticket CASE (`index`/`find` only). Do not demand in W5.1b.
 
 ---
 

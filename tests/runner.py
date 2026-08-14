@@ -4046,6 +4046,133 @@ try:
 except AttributeError as e:
     print(type(e).__name__)
 """, "AttributeError\n"),
+    # W5.1b / I-050: GetSlice/SetSlice reverse underflow + step 0.
+    ("""print([0, 1, 2, 3, 4][-10::-1])
+print("abcde"[-10::-1])
+try:
+    print([0, 1, 2, 3, 4][::0])
+except ValueError as e:
+    print(type(e).__name__)
+h = [0, 1, 2, 3, 4]
+try:
+    h[-10::-1] = [9]
+    print(h)
+except ValueError as e:
+    print(type(e).__name__)
+h = [0, 1, 2, 3, 4]
+try:
+    h[::0] = []
+    print(h)
+except ValueError as e:
+    print(type(e).__name__)
+""", "[]\n\nValueError\nValueError\nValueError\n"),
+    # W5.1b / I-051: DelItem/SetItem on immutables; bytearray slice mutates.
+    ("""try:
+    t = (5, 1, 8, 3)
+    del t[1]
+    print(t)
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    s = "abcd"
+    del s[1]
+    print(s)
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    t = (5, 1, 8, 3)
+    t[1:3] = (9,)
+    print(t)
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    t = (5, 1, 8, 3)
+    t[1] = 9
+    print(t)
+except TypeError as e:
+    print(type(e).__name__)
+ba = bytearray(b"abcd")
+del ba[1:3]
+print(ba)
+ba = bytearray(b"abcd")
+ba[1:3] = b"x"
+print(ba)
+""", "TypeError\nTypeError\nTypeError\nTypeError\nbytearray(b'ad')\nbytearray(b'axd')\n"),
+    # W5.1b / I-052: non-str args to str methods are TypeError.
+    ("""try:
+    print('a b'.split(1))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print('abc'.find(1))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print('abc'.replace(1, 'x'))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print('abc'.startswith(1))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(','.join([1, 2]))
+except TypeError as e:
+    print(type(e).__name__)
+""", "TypeError\nTypeError\nTypeError\nTypeError\nTypeError\n"),
+    # W5.1b / I-053: format base-field miss raises.
+    ("""try:
+    print('{1}'.format('a'))
+except IndexError as e:
+    print(type(e).__name__)
+try:
+    print('{x}'.format())
+except KeyError as e:
+    print(type(e).__name__)
+try:
+    print('{} {}'.format(1))
+except IndexError as e:
+    print(type(e).__name__)
+""", "IndexError\nKeyError\nIndexError\n"),
+    # W5.1b / I-054: super is not a tuple for len/in/subscript/list.
+    ("""class C:
+    def f(self):
+        s = super()
+        try:
+            print(len(s))
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(1 in s)
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(s[0])
+        except TypeError as e:
+            print(type(e).__name__)
+        try:
+            print(list(s))
+        except TypeError as e:
+            print(type(e).__name__)
+C().f()
+""", "TypeError\nTypeError\nTypeError\nTypeError\n"),
+    # W5.1b / I-055: format {0.attr} when attr exists and is None prints None.
+    ("""class C:
+    x = None
+print('{0.x}'.format(C()))
+class D:
+    pass
+d = D()
+d.x = None
+print('{0.x}'.format(d))
+""", "None\nNone\n"),
+    # W5.1b / I-056: del None[s:e] is TypeError, not a no-op.
+    ("""try:
+    del None[1:3]
+    print('ok')
+except TypeError as e:
+    print(type(e).__name__)
+""", "TypeError\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
