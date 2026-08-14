@@ -26,6 +26,7 @@ Confirmed later and closed (do not re-open from a paragraph below):
 - Uncaught tracebacks print `File "…", line N, in <name>` (I-009). Leftovers: reraise/nomatch snapshot (I-036), IR frame names (I-037).
 - `super().__init__` into a builtin exception base stores `self.args` (I-008). Leftovers I-038 / I-039.
 - `partition("")` raises ValueError; `str.format` nested `{0.attr}` / `{0[k]}` (I-010). Leftovers I-040–I-042.
+- GDB `PyObject*` pretty-printer (`tools/pyc_gdb.py`) and A6 `FlagArtificial` (I-019). Leftovers I-043 / I-044.
 
 ## Design Choices of Omission
 

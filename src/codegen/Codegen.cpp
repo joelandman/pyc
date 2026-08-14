@@ -1329,6 +1329,12 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     displayName = displayName.substr(prefixLen, sigStart - prefixLen);
                 }
             }
+            // A6 specialized variants keep the original Python name so
+            // `break fib` matches, but they are FlagArtificial so gdb
+            // treats them as compiler-generated (I-019).
+            llvm::DINode::DIFlags diFlags = llvm::DINode::FlagPrototyped;
+            if (f.name.find("__specialized_") == 0)
+                diFlags |= llvm::DINode::FlagArtificial;
             subprog = diBuilder->createFunction(
                 diCU,
                 displayName,       // display name (Python function name)
@@ -1337,7 +1343,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 defLine,
                 diSubroutineType,
                 defLine,           // scope line
-                llvm::DINode::FlagPrototyped,
+                diFlags,
                 llvm::DISubprogram::SPFlagDefinition
             );
             func->setSubprogram(subprog);

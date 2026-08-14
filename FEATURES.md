@@ -247,8 +247,11 @@ runtime module dicts. Keep them in sync.
 
 `pyc hello.py -o hello -g -O0` emits DWARF line tables and `DbgDeclare` for
 locals. `gdb`/`lldb` can `break`, `next`, `info locals`, `backtrace`.
-See [DEBUGGING_PLAN.md](DEBUGGING_PLAN.md). Remaining: GDB pretty-printer,
-`FlagArtificial` on specialized variants ([I-019](ISSUES.md)).
+A6 specialized variants are `DW_AT_artificial`. Load
+[tools/pyc_gdb.py](tools/pyc_gdb.py) in gdb to pretty-print `PyObject*`
+when the type is a real struct (null prints `None`; scalar field access
+is [I-043](ISSUES.md)). See [DEBUGGING_PLAN.md](DEBUGGING_PLAN.md).
+Optional leftover: `-g` on `runtime.bc` ([I-044](ISSUES.md)).
 
 ---
 

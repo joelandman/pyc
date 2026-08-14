@@ -82,13 +82,13 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sorted` / cmp_to_key path)
 - Blocks merge: no
 
-### I-019  Debug-info leftovers
+### I-044  Optional `-g` on `runtime.bc`
 - Status: open
 - Severity: limitation
-- Evidence: DEBUGGING_PLAN.md Known Limitations. `-g` works. Remaining: GDB `PyObject*` pretty-printer; mark A6 variants `FlagArtificial`; optional `-g` on `runtime.bc`; README CLI table (fixed in Wave 0).
-- Files: `src/codegen/Codegen.cpp` DI; docs / `.gdbinit`
+- Evidence: DEBUGGING_PLAN leftover. User programs compiled `-g -O0` have no LTO of `runtime.bc`; stepping into runtime helpers has no line tables unless the bitcode itself is built with debug info.
+- Files: CMake `runtime.bc` target, `src/runtime/Runtime.cpp`
 - Blocks merge: no
-- Notes: Wave 3 W3.4.
+- Notes: Split from I-019 after W3.4. Does not retype user-local DI (I-043).
 
 ### I-020  Keyword args dropped by method-call fallback
 - Status: open
@@ -277,9 +277,26 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Found reviewing W3.3 / I-010. Pre-existing colon/bang split; the new walker never sees the full field. Ticket CASES have no `:`/`!` inside brackets. Do not demand in W3.3.
 
+### I-043  GDB printer cannot field-access user locals; tag 7 heuristic inverted
+- Status: open
+- Severity: limitation
+- Evidence:
+  - Codegen DI for boxed locals is a 64-bit `DIBasicType` named `"PyObject"`, not a `DICompositeType` (`Codegen.cpp:1371-1375`; no `createStructType` / `createMemberType` anywhere). `tools/pyc_gdb.py` then does `v.dereference()` + `v["type"]` / `v["value"]` / `v["str"]` on that type. GDB will not grow struct fields on a base type. The printer never `gdb.lookup_type("PyObject").pointer()` / `cast`s to the C++ layout from `include/pyc/object_struct.h`. Null `PyObject*` → `"None"` still works (no fields). Type 0/4/5 and containers do not, unless gdb happens to be stopped in a `Runtime.cpp` frame compiled with `-g`.
+  - Tag 7: printer treats a **non-empty** `str` as super (`pyc_gdb.py:132-137`). `PyBuiltin_Super` sets `type=7` and `str=""` (`Runtime.cpp:13257-13264`); `PyTuple_New` also leaves `str` empty (`Runtime.cpp:782-788`). Super therefore prints as `<tuple len=0>`. Distinguisher that matches the runtime: tag 7 + non-null `cell_content` is the proxy (compiler fills it); tuples leave `cell_content` null.
+- Files: `tools/pyc_gdb.py`, `src/codegen/Codegen.cpp` (DI types), `src/runtime/Runtime.cpp` (`PyBuiltin_Super` / `PyTuple_New`)
+- Blocks merge: no
+- Notes: Found reviewing W3.4 / I-019. `tests/check_gdb.py` only compiles the printer, greps `FlagArtificial`, and (if gdb exists) checks `_lookup` registered — it never `print`s a live local, so this is invisible to the ticket check. FEATURES.md `print x` → `42` is optimistic. `-g` on `runtime.bc` (I-019 leftover) would expose the C++ struct under LTO but would still not retype user-local DI; the printer needs a cast or Codegen needs a 4-field composite (refcount/type/value/dvalue) for scalars. Do not demand in W3.4.
+
 ---
 
 ## Closed (already fixed; listed so agents do not re-open them)
+
+### I-019  Debug-info leftovers
+- Status: fixed
+- Severity: limitation
+- Evidence: Runner 682/682. `tests/check_gdb.py` 3/3 (printer syntax, FlagArtificial in Codegen, gdb loads printer). `tools/pyc_gdb.py` registered; A6 `__specialized_*` DISubprograms are `FlagArtificial`; README `-g` documents the printer.
+- Files: `src/codegen/Codegen.cpp`, `tools/pyc_gdb.py`, `tests/check_gdb.py`
+- Notes: Wave 3 W3.4. SWR: no merge blockers. Leftovers I-043 (printer cannot field-access user locals; tag 7 heuristic) / I-044 (`-g` on `runtime.bc`).
 
 ### I-010  str.format nested fields; partition("") is lenient
 - Status: fixed

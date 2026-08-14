@@ -40,7 +40,7 @@ pyc hello.py -O2 -o hello      # with O2 optimisation
 | `--opt=N` | Alias for `-ON` (deprecated) |
 | `--emit-llvm` | Emit LLVM IR to `output.ll` instead of binary |
 | `--emit-asm` / `-S` | Emit assembly to `output.s` instead of binary |
-| `-g` | Emit DWARF debug info (source line mapping for gdb/lldb). Use with `-O0` |
+| `-g` | Emit DWARF debug info (source line mapping for gdb/lldb). Use with `-O0`. Pretty-print `PyObject*` via `source tools/pyc_gdb.py` in gdb. |
 | `--verbose` | Print verbose compilation information |
 
 ## Testing

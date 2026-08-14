@@ -50,15 +50,18 @@ lldb ./hello
   but a different linkage name, so `break fib` may not set a breakpoint
   on the variant the program actually calls. Workaround: use
   `break fib_debug.py:5` (break by source line) instead of `break fib`.
-  Future: mark specialized variants as `DINode::FlagArtificial` so gdb
-  sets breakpoints on all subprograms named `fib`.
+  Specialized variants are now `DINode::FlagArtificial` (I-019 / W3.4)
+  so gdb treats them as compiler-generated. `break fib` still matches
+  the display name; prefer a source-line breakpoint if both the original
+  and the variant are live.
 - **GDB `.debug_names` warning**: GDB may print "warning: .debug_names
   not created by gdb; ignoring" — this is a GDB/LLVM DWARF 5 index
   compatibility issue, not a pyc bug. Debugging still works; the warning
   is cosmetic.
-- **No Python-level expression evaluation**: `print x` in gdb shows the
-  raw `PyObject*` pointer. A pretty-printer (Layer 4 below) would format
-  it as Python repr.
+- **Pretty-printer**: `source tools/pyc_gdb.py` formats `PyObject*` as
+  Python scalars (`42`, `3.14`, `True`, `'hi'`). Containers print as
+  `<list len=N>` unless libstdc++ printers expose more. `-g` on
+  `runtime.bc` is still optional.
 - **`-g -O2`**: LTO + O2 may inline/move instructions and eliminate
   variables. Line tables still work but some variables may be
   "optimized out". `-g -O0` is the recommended debug configuration.
@@ -346,8 +349,8 @@ loop already exists; this adds a `setDebugLoc` call per instruction.
 - [x] Runner stays green with and without `-g` (count in README, not “300/300”)
 - [x] Document `-g` in README.md and IMPLEMENTATION.md
 
-Leftovers (not Phase 5): GDB pretty-printer, A6 `FlagArtificial`, `-g` on
-`runtime.bc` — ISSUES I-019.
+Leftovers (not Phase 5): `-g` on `runtime.bc` (I-044); printer field-access (I-043).
+GDB pretty-printer: `tools/pyc_gdb.py`. A6 `FlagArtificial`: landed W3.4.
 
 ## Constraints and Considerations
 

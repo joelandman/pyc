@@ -4050,6 +4050,26 @@ def main():
         file_failures += 1
         print("check_traceback.py missing")
 
+    # W3.4 / I-019: GDB pretty-printer script + A6 FlagArtificial.
+    total += 1
+    gdb_checker = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "check_gdb.py")
+    if os.path.exists(gdb_checker):
+        chk = subprocess.run(
+            [sys.executable, gdb_checker],
+            capture_output=True, text=True,
+            env={**os.environ, "PYC_BINARY": pyc},
+        )
+        sys.stdout.write(chk.stdout)
+        if chk.returncode == 0:
+            ok += 1
+        else:
+            file_failures += 1
+            sys.stdout.write(chk.stderr)
+    else:
+        file_failures += 1
+        print("check_gdb.py missing")
+
     print(f"{ok}/{total} (file_case_failures={file_failures})")
     if ok == total:
         sys.exit(0)
