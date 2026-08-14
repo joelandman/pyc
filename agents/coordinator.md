@@ -72,4 +72,5 @@ PYC_BINARY=./build/pyc python3 tests/o2_smoke.py
 
 ## Wave order
 
-Wave 0 (this) → Wave 1 correctness (I-001…I-005) → Wave 2 dispatch (I-006, I-007) → Wave 3 polish → Wave 4 perf (I-014 needs its own design review).
+Wave 0 → Wave 1 correctness → Wave 2 dispatch → Wave 3 polish → Wave 4 perf
+→ Wave 5 close-out (`agents/wave5.md`). I-014 implement is W5.8 (optional).
