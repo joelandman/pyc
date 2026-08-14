@@ -51,7 +51,9 @@ METHOD_ARM = re.compile(r'methodName\s*==\s*"([A-Za-z_0-9]+)"')
 # method name.
 NARROWING = ("typeOf(", "isProven", "isCollectionsModule", "args.size()",
              "args.empty()", "hasKeywordArgs", "->type ==", "->id ==",
-             "Aliases", "isShadowedLocal", "attr->children", "sepIsNone")
+             "Aliases", "isShadowedLocal", "attr->children", "sepIsNone",
+             "isRealDictReceiver", "isOsPathReceiver",
+             "isImportedModuleReceiver", "isKnownClassReceiver")
 
 # Known-benign catch-alls: the arm itself has no receiver-type guard, but
 # an ENCLOSING block supplies one, which this rule deliberately does not

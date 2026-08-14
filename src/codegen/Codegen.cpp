@@ -560,7 +560,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     for (const char* name : {"PyString_Split","PyString_Join","PyBuiltin_IntBase",
                               "PyString_RFind","PyString_Partition","PyString_RPartition",
-                              "PyString_RSplitWhitespace"}) {
+                              "PyString_RSplitWhitespace","PyString_SplitWhitespace2"}) {
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, name, module.get());
     }
@@ -823,6 +823,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(callMethodOrBuiltin2Ty, llvm::Function::ExternalLinkage,
                            "Pyc_CallMethodOrBuiltin2", module.get());
+    llvm::FunctionType* callMethodOrBuiltinKwTy = llvm::FunctionType::get(pyObjectPtrTy,
+        {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+    llvm::Function::Create(callMethodOrBuiltinKwTy, llvm::Function::ExternalLinkage,
+                           "Pyc_CallMethodOrBuiltinKw", module.get());
     llvm::FunctionType* callBuiltinMethod0Ty = llvm::FunctionType::get(pyObjectPtrTy,
         {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(callBuiltinMethod0Ty, llvm::Function::ExternalLinkage,

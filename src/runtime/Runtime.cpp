@@ -3088,14 +3088,31 @@ PyObject* PyString_Split2(PyObject* s, PyObject* sep, PyObject* maxsplitObj) {
 }
 
 PyObject* PyString_SplitWhitespace(PyObject* s) {
+    return PyString_SplitWhitespace2(s, nullptr);
+}
+
+// str.split(None, maxsplit) — left-to-right whitespace split, keeping the
+// leftmost maxsplit+1 pieces. Distinct from RSplitWhitespace (I-020).
+PyObject* PyString_SplitWhitespace2(PyObject* s, PyObject* maxsplitObj) {
+    long maxsplit = (maxsplitObj && (maxsplitObj->type == 0 || maxsplitObj->type == 5))
+        ? maxsplitObj->value : -1;
     PyObject* result = PyList_New(0);
     if (!s || s->type != 3) return result;
     size_t i = 0, n = s->str.size();
+    long splits = 0;
     while (i < n) {
         while (i < n && isspace((unsigned char)s->str[i])) ++i;
+        if (i >= n) break;
+        if (maxsplit >= 0 && splits >= maxsplit) {
+            PyList_Append(result, PyUnicode_FromString(s->str.substr(i).c_str()));
+            break;
+        }
         size_t j = i;
         while (j < n && !isspace((unsigned char)s->str[j])) ++j;
-        if (j > i) PyList_Append(result, PyUnicode_FromString(s->str.substr(i, j - i).c_str()));
+        if (j > i) {
+            PyList_Append(result, PyUnicode_FromString(s->str.substr(i, j - i).c_str()));
+            ++splits;
+        }
         i = j;
     }
     return result;
@@ -13997,6 +14014,15 @@ PYC_WRAP2(pyc_bm_str_ljust, PyString_LJust)
 PYC_WRAP2(pyc_bm_str_rjust, PyString_RJust)
 PYC_WRAP0(pyc_bm_int_bit_length, PyInt_BitLength)
 PYC_WRAP0(pyc_bm_path_exists, PyPathlib_Exists)
+PYC_WRAP0(pyc_bm_path_is_file, PyPathlib_IsFile)
+PYC_WRAP0(pyc_bm_path_is_dir, PyPathlib_IsDir)
+PYC_WRAP0(pyc_bm_path_mkdir, PyPathlib_Mkdir)
+PYC_WRAP0(pyc_bm_dt_isoformat, PyDateTime_Isoformat)
+PYC_WRAP0(pyc_bm_dt_weekday, PyDateTime_Weekday)
+PYC_WRAP0(pyc_bm_dt_isoweekday, PyDateTime_Isoweekday)
+PYC_WRAP0(pyc_bm_td_total_seconds, PyTimedelta_TotalSeconds)
+PYC_WRAP0(pyc_bm_float_is_integer, PyFloat_IsInteger)
+PYC_WRAP1(pyc_bm_match_group, PyBuiltin_ReMatchGroup)
 #undef PYC_WRAP0
 #undef PYC_WRAP1
 #undef PYC_WRAP2
@@ -14024,18 +14050,54 @@ static PyObject* pyc_bm_set_update(PyObject* recv, PyObject* a0, PyObject*, PyOb
 static PyObject* pyc_bm_dict_fromkeys(PyObject*, PyObject* a0, PyObject* a1, PyObject*) {
     return PyDict_FromKeys(a0, a1);
 }
+static PyObject* pyc_bm_dict_most_common(PyObject* recv, PyObject* a0, PyObject*, PyObject*) {
+    PyObject* lst = PyList_New(0);
+    PyList_Append(lst, recv);
+    if (a0) PyList_Append(lst, a0);
+    PyObject* r = PyCollections_MostCommon(lst);
+    Py_DECREF(lst);
+    return r;
+}
+static PyObject* pyc_bm_dict_elements(PyObject* recv, PyObject*, PyObject*, PyObject*) {
+    return PyCollections_Elements(recv);
+}
+static PyObject* pyc_bm_dict_subtract(PyObject* recv, PyObject* a0, PyObject*, PyObject*) {
+    PyObject* lst = PyList_New(0);
+    PyList_Append(lst, recv);
+    if (a0) PyList_Append(lst, a0);
+    PyObject* r = PyCollections_Subtract(lst);
+    Py_DECREF(lst);
+    return r;
+}
 static PyObject* pyc_bm_list_pop(PyObject* recv, PyObject* a0, PyObject*, PyObject*) {
     return a0 ? PyList_PopAt(recv, a0) : PyList_Pop(recv);
 }
 static PyObject* pyc_bm_list_sort(PyObject* recv, PyObject*, PyObject*, PyObject*) {
     return PyList_Sort(recv, nullptr, nullptr);
 }
+static PyObject* pyc_bm_path_joinpath(PyObject* recv, PyObject* a0, PyObject* a1,
+                                     PyObject* argsList) {
+    PyObject* owned = nullptr;
+    PyObject* parts = argsList;
+    if (!parts) {
+        owned = PyList_New(0);
+        if (a0) PyList_Append(owned, a0);
+        if (a1) PyList_Append(owned, a1);
+        parts = owned;
+    }
+    PyObject* r = PyPathlib_Joinpath(recv, parts);
+    if (owned) Py_DECREF(owned);
+    return r;
+}
 // split/rsplit/replace/find carry optional extra positional arguments;
 // the arms in Compiler.cpp support the same shapes, so these must too
 // or whitelisting those arms would lose maxsplit/count/start/end for
 // unproven receivers.
 static PyObject* pyc_bm_str_split(PyObject* recv, PyObject* a0, PyObject* a1, PyObject*) {
-    if (!a0) return PyString_SplitWhitespace(recv);
+    if (!a0) {
+        return a1 ? PyString_SplitWhitespace2(recv, a1)
+                  : PyString_SplitWhitespace(recv);
+    }
     return a1 ? PyString_Split2(recv, a0, a1) : PyString_Split(recv, a0);
 }
 static PyObject* pyc_bm_str_rsplit(PyObject* recv, PyObject* a0, PyObject* a1, PyObject*) {
@@ -14117,6 +14179,12 @@ static void pyc_init_builtin_method_tables(
     dictm["setdefault"] = pyc_bm_dict_setdefault;
     dictm["update"] = pyc_bm_dict_update;
     dictm["fromkeys"] = pyc_bm_dict_fromkeys;
+    // Counter methods: Counter is a plain dict at runtime. After the
+    // compile-time arms dropped "boxed" (I-030), boxed Counter()
+    // results reach this table instead of stealing user .most_common().
+    dictm["most_common"] = pyc_bm_dict_most_common;
+    dictm["elements"] = pyc_bm_dict_elements;
+    dictm["subtract"] = pyc_bm_dict_subtract;
 
     auto& listm = tables[1];
     listm["append"] = pyc_bm_list_append;
@@ -14152,9 +14220,25 @@ static void pyc_init_builtin_method_tables(
         tables[tag]["bit_length"] = pyc_bm_int_bit_length;
     }
 
-    // pathlib.Path — boxed Path.exists() after the compile-time arm
-    // stopped accepting "boxed".
+    // pathlib.Path — boxed Path methods after the compile-time arms
+    // stopped accepting "boxed" (I-030).
     tables[16]["exists"] = pyc_bm_path_exists;
+    tables[16]["is_file"] = pyc_bm_path_is_file;
+    tables[16]["is_dir"] = pyc_bm_path_is_dir;
+    tables[16]["mkdir"] = pyc_bm_path_mkdir;
+    tables[16]["joinpath"] = pyc_bm_path_joinpath;
+
+    // date/datetime (tag 14) and timedelta (tag 15).
+    tables[14]["isoformat"] = pyc_bm_dt_isoformat;
+    tables[14]["weekday"] = pyc_bm_dt_weekday;
+    tables[14]["isoweekday"] = pyc_bm_dt_isoweekday;
+    tables[15]["total_seconds"] = pyc_bm_td_total_seconds;
+
+    // re.Match.group
+    tables[9]["group"] = pyc_bm_match_group;
+
+    // float.is_integer
+    tables[4]["is_integer"] = pyc_bm_float_is_integer;
 
     auto& strm = tables[3];
     strm["upper"] = pyc_bm_str_upper;
@@ -14301,6 +14385,66 @@ extern "C" PyObject* Pyc_CallMethodOrBuiltin2(PyObject* methodVal, PyObject* rec
                                               PyObject* nameObj, PyObject* a0, PyObject* a1) {
     if (methodVal) return pyc_call_user_method_n(methodVal, receiver, a0, a1);
     return Pyc_CallBuiltinMethod2(receiver, nameObj, a0, a1);
+}
+
+static PyObject* pyc_dict_get_cstr(PyObject* d, const char* key) {
+    if (!d || d->type != 2 || !key) return nullptr;
+    for (auto& kv : d->dict) {
+        if (kv.first && kv.first->type == 3 && kv.first->str == key) return kv.second;
+    }
+    return nullptr;
+}
+
+// Boxed method fallback with keywords (I-020). User methods still go
+// through Pyc_CallMethod (kwargs already mapped at compile time when
+// the class is known). Builtin str.split/format read maxsplit= / **kwargs.
+extern "C" PyObject* Pyc_CallMethodOrBuiltinKw(PyObject* methodVal, PyObject* receiver,
+                                               PyObject* argsList, PyObject* kwargsDict,
+                                               PyObject* nameObj) {
+    if (methodVal) return Pyc_CallMethod(methodVal, receiver, argsList);
+    if (receiver && receiver->type == 3 && nameObj && nameObj->type == 3) {
+        const std::string& m = nameObj->str;
+        if (m == "format") {
+            PyObject* owned = nullptr;
+            PyObject* fmtArgs = argsList;
+            if (!fmtArgs) {
+                owned = PyList_New(0);
+                fmtArgs = owned;
+            }
+            PyObject* empty = nullptr;
+            PyObject* kw = kwargsDict;
+            if (!kw || kw->type != 2) {
+                empty = PyDict_New();
+                kw = empty;
+            }
+            PyObject* r = PyBuiltin_StrFormat(receiver, fmtArgs, kw);
+            if (empty) Py_DECREF(empty);
+            if (owned) Py_DECREF(owned);
+            return r;
+        }
+        if (m == "split" || m == "rsplit") {
+            PyObject* sep = pyc_arg_at(argsList, 0);
+            PyObject* ms = pyc_arg_at(argsList, 1);
+            if (PyObject* kwsep = pyc_dict_get_cstr(kwargsDict, "sep")) sep = kwsep;
+            if (PyObject* kwms = pyc_dict_get_cstr(kwargsDict, "maxsplit")) ms = kwms;
+            bool sepNone = !sep;
+            if (m == "split") {
+                if (sepNone) {
+                    return ms ? PyString_SplitWhitespace2(receiver, ms)
+                              : PyString_SplitWhitespace(receiver);
+                }
+                return ms ? PyString_Split2(receiver, sep, ms)
+                          : PyString_Split(receiver, sep);
+            }
+            PyObject* tmp = nullptr;
+            if (!ms) { tmp = PyInt_FromLong(-1); ms = tmp; }
+            PyObject* r = sepNone ? PyString_RSplitWhitespace(receiver, ms)
+                                  : PyString_RSplit(receiver, sep, ms);
+            if (tmp) Py_DECREF(tmp);
+            return r;
+        }
+    }
+    return Pyc_CallBuiltinMethod(receiver, nameObj, argsList);
 }
 
 // Pyc_GetAttr(obj, attrName) — wraps Pyc_GetItem for plain (non-call)

@@ -152,6 +152,7 @@ PyObject* PyString_RStrip(PyObject* s);
 PyObject* PyString_Split(PyObject* s, PyObject* sep);
 PyObject* PyString_Split2(PyObject* s, PyObject* sep, PyObject* maxsplit);
 PyObject* PyString_SplitWhitespace(PyObject* s);
+PyObject* PyString_SplitWhitespace2(PyObject* s, PyObject* maxsplit);
 PyObject* PyString_RSplit(PyObject* s, PyObject* sep, PyObject* maxsplit);
 PyObject* PyString_RSplitWhitespace(PyObject* s, PyObject* maxsplit);
 PyObject* PyString_Partition(PyObject* s, PyObject* sep);
@@ -217,6 +218,9 @@ PyObject* Pyc_CallMethodOrBuiltin1(PyObject* methodVal, PyObject* receiver,
                                   PyObject* nameObj, PyObject* a0);
 PyObject* Pyc_CallMethodOrBuiltin2(PyObject* methodVal, PyObject* receiver,
                                   PyObject* nameObj, PyObject* a0, PyObject* a1);
+PyObject* Pyc_CallMethodOrBuiltinKw(PyObject* methodVal, PyObject* receiver,
+                                   PyObject* argsList, PyObject* kwargsDict,
+                                   PyObject* nameObj);
 PyObject* Pyc_Subscript(PyObject* obj, PyObject* key);
 PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val);
 PyObject* Pyc_SubscriptSetItem(PyObject* obj, PyObject* key, PyObject* val);

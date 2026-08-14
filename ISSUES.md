@@ -138,12 +138,18 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found implementing W4.2. Do not treat the heap table as a general fix.
 
 ### I-020  Keyword args dropped by method-call fallback
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: IMPLEMENTATION.md dispatch steps 2–3. Terminal fallback builds positional-only lists. Arms that accept keywords (`split(maxsplit=)`, `format(**kwargs)`) must keep their fast path when `hasKeywordArgs`.
-- Files: `src/Compiler.cpp` `lowerMethodCall`
+- Evidence: W5.5 CASE (`tests/runner.py` banner `# W5.5 / I-020`):
+  `def fs(s): return s.split(maxsplit=1); fs("a b c")` → `['a', 'b c']`.
+  `def ff(s): return s.format(x=3); ff("{x}")` → `3`.
+  `def fsn(s): return s.split(None, 1); fsn("a  b  c")` → `['a', 'b  c']`.
+  Parent: `hasKeywordArgs` kept the str.split/format arms for *any* receiver,
+  which stole `C().format(a=1)` (I-030). Dropping that gate without a kwargs
+  fallback would have dropped `maxsplit=` / `x=` on boxed strings.
+- Files: `src/Compiler.cpp` (`Pyc_CallMethodOrBuiltinKw` emit), `src/runtime/Runtime.cpp` (`Pyc_CallMethodOrBuiltinKw`, `PyString_SplitWhitespace2`, `pyc_bm_str_split`), `src/codegen/Codegen.cpp`, `include/pyc/runtime.h`
 - Blocks merge: no
-- Notes: Do not whitelist those arms for unproven receivers without carrying kwargs.
+- Notes: Wave 5 W5.5. Proven str still uses the fast path. Boxed kwargs go through `Pyc_CallMethodOrBuiltinKw` (format **kwargs, split/rsplit sep=/maxsplit=). Boxed positional `split(None, n)` uses `PyString_SplitWhitespace2` (left-to-right); it used to ignore `n` and dump every token. User `C().format(a=1)` is mapped onto `C__format` via `instanceClassOf` when the class is known.
 
 ### I-021  NUL in str literals is truncated at parse/codegen
 - Status: fixed
@@ -216,32 +222,35 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 5 W5.1. Dropped the four `allocObject` null tests (`runRegexAll` / `ReSearch` / `ReMatch` / `ReCompile`). No new function-local static C++ objects (I-049).
 
 ### I-030  Remaining boxed-accepting `lowerMethodCall` arms steal user methods
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `class C` with `is_file`/`is_dir`/`mkdir`/`joinpath`/`isoformat`/`weekday`/`isoweekday`/`total_seconds`/`group`/`is_integer`/`most_common`/`elements`/`subtract`; also `format(a=1)` / `sort(key=len)`. CPython returns the user methods. pyc: `False`/`False`/`None`/`x`, empty isoformat, `0`/`1`/`0.0`, `None`, `True`, `[('__class__', 0)]`, `[]`, `None`; kwargs `format`/`sort` also stolen. Same result as a direct `C().is_file()` — user instances are `typeOf` `"boxed"`, not only through a parameter.
-- Files: `src/Compiler.cpp` (`lowerMethodCall` pathlib block ~9043–9070; datetime ~9078–9096; `group` ~9102; boxed `is_integer` ~9145; `format`/`sort` `hasKeywordArgs` ~9220 / ~9403; Counter ~9477–9516)
+- Evidence: W5.5 CASE (`tests/runner.py` banner `# W5.5 / I-030`):
+  user `C` with `is_file` / `isoformat` / `group` / `is_integer` / `most_common` / `format(a=1)` → `user-file` / `user-iso` / `user-group` / `user-int` / `user-mc` / `user-fmt:1`.
+  Parent: pathlib/datetime/`group`/`is_integer` arms accepted `typeOf=="boxed"`; `format`/`sort` accepted `hasKeywordArgs` on any receiver. User instances are `"boxed"`.
+- Files: `src/Compiler.cpp` (`lowerMethodCall` pathlib/datetime/group/is_integer/format/sort/Counter), `src/runtime/Runtime.cpp` (tag-16/14/15/9/4 table rows + Counter most_common/elements/subtract)
 - Blocks merge: no
-- Notes: Found reviewing W2.1 / I-006. SWE flagged pathlib `is_file`/`is_dir`/`mkdir`/`joinpath`. Same class as the ticket, **not** this ticket’s cases (`exists`/`call`/`bit_length`/`fromkeys`/`unlink`/`isfile`/`isdir`/`check_output` all pass). `.get()` was I-007 (now fixed); leftovers I-032 / I-034. Do not demand in W2.1. Fix is the exists pattern: proven type only at compile time; runtime tag in `Pyc_CallBuiltinMethod`.
+- Notes: Wave 5 W5.5. Compile-time arms are proven type only. Boxed Path/date/timedelta/Match/float/Counter methods go through `Pyc_CallBuiltinMethod` by tag. `sort(key=)` on a user instance no longer takes the list arm (`isProvenListLike` only). Leftover boxed module `.get` is I-067.
 
 ### I-031  `fromkeys` / `os.path` AST gates miss aliases and from-imports
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `D = dict; D.fromkeys([3])` — CPython `{3: None}`; pyc `AttributeError: 'str' object has no attribute 'fromkeys'` (`dict` is the token `PyBuiltin_DictFactory`). `from os import path; path.exists(".")` — CPython `True`; pyc `AttributeError: 'dict' object has no attribute 'exists'`. `import os as ox; ox.path.exists(".")` and `q = os.path; q.exists(".")` work.
-- Files: `src/Compiler.cpp` (`fromkeys` Name==`"dict"` ~9311; `exists`/`isfile`/`isdir` AST `os.path` ~9324)
+- Evidence: W5.5 CASE (`tests/runner.py` banner `# W5.5 / I-031`):
+  `D = dict; D.fromkeys([3])` → `{3: None}`. `from os import path; path.exists(".")` → `True`.
+  Parent: `dict` was the token `PyBuiltin_DictFactory` (type str); `from os import path` was a dict mapping, not `os.path`.
+- Files: `src/Compiler.cpp` (`dict_type` on the factory token; `osPathAliases`; `isOsPathReceiver`; `fromkeys` arm)
 - Blocks merge: no
-- Notes: Found reviewing W2.1 / I-006. The fromkeys miss is caused by this slice (parent name-only `fromkeys` served `D.fromkeys` by accident). `from os import path` was already wrong on the parent (boxed pathlib `exists` → `False`). Ticket CASES use `dict.fromkeys` and `import os` / `import os as`. Not a merge blocker. W2.2 leftover of the same alias/from-import class: I-032.
+- Notes: Wave 5 W5.5. `noteType(tokenVal, "dict_type")` for `PyBuiltin_DictFactory`; assignment copies it via `typeOf`. `from os import path [as X]` and `q = os.path` populate `osPathAliases`. `exists`/`isfile`/`isdir` fire on `isOsPathReceiver`.
 
 ### I-032  `.get` still stolen / silent on dict-typed non-user-dicts
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: Gate is AST `Name` + `isImportedModuleName` only (`Compiler.cpp` ~9302–9321). Rebind / boxed / class / submodule / unlisted module all miss it:
-  - `m = os; m.get("path")` and `def f(m): return m.get("path"); f(os)` — CPython `AttributeError`; pyc dict.get → the os.path mapping. Runtime tag 2 (`Pyc_CallBuiltinMethod` ~13481) also serves boxed modules as dicts.
-  - `C.get(c, "x")` with user `def get(self, k, default=None)` — CPython `user-get:x`; pyc `x` (`typeOf(C)=="dict"`, so the proven-dict arm fires; lookup of the instance as a key misses and the default `"x"` is returned).
-  - `os.path.get("exists")` / `from os import path; path.get("exists")` — CPython `AttributeError`; pyc `PyBuiltin_OsPathExists` (path mapping is a dict).
-  - `import sys; sys.get("x")`, `getattr(os, "get")`, compiled user module with no `get` — CPython `AttributeError`; pyc `None` (`sys` / user modules are not in `syntheticModuleExports()`, so the raise arm does not fire; dict `Pyc_GetItem`+`Pyc_Apply` yields None). `import math; math.get("pi")` and `import os; os.get("path")` raise, as intended.
-- Files: `src/Compiler.cpp` (`get` arms, `isImportedModuleName`, `moduleKnownMissingExport`, `syntheticModuleExports`), `src/runtime/Runtime.cpp` (`Pyc_CallBuiltinMethod` case 2)
+- Evidence: W5.5 CASE (`tests/runner.py` banner `# W5.5 / I-032`):
+  `m = os; m.get("path")` / `sys.get("x")` / `os.path.get("exists")` / `from os import path; path.get("exists")` / `q = os.path; q.get("exists")` → `AttributeError`.
+  `C.get(c, "x")` with user `def get` → `user-get:x`.
+  Parent: `get` fired for any `typeOf=="dict"` whose AST base was not a module Name. Class dicts, `m = os`, and the os.path mapping all missed that gate.
+- Files: `src/Compiler.cpp` (`isRealDictReceiver`, `propagateReceiverAliases`, dict-namespace raise arm)
 - Blocks merge: no
-- Notes: Found reviewing W2.2 / I-007. SWE flagged `m = os` (I-031 class) and user-module silent None. Ticket CASES are `C().get` / boxed `f(C())` / `os.get` / `import os as ox` / shadowed `time = {…}; time.get` — those pass. Same hole as I-031, different name. Do not demand in W2.2.
+- Notes: Wave 5 W5.5. `isRealDictReceiver` excludes imported modules, `osPathAliases`, and `knownClasses`. The raise arm covers those receivers for every `isDictNamespaceMethod`. Leftover: boxed `def f(m): return m.get("path"); f(os)` and `getattr(os, "get")` — I-067.
 
 ### I-033  Adapter default probe uses param index first
 - Status: fixed
@@ -252,12 +261,14 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 5 W5.4. Adapter now pushes `i-firstDef` before param index (`Codegen.cpp` ~1174). `C().foo()` → `(1, 2)`. `C().get("x")` still works: `ndef==1` never had a `__default_*_2` hit, so the old second candidate was already slot 0. CASE `g=f; g(0)` is now a *direct* call via the I-024 alias (defaults injected at the call site); the adapter path is still the `C().foo()` half. `T=A; T()` stays a class-name miss (no `lambdaAliases` for `knownClasses`).
 
 ### I-034  Remaining dict methods on module namespaces
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `import os; os.keys()` / `os.items()` / `os.values()` / `os.pop("path")` — CPython `AttributeError`; pyc `list` / `list` / `list` / the os.path mapping. Arms are `typeOf=="dict"` with no `isImportedModuleName` exclusion (`Compiler.cpp` ~9336 values, ~9350 update, ~9353 pop). `os.environ.get("PATH")` is correctly dict.get (environ is a mapping).
-- Files: `src/Compiler.cpp` (`lowerMethodCall` dict arms)
+- Evidence: W5.5 CASE (`tests/runner.py` banner `# W5.5 / I-034`):
+  `os.keys()` / `os.pop("path")` → `AttributeError`.
+  Parent: `keys`/`items`/`values`/`pop`/`update` fired on `typeOf=="dict"` with no module exclusion. `os.environ.get("PATH")` is still dict.get (environ is a mapping).
+- Files: `src/Compiler.cpp` (`isRealDictReceiver` on table Dict rows + values/update/pop; dict-namespace raise arm)
 - Blocks merge: no
-- Notes: Found reviewing W2.2 / I-007. Pre-existing; this slice only special-cased `.get`. Same class, not this ticket’s cases. Do not demand in W2.2.
+- Notes: Wave 5 W5.5. Same gate as I-032. `check_dispatch_chain.py` NARROWING now includes `isRealDictReceiver` so the dict `pop` arm does not look like a catch-all in front of list `pop`.
 
 ### I-035  Class-method defaults lowered in the wrong scope
 - Status: open
@@ -524,6 +535,16 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/Compiler.cpp` (`lowerClass` method / `__init__`), `src/codegen/Codegen.cpp` (adapter `miss.fn`)
 - Blocks merge: no
 - Notes: Found reviewing W5.4 / I-025. Ticket CASE is module-level `outer.inner` and `<lambda>`. Same class; do not demand in W5.4. Setting method `displayName` to `C.foo` would also be the I-037 method-frame leftover if PushFrame used `__name__` (`foo`) rather than qualname.
+
+### I-067  Boxed module `.get` / `getattr(os, "get")` still dict
+- Status: open
+- Severity: wrong-answer
+- Evidence: I-032 closed the compile-time `Name` / alias / `os.path` gates. A parameter or `getattr` still sees a tag-2 dict:
+  - `def f(m): return m.get("path"); f(os)` — CPython `AttributeError`; pyc returns the os.path mapping (`Pyc_CallBuiltinMethod` tables[2]["get"]).
+  - `getattr(os, "get")` — CPython `AttributeError`; pyc `None` (`Pyc_GetAttr` → dict miss).
+- Files: `src/runtime/Runtime.cpp` (`Pyc_CallBuiltinMethod` tag 2, `Pyc_GetAttr`)
+- Blocks merge: no
+- Notes: Found finishing W5.5 / I-032. Modules are type-2 dicts at runtime; distinguishing them from user dicts is a layout change (I-013 class). Do not demand in W5.5.
 
 ---
 

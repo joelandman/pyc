@@ -1281,6 +1281,11 @@ class LoweringVisitor {
                         if (mod == "decimal" && origName == "Decimal") {
                             decimalCtorAliases.insert(name);
                         }
+                        // `from os import path [as X]` — X.exists must be
+                        // os.path.exists, not a missing dict attribute (I-031).
+                        if (mod == "os" && origName == "path") {
+                            osPathAliases.insert(name);
+                        }
 
                         std::string attrKey = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + origName + "\""}, attrKey, "str");
@@ -1680,6 +1685,10 @@ class LoweringVisitor {
                     std::string tokenVal = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "const", {"\"" + std::string(bfIt->second) + "\""}, tokenVal, "str");
                     callableTokenTemps.insert(tokenVal);
+                    callableTokenToSynthetic[tokenVal] = bfIt->second;
+                    // `D = dict; D.fromkeys(...)` must see a factory, not a
+                    // str token (I-031). Assignment copies this via typeOf.
+                    noteType(tokenVal, "dict_type");
                     return tokenVal;
                 }
             }
@@ -2960,6 +2969,14 @@ class LoweringVisitor {
     // as dt` the same way it already recognizes the unaliased `datetime`
     // name.
     std::unordered_map<std::string, std::string> moduleNameAliases;
+    // Local names bound to the os.path mapping: `from os import path [as X]`
+    // and `q = os.path`. exists/isfile/isdir must reach the same helpers
+    // as `os.path.exists` (I-031); the name is not the os module itself.
+    std::unordered_set<std::string> osPathAliases;
+    // SSA name -> class name for a just-constructed user instance, so
+    // `C().format(a=1)` can map kwargs onto `C__format` instead of
+    // taking the str.format hasKeywordArgs arm (I-030 / I-020).
+    std::unordered_map<std::string, std::string> instanceClassOf;
     // Local names bound via `from pathlib import Path [as X]` — same
     // rationale as datetimeCtorAliases, but a plain set since Path has
     // only one constructor (no date/datetime/timedelta-style variants).
@@ -3548,6 +3565,105 @@ class LoweringVisitor {
         return true;
     }
 
+    // True when `attr` is a known export of the synthetic module bound
+    // to `boundName`. Unknown modules (sys) and names not in the table
+    // are not exports — dict-method names on those modules raise.
+    bool moduleHasExport(const std::string& boundName,
+                         const std::string& attr) const {
+        std::string orig = boundName;
+        auto it = moduleNameAliases.find(boundName);
+        if (it != moduleNameAliases.end()) orig = it->second;
+        auto expIt = syntheticModuleExports().find(orig);
+        if (expIt == syntheticModuleExports().end()) return false;
+        for (const auto& e : expIt->second)
+            if (e == attr) return true;
+        return false;
+    }
+
+    bool isImportedModuleReceiver(const ASTNode* attr) const {
+        return attr && attr->children.size() >= 1 && attr->children[0] &&
+               attr->children[0]->type == "Name" &&
+               isImportedModuleName(attr->children[0]->id);
+    }
+
+    bool isKnownClassReceiver(const ASTNode* attr) const {
+        return attr && attr->children.size() >= 1 && attr->children[0] &&
+               attr->children[0]->type == "Name" &&
+               knownClasses.count(attr->children[0]->id);
+    }
+
+    // Proven user dict — not an imported module namespace, os.path
+    // mapping, or class dict (all are typeOf "dict").
+    bool isRealDictReceiver(const ASTNode* attr, const std::string& obj) const {
+        if (typeOf(obj) != "dict") return false;
+        if (isImportedModuleReceiver(attr) || isKnownClassReceiver(attr) ||
+            isOsPathReceiver(attr))
+            return false;
+        return true;
+    }
+
+    // `os.path.<name>` (including `import os as X`) or a from-import /
+    // assignment alias of that mapping (`from os import path`; `q = os.path`).
+    bool isOsPathReceiver(const ASTNode* attr) const {
+        if (!attr || attr->children.empty() || !attr->children[0]) return false;
+        const ASTNode* base = attr->children[0].get();
+        if (base->type == "Attribute" && base->id == "path" &&
+            !base->children.empty() && base->children[0] &&
+            base->children[0]->type == "Name") {
+            const std::string& id = base->children[0]->id;
+            if (id == "os") return true;
+            auto it = moduleNameAliases.find(id);
+            return it != moduleNameAliases.end() && it->second == "os";
+        }
+        if (base->type == "Name" && osPathAliases.count(base->id)) return true;
+        return false;
+    }
+
+    static bool isDictNamespaceMethod(const std::string& name) {
+        return name == "get" || name == "keys" || name == "items" ||
+               name == "values" || name == "pop" || name == "update" ||
+               name == "fromkeys" || name == "copy" || name == "clear" ||
+               name == "popitem" || name == "setdefault";
+    }
+
+    // `m = os` / `q = os.path` / `c = C()` must keep the same receiver
+    // identity the original name had (I-031 / I-032).
+    void propagateReceiverAliases(const std::string& target, const ASTNode* rhs,
+                                  const std::string& val) {
+        if (target.empty()) return;
+        bool copiedMod = false, copiedPath = false;
+        if (rhs && rhs->type == "Name") {
+            if (isImportedModuleName(rhs->id)) {
+                auto it = moduleNameAliases.find(rhs->id);
+                moduleNameAliases[target] =
+                    (it != moduleNameAliases.end()) ? it->second : rhs->id;
+                copiedMod = true;
+            }
+            if (osPathAliases.count(rhs->id)) {
+                osPathAliases.insert(target);
+                copiedPath = true;
+            }
+        } else if (rhs && rhs->type == "Attribute" && rhs->id == "path" &&
+                   !rhs->children.empty() && rhs->children[0] &&
+                   rhs->children[0]->type == "Name") {
+            const std::string& id = rhs->children[0]->id;
+            bool isOs = (id == "os");
+            if (!isOs) {
+                auto it = moduleNameAliases.find(id);
+                isOs = (it != moduleNameAliases.end() && it->second == "os");
+            }
+            if (isOs) {
+                osPathAliases.insert(target);
+                copiedPath = true;
+            }
+        }
+        if (!copiedMod) moduleNameAliases.erase(target);
+        if (!copiedPath) osPathAliases.erase(target);
+        auto iit = instanceClassOf.find(val);
+        if (iit != instanceClassOf.end()) instanceClassOf[target] = iit->second;
+        else instanceClassOf.erase(target);
+    }
+
     bool isProvenListLike(const std::string& v) const {
         const std::string t = typeOf(v);
         return t == "list" || t == "list_int" || t == "list_float" ||
@@ -3695,11 +3811,15 @@ class LoweringVisitor {
         }
     }
 
-    bool receiverMatches(RecvKind k, const std::string& v) const {
+    bool receiverMatches(RecvKind k, const std::string& v,
+                         const ASTNode* attr) const {
         switch (k) {
             case RecvKind::Str:      return isProvenStr(v);
             case RecvKind::ListLike: return isProvenListLike(v);
-            case RecvKind::Dict:     return typeOf(v) == "dict";
+            case RecvKind::Dict:
+                // Modules, os.path, and class dicts are typeOf "dict"
+                // but are not dict-method receivers (I-032 / I-034).
+                return isRealDictReceiver(attr, v);
             case RecvKind::Set:      return typeOf(v) == "set";
             case RecvKind::Bytes:    return typeOf(v) == "bytes" ||
                                             typeOf(v) == "bytearray";
@@ -3713,11 +3833,12 @@ class LoweringVisitor {
     bool tryBuiltinMethodTable(const std::string& methodName,
                                const std::string& obj,
                                const std::vector<std::string>& args,
-                               const std::string& res) {
+                               const std::string& res,
+                               const ASTNode* attr) {
         static const bool validated = (validateBuiltinMethodRows(), true);
         (void)validated;
         for (const auto& r : builtinMethodRows()) {
-            if (methodName != r.name || !receiverMatches(r.recv, obj)) continue;
+            if (methodName != r.name || !receiverMatches(r.recv, obj, attr)) continue;
             std::vector<std::string> call{r.fn, obj};
             for (int i = 0; i < r.argc; ++i) {
                 call.push_back((size_t)i < args.size() ? args[i] : "");
@@ -4677,6 +4798,7 @@ class LoweringVisitor {
             if (classIt != knownClasses.end()) {
                 std::string instanceDict = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyDict_New"}, instanceDict);
+                instanceClassOf[instanceDict] = funcName;
                 // Store class reference on instance for method lookup
                 std::string classKeyConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"\"__class__\""}, classKeyConst, "str");
@@ -7427,7 +7549,9 @@ class LoweringVisitor {
         if (!node->args.empty()) {
             std::string val = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
             std::string vt = typeOf(val);
+            const ASTNode* rhsAst = node->children.empty() ? nullptr : node->children[0].get();
             for (const auto& name : node->args) {
+                propagateReceiverAliases(name, rhsAst, val);
                 bool isGlob = isGlobalHere(name);
                 if (!isGlob && (numericLocals.count(name) || (vt == "int" || vt == "i64" || vt == "bool"))) {
                     ir.addInstruction(currentFunc, "i64assign", {val}, name, "i64");
@@ -7557,6 +7681,7 @@ class LoweringVisitor {
             // statement's own RHS lowering.
             lastLambdaSynthetic.clear();
             std::string val = lowerExpr(node->children[0].get());
+            propagateReceiverAliases(node->id, node->children[0].get(), val);
             // B5: if the target is cell-backed *in this function* (we own or receive the cell here),
             // emit PyCell_Set instead of a plain assign. A name that is only a nonlocal target in a
             // nested scope should not be routed through a cell at this level.
@@ -8627,12 +8752,10 @@ class LoweringVisitor {
                 hasKeywordArgs = true;
         }
         // `args` is positional-only; keyword arguments are re-scanned out of
-        // the AST by the individual arms that support them. The terminal
-        // fallback builds its argument list from `args` alone, so it cannot
-        // carry keywords -- which is why arms handling kwargs (split's
-        // maxsplit=, format's **kwargs) must keep their fast path when
-        // hasKeywordArgs is set, even for an unproven receiver. Falling
-        // through would silently drop the keyword.
+        // the AST by the individual arms that support them. hasKeywordArgs
+        // is not a receiver gate (that stole user C().format(a=1)). Proven
+        // str/list keep their kwargs fast path; boxed receivers carry
+        // keywords through Pyc_CallMethodOrBuiltinKw (I-020).
 
         // B6: Handle super().method() — look up method on parent class
         if (isSuperCall && superProxyTemps.count(obj) && !currentClass.empty()) {
@@ -9108,37 +9231,29 @@ class LoweringVisitor {
             return res;
         }
         // Path.exists()/.is_file()/.is_dir()/.mkdir()/.joinpath(*parts) —
-        // dispatch on typeOf(obj) == "path" (fast path after construction)
-        // OR "boxed" (untyped function parameter). The runtime functions
-        // (PyPathlib_Exists etc.) already type-check at runtime via
-        // pyc_is_path_like and return safe defaults for non-Path values,
-        // so emitting the call unconditionally for "boxed" values is safe
-        // and fixes the silent-None bug for Path values passed as params.
-        if (typeOf(obj) == "path" || typeOf(obj) == "boxed") {
-            if (methodName == "exists" && typeOf(obj) == "path") {
-                // Proven Path only. "boxed" here stole user-class
-                // .exists() (direct and through a parameter); Path
-                // values arriving as parameters fall through to
-                // Pyc_CallBuiltinMethod (type 16).
-                ir.addInstruction(currentFunc, "call", {"PyPathlib_Exists", obj}, res, "bool");
-                noteType(res, "bool");
-                return res;
-            }
-            if (methodName == "is_file") {
-                ir.addInstruction(currentFunc, "call", {"PyPathlib_IsFile", obj}, res, "bool");
-                noteType(res, "bool");
-                return res;
-            }
-            if (methodName == "is_dir") {
-                ir.addInstruction(currentFunc, "call", {"PyPathlib_IsDir", obj}, res, "bool");
-                noteType(res, "bool");
-                return res;
-            }
-            if (methodName == "mkdir") {
-                ir.addInstruction(currentFunc, "call", {"PyPathlib_Mkdir", obj}, res);
-                return res;
-            }
-            if (methodName == "joinpath") {
+        // proven Path only. "boxed" stole user-class methods (I-030);
+        // Path values arriving as parameters fall through to
+        // Pyc_CallBuiltinMethod (type 16).
+        if (methodName == "exists" && typeOf(obj) == "path") {
+            ir.addInstruction(currentFunc, "call", {"PyPathlib_Exists", obj}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+        if (methodName == "is_file" && typeOf(obj) == "path") {
+            ir.addInstruction(currentFunc, "call", {"PyPathlib_IsFile", obj}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+        if (methodName == "is_dir" && typeOf(obj) == "path") {
+            ir.addInstruction(currentFunc, "call", {"PyPathlib_IsDir", obj}, res, "bool");
+            noteType(res, "bool");
+            return res;
+        }
+        if (methodName == "mkdir" && typeOf(obj) == "path") {
+            ir.addInstruction(currentFunc, "call", {"PyPathlib_Mkdir", obj}, res);
+            return res;
+        }
+        if (methodName == "joinpath" && typeOf(obj) == "path") {
                 std::string partsList = "$t" + std::to_string(tempCounter++);
                 std::string countConst = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {std::to_string(args.size())}, countConst);
@@ -9152,38 +9267,32 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyPathlib_Joinpath", obj, partsList}, res);
                 noteType(res, "path");
                 return res;
-            }
         }
-        // .isoformat()/.weekday()/.isoweekday()/.total_seconds() — dispatch
-        // when typeOf(obj) is date/datetime/timedelta (fast path after
-        // construction) OR "boxed" (untyped function parameter). The runtime
-        // functions type-check via pyc_as_datetime/pyc_as_timedelta and return
-        // safe defaults for non-matching types, so this is safe.
-        if (methodName == "isoformat" && (typeOf(obj) == "date" || typeOf(obj) == "datetime" || typeOf(obj) == "boxed")) {
+        // .isoformat()/.weekday()/.isoweekday()/.total_seconds() — proven
+        // date/datetime/timedelta only. "boxed" stole user methods (I-030).
+        if (methodName == "isoformat" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
             ir.addInstruction(currentFunc, "call", {"PyDateTime_Isoformat", obj}, res, "str");
             noteType(res, "str");
             return res;
         }
-        if (methodName == "weekday" && (typeOf(obj) == "date" || typeOf(obj) == "datetime" || typeOf(obj) == "boxed")) {
+        if (methodName == "weekday" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
             ir.addInstruction(currentFunc, "call", {"PyDateTime_Weekday", obj}, res, "int");
             noteType(res, "int");
             return res;
         }
-        if (methodName == "isoweekday" && (typeOf(obj) == "date" || typeOf(obj) == "datetime" || typeOf(obj) == "boxed")) {
+        if (methodName == "isoweekday" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
             ir.addInstruction(currentFunc, "call", {"PyDateTime_Isoweekday", obj}, res, "int");
             noteType(res, "int");
             return res;
         }
-        if (methodName == "total_seconds" && (typeOf(obj) == "timedelta" || typeOf(obj) == "boxed")) {
+        if (methodName == "total_seconds" && typeOf(obj) == "timedelta") {
             ir.addInstruction(currentFunc, "call", {"PyTimedelta_TotalSeconds", obj}, res, "float");
             noteType(res, "float");
             return res;
         }
 
-        // Match.group(i) — dispatch when typeOf(obj) is "match" (fast path)
-        // OR "boxed" (untyped function parameter). PyBuiltin_ReMatchGroup
-        // type-checks via asMatchObj and returns None for non-Match values.
-        if (methodName == "group" && (typeOf(obj) == "match" || typeOf(obj) == "boxed")) {
+        // Match.group(i) — proven match only. "boxed" stole user .group().
+        if (methodName == "group" && typeOf(obj) == "match") {
             std::string i = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyBuiltin_ReMatchGroup", obj, i}, res);
             return res;
@@ -9196,7 +9305,7 @@ class LoweringVisitor {
         // here -- after the structural / module-qualified arms above, and
         // before the remaining name-only arms -- so a proven receiver
         // takes its own row and nothing else can claim it.
-        if (tryBuiltinMethodTable(methodName, obj, args, res)) {
+        if (tryBuiltinMethodTable(methodName, obj, args, res, attr)) {
             return res;
         }
 
@@ -9226,11 +9335,8 @@ class LoweringVisitor {
         } else if (methodName == "is_integer" && typeOf(obj) == "float") {
             ir.addInstruction(currentFunc, "call", {"PyFloat_IsInteger", obj}, res, "bool");
             noteType(res, "bool");
-        } else if (methodName == "is_integer" && typeOf(obj) == "boxed") {
-            ir.addInstruction(currentFunc, "call", {"PyFloat_IsInteger", obj}, res, "bool");
-            noteType(res, "bool");
         } else if ((methodName == "split" || methodName == "rsplit") &&
-                   (isProvenStr(obj) || hasKeywordArgs)) {
+                   isProvenStr(obj)) {
             // sep=None (the whitespace-run-splitting mode, collapsing
             // consecutive whitespace and dropping empty tokens) must be
             // detected from the AST, not just "no argument given" — a
@@ -9263,11 +9369,7 @@ class LoweringVisitor {
                     if (maxsplitArg.empty()) {
                         ir.addInstruction(currentFunc, "call", {"PyString_SplitWhitespace", obj}, res);
                     } else {
-                        // split(None, maxsplit) — whitespace mode with a limit.
-                        // Not commonly used; delegate to RSplitWhitespace which
-                        // handles maxsplit (the result order differs only for
-                        // the exact boundary, which whitespace mode makes rare).
-                        ir.addInstruction(currentFunc, "call", {"PyString_RSplitWhitespace", obj, maxsplitArg}, res);
+                        ir.addInstruction(currentFunc, "call", {"PyString_SplitWhitespace2", obj, maxsplitArg}, res);
                     }
                 } else {
                     if (maxsplitArg.empty()) {
@@ -9301,7 +9403,7 @@ class LoweringVisitor {
                     ir.addInstruction(currentFunc, "call", {"PyString_RSplit", obj, args[0], maxsplitArg}, res);
                 }
             }
-        } else if (methodName == "format" && (isProvenStr(obj) || hasKeywordArgs)) {
+        } else if (methodName == "format" && isProvenStr(obj)) {
             // str.format(*args, **kwargs) — found entirely unimplemented
             // while bug hunting. `args` here already has only positional
             // arguments (Keyword children are filtered out at the top of
@@ -9362,14 +9464,11 @@ class LoweringVisitor {
         // Set methods (gated on typeOf == "set" so they don't shadow
         // dict/list method names like pop/copy/update/clear).
         // Dict methods
-        } else if (methodName == "get" && typeOf(obj) == "dict" &&
-                   !(attr->children.size() >= 1 && attr->children[0] &&
-                     attr->children[0]->type == "Name" &&
-                     isImportedModuleName(attr->children[0]->id))) {
+        } else if (methodName == "get" && isRealDictReceiver(attr, obj)) {
             // Proven user dict only. Do not accept "boxed" (user instances
             // and boxed dicts fall through to Pyc_CallMethodOrBuiltin /
             // Pyc_CallBuiltinMethod case 2). Do not fire for an imported
-            // module namespace (typeOf is "dict" after import).
+            // module namespace, os.path mapping, or a class dict.
             std::string keyArg = args.empty() ? "" : args[0];
             if (args.size() >= 2) {
                 ir.addInstruction(currentFunc, "call", {"PyDict_GetItemWithDefault", obj, keyArg, args[1]}, res);
@@ -9377,26 +9476,31 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyDict_GetItem", obj, keyArg}, res);
             }
             noteType(res, "boxed");
-        } else if (methodName == "get" &&
-                   attr->children.size() >= 1 && attr->children[0] &&
-                   attr->children[0]->type == "Name" &&
-                   isImportedModuleName(attr->children[0]->id) &&
-                   moduleKnownMissingExport(attr->children[0]->id, "get")) {
-            // os.get(...) etc. Generic Pyc_GetItem+Pyc_Apply would yield
-            // None; CPython raises AttributeError.
-            const std::string& baseId = attr->children[0]->id;
-            auto aliasIt = moduleNameAliases.find(baseId);
-            const std::string& orig =
-                (aliasIt != moduleNameAliases.end()) ? aliasIt->second : baseId;
+        } else if (isDictNamespaceMethod(methodName) &&
+                   (isOsPathReceiver(attr) ||
+                    (attr->children.size() >= 1 && attr->children[0] &&
+                     attr->children[0]->type == "Name" &&
+                     isImportedModuleName(attr->children[0]->id) &&
+                     !moduleHasExport(attr->children[0]->id, methodName)))) {
+            // os.keys() / os.get() / sys.get() / os.path.get() etc.
+            // Generic dict dispatch would serve dict methods or yield
+            // None; CPython raises.
+            std::string orig = "os.path";
+            if (!isOsPathReceiver(attr) && attr->children.size() >= 1 &&
+                attr->children[0]) {
+                const std::string& baseId = attr->children[0]->id;
+                auto aliasIt = moduleNameAliases.find(baseId);
+                orig = (aliasIt != moduleNameAliases.end()) ? aliasIt->second : baseId;
+            }
             std::string nameConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"AttributeError\""}, nameConst, "str");
             std::string msgConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const",
-                              {"\"module '" + orig + "' has no attribute 'get'\""},
+                              {"\"module '" + orig + "' has no attribute '" + methodName + "'\""},
                               msgConst, "str");
             ir.addInstruction(currentFunc, "call", {"pyc_make_exc", nameConst, msgConst}, res);
             ir.addInstruction(currentFunc, "call", {"pyc_raise", res}, "");
-        } else if (methodName == "values" && typeOf(obj) == "dict") {
+        } else if (methodName == "values" && isRealDictReceiver(attr, obj)) {
             ir.addInstruction(currentFunc, "call", {"PyDict_Values", obj}, res);
             noteType(res, "list");
             std::string valueType = dictValueTypes[obj];
@@ -9410,68 +9514,38 @@ class LoweringVisitor {
             if (dlit != dictValueLayouts.end() && !dlit->second.empty()) {
                 markStructuredList(res, dlit->second);
             }
-        } else if (methodName == "update" && typeOf(obj) == "dict") {
+        } else if (methodName == "update" && isRealDictReceiver(attr, obj)) {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyDict_Update", obj, arg}, res);
-        } else if (methodName == "pop" && typeOf(obj) == "dict") {
+        } else if (methodName == "pop" && isRealDictReceiver(attr, obj)) {
             std::string key = args.size() > 0 ? args[0] : "";
             std::string defv = args.size() > 1 ? args[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyDict_Pop", obj, key, defv}, res);
         } else if (methodName == "fromkeys" &&
-                   (typeOf(obj) == "dict" ||
+                   (typeOf(obj) == "dict_type" ||
+                    isRealDictReceiver(attr, obj) ||
                     (attr->children.size() >= 1 && attr->children[0] &&
                      attr->children[0]->type == "Name" &&
-                     attr->children[0]->id == "dict"))) {
-            // Classmethod: no self. Proven dict, or the AST `dict` type
-            // name (`dict.fromkeys(...)`). Do not accept "boxed".
+                     (attr->children[0]->id == "dict" ||
+                      (lambdaAliases.count(attr->children[0]->id) &&
+                       lambdaAliases[attr->children[0]->id] == "PyBuiltin_DictFactory"))))) {
+            // Classmethod: no self. Proven dict, dict factory alias
+            // (`D = dict; D.fromkeys`), or the AST `dict` type name.
             std::string keys = args.size() > 0 ? args[0] : "";
             std::string defv = args.size() > 1 ? args[1] : "";
             ir.addInstruction(currentFunc, "call", {"PyDict_FromKeys", keys, defv}, res);
-        // os.path stub methods — gate on AST `os.path.<name>` (or an
-        // `import os as X` alias). The earlier pathlib exists/is_file/
-        // is_dir block is a different name set / enclosing typeOf.
-        } else if (methodName == "exists" &&
-                   attr->children.size() >= 1 && attr->children[0] &&
-                   attr->children[0]->type == "Attribute" &&
-                   attr->children[0]->id == "path" &&
-                   !attr->children[0]->children.empty() &&
-                   attr->children[0]->children[0] &&
-                   attr->children[0]->children[0]->type == "Name" &&
-                   (attr->children[0]->children[0]->id == "os" ||
-                    (moduleNameAliases.find(attr->children[0]->children[0]->id) !=
-                         moduleNameAliases.end() &&
-                     moduleNameAliases.find(attr->children[0]->children[0]->id)->second ==
-                         "os"))) {
+        // os.path stub methods — AST `os.path.<name>` (including
+        // `import os as X`) or a from-import / assignment alias of that
+        // mapping (`from os import path`; `q = os.path`).
+        } else if (methodName == "exists" && isOsPathReceiver(attr)) {
             std::string pathArg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"Pyc_OsPathExists", pathArg}, res, "bool");
             noteType(res, "bool");
-        } else if (methodName == "isfile" &&
-                   attr->children.size() >= 1 && attr->children[0] &&
-                   attr->children[0]->type == "Attribute" &&
-                   attr->children[0]->id == "path" &&
-                   !attr->children[0]->children.empty() &&
-                   attr->children[0]->children[0] &&
-                   attr->children[0]->children[0]->type == "Name" &&
-                   (attr->children[0]->children[0]->id == "os" ||
-                    (moduleNameAliases.find(attr->children[0]->children[0]->id) !=
-                         moduleNameAliases.end() &&
-                     moduleNameAliases.find(attr->children[0]->children[0]->id)->second ==
-                         "os"))) {
+        } else if (methodName == "isfile" && isOsPathReceiver(attr)) {
             std::string pathArg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"Pyc_OsPathIsFile", pathArg}, res, "bool");
             noteType(res, "bool");
-        } else if (methodName == "isdir" &&
-                   attr->children.size() >= 1 && attr->children[0] &&
-                   attr->children[0]->type == "Attribute" &&
-                   attr->children[0]->id == "path" &&
-                   !attr->children[0]->children.empty() &&
-                   attr->children[0]->children[0] &&
-                   attr->children[0]->children[0]->type == "Name" &&
-                   (attr->children[0]->children[0]->id == "os" ||
-                    (moduleNameAliases.find(attr->children[0]->children[0]->id) !=
-                         moduleNameAliases.end() &&
-                     moduleNameAliases.find(attr->children[0]->children[0]->id)->second ==
-                         "os"))) {
+        } else if (methodName == "isdir" && isOsPathReceiver(attr)) {
             std::string pathArg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"Pyc_OsPathIsDir", pathArg}, res, "bool");
             noteType(res, "bool");
@@ -9509,7 +9583,7 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "call", {"Pyc_SubprocessCheckOutput", args[0]}, res, "str");
             noteType(res, "str");
         // List methods
-        } else if (methodName == "sort" && (isProvenListLike(obj) || hasKeywordArgs)) {
+        } else if (methodName == "sort" && isProvenListLike(obj)) {
             // key=/reverse= — found completely unimplemented (silently
             // ignored) while hunting for more bugs; extracted the same
             // way other keyword-only args are pulled from the raw AST
@@ -9583,7 +9657,8 @@ class LoweringVisitor {
                 attr->children[0]->type == "Name" && attr->children[0]->id == "collections") {
                 isCollectionsModule = true;
             }
-            if (methodName == "most_common" && (typeOf(obj) == "dict" || typeOf(obj) == "boxed") && !isCollectionsModule) {
+            if (methodName == "most_common" && isRealDictReceiver(attr, obj) &&
+                !isCollectionsModule) {
                 std::string zero = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"0"}, zero);
                 std::string argList = "$t" + std::to_string(tempCounter++);
@@ -9599,7 +9674,8 @@ class LoweringVisitor {
                 return res;
             }
             // Counter.elements() — returns an iterator over elements.
-            if (methodName == "elements" && (typeOf(obj) == "dict" || typeOf(obj) == "boxed") && !isCollectionsModule) {
+            if (methodName == "elements" && isRealDictReceiver(attr, obj) &&
+                !isCollectionsModule) {
                 ir.addInstruction(currentFunc, "call", {"PyCollections_Elements", obj}, res);
                 noteType(res, "list");
                 return res;
@@ -9609,8 +9685,8 @@ class LoweringVisitor {
             // untyped `.update()` arm earlier in this chain resolves
             // first, so anything added here would be unreachable. That
             // arm's PyDict_Update is Counter-aware at runtime instead.
-            if (methodName == "subtract" &&
-                (typeOf(obj) == "dict" || typeOf(obj) == "boxed") && !isCollectionsModule) {
+            if (methodName == "subtract" && isRealDictReceiver(attr, obj) &&
+                !isCollectionsModule) {
                 std::string zero = "$c" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "const", {"0"}, zero);
                 std::string argList = "$t" + std::to_string(tempCounter++);
@@ -9658,6 +9734,36 @@ class LoweringVisitor {
             }
             // Try to call as user-defined method
             // For class instances: look up method on class dict
+            // C().format(a=1): map kwargs onto C__format at compile time
+            // so dropping the hasKeywordArgs format arm does not drop `a`
+            // (I-030 / I-020).
+            if (hasKeywordArgs) {
+                auto iit = instanceClassOf.find(obj);
+                if (iit != instanceClassOf.end()) {
+                    std::string irName = iit->second + "__" + methodName;
+                    if (knownIRFunctions.count(irName)) {
+                        std::vector<std::string> callArgs{irName, obj};
+                        for (auto& a : args) callArgs.push_back(a);
+                        auto pit = funcParamNames.find(irName);
+                        if (pit != funcParamNames.end()) {
+                            for (size_t i = 1; i < node->children.size(); ++i) {
+                                const auto* ch = node->children[i].get();
+                                if (!ch || ch->type != "Keyword" || ch->id.empty() ||
+                                    ch->children.empty())
+                                    continue;
+                                for (size_t j = 0; j < pit->second.size(); ++j) {
+                                    if (pit->second[j] != ch->id) continue;
+                                    while (callArgs.size() <= j + 1) callArgs.push_back("");
+                                    callArgs[j + 1] = lowerExpr(ch->children[0].get());
+                                    break;
+                                }
+                            }
+                        }
+                        ir.addInstruction(currentFunc, "call", callArgs, res);
+                        return res;
+                    }
+                }
+            }
             std::string methodLookup = "$t" + std::to_string(tempCounter++);
             std::string methodNameConst = "$c" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "const", {"\"" + methodName + "\""}, methodNameConst, "str");
@@ -9677,11 +9783,37 @@ class LoweringVisitor {
             // the right implementation. Class instances are unaffected:
             // a non-null methodLookup takes the identical path as before.
             //
-            // Arity 0/1/2: Pyc_CallMethodOrBuiltinN(method, obj, name, a0, a1)
-            // — no args list. Arity 3+ still builds one (rfind 4-arg,
-            // replace-with-count). self/cls is NOT prepended; Pyc_CallMethod
-            // decides that from the looked-up method's shape.
-            if (args.size() <= 2) {
+            // Keywords: Pyc_CallMethodOrBuiltinKw carries the kwargs dict
+            // so boxed s.split(maxsplit=) / s.format(x=) still work (I-020).
+            // Arity 0/1/2 without keywords: Pyc_CallMethodOrBuiltinN.
+            if (hasKeywordArgs) {
+                std::string argList = "$t" + std::to_string(tempCounter++);
+                {
+                    std::string z = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"0"}, z);
+                    ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", z}, argList);
+                }
+                for (auto& a : args) {
+                    std::string d = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", argList, a}, d);
+                }
+                std::string kwargsDictVar = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyDict_New"}, kwargsDictVar);
+                for (size_t i = 1; i < node->children.size(); ++i) {
+                    const auto* ch = node->children[i].get();
+                    if (ch && ch->type == "Keyword" && !ch->id.empty() && !ch->children.empty()) {
+                        std::string keyConst = "$c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {"\"" + ch->id + "\""}, keyConst, "str");
+                        std::string kval = lowerExpr(ch->children[0].get());
+                        std::string dummy = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call",
+                                          {"PyDict_SetItem", kwargsDictVar, keyConst, kval}, dummy);
+                    }
+                }
+                ir.addInstruction(currentFunc, "call",
+                                  {"Pyc_CallMethodOrBuiltinKw", methodLookup, obj, argList,
+                                   kwargsDictVar, methodNameConst}, res);
+            } else if (args.size() <= 2) {
                 std::vector<std::string> callOps;
                 callOps.push_back("Pyc_CallMethodOrBuiltin" + std::to_string(args.size()));
                 callOps.push_back(methodLookup);
@@ -9900,6 +10032,7 @@ class LoweringVisitor {
                 }
                 ir.addFunction(methodFuncName, methodParams);
                 knownIRFunctions.insert(methodFuncName);
+                funcParamNames[methodFuncName] = c->args;
                 for (auto& fnr : ir.functions) {
                     if (fnr.name == methodFuncName) {
                         fnr.paramNames = c->args;

@@ -4166,6 +4166,87 @@ d = D()
 d.x = None
 print('{0.x}'.format(d))
 """, "None\nNone\n"),
+    # W5.5 / I-030: boxed-accepting arms must not steal user methods.
+    ("""class C:
+    def is_file(self):
+        return "user-file"
+    def isoformat(self):
+        return "user-iso"
+    def group(self, n):
+        return "user-group"
+    def is_integer(self):
+        return "user-int"
+    def most_common(self):
+        return "user-mc"
+    def format(self, a=0):
+        return "user-fmt:" + str(a)
+print(C().is_file())
+print(C().isoformat())
+print(C().group(1))
+print(C().is_integer())
+print(C().most_common())
+print(C().format(a=1))
+""", "user-file\nuser-iso\nuser-group\nuser-int\nuser-mc\nuser-fmt:1\n"),
+    # W5.5 / I-031: fromkeys / os.path via alias and from-import.
+    ("""D = dict
+print(D.fromkeys([3]))
+from os import path
+print(path.exists("."))
+""", "{3: None}\nTrue\n"),
+    # W5.5 / I-032: leftover .get on modules / class / sys.
+    ("""import os
+m = os
+try:
+    print(m.get("path"))
+except AttributeError as e:
+    print(type(e).__name__)
+class C:
+    def get(self, k, default=None):
+        return "user-get:" + str(k)
+c = C()
+print(C.get(c, "x"))
+import sys
+try:
+    print(sys.get("x"))
+except AttributeError as e:
+    print(type(e).__name__)
+try:
+    print(os.path.get("exists"))
+except AttributeError as e:
+    print(type(e).__name__)
+from os import path
+try:
+    print(path.get("exists"))
+except AttributeError as e:
+    print(type(e).__name__)
+q = os.path
+try:
+    print(q.get("exists"))
+except AttributeError as e:
+    print(type(e).__name__)
+""", "AttributeError\nuser-get:x\nAttributeError\nAttributeError\nAttributeError\nAttributeError\n"),
+    # W5.5 / I-034: module namespaces are not dict method receivers.
+    ("""import os
+try:
+    print(os.keys())
+except AttributeError as e:
+    print(type(e).__name__)
+try:
+    print(os.pop("path"))
+except AttributeError as e:
+    print(type(e).__name__)
+""", "AttributeError\nAttributeError\n"),
+    # W5.5 / I-020: kwargs reach boxed method fallback.
+    ("""def fs(s):
+    return s.split(maxsplit=1)
+print(fs("a b c"))
+def ff(s):
+    return s.format(x=3)
+print(ff("{x}"))
+def fsn(s):
+    return s.split(None, 1)
+print(fsn("a  b  c"))
+""", "['a', 'b c']\n3\n['a', 'b  c']\n"),
     # W5.4 / I-023: dynamic *args still TypeError on missing required.
     ("""def f(a):
     return a
