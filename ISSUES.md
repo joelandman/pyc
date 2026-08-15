@@ -962,22 +962,22 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 8 W8.5. Coordinator: `-O0`/`-O2` match CPython.
 
 ### I-156  Static `zip(a, b, c)` is still Zip2
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `zip([1,2],[3,4],[5,6])` — CPython 3-tuples; pyc `[(1, 3), (2, 4)]`.
-  Only the dynamic-`*` arm (I-151) is N-way.
-- Files: `src/Compiler.cpp` (`zip` arm)
+- Evidence: W9.1 / `w91_zip.py`: `zip([1,2],[3,4],[5,6])` / unequal / 4-way → N-tuples.
+  Parent: Zip2 of the first two.
+- Files: `src/Compiler.cpp` (static `zip` arm), `src/runtime/Runtime.cpp` (`PyBuiltin_ZipN`), `src/codegen/Codegen.cpp`, `include/pyc/runtime.h`
 - Blocks merge: no
-- Notes: Found verifying W8.5. Do not demand in W8.5.
+- Notes: Wave 9 W9.1. Coordinator: `-O0`/`-O2` match CPython. Runner 754/754. `argRes.size()==2` still Zip2. 0-arg / 1-arg now ZipN (bonus; parent was a link-fail). First-class `z=zip; z(a,b,c)` via `pyc_adapt_zip`.
 
 ### I-157  Dynamic `zip(*tuples)` still empty / list-only
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `zip(*[(1,2),(3,4),(5,6)])` — CPython 3-tuples; pyc `[]`.
-  `emitZipFromVaList` walks `PyList_*` (type-1 only).
-- Files: `src/Compiler.cpp`
+- Evidence: W9.1: `zip((1,2),(3,4),(5,6))`, `zip([1,2],(3,4))`, `zip(*[(1,2),…])`, `zip(*mt())`, `zip(*mt2())`.
+  Parent: `[]` (`PyList_*` / Zip2 type==1 only).
+- Files: `src/runtime/Runtime.cpp` (`pyc_zip_seq_len` / `pyc_zip_seq_item` / Zip2 / ZipN), `src/Compiler.cpp` (`emitZipFromVaList`)
 - Blocks merge: no
-- Notes: Found verifying W8.5. Do not demand in W8.5.
+- Notes: Wave 9 W9.1. Coordinator: `-O0`/`-O2` match CPython. Super (`type==7 && cell_content`) still TypeError (I-013). Non-list/tuple leftover is I-159. Do not re-open I-151.
 
 ### I-158  Nested generator calls are unwrapped; `list(int)` drains yield buffer
 - Status: open
@@ -986,6 +986,119 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/Compiler.cpp` (`scanForGenerators`), `src/runtime/Runtime.cpp` (`PyBuiltin_List`)
 - Blocks merge: no
 - Notes: Found fixing W8.4 runner DIFF. Real fix is Compiler wrap of `__nesteddef_*`. Do not demand in W8.4.
+
+### I-159  `zip` of str / dict / set / bytes / None is empty
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.2 / `w92_zip.py` + CASE banner `# W9.2 / I-159`:
+  `zip("ab","cd")` / 3-way / mixed / shortest / `zip(b"ab",[1,2])` match CPython;
+  `zip(None,[1])` / `zip(1,[1])` → TypeError not `[]`.
+  Parent: `pyc_zip_seq_len` type 3/17 → 0; Zip2 `!a||!b` → `[]`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_zip_seq_len`, `pyc_zip_seq_item`, Zip2)
+- Blocks merge: no
+- Notes: Wave 9 W9.2. Coordinator: `-O0`/`-O2` match CPython. Walks str +
+  bytes/bytearray. None/int TypeError in the shared helper (ZipN /
+  `pyc_adapt_zip` included). Super still TypeError (I-013). Leftover
+  dict/set/bool/float is I-161. enumerate still list-only is I-162.
+  Do not re-open I-156 / I-157.
+
+### I-160  IMPLEMENTATION.md still says zip is 2-tuples
+- Status: open
+- Severity: doc-drift
+- Evidence: IMPLEMENTATION.md ~3098: `enumerate`/`zip` (list of 2-tuples).
+  After W9.1, `zip(a,b,c)` is 3-tuples.
+- Files: `IMPLEMENTATION.md`
+- Blocks merge: no
+- Notes: Prose leftover of Zip2. FEATURES.md just says `zip` — fine.
+
+### I-161  `zip` of dict / set / bool / float still empty
+- Status: open
+- Severity: wrong-answer
+- Evidence: After W9.2, `pyc_zip_seq_len` still `return 0` for unknown tags.
+  `zip({1:2},[1])` — CPython `[(1, 1)]`; pyc `[]`.
+  `zip({1},[1])` — CPython `[(1, 1)]`; pyc `[]`.
+  `zip(True,[1])` — CPython TypeError (`'bool'`); pyc `[]` (tag 5, not type 0).
+  `zip(1.0,[1])` — CPython TypeError (`'float'`); pyc `[]` (type 4).
+- Files: `src/runtime/Runtime.cpp` (`pyc_zip_seq_len`, `pyc_zip_seq_item`)
+- Blocks merge: no
+- Notes: Found reviewing W9.2. Ticket scoped str/bytes + None/int. If dict
+  walk is added, skip modules / instances (`list()` already does; I-154).
+  pyc dict/set insertion-order is not CPython hash order.
+
+### I-162  `enumerate` still walks lists only
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.3 / `w93_enum.py` + CASE banner `# W9.3 / I-162`:
+  `enumerate((1,2))` / `"ab"` / `b"ab"` / `start=` on list and str match
+  CPython; `enumerate(None)` → TypeError not `[]`.
+  Parent: `PyBuiltin_Enumerate2`: `!iterable || type != 1` → `[]`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Enumerate2`)
+- Blocks merge: no
+- Notes: Wave 9 W9.3. Coordinator: `-O0`/`-O2` match CPython. Reuses
+  `pyc_zip_seq_len` / `pyc_zip_seq_item`. Super already TypeError (I-121).
+  `enumerate(1)` TypeErrors for free. Leftovers I-163–I-167. Do not re-open
+  I-159.
+
+### I-163  `reversed` still skips tuple / bytes
+- Status: open
+- Severity: wrong-answer
+- Evidence: `PyBuiltin_Reversed`: type 1 / 3 / 20 only; else `[]`.
+  Comment claims tuples work (“stored as list”) — stale; tuples are type 7.
+  `list(reversed((1,2)))` — CPython `[2, 1]`; pyc `[]`.
+  `list(reversed(b"ab"))` — CPython `[98, 97]`; pyc `[]`.
+  Str already walks. Over-accept: `reversed({1,2})` — CPython TypeError;
+  pyc reverses `setElems`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Reversed`)
+- Blocks merge: no
+- Notes: Found reviewing W9.3 / I-162. Enumerate's sibling walker.
+
+### I-164  `enumerate` of dict / set / bool / float still empty
+- Status: open
+- Severity: wrong-answer
+- Evidence: After W9.3, unknown tags still `[]` via `pyc_zip_seq_len`.
+  `enumerate(True)` / `enumerate(1.0)` — CPython TypeError; pyc `[]`.
+  `enumerate({1:2})` / `enumerate({1})` — CPython pairs; pyc `[]`.
+  `enumerate(1)` now TypeErrors (zip helper reuse) — not this ID.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Enumerate2`)
+- Blocks merge: no
+- Notes: Found reviewing W9.3. Same class as I-161. Skip modules / instances
+  (I-154).
+
+### I-165  First-class `e=enumerate` drops start; `e(None)` is None
+- Status: open
+- Severity: wrong-answer
+- Evidence: `pyc_adapt_enumerate`: `arg0`; `if (!a) return nullptr`; then
+  `PyBuiltin_Enumerate(a)` only.
+  `e=enumerate; list(e([1,2], 5))` — CPython `[(5,1),(6,2)]`; pyc `[(0,1),(1,2)]`.
+  `e(None)` / `e()` — CPython TypeError; pyc `None`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_adapt_enumerate`)
+- Blocks merge: no
+- Notes: Found reviewing W9.3. Token already wired. Do not demand in W9.3.
+
+### I-166  `enumerate(..., start=non-int)` silently uses 0
+- Status: open
+- Severity: wrong-answer
+- Evidence: `Enumerate2`: `if (startObj && (type == 0 || type == 5))` else
+  `startVal = 0`.
+  `enumerate([1], start="x")` / `start=1.5` / `start=None` — CPython TypeError;
+  pyc `[(0, 1)]`. `start=True` already matches.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Enumerate2`)
+- Blocks merge: no
+- Notes: Found reviewing W9.3. Not in the W9.3 CASE.
+
+### I-167  `any`/`all`/`sorted`/`sum`/`min`/`max` still list-only
+- Status: open
+- Severity: wrong-answer
+- Evidence: Same seq-walk class as I-162 / I-163.
+  `any((0,1))` — CPython `True`; pyc `False`.
+  `all((1,0))` — CPython `False`; pyc `True`.
+  `sorted((3,1,2))` / `sorted("bac")` — CPython sorted; pyc `[]`.
+  `sum((1,2,3))` — CPython `6`; pyc `0`.
+  `min((3,1,2))` — CPython `1`; pyc `None`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Any`, `All`, `Sorted`, `Sum2`,
+  `MinList`, `MaxList`)
+- Blocks merge: no
+- Notes: Found reviewing W9.3. Broader leftover than reversed (I-163).
 
 ---
 

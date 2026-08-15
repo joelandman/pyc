@@ -4881,108 +4881,11 @@ class LoweringVisitor {
         ir.addInstruction(currentFunc, "label", {}, okL);
     }
 
-    // I-151: zip(*iterables) for runtime-length N. Zip2 only covers two
-    // iterables; there is no Runtime ZipN, so build N-tuples from the
-    // existing list/tuple helpers.
+    // I-151 / I-156 / I-157: zip(*iterables) for runtime-length N.
+    // Walks lists and tuples in Runtime (PyBuiltin_ZipN).
     std::string emitZipFromVaList(const std::string& vaList) {
-        std::string nCols = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", vaList}, nCols);
-        std::string nSlot = "__sl_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "assign", {nCols}, nSlot);
-        std::string zero = "$c" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "const", {"0"}, zero);
         std::string result = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, result);
-        std::string isZ = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {"Eq", nSlot, zero}, isZ);
-        int sc = tempCounter++;
-        std::string emptyL = "zn_emp_" + std::to_string(sc);
-        std::string workL = "zn_wk_" + std::to_string(sc);
-        std::string doneL = "zn_dn_" + std::to_string(sc);
-        ir.addInstruction(currentFunc, "br", {isZ, emptyL, workL});
-        ir.addInstruction(currentFunc, "label", {}, emptyL);
-        ir.addInstruction(currentFunc, "br", {}, doneL);
-        ir.addInstruction(currentFunc, "label", {}, workL);
-        std::string first = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", vaList, zero}, first);
-        std::string min0 = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", first}, min0);
-        std::string minSlot = "$s" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "assign", {min0}, minSlot);
-        std::string one = "$c" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "const", {"1"}, one);
-        std::string col = "$s" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "assign", {one}, col);
-        std::string minLp = "zn_mlp_" + std::to_string(sc);
-        std::string minBd = "zn_mbd_" + std::to_string(sc);
-        std::string minEx = "zn_mex_" + std::to_string(sc);
-        ir.addInstruction(currentFunc, "br", {}, minLp);
-        ir.addInstruction(currentFunc, "label", {}, minLp);
-        std::string cmCol = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {"Lt", col, nSlot}, cmCol);
-        ir.addInstruction(currentFunc, "br", {cmCol, minBd, minEx});
-        ir.addInstruction(currentFunc, "label", {}, minBd);
-        std::string it = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", vaList, col}, it);
-        std::string sz = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", it}, sz);
-        std::string smaller = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {"Lt", sz, minSlot}, smaller);
-        std::string updL = "zn_upd_" + std::to_string(sc);
-        std::string nxtCol = "zn_nc_" + std::to_string(sc);
-        ir.addInstruction(currentFunc, "br", {smaller, updL, nxtCol});
-        ir.addInstruction(currentFunc, "label", {}, updL);
-        ir.addInstruction(currentFunc, "assign", {sz}, minSlot);
-        ir.addInstruction(currentFunc, "br", {}, nxtCol);
-        ir.addInstruction(currentFunc, "label", {}, nxtCol);
-        std::string ncol = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "add", {col, one}, ncol);
-        ir.addInstruction(currentFunc, "assign", {ncol}, col);
-        ir.addInstruction(currentFunc, "br", {}, minLp);
-        ir.addInstruction(currentFunc, "label", {}, minEx);
-        std::string row = "$s" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "assign", {zero}, row);
-        std::string rowLp = "zn_rlp_" + std::to_string(sc);
-        std::string rowBd = "zn_rbd_" + std::to_string(sc);
-        std::string rowEx = "zn_rex_" + std::to_string(sc);
-        ir.addInstruction(currentFunc, "br", {}, rowLp);
-        ir.addInstruction(currentFunc, "label", {}, rowLp);
-        std::string cmRow = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {"Lt", row, minSlot}, cmRow);
-        ir.addInstruction(currentFunc, "br", {cmRow, rowBd, rowEx});
-        ir.addInstruction(currentFunc, "label", {}, rowBd);
-        std::string tup = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyTuple_NewBoxed", nSlot}, tup);
-        std::string col2 = "$s" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "assign", {zero}, col2);
-        std::string cLp = "zn_clp_" + std::to_string(sc);
-        std::string cBd = "zn_cbd_" + std::to_string(sc);
-        std::string cEx = "zn_cex_" + std::to_string(sc);
-        ir.addInstruction(currentFunc, "br", {}, cLp);
-        ir.addInstruction(currentFunc, "label", {}, cLp);
-        std::string cmC2 = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "icmp", {"Lt", col2, nSlot}, cmC2);
-        ir.addInstruction(currentFunc, "br", {cmC2, cBd, cEx});
-        ir.addInstruction(currentFunc, "label", {}, cBd);
-        std::string it2 = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", vaList, col2}, it2);
-        std::string item = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", it2, row}, item);
-        ir.addInstruction(currentFunc, "call", {"PyTuple_SetItemBoxed", tup, col2, item}, "");
-        std::string ncol2 = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "add", {col2, one}, ncol2);
-        ir.addInstruction(currentFunc, "assign", {ncol2}, col2);
-        ir.addInstruction(currentFunc, "br", {}, cLp);
-        ir.addInstruction(currentFunc, "label", {}, cEx);
-        std::string dmy = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_Append", result, tup}, dmy);
-        std::string nrow = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "add", {row, one}, nrow);
-        ir.addInstruction(currentFunc, "assign", {nrow}, row);
-        ir.addInstruction(currentFunc, "br", {}, rowLp);
-        ir.addInstruction(currentFunc, "label", {}, rowEx);
-        ir.addInstruction(currentFunc, "br", {}, doneL);
-        ir.addInstruction(currentFunc, "label", {}, doneL);
+        ir.addInstruction(currentFunc, "call", {"PyBuiltin_ZipN", vaList}, result);
         return result;
     }
 
@@ -6357,12 +6260,23 @@ class LoweringVisitor {
             noteType(res, "list");
             return res;
         }
-        // zip(a, b) → PyBuiltin_Zip2(a, b)
-        if (funcName == "zip" && argRes.size() >= 2) {
+        // zip(a, b) → PyBuiltin_Zip2(a, b); zip(a, b, c, ...) → ZipN
+        if (funcName == "zip") {
             std::string res = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Zip2", argRes[0], argRes[1]}, res);
+            if (argRes.size() == 2) {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_Zip2", argRes[0], argRes[1]}, res);
+            } else {
+                std::string zero = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, zero);
+                std::string seqs = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, seqs);
+                for (size_t i = 0; i < argRes.size(); ++i) {
+                    std::string d = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", seqs, argRes[i]}, d);
+                }
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_ZipN", seqs}, res);
+            }
             noteType(res, "list");
-            // S3: zip returns tuples, always boxed
             return res;
         }
 

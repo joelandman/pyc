@@ -505,6 +505,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     }
     llvm::FunctionType* zip2Ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(zip2Ty, llvm::Function::ExternalLinkage, "PyBuiltin_Zip2", module.get());
+    llvm::FunctionType* zipNTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+    llvm::Function::Create(zipNTy, llvm::Function::ExternalLinkage, "PyBuiltin_ZipN", module.get());
     // min/max: list form takes (iterable, key); 2-value form takes
     // (a, b, key) — key= was found completely unsupported (silently
     // ignored, min([...], key=f) printed the key function itself,

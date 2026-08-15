@@ -125,6 +125,7 @@ PyObject* PyBuiltin_Reversed(PyObject* obj);
 PyObject* PyBuiltin_Enumerate(PyObject* iterable);
 PyObject* PyBuiltin_Enumerate2(PyObject* iterable, PyObject* start);
 PyObject* PyBuiltin_Zip2(PyObject* a, PyObject* b);
+PyObject* PyBuiltin_ZipN(PyObject* seqs);
 PyObject* PyBuiltin_Int(PyObject* obj);
 PyObject* PyBuiltin_IntBase(PyObject* obj, PyObject* base);
 PyObject* PyBuiltin_Ord(PyObject* obj);

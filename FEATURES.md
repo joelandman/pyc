@@ -124,7 +124,7 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 
 `print(*args, sep=, end=)`, `range` (1/2/3-arg), `len`, `str`, `int`/`int(x, base)`,
 `float`, `complex`, `abs`, `min`/`max` (multi-arg, iterable, `key=`, `default=`),
-`list`, `tuple`, `set`, `enumerate` (`start=`), `zip`, `sum` (`start=`),
+`list`, `tuple`, `set`, `enumerate` (`start=`; list/tuple/str/bytes, [I-162](ISSUES.md)), `zip` (N-way; list/tuple/str/bytes, [I-156](ISSUES.md)/[I-157](ISSUES.md)/[I-159](ISSUES.md)), `sum` (`start=`),
 `sorted` / `list.sort` (`key=`, `reverse=`), `any`, `all`, `isinstance`,
 `issubclass`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`,
 `round`, `divmod` (returns a tuple), `pow` / `pow(base, exp, mod)`, `reversed`,
@@ -241,7 +241,7 @@ runtime module dicts. Keep them in sync.
 | `decimal` | `Decimal` arithmetic, `.quantize`, conversions | `getcontext`/`localcontext` |
 
 `itertools.product`/`combinations`/`permutations`/`zip_longest` entries,
-`os.path.split`/`splitext`, `struct.unpack`, `enumerate`/`zip` pairs,
+`os.path.split`/`splitext`, `struct.unpack`, `enumerate` pairs / `zip` N-tuples,
 `dict.items`, `str.partition`/`rpartition`, `groupby` pairs, and
 `Counter.most_common` entries are **real tuples**.
 

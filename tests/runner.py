@@ -4874,6 +4874,48 @@ def mkp():
     return [1, 2, 3]
 print(*mkp())
 """, "1\n[(1, 3, 5), (2, 4, 6)]\nTypeError\nTypeError\n1 2 3\n"),
+    # W9.1 / I-156 I-157: static N-way zip; zip walks tuples not just lists.
+    ("""print(list(zip([1, 2], [3, 4], [5, 6])))
+print(list(zip([1, 2], [3, 4])))
+print(list(zip((1, 2), (3, 4), (5, 6))))
+print(list(zip([1, 2], (3, 4))))
+print(list(zip(*[(1, 2), (3, 4), (5, 6)])))
+def mt():
+    return [(1, 2), (3, 4), (5, 6)]
+print(list(zip(*mt())))
+def mt2():
+    return ((1, 2), (3, 4), (5, 6))
+print(list(zip(*mt2())))
+print(list(zip([1, 2, 3], [4, 5], [6, 7, 8, 9])))
+print(list(zip([1], [2], [3], [4])))
+""", "[(1, 3, 5), (2, 4, 6)]\n[(1, 3), (2, 4)]\n[(1, 3, 5), (2, 4, 6)]\n[(1, 3), (2, 4)]\n[(1, 3, 5), (2, 4, 6)]\n[(1, 3, 5), (2, 4, 6)]\n[(1, 3, 5), (2, 4, 6)]\n[(1, 4, 6), (2, 5, 7)]\n[(1, 2, 3, 4)]\n"),
+    # W9.2 / I-159: zip walks str/bytes; None/int are TypeError not [].
+    ("""print(list(zip("ab", "cd")))
+print(list(zip("ab", "cd", "ef")))
+print(list(zip("ab", [1, 2])))
+print(list(zip("ab", "c")))
+print(list(zip(b"ab", [1, 2])))
+try:
+    print(list(zip(None, [1])))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(list(zip(1, [1])))
+except TypeError as e:
+    print(type(e).__name__)
+""", "[('a', 'c'), ('b', 'd')]\n[('a', 'c', 'e'), ('b', 'd', 'f')]\n[('a', 1), ('b', 2)]\n[('a', 'c')]\n[(97, 1), (98, 2)]\nTypeError\nTypeError\n"),
+    # W9.3 / I-162: enumerate walks tuple/str/bytes; list + start= kept.
+    ("""print(list(enumerate([10, 20])))
+print(list(enumerate((1, 2))))
+print(list(enumerate("ab")))
+print(list(enumerate(b"ab")))
+print(list(enumerate([1, 2], start=3)))
+print(list(enumerate("ab", 5)))
+try:
+    print(list(enumerate(None)))
+except TypeError as e:
+    print(type(e).__name__)
+""", "[(0, 10), (1, 20)]\n[(0, 1), (1, 2)]\n[(0, 'a'), (1, 'b')]\n[(0, 97), (1, 98)]\n[(3, 1), (4, 2)]\n[(5, 'a'), (6, 'b')]\nTypeError\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -4915,6 +4957,12 @@ FILE_CASES = [
     ("w84_runtime.py", []),
     # W8.5: builtin * forms; * + **dict multiple values.
     ("w85_star.py", []),
+    # W9.1: static N-way zip; zip walks tuples not just lists.
+    ("w91_zip.py", []),
+    # W9.2: zip walks str/bytes; None/int TypeError.
+    ("w92_zip.py", []),
+    # W9.3: enumerate walks tuple/str/bytes.
+    ("w93_enum.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

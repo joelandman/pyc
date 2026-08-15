@@ -7099,59 +7099,115 @@ PyObject* PyBuiltin_Reversed(PyObject* obj) {
     }
     return r;
 }
+// Forward decls: zip seq walk (list / tuple / str / bytes) lives just
+// below; enumerate reuses it so None/int TypeError and item boxing match.
+static size_t pyc_zip_seq_len(PyObject* s);
+static PyObject* pyc_zip_seq_item(PyObject* s, size_t i);
+
 PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
     return PyBuiltin_Enumerate2(iterable, nullptr);
 }
 PyObject* PyBuiltin_Enumerate2(PyObject* iterable, PyObject* startObj) {
     if (pyc_super_not_iterable(iterable)) return nullptr;
-    if (!iterable || iterable->type != 1) return PyList_New(0);
     long startVal = 0;
     if (startObj && (startObj->type == 0 || startObj->type == 5)) startVal = startObj->value;
-    size_t n = 0;
-    if (iterable->list_item_type == 1) n = iterable->ilist.size();
-    else if (iterable->list_item_type == 2) n = iterable->flist.size();
-    else n = iterable->list.size();
+    size_t n = pyc_zip_seq_len(iterable);
     PyObject* r = PyList_New(n);
     for (size_t i = 0; i < n; ++i) {
         PyObject* pair = PyTuple_New(2);
         PyTuple_SetItem(pair, 0, PyInt_FromLong(startVal + (long)i));
-        PyObject* v = nullptr;
-        if (iterable->list_item_type == 1) v = PyInt_FromLong(iterable->ilist[i]);
-        else if (iterable->list_item_type == 2) v = PyFloat_FromDouble(iterable->flist[i]);
-        else { v = iterable->list[i]; if (v) Py_INCREF(v); }
-        PyTuple_SetItem(pair, 1, v);
+        PyTuple_SetItem(pair, 1, pyc_zip_seq_item(iterable, i));
         PyList_SetItem(r, i, pair);
     }
     return r;
 }
+// Zip walks list (type 1, including A4 ilist/flist), tuple
+// (type 7 && !cell_content), str (3), and bytes/bytearray (17/18).
+// Super is type 7 with cell_content (I-013) and is not iterable.
+// None (nullptr) and int (type 0) are TypeError, not length 0 (I-159).
+static size_t pyc_zip_seq_len(PyObject* s) {
+    if (!s) {
+        pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
+        return 0;
+    }
+    if (s->type == 0) {
+        pyc_raise_msg("TypeError", "'int' object is not iterable");
+        return 0;
+    }
+    if (s->type == 1) return PyList_Size(s);
+    if (s->type == 7 && !s->cell_content) return PyTuple_Size(s);
+    if (s->type == 3 || s->type == 17 || s->type == 18) return s->str.size();
+    return 0;
+}
+static PyObject* pyc_zip_seq_item(PyObject* s, size_t i) {
+    if (!s) return nullptr;
+    if (s->type == 1) return listGetNewRef(s, i);
+    if (s->type == 7 && !s->cell_content) return tupleGetNewRef(s, i);
+    if (s->type == 3) {
+        if (i >= s->str.size()) return nullptr;
+        return PyUnicode_FromStringAndSize(s->str.data() + i, 1);
+    }
+    if (s->type == 17 || s->type == 18) {
+        if (i >= s->str.size()) return nullptr;
+        return PyInt_FromLong((unsigned char)s->str[i]);
+    }
+    return nullptr;
+}
+static PyObject* pyc_zip_col(PyObject* seqs, size_t i) {
+    if (!seqs) return nullptr;
+    if (seqs->type == 1 && seqs->list_item_type == 0 && i < seqs->list.size())
+        return seqs->list[i];
+    if (seqs->type == 7 && !seqs->cell_content &&
+        seqs->list_item_type == 0 && i < seqs->list.size())
+        return seqs->list[i];
+    return nullptr;
+}
+
 PyObject* PyBuiltin_Zip2(PyObject* a, PyObject* b) {
     if (pyc_super_not_iterable(a) || pyc_super_not_iterable(b)) return nullptr;
-    if (!a || !b) return PyList_New(0);
-    size_t na = 0, nb = 0;
-    if (a->type == 1) {
-        if (a->list_item_type == 1) na = a->ilist.size();
-        else if (a->list_item_type == 2) na = a->flist.size();
-        else na = a->list.size();
-    }
-    if (b->type == 1) {
-        if (b->list_item_type == 1) nb = b->ilist.size();
-        else if (b->list_item_type == 2) nb = b->flist.size();
-        else nb = b->list.size();
-    }
+    size_t na = pyc_zip_seq_len(a);
+    size_t nb = pyc_zip_seq_len(b);
     size_t n = na < nb ? na : nb;
     PyObject* r = PyList_New(n);
     for (size_t i = 0; i < n; ++i) {
         PyObject* pair = PyTuple_New(2);
-        PyObject* va = nullptr, *vb = nullptr;
-        if (a->list_item_type == 1) va = PyInt_FromLong(a->ilist[i]);
-        else if (a->list_item_type == 2) va = PyFloat_FromDouble(a->flist[i]);
-        else { va = a->list[i]; if (va) Py_INCREF(va); }
-        if (b->list_item_type == 1) vb = PyInt_FromLong(b->ilist[i]);
-        else if (b->list_item_type == 2) vb = PyFloat_FromDouble(b->flist[i]);
-        else { vb = b->list[i]; if (vb) Py_INCREF(vb); }
-        PyTuple_SetItem(pair, 0, va);
-        PyTuple_SetItem(pair, 1, vb);
+        PyTuple_SetItem(pair, 0, pyc_zip_seq_item(a, i));
+        PyTuple_SetItem(pair, 1, pyc_zip_seq_item(b, i));
         PyList_SetItem(r, i, pair);
+    }
+    return r;
+}
+
+// ZipN: `seqs` is a list (or boxed tuple) of iterables. Stops at the
+// shortest. Each row is a real N-tuple; the outer result is a list.
+PyObject* PyBuiltin_ZipN(PyObject* seqs) {
+    if (pyc_super_not_iterable(seqs)) return nullptr;
+    if (!seqs) return PyList_New(0);
+    size_t nCols = 0;
+    if (seqs->type == 1) {
+        if (seqs->list_item_type != 0) return PyList_New(0);
+        nCols = seqs->list.size();
+    } else if (seqs->type == 7 && !seqs->cell_content) {
+        if (seqs->list_item_type != 0) return PyList_New(0);
+        nCols = seqs->list.size();
+    } else {
+        return PyList_New(0);
+    }
+    if (nCols == 0) return PyList_New(0);
+    for (size_t i = 0; i < nCols; ++i) {
+        if (pyc_super_not_iterable(pyc_zip_col(seqs, i))) return nullptr;
+    }
+    size_t minLen = (size_t)-1;
+    for (size_t i = 0; i < nCols; ++i) {
+        size_t n = pyc_zip_seq_len(pyc_zip_col(seqs, i));
+        if (n < minLen) minLen = n;
+    }
+    PyObject* r = PyList_New(minLen);
+    for (size_t row = 0; row < minLen; ++row) {
+        PyObject* tup = PyTuple_New(nCols);
+        for (size_t col = 0; col < nCols; ++col)
+            PyTuple_SetItem(tup, col, pyc_zip_seq_item(pyc_zip_col(seqs, col), row));
+        PyList_SetItem(r, row, tup);
     }
     return r;
 }
@@ -11961,8 +12017,7 @@ static PyObject* pyc_adapt_enumerate(PyObject* args) {
     return PyBuiltin_Enumerate(a);
 }
 static PyObject* pyc_adapt_zip(PyObject* args) {
-    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
-    return PyBuiltin_Zip2(args->list[0], args->list[1]);
+    return PyBuiltin_ZipN(args);
 }
 static PyObject* pyc_adapt_isinstance(PyObject* args) {
     // Note: isinstance as a value is limited — the compile-time typecode
