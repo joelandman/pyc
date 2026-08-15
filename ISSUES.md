@@ -799,12 +799,16 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: I-017 child. Feature work. Keep Compiler exports in sync.
 
 ### I-118  `open()` `.read` / `.readline` / `.close` / `"rb"`
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: FEATURES.md File I/O. `open` + `.write` / `.readlines` / `with` work. No `.read()`, `.readline()`, `.close()`, or `open(..., "rb")`.
-- Files: `src/runtime/Runtime.cpp`
+- Evidence: W10.1 / `w118_io.py`: `f.read()` / `readline()` / `readlines()` /
+  `read(5)` / `open(..., "rb")` bytes / `close()` then `read()` ValueError /
+  `with` read match CPython. Parent: AttributeError `'dict' ... 'read'`.
+- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp` (file arms),
+  `src/codegen/Codegen.cpp`, `include/pyc/runtime.h`
 - Blocks merge: no
-- Notes: I-017 child. Feature work. `"rb"` is the bytes-I/O half of the old I-017 umbrella.
+- Notes: Wave 10 W10.1. Coordinator: `-O0`/`-O2` match; valgrind 0 errors
+  on w118. Proven `typeOf=="file"` only (I-030). Leftovers I-222–I-225.
 
 ### I-119  hashlib `.update()`
 - Status: open
@@ -1632,6 +1636,46 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/runtime/Runtime.cpp` (`PyObject_CompareBool`)
 - Blocks merge: no
 - Notes: Found reviewing W9.21 / I-211. Same CPython arm as factory==K.
+
+### I-222  Boxed / first-class file methods still miss
+- Status: open
+- Severity: wrong-answer
+- Evidence: `def g(f): return f.read(); g(open(p))` — CPython file text;
+  pyc AttributeError `'dict' object has no attribute 'read'`.
+  `h = f.read; h()` — CPython text; pyc None (token, no bound self).
+- Files: `src/Compiler.cpp`, `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W10.1 / I-118. Proven `f=open(...); f.read()`
+  works. Do not register `(2, "read")` without `g_pycFiles` (plain dicts).
+
+### I-223  `write(bytes)` in `"wb"` is a silent no-op
+- Status: open
+- Severity: wrong-answer
+- Evidence: `open(p,"wb"); f.write(b"xy")` — CPython writes bytes; pyc
+  writes 0 (`pyc_file_write_adapter` type-3 only).
+  `f.write("hi")` on `"wb"` — CPython TypeError; pyc writes.
+- Files: `src/runtime/Runtime.cpp` (`pyc_file_write_adapter`)
+- Blocks merge: no
+- Notes: Found reviewing W10.1. Inverse of I-118 `"rb"`.
+
+### I-224  `readlines()` on `"rb"` is list[str]; closed is `[]`
+- Status: open
+- Severity: wrong-answer
+- Evidence: `open(p,"rb").readlines()` — CPython list[bytes]; pyc
+  list[str]. `f.close(); f.readlines()` — CPython ValueError; pyc `[]`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_FileReadlines`)
+- Blocks merge: no
+- Notes: Found reviewing W10.1. `read`/`readline` were updated; this path
+  was not.
+
+### I-225  `read()` on write-only; `encoding=`; `readline(n)`
+- Status: open
+- Severity: limitation
+- Evidence: `open(p,"w").read()` — CPython UnsupportedOperation; pyc `""`.
+  `encoding=` dropped. `f.readline(3)` ignores size at compile time.
+- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W10.1.
 
 ---
 

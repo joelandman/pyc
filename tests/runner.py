@@ -5271,6 +5271,9 @@ except TypeError as e:
     # fromkeys/deque leftover; None[:].
     (open(__file__.replace("runner.py", "w921_tail.py")).read(),
      "TypeError\n[1, 2]\nAttributeError\nTypeError\nFalse\n[1, 2, 3]\nTypeError\n{1: 0, 2: 0}\nTypeError\n[1, 2]\nTypeError\n[2]\nTypeError\n"),
+    # W10.1 / I-118: open().read / .readline / .close / "rb".
+    (open(__file__.replace("runner.py", "w118_io.py")).read(),
+     "hello\nworld\n'hello\\n'\n'world'\n''\n['hello\\n', 'world']\nhello\nb'hello\\nworld'\nb'hello\\n'\nb'world'\nValueError\nhello\nworld\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5354,6 +5357,8 @@ FILE_CASES = [
     ("w920_set.py", []),
     # W9.21: first-class set(None); factory==K; fromkeys/deque; None[:].
     ("w921_tail.py", []),
+    # W10.1 / I-118: open().read / .readline / .close / "rb".
+    ("w118_io.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

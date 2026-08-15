@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **794/794** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **796/796** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794) are stale.
 
 ---
 
@@ -192,8 +192,10 @@ consumers either call `pyc_ensure_boxed_list()` or branch on `list_item_type`
 
 ## File I/O
 
-`open(path, mode)` / `with open(...) as f:` — `.write()`, `.readlines()`.
-No `.read()`, `.readline()`, `.close()`, or `open(..., "rb")`.
+`open(path, mode)` / `with open(...) as f:` — `.write()`, `.read()` / `.read(n)`,
+`.readline()`, `.readlines()`, `.close()`. `open(..., "rb")` returns bytes
+([I-118](ISSUES.md)). Leftover: boxed `g(f).read()`, `write(bytes)` in `"wb"`,
+`readlines()` on `"rb"` ([I-222](ISSUES.md)–[I-224](ISSUES.md)).
 
 ---
 

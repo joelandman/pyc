@@ -9709,6 +9709,23 @@ class LoweringVisitor {
             noteType(res, "list");
             return res;
         }
+        // file.read() / file.read(n) — proven "file" only (I-030).
+        if (typeOf(obj) == "file" && methodName == "read") {
+            if (args.empty()) {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_FileRead", obj}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_FileReadN", obj, args[0]}, res);
+            }
+            return res;
+        }
+        if (typeOf(obj) == "file" && methodName == "readline") {
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_FileReadline", obj}, res);
+            return res;
+        }
+        if (typeOf(obj) == "file" && methodName == "close") {
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_FileClose", obj}, res);
+            return res;
+        }
         // Path.exists()/.is_file()/.is_dir()/.mkdir()/.joinpath(*parts) —
         // proven Path only. "boxed" stole user-class methods (I-030);
         // Path values arriving as parameters fall through to

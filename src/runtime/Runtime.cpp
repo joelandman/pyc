@@ -10061,6 +10061,96 @@ extern "C" PyObject* PyBuiltin_FileReadlines(PyObject* self) {
     return out;
 }
 
+static bool pyc_file_is_binary(const std::string& mode) {
+    return mode.find('b') != std::string::npos;
+}
+
+static PyObject* pyc_file_make_data(const std::string& buf, bool binary) {
+    if (binary) return PyBytes_FromStringAndSize(buf.data(), buf.size());
+    return PyUnicode_FromStringAndSize(buf.data(), buf.size());
+}
+
+static PycFile* pyc_file_or_closed(PyObject* self) {
+    auto it = g_pycFiles.find(self);
+    if (it == g_pycFiles.end() || !it->second.fp) {
+        pyc_raise_msg("ValueError", "I/O operation on closed file.");
+        return nullptr;
+    }
+    return &it->second;
+}
+
+// file.read() — rest of the file. Text mode returns str; "rb" returns bytes.
+extern "C" PyObject* PyBuiltin_FileRead(PyObject* self) {
+    PycFile* f = pyc_file_or_closed(self);
+    if (!f) return nullptr;
+    FILE* fp = f->fp;
+    bool binary = pyc_file_is_binary(f->mode);
+    std::string buf;
+    char tmp[4096];
+    size_t n;
+    while ((n = std::fread(tmp, 1, sizeof(tmp), fp)) > 0)
+        buf.append(tmp, n);
+    return pyc_file_make_data(buf, binary);
+}
+
+// file.read(n) — up to n chars (text) or bytes (binary). n < 0 means all.
+extern "C" PyObject* PyBuiltin_FileReadN(PyObject* self, PyObject* nObj) {
+    PycFile* f = pyc_file_or_closed(self);
+    if (!f) return nullptr;
+    long n = (nObj && (nObj->type == 0 || nObj->type == 5)) ? nObj->value : -1;
+    if (n < 0) return PyBuiltin_FileRead(self);
+    bool binary = pyc_file_is_binary(f->mode);
+    if (n == 0) return pyc_file_make_data(std::string(), binary);
+    std::string buf;
+    buf.resize((size_t)n);
+    size_t got = std::fread(&buf[0], 1, (size_t)n, f->fp);
+    buf.resize(got);
+    return pyc_file_make_data(buf, binary);
+}
+
+// file.readline() — one line including '\n', or remainder; EOF → '' / b''.
+extern "C" PyObject* PyBuiltin_FileReadline(PyObject* self) {
+    PycFile* f = pyc_file_or_closed(self);
+    if (!f) return nullptr;
+    FILE* fp = f->fp;
+    bool binary = pyc_file_is_binary(f->mode);
+    std::string line;
+    int c;
+    while ((c = std::fgetc(fp)) != EOF) {
+        line += (char)c;
+        if (c == '\n') break;
+    }
+    return pyc_file_make_data(line, binary);
+}
+
+// file.close() — fclose + erase. Second close is a no-op (CPython).
+extern "C" PyObject* PyBuiltin_FileClose(PyObject* self) {
+    auto it = g_pycFiles.find(self);
+    if (it != g_pycFiles.end() && it->second.fp) {
+        std::fclose(it->second.fp);
+        g_pycFiles.erase(it);
+    }
+    return nullptr;
+}
+
+static PyObject* pyc_file_read_adapter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* self = args->list[0];
+    if (args->list.size() >= 2)
+        return PyBuiltin_FileReadN(self, args->list[1]);
+    return PyBuiltin_FileRead(self);
+}
+
+static PyObject* pyc_file_readline_adapter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    return PyBuiltin_FileReadline(args->list[0]);
+}
+
+static PyObject* pyc_file_close_adapter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    return PyBuiltin_FileClose(args->list[0]);
+}
+
 static PyObject* pyc_file_enter_adapter(PyObject* args) {
     // Severe pre-existing bug, found while adding file.readlines():
     // this returned `self` without incrementing its refcount. Every
@@ -10088,13 +10178,7 @@ static PyObject* pyc_file_enter_adapter(PyObject* args) {
 
 static PyObject* pyc_file_exit_adapter(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) return nullptr;
-    PyObject* self = args->list[0];
-    auto it = g_pycFiles.find(self);
-    if (it != g_pycFiles.end() && it->second.fp) {
-        std::fclose(it->second.fp);
-        g_pycFiles.erase(it);
-    }
-    return nullptr;
+    return PyBuiltin_FileClose(args->list[0]);
 }
 
 extern "C" PyObject* PyBuiltin_Open(PyObject* path, PyObject* mode) {
@@ -10116,6 +10200,9 @@ extern "C" PyObject* PyBuiltin_Open(PyObject* path, PyObject* mode) {
     addTok("__enter__", "pyc_file_enter");
     addTok("__exit__",  "pyc_file_exit");
     addTok("write",     "pyc_file_write");
+    addTok("read",      "pyc_file_read");
+    addTok("readline",  "pyc_file_readline");
+    addTok("close",     "pyc_file_close");
     g_pycFiles[d] = {pathStr, modeStr, fp};
     return d;
 }
@@ -12767,6 +12854,9 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("pyc_stderr_write",              stderr_write_adapter);
     pyc_register_callable("pyc_stdout_write",              stdout_write_adapter);
     pyc_register_callable("pyc_file_write",                pyc_file_write_adapter);
+    pyc_register_callable("pyc_file_read",                 pyc_file_read_adapter);
+    pyc_register_callable("pyc_file_readline",             pyc_file_readline_adapter);
+    pyc_register_callable("pyc_file_close",                pyc_file_close_adapter);
     pyc_register_callable("pyc_file_enter",                pyc_file_enter_adapter);
     pyc_register_callable("pyc_file_exit",                 pyc_file_exit_adapter);
     pyc_register_callable("Pyc_Time_PerfCounter",          Pyc_Time_PerfCounter);

@@ -419,6 +419,11 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     {
         llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_FileReadlines", module.get());
+        llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_FileRead", module.get());
+        llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_FileReadline", module.get());
+        llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_FileClose", module.get());
+        llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_FileReadN", module.get());
     }
     // csv.writer(f) / .writerow(row): direct-call convention.
     {
