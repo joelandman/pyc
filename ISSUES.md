@@ -696,60 +696,67 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found reviewing W6.2 / I-062. `deque.count` is 1-arg only.
 
 ### I-133  Boxed `fn(*[...])` literal star is dropped
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `hs[0](*[1])` — CPython `1`; pyc TypeError missing `a`.
+- Evidence: W7.1 CASE / `w71_call.py`: `hs[0](*[1])` → `1`.
+  Parent: TypeError missing `a` (literal star landed in `argRes`; Apply used empty `indirectArgListTemp`).
 - Files: `src/Compiler.cpp`
 - Blocks merge: no
-- Notes: Found reviewing W6.3 / I-064.
+- Notes: Wave 7 W7.1. Also covers `*(1,)`, `hs[0](1, *[2])`, `xs=[1]; hs[0](*xs)` (I-140). Coordinator: `-O0`/`-O2` match CPython.
 
 ### I-134  First-class named kwargs / non-empty `**dict` still bind the dict
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `hs[0](a=1)` / `hs[0](**{'a': 1})` — CPython `1`; pyc `{'a': 1}`.
-- Files: `src/Compiler.cpp`, `src/codegen/Codegen.cpp`
+- Evidence: W7.1b CASE / `w71b_kw.py`: `hs[0](a=1)` / `hs[0](**{"a": 1})` / `apply(f)` → `1`.
+  Parent: bound the merged dict as positional.
+- Files: `src/Compiler.cpp`, `src/codegen/Codegen.cpp`, `src/runtime/Runtime.cpp` (`Pyc_ApplyKw`), `include/pyc/runtime.h`
 - Blocks merge: no
-- Notes: Found reviewing W6.3 / I-064. Do not peel empty dicts.
+- Notes: Wave 7 W7.1b. Kwargs are a third Apply argument, not a trailing list element — `hs[0]({})` / `hs[0]({"a": 1})` stay positional. Empty `**{}` still TypeError (I-064). Coordinator: `-O0`/`-O2` match CPython. Multi-kw / extra keys closed as I-144.
 
 ### I-135  `__va_` first-star-wins: `**kwargs` is `*args`
-- Status: open
+- Status: fixed
 - Severity: crash
-- Evidence: `def f(a, *args, **kw)` / `f(*[1])` LLVM arity mismatch.
+- Evidence: W7.1: `def f135(a, *args, **kw)` / `f135(*mk135())` with `mk135()==[1]` compiles and prints `1` / `0` / `{}`.
+  Parent: LLVM "Incorrect number of arguments" (`emitForwardCallFromList` `ps[j][0]=='*'`). Literal `f(*[1])` was statically expanded and was not the crash.
 - Files: `src/Compiler.cpp` (`emitForwardCallFromList`)
 - Blocks merge: no
-- Notes: Found reviewing W6.3 / I-065.
+- Notes: Wave 7 W7.1. One star vs two stars. `*args` is still a list (not this ticket).
 
 ### I-136  Dynamic `*` splice only walks type-1 lists
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `f(*mk())` when `mk` returns `(1,)` — CPython `1`; pyc TypeError.
+- Evidence: W7.1: `f(*mk_tup())` with `mk_tup()==(1,)` → `1`.
+  Parent: TypeError (`PyList_SizeBoxed` type-1 only).
 - Files: `src/Compiler.cpp`
 - Blocks merge: no
-- Notes: Found reviewing W6.3 / I-065.
+- Notes: Wave 7 W7.1. Starred value goes through `PyBuiltin_List` first. Also closes str/set star (I-141). Super (`type==7 && cell_content`) still TypeErrors.
 
 ### I-137  Dynamic `*args` plus keywords are dropped
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `g(*mk(), b=3)` — CPython `(1, 3)`; after I-065 still `(1, 2)`.
+- Evidence: W7.1: `g(*mk(), b=3)` with `g(a, b=2)` → `(1, 3)`.
+  Parent: `(1, 2)` (`funcName` rewritten to `__va_g`).
 - Files: `src/Compiler.cpp`
 - Blocks merge: no
-- Notes: Found reviewing W6.3 / I-065.
+- Notes: Wave 7 W7.1. Forward inline against the real target. `g(*mk(), **{"b": 3})` also matches. Leftover required-kw / unexpected-kw: I-142.
 
 ### I-138  Remaining C-string rebuilds after I-130 (os.path / pathlib)
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `os.path.basename("a\\x00b")` — CPython keeps NUL; pyc truncates.
+- Evidence: W7.2 CASE / `w72_path.py`: `os.path.basename("a\\x00b")` → `'a\\x00b'`.
+  Parent: `'a'`.
 - Files: `src/runtime/Runtime.cpp`
 - Blocks merge: no
-- Notes: Found reviewing W6.4 / I-130.
+- Notes: Wave 7 W7.2. basename/dirname/split/splitext/abspath and Path `.name`/`.suffix`/`.stem` use `FromStringAndSize`. Coordinator: `-O0`/`-O2` match CPython. Leftover `os.path.join`: I-143.
 
 ### I-139  `getattr(module, name, default)` still drops default
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `getattr(os, "missing", 99)` — CPython `99`; after I-067 AttributeError.
-- Files: `src/Compiler.cpp`, `src/runtime/Runtime.cpp`
+- Evidence: W7.3 CASE / `w73_getattr.py`: `getattr(os, "missing", 99)` → `99`; `getattr(C(), "x", 7)` → `7`; 2-arg module miss still AttributeError.
+  Parent: 3-arg ignored; I-067 raised on modules; instance miss printed None.
+- Files: `src/Compiler.cpp`, `src/runtime/Runtime.cpp` (`Pyc_GetAttrDefault`), `include/pyc/runtime.h`, `src/codegen/Codegen.cpp` (extern only)
 - Blocks merge: no
-- Notes: Found reviewing W6.4 / I-067. Ticket getattr had no default.
+- Notes: Wave 7 W7.3. Coordinator: `-O0`/`-O2` match CPython. Stored-None vs miss is I-145. Indirect `g=getattr` not this arm.
 
 ### I-113  datetime / timedelta microseconds
 - Status: open
@@ -814,6 +821,171 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp` (`syntheticModuleExports`)
 - Blocks merge: no
 - Notes: I-017 child. Feature work. Keep Compiler exports in sync.
+
+### I-140  Boxed `fn(*(1,))` / `fn(1, *[2])` / `fn(*xs)` still drop the star
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: After W7.1, `hs[0](*(1,))` / `hs[0](1, *[2])` / `xs=[1]; hs[0](*xs)` match CPython.
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Filed reviewing W7.1 parent; closed by the I-133 `indirectArgListTemp` append (literal name + List/Tuple + positional prefix).
+
+### I-141  Dynamic `*` on str / set is an empty splice
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: After W7.1, `f(*"ab")` → `('a', 'b')`; `f(*{1})` → `(1, None)`.
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Filed reviewing W7.1 parent; closed by `PyBuiltin_List` before the splice (I-136).
+
+### I-142  Dynamic `*` plus required / unexpected keyword
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.1 / `w81_star.py`: `g(*mk(), b=3)` with required `b` → `(1, 3)`; `g3(*mk(), x=3)` → TypeError.
+  Parent: TypeError missing `a` and `b` / silent `(1, 0)`.
+- Files: `src/Compiler.cpp` (`emitForwardCallFromList`)
+- Blocks merge: no
+- Notes: Wave 8 W8.1. Coordinator: `-O0`/`-O2` match CPython. Unexpected `**dict` keys still I-151-class if filed.
+
+### I-143  `os.path.join` still strlen-truncates NUL
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W7.2 CASE / `w72_path.py`: `os.path.join("a\\x00b", "c")` → `'a\\x00b/c'`.
+  Parent: `'a'` (`FromString(out.c_str())`).
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_OsPathJoin`)
+- Blocks merge: no
+- Notes: Wave 7 W7.3. Coordinator: `-O0`/`-O2` match CPython.
+
+### I-144  Boxed `fn(a=1, b=2)` / extra `**` keys still wrong
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W7.1b: `hs2[0](a=1, b=2)` → `(1, 2)`; `hs[0](**{"a": 1, "x": 2})` → TypeError.
+  Parent: TypeError missing `b` / dict bound as `a`.
+- Files: `src/Compiler.cpp`, `src/codegen/Codegen.cpp`, `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Wave 7 W7.1b. Same `Pyc_ApplyKw` channel as I-134.
+
+### I-145  getattr 3-arg treats stored None as miss
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.2 / `w82_runtime.py`: `o.x = None; getattr(o, "x", 7)` → `None`; missing still `7`.
+  Parent: both printed `7`.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_GetAttrDefault` + `pyc_format_attr_present`)
+- Blocks merge: no
+- Notes: Wave 8 W8.2. Coordinator: `-O0`/`-O2` match CPython. `hasattr` on stored None is still I-055-class.
+
+### I-146  Dynamic `*` + keyword: multiple values for argument
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.1: `g4(*[1, 9], b=3)` and `g4(*mk2(), b=3)` → TypeError.
+  Parent: `(1, 3)` (keyword overwrite).
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Wave 8 W8.1. Coordinator: `-O0`/`-O2` match CPython.
+
+### I-147  Dynamic `*` drops later positionals / later stars
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.1: `f(*mk(), 2)` and `f(*a(), *b())` → `(1, 2)`.
+  Parent: dropped the tail / replaced the va list.
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Wave 8 W8.1. Coordinator: `-O0`/`-O2` match CPython. Also fixed prefix `f(1, *mk())` null-slot seed.
+
+### I-148  Dynamic `*` on builtins skips special-case arms
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.1: `print(*mkp())` → `1 2 3`.
+  Parent: empty/None print (`call print` with 0 args).
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Wave 8 W8.1. `print` / `min` / `max` / `zip` handled before the va forward. Coordinator: `-O0`/`-O2` match CPython.
+
+### I-149  Dynamic `*` on None / int is an empty splice
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.2: `f(*None)` / `f(*1)` / `list(None)` / `list(1)` → TypeError; `list()` still `[]`.
+  Parent: empty splice / `[]`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_List`)
+- Blocks merge: no
+- Notes: Wave 8 W8.2. Coordinator: `-O0`/`-O2` match CPython. `tuple(None)` / `for x in None` not this ticket.
+
+### I-150  Known-class method kwargs drop the keyword / LLVM arity
+- Status: fixed
+- Severity: crash
+- Evidence: W8.3 / `w83_method.py`: `C().f(a=1)` / `C().f(**{"a": 2})` → `1` / `2`; unexpected named kw TypeError.
+  Parent LLVM fail was `**dict` (empty-id Keyword skipped), not stripped `self`.
+- Files: `src/Compiler.cpp` (`lowerMethodCall`)
+- Blocks merge: no
+- Notes: Wave 8 W8.3. Coordinator: `-O0`/`-O2` match CPython. dispatch-chain 77/77. Extra keys inside `**dict` and boxed method fallback leftovers not this ticket.
+
+### I-151  I-148 min/max/zip star arms do not match CPython call forms
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.5 / `w85_star.py`: `min(*mk())` → `1`; `zip(*mz())` → 3-tuples.
+  Parent: `[1, 2, 3]` / Zip2 of first two.
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Wave 8 W8.5. Coordinator: `-O0`/`-O2` match CPython. Static `zip(a,b,c)` leftover I-156.
+
+### I-152  hasattr treats stored None as missing
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.4 / `w84_runtime.py`: `hasattr(o, "x")` with `o.x is None` → True.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_HasAttr`)
+- Blocks merge: no
+- Notes: Wave 8 W8.4. Coordinator: `-O0`/`-O2` match CPython.
+
+### I-153  tuple(None) / reversed(None) still empty after I-149
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.4: `tuple(None)` / `reversed(None)` → TypeError; `tuple()` / `tuple("ab")` kept.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Wave 8 W8.4. Coordinator: `-O0`/`-O2` match CPython.
+
+### I-154  list(instance) without __iter__ iterates the attr dict
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.4: `list(C())` → TypeError; plain `list({"a":1})` still keys.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_List`)
+- Blocks merge: no
+- Notes: Wave 8 W8.4. Coordinator: `-O0`/`-O2` match CPython. `list(C)` the class is a leftover.
+
+### I-155  Dynamic/static `*` + `**dict` still overwrites (I-146 leftover)
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W8.5: `g4(*mk2(), **{"b": 3})` / `g4(*[1, 9], **{"b": 3})` → TypeError.
+  `g(*[1], **{"b": 3})` with unbound `b` still `(1, 3)`.
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Wave 8 W8.5. Coordinator: `-O0`/`-O2` match CPython.
+
+### I-156  Static `zip(a, b, c)` is still Zip2
+- Status: open
+- Severity: wrong-answer
+- Evidence: `zip([1,2],[3,4],[5,6])` — CPython 3-tuples; pyc `[(1, 3), (2, 4)]`.
+  Only the dynamic-`*` arm (I-151) is N-way.
+- Files: `src/Compiler.cpp` (`zip` arm)
+- Blocks merge: no
+- Notes: Found verifying W8.5. Do not demand in W8.5.
+
+### I-157  Dynamic `zip(*tuples)` still empty / list-only
+- Status: open
+- Severity: wrong-answer
+- Evidence: `zip(*[(1,2),(3,4),(5,6)])` — CPython 3-tuples; pyc `[]`.
+  `emitZipFromVaList` walks `PyList_*` (type-1 only).
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Found verifying W8.5. Do not demand in W8.5.
+
+### I-158  Nested generator calls are unwrapped; `list(int)` drains yield buffer
+- Status: open
+- Severity: latent
+- Evidence: W8.4 regression fix. `scanForGenerators` records the Python name, not `__nesteddef_N`, so `inner_gen()` is a raw call that returns `0` after `pyc_yield_collect`. `PyBuiltin_List` on a type-0 int now drains a non-empty yield buffer so `list(nested_gen())` still works. `list(1)` inside a generator after yields would steal that buffer.
+- Files: `src/Compiler.cpp` (`scanForGenerators`), `src/runtime/Runtime.cpp` (`PyBuiltin_List`)
+- Blocks merge: no
+- Notes: Found fixing W8.4 runner DIFF. Real fix is Compiler wrap of `__nesteddef_*`. Do not demand in W8.4.
 
 ---
 

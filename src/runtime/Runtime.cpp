@@ -910,8 +910,14 @@ PyObject* PyTuple_Repeat(PyObject* tuple, long n) {
 
 // tuple(iterable) — materializes any iterable into a real tuple. Mirrors
 // PyBuiltin_List's dispatch but wraps the result as type 7.
+// Zero-arg tuple() is PyTuple_NewBoxed, not this path.
 PyObject* PyBuiltin_Tuple(PyObject* obj) {
-    if (!obj) return PyTuple_New(0);
+    if (!obj) {
+        // None is a null pointer (tag 5 is bool). tuple(None) is
+        // TypeError, not () (I-153).
+        pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
+        return nullptr;
+    }
     if (obj->type == 7 && obj->cell_content) {
         pyc_raise_msg("TypeError", "'super' object is not iterable");
         return nullptr;
@@ -920,7 +926,7 @@ PyObject* PyBuiltin_Tuple(PyObject* obj) {
     // Reuse PyBuiltin_List's full materialization (str/bytes/dict/set/
     // iterator-protocol/class-instance) then convert the list to a tuple.
     PyObject* lst = PyBuiltin_List(obj);
-    if (!lst) return PyTuple_New(0);
+    if (!lst) return nullptr;  // List already raised
     size_t n = PyList_Size(lst);
     PyObject* r = PyTuple_New(n);
     for (size_t i = 0; i < n; ++i) {
@@ -2624,6 +2630,7 @@ PyObject* PyBuiltin_Type(PyObject* obj) {
 // Forward declaration: the callable registry is defined far below (B4/B8
 // dispatch section) but PyBuiltin_Callable needs to check it.
 static std::unordered_map<std::string, PyObject* (*)(PyObject*)> g_callableRegistry;
+static std::unordered_map<std::string, PyObject* (*)(PyObject*, PyObject*)> g_callableKwRegistry;
 
 PyObject* PyBuiltin_Callable(PyObject* obj) {
     if (!obj) return PyBool_New(0);
@@ -2635,6 +2642,10 @@ PyObject* PyBuiltin_Callable(PyObject* obj) {
     if (obj->type == 3) {
         auto it = g_callableRegistry.find(obj->str);
         if (it != g_callableRegistry.end() && it->second) {
+            return PyBool_New(1);
+        }
+        auto itKw = g_callableKwRegistry.find(obj->str);
+        if (itKw != g_callableKwRegistry.end() && itKw->second) {
             return PyBool_New(1);
         }
         return PyBool_New(0);
@@ -2660,6 +2671,8 @@ PyObject* PyBuiltin_Callable(PyObject* obj) {
             if (first->type == 3) {
                 auto it = g_callableRegistry.find(first->str);
                 if (it != g_callableRegistry.end() && it->second) return PyBool_New(1);
+                auto itKw = g_callableKwRegistry.find(first->str);
+                if (itKw != g_callableKwRegistry.end() && itKw->second) return PyBool_New(1);
             }
         }
     }
@@ -3404,8 +3417,9 @@ PyObject* PyString_RPartition(PyObject* s, PyObject* sep) {
 }
 
 // True when `key` is present on a type-2 instance dict or its __class__
-// dict, even if the stored value is nullptr (None). Pyc_GetItem / Pyc_HasAttr
-// cannot tell that apart from a miss (I-055).
+// dict, even if the stored value is nullptr (None). Pyc_GetItem cannot
+// tell that apart from a miss (I-055); Pyc_HasAttr / Pyc_GetAttrDefault
+// use this to treat stored None as present (I-145 / I-152).
 static bool pyc_format_attr_present(PyObject* obj, PyObject* key) {
     if (!obj || !key || obj->type != 2) return false;
     // Plain mappings have no __class__; '{0.x}'.format({'x': None}) must
@@ -5216,12 +5230,16 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
     // Pyc_GetItem unconditionally.
     if (obj->type == 16 && key->type == 3) {
         const std::string& k = key->str;
-        if (k == "name") return PyUnicode_FromString(pyc_path_basename(obj->str).c_str());
+        if (k == "name") {
+            std::string name = pyc_path_basename(obj->str);
+            return PyUnicode_FromStringAndSize(name.data(), name.size());
+        }
         if (k == "parent") return pyc_new_path(pyc_path_dirname(obj->str));
         if (k == "suffix" || k == "stem") {
             std::string root, ext;
             pyc_path_splitext(pyc_path_basename(obj->str), root, ext);
-            return PyUnicode_FromString((k == "suffix" ? ext : root).c_str());
+            const std::string& part = (k == "suffix" ? ext : root);
+            return PyUnicode_FromStringAndSize(part.data(), part.size());
         }
         return nullptr;
     }
@@ -6135,12 +6153,16 @@ PyObject* Pyc_Next(PyObject* iter) {
 }
 
 // Pyc_HasAttr(obj, attrName) — returns True if obj has the attribute.
+// Stored None is a null PyObject*; Pyc_GetItem cannot tell that from a
+// miss, so reuse pyc_format_attr_present (I-152 / I-145).
 PyObject* Pyc_HasAttr(PyObject* obj, PyObject* attrName) {
     if (!obj || !attrName) return PyBool_New(0);
     PyObject* val = Pyc_GetItem(obj, attrName);
-    bool has = (val != nullptr);
-    if (val) Py_DECREF(val);
-    return PyBool_New(has ? 1 : 0);
+    if (val) {
+        Py_DECREF(val);
+        return PyBool_New(1);
+    }
+    return PyBool_New(pyc_format_attr_present(obj, attrName) ? 1 : 0);
 }
 
 PyObject* PyString_Find(PyObject* s, PyObject* sub) {
@@ -6917,7 +6939,13 @@ PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
     return r;
 }
 PyObject* PyBuiltin_List(PyObject* obj) {
-    if (!obj) return PyList_New(0);
+    if (!obj) {
+        // None is a null pointer (tag 5 is bool). list(None) / *None
+        // are TypeError, not an empty splice (I-149). Zero-arg list()
+        // is PyBuiltin_ListFactory / PyList_NewBoxed, not this path.
+        pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
+        return nullptr;
+    }
     if (obj->type == 1) { Py_INCREF(obj); return obj; }
     if (obj->type == 7 && obj->cell_content) {
         pyc_raise_msg("TypeError", "'super' object is not iterable");
@@ -6949,6 +6977,31 @@ PyObject* PyBuiltin_List(PyObject* obj) {
         if (pyc_lookup_dunder(obj, "__iter__")) {
             return pyc_materialize_iterator_protocol(obj);
         }
+        // User instances (__class__ present) and modules are not mappings.
+        // list(C()) / list(sys) TypeError; plain dicts still iterate keys (I-154).
+        bool isInstance = false;
+        for (auto& kv : obj->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == "__class__") {
+                isInstance = true;
+                break;
+            }
+        }
+        if (pyc_is_module(obj) || isInstance) {
+            const char* tname = pyc_is_module(obj) ? "module" : "object";
+            std::string owned;
+            PyObject* mro = pyc_exc_instance_mro(obj);
+            if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
+                PyObject* first = PyList_GetItemI64(mro, 0);
+                if (first && first->type == 3) {
+                    owned = first->str;
+                    tname = owned.c_str();
+                }
+                if (first) Py_DECREF(first);
+            }
+            std::string msg = std::string("'") + tname + "' object is not iterable";
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
         // CPython: list(dict) iterates over keys.
         PyObject* r = PyList_New(obj->dict.size());
         size_t i = 0;
@@ -6969,7 +7022,22 @@ PyObject* PyBuiltin_List(PyObject* obj) {
     if (obj->type == 20) {
         return PySet_ToList(obj);
     }
-    return PyList_New(0);
+    // Nested generator defs compile as __nesteddef_N and their calls are
+    // not wrapped with clear→call→get_buffer. The function appends yields
+    // to the thread-local buffer and returns 0 (implicit). `for x in
+    // inner_gen()` then list()s that int. Drain pending yields so the
+    // loop sees them; list(1) with an empty buffer stays TypeError (I-149).
+    // list(C()) / list(None) do not take this arm (I-154 / I-149).
+    if (obj->type == 0) {
+        PyObject* pending = pyc_get_yield_buffer();
+        if (pending && PyList_Size(pending) > 0) return pending;
+        if (pending) Py_DECREF(pending);
+    }
+    // int/float/bool/etc. — CPython TypeError, not [] (I-149).
+    std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
+                      "' object is not iterable";
+    pyc_raise_msg("TypeError", msg.c_str());
+    return nullptr;
 }
 
 // reversed(seq) — returns a new list with the elements of seq in
@@ -6978,7 +7046,12 @@ PyObject* PyBuiltin_List(PyObject* obj) {
 // is the same. Accepts lists, tuples (also stored as list in our
 // runtime), strings, and ranges.
 PyObject* PyBuiltin_Reversed(PyObject* obj) {
-    if (!obj) return PyList_New(0);
+    if (!obj) {
+        // None is a null pointer (tag 5 is bool). reversed(None) is
+        // TypeError, not [] (I-153).
+        pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
+        return nullptr;
+    }
     if (pyc_super_not_iterable(obj)) return nullptr;
     PyObject* r = nullptr;
     if (obj->type == 1) {
@@ -7793,7 +7866,7 @@ extern "C" PyObject* PyBuiltin_OsPathJoin(PyObject* args) {
         if (!out.empty() && out.back() != '/') out += '/';
         out += p->str;
     }
-    return PyUnicode_FromString(out.c_str());
+    return PyUnicode_FromStringAndSize(out.data(), out.size());
 }
 
 // os.path.basename(p) -> str : text after the last "/"
@@ -7802,7 +7875,9 @@ extern "C" PyObject* PyBuiltin_OsPathBasename(PyObject* args) {
     PyObject* p = args->list[0];
     if (!p || p->type != 3) return PyUnicode_FromString("");
     size_t slash = p->str.find_last_of('/');
-    return PyUnicode_FromString(slash == std::string::npos ? p->str.c_str() : p->str.c_str() + slash + 1);
+    if (slash == std::string::npos)
+        return PyUnicode_FromStringAndSize(p->str.data(), p->str.size());
+    return PyUnicode_FromStringAndSize(p->str.data() + slash + 1, p->str.size() - slash - 1);
 }
 
 // os.path.dirname(p) -> str : text before the last "/" (matching CPython's
@@ -7814,7 +7889,7 @@ extern "C" PyObject* PyBuiltin_OsPathDirname(PyObject* args) {
     size_t slash = p->str.find_last_of('/');
     if (slash == std::string::npos) return PyUnicode_FromString("");
     if (slash == 0) return PyUnicode_FromString("/");
-    return PyUnicode_FromString(p->str.substr(0, slash).c_str());
+    return PyUnicode_FromStringAndSize(p->str.data(), slash);
 }
 
 // os.path.split(p) -> (head, tail) 2-tuple, matching CPython. Equivalent
@@ -7844,8 +7919,8 @@ extern "C" PyObject* PyBuiltin_OsPathSplit(PyObject* args) {
         head = s.substr(0, slash); tail = s.substr(slash + 1);
     }
     PyObject* r = PyTuple_New(2);
-    PyTuple_SetItem(r, 0, PyUnicode_FromString(head.c_str()));
-    PyTuple_SetItem(r, 1, PyUnicode_FromString(tail.c_str()));
+    PyTuple_SetItem(r, 0, PyUnicode_FromStringAndSize(head.data(), head.size()));
+    PyTuple_SetItem(r, 1, PyUnicode_FromStringAndSize(tail.data(), tail.size()));
     return r;
 }
 
@@ -7868,8 +7943,8 @@ extern "C" PyObject* PyBuiltin_OsPathSplitext(PyObject* args) {
         ext = s.substr(dot);
     }
     PyObject* out = PyTuple_New(2);
-    PyTuple_SetItem(out, 0, PyUnicode_FromString(root.c_str()));
-    PyTuple_SetItem(out, 1, PyUnicode_FromString(ext.c_str()));
+    PyTuple_SetItem(out, 0, PyUnicode_FromStringAndSize(root.data(), root.size()));
+    PyTuple_SetItem(out, 1, PyUnicode_FromStringAndSize(ext.data(), ext.size()));
     return out;
 }
 
@@ -7880,15 +7955,17 @@ extern "C" PyObject* PyBuiltin_OsPathAbspath(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) return PyUnicode_FromString("");
     PyObject* p = args->list[0];
     if (!p || p->type != 3) return PyUnicode_FromString("");
-    if (!p->str.empty() && p->str[0] == '/') return PyUnicode_FromString(p->str.c_str());
+    if (!p->str.empty() && p->str[0] == '/')
+        return PyUnicode_FromStringAndSize(p->str.data(), p->str.size());
     char cwd[4096];
-    if (!::getcwd(cwd, sizeof(cwd))) return PyUnicode_FromString(p->str.c_str());
+    if (!::getcwd(cwd, sizeof(cwd)))
+        return PyUnicode_FromStringAndSize(p->str.data(), p->str.size());
     std::string out = cwd;
     if (!p->str.empty()) {
         if (out.back() != '/') out += '/';
         out += p->str;
     }
-    return PyUnicode_FromString(out.c_str());
+    return PyUnicode_FromStringAndSize(out.data(), out.size());
 }
 
 // os.getcwd() -> str
@@ -11788,12 +11865,17 @@ static PyObject* pyc_adapt_pow(PyObject* args) {
     return PyBuiltin_Pow(a, b);
 }
 static PyObject* pyc_adapt_list(PyObject* args) {
-    PyObject* a = arg0(args);
-    return PyBuiltin_List(a);
+    // Zero-arg list() via Apply (defaultdict(list), first-class list)
+    // is []; list(None) is a 1-element args list whose item is nullptr.
+    if (!args || args->type != 1 || args->list.empty())
+        return PyList_New(0);
+    return PyBuiltin_List(args->list[0]);
 }
 static PyObject* pyc_adapt_tuple(PyObject* args) {
-    PyObject* a = arg0(args);
-    return PyBuiltin_Tuple(a);
+    // Same empty-vs-None split as pyc_adapt_list (I-149 / I-153).
+    if (!args || args->type != 1 || args->list.empty())
+        return PyTuple_New(0);
+    return PyBuiltin_Tuple(args->list[0]);
 }
 static PyObject* pyc_adapt_set(PyObject* args) {
     PyObject* a = arg0(args);
@@ -11868,8 +11950,11 @@ static PyObject* pyc_adapt_all(PyObject* args) {
     return PyBuiltin_All(a);
 }
 static PyObject* pyc_adapt_reversed(PyObject* args) {
-    PyObject* a = arg0(args); if (!a) return nullptr;
-    return PyBuiltin_Reversed(a);
+    if (!args || args->type != 1 || args->list.empty()) {
+        pyc_raise_msg("TypeError", "reversed expected at least 1 argument, got 0");
+        return nullptr;
+    }
+    return PyBuiltin_Reversed(args->list[0]);
 }
 static PyObject* pyc_adapt_enumerate(PyObject* args) {
     PyObject* a = arg0(args); if (!a) return nullptr;
@@ -13688,6 +13773,10 @@ extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObje
     if (name && func) g_callableRegistry[std::string(name)] = func;
 }
 
+extern "C" void pyc_register_callable_kw(const char* name, PyObject* (*func)(PyObject*, PyObject*)) {
+    if (name && func) g_callableKwRegistry[std::string(name)] = func;
+}
+
 // Forward declaration: classRegistry() is defined further down (alongside
 // super()'s MRO resolution) but is also needed here, by
 // pyc_lookup_via_mro, for the dynamic class-instantiation branch below.
@@ -13727,10 +13816,11 @@ static PyObject* pyc_lookup_via_mro(PyObject* classDict, const char* name) {
     return nullptr;
 }
 
-// Pyc_Apply(tokenStr or bundleList, argList) -> boxed result
+// Pyc_Apply / Pyc_ApplyKw: dispatch a callable token.
 // If first arg is a bundle list [tokenStr, extra0, ...] (cells or prebound defaults),
 // extract the token and prepend the extras to the provided argList before dispatch.
-extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
+// kwDict is a separate kwargs channel (never a positional list element).
+static PyObject* pyc_apply_impl(PyObject* token, PyObject* argList, PyObject* kwDict) {
     if (!token) return nullptr;
     // A cell-backed callee (closure free variable holding a callable) may
     // arrive as the cell itself — unwrap to its content.
@@ -13816,8 +13906,11 @@ extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
         }
         return nullptr;
     }
+    auto itKw = g_callableKwRegistry.find(tokName);
+    bool haveKwAdp = (itKw != g_callableKwRegistry.end() && itKw->second);
     auto it = g_callableRegistry.find(tokName);
-    if (it == g_callableRegistry.end()) return nullptr;
+    bool haveAdp = (it != g_callableRegistry.end() && it->second);
+    if (!haveKwAdp && !haveAdp) return nullptr;
 
     PyObject* prepend = nullptr;
     if (token->type == 1 && !token->list.empty()) {
@@ -13843,12 +13936,22 @@ extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
             }
         }
         finalList = comb;
-        PyObject* r = it->second ? it->second(finalList) : nullptr;
+        PyObject* r = haveKwAdp ? itKw->second(finalList, kwDict)
+                                : it->second(finalList);
         Py_DECREF(comb);
         Py_DECREF(prepend);
         return r;
     }
-    return it->second ? it->second(finalList) : nullptr;
+    return haveKwAdp ? itKw->second(finalList, kwDict) : it->second(finalList);
+}
+
+extern "C" PyObject* Pyc_Apply(PyObject* token, PyObject* argList) {
+    return pyc_apply_impl(token, argList, nullptr);
+}
+
+extern "C" PyObject* Pyc_ApplyKw(PyObject* token, PyObject* argList, PyObject* kwDict) {
+    if (kwDict && kwDict->type != 2) kwDict = nullptr;
+    return pyc_apply_impl(token, argList, kwDict);
 }
 
 // PyObject_Call(obj, args, kwargs) — call obj with positional and keyword args
@@ -13857,6 +13960,10 @@ extern "C" PyObject* PyObject_Call(PyObject* obj, PyObject* args, PyObject* kwar
     if (!obj || !args || args->type != 1) return nullptr;
     if (obj->type == 3) {
         // It's a string token — look it up in the registry
+        auto itKw = g_callableKwRegistry.find(obj->str);
+        if (itKw != g_callableKwRegistry.end() && itKw->second) {
+            return itKw->second(args, kwargs);
+        }
         auto it = g_callableRegistry.find(obj->str);
         if (it != g_callableRegistry.end() && it->second) {
             return it->second(args);
@@ -14932,6 +15039,28 @@ PyObject* Pyc_GetAttr(PyObject* obj, PyObject* attrName) {
     return val;
 }
 
+// getattr(obj, name, default) — return default on a miss instead of
+// raising (modules, I-067) or yielding None (instances). Stored None
+// on a type-2 instance is present (I-145); Pyc_GetItem cannot tell
+// that from a miss, so reuse pyc_format_attr_present. Module miss
+// still returns default (I-139).
+PyObject* Pyc_GetAttrDefault(PyObject* obj, PyObject* attrName, PyObject* defaultVal) {
+    if (pyc_is_module(obj)) {
+        PyObject* probe = Pyc_GetItem(obj, attrName);
+        if (probe) {
+            Py_DECREF(probe);
+            return Pyc_GetAttr(obj, attrName);
+        }
+        if (defaultVal) Py_INCREF(defaultVal);
+        return defaultVal;
+    }
+    PyObject* val = Pyc_GetAttr(obj, attrName);
+    if (val) return val;
+    if (pyc_format_attr_present(obj, attrName)) return nullptr;
+    if (defaultVal) Py_INCREF(defaultVal);
+    return defaultVal;
+}
+
 // ---- B6: Extended attribute lookup with class fallback ----
 // PyObject_GetAttrExtended looks up an attribute on an object, first checking
 // the instance dict, then the class dict (for class attributes).
@@ -15067,6 +15196,50 @@ void Pyc_CheckMissingArgs(PyObject* func, PyObject* required, PyObject* dicts) {
 // over the spread dict's keys, and for each key not in the callee's named
 // parameters, sets it in the kwargs dict. This fixes the gap where
 // `def f(**kwargs): ...` called as `f(**{"p":1,"q":2})` left kwargs empty.
+void Pyc_ApplyRejectDupKw(PyObject* kwDict, const char* name, const char* func) {
+    if (!kwDict || kwDict->type != 2 || !name) return;
+    PyObject* key = PyUnicode_FromString(name);
+    PyObject* v = PyDict_GetItem(kwDict, key);
+    Py_DECREF(key);
+    if (!v) return;
+    Py_DECREF(v);
+    std::string msg;
+    msg += func ? func : "";
+    msg += "() got multiple values for argument '";
+    msg += name;
+    msg += "'";
+    pyc_raise_msg("TypeError", msg.c_str());
+}
+
+PyObject* Pyc_ApplyKwRest(PyObject* kwDict, PyObject* boundNames,
+                          int hasKwVar, const char* funcName) {
+    PyObject* rest = PyDict_New();
+    if (!kwDict || kwDict->type != 2) return rest;
+    std::unordered_set<std::string> bound;
+    if (boundNames && boundNames->type == 1) {
+        for (auto& item : boundNames->list) {
+            if (item && item->type == 3) bound.insert(item->str);
+        }
+    }
+    const char* fname = funcName ? funcName : "";
+    for (auto& kv : kwDict->dict) {
+        if (!kv.first || kv.first->type != 3) continue;
+        if (bound.find(kv.first->str) != bound.end()) continue;
+        if (!hasKwVar) {
+            std::string msg;
+            msg += fname;
+            msg += "() got an unexpected keyword argument '";
+            msg += kv.first->str;
+            msg += "'";
+            Py_DECREF(rest);
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
+        PyDict_SetItem(rest, kv.first, kv.second);
+    }
+    return rest;
+}
+
 void Pyc_RouteSpreadKwargs(PyObject* spread_dict, PyObject* param_names_list,
                            PyObject* kwargs_dict) {
     if (!spread_dict || spread_dict->type != 2 || !param_names_list ||

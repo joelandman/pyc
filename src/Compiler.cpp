@@ -4396,43 +4396,102 @@ class LoweringVisitor {
     // 'call' instruction to the target with the correct static number of
     // operands. The result of the call is placed in 'resultTemp' (or a fresh
     // temp if empty). This is used by __va wrappers for dynamic *args calls.
-    void emitForwardCallFromList(const std::string& targetFunc, const std::string& listVal, const std::string& resultTemp) {
+    void emitForwardCallFromList(const std::string& targetFunc, const std::string& listVal, const std::string& resultTemp,
+                                 const std::vector<std::string>& slotOverrides = {},
+                                 const std::vector<std::string>& kwargDicts = {}) {
         auto pit = funcParamNames.find(targetFunc);
         size_t fixed = 0;
         bool hasVar = false;
+        bool hasKw = false;
+        size_t kwidx = (size_t)-1;
         std::vector<std::string> reqNames;
+        std::vector<std::string> fixedNames;
         if (pit != funcParamNames.end()) {
             const auto& ps = pit->second;
+            // I-135: **kwargs is two stars. `ps[j][0]=='*'` treated ** as
+            // *args, so the forwarded call was one operand short.
             for (size_t j = 0; j < ps.size(); ++j) {
-                if (!ps[j].empty() && ps[j][0] == '*') { hasVar = true; break; }
-                ++fixed;
-                reqNames.push_back(ps[j]);
+                if (ps[j].size() >= 2 && ps[j][0] == '*' && ps[j][1] == '*') {
+                    hasKw = true;
+                    kwidx = j;
+                } else if (!ps[j].empty() && ps[j][0] == '*') {
+                    hasVar = true;
+                } else if (!hasVar) {
+                    ++fixed;
+                    reqNames.push_back(ps[j]);
+                    fixedNames.push_back(ps[j]);
+                }
             }
         }
         // Dynamic *args skips call-site default injection / missing-arg
         // checks (hadRuntimeStar). Enforce required positionals here so
         // f(*mk()) with mk()==[] is TypeError, not GetItem OOB → None.
+        // I-142: a slot is supplied if it is in-range in the list, has a
+        // keyword override, or is present in a **dict — not list-size only.
         size_t ndef = 0;
         auto dit = funcDefaultValues.find(targetFunc);
         if (dit != funcDefaultValues.end()) ndef = dit->second.size();
         size_t nrequired = (fixed > ndef) ? (fixed - ndef) : 0;
         if (reqNames.size() > nrequired) reqNames.resize(nrequired);
-        if (nrequired > 0) {
+        bool anyOverride = false;
+        for (size_t k = 0; k < fixed; ++k) {
+            if (k < slotOverrides.size() && !slotOverrides[k].empty()) {
+                anyOverride = true;
+                break;
+            }
+        }
+        std::string lnSlot;
+        if (nrequired > 0 || anyOverride || !kwargDicts.empty()) {
             std::string ln = "$t" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", listVal}, ln);
-            std::string lnSlot = "__sl_" + std::to_string(tempCounter++);
+            lnSlot = "__sl_" + std::to_string(tempCounter++);
             ir.addInstruction(currentFunc, "assign", {ln}, lnSlot);
-            std::string reqC = "$c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {std::to_string(nrequired)}, reqC);
-            std::string cm = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "icmp", {"Lt", lnSlot, reqC}, cm);
-            int sc = tempCounter++;
-            std::string missL = "va_miss_" + std::to_string(sc);
-            std::string okL = "va_ok_" + std::to_string(sc);
-            ir.addInstruction(currentFunc, "br", {cm, missL, okL});
-            ir.addInstruction(currentFunc, "label", {}, missL);
-            emitMissingArgsCheck(callDisplayName(targetFunc), reqNames, {});
-            ir.addInstruction(currentFunc, "label", {}, okL);
+        }
+        bool anyMaybeMissing = false;
+        for (size_t k = 0; k < nrequired; ++k) {
+            if (k < slotOverrides.size() && !slotOverrides[k].empty()) continue;
+            anyMaybeMissing = true;
+            break;
+        }
+        if (anyMaybeMissing) {
+            std::string namesList = "$t" + std::to_string(tempCounter++);
+            std::string zNames = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, zNames, "int");
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zNames}, namesList, "boxed");
+            for (size_t k = 0; k < nrequired; ++k) {
+                if (k < slotOverrides.size() && !slotOverrides[k].empty()) continue;
+                std::string ck = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(k)}, ck);
+                std::string cm = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "icmp", {"Lt", ck, lnSlot}, cm);
+                int sc = tempCounter++;
+                std::string haveL = "va_hvreq_" + std::to_string(sc);
+                std::string missL = "va_msreq_" + std::to_string(sc);
+                std::string joinL = "va_jnreq_" + std::to_string(sc);
+                ir.addInstruction(currentFunc, "br", {cm, haveL, missL});
+                ir.addInstruction(currentFunc, "label", {}, missL);
+                std::string nm = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"\"" + reqNames[k] + "\""}, nm, "str");
+                std::string d = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_Append", namesList, nm}, d);
+                ir.addInstruction(currentFunc, "br", {}, joinL);
+                ir.addInstruction(currentFunc, "label", {}, haveL);
+                ir.addInstruction(currentFunc, "br", {}, joinL);
+                ir.addInstruction(currentFunc, "label", {}, joinL);
+            }
+            std::string dictsList = "$t" + std::to_string(tempCounter++);
+            std::string zDicts = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {"0"}, zDicts, "int");
+            ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zDicts}, dictsList, "boxed");
+            for (const auto& dv : kwargDicts) {
+                std::string d = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_Append", dictsList, dv}, d);
+            }
+            std::string fnConst = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const",
+                {"\"" + callDisplayName(targetFunc) + "\""}, fnConst, "str");
+            ir.addInstruction(currentFunc, "call",
+                {"Pyc_CheckMissingArgs", fnConst, namesList, dictsList}, "");
         }
         // I-065: omitted defaults used to GetItem OOB → None. For each
         // defaulted slot (k >= nrequired), use the registered default when
@@ -4446,34 +4505,83 @@ class LoweringVisitor {
         }
         std::vector<std::string> fwd;
         for (size_t k = 0; k < fixed; ++k) {
-            std::string ck = "$c" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "const", {std::to_string(k)}, ck);
-            size_t di = (k >= nrequired) ? (k - nrequired) : (size_t)-1;
-            if (!sizeForDef.empty() && di != (size_t)-1 &&
-                dit != funcDefaultValues.end() && di < dit->second.size()) {
-                std::string cm = "$t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "icmp", {"Lt", ck, sizeForDef}, cm);
-                int sc = tempCounter++;
-                std::string haveL = "va_hv_" + std::to_string(sc);
-                std::string defL = "va_df_" + std::to_string(sc);
-                std::string mgL = "va_mg_" + std::to_string(sc);
-                std::string elSlot = "__vael_" + std::to_string(sc);
-                ir.addInstruction(currentFunc, "br", {cm, haveL, defL});
-                ir.addInstruction(currentFunc, "label", {}, haveL);
-                std::string elH = "$t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, ck}, elH);
-                ir.addInstruction(currentFunc, "assign", {elH}, elSlot);
-                ir.addInstruction(currentFunc, "br", {}, mgL);
-                ir.addInstruction(currentFunc, "label", {}, defL);
-                ir.addInstruction(currentFunc, "assign", {dit->second[di]}, elSlot);
-                ir.addInstruction(currentFunc, "br", {}, mgL);
-                ir.addInstruction(currentFunc, "label", {}, mgL);
-                fwd.push_back(elSlot);
+            std::string chosen;
+            // I-137: a call-site keyword binds this slot even when the
+            // starred list is short (g(*mk(), b=3) with defaulted b).
+            // I-146: if the star already bound the same slot, TypeError.
+            if (k < slotOverrides.size() && !slotOverrides[k].empty()) {
+                if (!lnSlot.empty()) {
+                    std::string ckDup = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {std::to_string(k)}, ckDup);
+                    std::string cmDup = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "icmp", {"Lt", ckDup, lnSlot}, cmDup);
+                    int scDup = tempCounter++;
+                    std::string dupL = "va_dup_" + std::to_string(scDup);
+                    std::string useL = "va_usekw_" + std::to_string(scDup);
+                    ir.addInstruction(currentFunc, "br", {cmDup, dupL, useL});
+                    ir.addInstruction(currentFunc, "label", {}, dupL);
+                    std::string pname = (k < fixedNames.size()) ? fixedNames[k] : "";
+                    emitTypeError(callDisplayName(targetFunc) +
+                        "() got multiple values for argument '" + pname + "'");
+                    ir.addInstruction(currentFunc, "br", {}, useL);
+                    ir.addInstruction(currentFunc, "label", {}, useL);
+                }
+                chosen = slotOverrides[k];
             } else {
-                std::string el = "$t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, ck}, el);
-                fwd.push_back(el);
+                std::string ck = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {std::to_string(k)}, ck);
+                size_t di = (k >= nrequired) ? (k - nrequired) : (size_t)-1;
+                if (!sizeForDef.empty() && di != (size_t)-1 &&
+                    dit != funcDefaultValues.end() && di < dit->second.size()) {
+                    std::string cm = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "icmp", {"Lt", ck, sizeForDef}, cm);
+                    int sc = tempCounter++;
+                    std::string haveL = "va_hv_" + std::to_string(sc);
+                    std::string defL = "va_df_" + std::to_string(sc);
+                    std::string mgL = "va_mg_" + std::to_string(sc);
+                    std::string elSlot = "__vael_" + std::to_string(sc);
+                    ir.addInstruction(currentFunc, "br", {cm, haveL, defL});
+                    ir.addInstruction(currentFunc, "label", {}, haveL);
+                    std::string elH = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, ck}, elH);
+                    ir.addInstruction(currentFunc, "assign", {elH}, elSlot);
+                    ir.addInstruction(currentFunc, "br", {}, mgL);
+                    ir.addInstruction(currentFunc, "label", {}, defL);
+                    ir.addInstruction(currentFunc, "assign", {dit->second[di]}, elSlot);
+                    ir.addInstruction(currentFunc, "br", {}, mgL);
+                    ir.addInstruction(currentFunc, "label", {}, mgL);
+                    chosen = elSlot;
+                } else {
+                    std::string el = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", listVal, ck}, el);
+                    chosen = el;
+                }
+                for (const auto& dictVal : kwargDicts) {
+                    if (k >= fixedNames.size()) break;
+                    // I-155: * already bound this slot and **dict also has it.
+                    if (!lnSlot.empty()) {
+                        std::string ckB = "$c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "const", {std::to_string(k)}, ckB);
+                        std::string cmB = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "icmp", {"Lt", ckB, lnSlot}, cmB);
+                        int scB = tempCounter++;
+                        std::string chkL = "va_kwb_" + std::to_string(scB);
+                        std::string skipL = "va_kws_" + std::to_string(scB);
+                        ir.addInstruction(currentFunc, "br", {cmB, chkL, skipL});
+                        ir.addInstruction(currentFunc, "label", {}, chkL);
+                        emitRejectDupKwFromDict(dictVal, fixedNames[k],
+                            callDisplayName(targetFunc));
+                        ir.addInstruction(currentFunc, "br", {}, skipL);
+                        ir.addInstruction(currentFunc, "label", {}, skipL);
+                    }
+                    std::string paramConst = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + fixedNames[k] + "\""}, paramConst, "str");
+                    std::string elem = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"Pyc_DictGetOrDefault", dictVal, paramConst, chosen}, elem);
+                    chosen = elem;
+                }
             }
+            fwd.push_back(chosen);
         }
         std::string rest;
         if (hasVar) {
@@ -4513,6 +4621,32 @@ class LoweringVisitor {
             ir.addInstruction(currentFunc, "label", {}, sex);
         }
         if (hasVar) fwd.push_back(rest);
+        if (hasKw) {
+            std::string kwDict;
+            if (kwidx != (size_t)-1 && kwidx < slotOverrides.size() && !slotOverrides[kwidx].empty()) {
+                kwDict = slotOverrides[kwidx];
+            } else {
+                kwDict = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyDict_New"}, kwDict);
+            }
+            if (!kwargDicts.empty() && pit != funcParamNames.end()) {
+                std::string paramList = "$t" + std::to_string(tempCounter++);
+                std::string sizeConst = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, sizeConst, "int");
+                ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, paramList, "boxed");
+                for (const auto& pn : fixedNames) {
+                    std::string paramName = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + pn + "\""}, paramName, "str");
+                    std::string dummyAppend = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyList_Append", paramList, paramName}, dummyAppend);
+                }
+                for (const auto& dictVal : kwargDicts) {
+                    std::string dummyRoute = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"Pyc_RouteSpreadKwargs", dictVal, paramList, kwDict}, dummyRoute);
+                }
+            }
+            fwd.push_back(kwDict);
+        }
         std::string callRes = resultTemp.empty() ? ("$t" + std::to_string(tempCounter++)) : resultTemp;
         std::vector<std::string> cops = {targetFunc};
         cops.insert(cops.end(), fwd.begin(), fwd.end());
@@ -4684,6 +4818,172 @@ class LoweringVisitor {
         std::string fnConst = "$c" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "const", {"\"" + displayName + "\""}, fnConst, "str");
         ir.addInstruction(currentFunc, "call", {"Pyc_CheckMissingArgs", fnConst, namesList, dictsList}, "");
+    }
+
+    void emitTypeError(const std::string& msg) {
+        std::string nameConst = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"\"TypeError\""}, nameConst, "str");
+        std::string msgConst = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"\"" + msg + "\""}, msgConst, "str");
+        std::string exc = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"pyc_make_exc", nameConst, msgConst}, exc);
+        ir.addInstruction(currentFunc, "call", {"pyc_raise", exc}, "");
+    }
+
+    // Append every element of srcList onto dstList (runtime length).
+    void emitSpliceList(const std::string& dstList, const std::string& srcList) {
+        std::string ln = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", srcList}, ln);
+        std::string lnSlot = "__sl_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {ln}, lnSlot);
+        std::string jv = "$s" + std::to_string(tempCounter++);
+        std::string j0 = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, j0);
+        ir.addInstruction(currentFunc, "assign", {j0}, jv);
+        int sc = tempCounter++;
+        std::string slp = "spl_lp_" + std::to_string(sc);
+        std::string sbd = "spl_bd_" + std::to_string(sc);
+        std::string sex = "spl_ex_" + std::to_string(sc);
+        ir.addInstruction(currentFunc, "br", {}, slp);
+        ir.addInstruction(currentFunc, "label", {}, slp);
+        std::string cm = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", jv, lnSlot}, cm);
+        ir.addInstruction(currentFunc, "br", {cm, sbd, sex});
+        ir.addInstruction(currentFunc, "label", {}, sbd);
+        std::string el = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", srcList, jv}, el);
+        std::string dmy = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_Append", dstList, el}, dmy);
+        std::string one = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"1"}, one);
+        std::string nj = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "add", {jv, one}, nj);
+        ir.addInstruction(currentFunc, "assign", {nj}, jv);
+        ir.addInstruction(currentFunc, "br", {}, slp);
+        ir.addInstruction(currentFunc, "label", {}, sex);
+    }
+
+    // I-155: TypeError if **dict supplies a name already bound by * / positionals.
+    void emitRejectDupKwFromDict(const std::string& dictVal, const std::string& paramName,
+                                 const std::string& funcDisplay) {
+        std::string key = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"\"" + paramName + "\""}, key, "str");
+        std::string has = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"Pyc_Contains", dictVal, key}, has);
+        int sc = tempCounter++;
+        std::string errL = "va_kwdup_" + std::to_string(sc);
+        std::string okL = "va_kwnodup_" + std::to_string(sc);
+        ir.addInstruction(currentFunc, "br", {has, errL, okL});
+        ir.addInstruction(currentFunc, "label", {}, errL);
+        emitTypeError(funcDisplay +
+            "() got multiple values for argument '" + paramName + "'");
+        ir.addInstruction(currentFunc, "br", {}, okL);
+        ir.addInstruction(currentFunc, "label", {}, okL);
+    }
+
+    // I-151: zip(*iterables) for runtime-length N. Zip2 only covers two
+    // iterables; there is no Runtime ZipN, so build N-tuples from the
+    // existing list/tuple helpers.
+    std::string emitZipFromVaList(const std::string& vaList) {
+        std::string nCols = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", vaList}, nCols);
+        std::string nSlot = "__sl_" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {nCols}, nSlot);
+        std::string zero = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"0"}, zero);
+        std::string result = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", zero}, result);
+        std::string isZ = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Eq", nSlot, zero}, isZ);
+        int sc = tempCounter++;
+        std::string emptyL = "zn_emp_" + std::to_string(sc);
+        std::string workL = "zn_wk_" + std::to_string(sc);
+        std::string doneL = "zn_dn_" + std::to_string(sc);
+        ir.addInstruction(currentFunc, "br", {isZ, emptyL, workL});
+        ir.addInstruction(currentFunc, "label", {}, emptyL);
+        ir.addInstruction(currentFunc, "br", {}, doneL);
+        ir.addInstruction(currentFunc, "label", {}, workL);
+        std::string first = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", vaList, zero}, first);
+        std::string min0 = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", first}, min0);
+        std::string minSlot = "$s" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {min0}, minSlot);
+        std::string one = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {"1"}, one);
+        std::string col = "$s" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {one}, col);
+        std::string minLp = "zn_mlp_" + std::to_string(sc);
+        std::string minBd = "zn_mbd_" + std::to_string(sc);
+        std::string minEx = "zn_mex_" + std::to_string(sc);
+        ir.addInstruction(currentFunc, "br", {}, minLp);
+        ir.addInstruction(currentFunc, "label", {}, minLp);
+        std::string cmCol = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", col, nSlot}, cmCol);
+        ir.addInstruction(currentFunc, "br", {cmCol, minBd, minEx});
+        ir.addInstruction(currentFunc, "label", {}, minBd);
+        std::string it = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", vaList, col}, it);
+        std::string sz = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", it}, sz);
+        std::string smaller = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", sz, minSlot}, smaller);
+        std::string updL = "zn_upd_" + std::to_string(sc);
+        std::string nxtCol = "zn_nc_" + std::to_string(sc);
+        ir.addInstruction(currentFunc, "br", {smaller, updL, nxtCol});
+        ir.addInstruction(currentFunc, "label", {}, updL);
+        ir.addInstruction(currentFunc, "assign", {sz}, minSlot);
+        ir.addInstruction(currentFunc, "br", {}, nxtCol);
+        ir.addInstruction(currentFunc, "label", {}, nxtCol);
+        std::string ncol = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "add", {col, one}, ncol);
+        ir.addInstruction(currentFunc, "assign", {ncol}, col);
+        ir.addInstruction(currentFunc, "br", {}, minLp);
+        ir.addInstruction(currentFunc, "label", {}, minEx);
+        std::string row = "$s" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {zero}, row);
+        std::string rowLp = "zn_rlp_" + std::to_string(sc);
+        std::string rowBd = "zn_rbd_" + std::to_string(sc);
+        std::string rowEx = "zn_rex_" + std::to_string(sc);
+        ir.addInstruction(currentFunc, "br", {}, rowLp);
+        ir.addInstruction(currentFunc, "label", {}, rowLp);
+        std::string cmRow = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", row, minSlot}, cmRow);
+        ir.addInstruction(currentFunc, "br", {cmRow, rowBd, rowEx});
+        ir.addInstruction(currentFunc, "label", {}, rowBd);
+        std::string tup = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyTuple_NewBoxed", nSlot}, tup);
+        std::string col2 = "$s" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "assign", {zero}, col2);
+        std::string cLp = "zn_clp_" + std::to_string(sc);
+        std::string cBd = "zn_cbd_" + std::to_string(sc);
+        std::string cEx = "zn_cex_" + std::to_string(sc);
+        ir.addInstruction(currentFunc, "br", {}, cLp);
+        ir.addInstruction(currentFunc, "label", {}, cLp);
+        std::string cmC2 = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "icmp", {"Lt", col2, nSlot}, cmC2);
+        ir.addInstruction(currentFunc, "br", {cmC2, cBd, cEx});
+        ir.addInstruction(currentFunc, "label", {}, cBd);
+        std::string it2 = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", vaList, col2}, it2);
+        std::string item = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_GetItemObj", it2, row}, item);
+        ir.addInstruction(currentFunc, "call", {"PyTuple_SetItemBoxed", tup, col2, item}, "");
+        std::string ncol2 = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "add", {col2, one}, ncol2);
+        ir.addInstruction(currentFunc, "assign", {ncol2}, col2);
+        ir.addInstruction(currentFunc, "br", {}, cLp);
+        ir.addInstruction(currentFunc, "label", {}, cEx);
+        std::string dmy = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "call", {"PyList_Append", result, tup}, dmy);
+        std::string nrow = "$t" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "add", {row, one}, nrow);
+        ir.addInstruction(currentFunc, "assign", {nrow}, row);
+        ir.addInstruction(currentFunc, "br", {}, rowLp);
+        ir.addInstruction(currentFunc, "label", {}, rowEx);
+        ir.addInstruction(currentFunc, "br", {}, doneL);
+        ir.addInstruction(currentFunc, "label", {}, doneL);
+        return result;
     }
 
     std::string callDisplayName(const std::string& funcName) const {
@@ -5154,6 +5454,7 @@ class LoweringVisitor {
         // list for Pyc_Apply directly here so that Starred dynamic * can splice into it
         // without routing through a __va wrapper (which requires a static target name).
         std::string indirectArgListTemp; // if non-empty, this list is passed to Pyc_Apply
+        std::string indirectKwDictTemp;  // separate kwargs dict for Pyc_ApplyKw (I-134)
         bool buildingIndirectArgs = false;
         if (isIndirectCallee) {
             std::string z = "$c" + std::to_string(tempCounter++);
@@ -5166,7 +5467,24 @@ class LoweringVisitor {
         std::vector<std::string> argRes;
         std::vector<std::pair<std::string, std::string>> kwArgs; // (name, value)
         std::vector<std::string> kwargDicts; // dicts from **kwargs unpacking
-        bool hadRuntimeStar = false; // true if this call used * with a non-literal (dynamic splice via __va wrapper)
+        bool hadRuntimeStar = false; // true if this call used * with a non-literal (dynamic splice)
+        std::string runtimeStarList; // va list for a direct-callee dynamic * (I-137)
+
+        // I-147: after the first dynamic *, later positionals / static stars
+        // join the same va list instead of sitting in argRes (dropped on
+        // the I-137 early-return).
+        auto appendCallPositional = [&](const std::string& v) {
+            if (v.empty()) return;
+            if (buildingIndirectArgs) {
+                std::string d = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, v}, d);
+            } else if (!runtimeStarList.empty()) {
+                std::string d = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call", {"PyList_Append", runtimeStarList, v}, d);
+            } else {
+                argRes.push_back(v);
+            }
+        };
 
         for (size_t i = 1; i < node->children.size(); ++i) {
             if (!node->children[i]) continue;
@@ -5199,17 +5517,24 @@ class LoweringVisitor {
                 const ASTNode* starChild = node->children[i]->children[0].get();
                 if (litIt != listLiteralElemASTs.end()) {
                     for (auto* elemAst : litIt->second) {
-                        argRes.push_back(lowerExpr(elemAst));
+                        // I-133: Pyc_Apply uses indirectArgListTemp, not argRes.
+                        appendCallPositional(lowerExpr(elemAst));
                     }
                 } else if (starChild && (starChild->type == "List" || starChild->type == "Tuple")) {
                     // Direct literal in * position: static expand.
                     for (auto& ch : starChild->children) {
-                        argRes.push_back(lowerExpr(ch.get()));
+                        // I-133: hs[0](*[1]) must land in the apply list.
+                        appendCallPositional(lowerExpr(ch.get()));
                     }
                 } else {
                     // Dynamic case: runtime splice.
                     hadRuntimeStar = true;
-                    std::string lst = lowerExpr(starChild);
+                    std::string lstSrc = lowerExpr(starChild);
+                    // I-136: * accepts tuples; PyList_SizeBoxed/GetItemObj
+                    // are type-1 only. PyBuiltin_List copies tuples and
+                    // TypeErrors super (type==7 && cell_content).
+                    std::string lst = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", lstSrc}, lst);
                     if (buildingIndirectArgs) {
                         // Indirect callee (lambda-as-value via token, possibly passed as param or in a container).
                         // Flush any fixed prefix collected before this * into the indirect list,
@@ -5250,8 +5575,12 @@ class LoweringVisitor {
                         ir.addInstruction(currentFunc, "br", {}, slp);
                         ir.addInstruction(currentFunc, "label", {}, sex);
                         // Nothing is pushed to argRes; the indirect Pyc_Apply path will use indirectArgListTemp.
+                    } else if (!runtimeStarList.empty()) {
+                        // I-147: later dynamic * joins the existing va list
+                        // (f(*a(), *b()) — do not replace the first star).
+                        emitSpliceList(runtimeStarList, lst);
                     } else {
-                        // Direct target: original dynamic * path using a __va_<target> wrapper.
+                        // Direct target: splice into a va list; forwarded after this loop.
                         std::string ln = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyList_SizeBoxed", lst}, ln);
                         std::string lnSlotD = "__sl_" + std::to_string(tempCounter++);
@@ -5264,10 +5593,11 @@ class LoweringVisitor {
                         std::string slp = "star_lp_" + std::to_string(sc);
                         std::string sbd = "star_bd_" + std::to_string(sc);
                         std::string sex = "star_ex_" + std::to_string(sc);
-                        // Seed va list with fixed prefix so far (positionals before the *)
+                        // Seed va list with fixed prefix so far (positionals before the *).
+                        // Start empty and append — NewBoxed(n) + append leaves n nulls.
                         std::string va = "$t" + std::to_string(tempCounter++);
                         std::string pn = "$c" + std::to_string(tempCounter++);
-                        ir.addInstruction(currentFunc, "const", {std::to_string(argRes.size())}, pn);
+                        ir.addInstruction(currentFunc, "const", {"0"}, pn);
                         ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", pn}, va);
                         for (auto& p : argRes) {
                             if (!p.empty()) {
@@ -5292,22 +5622,140 @@ class LoweringVisitor {
                         ir.addInstruction(currentFunc, "assign", {nj}, jv);
                         ir.addInstruction(currentFunc, "br", {}, slp);
                         ir.addInstruction(currentFunc, "label", {}, sex);
-                        // Route this call through the __va wrapper for the target.
-                        ensureVaWrapper(funcName);
-                        funcName = "__va_" + funcName;
+                        // Keep the original target name. Switching to
+                        // __va_<target> (params={"va"}) dropped call-site
+                        // keywords (I-137: g(*mk(), b=3)). Forward inline
+                        // after this loop so keywords still see `g`.
+                        runtimeStarList = va;
                         argRes.clear();
-                        argRes.push_back(va);
                     }
                 }
             } else {
-                if (buildingIndirectArgs) {
-                    std::string v = lowerExpr(node->children[i].get());
-                    std::string d = "$t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, v}, d);
-                } else {
-                    argRes.push_back(lowerExpr(node->children[i].get()));
-                }
+                appendCallPositional(lowerExpr(node->children[i].get()));
             }
+        }
+        // I-137: dynamic * on a direct callee. Forward from the collected
+        // list against the real target so call-site keywords / **dict bind.
+        if (hadRuntimeStar && !buildingIndirectArgs && !runtimeStarList.empty()) {
+            // I-148: this return used to run before print/min/max/zip, so
+            // print(*mkp()) became `call print` with 0 args.
+            if (funcName == "print") {
+                std::string sepVal;
+                std::string endVal;
+                bool sepGiven = false, endGiven = false;
+                for (const auto& kv : kwArgs) {
+                    if (kv.first == "sep")      { sepVal = kv.second; sepGiven = true; }
+                    else if (kv.first == "end") { endVal = kv.second; endGiven = true; }
+                }
+                std::string sepArg;
+                if (sepGiven) {
+                    sepArg = sepVal;
+                } else {
+                    sepArg = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "nconst", {}, sepArg, "none");
+                }
+                std::string endArg;
+                if (endGiven) {
+                    endArg = endVal;
+                } else {
+                    endArg = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "nconst", {}, endArg, "none");
+                }
+                std::string res = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call",
+                    {"pyc_print", runtimeStarList, sepArg, endArg}, res);
+                return res;
+            }
+            if (funcName == "min" || funcName == "max") {
+                std::string fnLst = (funcName == "min") ? "PyBuiltin_MinList" : "PyBuiltin_MaxList";
+                std::string keyName;
+                std::string defaultName;
+                for (const auto& kv : kwArgs) {
+                    if (kv.first == "key") keyName = kv.second;
+                    if (kv.first == "default") defaultName = kv.second;
+                }
+                // I-151: min(*[[1,2,3]]) is min([1,2,3]) — MinList of item 0.
+                // min(*[1,2,3]) is multi-arg: MinList of the va list itself.
+                std::string ln = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call",
+                    {"PyList_SizeBoxed", runtimeStarList}, ln);
+                std::string one = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"1"}, one);
+                std::string cm = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "icmp", {"Eq", ln, one}, cm);
+                int sc = tempCounter++;
+                std::string oneL = "va_mm1_" + std::to_string(sc);
+                std::string manyL = "va_mmn_" + std::to_string(sc);
+                std::string joinL = "va_mmj_" + std::to_string(sc);
+                std::string srcSlot = "__mmsrc_" + std::to_string(sc);
+                ir.addInstruction(currentFunc, "br", {cm, oneL, manyL});
+                ir.addInstruction(currentFunc, "label", {}, oneL);
+                std::string i0 = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "const", {"0"}, i0);
+                std::string only = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call",
+                    {"PyList_GetItemObj", runtimeStarList, i0}, only);
+                ir.addInstruction(currentFunc, "assign", {only}, srcSlot);
+                ir.addInstruction(currentFunc, "br", {}, joinL);
+                ir.addInstruction(currentFunc, "label", {}, manyL);
+                ir.addInstruction(currentFunc, "assign", {runtimeStarList}, srcSlot);
+                ir.addInstruction(currentFunc, "br", {}, joinL);
+                ir.addInstruction(currentFunc, "label", {}, joinL);
+                std::string res = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "call",
+                    {fnLst, srcSlot, keyName, defaultName}, res);
+                noteType(res, "boxed");
+                return res;
+            }
+            if (funcName == "zip") {
+                std::string res = emitZipFromVaList(runtimeStarList);
+                noteType(res, "list");
+                return res;
+            }
+            std::vector<std::string> overrides;
+            auto pit = funcParamNames.find(funcName);
+            if (pit != funcParamNames.end() && (!kwArgs.empty() || !kwargDicts.empty())) {
+                const auto& params = pit->second;
+                overrides.assign(params.size(), "");
+                size_t kwSlot = (size_t)-1;
+                for (size_t j = 0; j < params.size(); ++j) {
+                    if (params[j].size() >= 2 && params[j][0] == '*' && params[j][1] == '*') {
+                        kwSlot = j;
+                        break;
+                    }
+                }
+                std::string extraKw;
+                for (auto& kw : kwArgs) {
+                    bool matched = false;
+                    for (size_t j = 0; j < params.size(); ++j) {
+                        if (params[j] == kw.first) {
+                            overrides[j] = kw.second;
+                            matched = true;
+                            break;
+                        }
+                    }
+                    if (matched) continue;
+                    // I-142: unmatched keyword on a callee with no **kwargs
+                    // is TypeError, not a silent drop (g3(*mk(), x=3)).
+                    if (kwSlot == (size_t)-1) {
+                        emitTypeError(callDisplayName(funcName) +
+                            "() got an unexpected keyword argument '" + kw.first + "'");
+                        continue;
+                    }
+                    if (extraKw.empty()) {
+                        extraKw = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "call", {"PyDict_New"}, extraKw);
+                    }
+                    std::string keyConst = "$c" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "const", {"\"" + kw.first + "\""}, keyConst, "str");
+                    std::string dummySet = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", extraKw, keyConst, kw.second}, dummySet);
+                }
+                if (kwSlot != (size_t)-1 && !extraKw.empty()) overrides[kwSlot] = extraKw;
+            }
+            std::string callRes = "$t" + std::to_string(tempCounter++);
+            emitForwardCallFromList(funcName, runtimeStarList, callRes, overrides, kwargDicts);
+            return callRes;
         }
         // Callee-side *args/**kwargs collection (skip for runtime * call
         // sites; the __va wrapper already forwards the correct
@@ -5397,6 +5845,12 @@ class LoweringVisitor {
                     bool matched = false;
                     for (size_t j = 0; j < params.size(); ++j) {
                         if (params[j] == kw.first) {
+                            // I-146: g4(*[1, 9], b=3) statically expands,
+                            // then this overwrite used to hide the star.
+                            if (j < argRes.size() && !argRes[j].empty()) {
+                                emitTypeError(callDisplayName(funcName) +
+                                    "() got multiple values for argument '" + kw.first + "'");
+                            }
                             if (argRes.size() <= j) argRes.resize(j + 1);
                             argRes[j] = kw.second;
                             matched = true;
@@ -5461,6 +5915,14 @@ class LoweringVisitor {
                         emitMissingArgsCheck(callDisplayName(funcName), reqUnbound, kwargDicts);
                     }
                 }
+                // I-155: snapshot slots bound by * / positionals / named kw
+                // before **dict overwrites them via Pyc_DictGetOrDefault.
+                std::vector<char> alreadyBound(params.size(), 0);
+                for (size_t j = 0; j < params.size(); ++j) {
+                    if (j == kwidx) continue;
+                    if (!params[j].empty() && params[j][0] == '*') continue;
+                    if (j < argRes.size() && !argRes[j].empty()) alreadyBound[j] = 1;
+                }
                 for (auto& dictVal : kwargDicts) {
                     auto ddit = funcDefaultValues.find(funcName);
                     size_t nregular = params.size();
@@ -5480,6 +5942,10 @@ class LoweringVisitor {
                         if (fallback.empty()) {
                             fallback = "$c" + std::to_string(tempCounter++);
                             ir.addInstruction(currentFunc, "nconst", {}, fallback, "none");
+                        }
+                        if (alreadyBound[j]) {
+                            emitRejectDupKwFromDict(dictVal, params[j],
+                                callDisplayName(funcName));
                         }
                         std::string paramConst = "$c" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "const", {"\"" + params[j] + "\""}, paramConst, "str");
@@ -5518,31 +5984,13 @@ class LoweringVisitor {
                 // Indirect callee (unknown shape at compile time — a
                 // variable holding a function, a closure/decorator
                 // forwarding *args/**kwargs, a value pulled from a
-                // container). Real bug found and fixed while bug hunting:
-                // keyword arguments to an indirect call used to be
-                // silently dropped entirely — pushed onto `argRes`, which
-                // isn't even the list actually used for indirect calls
-                // (see buildingIndirectArgs above; indirect args are
-                // appended directly to indirectArgListTemp as they're
-                // processed, so anything pushed onto argRes here was dead
-                // code). Fixed by packing keyword args + dict spreads into
-                // a single merged dict, appended as the LAST element of
-                // the flat Pyc_Apply argument list. The generated
-                // __apply__<name> adapter (Codegen.cpp) recognizes a
-                // trailing dict argument and, if the target has a
-                // **kwargs catch-all, binds it there instead of always
-                // synthesizing an empty placeholder (which, before this
-                // fix, was itself also the wrong type — a list, not a
-                // dict). An ordinary positional-only indirect call (no
-                // keyword args at this call site) is unaffected: nothing
-                // is appended, matching prior behavior exactly.
-                //
-                // I-064: a kwargs-append is not a positional. Adapter-side
-                // "peel last if empty dict" made hs[0]({}) look like
-                // hs[0](**{}) — the call site knows which one this is.
-                // Omit the merged dict when it is empty (**{} / **d with
-                // d=={}). Named keywords / non-empty spreads still append
-                // (hasKwVar peel / existing non-empty path).
+                // container). Pack named keywords + **dict spreads into a
+                // merged dict passed separately via Pyc_ApplyKw. Do NOT
+                // append that dict onto the positional apply list:
+                // hs[0]({"a": 1}) is a positional dict (Pyc_Apply) and
+                // hs[0](a=1) / hs[0](**{"a": 1}) must not share that
+                // shape (I-134 / I-144). Empty **{} still goes through
+                // ApplyKw with an empty dict (I-064: no empty-dict peel).
                 if (!kwArgs.empty() || !kwargDicts.empty()) {
                     std::string kwDict = "$t" + std::to_string(tempCounter++);
                     ir.addInstruction(currentFunc, "call", {"PyDict_New"}, kwDict);
@@ -5556,21 +6004,7 @@ class LoweringVisitor {
                         std::string dummySet = "$t" + std::to_string(tempCounter++);
                         ir.addInstruction(currentFunc, "call", {"PyDict_SetItem", kwDict, keyConst, kw.second}, dummySet);
                     }
-                    std::string dsz = "$t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"PyBuiltin_Len", kwDict}, dsz);
-                    std::string zero = "$c" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "const", {"0"}, zero);
-                    std::string nonempty = "$t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "icmp", {"Gt", dsz, zero}, nonempty);
-                    int sc = tempCounter++;
-                    std::string appL = "kw_app_" + std::to_string(sc);
-                    std::string skipL = "kw_sk_" + std::to_string(sc);
-                    ir.addInstruction(currentFunc, "br", {nonempty, appL, skipL});
-                    ir.addInstruction(currentFunc, "label", {}, appL);
-                    std::string dAppend = "$t" + std::to_string(tempCounter++);
-                    ir.addInstruction(currentFunc, "call", {"PyList_Append", indirectArgListTemp, kwDict}, dAppend);
-                    ir.addInstruction(currentFunc, "br", {}, skipL);
-                    ir.addInstruction(currentFunc, "label", {}, skipL);
+                    indirectKwDictTemp = kwDict;
                 }
             } else {
                 // Fallback: append keyword values
@@ -6288,15 +6722,18 @@ class LoweringVisitor {
             noteType(res, "boxed");
             return res;
         }
-        // getattr(obj, name[, default]) → Pyc_GetAttr(obj, name)
+        // getattr(obj, name[, default]) — 2-arg still raises on a module
+        // miss (I-067). 3-arg returns the default on a miss (I-139).
         if (funcName == "getattr" && argRes.size() >= 2) {
             std::string obj = argRes[0];
             std::string name = argRes[1];
             std::string res = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_GetAttr", obj, name}, res);
-            // If a default was provided and the attribute is missing, the
-            // runtime returns None — we don't have a real AttributeError
-            // mechanism, so just return the result (which may be None).
+            if (argRes.size() >= 3) {
+                ir.addInstruction(currentFunc, "call",
+                    {"Pyc_GetAttrDefault", obj, name, argRes[2]}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"Pyc_GetAttr", obj, name}, res);
+            }
             noteType(res, "boxed");
             return res;
         }
@@ -6635,7 +7072,12 @@ class LoweringVisitor {
                 // No additional handling needed - the temp holds the string token.
             }
             std::string res = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"Pyc_Apply", tok, argList}, res);
+            if (!indirectKwDictTemp.empty()) {
+                ir.addInstruction(currentFunc, "call",
+                    {"Pyc_ApplyKw", tok, argList, indirectKwDictTemp}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"Pyc_Apply", tok, argList}, res);
+            }
             // The Pyc_GetItem on the bundle returns a borrowed ref to a
             // string token (the function name). Pyc_Apply does not
             // INCREF/DECREF the token, but it does keep a reference via
@@ -9886,31 +10328,109 @@ class LoweringVisitor {
                 callableTokenTemps.insert(res);
                 return res;
             }
-            // Try to call as user-defined method
-            // For class instances: look up method on class dict
-            // C().format(a=1): map kwargs onto C__format at compile time
-            // so dropping the hasKeywordArgs format arm does not drop `a`
-            // (I-030 / I-020).
+            // Known-class instance: map kwargs onto C__meth *user* slots
+            // after self so the direct call is C__f(self, a) (I-150 / I-020).
+            // funcParamNames keeps "self"; a Keyword named "a" is params[1]
+            // and must land in callArgs[2], not overwrite self at [1].
+            // **dict is a Keyword with empty id — skip it and the call is
+            // C__f(self) only (LLVM arity fail). Unexpected names: TypeError.
+            // No param names: fall through (boxed helper) rather than a
+            // short direct call.
             if (hasKeywordArgs) {
                 auto iit = instanceClassOf.find(obj);
                 if (iit != instanceClassOf.end()) {
                     std::string irName = iit->second + "__" + methodName;
-                    if (knownIRFunctions.count(irName)) {
+                    auto pit = funcParamNames.find(irName);
+                    if (knownIRFunctions.count(irName) && pit != funcParamNames.end()) {
+                        const auto& params = pit->second;
+                        size_t selfOff = (!params.empty() && params[0] == "self") ? 1 : 0;
+                        auto callSlot = [&](size_t j) -> size_t {
+                            return selfOff ? (j + 1) : (j + 2);
+                        };
                         std::vector<std::string> callArgs{irName, obj};
                         for (auto& a : args) callArgs.push_back(a);
-                        auto pit = funcParamNames.find(irName);
-                        if (pit != funcParamNames.end()) {
-                            for (size_t i = 1; i < node->children.size(); ++i) {
-                                const auto* ch = node->children[i].get();
-                                if (!ch || ch->type != "Keyword" || ch->id.empty() ||
-                                    ch->children.empty())
-                                    continue;
-                                for (size_t j = 0; j < pit->second.size(); ++j) {
-                                    if (pit->second[j] != ch->id) continue;
-                                    while (callArgs.size() <= j + 1) callArgs.push_back("");
-                                    callArgs[j + 1] = lowerExpr(ch->children[0].get());
-                                    break;
+                        size_t nregular = params.size();
+                        size_t kwidx = (size_t)-1;
+                        for (size_t k = 0; k < params.size(); ++k) {
+                            if (params[k].size() >= 2 && params[k][0] == '*' &&
+                                params[k][1] == '*') {
+                                kwidx = k;
+                                if (nregular == params.size()) nregular = k;
+                            } else if (!params[k].empty() && params[k][0] == '*' &&
+                                       nregular == params.size()) {
+                                nregular = k;
+                            }
+                        }
+                        std::vector<std::string> kwargDicts;
+                        for (size_t i = 1; i < node->children.size(); ++i) {
+                            const auto* ch = node->children[i].get();
+                            if (!ch || ch->type != "Keyword" || ch->children.empty())
+                                continue;
+                            if (ch->id.empty()) {
+                                kwargDicts.push_back(lowerExpr(ch->children[0].get()));
+                                continue;
+                            }
+                            bool matched = false;
+                            for (size_t j = selfOff; j < nregular; ++j) {
+                                if (params[j] != ch->id) continue;
+                                size_t slot = callSlot(j);
+                                while (callArgs.size() <= slot) callArgs.push_back("");
+                                callArgs[slot] = lowerExpr(ch->children[0].get());
+                                matched = true;
+                                break;
+                            }
+                            if (!matched && kwidx == (size_t)-1) {
+                                emitTypeError(callDisplayName(irName) +
+                                    "() got an unexpected keyword argument '" +
+                                    ch->id + "'");
+                            }
+                        }
+                        auto ddit = funcDefaultValues.find(irName);
+                        size_t ndefaults = (ddit != funcDefaultValues.end())
+                                               ? ddit->second.size() : 0;
+                        for (auto& dictVal : kwargDicts) {
+                            for (size_t j = selfOff; j < nregular; ++j) {
+                                size_t slot = callSlot(j);
+                                std::string fallback;
+                                if (slot < callArgs.size() && !callArgs[slot].empty()) {
+                                    fallback = callArgs[slot];
+                                } else if (ndefaults > 0 && j >= nregular - ndefaults) {
+                                    fallback = ddit->second[j - (nregular - ndefaults)];
                                 }
+                                if (fallback.empty()) {
+                                    fallback = "$c" + std::to_string(tempCounter++);
+                                    ir.addInstruction(currentFunc, "nconst", {},
+                                                      fallback, "none");
+                                }
+                                std::string paramConst = "$c" + std::to_string(tempCounter++);
+                                ir.addInstruction(currentFunc, "const",
+                                                  {"\"" + params[j] + "\""},
+                                                  paramConst, "str");
+                                std::string elem = "$t" + std::to_string(tempCounter++);
+                                ir.addInstruction(currentFunc, "call",
+                                                  {"Pyc_DictGetOrDefault", dictVal,
+                                                   paramConst, fallback}, elem);
+                                while (callArgs.size() <= slot) callArgs.push_back("");
+                                callArgs[slot] = elem;
+                            }
+                        }
+                        if (ndefaults > 0) {
+                            for (size_t i = 0; i < ndefaults; ++i) {
+                                size_t j = nregular - ndefaults + i;
+                                if (j < selfOff || j >= nregular) continue;
+                                size_t slot = callSlot(j);
+                                while (callArgs.size() <= slot) callArgs.push_back("");
+                                if (callArgs[slot].empty())
+                                    callArgs[slot] = ddit->second[i];
+                            }
+                        }
+                        for (size_t j = selfOff; j < nregular; ++j) {
+                            size_t slot = callSlot(j);
+                            while (callArgs.size() <= slot) callArgs.push_back("");
+                            if (callArgs[slot].empty()) {
+                                std::string none = "$c" + std::to_string(tempCounter++);
+                                ir.addInstruction(currentFunc, "nconst", {}, none, "none");
+                                callArgs[slot] = none;
                             }
                         }
                         ir.addInstruction(currentFunc, "call", callArgs, res);

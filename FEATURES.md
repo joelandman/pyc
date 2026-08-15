@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): ~637 inline `CASES` + 29 `FILE_CASES` + 1 dispatch-chain check, compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **752/752** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742) are stale.
 
 ---
 
@@ -79,7 +79,7 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 ```
 
 - Nested functions, `nonlocal` (cells), `global`
-- Lambdas (defaults, `*args`) as values; indirect calls via `Pyc_Apply`
+- Lambdas (defaults, `*args`) as values; indirect calls via `Pyc_Apply` / `Pyc_ApplyKw` (named keywords and `**dict` on a boxed callee, [I-134](ISSUES.md))
 - Decorators: `@deco`, `@deco(args)` factories, stacked
 - `@classmethod` / `@property` / `@staticmethod` on methods
 - First-class functions: identity, `print(f)` → `<function f at 0x...>`
@@ -129,7 +129,7 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 `issubclass`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`,
 `round`, `divmod` (returns a tuple), `pow` / `pow(base, exp, mod)`, `reversed`,
 `cmp_to_key`, `callable`, `map`, `filter`,
-`getattr` / `hasattr` / `setattr` / `delattr`, `format`.
+`getattr` / `hasattr` / `setattr` / `delattr` (`getattr(obj, name, default)` keeps the default, [I-139](ISSUES.md)), `format`.
 
 Many of these are first-class values (`sorted(words, key=len)`, `funcs = [abs, str]`).
 
@@ -168,7 +168,7 @@ are index characters ([I-042](ISSUES.md)). Base-field misses raise
 IndexError/KeyError ([I-053](ISSUES.md)). `partition("")` / `rpartition("")` raise
 `ValueError: empty separator`. Non-str sep is `TypeError` ([I-040](ISSUES.md)).
 
-Container / `repr` of `str` escapes `\n`, `\t`, `\r`, `\\`, quotes, and other ASCII controls (`\xHH`), with CPython quote-switching. Bare `print("a\nb")` is still `str` (real newline). Embedded NUL in a str literal and `chr(0)` keep their length ([I-021](ISSUES.md)); bare `print` / some rebuilds still stop at the first NUL ([I-063](ISSUES.md)). `KeyError` / nested `Path` print use `repr` ([I-022](ISSUES.md)).
+Container / `repr` of `str` escapes `\n`, `\t`, `\r`, `\\`, quotes, and other ASCII controls (`\xHH`), with CPython quote-switching. Bare `print("a\nb")` is still `str` (real newline). Embedded NUL in a str literal and `chr(0)` keep their length ([I-021](ISSUES.md)). Bare `print` and path rebuilds (`os.path.basename`/`join`/…) keep NUL ([I-063](ISSUES.md), [I-138](ISSUES.md)). `KeyError` / nested `Path` print use `repr` ([I-022](ISSUES.md)).
 
 ---
 

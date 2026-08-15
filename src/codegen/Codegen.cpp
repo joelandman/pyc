@@ -708,6 +708,21 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_Apply", module.get());
     }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_ApplyKw", module.get());
+    }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(pyObjectPtrTy,
+            {pyObjectPtrTy, pyObjectPtrTy, llvm::Type::getInt32Ty(context), int8PtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_ApplyKwRest", module.get());
+    }
+    {
+        llvm::FunctionType* ty = llvm::FunctionType::get(llvm::Type::getVoidTy(context),
+            {pyObjectPtrTy, int8PtrTy, int8PtrTy}, false);
+        llvm::Function::Create(ty, llvm::Function::ExternalLinkage, "Pyc_ApplyRejectDupKw", module.get());
+    }
     // PyCollections_Counter / PyCollections_MostCommon (1-arg: args list)
     // PyCollections_Elements (1-arg: counter dict)
     {
@@ -805,6 +820,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     // attribute read, auto-invoking a @property getter — see its
     // comment in Runtime.cpp.
     llvm::Function::Create(getItemTy, llvm::Function::ExternalLinkage, "Pyc_GetAttr", module.get());
+    // Pyc_GetAttrDefault(obj, attrName, default): getattr with a default
+    // (I-139). Same boxed-ptr convention as Pyc_GetAttr, plus the default.
+    {
+        llvm::FunctionType* getAttrDefaultTy = llvm::FunctionType::get(
+            pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(getAttrDefaultTy, llvm::Function::ExternalLinkage,
+                               "Pyc_GetAttrDefault", module.get());
+    }
     // Pyc_CallMethod(methodVal, receiver, argsList): the single dispatch
     // point for obj.method(...)/ClassName.method(...) calls, deciding
     // self/cls-prepending based on @staticmethod/@classmethod tagging —
@@ -1001,13 +1024,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // (which boxes arguments), so they don't need indirect dispatch adapters.
         if (f.name.find("__specialized_") == 0) continue;
         std::string adapterName = "__apply__" + f.name;
-        llvm::FunctionType* aty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
+        llvm::FunctionType* aty = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function* adapter = llvm::Function::Create(aty, llvm::Function::ExternalLinkage, adapterName, module.get());
 
         llvm::BasicBlock* aentry = llvm::BasicBlock::Create(context, "entry", adapter);
         llvm::IRBuilder<> abuilder(aentry);
         llvm::Value* argListVal = adapter->getArg(0);
         argListVal->setName("args");
+        llvm::Value* kwArgVal = adapter->getArg(1);
+        kwArgVal->setName("kwargs");
 
         std::string realName = llvmFunctionName(f.name);
         llvm::Function* real = module->getFunction(realName);
@@ -1124,9 +1149,13 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         // Recompute ndef/firstDef from the (possibly probed) defSlots for this adapter.
         ndef = defSlots.size();
         size_t firstDef = (userFixed > ndef) ? (userFixed - ndef) : 0;
-        // Missing required positional args (userLen < firstDef): raise
-        // TypeError listing ALL missing names, then unreachable. Do not
-        // pass a null PyObject* (which prints as None).
+        // Missing required args: not supplied positionally AND not in kwDict.
+        // A kwargs-only call (hs[0](a=1)) has userLen==0; do not raise until
+        // we have checked the separate kw channel. Empty miss list is a no-op.
+        std::string applyFnName = !f.displayName.empty() ? f.displayName : f.name;
+        llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
+        llvm::Function* dictGetFn = module->getFunction("PyDict_GetItem");
+        llvm::Function* rejectDupFn = module->getFunction("Pyc_ApplyRejectDupKw");
         if (firstDef > 0) {
             llvm::Value* firstDefV = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), firstDef);
             llvm::Value* needRaise = abuilder.CreateICmpSLT(userLen, firstDefV, "need.miss");
@@ -1134,18 +1163,36 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             llvm::BasicBlock* okB = llvm::BasicBlock::Create(context, "args.ok", adapter);
             abuilder.CreateCondBr(needRaise, raiseB, okB);
             abuilder.SetInsertPoint(raiseB);
-            llvm::Function* fromStr = module->getFunction("PyUnicode_FromString");
             llvm::Function* raiseFn = module->getFunction("Pyc_RaiseMissingArgs");
             llvm::Value* zeroSz = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
             llvm::Value* mlist = listNew
                 ? (llvm::Value*)abuilder.CreateCall(listNew, {zeroSz}, "miss.names")
                 : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            llvm::Value* kwIsNull = abuilder.CreateICmpEQ(
+                kwArgVal, llvm::ConstantPointerNull::get(pyObjectPtrTy), "miss.kwnull");
             for (size_t i = 0; i < firstDef; ++i) {
                 llvm::Value* iV = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i);
-                llvm::Value* isMiss = abuilder.CreateICmpSLE(userLen, iV, "miss.i" + std::to_string(i));
+                llvm::Value* isMissPos = abuilder.CreateICmpSLE(userLen, iV, "miss.i" + std::to_string(i));
+                llvm::BasicBlock* chkKwB = llvm::BasicBlock::Create(context, "miss.chkw" + std::to_string(i), adapter);
                 llvm::BasicBlock* appB = llvm::BasicBlock::Create(context, "miss.app" + std::to_string(i), adapter);
                 llvm::BasicBlock* nxtB = llvm::BasicBlock::Create(context, "miss.nxt" + std::to_string(i), adapter);
-                abuilder.CreateCondBr(isMiss, appB, nxtB);
+                abuilder.CreateCondBr(isMissPos, chkKwB, nxtB);
+                abuilder.SetInsertPoint(chkKwB);
+                llvm::BasicBlock* lookupB = llvm::BasicBlock::Create(context, "miss.lkw" + std::to_string(i), adapter);
+                abuilder.CreateCondBr(kwIsNull, appB, lookupB);
+                abuilder.SetInsertPoint(lookupB);
+                if (fromStr && dictGetFn && i < pnames.size()) {
+                    llvm::Value* nm = abuilder.CreateGlobalStringPtr(pnames[i], "miss.kn" + std::to_string(i));
+                    llvm::Value* s = abuilder.CreateCall(fromStr, {nm}, "miss.ks" + std::to_string(i));
+                    llvm::Value* got = abuilder.CreateCall(dictGetFn, {kwArgVal, s}, "miss.kv" + std::to_string(i));
+                    llvm::Value* found = abuilder.CreateICmpNE(
+                        got, llvm::ConstantPointerNull::get(pyObjectPtrTy), "miss.kf" + std::to_string(i));
+                    if (auto* dec = module->getFunction("Py_DECREF"))
+                        abuilder.CreateCall(dec, {got});
+                    abuilder.CreateCondBr(found, nxtB, appB);
+                } else {
+                    abuilder.CreateBr(appB);
+                }
                 abuilder.SetInsertPoint(appB);
                 if (fromStr && listAppend && i < pnames.size()) {
                     llvm::Value* nm = abuilder.CreateGlobalStringPtr(pnames[i], "miss.n" + std::to_string(i));
@@ -1155,9 +1202,16 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 abuilder.CreateBr(nxtB);
                 abuilder.SetInsertPoint(nxtB);
             }
+            llvm::BasicBlock* doRaiseB = llvm::BasicBlock::Create(context, "miss.do", adapter);
+            llvm::Value* msz = listSize
+                ? (llvm::Value*)abuilder.CreateCall(listSize, {mlist}, "miss.sz")
+                : (llvm::Value*)llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 1);
+            llvm::Value* missEmpty = abuilder.CreateICmpEQ(
+                msz, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0), "miss.empty");
+            abuilder.CreateCondBr(missEmpty, okB, doRaiseB);
+            abuilder.SetInsertPoint(doRaiseB);
             if (raiseFn) {
-                std::string missName = !f.displayName.empty() ? f.displayName : f.name;
-                llvm::Value* fns = abuilder.CreateGlobalStringPtr(missName, "miss.fn");
+                llvm::Value* fns = abuilder.CreateGlobalStringPtr(applyFnName, "miss.fn");
                 abuilder.CreateCall(raiseFn, {fns, mlist});
             }
             abuilder.CreateUnreachable();
@@ -1167,13 +1221,37 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             llvm::Value* iV = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), i);
             llvm::Value* have = abuilder.CreateICmpSGT(userLen, iV);
             llvm::BasicBlock* haveB = llvm::BasicBlock::Create(context, "have" + std::to_string(i), adapter);
+            llvm::BasicBlock* checkKwB = llvm::BasicBlock::Create(context, "chkw" + std::to_string(i), adapter);
+            llvm::BasicBlock* lookupKwB = llvm::BasicBlock::Create(context, "lkw" + std::to_string(i), adapter);
+            llvm::BasicBlock* fromKwB = llvm::BasicBlock::Create(context, "fromkw" + std::to_string(i), adapter);
             llvm::BasicBlock* missB = llvm::BasicBlock::Create(context, "miss" + std::to_string(i), adapter);
             llvm::BasicBlock* after = llvm::BasicBlock::Create(context, "arg" + std::to_string(i), adapter);
-            abuilder.CreateCondBr(have, haveB, missB);
+            abuilder.CreateCondBr(have, haveB, checkKwB);
             abuilder.SetInsertPoint(haveB);
             llvm::Value* idxHave = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), ncells + i);
             llvm::Value* elHave = nullptr;
             if (listGet) elHave = abuilder.CreateCall(listGet, {argListVal, idxHave}, "a" + std::to_string(i));
+            if (rejectDupFn && i < pnames.size()) {
+                llvm::Value* dnm = abuilder.CreateGlobalStringPtr(pnames[i], "dup.n" + std::to_string(i));
+                llvm::Value* dfn = abuilder.CreateGlobalStringPtr(applyFnName, "dup.fn" + std::to_string(i));
+                abuilder.CreateCall(rejectDupFn, {kwArgVal, dnm, dfn});
+            }
+            abuilder.CreateBr(after);
+            abuilder.SetInsertPoint(checkKwB);
+            llvm::Value* kwNull = abuilder.CreateICmpEQ(
+                kwArgVal, llvm::ConstantPointerNull::get(pyObjectPtrTy), "kwnull" + std::to_string(i));
+            abuilder.CreateCondBr(kwNull, missB, lookupKwB);
+            abuilder.SetInsertPoint(lookupKwB);
+            llvm::Value* elKw = llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            if (fromStr && dictGetFn && i < pnames.size()) {
+                llvm::Value* knm = abuilder.CreateGlobalStringPtr(pnames[i], "kw.n" + std::to_string(i));
+                llvm::Value* ks = abuilder.CreateCall(fromStr, {knm}, "kw.s" + std::to_string(i));
+                elKw = abuilder.CreateCall(dictGetFn, {kwArgVal, ks}, "kw.v" + std::to_string(i));
+            }
+            llvm::Value* hasKw = abuilder.CreateICmpNE(
+                elKw, llvm::ConstantPointerNull::get(pyObjectPtrTy), "kw.has" + std::to_string(i));
+            abuilder.CreateCondBr(hasKw, fromKwB, missB);
+            abuilder.SetInsertPoint(fromKwB);
             abuilder.CreateBr(after);
             abuilder.SetInsertPoint(missB);
             llvm::Value* elMiss = llvm::ConstantPointerNull::get(pyObjectPtrTy);
@@ -1209,26 +1287,56 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             }
             abuilder.CreateBr(after);
             abuilder.SetInsertPoint(after);
-            llvm::PHINode* phi = abuilder.CreatePHI(pyObjectPtrTy, 2);
+            llvm::PHINode* phi = abuilder.CreatePHI(pyObjectPtrTy, 3);
             phi->addIncoming(elHave ? elHave : llvm::ConstantPointerNull::get(pyObjectPtrTy), haveB);
+            phi->addIncoming(elKw, fromKwB);
             phi->addIncoming(elMiss, missB);
             cargs.push_back(phi);
         }
 
-        // Trailing kwargs dict on the apply list is used only when the
-        // target has **kwargs (hasKwVar). Do not peel empty dicts for
-        // functions without **kwargs — that made g({}) look like g(**{}).
+        // Separate kw channel (Pyc_ApplyKw): leftover keys → **kwargs or TypeError.
+        // Trailing type-2 peel stays only when kwArg is null AND hasKwVar
+        // (legacy append path). Never peel when kwargs arrived separately —
+        // hs[0]({"a": 1}) is positional and uses Pyc_Apply (kwArg==null),
+        // and must not be stolen for a function without **kwargs.
         llvm::Function* dictNewFn = module->getFunction("PyDict_New");
+        llvm::Function* kwRestFn = module->getFunction("Pyc_ApplyKwRest");
         llvm::Value* kwargsVal = nullptr;
         llvm::Value* varEndIdx = ln;  // upper bound (exclusive) for the *args tail below
+        llvm::Value* restKw = nullptr;
+        {
+            llvm::Value* zeroSz = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
+            llvm::Value* nlist = listNew
+                ? (llvm::Value*)abuilder.CreateCall(listNew, {zeroSz}, "kw.bound")
+                : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            if (fromStr && listAppend && nlist) {
+                for (size_t i = 0; i < userFixed && i < pnames.size(); ++i) {
+                    llvm::Value* nm = abuilder.CreateGlobalStringPtr(pnames[i], "kw.bn" + std::to_string(i));
+                    llvm::Value* s = abuilder.CreateCall(fromStr, {nm}, "kw.bs" + std::to_string(i));
+                    abuilder.CreateCall(listAppend, {nlist, s});
+                }
+            }
+            llvm::Value* hasKwI = llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), hasKwVar ? 1 : 0);
+            llvm::Value* fns = abuilder.CreateGlobalStringPtr(applyFnName, "kw.fn");
+            if (kwRestFn) {
+                restKw = abuilder.CreateCall(kwRestFn, {kwArgVal, nlist, hasKwI, fns}, "kw.rest");
+            } else {
+                restKw = dictNewFn
+                    ? (llvm::Value*)abuilder.CreateCall(dictNewFn, {}, "kw.rest.empty")
+                    : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy);
+            }
+        }
         if (hasKwVar) {
+            llvm::Value* kwNull = abuilder.CreateICmpEQ(
+                kwArgVal, llvm::ConstantPointerNull::get(pyObjectPtrTy), "kw.argnull");
             llvm::Value* minRequired = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), ncells + userFixed);
             llvm::Value* hasExtra = abuilder.CreateICmpSGT(ln, minRequired, "kw.hasextra");
+            llvm::Value* tryPeel = abuilder.CreateAnd(hasExtra, kwNull, "kw.trypeel");
             llvm::BasicBlock* checkB = llvm::BasicBlock::Create(context, "kw.check", adapter);
             llvm::BasicBlock* foundB = llvm::BasicBlock::Create(context, "kw.found", adapter);
             llvm::BasicBlock* noneB = llvm::BasicBlock::Create(context, "kw.none", adapter);
             llvm::BasicBlock* mergeB = llvm::BasicBlock::Create(context, "kw.merge", adapter);
-            abuilder.CreateCondBr(hasExtra, checkB, noneB);
+            abuilder.CreateCondBr(tryPeel, checkB, noneB);
             abuilder.SetInsertPoint(checkB);
             llvm::Value* one64 = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 1);
             llvm::Value* lastIdx = abuilder.CreateSub(ln, one64, "kw.lastidx");
@@ -1245,9 +1353,10 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             llvm::Value* foundEnd = lastIdx;
             abuilder.CreateBr(mergeB);
             abuilder.SetInsertPoint(noneB);
-            llvm::Value* emptyVal = dictNewFn
+            // Prefer the ApplyKw leftover dict when kwargs arrived separately.
+            llvm::Value* emptyVal = restKw ? restKw : (dictNewFn
                 ? (llvm::Value*)abuilder.CreateCall(dictNewFn, {}, "kw.empty")
-                : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy);
+                : (llvm::Value*)llvm::ConstantPointerNull::get(pyObjectPtrTy));
             llvm::Value* emptyEnd = ln;
             abuilder.CreateBr(mergeB);
             abuilder.SetInsertPoint(mergeB);
@@ -1316,7 +1425,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* regTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {int8PtrTy, pyObjectPtrTy}, false);
     llvm::Function* regFn = module->getFunction("pyc_register_callable");
     if (!regFn) regFn = llvm::Function::Create(regTy, llvm::Function::ExternalLinkage, "pyc_register_callable", module.get());
-    llvm::Function* regCallable = regFn; // local alias used in the per-function registration below
+    llvm::Function* regKwFn = module->getFunction("pyc_register_callable_kw");
+    if (!regKwFn) regKwFn = llvm::Function::Create(regTy, llvm::Function::ExternalLinkage, "pyc_register_callable_kw", module.get());
 
     // Build set of user-defined function names (both IR name and LLVM mangled name).
     // Used by Fix 2 to identify discarded call results that are safe to free immediately.
@@ -1470,9 +1580,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 llvm::Function* adp = module->getFunction(adapterName);
                 if (!adp) continue;
                 llvm::Value* nameStr = builder.CreateGlobalStringPtr(rf.name, "reg." + rf.name);
-                // regFn is the registration function declared above.
-                if (regFn) {
-                    builder.CreateCall(regFn, {nameStr, adp});
+                // 2-arg adapters (args, kwargs) go in the kw registry.
+                if (regKwFn) {
+                    builder.CreateCall(regKwFn, {nameStr, adp});
                 }
             }
         }
@@ -3231,6 +3341,27 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                        }
                        emitDecRefIfOwned(tokenName);
                        emitDecRefIfOwned(argListName);
+                       continue;
+                   }
+                   // Pyc_ApplyKw(token, argList, kwDict) — same dispatch, separate kwargs
+                   if (funcName == "Pyc_ApplyKw" && inst.operands.size() >= 4) {
+                       std::string tokenName = inst.operands[1].name;
+                       std::string argListName = inst.operands[2].name;
+                       std::string kwName = inst.operands[3].name;
+                       llvm::Value* tokenVal = getAsPyObject(tokenName);
+                       llvm::Value* argListVal = getAsPyObject(argListName);
+                       llvm::Value* kwVal = getAsPyObject(kwName);
+                       llvm::Function* applyFn = module->getFunction("Pyc_ApplyKw");
+                       if (applyFn) {
+                           llvm::Value* res = builder.CreateCall(applyFn, {tokenVal, argListVal, kwVal}, inst.result);
+                           if (!inst.result.empty()) {
+                               valueMap[inst.result] = res;
+                               markOwned(inst.result);
+                           }
+                       }
+                       emitDecRefIfOwned(tokenName);
+                       emitDecRefIfOwned(argListName);
+                       emitDecRefIfOwned(kwName);
                        continue;
                    }
                     // PyComplex_New(real: double, imag: double) — takes native doubles, not boxed ptrs

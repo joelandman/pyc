@@ -4675,6 +4675,205 @@ def f(xs):
     return xs.index(1, 1)
 print(f([1, 2, 1]))
 """, "2\n3\n5\n2\n2\n0\n2\nValueError\n2\n"),
+    # W7.1 / I-133 I-135 I-136 I-137: boxed literal *, dynamic * + **kwargs / tuple / keywords.
+    ("""def f(a):
+    return a
+hs = [f]
+print(hs[0](*[1]))
+def f135(a, *args, **kw):
+    print(a)
+    print(len(args))
+    print(kw)
+def mk135():
+    return [1]
+f135(*mk135())
+def f135b(a, **kw):
+    print(a)
+    print(kw)
+f135b(*mk135())
+def mk_tup():
+    return (1,)
+print(f(*mk_tup()))
+def g(a, b=2):
+    return (a, b)
+def mk():
+    return [1]
+print(g(*mk(), b=3))
+""", "1\n1\n0\n{}\n1\n{}\n1\n(1, 3)\n"),
+    # W7.1b / I-134: first-class named kwargs / non-empty **dict.
+    ("""def f(a):
+    return a
+hs = [f]
+print(hs[0](a=1))
+print(hs[0](**{"a": 1}))
+print(repr(hs[0]({"a": 1})))
+def apply(fn):
+    return fn(a=1)
+print(apply(f))
+try:
+    print(repr(hs[0](**{})))
+except TypeError as e:
+    print(type(e).__name__)
+print(repr(hs[0]({})))
+def f2(a, b):
+    return (a, b)
+hs2 = [f2]
+print(hs2[0](a=1, b=2))
+print(hs2[0](**{"a": 1, "b": 2}))
+try:
+    print(hs[0](**{"a": 1, "x": 2}))
+except TypeError as e:
+    print(type(e).__name__)
+""", "1\n1\n{'a': 1}\n1\nTypeError\n{}\n(1, 2)\n(1, 2)\nTypeError\n"),
+    # W7.2 / I-138: os.path keeps embedded NUL.
+    ("""import os
+print(repr(os.path.basename("a\\x00b")))
+print(repr(os.path.dirname("x/a\\x00b")))
+print(repr(os.path.split("a\\x00b/c")[1]))
+print(repr(os.path.splitext("a\\x00b.txt")[0]))
+print(repr(os.path.basename("a/b\\x00c")))
+print(repr(os.path.join("a\\x00b", "c")))
+""", "'a\\x00b'\n'x'\n'c'\n'a\\x00b'\n'b\\x00c'\n'a\\x00b/c'\n"),
+    # W7.3 / I-139: getattr default is kept.
+    ("""import os
+print(getattr(os, "missing", 99))
+class C:
+    pass
+print(getattr(C(), "x", 7))
+print(getattr(os, "path", "no") is not None)
+o = C()
+o.y = 3
+print(getattr(o, "y", 8))
+try:
+    print(getattr(os, "missing"))
+except AttributeError as e:
+    print(type(e).__name__)
+""", "99\n7\nTrue\n3\nAttributeError\n"),
+    # W8.1 / I-142 I-146 I-147 I-148: dynamic * leftovers.
+    ("""def g(a, b):
+    return (a, b)
+def mk():
+    return [1]
+print(g(*mk(), b=3))
+def g3(a, *args):
+    return (a, len(args))
+try:
+    print(g3(*mk(), x=3))
+except TypeError as e:
+    print(type(e).__name__)
+def g4(a, b=2):
+    return (a, b)
+try:
+    print(g4(*[1, 9], b=3))
+except TypeError as e:
+    print(type(e).__name__)
+def mk2():
+    return [1, 9]
+try:
+    print(g4(*mk2(), b=3))
+except TypeError as e:
+    print(type(e).__name__)
+def f(a, b):
+    return (a, b)
+print(f(*mk(), 2))
+def a():
+    return [1]
+def b():
+    return [2]
+print(f(*a(), *b()))
+def mkp():
+    return [1, 2, 3]
+print(*mkp())
+""", "(1, 3)\nTypeError\nTypeError\nTypeError\n(1, 2)\n(1, 2)\n1 2 3\n"),
+    # W8.2 / I-145 I-149: getattr stored-None; *None / list(None).
+    ("""class C:
+    pass
+o = C()
+o.x = None
+print(getattr(o, "x", 7))
+print(getattr(o, "missing", 7))
+def f(a=1):
+    return a
+try:
+    print(f(*None))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(f(*1))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(list(None))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(list(1))
+except TypeError as e:
+    print(type(e).__name__)
+print(list())
+print(list("ab"))
+""", "None\n7\nTypeError\nTypeError\nTypeError\nTypeError\n[]\n['a', 'b']\n"),
+    # W8.3 / I-150: known-class method kwargs.
+    ("""class C:
+    def f(self, a):
+        return a
+    def g(self, a, b=2):
+        return (a, b)
+print(C().f(a=1))
+print(C().f(**{"a": 2}))
+print(C().g(a=1, b=3))
+print(C().f(3))
+try:
+    print(C().f(a=1, x=9))
+except TypeError as e:
+    print(type(e).__name__)
+""", "1\n2\n(1, 3)\n3\nTypeError\n"),
+    # W8.4 / I-152 I-153 I-154: hasattr stored-None; tuple/reversed(None); list(instance).
+    ("""class C:
+    pass
+o = C()
+o.x = None
+print(hasattr(o, "x"))
+print(hasattr(o, "missing"))
+try:
+    print(tuple(None))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(reversed(None))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(list(C()))
+except TypeError as e:
+    print(type(e).__name__)
+print(tuple())
+print(tuple("ab"))
+print(list(reversed([1, 2])))
+""", "True\nFalse\nTypeError\nTypeError\nTypeError\n()\n('a', 'b')\n[2, 1]\n"),
+    # W8.5 / I-151 I-155: builtin * forms; * + **dict multiple values.
+    ("""def mk():
+    return [[1, 2, 3]]
+print(min(*mk()))
+def mz():
+    return [[1, 2], [3, 4], [5, 6]]
+print(list(zip(*mz())))
+def g4(a, b=2):
+    return (a, b)
+def mk2():
+    return [1, 9]
+try:
+    print(g4(*mk2(), **{"b": 3}))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(g4(*[1, 9], **{"b": 3}))
+except TypeError as e:
+    print(type(e).__name__)
+def mkp():
+    return [1, 2, 3]
+print(*mkp())
+""", "1\n[(1, 3, 5), (2, 4, 6)]\nTypeError\nTypeError\n1 2 3\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -4698,6 +4897,24 @@ FILE_CASES = [
     ("w62b_index.py", []),
     ("w63_call.py", []),
     ("w64_mod_super.py", []),
+    # W7.1: boxed literal *, dynamic * + **kwargs / tuple / keywords.
+    ("w71_call.py", []),
+    # W7.1b: first-class named kwargs / non-empty **dict.
+    ("w71b_kw.py", []),
+    # W7.2: os.path NUL rebuilds.
+    ("w72_path.py", []),
+    # W7.3: getattr default.
+    ("w73_getattr.py", []),
+    # W8.1: dynamic * leftovers.
+    ("w81_star.py", []),
+    # W8.2: getattr stored-None; list(None).
+    ("w82_runtime.py", []),
+    # W8.3: known-class method kwargs.
+    ("w83_method.py", []),
+    # W8.4: hasattr stored-None; tuple/reversed(None); list(instance).
+    ("w84_runtime.py", []),
+    # W8.5: builtin * forms; * + **dict multiple values.
+    ("w85_star.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

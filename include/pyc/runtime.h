@@ -218,6 +218,7 @@ PyObject* PyList_PopAt(PyObject* list, PyObject* idx);
 PyObject* PyObject_TruthBoxed(PyObject* obj);
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key);
 PyObject* Pyc_GetAttr(PyObject* obj, PyObject* attrName);
+PyObject* Pyc_GetAttrDefault(PyObject* obj, PyObject* attrName, PyObject* defaultVal);
 PyObject* Pyc_CallMethod(PyObject* methodVal, PyObject* receiver, PyObject* argsList);
 PyObject* Pyc_CallBuiltinMethod(PyObject* receiver, PyObject* nameObj, PyObject* argsList);
 PyObject* Pyc_CallBuiltinMethod0(PyObject* receiver, PyObject* nameObj);
@@ -333,6 +334,16 @@ void  pyc_free(void* obj);
 // B4/B8 support: apply a callable token (string naming a registered IR function)
 // to a Python list of arguments. Returns the result (boxed) or NULL on error.
 PyObject* Pyc_Apply(PyObject* token, PyObject* argList);
+// Same dispatch as Pyc_Apply, with a separate kwargs dict (type 2 or NULL).
+// Named keys bind to parameters; leftover keys go to **kwargs or TypeError.
+// A positional dict stays in argList and is never treated as kwargs.
+PyObject* Pyc_ApplyKw(PyObject* token, PyObject* argList, PyObject* kwDict);
+// Leftover keys of kwDict after binding `boundNames`. If hasKwVar, returns
+// those keys as a new dict; otherwise TypeError on the first extra key.
+PyObject* Pyc_ApplyKwRest(PyObject* kwDict, PyObject* boundNames,
+                          int hasKwVar, const char* funcName);
+// TypeError if `name` is present in kwDict (positional + keyword for same arg).
+void Pyc_ApplyRejectDupKw(PyObject* kwDict, const char* name, const char* func);
 
 // B5 (nonlocal/cells): minimal cell primitives.
 // A cell is a PyObject with type==6 whose cell_content holds the target PyObject*.
