@@ -1335,25 +1335,54 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   path was I-183 / I-184. Star-args arm leftover not demanded.
 
 ### I-187  `"__mro__" in C` / `len(C)` still treat class as mapping
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `"__mro__" in C` — CPython TypeError; pyc `True`
-  (`Pyc_Contains` type-2 key scan). `len(C)` — CPython TypeError; pyc `1`.
+- Evidence: W9.12 / `w912_class.py`: `"__mro__" in C` / `len(C)` → TypeError;
+  `len({1: 2})` / `1 in {1: 2}` kept. Parent: `True` / `1`.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_Contains`, `PyBuiltin_Len`)
 - Blocks merge: no
-- Notes: Found reviewing W9.11. `for x in C` already TypeErrors (I-182).
-  `map`/`filter` were gated in W9.11.
+- Notes: Wave 9 W9.12. Coordinator: `-O0`/`-O2` match CPython. Class gate
+  after `__contains__`/`__len__` lookup. Leftovers I-190 / I-192.
 
 ### I-189  `sum(C)` walks class-dict keys
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `sum(C)` — CPython TypeError (`'type' object is not iterable`);
-  pyc TypeError `unsupported operand type(s) for +: 'int' and 'str'`
-  (`0 + "__mro__"`). Exception name matches; reason does not.
+- Evidence: W9.12: `sum(C)` → `'type' object is not iterable`;
+  `sum([1, 2, 3])` kept `6`. Parent: `int+str` via `0 + "__mro__"`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
 - Blocks merge: no
-- Notes: Found reviewing W9.11. I-188 (map/filter) was fixed in this
-  slice. Skipped I-188.
+- Notes: Wave 9 W9.12. Coordinator: `-O0`/`-O2` match CPython. DECREFs
+  start/`0` before raise. Leftover I-191 (`sum(C())`).
+
+### I-190  `len(C())` / `x in C()` still treat instance as mapping
+- Status: open
+- Severity: wrong-answer
+- Evidence: After W9.12 the class gate is `pyc_is_class_dict` only.
+  `len(C())` — CPython TypeError; pyc `1`. `"__class__" in C()` — CPython
+  TypeError; pyc `True`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Len`, `Pyc_Contains`)
+- Blocks merge: no
+- Notes: Found reviewing W9.12. Instance with real `__len__`/`__contains__`
+  is already correct.
+
+### I-191  `sum(C())` walks instance attr keys
+- Status: open
+- Severity: wrong-answer
+- Evidence: `sum(C())` — CPython `'C' object is not iterable`; pyc
+  TypeError `int + str` (`0 + "__class__"`).
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
+- Blocks merge: no
+- Notes: Found reviewing W9.12. `list(C())` already TypeError (I-154).
+
+### I-192  `C[k]` / `C()[k]` still treat class/instance as a mapping
+- Status: open
+- Severity: wrong-answer
+- Evidence: `C["__mro__"]` — CPython TypeError (`not subscriptable`);
+  pyc returns the MRO list. `C()["__class__"]` — CPython TypeError; pyc
+  returns the class dict.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_Subscript`)
+- Blocks merge: no
+- Notes: Found reviewing W9.12. Do not gate `Pyc_GetItem` (attr probes).
 
 ---
 

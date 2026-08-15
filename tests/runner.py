@@ -5159,6 +5159,29 @@ print(min([], default=99))
 print(min(1, 2))
 print(min([3, 1]))
 """, "TypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\n[1]\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\n99\n1\n1\n"),
+    # W9.12 / I-187 I-189: class not a mapping for in/len; sum(C) is not iterable.
+    ("""class C:
+    pass
+try:
+    print("__mro__" in C)
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(len(C))
+except TypeError as e:
+    print(type(e).__name__)
+print(len({1: 2}))
+print(1 in {1: 2})
+try:
+    print(sum(C))
+except TypeError as e:
+    print(e)
+print(sum([1, 2, 3]))
+try:
+    print(list(C))
+except TypeError as e:
+    print(type(e).__name__)
+""", "TypeError\nTypeError\n1\nTrue\n\'type\' object is not iterable\n6\nTypeError\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5222,6 +5245,8 @@ FILE_CASES = [
     ("w910_class.py", []),
     # W9.11: class iter leftovers; direct min 0-arg / default= + extras.
     ("w911_class.py", []),
+    # W9.12: class not a mapping for in/len; sum(C) is not iterable.
+    ("w912_class.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

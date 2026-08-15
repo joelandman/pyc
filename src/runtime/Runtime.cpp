@@ -5123,6 +5123,12 @@ PyObject* PyBuiltin_Len(PyObject* obj) {
             if (r) Py_DECREF(r);
             return PyInt_FromLong(n);
         }
+        // Class objects are types, not mappings (I-187). Plain dicts
+        // still report dict.size() (len({1: 2}) == 1).
+        if (pyc_is_class_dict(obj)) {
+            pyc_raise_msg("TypeError", "object of type 'type' has no len()");
+            return nullptr;
+        }
         return PyInt_FromLong((long)obj->dict.size());
     }
     if (obj->type == 20) return PyInt_FromLong((long)PySet_Size(obj));
@@ -5604,6 +5610,13 @@ PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
         return PyBool_New(0);
     }
     if (container->type == 2) {
+        // Class objects are types, not mappings (I-187). Plain dicts
+        // still scan keys (1 in {1: 2}).
+        if (pyc_is_class_dict(container)) {
+            pyc_raise_msg("TypeError",
+                          "argument of type 'type' is not a container or iterable");
+            return nullptr;
+        }
         for (auto& pair : container->dict)
             if (PyObject_CompareBool(pair.first, item, 0)) return PyBool_New(1);
         return PyBool_New(0);
@@ -5695,6 +5708,13 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
             for (auto* item : lst->list) if (!addOne(item)) return nullptr;
         }
     } else if (lst->type == 2) {
+        // Class objects are types, not mappings (I-189). Must raise
+        // before walking keys or sum(C) becomes int+str via __mro__.
+        if (pyc_is_class_dict(lst)) {
+            Py_DECREF(total);
+            pyc_raise_msg("TypeError", "'type' object is not iterable");
+            return nullptr;
+        }
         for (auto& pair : lst->dict) if (!addOne(pair.first)) return nullptr;
     } else if (lst->type == 20) {
         for (auto* e : lst->setElems) if (!addOne(e)) return nullptr;
