@@ -5660,10 +5660,10 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
     if (!lst) return start ? (Py_INCREF(start), start) : PyInt_FromLong(0);
     if (pyc_super_not_iterable(lst)) return nullptr;
     PyObject* total = start ? (Py_INCREF(start), start) : PyInt_FromLong(0);
-    // PyNumber_Add already TypeErrors on int+str (I-170). Do not replace a
-    // failed add with 0 — that made sum("ab") print 0 instead of raising.
+    // PyNumber_Add already TypeErrors on int+str (I-170) and int+None
+    // (I-177). Do not skip nullptr items — None is a null pointer, and
+    // skipping made sum([1, None]) print 1 instead of raising.
     auto addOne = [&](PyObject* item) -> bool {
-        if (!item) return true;
         PyObject* next = PyNumber_Add(total, item);
         Py_DECREF(total);
         total = next;
@@ -7132,8 +7132,10 @@ PyObject* PyBuiltin_List(PyObject* obj) {
 // reverse order. CPython returns a reverse_iterator; for the patterns
 // pyc supports (list(reversed(x)), for x in reversed(x)) the result
 // is the same. Reversible: list (1), tuple (7 && !cell_content),
-// str (3), bytes/bytearray (17/18). set/int/etc. TypeError (I-163).
-// Super (type 7 + cell_content) and None stay TypeError (I-013 / I-153).
+// str (3), bytes/bytearray (17/18), plain dict (2, reverse insertion
+// keys, I-168). set/int/etc. TypeError (I-163). Super (type 7 +
+// cell_content) and None stay TypeError (I-013 / I-153). Modules and
+// user instances (__class__) stay TypeError, not attr-key reverse (I-154).
 // Zip seq walk lives just below; reuse so tuple/bytes boxing matches zip.
 static size_t pyc_zip_seq_len(PyObject* s);
 static PyObject* pyc_zip_seq_item(PyObject* s, size_t i);
@@ -7164,6 +7166,38 @@ PyObject* PyBuiltin_Reversed(PyObject* obj) {
             }
             return r;
         }
+    }
+    // CPython 3.8+: reversed(dict) yields keys in reverse insertion order.
+    // Skip modules (list_item_type==3) and instances (I-154 / I-168).
+    if (obj->type == 2) {
+        bool isInstance = false;
+        for (auto& kv : obj->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == "__class__") {
+                isInstance = true;
+                break;
+            }
+        }
+        if (pyc_is_module(obj) || isInstance) {
+            const char* tname = pyc_is_module(obj) ? "module" : "object";
+            std::string owned;
+            PyObject* mro = pyc_exc_instance_mro(obj);
+            if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
+                PyObject* first = PyList_GetItemI64(mro, 0);
+                if (first && first->type == 3) {
+                    owned = first->str;
+                    tname = owned.c_str();
+                }
+                if (first) Py_DECREF(first);
+            }
+            std::string msg = std::string("'") + tname + "' object is not reversible";
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
+        PyObject* r = PyList_New(obj->dict.size());
+        size_t i = 0;
+        for (auto it = obj->dict.rbegin(); it != obj->dict.rend(); ++it)
+            PyList_SetItem(r, i++, it->first);
+        return r;
     }
     bool reversible = (obj->type == 1) ||
                       (obj->type == 7 && !obj->cell_content) ||
@@ -11801,6 +11835,7 @@ extern "C" PyObject* PyBuiltin_ReSplit(PyObject* pattern, PyObject* subject,
 // naming the registered adapter. Each adapter pulls the strings out of
 // the args list and writes them to the corresponding FILE*.
 extern "C" void pyc_register_callable(const char* name, PyObject* (*func)(PyObject*));
+extern "C" void pyc_register_callable_kw(const char* name, PyObject* (*func)(PyObject*, PyObject*));
 static PyObject* stderr_write_adapter(PyObject* args) {
     if (!args || args->type != 1) return nullptr;
     for (size_t i = 0; i < args->list.size(); ++i) {
@@ -12068,21 +12103,49 @@ static PyObject* pyc_adapt_max(PyObject* args) {
     }
     return best;
 }
-static PyObject* pyc_adapt_sum(PyObject* args) {
-    PyObject* a = arg0(args); if (!a) return nullptr;
-    return PyBuiltin_Sum(a);
+static PyObject* pyc_kw_borrow(PyObject* kwDict, const char* name) {
+    if (!kwDict || kwDict->type != 2 || !name) return nullptr;
+    for (auto& pair : kwDict->dict) {
+        if (pair.first && pair.first->type == 3 && pair.first->str == name)
+            return pair.second;
+    }
+    return nullptr;
 }
-static PyObject* pyc_adapt_sorted(PyObject* args) {
+static PyObject* pyc_adapt_sum(PyObject* args, PyObject* kwDict) {
+    if (!args || args->type != 1 || args->list.empty()) {
+        pyc_raise_msg("TypeError", "sum expected at least 1 argument, got 0");
+        return nullptr;
+    }
+    PyObject* start = arg1(args);
+    if (!start) start = pyc_kw_borrow(kwDict, "start");
+    return PyBuiltin_Sum2(args->list[0], start);
+}
+static PyObject* pyc_adapt_sorted(PyObject* args, PyObject* kwDict) {
     PyObject* a = arg0(args); if (!a) return nullptr;
-    return PyBuiltin_Sorted(a, nullptr, nullptr);
+    return PyBuiltin_Sorted(a, pyc_kw_borrow(kwDict, "key"),
+                            pyc_kw_borrow(kwDict, "reverse"));
 }
 static PyObject* pyc_adapt_any(PyObject* args) {
-    PyObject* a = arg0(args); if (!a) return nullptr;
-    return PyBuiltin_Any(a);
+    if (!args || args->type != 1 || args->list.empty()) {
+        pyc_raise_msg("TypeError", "any expected at least 1 argument, got 0");
+        return nullptr;
+    }
+    if (!args->list[0]) {
+        pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
+        return nullptr;
+    }
+    return PyBuiltin_Any(args->list[0]);
 }
 static PyObject* pyc_adapt_all(PyObject* args) {
-    PyObject* a = arg0(args); if (!a) return nullptr;
-    return PyBuiltin_All(a);
+    if (!args || args->type != 1 || args->list.empty()) {
+        pyc_raise_msg("TypeError", "all expected at least 1 argument, got 0");
+        return nullptr;
+    }
+    if (!args->list[0]) {
+        pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
+        return nullptr;
+    }
+    return PyBuiltin_All(args->list[0]);
 }
 static PyObject* pyc_adapt_reversed(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) {
@@ -12297,8 +12360,8 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("pyc_adapt_print",      pyc_adapt_print);
     pyc_register_callable("pyc_adapt_min",        pyc_adapt_min);
     pyc_register_callable("pyc_adapt_max",        pyc_adapt_max);
-    pyc_register_callable("pyc_adapt_sum",        pyc_adapt_sum);
-    pyc_register_callable("pyc_adapt_sorted",     pyc_adapt_sorted);
+    pyc_register_callable_kw("pyc_adapt_sum",     pyc_adapt_sum);
+    pyc_register_callable_kw("pyc_adapt_sorted",  pyc_adapt_sorted);
     pyc_register_callable("pyc_adapt_any",        pyc_adapt_any);
     pyc_register_callable("pyc_adapt_all",        pyc_adapt_all);
     pyc_register_callable("pyc_adapt_reversed",   pyc_adapt_reversed);

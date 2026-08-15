@@ -1105,16 +1105,16 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   I-121). Leftovers I-169–I-174. Do not re-open I-162 / I-163.
 
 ### I-168  `reversed` of dict is TypeError, not reverse-keys
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: After W9.4, non-list/tuple/str/bytes is
-  `TypeError: '…' object is not reversible`.
-  `list(reversed({1: 2}))` — CPython 3.8+ `[1]`; pyc TypeError.
+- Evidence: W9.8 / `w98_adapt.py`: `list(reversed({1: 2}))` /
+  `{"a":1,"b":2}` / `{}` → `[1]` / `['b','a']` / `[]`. Tuple form kept.
+  Parent: TypeError not reversible.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Reversed`)
 - Blocks merge: no
-- Notes: Found reviewing W9.4 / I-163. Ticket scoped tuple/bytes + set/int.
-  If dict walk is added, reverse insertion-order keys (not values); skip
-  modules (`list_item_type==3`) and instances (I-154).
+- Notes: Wave 9 W9.8. Coordinator: `-O0`/`-O2` match CPython. Reverse
+  insertion-order keys. Modules and instances TypeError (I-154). Class
+  objects still walk keys — I-180. Do not re-open I-163.
 
 ### I-169  `sum` of bytes / bytearray is 0
 - Status: fixed
@@ -1153,16 +1153,19 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   qualified `cmp_to_key` leftover is I-175.
 
 ### I-172  First-class `sum`/`sorted`/`any`/`all` drop extra args; None is None
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: Adapters: `s=sum; s((1,2), 10)` — CPython `13`; pyc `3`.
-  `s=sorted; s([3,1,2], reverse=True)` — CPython `[3,2,1]`; pyc `[1,2,3]`.
-  `a=any; a(None)` — CPython TypeError; pyc `None`.
+- Evidence: W9.8: `s=sum; s((1,2), 10)` → `13`;
+  `so=sorted; so([3,1,2], reverse=True)` → `[3,2,1]`;
+  `a=any; a(None)` / `al=all; al(None)` → TypeError.
+  Parent: `3` / `[1,2,3]` / `None`.
 - Files: `src/runtime/Runtime.cpp` (`pyc_adapt_sum`, `pyc_adapt_sorted`,
-  `pyc_adapt_any`, `pyc_adapt_all`, `pyc_adapt_min`, `pyc_adapt_max`)
+  `pyc_adapt_any`, `pyc_adapt_all`, `pyc_register_callable_kw`)
 - Blocks merge: no
-- Notes: Found reviewing W9.5. Same class as I-165. Direct builtin calls
-  do not use these.
+- Notes: Wave 9 W9.8. Coordinator: `-O0`/`-O2` match CPython. Kw adapters;
+  `start=` and `key=` also forwarded. First-class `min`/`max` `default=`
+  is I-179. First-class `sorted(None)` / `sum(None)` is I-181. Direct
+  `any(None)` still I-174.
 
 ### I-173  empty `min`/`max` is None, not TypeError
 - Status: fixed
@@ -1219,13 +1222,14 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found reviewing W9.7. Ticket cases use default start 0.
 
 ### I-177  `sum` skips None items
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `addOne`: `if (!item) return;`
-  `sum([1, None])` — CPython TypeError; pyc `1`.
-- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
+- Evidence: W9.8: `sum([1, None])` / `sum([None])` → TypeError;
+  `sum([1,2,3])` kept. Parent: `1` / printed None (skipped nullptr).
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2` `addOne`)
 - Blocks merge: no
-- Notes: Found reviewing W9.7. `sum([1, "a"])` now TypeErrors.
+- Notes: Wave 9 W9.8. Coordinator: `-O0`/`-O2` match CPython.
+  `PyNumber_Add` TypeErrors int+None.
 
 ### I-178  empty `min`/`max` with `default=None` is ValueError
 - Status: fixed
@@ -1237,7 +1241,35 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   `src/codegen/Codegen.cpp`
 - Blocks merge: no
 - Notes: Wave 9 W9.7. Coordinator: `-O0`/`-O2` match CPython. First-class
-  `m=min; m([], default=None)` still I-172.
+  `m=min; m([], default=None)` still I-179.
+
+### I-179  First-class `min`/`max` drop `default=` / `key=`
+- Status: open
+- Severity: wrong-answer
+- Evidence: `m=min; m([], default=99)` — CPython `99`; pyc ValueError.
+  `m([], default=None)` — CPython `None`; pyc ValueError.
+- Files: `src/runtime/Runtime.cpp` (`pyc_adapt_min`, `pyc_adapt_max`)
+- Blocks merge: no
+- Notes: Found reviewing W9.8. Adapters not kw-registered. Direct path
+  is I-173.
+
+### I-180  `reversed` of a class object walks the class dict
+- Status: open
+- Severity: wrong-answer
+- Evidence: `class C: pass; list(reversed(C))` — CPython TypeError
+  (`'type'`); pyc `['__mro__']` (`__mro__` present, no `__class__`).
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Reversed`)
+- Blocks merge: no
+- Notes: Found reviewing W9.8 / I-168. Same class as I-154 `list(C)`.
+
+### I-181  First-class `sorted(None)` / `sum(None)` still silent
+- Status: open
+- Severity: wrong-answer
+- Evidence: `so=sorted; so(None)` — CPython TypeError; pyc `None`.
+  `s=sum; s(None)` — CPython TypeError; pyc `0`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_adapt_sorted`, `pyc_adapt_sum`)
+- Blocks merge: no
+- Notes: Found reviewing W9.8. Direct path is I-174.
 
 ---
 
