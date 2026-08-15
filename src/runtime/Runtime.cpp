@@ -122,6 +122,17 @@ static bool pyc_super_not_iterable(PyObject* o) {
     pyc_raise_msg("TypeError", "'super' object is not iterable");
     return true;
 }
+// Class objects are type-2 dicts that hold __mro__ (I-182). Same test as
+// PyBuiltin_Reversed. Not mappings: list/tuple/sorted/set of a class is
+// TypeError, not a walk of ['__mro__'].
+static bool pyc_is_class_dict(PyObject* o) {
+    if (!o || o->type != 2) return false;
+    for (auto& kv : o->dict) {
+        if (kv.first && kv.first->type == 3 && kv.first->str == "__mro__")
+            return true;
+    }
+    return false;
+}
 
 // Tag 2 is a user dict (list_item_type 0) or a synthetic module / module-like
 // namespace (list_item_type 3). 3 is unused on dicts (lists/tuples use 0/1/2).
@@ -4228,6 +4239,12 @@ static PyObject* pyc_set_iter_to_list(PyObject* iterable) {
         return r;
     }
     if (iterable->type == 2) {
+        // Class objects are types, not mappings (I-182). Plain dicts still
+        // contribute their keys (set({1: 2})).
+        if (pyc_is_class_dict(iterable)) {
+            pyc_raise_msg("TypeError", "'type' object is not iterable");
+            return nullptr;
+        }
         // dict: iterate keys.
         PyObject* r = PyList_New(iterable->dict.size());
         size_t i = 0;
@@ -5728,6 +5745,11 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse) {
             }
         }
     } else if (lst->type == 2) {
+        // Class objects are types, not mappings (I-182).
+        if (pyc_is_class_dict(lst)) {
+            pyc_raise_msg("TypeError", "'type' object is not iterable");
+            return nullptr;
+        }
         for (auto& pair : lst->dict) {
             if (pair.first) Py_INCREF(pair.first);
             items.push_back(pair.first);
@@ -7065,17 +7087,20 @@ PyObject* PyBuiltin_List(PyObject* obj) {
         if (pyc_lookup_dunder(obj, "__iter__")) {
             return pyc_materialize_iterator_protocol(obj);
         }
-        // User instances (__class__ present) and modules are not mappings.
-        // list(C()) / list(sys) TypeError; plain dicts still iterate keys (I-154).
+        // User instances (__class__), class objects (__mro__, I-182), and
+        // modules are not mappings. list(C) / list(C()) / list(sys)
+        // TypeError; plain dicts still iterate keys (I-154).
         bool isInstance = false;
+        bool isClass = pyc_is_class_dict(obj);
         for (auto& kv : obj->dict) {
             if (kv.first && kv.first->type == 3 && kv.first->str == "__class__") {
                 isInstance = true;
                 break;
             }
         }
-        if (pyc_is_module(obj) || isInstance) {
-            const char* tname = pyc_is_module(obj) ? "module" : "object";
+        if (pyc_is_module(obj) || isInstance || isClass) {
+            const char* tname = pyc_is_module(obj) ? "module"
+                               : isClass ? "type" : "object";
             std::string owned;
             PyObject* mro = pyc_exc_instance_mro(obj);
             if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
@@ -7135,7 +7160,8 @@ PyObject* PyBuiltin_List(PyObject* obj) {
 // str (3), bytes/bytearray (17/18), plain dict (2, reverse insertion
 // keys, I-168). set/int/etc. TypeError (I-163). Super (type 7 +
 // cell_content) and None stay TypeError (I-013 / I-153). Modules and
-// user instances (__class__) stay TypeError, not attr-key reverse (I-154).
+// user instances (__class__) and class dicts (__mro__, I-180) stay
+// TypeError, not attr-key reverse (I-154).
 // Zip seq walk lives just below; reuse so tuple/bytes boxing matches zip.
 static size_t pyc_zip_seq_len(PyObject* s);
 static PyObject* pyc_zip_seq_item(PyObject* s, size_t i);
@@ -7168,17 +7194,19 @@ PyObject* PyBuiltin_Reversed(PyObject* obj) {
         }
     }
     // CPython 3.8+: reversed(dict) yields keys in reverse insertion order.
-    // Skip modules (list_item_type==3) and instances (I-154 / I-168).
+    // Skip modules (list_item_type==3), instances (__class__), and class
+    // dicts (__mro__ — same test Pyc_Apply uses; I-154 / I-168 / I-180).
     if (obj->type == 2) {
         bool isInstance = false;
+        bool isClass = false;
         for (auto& kv : obj->dict) {
-            if (kv.first && kv.first->type == 3 && kv.first->str == "__class__") {
-                isInstance = true;
-                break;
-            }
+            if (!kv.first || kv.first->type != 3) continue;
+            if (kv.first->str == "__class__") isInstance = true;
+            else if (kv.first->str == "__mro__") isClass = true;
         }
-        if (pyc_is_module(obj) || isInstance) {
-            const char* tname = pyc_is_module(obj) ? "module" : "object";
+        if (pyc_is_module(obj) || isInstance || isClass) {
+            const char* tname = pyc_is_module(obj) ? "module"
+                               : isClass ? "type" : "object";
             std::string owned;
             PyObject* mro = pyc_exc_instance_mro(obj);
             if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
@@ -12076,33 +12104,6 @@ static PyObject* pyc_adapt_print(PyObject* args) {
     std::printf("\n");
     return PyInt_FromLong(0);
 }
-static PyObject* pyc_adapt_min(PyObject* args) {
-    if (!args || args->type != 1 || args->list.empty()) return nullptr;
-    if (args->list.size() == 1) return PyBuiltin_MinList(args->list[0], nullptr, Pyc_MissingDefault());
-    // Multiple positional args: compare pairwise
-    PyObject* best = args->list[0];
-    if (best) Py_INCREF(best);
-    for (size_t i = 1; i < args->list.size(); ++i) {
-        PyObject* r = PyBuiltin_Min2(best, args->list[i], nullptr);
-        if (best) Py_DECREF(best);
-        best = r;
-        if (!best) break;
-    }
-    return best;
-}
-static PyObject* pyc_adapt_max(PyObject* args) {
-    if (!args || args->type != 1 || args->list.empty()) return nullptr;
-    if (args->list.size() == 1) return PyBuiltin_MaxList(args->list[0], nullptr, Pyc_MissingDefault());
-    PyObject* best = args->list[0];
-    if (best) Py_INCREF(best);
-    for (size_t i = 1; i < args->list.size(); ++i) {
-        PyObject* r = PyBuiltin_Max2(best, args->list[i], nullptr);
-        if (best) Py_DECREF(best);
-        best = r;
-        if (!best) break;
-    }
-    return best;
-}
 static PyObject* pyc_kw_borrow(PyObject* kwDict, const char* name) {
     if (!kwDict || kwDict->type != 2 || !name) return nullptr;
     for (auto& pair : kwDict->dict) {
@@ -12111,9 +12112,86 @@ static PyObject* pyc_kw_borrow(PyObject* kwDict, const char* name) {
     }
     return nullptr;
 }
+static bool pyc_kw_has(PyObject* kwDict, const char* name) {
+    if (!kwDict || kwDict->type != 2 || !name) return false;
+    for (auto& pair : kwDict->dict) {
+        if (pair.first && pair.first->type == 3 && pair.first->str == name)
+            return true;
+    }
+    return false;
+}
+// I-183 / I-184: first-class min/max reject 0-arg, unexpected kwargs, and
+// default= with more than one positional. Returns false after raise.
+static bool pyc_minmax_adapt_ok(const char* name, PyObject* args, PyObject* kwDict) {
+    if (!args || args->type != 1 || args->list.empty()) {
+        std::string msg = std::string(name) + " expected at least 1 argument, got 0";
+        pyc_raise_msg("TypeError", msg.c_str());
+        return false;
+    }
+    if (kwDict && kwDict->type == 2) {
+        for (auto& pair : kwDict->dict) {
+            if (!pair.first || pair.first->type != 3) continue;
+            if (pair.first->str != "key" && pair.first->str != "default") {
+                std::string msg = std::string(name) +
+                    "() got an unexpected keyword argument '" + pair.first->str + "'";
+                pyc_raise_msg("TypeError", msg.c_str());
+                return false;
+            }
+        }
+        if (pyc_kw_has(kwDict, "default") && args->list.size() > 1) {
+            std::string msg = std::string("Cannot specify a default for ") + name +
+                "() with multiple positional arguments";
+            pyc_raise_msg("TypeError", msg.c_str());
+            return false;
+        }
+    }
+    return true;
+}
+static PyObject* pyc_adapt_min(PyObject* args, PyObject* kwDict) {
+    if (!pyc_minmax_adapt_ok("min", args, kwDict)) return nullptr;
+    PyObject* key = pyc_kw_borrow(kwDict, "key");
+    // default=None stores nullptr; omitted default is Pyc_MissingDefault (I-179).
+    PyObject* defaultVal = pyc_kw_has(kwDict, "default")
+        ? pyc_kw_borrow(kwDict, "default")
+        : Pyc_MissingDefault();
+    if (args->list.size() == 1)
+        return PyBuiltin_MinList(args->list[0], key, defaultVal);
+    PyObject* best = args->list[0];
+    if (best) Py_INCREF(best);
+    for (size_t i = 1; i < args->list.size(); ++i) {
+        PyObject* r = PyBuiltin_Min2(best, args->list[i], key);
+        if (best) Py_DECREF(best);
+        best = r;
+        if (!best) break;
+    }
+    return best;
+}
+static PyObject* pyc_adapt_max(PyObject* args, PyObject* kwDict) {
+    if (!pyc_minmax_adapt_ok("max", args, kwDict)) return nullptr;
+    PyObject* key = pyc_kw_borrow(kwDict, "key");
+    PyObject* defaultVal = pyc_kw_has(kwDict, "default")
+        ? pyc_kw_borrow(kwDict, "default")
+        : Pyc_MissingDefault();
+    if (args->list.size() == 1)
+        return PyBuiltin_MaxList(args->list[0], key, defaultVal);
+    PyObject* best = args->list[0];
+    if (best) Py_INCREF(best);
+    for (size_t i = 1; i < args->list.size(); ++i) {
+        PyObject* r = PyBuiltin_Max2(best, args->list[i], key);
+        if (best) Py_DECREF(best);
+        best = r;
+        if (!best) break;
+    }
+    return best;
+}
 static PyObject* pyc_adapt_sum(PyObject* args, PyObject* kwDict) {
     if (!args || args->type != 1 || args->list.empty()) {
         pyc_raise_msg("TypeError", "sum expected at least 1 argument, got 0");
+        return nullptr;
+    }
+    // list[0] nullptr is None, not a missing iterable (I-181).
+    if (!args->list[0]) {
+        pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
         return nullptr;
     }
     PyObject* start = arg1(args);
@@ -12121,8 +12199,15 @@ static PyObject* pyc_adapt_sum(PyObject* args, PyObject* kwDict) {
     return PyBuiltin_Sum2(args->list[0], start);
 }
 static PyObject* pyc_adapt_sorted(PyObject* args, PyObject* kwDict) {
-    PyObject* a = arg0(args); if (!a) return nullptr;
-    return PyBuiltin_Sorted(a, pyc_kw_borrow(kwDict, "key"),
+    if (!args || args->type != 1 || args->list.empty()) {
+        pyc_raise_msg("TypeError", "sorted expected 1 argument, got 0");
+        return nullptr;
+    }
+    if (!args->list[0]) {
+        pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
+        return nullptr;
+    }
+    return PyBuiltin_Sorted(args->list[0], pyc_kw_borrow(kwDict, "key"),
                             pyc_kw_borrow(kwDict, "reverse"));
 }
 static PyObject* pyc_adapt_any(PyObject* args) {
@@ -12358,8 +12443,8 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("pyc_adapt_set",        pyc_adapt_set);
     pyc_register_callable("pyc_adapt_range",      pyc_adapt_range);
     pyc_register_callable("pyc_adapt_print",      pyc_adapt_print);
-    pyc_register_callable("pyc_adapt_min",        pyc_adapt_min);
-    pyc_register_callable("pyc_adapt_max",        pyc_adapt_max);
+    pyc_register_callable_kw("pyc_adapt_min",     pyc_adapt_min);
+    pyc_register_callable_kw("pyc_adapt_max",     pyc_adapt_max);
     pyc_register_callable_kw("pyc_adapt_sum",     pyc_adapt_sum);
     pyc_register_callable_kw("pyc_adapt_sorted",  pyc_adapt_sorted);
     pyc_register_callable("pyc_adapt_any",        pyc_adapt_any);

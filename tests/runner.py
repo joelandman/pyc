@@ -5023,6 +5023,83 @@ except TypeError as e:
     print(type(e).__name__)
 print(sum([1, 2, 3]))
 """, "[1]\n['b', 'a']\n[]\n[3, 2, 1]\n13\n6\n[3, 2, 1]\n[1, 2, 3]\nTypeError\nTypeError\nTypeError\nTypeError\n6\n"),
+    # W9.9 / I-179 I-180 I-181: first-class min default/key; reversed(class); sum/sorted(None).
+    ("""m = min
+print(m([], default=99))
+print(m([], default=None))
+print(m([3, 1, 2], key=lambda x: -x))
+print(m([1, 2]))
+mx = max
+print(mx([], default=0))
+class C:
+    pass
+try:
+    print(list(reversed(C)))
+except TypeError as e:
+    print(type(e).__name__)
+print(list(reversed({1: 2})))
+so = sorted
+try:
+    print(so(None))
+except TypeError as e:
+    print(type(e).__name__)
+s = sum
+try:
+    print(s(None))
+except TypeError as e:
+    print(type(e).__name__)
+print(so([3, 1, 2], reverse=True))
+print(s((1, 2), 10))
+""", "99\nNone\n3\n1\n0\nTypeError\n[1]\nTypeError\nTypeError\n[3, 2, 1]\n13\n"),
+    # W9.10 / I-182 I-183 I-184: class not iterable; first-class min() / default= + extras.
+    ("""class C:
+    pass
+try:
+    print(list(C))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(tuple(C))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(sorted(C))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(set(C))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(list(C()))
+except TypeError as e:
+    print(type(e).__name__)
+print(list({1: 2}))
+try:
+    print(list(reversed(C)))
+except TypeError as e:
+    print(type(e).__name__)
+m = min
+try:
+    print(m())
+except TypeError as e:
+    print(type(e).__name__)
+mx = max
+try:
+    print(mx())
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(m(1, 2, default=0))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(m([1], foo=1))
+except TypeError as e:
+    print(type(e).__name__)
+print(m([], default=99))
+print(m([1, 2]))
+""", "TypeError\nTypeError\nTypeError\nTypeError\nTypeError\n[1]\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\n99\n1\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5080,6 +5157,10 @@ FILE_CASES = [
     ("w97_sum_minmax.py", []),
     # W9.8: reversed(dict); first-class adapters; sum(None).
     ("w98_adapt.py", []),
+    # W9.9: first-class min default/key; reversed(class); sum/sorted(None).
+    ("w99_adapt.py", []),
+    # W9.10: class not iterable; first-class min() / default= + extras.
+    ("w910_class.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

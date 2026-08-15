@@ -1244,32 +1244,96 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   `m=min; m([], default=None)` still I-179.
 
 ### I-179  First-class `min`/`max` drop `default=` / `key=`
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `m=min; m([], default=99)` — CPython `99`; pyc ValueError.
-  `m([], default=None)` — CPython `None`; pyc ValueError.
-- Files: `src/runtime/Runtime.cpp` (`pyc_adapt_min`, `pyc_adapt_max`)
+- Evidence: W9.9 / `w99_adapt.py`: `m=min; m([], default=99)` → `99`;
+  `m([], default=None)` → `None`; `m([3,1,2], key=lambda x: -x)` → `3`;
+  `mx([], default=0)` → `0`. Parent: ValueError / ValueError / `1` / ValueError.
+- Files: `src/runtime/Runtime.cpp` (`pyc_adapt_min`, `pyc_adapt_max`,
+  `pyc_kw_has`, `pyc_register_callable_kw`)
 - Blocks merge: no
-- Notes: Found reviewing W9.8. Adapters not kw-registered. Direct path
-  is I-173.
+- Notes: Wave 9 W9.9. Coordinator: `-O0`/`-O2` match CPython. Kw adapters.
+  `pyc_kw_has` distinguishes omitted default vs `default=None`. Direct
+  path is I-173 / I-178. Leftovers I-183 / I-184.
 
 ### I-180  `reversed` of a class object walks the class dict
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `class C: pass; list(reversed(C))` — CPython TypeError
-  (`'type'`); pyc `['__mro__']` (`__mro__` present, no `__class__`).
-- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Reversed`)
+- Evidence: W9.9: `class C: pass; list(reversed(C))` → TypeError;
+  `list(reversed({1: 2}))` kept `[1]`. Parent: `['__mro__']`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Reversed` type-2 arm)
 - Blocks merge: no
-- Notes: Found reviewing W9.8 / I-168. Same class as I-154 `list(C)`.
+- Notes: Wave 9 W9.9. Coordinator: `-O0`/`-O2` match CPython. `__mro__`
+  → `'type' object is not reversible`. Instances still `__class__`
+  (I-154). Plain dicts still reverse keys (I-168). `list(C)` leftover
+  is I-182.
 
 ### I-181  First-class `sorted(None)` / `sum(None)` still silent
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `so=sorted; so(None)` — CPython TypeError; pyc `None`.
-  `s=sum; s(None)` — CPython TypeError; pyc `0`.
+- Evidence: W9.9: `so=sorted; so(None)` / `s=sum; s(None)` → TypeError.
+  `so([3,1,2], reverse=True)` / `s((1,2), 10)` kept. Parent: `None` / `0`.
 - Files: `src/runtime/Runtime.cpp` (`pyc_adapt_sorted`, `pyc_adapt_sum`)
 - Blocks merge: no
-- Notes: Found reviewing W9.8. Direct path is I-174.
+- Notes: Wave 9 W9.9. Coordinator: `-O0`/`-O2` match CPython. Direct
+  `sorted(None)` / `sum(None)` still I-174.
+
+### I-182  `list`/`tuple`/`sorted`/`set` of a class object walk the class dict
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.10 / `w910_class.py`: `list(C)` / `tuple(C)` / `sorted(C)` /
+  `set(C)` → TypeError; `list(C())` / `reversed(C)` kept TypeError;
+  `list({1: 2})` kept `[1]`. Parent: `['__mro__']` etc.
+- Files: `src/runtime/Runtime.cpp` (`pyc_is_class_dict`, `PyBuiltin_List`,
+  `PyBuiltin_Sorted` type-2, `pyc_set_iter_to_list`)
+- Blocks merge: no
+- Notes: Wave 9 W9.10. Coordinator: `-O0`/`-O2` match CPython. `tuple`
+  reuses List. Leftovers I-185 / I-186. Do not re-open I-154 / I-180.
+
+### I-183  First-class `min()` / `max()` 0-arg is None, not TypeError
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.10: `m=min; m()` / `mx=max; mx()` → TypeError.
+  Parent: printed None.
+- Files: `src/runtime/Runtime.cpp` (`pyc_minmax_adapt_ok`, `pyc_adapt_min`,
+  `pyc_adapt_max`)
+- Blocks merge: no
+- Notes: Wave 9 W9.10. Coordinator: `-O0`/`-O2` match CPython. Empty
+  iterable is I-173. Direct `min()` is I-186.
+
+### I-184  First-class `min`/`max` `default=` plus extra positionals is silent
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.10: `m(1, 2, default=0)` / `m([1], foo=1)` → TypeError;
+  `m([], default=99)` / `m([1, 2])` kept. Parent: `1` / `1`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_minmax_adapt_ok`)
+- Blocks merge: no
+- Notes: Wave 9 W9.10. Coordinator: `-O0`/`-O2` match CPython. Direct
+  path is I-186.
+
+### I-185  class object still silent in remaining iter consumers
+- Status: open
+- Severity: wrong-answer
+- Evidence: After W9.10, only list/tuple/sorted/set/reversed skip `__mro__`.
+  `class C: pass`
+  `list(enumerate(C))` / `zip(C, [1])` — CPython TypeError; pyc `[]`.
+  `any(C)` / `all(C)` — CPython TypeError; pyc `False` / `True`.
+  `min(C)` / `max(C)` — CPython TypeError; pyc `None`.
+  `sorted(C, key=cmp_to_key(cmp))` still walks keys (`SortedWithCmp`).
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W9.10. When I-161 / I-164 / I-174 add type-2
+  walks, skip `pyc_is_class_dict`. Do not demand in W9.10.
+
+### I-186  Direct `min`/`max` still drop 0-arg / `default=`+extras / unexpected kw
+- Status: open
+- Severity: wrong-answer
+- Evidence: Compiler `min`/`max` arm ignores unexpected kwargs and
+  `default=` on multi-arg. First-class path is I-183 / I-184 (W9.10).
+  `min(1, 2, default=0)` / `min([1], foo=1)` — CPython TypeError; pyc `1`.
+- Files: `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W9.10. SWE lock was Runtime.cpp only.
 
 ---
 
