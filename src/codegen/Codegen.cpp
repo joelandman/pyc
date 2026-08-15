@@ -388,20 +388,32 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* timedeltaNewTy = llvm::FunctionType::get(pyObjectPtrTy,
         {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(timedeltaNewTy, llvm::Function::ExternalLinkage, "PyTimedelta_New", module.get());
-    for (const char* name : {"PyDateTime_Isoformat", "PyDateTime_Weekday", "PyDateTime_Isoweekday", "PyTimedelta_TotalSeconds"}) {
+    for (const char* name : {"PyDateTime_Isoformat", "PyDateTime_Weekday", "PyDateTime_Isoweekday",
+                              "PyTimedelta_TotalSeconds",
+                              "PyDateTime_DateFromIsoformat", "PyDateTime_DatetimeFromIsoformat"}) {
         llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, name, module.get());
     }
+    {
+        llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        for (const char* name : {"PyDateTime_Strftime", "PyDateTime_DateStrptime",
+                                  "PyDateTime_DatetimeStrptime"}) {
+            llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, name, module.get());
+        }
+    }
     // pathlib.Path: same AST-recognized direct-call convention as datetime
-    // above. PyPathlib_Path/Exists/IsFile/IsDir/Mkdir take one ptr arg;
-    // PyPathlib_Joinpath takes the receiver plus a boxed list of parts.
+    // above. PyPathlib_Path/Exists/IsFile/IsDir/Mkdir/Resolve/PathFromParts
+    // take one ptr arg; Joinpath/Glob take the receiver plus a boxed list
+    // of parts / a pattern.
     for (const char* name : {"PyPathlib_Path", "PyPathlib_Exists", "PyPathlib_IsFile",
-                              "PyPathlib_IsDir", "PyPathlib_Mkdir"}) {
+                              "PyPathlib_IsDir", "PyPathlib_Mkdir", "PyPathlib_Resolve",
+                              "PyPathlib_PathFromParts"}) {
         llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, name, module.get());
     }
     llvm::FunctionType* joinpathTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(joinpathTy, llvm::Function::ExternalLinkage, "PyPathlib_Joinpath", module.get());
+    llvm::Function::Create(joinpathTy, llvm::Function::ExternalLinkage, "PyPathlib_Glob", module.get());
     // hashlib: same direct-call convention. PyHashlib_Md5/Sha1/Sha256 take
     // the data string; PyHashlib_Hexdigest/Digest take the hash-object receiver.
     for (const char* name : {"PyHashlib_Md5", "PyHashlib_Sha1", "PyHashlib_Sha256",

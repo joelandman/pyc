@@ -1260,8 +1260,8 @@ class LoweringVisitor {
                             (origName == "date" || origName == "datetime" || origName == "timedelta")) {
                             datetimeCtorAliases[name] = origName;
                         }
-                        // `from pathlib import Path [as X]` — same rationale.
-                        if (mod == "pathlib" && origName == "Path") {
+                        // `from pathlib import Path/PurePath [as X]` — same rationale.
+                        if (mod == "pathlib" && (origName == "Path" || origName == "PurePath")) {
                             pathCtorAliases.insert(name);
                         }
                         // `from hashlib import md5/sha1/sha256 [as X]` — same rationale.
@@ -4716,24 +4716,32 @@ class LoweringVisitor {
         return res;
     }
 
-    // Shared by both `pathlib.Path(...)`-qualified construction
-    // (lowerMethodCall) and bare `Path(...)` construction after a
-    // from-import (lowerCall, via pathCtorAliases). Single positional or
-    // keyword `path=`/first-arg; anything else is dropped (real
-    // pathlib.Path also accepts multiple path segments to join, e.g.
-    // `Path("a", "b")` — not supported here, single-argument only).
+    // Shared by both `pathlib.Path(...)`/`pathlib.PurePath(...)`-qualified
+    // construction (lowerMethodCall) and bare `Path(...)`/`PurePath(...)`
+    // after a from-import (lowerCall, via pathCtorAliases). All positional
+    // args are joined like Path.joinpath (`/` join; an absolute segment
+    // replaces). Keyword `path=` is treated as a single part.
     std::string lowerPathConstruct(const ASTNode* node, const std::vector<std::string>& posArgs) {
-        std::string arg;
+        std::vector<std::string> parts = posArgs;
         for (size_t i = 1; i < node->children.size(); ++i) {
             const auto* ch = node->children[i].get();
             if (ch && ch->type == "Keyword" && ch->id == "path" && !ch->children.empty()) {
-                arg = lowerExpr(ch->children[0].get());
+                parts = {lowerExpr(ch->children[0].get())};
                 break;
             }
         }
-        if (arg.empty() && !posArgs.empty()) arg = posArgs[0];
+        std::string partsList = "$t" + std::to_string(tempCounter++);
+        std::string countConst = "$c" + std::to_string(tempCounter++);
+        ir.addInstruction(currentFunc, "const", {std::to_string(parts.size())}, countConst);
+        ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", countConst}, partsList);
+        for (size_t i = 0; i < parts.size(); ++i) {
+            std::string idxConst = "$c" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
+            std::string setRes = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyList_SetItemBoxed", partsList, idxConst, parts[i]}, setRes);
+        }
         std::string res = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyPathlib_Path", arg}, res);
+        ir.addInstruction(currentFunc, "call", {"PyPathlib_PathFromParts", partsList}, res);
         noteType(res, "path");
         return res;
     }
@@ -9437,6 +9445,23 @@ class LoweringVisitor {
                     noteType(res, "datetime");
                     return res;
                 }
+                if ((innerKind == "date" || innerKind == "datetime") && methodName == "fromisoformat") {
+                    std::string arg = args.empty() ? "" : args[0];
+                    const char* fn = (innerKind == "date")
+                        ? "PyDateTime_DateFromIsoformat" : "PyDateTime_DatetimeFromIsoformat";
+                    ir.addInstruction(currentFunc, "call", {fn, arg}, res);
+                    noteType(res, innerKind);
+                    return res;
+                }
+                if ((innerKind == "date" || innerKind == "datetime") && methodName == "strptime") {
+                    std::string s = args.empty() ? "" : args[0];
+                    std::string fmt = args.size() < 2 ? "" : args[1];
+                    const char* fn = (innerKind == "date")
+                        ? "PyDateTime_DateStrptime" : "PyDateTime_DatetimeStrptime";
+                    ir.addInstruction(currentFunc, "call", {fn, s, fmt}, res);
+                    noteType(res, innerKind);
+                    return res;
+                }
             }
         }
         // pathlib.Path(...) construction — literal "pathlib" name or any
@@ -9445,7 +9470,8 @@ class LoweringVisitor {
         // itself sets valueTypes["pathlib"]="dict", which would always
         // look "shadowed").
         if (attr->children.size() >= 1 && attr->children[0] &&
-            attr->children[0]->type == "Name" && methodName == "Path") {
+            attr->children[0]->type == "Name" &&
+            (methodName == "Path" || methodName == "PurePath")) {
             const std::string& baseId = attr->children[0]->id;
             bool isPathlib = (baseId == "pathlib");
             if (!isPathlib) {
@@ -9764,6 +9790,17 @@ class LoweringVisitor {
                 noteType(res, "path");
                 return res;
         }
+        if (methodName == "resolve" && typeOf(obj) == "path") {
+            ir.addInstruction(currentFunc, "call", {"PyPathlib_Resolve", obj}, res);
+            noteType(res, "path");
+            return res;
+        }
+        if (methodName == "glob" && typeOf(obj) == "path") {
+            std::string pat = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyPathlib_Glob", obj, pat}, res, "list");
+            noteType(res, "list");
+            return res;
+        }
         // .isoformat()/.weekday()/.isoweekday()/.total_seconds() — proven
         // date/datetime/timedelta only. "boxed" stole user methods (I-030).
         if (methodName == "isoformat" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
@@ -9784,6 +9821,12 @@ class LoweringVisitor {
         if (methodName == "total_seconds" && typeOf(obj) == "timedelta") {
             ir.addInstruction(currentFunc, "call", {"PyTimedelta_TotalSeconds", obj}, res, "float");
             noteType(res, "float");
+            return res;
+        }
+        if (methodName == "strftime" && (typeOf(obj) == "date" || typeOf(obj) == "datetime")) {
+            std::string fmt = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyDateTime_Strftime", obj, fmt}, res, "str");
+            noteType(res, "str");
             return res;
         }
 
@@ -11646,7 +11689,7 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
                          "compress", "groupby"}},
         {"collections", {"Counter", "most_common", "deque", "namedtuple", "defaultdict"}},
         {"datetime",   {"date", "datetime", "timedelta"}},
-        {"pathlib",    {"Path"}},
+        {"pathlib",    {"Path", "PurePath"}},
         {"hashlib",    {"md5", "sha1", "sha256"}},
         {"base64",     {"b64encode", "b64decode"}},
         {"struct",     {"pack", "unpack"}},

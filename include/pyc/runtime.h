@@ -448,6 +448,18 @@ void      pyc_clear_yield_buffer(void);
 // Flatten nested tuple/list into single-level list for optimized subscript access
 PyObject* Pyc_ToFlatList(PyObject* obj);
 
+// datetime: strftime / fromisoformat / strptime (no µs, no tz).
+PyObject* PyDateTime_Strftime(PyObject* obj, PyObject* fmt);
+PyObject* PyDateTime_DateFromIsoformat(PyObject* s);
+PyObject* PyDateTime_DatetimeFromIsoformat(PyObject* s);
+PyObject* PyDateTime_DateStrptime(PyObject* s, PyObject* fmt);
+PyObject* PyDateTime_DatetimeStrptime(PyObject* s, PyObject* fmt);
+
+// pathlib: multi-arg Path/PurePath, resolve, glob.
+PyObject* PyPathlib_PathFromParts(PyObject* parts);
+PyObject* PyPathlib_Resolve(PyObject* obj);
+PyObject* PyPathlib_Glob(PyObject* obj, PyObject* pattern);
+
 #ifdef __cplusplus
 }
 #endif

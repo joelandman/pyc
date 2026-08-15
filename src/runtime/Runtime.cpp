@@ -22,6 +22,7 @@
 #include <atomic>
 #include <chrono>
 #include <mutex>
+#include <time.h>
 
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include <pcre2.h>
@@ -4964,6 +4965,7 @@ static PyObject* makeRandomModuleDict();
 static PyObject* makeItertoolsModuleDict();
 static PyObject* makeCollectionsModuleDict();
 static PyObject* makeDatetimeModuleDict();
+static PyObject* makePathlibModuleDict();
 static PyObject* makeHashlibModuleDict();
 static PyObject* makeBase64ModuleDict();
 static PyObject* makeStructModuleDict();
@@ -5061,12 +5063,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
             return makeDatetimeModuleDict();
         }
         if (modName->str == "pathlib") {
-            // Empty: pathlib.Path(...) construction and Path.today()-style
-            // calls are never needed (unlike datetime's date.today()/
-            // datetime.now()) — Path has exactly one constructor, always
-            // intercepted structurally in Compiler.cpp. This dict exists
-            // only so `import pathlib` doesn't report ImportError.
-            return pyc_mark_module(PyDict_New());
+            return makePathlibModuleDict();
         }
         if (modName->str == "hashlib") {
             return makeHashlibModuleDict();
@@ -5274,6 +5271,30 @@ static std::string pyc_path_basename(const std::string& s) {
     size_t slash = s.find_last_of('/');
     return slash == std::string::npos ? s : s.substr(slash + 1);
 }
+// CPython 3.14 Path.parts: split on '/', drop empty and '.' components,
+// keep '..'. Absolute paths start with '/'. Path() / Path('.') / Path('')
+// are all the empty tuple.
+static PyObject* pyc_path_parts(const std::string& s) {
+    if (s.empty() || s == ".") return PyTuple_New(0);
+    bool abs = (s[0] == '/');
+    std::vector<std::string> parts;
+    if (abs) parts.push_back("/");
+    size_t i = abs ? 1 : 0;
+    while (i < s.size()) {
+        size_t next = s.find('/', i);
+        std::string comp = (next == std::string::npos) ? s.substr(i) : s.substr(i, next - i);
+        if (!comp.empty() && comp != ".") parts.push_back(comp);
+        if (next == std::string::npos) break;
+        i = next + 1;
+    }
+    PyObject* t = PyTuple_New(parts.size());
+    for (size_t j = 0; j < parts.size(); ++j) {
+        PyObject* p = PyUnicode_FromStringAndSize(parts[j].data(), parts[j].size());
+        PyTuple_SetItem(t, j, p);
+        if (p) Py_DECREF(p);
+    }
+    return t;
+}
 static std::string pyc_path_dirname(const std::string& s) {
     size_t slash = s.find_last_of('/');
     if (slash == std::string::npos) return "";
@@ -5358,6 +5379,7 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
             const std::string& part = (k == "suffix" ? ext : root);
             return PyUnicode_FromStringAndSize(part.data(), part.size());
         }
+        if (k == "parts") return pyc_path_parts(obj->str);
         return nullptr;
     }
     if (obj->type == 1) return PyList_GetItemObj(obj, key); // returns new ref (INCREF inside)
@@ -8624,6 +8646,31 @@ extern "C" PyObject* PyPathlib_Path(PyObject* arg) {
     return pyc_new_path(pyc_is_path_like(arg) ? arg->str : std::string());
 }
 
+// Path(*parts) / PurePath(*parts): join like Path.joinpath, empty → ".".
+// Also the token+registry adapter (args is a boxed list).
+extern "C" PyObject* PyPathlib_PathFromParts(PyObject* parts) {
+    std::string out;
+    if (parts && parts->type == 1) {
+        for (PyObject* p : parts->list) {
+            if (!pyc_is_path_like(p) || p->str.empty()) continue;
+            if (p->str[0] == '/') { out = p->str; continue; }
+            if (!out.empty() && out.back() != '/') out += '/';
+            out += p->str;
+        }
+    }
+    if (out.empty()) return pyc_new_path(".");
+    return pyc_new_path(out);
+}
+
+extern "C" PyObject* PyPathlib_Resolve(PyObject* obj) {
+    if (!pyc_is_path_like(obj) || obj->str.empty()) return pyc_new_path(".");
+    char* r = ::realpath(obj->str.c_str(), nullptr);
+    if (!r) return pyc_new_path(obj->str);
+    PyObject* out = pyc_new_path(r);
+    ::free(r);
+    return out;
+}
+
 // Path.exists()/.is_file()/.is_dir() — typeOf-gated method calls (see the
 // dispatch note in Compiler.cpp's lowerMethodCall); reuse the same
 // stat(2) logic as os.path.exists/isfile/isdir.
@@ -8681,6 +8728,37 @@ extern "C" PyObject* PyPathlib_Joinpath(PyObject* obj, PyObject* parts) {
         }
     }
     return pyc_new_path(out);
+}
+
+static bool pyc_fnmatch(const char* name, const char* pat);
+
+// Path.glob(pattern): non-recursive, files in this directory matching
+// fnmatch. Returns a list of Path. No ** / rglob.
+extern "C" PyObject* PyPathlib_Glob(PyObject* obj, PyObject* pattern) {
+    PyObject* out = PyList_New(0);
+    if (!pyc_is_path_like(obj) || !pattern || pattern->type != 3) return out;
+    std::string dirPart = obj->str.empty() ? std::string(".") : obj->str;
+    const std::string& basePart = pattern->str;
+    std::string prefix = dirPart;
+    if (prefix != "/" && !prefix.empty() && prefix.back() != '/') prefix += '/';
+    DIR* d = ::opendir(dirPart.c_str());
+    if (!d) return out;
+    std::vector<std::string> matches;
+    struct dirent* ent;
+    while ((ent = ::readdir(d)) != nullptr) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+        if (ent->d_name[0] == '.' && !basePart.empty() && basePart[0] != '.') continue;
+        if (pyc_fnmatch(ent->d_name, basePart.c_str())) {
+            matches.push_back(prefix + ent->d_name);
+        }
+    }
+    ::closedir(d);
+    for (auto& m : matches) {
+        PyObject* p = pyc_new_path(m);
+        PyList_Append(out, p);
+        Py_DECREF(p);
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------
@@ -11892,6 +11970,146 @@ extern "C" PyObject* PyDateTime_Now(PyObject* args) {
                              lt.tm_hour, lt.tm_min, lt.tm_sec, true);
 }
 
+// glibc hides strptime behind _XOPEN_SOURCE; declare it so we don't
+// have to change this TU's feature-test macros.
+extern "C" char* strptime(const char* s, const char* format, struct tm* tm);
+
+static bool pyc_parse_n_digits(const char* s, int n, int& out) {
+    out = 0;
+    for (int i = 0; i < n; ++i) {
+        if (s[i] < '0' || s[i] > '9') return false;
+        out = out * 10 + (s[i] - '0');
+    }
+    return true;
+}
+
+static bool pyc_parse_iso_date(const char* s, size_t n, int& y, int& mo, int& d, size_t& used) {
+    if (n < 10 || s[4] != '-' || s[7] != '-') return false;
+    if (!pyc_parse_n_digits(s, 4, y)) return false;
+    if (!pyc_parse_n_digits(s + 5, 2, mo)) return false;
+    if (!pyc_parse_n_digits(s + 8, 2, d)) return false;
+    used = 10;
+    return true;
+}
+
+static bool pyc_parse_iso_time(const char* s, size_t n, int& h, int& mi, int& sec, size_t& used) {
+    if (n < 8 || s[2] != ':' || s[5] != ':') return false;
+    if (!pyc_parse_n_digits(s, 2, h)) return false;
+    if (!pyc_parse_n_digits(s + 3, 2, mi)) return false;
+    if (!pyc_parse_n_digits(s + 6, 2, sec)) return false;
+    used = 8;
+    if (n > 8 && s[8] == '.') {
+        size_t i = 9;
+        while (i < n && s[i] >= '0' && s[i] <= '9') ++i;
+        if (i == 9) return false;
+        used = i;
+    }
+    return true;
+}
+
+static void pyc_raise_bad_isoformat(PyObject* s) {
+    std::string shown = (s && s->type == 3) ? s->str : std::string();
+    pyc_raise_msg("ValueError", ("Invalid isoformat string: '" + shown + "'").c_str());
+}
+
+extern "C" PyObject* PyDateTime_Strftime(PyObject* obj, PyObject* fmt) {
+    PycDateTime* dt = pyc_as_datetime(obj);
+    if (!dt || !fmt || fmt->type != 3) return PyUnicode_FromString("");
+    struct tm tmv;
+    memset(&tmv, 0, sizeof(tmv));
+    tmv.tm_year = dt->year - 1900;
+    tmv.tm_mon = dt->month - 1;
+    tmv.tm_mday = dt->day;
+    tmv.tm_hour = dt->hasTime ? dt->hour : 0;
+    tmv.tm_min = dt->hasTime ? dt->minute : 0;
+    tmv.tm_sec = dt->hasTime ? dt->second : 0;
+    int64_t days = pyc_days_from_civil(dt->year, dt->month, dt->day);
+    // Python weekday() is Mon=0; tm_wday is Sun=0.
+    tmv.tm_wday = (pyc_weekday_from_days(days) + 1) % 7;
+    tmv.tm_yday = (int)(days - pyc_days_from_civil(dt->year, 1, 1));
+    tmv.tm_isdst = -1;
+    char buf[256];
+    size_t n = strftime(buf, sizeof(buf), fmt->str.c_str(), &tmv);
+    if (n == 0) return PyUnicode_FromString("");
+    return PyUnicode_FromStringAndSize(buf, n);
+}
+
+extern "C" PyObject* PyDateTime_DateFromIsoformat(PyObject* s) {
+    if (!s || s->type != 3) { pyc_raise_bad_isoformat(s); return nullptr; }
+    int y = 0, mo = 0, d = 0;
+    size_t used = 0;
+    if (!pyc_parse_iso_date(s->str.c_str(), s->str.size(), y, mo, d, used) || used != s->str.size()) {
+        pyc_raise_bad_isoformat(s);
+        return nullptr;
+    }
+    return pyc_new_datetime(y, mo, d, 0, 0, 0, false);
+}
+
+extern "C" PyObject* PyDateTime_DatetimeFromIsoformat(PyObject* s) {
+    if (!s || s->type != 3) { pyc_raise_bad_isoformat(s); return nullptr; }
+    const char* p = s->str.c_str();
+    size_t n = s->str.size();
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
+    size_t used = 0;
+    if (!pyc_parse_iso_date(p, n, y, mo, d, used)) {
+        pyc_raise_bad_isoformat(s);
+        return nullptr;
+    }
+    if (used == n) return pyc_new_datetime(y, mo, d, 0, 0, 0, true);
+    if (p[used] != 'T' && p[used] != ' ') { pyc_raise_bad_isoformat(s); return nullptr; }
+    size_t tused = 0;
+    if (!pyc_parse_iso_time(p + used + 1, n - used - 1, h, mi, sec, tused) ||
+        used + 1 + tused != n) {
+        pyc_raise_bad_isoformat(s);
+        return nullptr;
+    }
+    return pyc_new_datetime(y, mo, d, h, mi, sec, true);
+}
+
+static PyObject* pyc_strptime_impl(PyObject* s, PyObject* fmt, bool hasTime) {
+    if (!s || s->type != 3 || !fmt || fmt->type != 3) {
+        pyc_raise_msg("ValueError", "strptime() argument must be a string");
+        return nullptr;
+    }
+    struct tm tmv;
+    memset(&tmv, 0, sizeof(tmv));
+    tmv.tm_mday = 1;
+    const char* end = strptime(s->str.c_str(), fmt->str.c_str(), &tmv);
+    if (!end || *end != '\0') {
+        pyc_raise_msg("ValueError",
+                      ("time data '" + s->str + "' does not match format '" + fmt->str + "'").c_str());
+        return nullptr;
+    }
+    return pyc_new_datetime(tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+                            tmv.tm_hour, tmv.tm_min, tmv.tm_sec, hasTime);
+}
+
+extern "C" PyObject* PyDateTime_DateStrptime(PyObject* s, PyObject* fmt) {
+    return pyc_strptime_impl(s, fmt, false);
+}
+extern "C" PyObject* PyDateTime_DatetimeStrptime(PyObject* s, PyObject* fmt) {
+    return pyc_strptime_impl(s, fmt, true);
+}
+
+static PyObject* pyc_tok_date_fromisoformat(PyObject* args) {
+    PyObject* s = (args && args->type == 1 && !args->list.empty()) ? args->list[0] : nullptr;
+    return PyDateTime_DateFromIsoformat(s);
+}
+static PyObject* pyc_tok_datetime_fromisoformat(PyObject* args) {
+    PyObject* s = (args && args->type == 1 && !args->list.empty()) ? args->list[0] : nullptr;
+    return PyDateTime_DatetimeFromIsoformat(s);
+}
+static PyObject* pyc_tok_date_strptime(PyObject* args) {
+    PyObject* s = (args && args->type == 1 && !args->list.empty()) ? args->list[0] : nullptr;
+    PyObject* fmt = (args && args->type == 1 && args->list.size() >= 2) ? args->list[1] : nullptr;
+    return PyDateTime_DateStrptime(s, fmt);
+}
+static PyObject* pyc_tok_datetime_strptime(PyObject* args) {
+    PyObject* s = (args && args->type == 1 && !args->list.empty()) ? args->list[0] : nullptr;
+    PyObject* fmt = (args && args->type == 1 && args->list.size() >= 2) ? args->list[1] : nullptr;
+    return PyDateTime_DatetimeStrptime(s, fmt);
+}
+
 // makeDatetimeModuleDict: `date`/`datetime`/`timedelta` constructors are
 // intercepted at the AST level and never actually looked up in this dict
 // (see the comment above) — it exists so `import datetime` binds a real
@@ -11909,15 +12127,35 @@ static PyObject* makeDatetimeModuleDict() {
     };
     PyObject* dateSub = pyc_mark_module(PyDict_New());
     addTok(dateSub, "today", "PyDateTime_Today");
+    addTok(dateSub, "fromisoformat", "PyDateTime_DateFromIsoformatTok");
+    addTok(dateSub, "strptime", "PyDateTime_DateStrptimeTok");
     PyObject* dateKey = PyUnicode_FromString("date");
     PyDict_SetItem(d, dateKey, dateSub);
     Py_DECREF(dateKey); Py_DECREF(dateSub);
 
     PyObject* datetimeSub = pyc_mark_module(PyDict_New());
     addTok(datetimeSub, "now", "PyDateTime_Now");
+    addTok(datetimeSub, "fromisoformat", "PyDateTime_DatetimeFromIsoformatTok");
+    addTok(datetimeSub, "strptime", "PyDateTime_DatetimeStrptimeTok");
     PyObject* datetimeKey = PyUnicode_FromString("datetime");
     PyDict_SetItem(d, datetimeKey, datetimeSub);
     Py_DECREF(datetimeKey); Py_DECREF(datetimeSub);
+    return d;
+}
+
+// Path / PurePath construction is intercepted structurally; this dict
+// exists so `from pathlib import Path, PurePath` binds a real token
+// (same constructor — both are type 16) rather than None.
+static PyObject* makePathlibModuleDict() {
+    PyObject* d = pyc_mark_module(PyDict_New());
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("Path", "PyPathlib_PathFromParts");
+    addTok("PurePath", "PyPathlib_PathFromParts");
     return d;
 }
 
@@ -12956,6 +13194,11 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("pyc_adapt_bytearray",  pyc_adapt_bytearray);
     pyc_register_callable("PyDateTime_Today", PyDateTime_Today);
     pyc_register_callable("PyDateTime_Now",   PyDateTime_Now);
+    pyc_register_callable("PyDateTime_DateFromIsoformatTok", pyc_tok_date_fromisoformat);
+    pyc_register_callable("PyDateTime_DatetimeFromIsoformatTok", pyc_tok_datetime_fromisoformat);
+    pyc_register_callable("PyDateTime_DateStrptimeTok", pyc_tok_date_strptime);
+    pyc_register_callable("PyDateTime_DatetimeStrptimeTok", pyc_tok_datetime_strptime);
+    pyc_register_callable("PyPathlib_PathFromParts", PyPathlib_PathFromParts);
 }
 
 // Look up an attribute on the global `sys` module. Returns a strong
@@ -15308,9 +15551,12 @@ PYC_WRAP0(pyc_bm_path_exists, PyPathlib_Exists)
 PYC_WRAP0(pyc_bm_path_is_file, PyPathlib_IsFile)
 PYC_WRAP0(pyc_bm_path_is_dir, PyPathlib_IsDir)
 PYC_WRAP0(pyc_bm_path_mkdir, PyPathlib_Mkdir)
+PYC_WRAP0(pyc_bm_path_resolve, PyPathlib_Resolve)
+PYC_WRAP1(pyc_bm_path_glob, PyPathlib_Glob)
 PYC_WRAP0(pyc_bm_dt_isoformat, PyDateTime_Isoformat)
 PYC_WRAP0(pyc_bm_dt_weekday, PyDateTime_Weekday)
 PYC_WRAP0(pyc_bm_dt_isoweekday, PyDateTime_Isoweekday)
+PYC_WRAP1(pyc_bm_dt_strftime, PyDateTime_Strftime)
 PYC_WRAP0(pyc_bm_td_total_seconds, PyTimedelta_TotalSeconds)
 PYC_WRAP0(pyc_bm_float_is_integer, PyFloat_IsInteger)
 PYC_WRAP1(pyc_bm_match_group, PyBuiltin_ReMatchGroup)
@@ -15554,11 +15800,14 @@ static void pyc_init_builtin_method_tables(
     tables[16]["is_dir"] = pyc_bm_path_is_dir;
     tables[16]["mkdir"] = pyc_bm_path_mkdir;
     tables[16]["joinpath"] = pyc_bm_path_joinpath;
+    tables[16]["resolve"] = pyc_bm_path_resolve;
+    tables[16]["glob"] = pyc_bm_path_glob;
 
     // date/datetime (tag 14) and timedelta (tag 15).
     tables[14]["isoformat"] = pyc_bm_dt_isoformat;
     tables[14]["weekday"] = pyc_bm_dt_weekday;
     tables[14]["isoweekday"] = pyc_bm_dt_isoweekday;
+    tables[14]["strftime"] = pyc_bm_dt_strftime;
     tables[15]["total_seconds"] = pyc_bm_td_total_seconds;
 
     // re.Match.group

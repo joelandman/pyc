@@ -783,20 +783,30 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: I-017 child. Touches I-011/I-013-class type objects. Feature work.
 
 ### I-116  datetime `strptime` / `strftime` / `fromisoformat`
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: FEATURES.md. `.isoformat` exists; parse/format counterparts do not.
-- Files: `src/runtime/Runtime.cpp`
+- Evidence: W10.2 / `w116_dt.py`: `strftime` `%Y-%m-%d` / `%H:%M:%S` / `%%`;
+  `date.fromisoformat` / `datetime.fromisoformat` (T and space);
+  `strptime` on date and datetime match CPython. Parent: AttributeError
+  `'object' has no attribute 'strftime'`.
+- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp`, `src/codegen/Codegen.cpp`,
+  `include/pyc/runtime.h`
 - Blocks merge: no
-- Notes: I-017 child. Feature work.
+- Notes: Wave 10 W10.2. Coordinator: `-O0`/`-O2` match. `%f` stays I-113;
+  offset/`Z` stays I-114. Compact `YYYYMMDD` fromisoformat leftover I-226
+  notes. libc `strftime` gives `%a` for free.
 
 ### I-117  pathlib PurePath / parts / resolve / glob / multi-arg ctor
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: FEATURES.md. `Path` is single-arg; no `PurePath`, `.parts`, `.resolve`, `.glob`.
-- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp` (`syntheticModuleExports`)
+- Evidence: W10.2 / `w117_path.py`: `Path("a","b","c")` / `PurePath` /
+  `.parts` tuple / `.glob("*.txt")` / `.resolve()` match CPython.
+  Parent: first-arg only; parts None; PurePath None; glob AttributeError.
+- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp` (`syntheticModuleExports`),
+  `src/codegen/Codegen.cpp`, `include/pyc/runtime.h`
 - Blocks merge: no
-- Notes: I-017 child. Feature work. Keep Compiler exports in sync.
+- Notes: Wave 10 W10.2. Coordinator: `-O0`/`-O2` match. PurePath is tag 16
+  (no new type). Leftovers I-226 `rglob` / I-227 `open(Path)`.
 
 ### I-118  `open()` `.read` / `.readline` / `.close` / `"rb"`
 - Status: fixed
@@ -1676,6 +1686,24 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp`
 - Blocks merge: no
 - Notes: Found reviewing W10.1.
+
+### I-226  `Path.rglob` / `**` glob still missing
+- Status: open
+- Severity: limitation
+- Evidence: `Path(base).glob("**/*.txt")` — CPython matches; pyc `[]`.
+  No `rglob`. Non-recursive `*.txt` is I-117.
+- Files: `src/runtime/Runtime.cpp` (`PyPathlib_Glob`)
+- Blocks merge: no
+- Notes: Found reviewing W10.2 / I-117. Same class as `glob` module no `**`.
+
+### I-227  `open(Path)` / PathLike still rejected
+- Status: open
+- Severity: limitation
+- Evidence: `open(Path("/tmp/pyc_w117_glob/a.txt"))` — CPython reads;
+  pyc ValueError. `PyBuiltin_Open` requires `path->type == 3`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Open`)
+- Blocks merge: no
+- Notes: Found reviewing W10.2 / I-117. Use `open(str(p))`.
 
 ---
 

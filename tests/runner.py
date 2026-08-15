@@ -5274,6 +5274,12 @@ except TypeError as e:
     # W10.1 / I-118: open().read / .readline / .close / "rb".
     (open(__file__.replace("runner.py", "w118_io.py")).read(),
      "hello\nworld\n'hello\\n'\n'world'\n''\n['hello\\n', 'world']\nhello\nb'hello\\nworld'\nb'hello\\n'\nb'world'\nValueError\nhello\nworld\n"),
+    # W10.2 / I-116: datetime strftime / strptime / fromisoformat.
+    (open(__file__.replace("runner.py", "w116_dt.py")).read(),
+     "2024-03-15\n2024/03/15\n%Y\n2024-03-15 14:30:05\n2024-03-15T14:30:05\n2024-03-15\n2024-03-15T14:30:05\n2024-03-15T14:30:05\n2024-03-15T14:30:05\n2024-03-15\n2024\n14\n"),
+    # W10.2 / I-117: pathlib PurePath, parts, resolve, glob, multi-arg Path.
+    (open(__file__.replace("runner.py", "w117_path.py")).read(),
+     "c\n('a', 'b', 'c')\na/b/c\ny\nx/y\n('/', 'tmp', 'foo')\n['a.txt', 'c.txt']\na.txt\nTrue\nTrue\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5359,6 +5365,10 @@ FILE_CASES = [
     ("w921_tail.py", []),
     # W10.1 / I-118: open().read / .readline / .close / "rb".
     ("w118_io.py", []),
+    # W10.2 / I-116: datetime strftime / strptime / fromisoformat.
+    ("w116_dt.py", []),
+    # W10.2 / I-117: pathlib PurePath, parts, resolve, glob, multi-arg Path.
+    ("w117_path.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

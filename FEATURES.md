@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **796/796** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **800/800** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796) are stale.
 
 ---
 
@@ -221,7 +221,7 @@ runtime module dicts. Keep them in sync.
 | `time` | `perf_counter` | rest of `time` |
 | `re` | search/match/finditer/findall/sub/split/compile; `IGNORECASE`/`MULTILINE`/`DOTALL`; `count=`/`maxsplit=`; `.group(i)` | `VERBOSE`/`ASCII`; named groups; compiled-pattern methods |
 | `os` / `os.path` | exists/isfile/isdir/join/basename/dirname/`split`/`splitext` (2-tuples)/abspath; unlink/remove/rename/getcwd/listdir/makedirs (`exist_ok` always true); `environ` (read-only snapshot) | writes to `environ` do not affect the process |
-| `pathlib` | `Path`, `/` chaining, `.exists`/`.is_dir`/`.joinpath` | `PurePath`, `.parts`, `.resolve`, `.glob`, multi-arg ctor |
+| `pathlib` | `Path` / `PurePath`, multi-arg ctor, `/`, `.exists`/`.is_dir`/`.joinpath`, `.parts`, `.resolve`, `.glob` (one dir) | `rglob` / `**`, `open(Path)` ([I-226](ISSUES.md)/[I-227](ISSUES.md)) |
 | `subprocess` | `call`, `check_output` | |
 | `math` | ~25 libm functions + `pi`/`e`/`tau`/`inf`/`nan` | |
 | `cmath` | `sqrt`, `log`, `exp`, `sin`, `cos`, `tan` | |
@@ -229,7 +229,7 @@ runtime module dicts. Keep them in sync.
 | `random` | MT19937 matching CPython: seed/random/randrange/randint/uniform/choice/shuffle | |
 | `itertools` | chain, `chain.from_iterable`, product, combinations, permutations, starmap, islice (2-arg), zip_longest, accumulate, takewhile, dropwhile, compress, groupby | `count`/`cycle`/unbounded `repeat` (no lazy iterators) |
 | `collections` | `Counter` (`.most_common`/`.elements`/`.subtract`/`.update`, `__missing__`); `deque`; `namedtuple`; `defaultdict` | `Counter` is a dict + side table, not a subclass; deque/namedtuple print as list/dict |
-| `datetime` | `date`/`datetime`/`timedelta`, arithmetic, comparisons, `.isoformat`/`.weekday`/`.total_seconds` | µs, tz, `strptime`/`strftime`/`fromisoformat`; `datetime` is not a `date` subclass |
+| `datetime` | `date`/`datetime`/`timedelta`, arithmetic, comparisons, `.isoformat`/`.strftime`/`.strptime`/`.fromisoformat` | µs, tz, `datetime` is not a `date` subclass ([I-113](ISSUES.md)/[I-114](ISSUES.md)/[I-115](ISSUES.md)) |
 | `hashlib` | md5/sha1/sha256; `str`/`bytes`/`bytearray`; `.hexdigest()`/`.digest()` | no `.update()` (digest at construction) |
 | `base64` | `b64encode`/`b64decode` → bytes | |
 | `struct` | common pack/unpack codes; `unpack` → tuple | native align, `n`/`N` |
