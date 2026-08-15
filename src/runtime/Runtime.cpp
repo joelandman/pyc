@@ -5851,6 +5851,11 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp, PyObject* revers
             }
         }
     } else if (lst->type == 2) {
+        // Class objects are types, not mappings (I-185).
+        if (pyc_is_class_dict(lst)) {
+            pyc_raise_msg("TypeError", "'type' object is not iterable");
+            return nullptr;
+        }
         for (auto& pair : lst->dict) {
             if (pair.first) Py_INCREF(pair.first);
             items.push_back(pair.first);
@@ -5897,6 +5902,10 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp, PyObject* revers
 PyObject* PyBuiltin_Any(PyObject* lst) {
     if (!lst) return PyBool_New(0);
     if (pyc_super_not_iterable(lst)) return nullptr;
+    if (pyc_is_class_dict(lst)) {
+        pyc_raise_msg("TypeError", "'type' object is not iterable");
+        return nullptr;
+    }
     if (lst->type == 20) {
         for (auto* e : lst->setElems) if (PyObject_TruthValue(e)) return PyBool_New(1);
         return PyBool_New(0);
@@ -5930,6 +5939,10 @@ PyObject* PyBuiltin_Any(PyObject* lst) {
 PyObject* PyBuiltin_All(PyObject* lst) {
     if (!lst) return PyBool_New(1);
     if (pyc_super_not_iterable(lst)) return nullptr;
+    if (pyc_is_class_dict(lst)) {
+        pyc_raise_msg("TypeError", "'type' object is not iterable");
+        return nullptr;
+    }
     if (lst->type == 20) {
         for (auto* e : lst->setElems) if (!PyObject_TruthValue(e)) return PyBool_New(0);
         return PyBool_New(1);
@@ -5990,6 +6003,10 @@ PyObject* PyBuiltin_Map(PyObject* func, PyObject* iterable) {
     } else if (iterable->type == 20) {
         for (auto* e : iterable->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
     } else if (iterable->type == 2) {
+        if (pyc_is_class_dict(iterable)) {
+            pyc_raise_msg("TypeError", "'type' object is not iterable");
+            return nullptr;
+        }
         for (auto& pair : iterable->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
     } else if (iterable->type == 3) {
         for (size_t i = 0; i < iterable->str.size(); ++i)
@@ -6057,6 +6074,10 @@ PyObject* PyBuiltin_MapN(PyObject* func, PyObject* iterables) {
         } else if (iter->type == 20) {
             for (auto* e : iter->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
         } else if (iter->type == 2) {
+            if (pyc_is_class_dict(iter)) {
+                pyc_raise_msg("TypeError", "'type' object is not iterable");
+                return nullptr;
+            }
             for (auto& pair : iter->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
         } else {
             minLen = 0;
@@ -6109,6 +6130,10 @@ PyObject* PyBuiltin_Filter(PyObject* func, PyObject* iterable) {
     } else if (iterable->type == 20) {
         for (auto* e : iterable->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
     } else if (iterable->type == 2) {
+        if (pyc_is_class_dict(iterable)) {
+            pyc_raise_msg("TypeError", "'type' object is not iterable");
+            return nullptr;
+        }
         for (auto& pair : iterable->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
     } else if (iterable->type == 3) {
         for (size_t i = 0; i < iterable->str.size(); ++i)
@@ -6959,6 +6984,10 @@ PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b, PyObject* key) {
 }
 PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) {
     if (pyc_super_not_iterable(lst)) return nullptr;
+    if (pyc_is_class_dict(lst)) {
+        pyc_raise_msg("TypeError", "'type' object is not iterable");
+        return nullptr;
+    }
     bool isList = lst && lst->type == 1;
     bool isSeq = pyc_is_seq_walk(lst);
     bool missingDef = defaultVal == Pyc_MissingDefault();
@@ -7005,6 +7034,10 @@ PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
 }
 PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal) {
     if (pyc_super_not_iterable(lst)) return nullptr;
+    if (pyc_is_class_dict(lst)) {
+        pyc_raise_msg("TypeError", "'type' object is not iterable");
+        return nullptr;
+    }
     bool isList = lst && lst->type == 1;
     bool isSeq = pyc_is_seq_walk(lst);
     bool missingDef = defaultVal == Pyc_MissingDefault();
@@ -7273,6 +7306,12 @@ static size_t pyc_zip_seq_len(PyObject* s) {
     }
     if (s->type == 0) {
         pyc_raise_msg("TypeError", "'int' object is not iterable");
+        return 0;
+    }
+    // Class objects are types, not empty sequences (I-185). Plain dicts
+    // still return 0 here (I-161).
+    if (pyc_is_class_dict(s)) {
+        pyc_raise_msg("TypeError", "'type' object is not iterable");
         return 0;
     }
     if (s->type == 1) return PyList_Size(s);

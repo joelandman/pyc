@@ -1312,28 +1312,48 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   path is I-186.
 
 ### I-185  class object still silent in remaining iter consumers
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: After W9.10, only list/tuple/sorted/set/reversed skip `__mro__`.
-  `class C: pass`
-  `list(enumerate(C))` / `zip(C, [1])` — CPython TypeError; pyc `[]`.
-  `any(C)` / `all(C)` — CPython TypeError; pyc `False` / `True`.
-  `min(C)` / `max(C)` — CPython TypeError; pyc `None`.
-  `sorted(C, key=cmp_to_key(cmp))` still walks keys (`SortedWithCmp`).
-- Files: `src/runtime/Runtime.cpp`
+- Evidence: W9.11 / `w911_class.py`: `enumerate(C)` / `zip(C,[1])` /
+  `any(C)` / `all(C)` / `min(C)` / `max(C)` / `sorted(C, key=cmp_to_key)`
+  → TypeError. Parent: `[]` / False / True / None / `['__mro__']`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_zip_seq_len`, `Any`, `All`,
+  `MinList`, `MaxList`, `SortedWithCmp`, `Map`/`Filter`)
 - Blocks merge: no
-- Notes: Found reviewing W9.10. When I-161 / I-164 / I-174 add type-2
-  walks, skip `pyc_is_class_dict`. Do not demand in W9.10.
+- Notes: Wave 9 W9.11. Coordinator: `-O0`/`-O2` match CPython. `map`/`filter`
+  gated too. Leftover `"__mro__" in C` / `len(C)` is I-187. `sum(C)` is I-189.
 
 ### I-186  Direct `min`/`max` still drop 0-arg / `default=`+extras / unexpected kw
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.11: `min()` / `max()` TypeError (parent compile SEGV);
+  `min(1, 2, default=0)` / `min([1], foo=1)` TypeError; `min([], default=99)`
+  / `min(1, 2)` / `min([3, 1])` kept.
+- Files: `src/Compiler.cpp` (min/max arm)
+- Blocks merge: no
+- Notes: Wave 9 W9.11. Coordinator: `-O0`/`-O2` match CPython. First-class
+  path was I-183 / I-184. Star-args arm leftover not demanded.
+
+### I-187  `"__mro__" in C` / `len(C)` still treat class as mapping
 - Status: open
 - Severity: wrong-answer
-- Evidence: Compiler `min`/`max` arm ignores unexpected kwargs and
-  `default=` on multi-arg. First-class path is I-183 / I-184 (W9.10).
-  `min(1, 2, default=0)` / `min([1], foo=1)` — CPython TypeError; pyc `1`.
-- Files: `src/Compiler.cpp`
+- Evidence: `"__mro__" in C` — CPython TypeError; pyc `True`
+  (`Pyc_Contains` type-2 key scan). `len(C)` — CPython TypeError; pyc `1`.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_Contains`, `PyBuiltin_Len`)
 - Blocks merge: no
-- Notes: Found reviewing W9.10. SWE lock was Runtime.cpp only.
+- Notes: Found reviewing W9.11. `for x in C` already TypeErrors (I-182).
+  `map`/`filter` were gated in W9.11.
+
+### I-189  `sum(C)` walks class-dict keys
+- Status: open
+- Severity: wrong-answer
+- Evidence: `sum(C)` — CPython TypeError (`'type' object is not iterable`);
+  pyc TypeError `unsupported operand type(s) for +: 'int' and 'str'`
+  (`0 + "__mro__"`). Exception name matches; reason does not.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
+- Blocks merge: no
+- Notes: Found reviewing W9.11. I-188 (map/filter) was fixed in this
+  slice. Skipped I-188.
 
 ---
 

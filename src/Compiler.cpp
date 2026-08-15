@@ -6131,10 +6131,31 @@ class LoweringVisitor {
             std::string defaultName;
             for (const auto& kv : kwArgs) {
                 if (kv.first == "key") keyName = kv.second;
-                if (kv.first == "default") defaultName = kv.second;
+                else if (kv.first == "default") defaultName = kv.second;
+                else {
+                    // I-186: unexpected kwargs were silently ignored
+                    // (min([1], foo=1) printed 1).
+                    emitTypeError(funcName +
+                        "() got an unexpected keyword argument '" + kv.first + "'");
+                    break;
+                }
             }
             std::vector<std::string> posArgs(argRes.begin(),
                 argRes.begin() + std::min(posArgCount, argRes.size()));
+            // I-186: min() indexed posArgs[0] and crashed the compiler.
+            if (posArgs.empty()) {
+                emitTypeError(funcName + " expected at least 1 argument, got 0");
+                std::string res = "$t" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "nconst", {}, res, "none");
+                noteType(res, "boxed");
+                return res;
+            }
+            // I-186: default= with more than one positional is TypeError
+            // (min(1, 2, default=0) printed 1).
+            if (!defaultName.empty() && posArgs.size() > 1) {
+                emitTypeError(std::string("Cannot specify a default for ") +
+                    funcName + "() with multiple positional arguments");
+            }
             if (posArgs.size() == 1) {
                 if (defaultName.empty()) {
                     defaultName = "$t" + std::to_string(tempCounter++);
