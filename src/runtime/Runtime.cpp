@@ -155,6 +155,25 @@ static PyObject* pyc_mark_module(PyObject* d) {
 static bool pyc_is_module(PyObject* o) {
     return o && o->type == 2 && o->list_item_type == 3;
 }
+// I-203: cmp_to_key factory is {"cmp_to_key": cmp} with no "obj".
+// A K object is that plus "obj". Borrowed refs. requireObj selects
+// factory (false) vs K (true).
+static bool pyc_cmp_to_key_parts(PyObject* o, bool requireObj,
+                                 PyObject** outCmp, PyObject** outObj) {
+    if (!o || o->type != 2) return false;
+    PyObject* cmp = nullptr;
+    PyObject* obj = nullptr;
+    bool hasObj = false;
+    for (auto& p : o->dict) {
+        if (!p.first || p.first->type != 3) continue;
+        if (p.first->str == "cmp_to_key") cmp = p.second;
+        else if (p.first->str == "obj") { hasObj = true; obj = p.second; }
+    }
+    if (!cmp || hasObj != requireObj) return false;
+    if (outCmp) *outCmp = cmp;
+    if (outObj) *outObj = obj;
+    return true;
+}
 // CPython super repr starts "<super: <cla"; the boxed proxy has no class.
 static const char kPycSuperRepr[] = "<super: <class 'object'>, <object object>>";
 
@@ -5888,17 +5907,15 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
 // reversing `r` in place before returning, in both the key and no-key
 // branches below.
 PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse) {
-    // I-175: first-class cmp_to_key wrapper is a plain dict whose
-    // "cmp_to_key" value is the comparator. Route to SortedWithCmp.
+    // I-175: first-class cmp_to_key factory is {"cmp_to_key": cmp}
+    // with no "obj". A K object (I-203) also has "obj" — not a factory.
     if (key && key->type == 2 && !pyc_is_uniterable_type2(key)) {
-        for (auto& pair : key->dict) {
-            if (pair.first && pair.first->type == 3 &&
-                pair.first->str == "cmp_to_key" && pair.second) {
-                PyObject* cb = PyBuiltin_Callable(pair.second);
-                int ok = PyObject_TruthValue(cb);
-                if (cb) Py_DECREF(cb);
-                if (ok) return PyBuiltin_SortedWithCmp(lst, pair.second, reverse);
-            }
+        PyObject* cmpFn = nullptr;
+        if (pyc_cmp_to_key_parts(key, false, &cmpFn, nullptr) && cmpFn) {
+            PyObject* cb = PyBuiltin_Callable(cmpFn);
+            int ok = PyObject_TruthValue(cb);
+            if (cb) Py_DECREF(cb);
+            if (ok) return PyBuiltin_SortedWithCmp(lst, cmpFn, reverse);
         }
     }
     if (!lst) {
@@ -6186,7 +6203,11 @@ PyObject* PyBuiltin_All(PyObject* lst) {
 // returns a list of results. func is a callable token (string/function object).
 // If func is None, each element is returned as-is (identity).
 PyObject* PyBuiltin_Map(PyObject* func, PyObject* iterable) {
-    if (!iterable) return PyList_New(0);
+    if (!iterable || iterable->type == 0 || iterable->type == 4 ||
+        iterable->type == 5) {
+        pyc_raise_not_iterable(iterable);
+        return nullptr;
+    }
     // Collect items from the iterable (list, tuple, set, dict, str).
     std::vector<PyObject*> items;
     if (iterable->type == 1) {
@@ -6259,7 +6280,10 @@ PyObject* PyBuiltin_MapN(PyObject* func, PyObject* iterables) {
     size_t minLen = SIZE_MAX;
     for (size_t i = 0; i < nIters; ++i) {
         PyObject* iter = iterables->list[i];
-        if (!iter) { minLen = 0; break; }
+        if (!iter || iter->type == 0 || iter->type == 4 || iter->type == 5) {
+            pyc_raise_not_iterable(iter);
+            return nullptr;
+        }
         std::vector<PyObject*>& items = allItems[i];
         if (iter->type == 1) {
             if (iter->list_item_type == 1) {
@@ -6314,7 +6338,11 @@ PyObject* PyBuiltin_MapN(PyObject* func, PyObject* iterables) {
 // PyBuiltin_Filter(func, iterable) — returns a list of items where func(item)
 // is truthy. If func is None, truthiness of the item itself is used.
 PyObject* PyBuiltin_Filter(PyObject* func, PyObject* iterable) {
-    if (!iterable) return PyList_New(0);
+    if (!iterable || iterable->type == 0 || iterable->type == 4 ||
+        iterable->type == 5) {
+        pyc_raise_not_iterable(iterable);
+        return nullptr;
+    }
     std::vector<PyObject*> items;
     if (iterable->type == 1) {
         if (iterable->list_item_type == 1) {
@@ -6787,6 +6815,27 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
     if (!obj) return PyList_New(0);
     if (obj->type == 7 && obj->cell_content) {
         pyc_raise_msg("TypeError", "'super' object is not subscriptable");
+        return nullptr;
+    }
+    // I-201: type-2 is not a sequence. Do not invent a slice object
+    // to call __getitem__ (ticket instances have none).
+    if (obj->type == 2) {
+        if (pyc_is_class_dict(obj)) {
+            pyc_raise_msg("TypeError", "'type' object is not subscriptable");
+            return nullptr;
+        }
+        if (pyc_is_instance_dict(obj)) {
+            std::string owned;
+            std::string msg = std::string("'") + pyc_iter_type_name(obj, owned) +
+                              "' object is not subscriptable";
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
+        if (pyc_is_module(obj)) {
+            pyc_raise_msg("TypeError", "'module' object is not subscriptable");
+            return nullptr;
+        }
+        pyc_raise_msg("KeyError", "slice(None, None, None)");
         return nullptr;
     }
     long n;
@@ -13197,6 +13246,28 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
     // We do the same: equal iff same keys and equal values. For ordering
     // (`<`, etc.), raise TypeError — we conservatively return 0.
     if (a->type == 2 && b->type == 2) {
+        // I-203: two cmp_to_key K objects compare via cmp(a.obj, b.obj)
+        // before generic dict equality.
+        PyObject *cmpA = nullptr, *objA = nullptr, *objB = nullptr;
+        if (pyc_cmp_to_key_parts(a, true, &cmpA, &objA) &&
+            pyc_cmp_to_key_parts(b, true, nullptr, &objB) && cmpA) {
+            PyObject* args = PyList_New(0);
+            PyList_Append(args, objA);
+            PyList_Append(args, objB);
+            PyObject* r = Pyc_Apply(cmpA, args);
+            Py_DECREF(args);
+            long c = 0;
+            if (r && (r->type == 0 || r->type == 5)) c = r->value;
+            if (r) Py_DECREF(r);
+            switch (op) {
+                case 0: return c == 0;
+                case 1: return c != 0;
+                case 2: return c < 0;
+                case 3: return c > 0;
+                case 4: return c <= 0;
+                case 5: return c >= 0;
+            }
+        }
         if (a->dict.size() != b->dict.size()) {
             switch (op) {
                 case 0: return 0;
@@ -14454,6 +14525,31 @@ static PyObject* pyc_apply_impl(PyObject* token, PyObject* argList, PyObject* kw
     }
     if (!haveTok) {
         if (token->type == 2) {
+            // I-203: cmp_to_key factory (has callable "cmp_to_key", no
+            // "obj") is not a class. Check before instantiation/__call__.
+            PyObject* cmpFn = nullptr;
+            if (pyc_cmp_to_key_parts(token, false, &cmpFn, nullptr) && cmpFn) {
+                PyObject* cb = PyBuiltin_Callable(cmpFn);
+                int ok = PyObject_TruthValue(cb);
+                if (cb) Py_DECREF(cb);
+                if (ok) {
+                    PyObject* arg0 = nullptr;
+                    if (!argList || argList->type != 1 || argList->list.empty()) {
+                        pyc_raise_msg("TypeError",
+                                      "cmp_to_key wrapper expected 1 argument");
+                        return nullptr;
+                    }
+                    arg0 = argList->list[0];
+                    PyObject* d = PyDict_New();
+                    PyObject* k1 = PyUnicode_FromString("cmp_to_key");
+                    PyDict_SetItem(d, k1, cmpFn);
+                    Py_DECREF(k1);
+                    PyObject* k2 = PyUnicode_FromString("obj");
+                    PyDict_SetItem(d, k2, arg0);
+                    Py_DECREF(k2);
+                    return d;
+                }
+            }
             // Dynamic class instantiation — found and fixed while bug
             // hunting: `X = Foo; X()` (factory patterns, class
             // registries, `cls()` inside plain functions) previously

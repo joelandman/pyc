@@ -5252,6 +5252,9 @@ except TypeError as e:
     # W9.15 remaining wrong-answers I-161/164/165/166/174/175/176/194–198.
     (open(__file__.replace("runner.py", "w915_wa.py")).read(),
      "'module' object is not iterable\n6\nTypeError\n2\nTrue\nTypeError\nTypeError\nTypeError\n4\n('k', 9)\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\n[1, 3]\nTypeError\nTypeError\nx\n[(1, 9)]\n[(1, 9)]\nTypeError\nTypeError\n[(1, 3), (2, 4)]\n[(0, 1)]\n[(0, 7)]\nTypeError\nTypeError\n[(0, 1), (1, 2)]\n[(5, 1), (6, 2)]\nTypeError\nTypeError\n[(5, 1), (6, 2)]\nTypeError\nTypeError\nTypeError\n[(1, 1)]\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTrue\n1\nTrue\n[1, 2, 3]\n[1, 2, 3]\n[1, 2, 3]\n[1, 2, 3]\n[1, 2, 3]\nsum() can't sum strings [use ''.join(seq) instead]\nsum() can't sum bytes [use b''.join(seq) instead]\nsum() can't sum bytearray [use b''.join(seq) instead]\n10\n13\n"),
+    # W9.16 / I-201 I-202 I-203: GetSlice; map/filter of scalars; cmp_to_key callable.
+    (open(__file__.replace("runner.py", "w916_slice.py")).read(),
+     "TypeError\nTypeError\nTypeError\nKeyError\n[2, 3]\n(2, 3)\nbc\nTypeError\nTypeError\nTypeError\nTypeError\n['1', '2']\n[1, 2]\n['1']\nFalse\nTrue\nTrue\nTrue\n[1, 2, 3]\n3\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5323,6 +5326,8 @@ FILE_CASES = [
     ("w914_map.py", []),
     # W9.15: remaining wrong-answers I-161/164/165/166/174/175/176/194–198.
     ("w915_wa.py", []),
+    # W9.16: GetSlice class/instance/module/dict; map/filter scalars; cmp_to_key callable.
+    ("w916_slice.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

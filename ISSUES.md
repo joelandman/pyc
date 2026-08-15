@@ -1441,37 +1441,67 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   gate before `__getitem__`; instance after. Leftover I-201 (`C[:]`).
 
 ### I-201  `GetSlice` of class / instance / module / dict is `[]`
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `C[:]` / `C()[:]` / `sys[:]` — CPython TypeError; pyc `[]`.
-  `{1: 2}[:]` — CPython KeyError (unhashable slice); pyc `[]`.
-  `Pyc_GetSlice` non-list/tuple/str/bytes uses `n=0` then `PyList_New(0)`.
+- Evidence: W9.16 / `w916_slice.py`: `C[:]` / `C()[:]` / `sys[:]` → TypeError;
+  `{1: 2}[:]` → KeyError; `[1,2,3][1:]` / `(1,2,3)[1:]` / `"abc"[1:]` kept.
+  Parent: `[]`.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_GetSlice`)
 - Blocks merge: no
-- Notes: Found reviewing W9.15. Slice assign already TypeErrors. Super
-  is I-057. None still `[]` (I-058 note).
+- Notes: Wave 9 W9.16. Coordinator: `-O0`/`-O2` match CPython. Super is
+  I-057. None still `[]` (I-058). Leftover I-204 (int/set/bool/float).
 
 ### I-202  `map`/`filter` of None/int/bool/float still empty
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `list(map(str, None))` / `list(map(str, True))` /
-  `list(filter(None, 1.0))` — CPython TypeError; pyc `[]`.
-  `if (!iterable) return PyList_New(0)`; unknown tags same empty default.
+- Evidence: W9.16: `list(map(str, None))` / `map(str, True)` / `map(str, 1)` /
+  `filter(None, 1.0)` → TypeError; `map(str, [1,2])` / `filter(None, [0,1,2])`
+  / `map(str, {1:2})` kept. Parent: `[]`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Map`, `MapN`, `Filter`)
 - Blocks merge: no
-- Notes: Found reviewing W9.15. Same empty-default class as I-174.
-  Zip/any/sum of those tags are fixed; Map/Filter/MapN were not.
+- Notes: Wave 9 W9.16. Coordinator: `-O0`/`-O2` match CPython. None is
+  nullptr. Leftover I-205 (bytes/bytearray still `[]`).
 
 ### I-203  `cmp_to_key` wrapper is not callable
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: `k = cmp_to_key(cmp); k(3) < k(1)` — CPython compares K
-  objects; pyc `Pyc_Apply` on the token dict returns None.
-  `sorted(..., key=k)` is I-175 (fixed).
-- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_CmpToKey`, `Pyc_Apply`)
+- Evidence: W9.16: `k=cmp_to_key(cmp); k(3)<k(1)` / `k(1)<k(3)` /
+  `k(3)>k(1)` / `k(1)==k(1)` → False/True/True/True; `sorted([3,1,2], key=k)`
+  → `[1,2,3]`; `k(3).obj` → 3. Parent: False / `.obj` None.
+- Files: `src/runtime/Runtime.cpp` (`pyc_apply_impl`, `PyObject_CompareBool`,
+  `PyBuiltin_Sorted`, `pyc_cmp_to_key_parts`)
 - Blocks merge: no
-- Notes: Found reviewing W9.15. Sorted recognizes the `"cmp_to_key"`
-  dict key; a plain `{"cmp_to_key": fn}` would also hijack. Not the CASE.
+- Notes: Wave 9 W9.16. Coordinator: `-O0`/`-O2` match CPython. Factory
+  `{"cmp_to_key": cmp}`; K adds `"obj"`. No `__class__`. Leftover I-206.
+
+### I-204  `GetSlice` of int / set / bool / float is `[]`
+- Status: open
+- Severity: wrong-answer
+- Evidence: `1[:]` / `{1}[:]` / `True[:]` / `(1.0)[:]` — CPython TypeError;
+  pyc `[]`. `Pyc_GetSlice` unknown-type tail still uses `n=0`.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_GetSlice`)
+- Blocks merge: no
+- Notes: Found reviewing W9.16. None stays I-058. list/tuple/str/bytes
+  slices kept.
+
+### I-205  `map`/`filter` of bytes / bytearray is `[]`
+- Status: open
+- Severity: wrong-answer
+- Evidence: `list(map(str, b"ab"))` — CPython `['97', '98']`; pyc `[]`.
+  `list(filter(None, b"ab"))` — CPython `[97, 98]`; pyc `[]`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Map`, `MapN`, `Filter`)
+- Blocks merge: no
+- Notes: Found reviewing W9.16. zip/sum/reversed already walk 17/18.
+
+### I-206  `cmp_to_key` extra-arg / mixed ordering / K-as-key
+- Status: open
+- Severity: latent
+- Evidence: `k(3, 4)` returns K(3); CPython TypeError. `k(3) < 1` is False
+  not TypeError. `sorted([3,1,2], key=k(3))` keeps `[3,1,2]` (None keys)
+  not TypeError.
+- Files: `src/runtime/Runtime.cpp` (`pyc_apply_impl`, `PyObject_CompareBool`)
+- Blocks merge: no
+- Notes: Found reviewing W9.16 / I-203. 0-arg `k()` is TypeError.
 
 ---
 

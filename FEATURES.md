@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **782/782** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **784/784** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782) are stale.
 
 ---
 
@@ -47,7 +47,7 @@ and  or  not                   short-circuit, returns the actual value
 
 User-class dunders: `__eq__`/`__ne__`/`__lt__`/`__le__`/`__gt__`/`__ge__`,
 `__add__`/`__sub__`/`__mul__`/`__floordiv__`/`__truediv__`/`__mod__`, `__neg__`,
-`__len__`, `__bool__`, `__getitem__`/`__setitem__`/`__contains__` (`C[k]` / `C()[k]` TypeError unless `__getitem__`, [I-192](ISSUES.md)),
+`__len__`, `__bool__`, `__getitem__`/`__setitem__`/`__contains__` (`C[k]` / `C()[k]` / `C[:]` TypeError unless `__getitem__`; `sys[:]` TypeError; dict slice KeyError, [I-192](ISSUES.md)/[I-201](ISSUES.md)),
 `__iter__`/`__next__` (eagerly materialized), `__call__`. Only the **left**
 operand's dunder is consulted (no `__radd__`).
 
@@ -125,10 +125,10 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 `print(*args, sep=, end=)`, `range` (1/2/3-arg), `len` (class/instance/module TypeError unless `__len__`, [I-187](ISSUES.md)/[I-190](ISSUES.md)/[I-193](ISSUES.md)), `str`, `int`/`int(x, base)`,
 `float`, `complex`, `abs`, `min`/`max` (multi-arg, iterable, `key=`, `default=`),
 `list`, `tuple`, `set`, `enumerate` (`start=`; list/tuple/str/bytes/dict/set; non-int `start=` TypeError, [I-162](ISSUES.md)/[I-164](ISSUES.md)/[I-166](ISSUES.md)), `zip` (N-way; list/tuple/str/bytes/dict/set, [I-156](ISSUES.md)/[I-157](ISSUES.md)/[I-159](ISSUES.md)/[I-161](ISSUES.md)), `sum` (`start=`; list/tuple/bytes/dict/set; `sum(str)` / `sum(C())` / `sum(sys)` TypeError; str/bytes/bytearray `start` TypeError, [I-167](ISSUES.md)/[I-169](ISSUES.md)/[I-170](ISSUES.md)/[I-176](ISSUES.md)/[I-191](ISSUES.md)/[I-194](ISSUES.md)),
-`sorted` / `list.sort` (`key=`, `reverse=`, first-class `cmp_to_key`, [I-167](ISSUES.md)/[I-171](ISSUES.md)/[I-175](ISSUES.md)), `any` / `all` (list/tuple/str/dict/set; None/int TypeError, [I-167](ISSUES.md)/[I-174](ISSUES.md)), `isinstance`,
+`sorted` / `list.sort` (`key=`, `reverse=`, first-class `cmp_to_key` including `k(3)<k(1)` / `k.obj`, [I-167](ISSUES.md)/[I-171](ISSUES.md)/[I-175](ISSUES.md)/[I-203](ISSUES.md)), `any` / `all` (list/tuple/str/dict/set; None/int TypeError, [I-167](ISSUES.md)/[I-174](ISSUES.md)), `isinstance`,
 `issubclass`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`,
 `round`, `divmod` (returns a tuple), `pow` / `pow(base, exp, mod)`, `reversed` (list/tuple/str/bytes/dict keys, [I-163](ISSUES.md)/[I-168](ISSUES.md)),
-`cmp_to_key`, `callable`, `map`, `filter`,
+`cmp_to_key`, `callable`, `map` / `filter` (None/int/bool/float TypeError, [I-202](ISSUES.md)),
 `getattr` / `hasattr` / `setattr` / `delattr` (`getattr(obj, name, default)` keeps the default, [I-139](ISSUES.md)), `format`.
 
 Many of these are first-class values (`sorted(words, key=len)`, `funcs = [abs, str]`).
