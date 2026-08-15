@@ -4916,6 +4916,53 @@ try:
 except TypeError as e:
     print(type(e).__name__)
 """, "[(0, 10), (1, 20)]\n[(0, 1), (1, 2)]\n[(0, 'a'), (1, 'b')]\n[(0, 97), (1, 98)]\n[(3, 1), (4, 2)]\n[(5, 'a'), (6, 'b')]\nTypeError\n"),
+    # W9.4 / I-163: reversed walks tuple/bytes; set/int TypeError.
+    ("""print(list(reversed([1, 2, 3])))
+print(list(reversed((1, 2, 3))))
+print(list(reversed("ab")))
+print(list(reversed(b"ab")))
+print(list(reversed(bytearray(b"ab"))))
+try:
+    print(list(reversed({1, 2})))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(list(reversed(1)))
+except TypeError as e:
+    print(type(e).__name__)
+""", "[3, 2, 1]\n[3, 2, 1]\n['b', 'a']\n[98, 97]\n[98, 97]\nTypeError\nTypeError\n"),
+    # W9.5 / I-167: any/all/sorted/sum/min/max walk tuples (and sorted/any str).
+    ("""print(any((0, 1)))
+print(all((1, 0)))
+print(sorted((3, 1, 2)))
+print(sorted("bac"))
+print(sum((1, 2, 3)))
+print(min((3, 1, 2)))
+print(max((3, 1, 2)))
+print(any([0, 1]))
+print(all([1, 0]))
+print(sorted([3, 1, 2]))
+print(sum([1, 2, 3]))
+print(min([3, 1, 2]))
+print(max([3, 1, 2]))
+print(any("abc"))
+print(all(""))
+print(sum((1, 2), 10))
+""", "True\nFalse\n[1, 2, 3]\n['a', 'b', 'c']\n6\n1\n3\nTrue\nFalse\n[1, 2, 3]\n6\n1\n3\nTrue\nTrue\n13\n"),
+    # W9.6 / I-169 I-171: sum(bytes); SortedWithCmp walks tuple/str/bytes.
+    ("""print(sum(b"ab"))
+print(sum(bytearray(b"ab")))
+print(sum(b"ab", 10))
+print(sum((1, 2, 3)))
+from functools import cmp_to_key
+def cmp(a, b):
+    return (a > b) - (a < b)
+print(sorted((3, 1, 2), key=cmp_to_key(cmp)))
+print(sorted("bac", key=cmp_to_key(cmp)))
+print(sorted(b"bac", key=cmp_to_key(cmp)))
+print(sorted([3, 1, 2], key=cmp_to_key(cmp)))
+print(sorted((3, 1, 2), key=cmp_to_key(cmp), reverse=True))
+""", "195\n195\n205\n6\n[1, 2, 3]\n['a', 'b', 'c']\n[97, 98, 99]\n[1, 2, 3]\n[3, 2, 1]\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -4963,6 +5010,12 @@ FILE_CASES = [
     ("w92_zip.py", []),
     # W9.3: enumerate walks tuple/str/bytes.
     ("w93_enum.py", []),
+    # W9.4: reversed walks tuple/bytes; set/int TypeError.
+    ("w94_rev.py", []),
+    # W9.5: any/all/sorted/sum/min/max walk tuples.
+    ("w95_seq.py", []),
+    # W9.6: sum(bytes); SortedWithCmp walks tuple/str/bytes.
+    ("w96_seq.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

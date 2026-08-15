@@ -124,10 +124,10 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 
 `print(*args, sep=, end=)`, `range` (1/2/3-arg), `len`, `str`, `int`/`int(x, base)`,
 `float`, `complex`, `abs`, `min`/`max` (multi-arg, iterable, `key=`, `default=`),
-`list`, `tuple`, `set`, `enumerate` (`start=`; list/tuple/str/bytes, [I-162](ISSUES.md)), `zip` (N-way; list/tuple/str/bytes, [I-156](ISSUES.md)/[I-157](ISSUES.md)/[I-159](ISSUES.md)), `sum` (`start=`),
-`sorted` / `list.sort` (`key=`, `reverse=`), `any`, `all`, `isinstance`,
+`list`, `tuple`, `set`, `enumerate` (`start=`; list/tuple/str/bytes, [I-162](ISSUES.md)), `zip` (N-way; list/tuple/str/bytes, [I-156](ISSUES.md)/[I-157](ISSUES.md)/[I-159](ISSUES.md)), `sum` (`start=`; list/tuple/bytes, [I-167](ISSUES.md)/[I-169](ISSUES.md)),
+`sorted` / `list.sort` (`key=`, `reverse=`, `cmp_to_key`; list/tuple/str/bytes, [I-167](ISSUES.md)/[I-171](ISSUES.md)), `any` / `all` (list/tuple/str, [I-167](ISSUES.md)), `isinstance`,
 `issubclass`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`,
-`round`, `divmod` (returns a tuple), `pow` / `pow(base, exp, mod)`, `reversed`,
+`round`, `divmod` (returns a tuple), `pow` / `pow(base, exp, mod)`, `reversed` (list/tuple/str/bytes, [I-163](ISSUES.md)),
 `cmp_to_key`, `callable`, `map`, `filter`,
 `getattr` / `hasattr` / `setattr` / `delattr` (`getattr(obj, name, default)` keeps the default, [I-139](ISSUES.md)), `format`.
 

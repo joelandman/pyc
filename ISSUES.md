@@ -1040,17 +1040,18 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   I-159.
 
 ### I-163  `reversed` still skips tuple / bytes
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `PyBuiltin_Reversed`: type 1 / 3 / 20 only; else `[]`.
-  Comment claims tuples work (“stored as list”) — stale; tuples are type 7.
-  `list(reversed((1,2)))` — CPython `[2, 1]`; pyc `[]`.
-  `list(reversed(b"ab"))` — CPython `[98, 97]`; pyc `[]`.
-  Str already walks. Over-accept: `reversed({1,2})` — CPython TypeError;
-  pyc reverses `setElems`.
+- Evidence: W9.4 / `w94_rev.py` + CASE banner `# W9.4 / I-163`:
+  `reversed((1,2,3))` / `b"ab"` / `bytearray(b"ab")` match CPython;
+  `reversed({1,2})` / `reversed(1)` → TypeError not `[]` / `setElems`.
+  List + str kept. Parent: type 1 / 3 / 20 only; else `[]`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Reversed`)
 - Blocks merge: no
-- Notes: Found reviewing W9.3 / I-162. Enumerate's sibling walker.
+- Notes: Wave 9 W9.4. Coordinator: `-O0`/`-O2` match CPython. Reuses
+  `pyc_zip_seq_len` / `pyc_zip_seq_item`. A4 ilist/flist reverse kept.
+  Super/None still TypeError (I-013 / I-153). Catch-all is “not
+  reversible”. Dict reverse-keys leftover is I-168.
 
 ### I-164  `enumerate` of dict / set / bool / float still empty
 - Status: open
@@ -1087,18 +1088,120 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found reviewing W9.3. Not in the W9.3 CASE.
 
 ### I-167  `any`/`all`/`sorted`/`sum`/`min`/`max` still list-only
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.5 / `w95_seq.py` + CASE banner `# W9.5 / I-167`:
+  `any((0,1))` / `all((1,0))` / `sorted((3,1,2))` / `sorted("bac")` /
+  `sum((1,2,3))` / `min((3,1,2))` / `max((3,1,2))` / `any("abc")` /
+  `all("")` / `sum((1,2), 10)` match CPython. List forms kept.
+  Parent: non-list → empty default (All True, Any False, Sorted [],
+  Sum start/0, Min/Max None).
+- Files: `src/runtime/Runtime.cpp` (`pyc_is_seq_walk`, `PyBuiltin_Any`,
+  `All`, `Sorted`, `Sum2`, `MinList`, `MaxList`)
+- Blocks merge: no
+- Notes: Wave 9 W9.5. Coordinator: `-O0`/`-O2` match CPython. Reuses
+  `pyc_zip_seq_len` / `pyc_zip_seq_item`. Super still TypeError (I-013 /
+  I-121). Leftovers I-169–I-174. Do not re-open I-162 / I-163.
+
+### I-168  `reversed` of dict is TypeError, not reverse-keys
 - Status: open
 - Severity: wrong-answer
-- Evidence: Same seq-walk class as I-162 / I-163.
-  `any((0,1))` — CPython `True`; pyc `False`.
-  `all((1,0))` — CPython `False`; pyc `True`.
-  `sorted((3,1,2))` / `sorted("bac")` — CPython sorted; pyc `[]`.
-  `sum((1,2,3))` — CPython `6`; pyc `0`.
-  `min((3,1,2))` — CPython `1`; pyc `None`.
-- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Any`, `All`, `Sorted`, `Sum2`,
-  `MinList`, `MaxList`)
+- Evidence: After W9.4, non-list/tuple/str/bytes is
+  `TypeError: '…' object is not reversible`.
+  `list(reversed({1: 2}))` — CPython 3.8+ `[1]`; pyc TypeError.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Reversed`)
 - Blocks merge: no
-- Notes: Found reviewing W9.3. Broader leftover than reversed (I-163).
+- Notes: Found reviewing W9.4 / I-163. Ticket scoped tuple/bytes + set/int.
+  If dict walk is added, reverse insertion-order keys (not values); skip
+  modules (`list_item_type==3`) and instances (I-154).
+
+### I-169  `sum` of bytes / bytearray is 0
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.6 / `w96_seq.py` + CASE banner `# W9.6 / I-169 I-171`:
+  `sum(b"ab")` / `sum(bytearray(b"ab"))` / `sum(b"ab", 10)` → `195` / `195` / `205`.
+  Parent: Sum2 walked type 7 only; bytes/bytearray returned start/0.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
+- Blocks merge: no
+- Notes: Wave 9 W9.6. Coordinator: `-O0`/`-O2` match CPython. Walks type
+  7/17/18 via `pyc_zip_seq_item`. Still does not walk type 3 (I-170).
+
+### I-170  `sum` of str is 0, not TypeError
+- Status: open
+- Severity: wrong-answer
+- Evidence: Sum2 does not walk type 3; returns start (default 0).
+  `sum("ab")` — CPython TypeError; pyc `0`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
+- Blocks merge: no
+- Notes: Found reviewing W9.5. SWE left this on purpose. Do not demand
+  in W9.5.
+
+### I-171  `SortedWithCmp` still skips tuple / str / bytes
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.6 / `w96_seq.py`: `sorted((3,1,2), key=cmp_to_key(cmp))` /
+  `sorted("bac", …)` / `sorted(b"bac", …)` match CPython; list form kept;
+  `reverse=True` on tuple → `[3, 2, 1]`.
+  Parent: `else return PyList_New(0)`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_SortedWithCmp`)
+- Blocks merge: no
+- Notes: Wave 9 W9.6. Coordinator: `-O0`/`-O2` match CPython. Same
+  `pyc_is_seq_walk` arm as `PyBuiltin_Sorted`. Stored / aliased /
+  qualified `cmp_to_key` leftover is I-175.
+
+### I-172  First-class `sum`/`sorted`/`any`/`all` drop extra args; None is None
+- Status: open
+- Severity: wrong-answer
+- Evidence: Adapters: `s=sum; s((1,2), 10)` — CPython `13`; pyc `3`.
+  `s=sorted; s([3,1,2], reverse=True)` — CPython `[3,2,1]`; pyc `[1,2,3]`.
+  `a=any; a(None)` — CPython TypeError; pyc `None`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_adapt_sum`, `pyc_adapt_sorted`,
+  `pyc_adapt_any`, `pyc_adapt_all`, `pyc_adapt_min`, `pyc_adapt_max`)
+- Blocks merge: no
+- Notes: Found reviewing W9.5. Same class as I-165. Direct builtin calls
+  do not use these.
+
+### I-173  empty `min`/`max` is None, not TypeError
+- Status: open
+- Severity: wrong-answer
+- Evidence: `MinList`/`MaxList` `n==0` → `defaultVal` or `nullptr`.
+  `min(())` / `min([])` / `min("")` — CPython TypeError; pyc `None`.
+  `min([], default=99)` already matches.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_MinList`, `PyBuiltin_MaxList`)
+- Blocks merge: no
+- Notes: Found reviewing W9.5. Empty list was already None; tuple walk
+  extends the same path.
+
+### I-174  `any`/`all`/`sorted`/`sum`/`min`/`max` of None/int/bool/float/dict
+- Status: open
+- Severity: wrong-answer
+- Evidence: After W9.5, unknown tags still use the empty default.
+  `any(None)` / `any(1)` — CPython TypeError; pyc `False`.
+  `all(None)` — CPython TypeError; pyc `True`.
+  `sorted(None)` / `sum(None)` / `min(None)` — CPython TypeError;
+  pyc `[]` / `0` / `None`.
+  `any({1: 0})` — CPython `True`; pyc `False`.
+  `min({3, 1, 2})` — CPython `1`; pyc `None`.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W9.5. Same class as I-161 / I-164. Skip modules /
+  instances (I-154).
+
+### I-175  First-class / aliased / qualified `cmp_to_key` is not a key
+- Status: open
+- Severity: wrong-answer
+- Evidence: `PyBuiltin_CmpToKey` ignores `cmp` and returns
+  `{"cmp_to_key": "cmp_to_key"}`. Compiler only routes
+  `sorted(..., key=cmp_to_key(cmp))` when the callee is a `Name`
+  whose id is exactly `cmp_to_key`.
+  `k = cmp_to_key(cmp); sorted([3,1,2], key=k)` — CPython `[1,2,3]`;
+  pyc applies the dummy dict as a 1-arg key.
+  Same: `cmp_to_key as ctk` and `functools.cmp_to_key(...)`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_CmpToKey`), `src/Compiler.cpp`
+  (`findCmpToKey`)
+- Blocks merge: no
+- Notes: Found reviewing W9.6. Inline `key=cmp_to_key(cmp)` (ticket
+  cases) is fine. First-class `s=sorted` is I-172. Do not demand in W9.6.
 
 ---
 

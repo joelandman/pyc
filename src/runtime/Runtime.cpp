@@ -5634,6 +5634,16 @@ PyObject* Pyc_PowInt64Obj(int64_t base, int64_t exp) {
     return PyFloat_FromDouble(pow((double)base, (double)exp));
 }
 
+// Zip seq walk (list/tuple/str/bytes) is defined near Reversed/Enumerate.
+// Forward-declared here so any/all/sorted/sum/min/max can reuse it (I-167).
+// Do not call pyc_zip_seq_len on unknown types: it TypeErrors on int/None.
+static size_t pyc_zip_seq_len(PyObject* s);
+static PyObject* pyc_zip_seq_item(PyObject* s, size_t i);
+static bool pyc_is_seq_walk(PyObject* s) {
+    return s && ((s->type == 7 && !s->cell_content) ||
+                 s->type == 3 || s->type == 17 || s->type == 18);
+}
+
 PyObject* PyBuiltin_Sum(PyObject* lst) {
     return PyBuiltin_Sum2(lst, nullptr);
 }
@@ -5659,6 +5669,16 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
         for (auto& pair : lst->dict) addOne(pair.first);
     } else if (lst->type == 20) {
         for (auto* e : lst->setElems) addOne(e);
+    } else if ((lst->type == 7 && !lst->cell_content) ||
+               lst->type == 17 || lst->type == 18) {
+        // Tuple and bytes/bytearray. Items of 17/18 are ints (I-169).
+        // Do not walk type 3: CPython TypeErrors on sum(str) (I-170).
+        size_t n = pyc_zip_seq_len(lst);
+        for (size_t i = 0; i < n; ++i) {
+            PyObject* item = pyc_zip_seq_item(lst, i);
+            addOne(item);
+            if (item) Py_DECREF(item);
+        }
     }
     return total;
 }
@@ -5704,6 +5724,11 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse) {
             if (e) Py_INCREF(e);
             items.push_back(e);
         }
+    } else if (pyc_is_seq_walk(lst)) {
+        size_t n = pyc_zip_seq_len(lst);
+        items.reserve(n);
+        for (size_t i = 0; i < n; ++i)
+            items.push_back(pyc_zip_seq_item(lst, i));
     } else {
         return PyList_New(0);
     }
@@ -5800,6 +5825,11 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp, PyObject* revers
             if (e) Py_INCREF(e);
             items.push_back(e);
         }
+    } else if (pyc_is_seq_walk(lst)) {
+        size_t n = pyc_zip_seq_len(lst);
+        items.reserve(n);
+        for (size_t i = 0; i < n; ++i)
+            items.push_back(pyc_zip_seq_item(lst, i));
     } else {
         return PyList_New(0);
     }
@@ -5836,16 +5866,28 @@ PyObject* PyBuiltin_Any(PyObject* lst) {
         for (auto* e : lst->setElems) if (PyObject_TruthValue(e)) return PyBool_New(1);
         return PyBool_New(0);
     }
-    if (lst->type != 1) return PyBool_New(0);
-    if (lst->list_item_type == 1) {
-        for (auto val : lst->ilist)
-            if (val != 0) return PyBool_New(1);
-    } else if (lst->list_item_type == 2) {
-        for (auto val : lst->flist)
-            if (val != 0.0) return PyBool_New(1);
-    } else {
-        for (auto* item : lst->list)
-            if (PyObject_TruthValue(item)) return PyBool_New(1);
+    if (lst->type == 1) {
+        if (lst->list_item_type == 1) {
+            for (auto val : lst->ilist)
+                if (val != 0) return PyBool_New(1);
+        } else if (lst->list_item_type == 2) {
+            for (auto val : lst->flist)
+                if (val != 0.0) return PyBool_New(1);
+        } else {
+            for (auto* item : lst->list)
+                if (PyObject_TruthValue(item)) return PyBool_New(1);
+        }
+        return PyBool_New(0);
+    }
+    if (pyc_is_seq_walk(lst)) {
+        size_t n = pyc_zip_seq_len(lst);
+        for (size_t i = 0; i < n; ++i) {
+            PyObject* item = pyc_zip_seq_item(lst, i);
+            bool t = PyObject_TruthValue(item);
+            if (item) Py_DECREF(item);
+            if (t) return PyBool_New(1);
+        }
+        return PyBool_New(0);
     }
     return PyBool_New(0);
 }
@@ -5857,16 +5899,28 @@ PyObject* PyBuiltin_All(PyObject* lst) {
         for (auto* e : lst->setElems) if (!PyObject_TruthValue(e)) return PyBool_New(0);
         return PyBool_New(1);
     }
-    if (lst->type != 1) return PyBool_New(1);
-    if (lst->list_item_type == 1) {
-        for (auto val : lst->ilist)
-            if (val == 0) return PyBool_New(0);
-    } else if (lst->list_item_type == 2) {
-        for (auto val : lst->flist)
-            if (val == 0.0) return PyBool_New(0);
-    } else {
-        for (auto* item : lst->list)
-            if (!PyObject_TruthValue(item)) return PyBool_New(0);
+    if (lst->type == 1) {
+        if (lst->list_item_type == 1) {
+            for (auto val : lst->ilist)
+                if (val == 0) return PyBool_New(0);
+        } else if (lst->list_item_type == 2) {
+            for (auto val : lst->flist)
+                if (val == 0.0) return PyBool_New(0);
+        } else {
+            for (auto* item : lst->list)
+                if (!PyObject_TruthValue(item)) return PyBool_New(0);
+        }
+        return PyBool_New(1);
+    }
+    if (pyc_is_seq_walk(lst)) {
+        size_t n = pyc_zip_seq_len(lst);
+        for (size_t i = 0; i < n; ++i) {
+            PyObject* item = pyc_zip_seq_item(lst, i);
+            bool t = PyObject_TruthValue(item);
+            if (item) Py_DECREF(item);
+            if (!t) return PyBool_New(0);
+        }
+        return PyBool_New(1);
     }
     return PyBool_New(1);
 }
@@ -6870,19 +6924,26 @@ PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b, PyObject* key) {
 }
 PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) {
     if (pyc_super_not_iterable(lst)) return nullptr;
-    if (!lst || lst->type != 1) {
+    bool isList = lst && lst->type == 1;
+    bool isSeq = pyc_is_seq_walk(lst);
+    if (!isList && !isSeq) {
         if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
         return nullptr;
     }
     size_t n = 0;
-    if (lst->list_item_type == 1) n = lst->ilist.size();
-    else if (lst->list_item_type == 2) n = lst->flist.size();
-    else n = lst->list.size();
+    if (isList) {
+        if (lst->list_item_type == 1) n = lst->ilist.size();
+        else if (lst->list_item_type == 2) n = lst->flist.size();
+        else n = lst->list.size();
+    } else {
+        n = pyc_zip_seq_len(lst);
+    }
     if (n == 0) {
         if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
         return nullptr;
     }
     auto getItem = [&](size_t i) -> PyObject* {
+        if (isSeq) return pyc_zip_seq_item(lst, i);
         if (lst->list_item_type == 1) return PyInt_FromLong(lst->ilist[i]);
         if (lst->list_item_type == 2) return PyFloat_FromDouble(lst->flist[i]);
         PyObject* it = lst->list[i]; if (it) Py_INCREF(it); return it;
@@ -6905,19 +6966,26 @@ PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
 }
 PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal) {
     if (pyc_super_not_iterable(lst)) return nullptr;
-    if (!lst || lst->type != 1) {
+    bool isList = lst && lst->type == 1;
+    bool isSeq = pyc_is_seq_walk(lst);
+    if (!isList && !isSeq) {
         if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
         return nullptr;
     }
     size_t n = 0;
-    if (lst->list_item_type == 1) n = lst->ilist.size();
-    else if (lst->list_item_type == 2) n = lst->flist.size();
-    else n = lst->list.size();
+    if (isList) {
+        if (lst->list_item_type == 1) n = lst->ilist.size();
+        else if (lst->list_item_type == 2) n = lst->flist.size();
+        else n = lst->list.size();
+    } else {
+        n = pyc_zip_seq_len(lst);
+    }
     if (n == 0) {
         if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
         return nullptr;
     }
     auto getItem = [&](size_t i) -> PyObject* {
+        if (isSeq) return pyc_zip_seq_item(lst, i);
         if (lst->list_item_type == 1) return PyInt_FromLong(lst->ilist[i]);
         if (lst->list_item_type == 2) return PyFloat_FromDouble(lst->flist[i]);
         PyObject* it = lst->list[i]; if (it) Py_INCREF(it); return it;
@@ -7043,8 +7111,13 @@ PyObject* PyBuiltin_List(PyObject* obj) {
 // reversed(seq) — returns a new list with the elements of seq in
 // reverse order. CPython returns a reverse_iterator; for the patterns
 // pyc supports (list(reversed(x)), for x in reversed(x)) the result
-// is the same. Accepts lists, tuples (also stored as list in our
-// runtime), strings, and ranges.
+// is the same. Reversible: list (1), tuple (7 && !cell_content),
+// str (3), bytes/bytearray (17/18). set/int/etc. TypeError (I-163).
+// Super (type 7 + cell_content) and None stay TypeError (I-013 / I-153).
+// Zip seq walk lives just below; reuse so tuple/bytes boxing matches zip.
+static size_t pyc_zip_seq_len(PyObject* s);
+static PyObject* pyc_zip_seq_item(PyObject* s, size_t i);
+
 PyObject* PyBuiltin_Reversed(PyObject* obj) {
     if (!obj) {
         // None is a null pointer (tag 5 is bool). reversed(None) is
@@ -7053,56 +7126,42 @@ PyObject* PyBuiltin_Reversed(PyObject* obj) {
         return nullptr;
     }
     if (pyc_super_not_iterable(obj)) return nullptr;
-    PyObject* r = nullptr;
+    // A4 homogeneous list: keep native storage (I-163 regression).
     if (obj->type == 1) {
-        // Handle homogeneous int lists
         if (obj->list_item_type == 1) {
-            r = PyList_NewIntBoxed(PyInt_FromLong((long)obj->ilist.size()));
+            PyObject* r = PyList_NewIntBoxed(PyInt_FromLong((long)obj->ilist.size()));
             for (size_t i = 0; i < obj->ilist.size(); ++i) {
                 size_t ri = obj->ilist.size() - 1 - i;
                 PyList_SetItemInt64(r, i, obj->ilist[ri]);
             }
             return r;
         }
-        // Handle homogeneous float lists
         if (obj->list_item_type == 2) {
-            r = PyList_NewFloatBoxed(PyInt_FromLong((long)obj->flist.size()));
+            PyObject* r = PyList_NewFloatBoxed(PyInt_FromLong((long)obj->flist.size()));
             for (size_t i = 0; i < obj->flist.size(); ++i) {
                 size_t ri = obj->flist.size() - 1 - i;
                 PyList_SetItemDouble(r, i, obj->flist[ri]);
             }
             return r;
         }
-        // List or tuple: reverse the elements.
-        r = PyList_New(obj->list.size());
-        for (size_t i = 0; i < obj->list.size(); ++i) {
-            size_t ri = obj->list.size() - 1 - i;
-            if (obj->list[ri]) Py_INCREF(obj->list[ri]);
-            PyList_SetItem(r, i, obj->list[ri]);
-        }
-    } else if (obj->type == 3) {
-        // String: reverse the characters.
-        r = PyList_New(obj->str.size());
-        for (size_t i = 0; i < obj->str.size(); ++i) {
-            size_t ri = obj->str.size() - 1 - i;
-            PyList_SetItem(r, i, PyUnicode_FromStringAndSize(obj->str.data() + ri, 1));
-        }
-    } else if (obj->type == 20) {
-        r = PyList_New(obj->setElems.size());
-        for (size_t i = 0; i < obj->setElems.size(); ++i) {
-            size_t ri = obj->setElems.size() - 1 - i;
-            if (obj->setElems[ri]) Py_INCREF(obj->setElems[ri]);
-            PyList_SetItem(r, i, obj->setElems[ri]);
-        }
-    } else {
-        return PyList_New(0);
     }
+    bool reversible = (obj->type == 1) ||
+                      (obj->type == 7 && !obj->cell_content) ||
+                      (obj->type == 3) ||
+                      (obj->type == 17) ||
+                      (obj->type == 18);
+    if (!reversible) {
+        std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
+                          "' object is not reversible";
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
+    size_t n = pyc_zip_seq_len(obj);
+    PyObject* r = PyList_New(n);
+    for (size_t i = 0; i < n; ++i)
+        PyList_SetItem(r, i, pyc_zip_seq_item(obj, n - 1 - i));
     return r;
 }
-// Forward decls: zip seq walk (list / tuple / str / bytes) lives just
-// below; enumerate reuses it so None/int TypeError and item boxing match.
-static size_t pyc_zip_seq_len(PyObject* s);
-static PyObject* pyc_zip_seq_item(PyObject* s, size_t i);
 
 PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
     return PyBuiltin_Enumerate2(iterable, nullptr);
