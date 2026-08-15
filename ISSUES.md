@@ -1013,18 +1013,16 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 9 W9.7. Historical log corrected; not a runtime change.
 
 ### I-161  `zip` of dict / set / bool / float still empty
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: After W9.2, `pyc_zip_seq_len` still `return 0` for unknown tags.
-  `zip({1:2},[1])` — CPython `[(1, 1)]`; pyc `[]`.
-  `zip({1},[1])` — CPython `[(1, 1)]`; pyc `[]`.
-  `zip(True,[1])` — CPython TypeError (`'bool'`); pyc `[]` (tag 5, not type 0).
-  `zip(1.0,[1])` — CPython TypeError (`'float'`); pyc `[]` (type 4).
+- Evidence: W9.15 / `w915_wa.py`: `zip({1:2},[9])` / `zip({1},[9])` →
+  `[(1, 9)]`; `zip(True,[1])` / `zip(1.0,[1])` → TypeError.
+  Parent: `[]`.
 - Files: `src/runtime/Runtime.cpp` (`pyc_zip_seq_len`, `pyc_zip_seq_item`)
 - Blocks merge: no
-- Notes: Found reviewing W9.2. Ticket scoped str/bytes + None/int. If dict
-  walk is added, skip modules / instances (`list()` already does; I-154).
-  pyc dict/set insertion-order is not CPython hash order.
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython. Skips
+  class/instance/module. Insertion order, not CPython hash order.
+  Leftover I-202 (map/filter empty default).
 
 ### I-162  `enumerate` still walks lists only
 - Status: fixed
@@ -1055,38 +1053,35 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   reversible”. Dict reverse-keys leftover is I-168.
 
 ### I-164  `enumerate` of dict / set / bool / float still empty
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: After W9.3, unknown tags still `[]` via `pyc_zip_seq_len`.
-  `enumerate(True)` / `enumerate(1.0)` — CPython TypeError; pyc `[]`.
-  `enumerate({1:2})` / `enumerate({1})` — CPython pairs; pyc `[]`.
-  `enumerate(1)` now TypeErrors (zip helper reuse) — not this ID.
+- Evidence: W9.15: `enumerate({1:2})` → `[(0, 1)]`; `enumerate({7})` →
+  `[(0, 7)]`; `enumerate(True)` / `enumerate(1.0)` → TypeError.
+  Parent: `[]`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Enumerate2`)
 - Blocks merge: no
-- Notes: Found reviewing W9.3. Same class as I-161. Skip modules / instances
-  (I-154).
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython. Reuses
+  I-161 helpers.
 
 ### I-165  First-class `e=enumerate` drops start; `e(None)` is None
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `pyc_adapt_enumerate`: `arg0`; `if (!a) return nullptr`; then
-  `PyBuiltin_Enumerate(a)` only.
-  `e=enumerate; list(e([1,2], 5))` — CPython `[(5,1),(6,2)]`; pyc `[(0,1),(1,2)]`.
-  `e(None)` / `e()` — CPython TypeError; pyc `None`.
+- Evidence: W9.15: `en=enumerate; list(en([1,2], 5))` → `[(5, 1), (6, 2)]`;
+  `en(None)` / `en()` → TypeError. Parent: start dropped / printed None.
 - Files: `src/runtime/Runtime.cpp` (`pyc_adapt_enumerate`)
 - Blocks merge: no
-- Notes: Found reviewing W9.3. Token already wired. Do not demand in W9.3.
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython. Now a
+  kw adapter; `start=` forwarded. Direct `enumerate([1,2], 5)` kept.
 
 ### I-166  `enumerate(..., start=non-int)` silently uses 0
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `Enumerate2`: `if (startObj && (type == 0 || type == 5))` else
-  `startVal = 0`.
-  `enumerate([1], start="x")` / `start=1.5` / `start=None` — CPython TypeError;
-  pyc `[(0, 1)]`. `start=True` already matches.
+- Evidence: W9.15: `start="x"` / `1.5` / `None` → TypeError;
+  `start=True` kept `[(1, 1)]`. Parent: `[(0, 1)]`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Enumerate2`)
 - Blocks merge: no
-- Notes: Found reviewing W9.3. Not in the W9.3 CASE.
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython. Omitted
+  start still 0 via `Enumerate` + boxed 0.
 
 ### I-167  `any`/`all`/`sorted`/`sum`/`min`/`max` still list-only
 - Status: fixed
@@ -1181,45 +1176,40 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   distinguishes omitted default vs `default=None` (I-178 closed here).
 
 ### I-174  `any`/`all`/`sorted`/`sum`/`min`/`max` of None/int/bool/float/dict
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: After W9.5, unknown tags still use the empty default.
-  `any(None)` / `any(1)` — CPython TypeError; pyc `False`.
-  `all(None)` — CPython TypeError; pyc `True`.
-  `sorted(None)` / `sum(None)` / `min(None)` — CPython TypeError;
-  pyc `[]` / `0` / `None`.
-  `any({1: 0})` — CPython `True`; pyc `False`.
-  `min({3, 1, 2})` — CPython `1`; pyc `None`.
+- Evidence: W9.15: `any(None)` / `any(1)` / `all(None)` / `sorted(None)` /
+  `sum(None)` / `min(None)` → TypeError; `any({1: 0})` → True;
+  `min({3, 1, 2})` → 1. Parent: False / True / `[]` / 0 / None.
 - Files: `src/runtime/Runtime.cpp`
 - Blocks merge: no
-- Notes: Found reviewing W9.5. Same class as I-161 / I-164. Skip modules /
-  instances (I-154).
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython. None is
+  nullptr. Class/instance/module TypeError. Leftover I-202 (map/filter).
 
 ### I-175  First-class / aliased / qualified `cmp_to_key` is not a key
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `PyBuiltin_CmpToKey` ignores `cmp` and returns
-  `{"cmp_to_key": "cmp_to_key"}`. Compiler only routes
-  `sorted(..., key=cmp_to_key(cmp))` when the callee is a `Name`
-  whose id is exactly `cmp_to_key`.
-  `k = cmp_to_key(cmp); sorted([3,1,2], key=k)` — CPython `[1,2,3]`;
-  pyc applies the dummy dict as a 1-arg key.
-  Same: `cmp_to_key as ctk` and `functools.cmp_to_key(...)`.
-- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_CmpToKey`), `src/Compiler.cpp`
-  (`findCmpToKey`)
+- Evidence: W9.15: `k=cmp_to_key(cmp); sorted([3,1,2], key=k)` /
+  `ctk(cmp)` / `functools.cmp_to_key(cmp)` → `[1, 2, 3]`.
+  Parent: stored key did not sort (`[3, 1, 2]`).
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_CmpToKey`, `PyBuiltin_Sorted`,
+  `pyc_adapt_cmp_to_key`)
 - Blocks merge: no
-- Notes: Found reviewing W9.6. Inline `key=cmp_to_key(cmp)` (ticket
-  cases) is fine. First-class `s=sorted` is I-172. Do not demand in W9.6.
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython. Token
+  stores the real cmp; Sorted routes to SortedWithCmp. Inline
+  `key=cmp_to_key(cmp)` still Compiler `findCmpToKey`. Leftover I-203
+  (`k(3) < k(1)` is not callable).
 
 ### I-176  `sum` with str/bytes/bytearray start is not TypeError
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: CPython 3.14 rejects start of those types even on an empty
-  iterable. `sum([], "")` / `sum("", "")` — CPython TypeError; pyc
-  returns the start. `sum("ab", "")` concatenates.
+- Evidence: W9.15: `sum([], "")` / `sum([], b"")` / `sum([], bytearray())`
+  → CPython 3.14 messages; `sum([], 10)` / `sum([1,2], 10)` kept.
+  Parent: returned the start.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
 - Blocks merge: no
-- Notes: Found reviewing W9.7. Ticket cases use default start 0.
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython. Rejected
+  before walking, including empty iterables.
 
 ### I-177  `sum` skips None items
 - Status: fixed
@@ -1400,50 +1390,88 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   `sys.argv` is GetItem, not this.
 
 ### I-194  `sum(sys)` walks module keys
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `import sys; sum(sys)` — CPython `'module' object is not iterable`;
-  pyc TypeError `int + str`.
+- Evidence: W9.15 / `w915_wa.py`: `sum(sys)` → `'module' object is not iterable`;
+  `sum([1, 2, 3])` kept `6`. Parent: `int + str`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
 - Blocks merge: no
-- Notes: Found reviewing W9.14. I-191 gated instance only.
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython.
 
 ### I-195  `sys[k]` still treats module as a mapping
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `import sys; sys["argv"]` — CPython TypeError; pyc returns
-  `sys.argv`.
+- Evidence: W9.15: `sys["argv"]` → TypeError; `{1: 2}[1]` / `sys.argv`
+  kept. Parent: returned argv.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_Subscript`)
 - Blocks merge: no
-- Notes: Found reviewing W9.14. I-192 gated class/instance only.
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython.
+  `Pyc_GetItem` not gated.
 
 ### I-196  `C[k]=v` / `del C[k]` still mutate class/instance/module dicts
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `C["x"] = 1` — CPython TypeError; pyc writes the class dict.
-  Same for `del C["__mro__"]` and `sys["argv"] = 1`.
+- Evidence: W9.15: `C["x"]=1` / `del C["__mro__"]` / `sys["argv"]=1` →
+  TypeError; `d[3]=4` / `E()["k"]=9` kept. Parent: assigned / deleted.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_SubscriptSetItem`, `Pyc_DelItem`)
 - Blocks merge: no
-- Notes: Found reviewing W9.14. Do not gate `Pyc_SetItem` (`C.x = 1`).
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython. Class
+  gate then `__setitem__`/`__delitem__` then instance/module.
+  `Pyc_SetItem` not gated. `__delitem__` on instances included.
 
 ### I-197  `sorted`/`map`/`filter`/`set` of instance/module still walk keys
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `sorted(C())` / `sorted(sys)` — CPython TypeError; pyc walks
-  attr/export names.
+- Evidence: W9.15: `sorted(C())` / `sorted(sys)` / `map(str, C())` /
+  `filter(None, C())` / `set(C())` → TypeError; `sorted({3:0, 1:0})`
+  kept `[1, 3]`. Parent: walked `__class__` / module keys.
 - Files: `src/runtime/Runtime.cpp`
 - Blocks merge: no
-- Notes: Found reviewing W9.14. I-182/I-185 gated class. `list(C())` /
-  `list(sys)` already TypeError (I-154).
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython. Leftover
+  I-202 (map/filter of None/int).
 
 ### I-198  class object `E[k]` dispatches instance `__getitem__`
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `class E: def __getitem__(self, k): return k; E["x"]` —
-  CPython TypeError; pyc calls `E.__getitem__(E, "x")` → `x`.
+- Evidence: W9.15: `E["x"]` → TypeError; `E()["x"]` kept `x`.
+  Parent: `x`.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_Subscript`)
 - Blocks merge: no
-- Notes: Found reviewing W9.14. Class gate is after `__getitem__` lookup.
+- Notes: Wave 9 W9.15. Coordinator: `-O0`/`-O2` match CPython. Class
+  gate before `__getitem__`; instance after. Leftover I-201 (`C[:]`).
+
+### I-201  `GetSlice` of class / instance / module / dict is `[]`
+- Status: open
+- Severity: wrong-answer
+- Evidence: `C[:]` / `C()[:]` / `sys[:]` — CPython TypeError; pyc `[]`.
+  `{1: 2}[:]` — CPython KeyError (unhashable slice); pyc `[]`.
+  `Pyc_GetSlice` non-list/tuple/str/bytes uses `n=0` then `PyList_New(0)`.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_GetSlice`)
+- Blocks merge: no
+- Notes: Found reviewing W9.15. Slice assign already TypeErrors. Super
+  is I-057. None still `[]` (I-058 note).
+
+### I-202  `map`/`filter` of None/int/bool/float still empty
+- Status: open
+- Severity: wrong-answer
+- Evidence: `list(map(str, None))` / `list(map(str, True))` /
+  `list(filter(None, 1.0))` — CPython TypeError; pyc `[]`.
+  `if (!iterable) return PyList_New(0)`; unknown tags same empty default.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Map`, `MapN`, `Filter`)
+- Blocks merge: no
+- Notes: Found reviewing W9.15. Same empty-default class as I-174.
+  Zip/any/sum of those tags are fixed; Map/Filter/MapN were not.
+
+### I-203  `cmp_to_key` wrapper is not callable
+- Status: open
+- Severity: limitation
+- Evidence: `k = cmp_to_key(cmp); k(3) < k(1)` — CPython compares K
+  objects; pyc `Pyc_Apply` on the token dict returns None.
+  `sorted(..., key=k)` is I-175 (fixed).
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_CmpToKey`, `Pyc_Apply`)
+- Blocks merge: no
+- Notes: Found reviewing W9.15. Sorted recognizes the `"cmp_to_key"`
+  dict key; a plain `{"cmp_to_key": fn}` would also hijack. Not the CASE.
 
 ---
 

@@ -1503,6 +1503,32 @@ static PyObject* pyc_exc_instance_mro(PyObject* exc) {
     }
     return nullptr;
 }
+// Visible name for "'<name>' object is not iterable/subscriptable".
+// Class → type, module → module, instance → MRO[0], else builtin tag.
+static const char* pyc_iter_type_name(PyObject* o, std::string& owned) {
+    if (pyc_is_module(o)) return "module";
+    if (pyc_is_class_dict(o)) return "type";
+    if (pyc_is_instance_dict(o)) {
+        PyObject* mro = pyc_exc_instance_mro(o);
+        if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
+            PyObject* first = PyList_GetItemI64(mro, 0);
+            if (first && first->type == 3) owned = first->str;
+            if (first) Py_DECREF(first);
+            if (!owned.empty()) return owned.c_str();
+        }
+        return "object";
+    }
+    return pyc_builtin_type_name(o);
+}
+static bool pyc_is_uniterable_type2(PyObject* o) {
+    return pyc_is_class_dict(o) || pyc_is_instance_dict(o) || pyc_is_module(o);
+}
+static void pyc_raise_not_iterable(PyObject* o) {
+    std::string owned;
+    std::string msg = std::string("'") + pyc_iter_type_name(o, owned) +
+                      "' object is not iterable";
+    pyc_raise_msg("TypeError", msg.c_str());
+}
 static bool pyc_str_is_builtin_exc_name(const std::string& n) {
     // Mirrors Compiler.cpp's builtinExcNames() — duplicated here since
     // Runtime.cpp has no access to the compiler's tables, and this list
@@ -4250,10 +4276,10 @@ static PyObject* pyc_set_iter_to_list(PyObject* iterable) {
         return r;
     }
     if (iterable->type == 2) {
-        // Class objects are types, not mappings (I-182). Plain dicts still
-        // contribute their keys (set({1: 2})).
-        if (pyc_is_class_dict(iterable)) {
-            pyc_raise_msg("TypeError", "'type' object is not iterable");
+        // Class/instance/module are not mappings (I-182 / I-197).
+        // Plain dicts still contribute their keys (set({1: 2})).
+        if (pyc_is_uniterable_type2(iterable)) {
+            pyc_raise_not_iterable(iterable);
             return nullptr;
         }
         // dict: iterate keys.
@@ -4937,16 +4963,9 @@ PyObject* pyc_import_failed(PyObject* modName) {
             return pyc_mark_module(PyDict_New());
         }
         if (modName->str == "functools") {
-            // cmp_to_key is needed by the sorted-with-comparator idiom
-            // and is handled structurally at the AST level (Compiler.cpp,
-            // funcName=="cmp_to_key") for the bare-name form; the token
-            // stored here only prevents attribute access from crashing —
-            // note this means `functools.cmp_to_key(...)` (the qualified
-            // form, going through the generic dict dispatch below) is
-            // NOT actually wired to a real callable and silently fails; a
-            // pre-existing gap, not touched here. reduce/partial/wraps/
-            // lru_cache are real, working tokens (both qualified and
-            // bare-name-via-from-import forms).
+            // cmp_to_key is a real callable token (I-175). Bare-name
+            // `cmp_to_key(...)` is still lowered structurally; qualified
+            // and aliased forms go through Pyc_Apply on this token.
             PyObject* d = PyDict_New();
             auto addTok = [&](const char* name, const char* token) {
                 PyObject* k = PyUnicode_FromString(name);
@@ -4954,7 +4973,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
                 PyDict_SetItem(d, k, v);
                 Py_DECREF(k); Py_DECREF(v);
             };
-            addTok("cmp_to_key", "cmp_to_key");
+            addTok("cmp_to_key", "pyc_adapt_cmp_to_key");
             addTok("reduce",     "PyFunctools_Reduce");
             addTok("partial",    "PyFunctools_Partial");
             addTok("wraps",      "PyFunctools_Wraps");
@@ -5377,45 +5396,28 @@ static std::unordered_map<PyObject*, PyObject*> g_pycDefaultFactories;
 
 PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
     if (obj && obj->type == 2) {
-        // __getitem__ dispatch for a class instance — found and fixed
-        // while bug hunting: obj[key] for a class defining __getitem__
-        // previously always fell straight into the dict-scan-and-raise
-        // logic below (a class instance is a dict with a "__class__"
-        // entry), which — since a real class instance's attribute
-        // dict essentially never contains the caller's actual subscript
-        // key — almost always raised an uncaught KeyError instead of
-        // running the user's __getitem__ body at all. Confirmed via a
-        // Container class whose __getitem__ has its own fallback
-        // ("missing") for an absent key: `c["b"]` crashed with
-        // `KeyError: 'b'` instead of calling __getitem__ and returning
-        // "missing". Checked first, before the "is this dict itself
-        // secretly a class instance" question even needs the
-        // pyc_lookup_dunder call below to matter for plain dicts (which
-        // have no "__class__" entry, so pyc_lookup_dunder always
-        // returns nullptr for them and this check is a no-op).
-        PyObject* getitemMethod = pyc_lookup_dunder(obj, "__getitem__");
-        if (getitemMethod) return pyc_call_dunder2(getitemMethod, obj, key);
-        // Class/instance objects are not mappings (I-192). After
-        // __getitem__ so E()["x"] still works. Do not gate Pyc_GetItem
-        // (attr probes / C.__mro__). Plain dicts still scan keys.
+        // Class objects are not mappings (I-198). Gate BEFORE
+        // __getitem__ so E["x"] does not invoke the instance method.
+        // Do not gate Pyc_GetItem (attr probes / C.__mro__).
         if (pyc_is_class_dict(obj)) {
             pyc_raise_msg("TypeError", "'type' object is not subscriptable");
             return nullptr;
         }
+        // __getitem__ dispatch for a class instance. After the class
+        // gate so E["x"] TypeErrors; before the instance gate so
+        // E()["x"] still runs the user method (I-192 / I-198).
+        PyObject* getitemMethod = pyc_lookup_dunder(obj, "__getitem__");
+        if (getitemMethod) return pyc_call_dunder2(getitemMethod, obj, key);
         if (pyc_is_instance_dict(obj)) {
-            const char* tname = "object";
             std::string owned;
-            PyObject* mro = pyc_exc_instance_mro(obj);
-            if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
-                PyObject* first = PyList_GetItemI64(mro, 0);
-                if (first && first->type == 3) {
-                    owned = first->str;
-                    tname = owned.c_str();
-                }
-                if (first) Py_DECREF(first);
-            }
-            std::string msg = std::string("'") + tname + "' object is not subscriptable";
+            std::string msg = std::string("'") + pyc_iter_type_name(obj, owned) +
+                              "' object is not subscriptable";
             pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
+        // Modules are namespaces, not mappings (I-195).
+        if (pyc_is_module(obj)) {
+            pyc_raise_msg("TypeError", "'module' object is not subscriptable");
             return nullptr;
         }
         // Dict: scan directly rather than going through Pyc_GetItem, which
@@ -5527,6 +5529,12 @@ PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
 // alongside __getitem__ above.
 PyObject* Pyc_SubscriptSetItem(PyObject* obj, PyObject* key, PyObject* val) {
     if (obj && obj->type == 2) {
+        // Class gate before __setitem__ so C["x"]=1 does not mutate the
+        // class dict or call an instance method (I-196).
+        if (pyc_is_class_dict(obj)) {
+            pyc_raise_msg("TypeError", "'type' object does not support item assignment");
+            return nullptr;
+        }
         PyObject* setitemMethod = pyc_lookup_dunder(obj, "__setitem__");
         if (setitemMethod) {
             PyObject* args = PyList_New(0);
@@ -5536,6 +5544,13 @@ PyObject* Pyc_SubscriptSetItem(PyObject* obj, PyObject* key, PyObject* val) {
             PyObject* r = Pyc_Apply(setitemMethod, args);
             Py_DECREF(args);
             if (r) Py_DECREF(r);
+            return nullptr;
+        }
+        if (pyc_is_instance_dict(obj) || pyc_is_module(obj)) {
+            std::string owned;
+            std::string msg = std::string("'") + pyc_iter_type_name(obj, owned) +
+                              "' object does not support item assignment";
+            pyc_raise_msg("TypeError", msg.c_str());
             return nullptr;
         }
     }
@@ -5553,7 +5568,28 @@ PyObject* Pyc_SubscriptSetItem(PyObject* obj, PyObject* key, PyObject* val) {
 // CPython. Compiler.cpp's del-Subscript lowering now calls this instead
 // of PyDict_DelItem directly.
 PyObject* Pyc_DelItem(PyObject* obj, PyObject* key) {
-    if (obj && obj->type == 2) return PyDict_DelItem(obj, key);
+    if (obj && obj->type == 2) {
+        // Class gate before __delitem__ so del C[k] does not mutate
+        // the class dict (I-196).
+        if (pyc_is_class_dict(obj)) {
+            pyc_raise_msg("TypeError", "'type' object does not support item deletion");
+            return nullptr;
+        }
+        PyObject* delitemMethod = pyc_lookup_dunder(obj, "__delitem__");
+        if (delitemMethod) {
+            PyObject* r = pyc_call_dunder2(delitemMethod, obj, key);
+            if (r) Py_DECREF(r);
+            return nullptr;
+        }
+        if (pyc_is_instance_dict(obj) || pyc_is_module(obj)) {
+            std::string owned;
+            std::string msg = std::string("'") + pyc_iter_type_name(obj, owned) +
+                              "' object does not support item deletion";
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
+        return PyDict_DelItem(obj, key);
+    }
     if (obj && obj->type == 1 && key && (key->type == 0 || key->type == 5)) {
         pyc_ensure_boxed_list(obj);
         long idx = key->value;
@@ -5771,7 +5807,28 @@ PyObject* PyBuiltin_Sum(PyObject* lst) {
     return PyBuiltin_Sum2(lst, nullptr);
 }
 PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
-    if (!lst) return start ? (Py_INCREF(start), start) : PyInt_FromLong(0);
+    // I-176: reject str/bytes/bytearray start even for an empty iterable.
+    if (start) {
+        if (start->type == 3) {
+            pyc_raise_msg("TypeError",
+                "sum() can't sum strings [use ''.join(seq) instead]");
+            return nullptr;
+        }
+        if (start->type == 17) {
+            pyc_raise_msg("TypeError",
+                "sum() can't sum bytes [use b''.join(seq) instead]");
+            return nullptr;
+        }
+        if (start->type == 18) {
+            pyc_raise_msg("TypeError",
+                "sum() can't sum bytearray [use b''.join(seq) instead]");
+            return nullptr;
+        }
+    }
+    if (!lst) {
+        pyc_raise_not_iterable(lst);
+        return nullptr;
+    }
     if (pyc_super_not_iterable(lst)) return nullptr;
     PyObject* total = start ? (Py_INCREF(start), start) : PyInt_FromLong(0);
     // PyNumber_Add already TypeErrors on int+str (I-170) and int+None
@@ -5792,30 +5849,11 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
             for (auto* item : lst->list) if (!addOne(item)) return nullptr;
         }
     } else if (lst->type == 2) {
-        // Class objects are types, not mappings (I-189). Must raise
-        // before walking keys or sum(C) becomes int+str via __mro__.
-        if (pyc_is_class_dict(lst)) {
+        // Class/instance/module are not mappings (I-189 / I-191 / I-194).
+        // DECREF start/0 before raise. Plain dicts still walk keys.
+        if (pyc_is_uniterable_type2(lst)) {
             Py_DECREF(total);
-            pyc_raise_msg("TypeError", "'type' object is not iterable");
-            return nullptr;
-        }
-        // Instances (__class__) are not mappings (I-191). After class
-        // so sum(C) stays 'type'. DECREF start/0 before raise.
-        if (pyc_is_instance_dict(lst)) {
-            Py_DECREF(total);
-            const char* tname = "object";
-            std::string owned;
-            PyObject* mro = pyc_exc_instance_mro(lst);
-            if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
-                PyObject* first = PyList_GetItemI64(mro, 0);
-                if (first && first->type == 3) {
-                    owned = first->str;
-                    tname = owned.c_str();
-                }
-                if (first) Py_DECREF(first);
-            }
-            std::string msg = std::string("'") + tname + "' object is not iterable";
-            pyc_raise_msg("TypeError", msg.c_str());
+            pyc_raise_not_iterable(lst);
             return nullptr;
         }
         for (auto& pair : lst->dict) if (!addOne(pair.first)) return nullptr;
@@ -5832,6 +5870,11 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
             if (item) Py_DECREF(item);
             if (!ok) return nullptr;
         }
+    } else if (lst->type == 0 || lst->type == 4 || lst->type == 5) {
+        // I-174: int/bool/float are not iterable; do not return start.
+        Py_DECREF(total);
+        pyc_raise_not_iterable(lst);
+        return nullptr;
     }
     return total;
 }
@@ -5845,7 +5888,23 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
 // reversing `r` in place before returning, in both the key and no-key
 // branches below.
 PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse) {
-    if (!lst) return PyList_New(0);
+    // I-175: first-class cmp_to_key wrapper is a plain dict whose
+    // "cmp_to_key" value is the comparator. Route to SortedWithCmp.
+    if (key && key->type == 2 && !pyc_is_uniterable_type2(key)) {
+        for (auto& pair : key->dict) {
+            if (pair.first && pair.first->type == 3 &&
+                pair.first->str == "cmp_to_key" && pair.second) {
+                PyObject* cb = PyBuiltin_Callable(pair.second);
+                int ok = PyObject_TruthValue(cb);
+                if (cb) Py_DECREF(cb);
+                if (ok) return PyBuiltin_SortedWithCmp(lst, pair.second, reverse);
+            }
+        }
+    }
+    if (!lst) {
+        pyc_raise_not_iterable(lst);
+        return nullptr;
+    }
     if (pyc_super_not_iterable(lst)) return nullptr;
     std::vector<PyObject*> items;
     if (lst->type == 1) {
@@ -5868,9 +5927,9 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse) {
             }
         }
     } else if (lst->type == 2) {
-        // Class objects are types, not mappings (I-182).
-        if (pyc_is_class_dict(lst)) {
-            pyc_raise_msg("TypeError", "'type' object is not iterable");
+        // Class/instance/module are not mappings (I-182 / I-197).
+        if (pyc_is_uniterable_type2(lst)) {
+            pyc_raise_not_iterable(lst);
             return nullptr;
         }
         for (auto& pair : lst->dict) {
@@ -5888,7 +5947,8 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse) {
         for (size_t i = 0; i < n; ++i)
             items.push_back(pyc_zip_seq_item(lst, i));
     } else {
-        return PyList_New(0);
+        pyc_raise_not_iterable(lst);
+        return nullptr;
     }
 
     if (key) {
@@ -5938,12 +5998,13 @@ PyObject* PyBuiltin_Sorted(PyObject* lst, PyObject* key, PyObject* reverse) {
 // sorted(iterable, key=cmp_to_key(cmp)). The dict token allows the
 // sorted function to recognize that it should use PyBuiltin_SortedWithCmp.
 PyObject* PyBuiltin_CmpToKey(PyObject* cmp) {
+    // Store the actual comparator so Sorted can recover it from a
+    // first-class wrapper (I-175). The previous string token made
+    // `k = cmp_to_key(cmp); sorted(xs, key=k)` apply a dummy dict.
     PyObject* d = PyDict_New();
     PyObject* k = PyUnicode_FromString("cmp_to_key");
-    PyObject* v = PyUnicode_FromString("cmp_to_key");
-    PyDict_SetItem(d, k, v);
+    PyDict_SetItem(d, k, cmp);
     Py_DECREF(k);
-    Py_DECREF(v);
     return d;
 }
 
@@ -5974,9 +6035,9 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp, PyObject* revers
             }
         }
     } else if (lst->type == 2) {
-        // Class objects are types, not mappings (I-185).
-        if (pyc_is_class_dict(lst)) {
-            pyc_raise_msg("TypeError", "'type' object is not iterable");
+        // Class/instance/module are not mappings (I-185 / I-197).
+        if (pyc_is_uniterable_type2(lst)) {
+            pyc_raise_not_iterable(lst);
             return nullptr;
         }
         for (auto& pair : lst->dict) {
@@ -5994,7 +6055,8 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp, PyObject* revers
         for (size_t i = 0; i < n; ++i)
             items.push_back(pyc_zip_seq_item(lst, i));
     } else {
-        return PyList_New(0);
+        pyc_raise_not_iterable(lst);
+        return nullptr;
     }
     std::sort(items.begin(), items.end(), [&](PyObject* a, PyObject* b) {
         if (!a || !b) return false;
@@ -6023,14 +6085,22 @@ PyObject* PyBuiltin_SortedWithCmp(PyObject* lst, PyObject* cmp, PyObject* revers
 }
 
 PyObject* PyBuiltin_Any(PyObject* lst) {
-    if (!lst) return PyBool_New(0);
-    if (pyc_super_not_iterable(lst)) return nullptr;
-    if (pyc_is_class_dict(lst)) {
-        pyc_raise_msg("TypeError", "'type' object is not iterable");
+    if (!lst) {
+        pyc_raise_not_iterable(lst);
         return nullptr;
     }
+    if (pyc_super_not_iterable(lst)) return nullptr;
     if (lst->type == 20) {
         for (auto* e : lst->setElems) if (PyObject_TruthValue(e)) return PyBool_New(1);
+        return PyBool_New(0);
+    }
+    if (lst->type == 2) {
+        if (pyc_is_uniterable_type2(lst)) {
+            pyc_raise_not_iterable(lst);
+            return nullptr;
+        }
+        for (auto& pair : lst->dict)
+            if (PyObject_TruthValue(pair.first)) return PyBool_New(1);
         return PyBool_New(0);
     }
     if (lst->type == 1) {
@@ -6056,16 +6126,19 @@ PyObject* PyBuiltin_Any(PyObject* lst) {
         }
         return PyBool_New(0);
     }
+    if (lst->type == 0 || lst->type == 4 || lst->type == 5) {
+        pyc_raise_not_iterable(lst);
+        return nullptr;
+    }
     return PyBool_New(0);
 }
 
 PyObject* PyBuiltin_All(PyObject* lst) {
-    if (!lst) return PyBool_New(1);
-    if (pyc_super_not_iterable(lst)) return nullptr;
-    if (pyc_is_class_dict(lst)) {
-        pyc_raise_msg("TypeError", "'type' object is not iterable");
+    if (!lst) {
+        pyc_raise_not_iterable(lst);
         return nullptr;
     }
+    if (pyc_super_not_iterable(lst)) return nullptr;
     if (lst->type == 20) {
         for (auto* e : lst->setElems) if (!PyObject_TruthValue(e)) return PyBool_New(0);
         return PyBool_New(1);
@@ -6083,6 +6156,15 @@ PyObject* PyBuiltin_All(PyObject* lst) {
         }
         return PyBool_New(1);
     }
+    if (lst->type == 2) {
+        if (pyc_is_uniterable_type2(lst)) {
+            pyc_raise_not_iterable(lst);
+            return nullptr;
+        }
+        for (auto& pair : lst->dict)
+            if (!PyObject_TruthValue(pair.first)) return PyBool_New(0);
+        return PyBool_New(1);
+    }
     if (pyc_is_seq_walk(lst)) {
         size_t n = pyc_zip_seq_len(lst);
         for (size_t i = 0; i < n; ++i) {
@@ -6092,6 +6174,10 @@ PyObject* PyBuiltin_All(PyObject* lst) {
             if (!t) return PyBool_New(0);
         }
         return PyBool_New(1);
+    }
+    if (lst->type == 0 || lst->type == 4 || lst->type == 5) {
+        pyc_raise_not_iterable(lst);
+        return nullptr;
     }
     return PyBool_New(1);
 }
@@ -6126,8 +6212,8 @@ PyObject* PyBuiltin_Map(PyObject* func, PyObject* iterable) {
     } else if (iterable->type == 20) {
         for (auto* e : iterable->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
     } else if (iterable->type == 2) {
-        if (pyc_is_class_dict(iterable)) {
-            pyc_raise_msg("TypeError", "'type' object is not iterable");
+        if (pyc_is_uniterable_type2(iterable)) {
+            pyc_raise_not_iterable(iterable);
             return nullptr;
         }
         for (auto& pair : iterable->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
@@ -6197,8 +6283,8 @@ PyObject* PyBuiltin_MapN(PyObject* func, PyObject* iterables) {
         } else if (iter->type == 20) {
             for (auto* e : iter->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
         } else if (iter->type == 2) {
-            if (pyc_is_class_dict(iter)) {
-                pyc_raise_msg("TypeError", "'type' object is not iterable");
+            if (pyc_is_uniterable_type2(iter)) {
+                pyc_raise_not_iterable(iter);
                 return nullptr;
             }
             for (auto& pair : iter->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
@@ -6253,8 +6339,8 @@ PyObject* PyBuiltin_Filter(PyObject* func, PyObject* iterable) {
     } else if (iterable->type == 20) {
         for (auto* e : iterable->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
     } else if (iterable->type == 2) {
-        if (pyc_is_class_dict(iterable)) {
-            pyc_raise_msg("TypeError", "'type' object is not iterable");
+        if (pyc_is_uniterable_type2(iterable)) {
+            pyc_raise_not_iterable(iterable);
             return nullptr;
         }
         for (auto& pair : iterable->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
@@ -7106,16 +7192,19 @@ PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b, PyObject* key) {
     return aWins ? (Py_INCREF(a), a) : (Py_INCREF(b), b);
 }
 PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) {
-    if (pyc_super_not_iterable(lst)) return nullptr;
-    if (pyc_is_class_dict(lst)) {
-        pyc_raise_msg("TypeError", "'type' object is not iterable");
+    if (!lst || lst->type == 0 || lst->type == 4 || lst->type == 5 ||
+        pyc_is_uniterable_type2(lst)) {
+        pyc_raise_not_iterable(lst);
         return nullptr;
     }
-    bool isList = lst && lst->type == 1;
+    if (pyc_super_not_iterable(lst)) return nullptr;
+    bool isList = lst->type == 1;
     bool isSeq = pyc_is_seq_walk(lst);
+    bool isDict = lst->type == 2;
+    bool isSet = lst->type == 20;
     bool missingDef = defaultVal == Pyc_MissingDefault();
-    if (!isList && !isSeq) {
-        // I-174: unknown tags still print None when default is omitted.
+    if (!isList && !isSeq && !isDict && !isSet) {
+        // Unknown tags still print None when default is omitted.
         if (defaultVal && !missingDef) { Py_INCREF(defaultVal); return defaultVal; }
         return nullptr;
     }
@@ -7134,7 +7223,7 @@ PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
         return nullptr;
     }
     auto getItem = [&](size_t i) -> PyObject* {
-        if (isSeq) return pyc_zip_seq_item(lst, i);
+        if (isSeq || isDict || isSet) return pyc_zip_seq_item(lst, i);
         if (lst->list_item_type == 1) return PyInt_FromLong(lst->ilist[i]);
         if (lst->list_item_type == 2) return PyFloat_FromDouble(lst->flist[i]);
         PyObject* it = lst->list[i]; if (it) Py_INCREF(it); return it;
@@ -7156,15 +7245,18 @@ PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
     return r;
 }
 PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal) {
-    if (pyc_super_not_iterable(lst)) return nullptr;
-    if (pyc_is_class_dict(lst)) {
-        pyc_raise_msg("TypeError", "'type' object is not iterable");
+    if (!lst || lst->type == 0 || lst->type == 4 || lst->type == 5 ||
+        pyc_is_uniterable_type2(lst)) {
+        pyc_raise_not_iterable(lst);
         return nullptr;
     }
-    bool isList = lst && lst->type == 1;
+    if (pyc_super_not_iterable(lst)) return nullptr;
+    bool isList = lst->type == 1;
     bool isSeq = pyc_is_seq_walk(lst);
+    bool isDict = lst->type == 2;
+    bool isSet = lst->type == 20;
     bool missingDef = defaultVal == Pyc_MissingDefault();
-    if (!isList && !isSeq) {
+    if (!isList && !isSeq && !isDict && !isSet) {
         if (defaultVal && !missingDef) { Py_INCREF(defaultVal); return defaultVal; }
         return nullptr;
     }
@@ -7183,7 +7275,7 @@ PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
         return nullptr;
     }
     auto getItem = [&](size_t i) -> PyObject* {
-        if (isSeq) return pyc_zip_seq_item(lst, i);
+        if (isSeq || isDict || isSet) return pyc_zip_seq_item(lst, i);
         if (lst->list_item_type == 1) return PyInt_FromLong(lst->ilist[i]);
         if (lst->list_item_type == 2) return PyFloat_FromDouble(lst->flist[i]);
         PyObject* it = lst->list[i]; if (it) Py_INCREF(it); return it;
@@ -7402,12 +7494,23 @@ PyObject* PyBuiltin_Reversed(PyObject* obj) {
 }
 
 PyObject* PyBuiltin_Enumerate(PyObject* iterable) {
-    return PyBuiltin_Enumerate2(iterable, nullptr);
+    // Omitted start is 0. Distinguish from start=None (I-166): that
+    // path goes through Enumerate2 with a null startObj.
+    PyObject* zero = PyInt_FromLong(0);
+    PyObject* r = PyBuiltin_Enumerate2(iterable, zero);
+    Py_DECREF(zero);
+    return r;
 }
 PyObject* PyBuiltin_Enumerate2(PyObject* iterable, PyObject* startObj) {
     if (pyc_super_not_iterable(iterable)) return nullptr;
-    long startVal = 0;
-    if (startObj && (startObj->type == 0 || startObj->type == 5)) startVal = startObj->value;
+    // I-166: start must be int or bool. start=None (nullptr) TypeErrors.
+    if (!startObj || (startObj->type != 0 && startObj->type != 5)) {
+        std::string msg = std::string("'") + pyc_builtin_type_name(startObj) +
+                          "' object cannot be interpreted as an integer";
+        pyc_raise_msg("TypeError", msg.c_str());
+        return nullptr;
+    }
+    long startVal = startObj->value;
     size_t n = pyc_zip_seq_len(iterable);
     PyObject* r = PyList_New(n);
     for (size_t i = 0; i < n; ++i) {
@@ -7431,15 +7534,26 @@ static size_t pyc_zip_seq_len(PyObject* s) {
         pyc_raise_msg("TypeError", "'int' object is not iterable");
         return 0;
     }
-    // Class objects are types, not empty sequences (I-185). Plain dicts
-    // still return 0 here (I-161).
-    if (pyc_is_class_dict(s)) {
-        pyc_raise_msg("TypeError", "'type' object is not iterable");
+    if (s->type == 4) {
+        pyc_raise_msg("TypeError", "'float' object is not iterable");
+        return 0;
+    }
+    if (s->type == 5) {
+        pyc_raise_msg("TypeError", "'bool' object is not iterable");
+        return 0;
+    }
+    // Class/instance/module are not sequences (I-161 / I-185).
+    if (pyc_is_uniterable_type2(s)) {
+        pyc_raise_not_iterable(s);
         return 0;
     }
     if (s->type == 1) return PyList_Size(s);
     if (s->type == 7 && !s->cell_content) return PyTuple_Size(s);
     if (s->type == 3 || s->type == 17 || s->type == 18) return s->str.size();
+    // Plain dict: keys in insertion order (I-161). Tests use 1-element dicts.
+    if (s->type == 2) return s->dict.size();
+    // Set: insertion order. Tests use 1-element sets (I-161).
+    if (s->type == 20) return s->setElems.size();
     return 0;
 }
 static PyObject* pyc_zip_seq_item(PyObject* s, size_t i) {
@@ -7453,6 +7567,18 @@ static PyObject* pyc_zip_seq_item(PyObject* s, size_t i) {
     if (s->type == 17 || s->type == 18) {
         if (i >= s->str.size()) return nullptr;
         return PyInt_FromLong((unsigned char)s->str[i]);
+    }
+    if (s->type == 2) {
+        if (i >= s->dict.size()) return nullptr;
+        PyObject* k = s->dict[i].first;
+        if (k) Py_INCREF(k);
+        return k;
+    }
+    if (s->type == 20) {
+        if (i >= s->setElems.size()) return nullptr;
+        PyObject* e = s->setElems[i];
+        if (e) Py_INCREF(e);
+        return e;
     }
     return nullptr;
 }
@@ -12401,9 +12527,32 @@ static PyObject* pyc_adapt_reversed(PyObject* args) {
     }
     return PyBuiltin_Reversed(args->list[0]);
 }
-static PyObject* pyc_adapt_enumerate(PyObject* args) {
-    PyObject* a = arg0(args); if (!a) return nullptr;
-    return PyBuiltin_Enumerate(a);
+static PyObject* pyc_adapt_enumerate(PyObject* args, PyObject* kwDict) {
+    if (!args || args->type != 1 || args->list.empty()) {
+        pyc_raise_msg("TypeError", "enumerate expected at least 1 argument, got 0");
+        return nullptr;
+    }
+    // list[0] nullptr is None, not a missing iterable (I-165).
+    if (!args->list[0]) {
+        pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
+        return nullptr;
+    }
+    PyObject* start = arg1(args);
+    bool haveStart = args->list.size() >= 2;
+    if (!haveStart && pyc_kw_has(kwDict, "start")) {
+        haveStart = true;
+        start = pyc_kw_borrow(kwDict, "start");
+    }
+    if (haveStart) return PyBuiltin_Enumerate2(args->list[0], start);
+    return PyBuiltin_Enumerate(args->list[0]);
+}
+static PyObject* pyc_adapt_cmp_to_key(PyObject* args) {
+    PyObject* a = arg0(args);
+    if (!args || args->type != 1 || args->list.empty()) {
+        pyc_raise_msg("TypeError", "cmp_to_key expected 1 argument, got 0");
+        return nullptr;
+    }
+    return PyBuiltin_CmpToKey(a);
 }
 static PyObject* pyc_adapt_zip(PyObject* args) {
     return PyBuiltin_ZipN(args);
@@ -12612,7 +12761,9 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("pyc_adapt_any",        pyc_adapt_any);
     pyc_register_callable("pyc_adapt_all",        pyc_adapt_all);
     pyc_register_callable("pyc_adapt_reversed",   pyc_adapt_reversed);
-    pyc_register_callable("pyc_adapt_enumerate",  pyc_adapt_enumerate);
+    pyc_register_callable_kw("pyc_adapt_enumerate", pyc_adapt_enumerate);
+    pyc_register_callable("pyc_adapt_cmp_to_key", pyc_adapt_cmp_to_key);
+    pyc_register_callable("cmp_to_key",          pyc_adapt_cmp_to_key);
     pyc_register_callable("pyc_adapt_zip",        pyc_adapt_zip);
     pyc_register_callable("pyc_adapt_isinstance", pyc_adapt_isinstance);
     pyc_register_callable("pyc_adapt_complex",    pyc_adapt_complex);

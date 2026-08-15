@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **780/780** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **782/782** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780) are stale.
 
 ---
 
@@ -124,8 +124,8 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 
 `print(*args, sep=, end=)`, `range` (1/2/3-arg), `len` (class/instance/module TypeError unless `__len__`, [I-187](ISSUES.md)/[I-190](ISSUES.md)/[I-193](ISSUES.md)), `str`, `int`/`int(x, base)`,
 `float`, `complex`, `abs`, `min`/`max` (multi-arg, iterable, `key=`, `default=`),
-`list`, `tuple`, `set`, `enumerate` (`start=`; list/tuple/str/bytes, [I-162](ISSUES.md)), `zip` (N-way; list/tuple/str/bytes, [I-156](ISSUES.md)/[I-157](ISSUES.md)/[I-159](ISSUES.md)), `sum` (`start=`; list/tuple/bytes; `sum(str)` / `sum(C())` TypeError, [I-167](ISSUES.md)/[I-169](ISSUES.md)/[I-170](ISSUES.md)/[I-191](ISSUES.md)),
-`sorted` / `list.sort` (`key=`, `reverse=`, `cmp_to_key`; list/tuple/str/bytes, [I-167](ISSUES.md)/[I-171](ISSUES.md)), `any` / `all` (list/tuple/str, [I-167](ISSUES.md)), `isinstance`,
+`list`, `tuple`, `set`, `enumerate` (`start=`; list/tuple/str/bytes/dict/set; non-int `start=` TypeError, [I-162](ISSUES.md)/[I-164](ISSUES.md)/[I-166](ISSUES.md)), `zip` (N-way; list/tuple/str/bytes/dict/set, [I-156](ISSUES.md)/[I-157](ISSUES.md)/[I-159](ISSUES.md)/[I-161](ISSUES.md)), `sum` (`start=`; list/tuple/bytes/dict/set; `sum(str)` / `sum(C())` / `sum(sys)` TypeError; str/bytes/bytearray `start` TypeError, [I-167](ISSUES.md)/[I-169](ISSUES.md)/[I-170](ISSUES.md)/[I-176](ISSUES.md)/[I-191](ISSUES.md)/[I-194](ISSUES.md)),
+`sorted` / `list.sort` (`key=`, `reverse=`, first-class `cmp_to_key`, [I-167](ISSUES.md)/[I-171](ISSUES.md)/[I-175](ISSUES.md)), `any` / `all` (list/tuple/str/dict/set; None/int TypeError, [I-167](ISSUES.md)/[I-174](ISSUES.md)), `isinstance`,
 `issubclass`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`,
 `round`, `divmod` (returns a tuple), `pow` / `pow(base, exp, mod)`, `reversed` (list/tuple/str/bytes/dict keys, [I-163](ISSUES.md)/[I-168](ISSUES.md)),
 `cmp_to_key`, `callable`, `map`, `filter`,

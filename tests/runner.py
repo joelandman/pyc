@@ -5249,6 +5249,9 @@ try:
 except TypeError as e:
     print(type(e).__name__)
 """, "'C' object is not iterable\n6\nTypeError\nTypeError\nx\n2\nTypeError\nTypeError\n1\nTrue\nTypeError\n"),
+    # W9.15 remaining wrong-answers I-161/164/165/166/174/175/176/194–198.
+    (open(__file__.replace("runner.py", "w915_wa.py")).read(),
+     "'module' object is not iterable\n6\nTypeError\n2\nTrue\nTypeError\nTypeError\nTypeError\n4\n('k', 9)\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\n[1, 3]\nTypeError\nTypeError\nx\n[(1, 9)]\n[(1, 9)]\nTypeError\nTypeError\n[(1, 3), (2, 4)]\n[(0, 1)]\n[(0, 7)]\nTypeError\nTypeError\n[(0, 1), (1, 2)]\n[(5, 1), (6, 2)]\nTypeError\nTypeError\n[(5, 1), (6, 2)]\nTypeError\nTypeError\nTypeError\n[(1, 1)]\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTrue\n1\nTrue\n[1, 2, 3]\n[1, 2, 3]\n[1, 2, 3]\n[1, 2, 3]\n[1, 2, 3]\nsum() can't sum strings [use ''.join(seq) instead]\nsum() can't sum bytes [use b''.join(seq) instead]\nsum() can't sum bytearray [use b''.join(seq) instead]\n10\n13\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5318,6 +5321,8 @@ FILE_CASES = [
     ("w913_inst.py", []),
     # W9.14: sum(C()); class/instance subscript; len(sys)/in sys.
     ("w914_map.py", []),
+    # W9.15: remaining wrong-answers I-161/164/165/166/174/175/176/194–198.
+    ("w915_wa.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),
