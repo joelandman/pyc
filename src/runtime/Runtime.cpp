@@ -5158,6 +5158,12 @@ PyObject* PyBuiltin_Len(PyObject* obj) {
             pyc_raise_msg("TypeError", msg.c_str());
             return nullptr;
         }
+        // Modules are namespaces, not mappings (I-193). After class/
+        // instance so those messages stay type-specific.
+        if (pyc_is_module(obj)) {
+            pyc_raise_msg("TypeError", "object of type 'module' has no len()");
+            return nullptr;
+        }
         return PyInt_FromLong((long)obj->dict.size());
     }
     if (obj->type == 20) return PyInt_FromLong((long)PySet_Size(obj));
@@ -5389,6 +5395,29 @@ PyObject* Pyc_Subscript(PyObject* obj, PyObject* key) {
         // returns nullptr for them and this check is a no-op).
         PyObject* getitemMethod = pyc_lookup_dunder(obj, "__getitem__");
         if (getitemMethod) return pyc_call_dunder2(getitemMethod, obj, key);
+        // Class/instance objects are not mappings (I-192). After
+        // __getitem__ so E()["x"] still works. Do not gate Pyc_GetItem
+        // (attr probes / C.__mro__). Plain dicts still scan keys.
+        if (pyc_is_class_dict(obj)) {
+            pyc_raise_msg("TypeError", "'type' object is not subscriptable");
+            return nullptr;
+        }
+        if (pyc_is_instance_dict(obj)) {
+            const char* tname = "object";
+            std::string owned;
+            PyObject* mro = pyc_exc_instance_mro(obj);
+            if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
+                PyObject* first = PyList_GetItemI64(mro, 0);
+                if (first && first->type == 3) {
+                    owned = first->str;
+                    tname = owned.c_str();
+                }
+                if (first) Py_DECREF(first);
+            }
+            std::string msg = std::string("'") + tname + "' object is not subscriptable";
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
         // Dict: scan directly rather than going through Pyc_GetItem, which
         // returns a null PyObject* both when the key is absent AND when
         // the key is present with a None value — indistinguishable to the
@@ -5665,6 +5694,13 @@ PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
             pyc_raise_msg("TypeError", msg.c_str());
             return nullptr;
         }
+        // Modules are namespaces, not mappings (I-193). After class/
+        // instance so those messages stay type-specific.
+        if (pyc_is_module(container)) {
+            pyc_raise_msg("TypeError",
+                          "argument of type 'module' is not a container or iterable");
+            return nullptr;
+        }
         for (auto& pair : container->dict)
             if (PyObject_CompareBool(pair.first, item, 0)) return PyBool_New(1);
         return PyBool_New(0);
@@ -5761,6 +5797,25 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
         if (pyc_is_class_dict(lst)) {
             Py_DECREF(total);
             pyc_raise_msg("TypeError", "'type' object is not iterable");
+            return nullptr;
+        }
+        // Instances (__class__) are not mappings (I-191). After class
+        // so sum(C) stays 'type'. DECREF start/0 before raise.
+        if (pyc_is_instance_dict(lst)) {
+            Py_DECREF(total);
+            const char* tname = "object";
+            std::string owned;
+            PyObject* mro = pyc_exc_instance_mro(lst);
+            if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
+                PyObject* first = PyList_GetItemI64(mro, 0);
+                if (first && first->type == 3) {
+                    owned = first->str;
+                    tname = owned.c_str();
+                }
+                if (first) Py_DECREF(first);
+            }
+            std::string msg = std::string("'") + tname + "' object is not iterable";
+            pyc_raise_msg("TypeError", msg.c_str());
             return nullptr;
         }
         for (auto& pair : lst->dict) if (!addOne(pair.first)) return nullptr;

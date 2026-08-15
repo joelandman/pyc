@@ -1725,18 +1725,18 @@ print(hof(add, 1, 1))
     # Class decorators: simple, stacked, factory, __repr__ injection.
     ("""
 def mark(cls):
-    cls['marked'] = True
+    cls.marked = True
     return cls
 
 @mark
 class Simple:
     pass
 
-print(Simple['marked'])
+print(Simple.marked)
 def add_repr(cls):
     def repr_method(self):
         return "Point"
-    cls['__repr__'] = repr_method
+    cls.__repr__ = repr_method
     return cls
 
 @add_repr
@@ -1748,10 +1748,10 @@ class Point:
 p = Point(1, 2)
 print(repr(p))
 def uppercase_name(cls):
-    cls['NAME'] = 'UPPER'
+    cls.NAME = 'UPPER'
     return cls
 def add_version(cls):
-    cls['VERSION'] = '1.0'
+    cls.VERSION = '1.0'
     return cls
 
 @uppercase_name
@@ -1759,11 +1759,11 @@ def add_version(cls):
 class App:
     pass
 
-print(App['NAME'])
-print(App['VERSION'])
+print(App.NAME)
+print(App.VERSION)
 def with_attr(name, value):
     def decorator(cls):
-        cls[name] = value
+        setattr(cls, name, value)
         return cls
     return decorator
 
@@ -1771,7 +1771,7 @@ def with_attr(name, value):
 class Feature:
     pass
 
-print(Feature['SPECIAL'])
+print(Feature.SPECIAL)
 """, "True\nPoint\nUPPER\n1.0\nyes\n"),
     # Exception classes as first-class values (B13).
     ("""
@@ -5212,6 +5212,43 @@ try:
 except TypeError as e:
     print(type(e).__name__)
 """, "TypeError\nTypeError\nTypeError\n5\nTrue\nFalse\n1\nTrue\nTypeError\n"),
+    # W9.14 / I-191 I-192 I-193: sum(C()); class/instance subscript; len(sys)/in sys.
+    ("""class C:
+    pass
+try:
+    print(sum(C()))
+except TypeError as e:
+    print(e)
+print(sum([1, 2, 3]))
+try:
+    print(C["__mro__"])
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print(C()["__class__"])
+except TypeError as e:
+    print(type(e).__name__)
+class E:
+    def __getitem__(self, k):
+        return k
+print(E()["x"])
+print({1: 2}[1])
+import sys
+try:
+    print(len(sys))
+except TypeError as e:
+    print(type(e).__name__)
+try:
+    print("argv" in sys)
+except TypeError as e:
+    print(type(e).__name__)
+print(len({1: 2}))
+print(1 in {1: 2})
+try:
+    print(len(C()))
+except TypeError as e:
+    print(type(e).__name__)
+""", "'C' object is not iterable\n6\nTypeError\nTypeError\nx\n2\nTypeError\nTypeError\n1\nTrue\nTypeError\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5279,6 +5316,8 @@ FILE_CASES = [
     ("w912_class.py", []),
     # W9.13: len(C()) / x in C() TypeError unless __len__/__contains__.
     ("w913_inst.py", []),
+    # W9.14: sum(C()); class/instance subscript; len(sys)/in sys.
+    ("w914_map.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

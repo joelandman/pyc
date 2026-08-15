@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **752/752** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **780/780** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752) are stale.
 
 ---
 
@@ -39,7 +39,7 @@ Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports 
 +  -  *  /  //  %  **          arithmetic (int, float, bool, str, complex, tuple, list)
 ==  !=  <  >  <=  >=           comparison (numeric, string, sequence; chained)
 is  is not                     identity
-in  not in                     membership (list, str, dict, set, tuple)
+in  not in                     membership (list, str, dict, set, tuple; class/instance/module TypeError unless `__contains__`, [I-187](ISSUES.md)/[I-190](ISSUES.md)/[I-193](ISSUES.md))
 and  or  not                   short-circuit, returns the actual value
 -x  +x                         unary
 +=  -=  *=  /=  //=  %=  **=  names, subscripts, and attributes
@@ -47,7 +47,7 @@ and  or  not                   short-circuit, returns the actual value
 
 User-class dunders: `__eq__`/`__ne__`/`__lt__`/`__le__`/`__gt__`/`__ge__`,
 `__add__`/`__sub__`/`__mul__`/`__floordiv__`/`__truediv__`/`__mod__`, `__neg__`,
-`__len__`, `__bool__`, `__getitem__`/`__setitem__`/`__contains__`,
+`__len__`, `__bool__`, `__getitem__`/`__setitem__`/`__contains__` (`C[k]` / `C()[k]` TypeError unless `__getitem__`, [I-192](ISSUES.md)),
 `__iter__`/`__next__` (eagerly materialized), `__call__`. Only the **left**
 operand's dunder is consulted (no `__radd__`).
 
@@ -122,9 +122,9 @@ f(**{"a": 1, "b": 2})          # unmatched keys go to **kwargs
 
 ## Builtins
 
-`print(*args, sep=, end=)`, `range` (1/2/3-arg), `len`, `str`, `int`/`int(x, base)`,
+`print(*args, sep=, end=)`, `range` (1/2/3-arg), `len` (class/instance/module TypeError unless `__len__`, [I-187](ISSUES.md)/[I-190](ISSUES.md)/[I-193](ISSUES.md)), `str`, `int`/`int(x, base)`,
 `float`, `complex`, `abs`, `min`/`max` (multi-arg, iterable, `key=`, `default=`),
-`list`, `tuple`, `set`, `enumerate` (`start=`; list/tuple/str/bytes, [I-162](ISSUES.md)), `zip` (N-way; list/tuple/str/bytes, [I-156](ISSUES.md)/[I-157](ISSUES.md)/[I-159](ISSUES.md)), `sum` (`start=`; list/tuple/bytes; `sum(str)` TypeError, [I-167](ISSUES.md)/[I-169](ISSUES.md)/[I-170](ISSUES.md)),
+`list`, `tuple`, `set`, `enumerate` (`start=`; list/tuple/str/bytes, [I-162](ISSUES.md)), `zip` (N-way; list/tuple/str/bytes, [I-156](ISSUES.md)/[I-157](ISSUES.md)/[I-159](ISSUES.md)), `sum` (`start=`; list/tuple/bytes; `sum(str)` / `sum(C())` TypeError, [I-167](ISSUES.md)/[I-169](ISSUES.md)/[I-170](ISSUES.md)/[I-191](ISSUES.md)),
 `sorted` / `list.sort` (`key=`, `reverse=`, `cmp_to_key`; list/tuple/str/bytes, [I-167](ISSUES.md)/[I-171](ISSUES.md)), `any` / `all` (list/tuple/str, [I-167](ISSUES.md)), `isinstance`,
 `issubclass`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`,
 `round`, `divmod` (returns a tuple), `pow` / `pow(base, exp, mod)`, `reversed` (list/tuple/str/bytes/dict keys, [I-163](ISSUES.md)/[I-168](ISSUES.md)),

@@ -1369,35 +1369,81 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   I-193 (`len(sys)` / `x in sys`). I-191 / I-192 unchanged.
 
 ### I-191  `sum(C())` walks instance attr keys
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `sum(C())` — CPython `'C' object is not iterable`; pyc
-  TypeError `int + str` (`0 + "__class__"`).
+- Evidence: W9.14 / `w914_map.py`: `sum(C())` → `'C' object is not iterable`;
+  `sum([1, 2, 3])` kept `6`. Parent: TypeError `int + str`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
 - Blocks merge: no
-- Notes: Found reviewing W9.12. `list(C())` already TypeError (I-154).
+- Notes: Wave 9 W9.14. Coordinator: `-O0`/`-O2` match CPython. Leftover
+  I-194 (`sum(sys)`).
 
 ### I-192  `C[k]` / `C()[k]` still treat class/instance as a mapping
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `C["__mro__"]` — CPython TypeError (`not subscriptable`);
-  pyc returns the MRO list. `C()["__class__"]` — CPython TypeError; pyc
-  returns the class dict.
+- Evidence: W9.14: `C["__mro__"]` / `C()["__class__"]` → TypeError;
+  `E()["x"]` / `{1: 2}[1]` kept. Parent: MRO list / class dict.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_Subscript`)
 - Blocks merge: no
-- Notes: Found reviewing W9.12. Do not gate `Pyc_GetItem` (attr probes).
+- Notes: Wave 9 W9.14. Coordinator: `-O0`/`-O2` match CPython. Class
+  decorator CASE rewritten to attribute access (was `cls['k']`).
+  Leftovers I-195 / I-196 / I-198.
 
 ### I-193  `len(sys)` / `x in sys` still treat module as mapping
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `import sys; len(sys)` — CPython TypeError; pyc counts
-  argv/stderr/stdout/modules. `"argv" in sys` — CPython TypeError; pyc
-  True.
+- Evidence: W9.14: `len(sys)` / `"argv" in sys` → TypeError;
+  `len({1: 2})` / `1 in {1: 2}` / `len(C())` kept. Parent: `4` / True.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Len`, `Pyc_Contains`)
 - Blocks merge: no
-- Notes: Found reviewing W9.13. Modules are type-2 + `list_item_type==3`
-  (`pyc_is_module`); no `__class__`, so the I-190 instance gate misses
-  them. `list(sys)` already TypeError (I-154).
+- Notes: Wave 9 W9.14. Coordinator: `-O0`/`-O2` match CPython.
+  `sys.argv` is GetItem, not this.
+
+### I-194  `sum(sys)` walks module keys
+- Status: open
+- Severity: wrong-answer
+- Evidence: `import sys; sum(sys)` — CPython `'module' object is not iterable`;
+  pyc TypeError `int + str`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
+- Blocks merge: no
+- Notes: Found reviewing W9.14. I-191 gated instance only.
+
+### I-195  `sys[k]` still treats module as a mapping
+- Status: open
+- Severity: wrong-answer
+- Evidence: `import sys; sys["argv"]` — CPython TypeError; pyc returns
+  `sys.argv`.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_Subscript`)
+- Blocks merge: no
+- Notes: Found reviewing W9.14. I-192 gated class/instance only.
+
+### I-196  `C[k]=v` / `del C[k]` still mutate class/instance/module dicts
+- Status: open
+- Severity: wrong-answer
+- Evidence: `C["x"] = 1` — CPython TypeError; pyc writes the class dict.
+  Same for `del C["__mro__"]` and `sys["argv"] = 1`.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_SubscriptSetItem`, `Pyc_DelItem`)
+- Blocks merge: no
+- Notes: Found reviewing W9.14. Do not gate `Pyc_SetItem` (`C.x = 1`).
+
+### I-197  `sorted`/`map`/`filter`/`set` of instance/module still walk keys
+- Status: open
+- Severity: wrong-answer
+- Evidence: `sorted(C())` / `sorted(sys)` — CPython TypeError; pyc walks
+  attr/export names.
+- Files: `src/runtime/Runtime.cpp`
+- Blocks merge: no
+- Notes: Found reviewing W9.14. I-182/I-185 gated class. `list(C())` /
+  `list(sys)` already TypeError (I-154).
+
+### I-198  class object `E[k]` dispatches instance `__getitem__`
+- Status: open
+- Severity: wrong-answer
+- Evidence: `class E: def __getitem__(self, k): return k; E["x"]` —
+  CPython TypeError; pyc calls `E.__getitem__(E, "x")` → `x`.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_Subscript`)
+- Blocks merge: no
+- Notes: Found reviewing W9.14. Class gate is after `__getitem__` lookup.
 
 ---
 
