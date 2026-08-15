@@ -1355,15 +1355,18 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   start/`0` before raise. Leftover I-191 (`sum(C())`).
 
 ### I-190  `len(C())` / `x in C()` still treat instance as mapping
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: After W9.12 the class gate is `pyc_is_class_dict` only.
-  `len(C())` — CPython TypeError; pyc `1`. `"__class__" in C()` — CPython
-  TypeError; pyc `True`.
-- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Len`, `Pyc_Contains`)
+- Evidence: W9.13 / `w913_inst.py`: `len(C())` / `"__class__" in C()` /
+  `1 in C()` → TypeError; `len(D())` / `1 in D()` / `2 in D()` → `5` /
+  True / False; `len({1: 2})` / `1 in {1: 2}` / `len(C)` kept.
+  Parent: `1` / True / False.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Len`, `Pyc_Contains`,
+  `pyc_is_instance_dict`)
 - Blocks merge: no
-- Notes: Found reviewing W9.12. Instance with real `__len__`/`__contains__`
-  is already correct.
+- Notes: Wave 9 W9.13. Coordinator: `-O0`/`-O2` match CPython. Instance
+  gate after `__len__`/`__contains__` and I-187 class gate. Leftover
+  I-193 (`len(sys)` / `x in sys`). I-191 / I-192 unchanged.
 
 ### I-191  `sum(C())` walks instance attr keys
 - Status: open
@@ -1383,6 +1386,18 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Files: `src/runtime/Runtime.cpp` (`Pyc_Subscript`)
 - Blocks merge: no
 - Notes: Found reviewing W9.12. Do not gate `Pyc_GetItem` (attr probes).
+
+### I-193  `len(sys)` / `x in sys` still treat module as mapping
+- Status: open
+- Severity: wrong-answer
+- Evidence: `import sys; len(sys)` — CPython TypeError; pyc counts
+  argv/stderr/stdout/modules. `"argv" in sys` — CPython TypeError; pyc
+  True.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Len`, `Pyc_Contains`)
+- Blocks merge: no
+- Notes: Found reviewing W9.13. Modules are type-2 + `list_item_type==3`
+  (`pyc_is_module`); no `__class__`, so the I-190 instance gate misses
+  them. `list(sys)` already TypeError (I-154).
 
 ---
 

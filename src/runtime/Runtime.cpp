@@ -133,6 +133,17 @@ static bool pyc_is_class_dict(PyObject* o) {
     }
     return false;
 }
+// User instances are type-2 dicts that hold __class__ (I-190). Same
+// test as PyBuiltin_List. Not mappings: len(C()) / x in C() is
+// TypeError, not dict.size() or a walk of ['__class__'].
+static bool pyc_is_instance_dict(PyObject* o) {
+    if (!o || o->type != 2) return false;
+    for (auto& kv : o->dict) {
+        if (kv.first && kv.first->type == 3 && kv.first->str == "__class__")
+            return true;
+    }
+    return false;
+}
 
 // Tag 2 is a user dict (list_item_type 0) or a synthetic module / module-like
 // namespace (list_item_type 3). 3 is unused on dicts (lists/tuples use 0/1/2).
@@ -5129,6 +5140,24 @@ PyObject* PyBuiltin_Len(PyObject* obj) {
             pyc_raise_msg("TypeError", "object of type 'type' has no len()");
             return nullptr;
         }
+        // Instances (__class__) are not mappings (I-190). len(C())
+        // TypeError unless __len__ (already tried above).
+        if (pyc_is_instance_dict(obj)) {
+            const char* tname = "object";
+            std::string owned;
+            PyObject* mro = pyc_exc_instance_mro(obj);
+            if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
+                PyObject* first = PyList_GetItemI64(mro, 0);
+                if (first && first->type == 3) {
+                    owned = first->str;
+                    tname = owned.c_str();
+                }
+                if (first) Py_DECREF(first);
+            }
+            std::string msg = std::string("object of type '") + tname + "' has no len()";
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
         return PyInt_FromLong((long)obj->dict.size());
     }
     if (obj->type == 20) return PyInt_FromLong((long)PySet_Size(obj));
@@ -5615,6 +5644,25 @@ PyObject* Pyc_Contains(PyObject* container, PyObject* item) {
         if (pyc_is_class_dict(container)) {
             pyc_raise_msg("TypeError",
                           "argument of type 'type' is not a container or iterable");
+            return nullptr;
+        }
+        // Instances (__class__) are not mappings (I-190). x in C()
+        // TypeError unless __contains__ (already tried above).
+        if (pyc_is_instance_dict(container)) {
+            const char* tname = "object";
+            std::string owned;
+            PyObject* mro = pyc_exc_instance_mro(container);
+            if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
+                PyObject* first = PyList_GetItemI64(mro, 0);
+                if (first && first->type == 3) {
+                    owned = first->str;
+                    tname = owned.c_str();
+                }
+                if (first) Py_DECREF(first);
+            }
+            std::string msg = std::string("argument of type '") + tname +
+                              "' is not a container or iterable";
+            pyc_raise_msg("TypeError", msg.c_str());
             return nullptr;
         }
         for (auto& pair : container->dict)
