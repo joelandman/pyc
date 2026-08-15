@@ -1510,24 +1510,128 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   `k(3)()` TypeErrors (arity).
 
 ### I-208  `map`/`filter` of complex / function still `[]`
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `list(map(str, 1+2j))` / `list(map(str, (lambda: 0)))` —
-  CPython TypeError; pyc `[]`.
+- Evidence: W9.18 / `w918_tail.py`: `list(map(str, 1+2j))` / `map(str, f)` /
+  `filter(None, 1+2j)` / `filter(None, f)` → TypeError;
+  `map(str, [1,2])` / `map(str, b"ab")` kept. Parent: `[]`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Map`, `MapN`, `Filter`)
 - Blocks merge: no
-- Notes: Found reviewing W9.17. I-202 gated 0/4/5; I-205 added 17/18.
-  Else still empty default.
+- Notes: Wave 9 W9.18. Coordinator: `-O0`/`-O2` match CPython. Else tail
+  TypeErrors leftover tags. Leftover I-210 (any/sum/zip of same tags).
 
 ### I-209  `k(3) == 3` is False, not TypeError
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `k=cmp_to_key(cmp); k(3)==3` — CPython TypeError
-  (`other argument must be K instance`); pyc False. Ordering mixed
-  (`k(3)<1`) is TypeError (I-206).
+- Evidence: W9.18: `k(3)==3` / `k(3)!=3` → TypeError; `k(3)<1` kept;
+  `k(3)<k(1)` / `k(1)==k(1)` / `sorted(..., key=k)` kept. Parent: False / True.
 - Files: `src/runtime/Runtime.cpp` (`PyObject_CompareBool`)
 - Blocks merge: no
-- Notes: Found reviewing W9.17. Ticket allowed eq to stay False.
+- Notes: Wave 9 W9.18. Coordinator: `-O0`/`-O2` match CPython. Mixed K
+  TypeErrors every op. Leftover I-211 (factory == K).
+
+### I-210  `any`/`all`/`sum`/`zip`/`min` of complex / function still empty-default
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.19 / `w919_tail.py`: `any(1+2j)` / `all(1+2j)` / `sum(f)` /
+  `zip(1+2j,[1])` / `enumerate(1+2j)` / `min(1+2j)` / `max(f)` → TypeError;
+  `any([0,1])` / `sum([1,2])` / `zip([1],[2])` kept. Parent: False / True /
+  0 / [] / [] / None / None.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Any`, `All`, `Sum2`,
+  `pyc_zip_seq_len`, `MinList`, `MaxList`)
+- Blocks merge: no
+- Notes: Wave 9 W9.19. Coordinator: `-O0`/`-O2` match CPython. Else tails
+  TypeError leftover tags. Dict/set walks kept. Leftover I-212 (`set` of
+  same tags). I-211 stays out.
+
+### I-212  `set` of complex / function still empty
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.20 / `w920_set.py`: `set(1+2j)` / `set(f)` / `set(None)` /
+  `set(1)` / `set(True)` / `set(1.0)` → TypeError; `set([3,1,1,2])` /
+  `set("ab")` / `set({1:2})` / `set()` kept. Parent: `set()`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_set_iter_to_list`)
+- Blocks merge: no
+- Notes: Wave 9 W9.20. Coordinator: `-O0`/`-O2` match CPython. Leftover
+  I-213 first-class `s=set; s(None)` still empty.
+
+### I-213  first-class `set(None)` still empty
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.21 / `w921_tail.py`: `s=set; s(None)` → TypeError;
+  `s([1,2])` / `set()` / `set(None)` kept. Parent: `set()`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_adapt_set`)
+- Blocks merge: no
+- Notes: Wave 9 W9.21. Coordinator: `-O0`/`-O2` match CPython. Empty
+  args still `set()`.
+
+### I-211  `cmp_to_key` factory `==` K is TypeError, not AttributeError
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.21: `k==k(3)` → AttributeError; `k(3)==3` TypeError;
+  `k(3)<k(1)` / `sorted(..., key=k)` kept. Parent: TypeError.
+- Files: `src/runtime/Runtime.cpp` (`PyObject_CompareBool`)
+- Blocks merge: no
+- Notes: Wave 9 W9.21. Coordinator: `-O0`/`-O2` match CPython. Leftover
+  I-219 (`k==k` factory vs factory).
+
+### I-214  `dict.fromkeys` of leftover tags is `{}`
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.21: `dict.fromkeys(1+2j)` → TypeError;
+  `dict.fromkeys([1,2], 0)` kept. Parent: `{}`.
+- Files: `src/runtime/Runtime.cpp` (`PyDict_FromKeys`)
+- Blocks merge: no
+- Notes: Wave 9 W9.21. Coordinator: `-O0`/`-O2` match CPython. Walks via
+  `pyc_set_iter_to_list` (str/tuple/set too).
+
+### I-215  `collections.deque` of leftover tags is `[]`
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.21: `list(deque(1+2j))` → TypeError; `deque([1,2])` kept.
+  Parent: `[]`.
+- Files: `src/runtime/Runtime.cpp` (`PyCollections_Deque`)
+- Blocks merge: no
+- Notes: Wave 9 W9.21. Coordinator: `-O0`/`-O2` match CPython. Walks via
+  `pyc_set_iter_to_list`. Leftover I-217 (`deque(None)` vs 0-arg).
+
+### I-216  `None[:]` is `[]`, not TypeError
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.21: `x=None; x[:]` → TypeError; `[1,2][1:]` kept `[2]`.
+  Parent: `[]`.
+- Files: `src/runtime/Runtime.cpp` (`Pyc_GetSlice`)
+- Blocks merge: no
+- Notes: Wave 9 W9.21. Coordinator: `-O0`/`-O2` match CPython.
+
+### I-217  `deque(None)` is `[]`, not TypeError
+- Status: open
+- Severity: wrong-answer
+- Evidence: `deque(None)` — CPython TypeError; pyc `[]`. 0-arg `deque()`
+  is correctly `[]`; both are nullptr at the runtime helper.
+- Files: `src/runtime/Runtime.cpp` (`PyCollections_Deque`)
+- Blocks merge: no
+- Notes: Found reviewing W9.21. Distinguishing needs a missing-vs-None
+  sentinel (same class as I-173). Do not sneak.
+
+### I-218  set `|` / `&` / `-` of None is silent
+- Status: open
+- Severity: wrong-answer
+- Evidence: `{1} | None` — CPython TypeError; pyc `{1}`.
+  `{1} & None` — CPython TypeError; pyc `set()`.
+  `{1} - None` — CPython TypeError; pyc `{1}`.
+- Files: `src/runtime/Runtime.cpp` (`PySet_Union`, `Intersection`, `Difference`)
+- Blocks merge: no
+- Notes: Found reviewing W9.21. `{1}.update(None)` already TypeErrors.
+
+### I-219  `cmp_to_key` factory `==` factory is True, not AttributeError
+- Status: open
+- Severity: wrong-answer
+- Evidence: `k=cmp_to_key(cmp); k == k` — CPython 3.14 AttributeError;
+  pyc True (generic dict eq). Two Ks with `.obj` still cmp (I-203).
+- Files: `src/runtime/Runtime.cpp` (`PyObject_CompareBool`)
+- Blocks merge: no
+- Notes: Found reviewing W9.21 / I-211. Same CPython arm as factory==K.
 
 ---
 

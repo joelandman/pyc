@@ -4230,17 +4230,22 @@ PyObject* PyDict_PopItem(PyObject* d) {
     PyList_SetItem(pair, 1, v);
     return pair;
 }
+static PyObject* pyc_set_iter_to_list(PyObject* iterable);
+
 PyObject* PyDict_FromKeys(PyObject* keys, PyObject* defval) {
+    // I-214: leftover tags / None TypeError; walk the same shapes as set.
     PyObject* r = PyDict_New();
-    if (!keys) return r;
-    if (keys->type == 1) {
-        pyc_ensure_boxed_list(keys);
-        for (auto* k : keys->list) {
-            PyObject* v = defval;
-            if (v) Py_INCREF(v);
-            PyDict_SetItem(r, k, v);
-        }
+    PyObject* keyList = pyc_set_iter_to_list(keys);
+    if (!keyList) {
+        Py_DECREF(r);
+        return nullptr;
     }
+    for (auto* k : keyList->list) {
+        PyObject* v = defval;
+        if (v) Py_INCREF(v);
+        PyDict_SetItem(r, k, v);
+    }
+    Py_DECREF(keyList);
     return r;
 }
 
@@ -4256,7 +4261,11 @@ PyObject* PyDict_FromKeys(PyObject* keys, PyObject* defval) {
 static PyObject* pyc_set_iter_to_list(PyObject* iterable) {
     // Materialize any supported iterable into a fresh list. Mirrors the
     // `PyBuiltin_List` shapes (list/tuple/str/dict/set) without depending on it.
-    if (!iterable) return PyList_New(0);
+    // I-212: None (null) is not iterable — do not silently return [].
+    if (!iterable) {
+        pyc_raise_not_iterable(iterable);
+        return nullptr;
+    }
     if (pyc_super_not_iterable(iterable)) return nullptr;
     if (iterable->type == 1 || iterable->type == 7) {
         size_t n = (iterable->list_item_type == 1) ? iterable->ilist.size()
@@ -4319,7 +4328,10 @@ static PyObject* pyc_set_iter_to_list(PyObject* iterable) {
         }
         return r;
     }
-    return PyList_New(0);
+    // I-212: leftover tags (complex, function, int, bool, float, …)
+    // are not iterable. Do not silently return an empty set.
+    pyc_raise_not_iterable(iterable);
+    return nullptr;
 }
 
 PyObject* PySet_New(void) {
@@ -5814,7 +5826,7 @@ PyObject* Pyc_PowInt64Obj(int64_t base, int64_t exp) {
 
 // Zip seq walk (list/tuple/str/bytes) is defined near Reversed/Enumerate.
 // Forward-declared here so any/all/sorted/sum/min/max can reuse it (I-167).
-// Do not call pyc_zip_seq_len on unknown types: it TypeErrors on int/None.
+// pyc_zip_seq_len TypeErrors on int/None/float/bool and leftover tags.
 static size_t pyc_zip_seq_len(PyObject* s);
 static PyObject* pyc_zip_seq_item(PyObject* s, size_t i);
 static bool pyc_is_seq_walk(PyObject* s) {
@@ -5889,8 +5901,9 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
             if (item) Py_DECREF(item);
             if (!ok) return nullptr;
         }
-    } else if (lst->type == 0 || lst->type == 4 || lst->type == 5) {
-        // I-174: int/bool/float are not iterable; do not return start.
+    } else {
+        // I-174 / I-210: int/bool/float and leftover tags (complex,
+        // function, …) are not iterable; do not return start/0.
         Py_DECREF(total);
         pyc_raise_not_iterable(lst);
         return nullptr;
@@ -6143,11 +6156,9 @@ PyObject* PyBuiltin_Any(PyObject* lst) {
         }
         return PyBool_New(0);
     }
-    if (lst->type == 0 || lst->type == 4 || lst->type == 5) {
-        pyc_raise_not_iterable(lst);
-        return nullptr;
-    }
-    return PyBool_New(0);
+    // I-174 / I-210: int/bool/float and leftover tags are not iterable.
+    pyc_raise_not_iterable(lst);
+    return nullptr;
 }
 
 PyObject* PyBuiltin_All(PyObject* lst) {
@@ -6192,11 +6203,9 @@ PyObject* PyBuiltin_All(PyObject* lst) {
         }
         return PyBool_New(1);
     }
-    if (lst->type == 0 || lst->type == 4 || lst->type == 5) {
-        pyc_raise_not_iterable(lst);
-        return nullptr;
-    }
-    return PyBool_New(1);
+    // I-174 / I-210: int/bool/float and leftover tags are not iterable.
+    pyc_raise_not_iterable(lst);
+    return nullptr;
 }
 
 // PyBuiltin_Map(func, iterable) — applies func to each element of iterable,
@@ -6246,7 +6255,9 @@ PyObject* PyBuiltin_Map(PyObject* func, PyObject* iterable) {
         for (size_t i = 0; i < iterable->str.size(); ++i)
             items.push_back(pyc_zip_seq_item(iterable, i));
     } else {
-        return PyList_New(0);
+        // I-208: leftover tags (complex, function, …) are not iterable.
+        pyc_raise_not_iterable(iterable);
+        return nullptr;
     }
 
     PyObject* result = PyList_New(items.size());
@@ -6321,8 +6332,9 @@ PyObject* PyBuiltin_MapN(PyObject* func, PyObject* iterables) {
             }
             for (auto& pair : iter->dict) { if (pair.first) Py_INCREF(pair.first); items.push_back(pair.first); }
         } else {
-            minLen = 0;
-            break;
+            // I-208: unknown column TypeError, not silent empty.
+            pyc_raise_not_iterable(iter);
+            return nullptr;
         }
         if (items.size() < minLen) minLen = items.size();
     }
@@ -6388,7 +6400,9 @@ PyObject* PyBuiltin_Filter(PyObject* func, PyObject* iterable) {
         for (size_t i = 0; i < iterable->str.size(); ++i)
             items.push_back(pyc_zip_seq_item(iterable, i));
     } else {
-        return PyList_New(0);
+        // I-208: leftover tags (complex, function, …) are not iterable.
+        pyc_raise_not_iterable(iterable);
+        return nullptr;
     }
 
     bool isNone = (func == nullptr) || (func->type == 5 && func->value == 0);
@@ -6824,7 +6838,10 @@ PyObject* PyString_Replace(PyObject* s, PyObject* old_, PyObject* new_) {
 }
 
 PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject* step) {
-    if (!obj) return PyList_New(0);
+    if (!obj) {
+        pyc_raise_msg("TypeError", "'NoneType' object is not subscriptable");
+        return nullptr;
+    }
     if (obj->type == 7 && obj->cell_content) {
         pyc_raise_msg("TypeError", "'super' object is not subscriptable");
         return nullptr;
@@ -7274,8 +7291,8 @@ PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
     bool isSet = lst->type == 20;
     bool missingDef = defaultVal == Pyc_MissingDefault();
     if (!isList && !isSeq && !isDict && !isSet) {
-        // Unknown tags still print None when default is omitted.
-        if (defaultVal && !missingDef) { Py_INCREF(defaultVal); return defaultVal; }
+        // I-210: leftover tags (complex, function, …) are not iterable.
+        pyc_raise_not_iterable(lst);
         return nullptr;
     }
     size_t n = 0;
@@ -7327,7 +7344,8 @@ PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
     bool isSet = lst->type == 20;
     bool missingDef = defaultVal == Pyc_MissingDefault();
     if (!isList && !isSeq && !isDict && !isSet) {
-        if (defaultVal && !missingDef) { Py_INCREF(defaultVal); return defaultVal; }
+        // I-210: leftover tags (complex, function, …) are not iterable.
+        pyc_raise_not_iterable(lst);
         return nullptr;
     }
     size_t n = 0;
@@ -7592,9 +7610,10 @@ PyObject* PyBuiltin_Enumerate2(PyObject* iterable, PyObject* startObj) {
     return r;
 }
 // Zip walks list (type 1, including A4 ilist/flist), tuple
-// (type 7 && !cell_content), str (3), and bytes/bytearray (17/18).
-// Super is type 7 with cell_content (I-013) and is not iterable.
-// None (nullptr) and int (type 0) are TypeError, not length 0 (I-159).
+// (type 7 && !cell_content), str (3), bytes/bytearray (17/18),
+// dict (2), and set (20). Super is type 7 with cell_content (I-013)
+// and is not iterable. None/int/float/bool and leftover tags
+// (complex/function/…) TypeError, not length 0 (I-159 / I-210).
 static size_t pyc_zip_seq_len(PyObject* s) {
     if (!s) {
         pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
@@ -7624,6 +7643,8 @@ static size_t pyc_zip_seq_len(PyObject* s) {
     if (s->type == 2) return s->dict.size();
     // Set: insertion order. Tests use 1-element sets (I-161).
     if (s->type == 20) return s->setElems.size();
+    // I-210: leftover tags (complex, function, …) are not iterable.
+    pyc_raise_not_iterable(s);
     return 0;
 }
 static PyObject* pyc_zip_seq_item(PyObject* s, size_t i) {
@@ -11578,14 +11599,10 @@ extern "C" PyObject* PyCollections_Subtract(PyObject* args) {
 // "deque" tag — the generic dict-dispatch path can't attach a custom
 // tag to its result).
 extern "C" PyObject* PyCollections_Deque(PyObject* iterable) {
-    if (!iterable || iterable->type != 1) return PyList_New(0);
-    pyc_ensure_boxed_list(iterable);
-    PyObject* r = PyList_New(iterable->list.size());
-    for (size_t i = 0; i < iterable->list.size(); ++i) {
-        if (iterable->list[i]) Py_INCREF(iterable->list[i]);
-        PyList_SetItem(r, i, iterable->list[i]);
-    }
-    return r;
+    // 0-arg deque() is empty. None is also null here (same slot).
+    // Leftover tags TypeError via the set iterable walker (I-215).
+    if (!iterable) return PyList_New(0);
+    return pyc_set_iter_to_list(iterable);
 }
 extern "C" PyObject* PyDeque_Appendleft(PyObject* obj, PyObject* item) {
     if (!obj || obj->type != 1) return nullptr;
@@ -12434,9 +12451,17 @@ static PyObject* pyc_adapt_tuple(PyObject* args) {
     return PyBuiltin_Tuple(args->list[0]);
 }
 static PyObject* pyc_adapt_set(PyObject* args) {
-    PyObject* a = arg0(args);
+    // I-213: empty args stay set(); first-class set(None) is TypeError.
+    // Non-null leftovers already TypeError in PySet_Update (I-212).
+    if (!args || args->type != 1 || args->list.empty())
+        return PySet_New();
+    PyObject* a = args->list[0];
+    if (!a) {
+        pyc_raise_not_iterable(nullptr);
+        return nullptr;
+    }
     PyObject* res = PySet_New();
-    if (a) PySet_Update(res, a);
+    PySet_Update(res, a);
     return res;
 }
 static PyObject* pyc_adapt_range(PyObject* args) {
@@ -13263,19 +13288,21 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
             default: return 0;
         }
     }
-    // I-206: mixed K vs non-K. Ordering TypeError; eq/ne are False/True.
-    // Two Ks still use cmp (I-203) in the type-2 block below.
+    // I-209: mixed K vs non-K TypeErrors every op (CPython: "other argument
+    // must be K instance"), including ==/!=. Two Ks still use cmp (I-203).
+    // I-211: factory (no "obj") vs K is AttributeError "object".
     {
         bool aIsK = pyc_cmp_to_key_parts(a, true, nullptr, nullptr);
         bool bIsK = pyc_cmp_to_key_parts(b, true, nullptr, nullptr);
         if (aIsK != bIsK) {
-            switch (op) {
-                case 0: return 0;
-                case 1: return 1;
-                default:
-                    pyc_raise_msg("TypeError", "other argument must be K instance");
-                    return 0;
-            }
+            bool mixedFactory =
+                pyc_cmp_to_key_parts(a, false, nullptr, nullptr) ||
+                pyc_cmp_to_key_parts(b, false, nullptr, nullptr);
+            if (mixedFactory)
+                pyc_raise_msg("AttributeError", "object");
+            else
+                pyc_raise_msg("TypeError", "other argument must be K instance");
+            return 0;
         }
     }
     // Dict equality. CPython compares keys and values (order-independent).

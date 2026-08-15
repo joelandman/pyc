@@ -5258,6 +5258,19 @@ except TypeError as e:
     # W9.17 / I-204 I-205 I-206: GetSlice scalars; map/filter bytes; cmp_to_key leftovers.
     (open(__file__.replace("runner.py", "w917_tail.py")).read(),
      "TypeError\nTypeError\nTypeError\nTypeError\n[2, 3]\nbc\n['97', '98']\n[97, 98]\n['97', '98']\n[97, 98]\n['1', '2']\nTypeError\nTypeError\n[1, 2, 3]\nFalse\nTrue\n[1, 2, 3]\n3\n1\n"),
+    # W9.18 / I-208 I-209: map/filter of complex/function; k(3)==3 TypeError.
+    (open(__file__.replace("runner.py", "w918_tail.py")).read(),
+     "TypeError\nTypeError\nTypeError\nTypeError\n['1', '2']\n['97', '98']\nTypeError\nTypeError\nTypeError\nFalse\nTrue\n[1, 2, 3]\n"),
+    # W9.19 / I-210: any/all/sum/zip/enumerate/min/max of complex/function.
+    (open(__file__.replace("runner.py", "w919_tail.py")).read(),
+     "TypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTrue\n3\n[(1, 2)]\n['1']\nTypeError\n"),
+    # W9.20 / I-212: set() of leftover non-iterables TypeError.
+    (open(__file__.replace("runner.py", "w920_set.py")).read(),
+     "TypeError\nTypeError\nTypeError\nTypeError\nTypeError\nTypeError\n[1, 2, 3]\n['a', 'b']\n[1]\nset()\nTypeError\n"),
+    # W9.21 / I-213 I-211 I-214 I-215 I-216: first-class set(None); factory==K;
+    # fromkeys/deque leftover; None[:].
+    (open(__file__.replace("runner.py", "w921_tail.py")).read(),
+     "TypeError\n[1, 2]\nAttributeError\nTypeError\nFalse\n[1, 2, 3]\nTypeError\n{1: 0, 2: 0}\nTypeError\n[1, 2]\nTypeError\n[2]\nTypeError\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5333,6 +5346,14 @@ FILE_CASES = [
     ("w916_slice.py", []),
     # W9.17: GetSlice int/set/bool/float; map/filter bytes; cmp_to_key leftovers.
     ("w917_tail.py", []),
+    # W9.18: map/filter of complex/function; k(3)==3 TypeError.
+    ("w918_tail.py", []),
+    # W9.19: any/all/sum/zip/enumerate/min/max of complex/function.
+    ("w919_tail.py", []),
+    # W9.20: set() of leftover non-iterables TypeError.
+    ("w920_set.py", []),
+    # W9.21: first-class set(None); factory==K; fromkeys/deque; None[:].
+    ("w921_tail.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),
