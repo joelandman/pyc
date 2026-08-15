@@ -120,6 +120,9 @@ PyObject* PyBuiltin_Min2(PyObject* a, PyObject* b, PyObject* key);
 PyObject* PyBuiltin_Max2(PyObject* a, PyObject* b, PyObject* key);
 PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal);
 PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal);
+// Sentinel for an omitted min/max default= (I-178). Distinct from nullptr,
+// which is real None (`default=None`).
+PyObject* Pyc_MissingDefault(void);
 PyObject* PyBuiltin_List(PyObject* obj);
 PyObject* PyBuiltin_Reversed(PyObject* obj);
 PyObject* PyBuiltin_Enumerate(PyObject* iterable);

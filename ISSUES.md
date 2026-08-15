@@ -1003,13 +1003,14 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   Do not re-open I-156 / I-157.
 
 ### I-160  IMPLEMENTATION.md still says zip is 2-tuples
-- Status: open
+- Status: fixed
 - Severity: doc-drift
-- Evidence: IMPLEMENTATION.md ~3098: `enumerate`/`zip` (list of 2-tuples).
-  After W9.1, `zip(a,b,c)` is 3-tuples.
+- Evidence: IMPLEMENTATION.md tuple-returns list: `enumerate` (2-tuples),
+  `zip` (N-tuples). Current Status header notes I-156 / I-160.
+  Parent: `enumerate`/`zip` (list of 2-tuples).
 - Files: `IMPLEMENTATION.md`
 - Blocks merge: no
-- Notes: Prose leftover of Zip2. FEATURES.md just says `zip` — fine.
+- Notes: Wave 9 W9.7. Historical log corrected; not a runtime change.
 
 ### I-161  `zip` of dict / set / bool / float still empty
 - Status: open
@@ -1127,14 +1128,16 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   7/17/18 via `pyc_zip_seq_item`. Still does not walk type 3 (I-170).
 
 ### I-170  `sum` of str is 0, not TypeError
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: Sum2 does not walk type 3; returns start (default 0).
-  `sum("ab")` — CPython TypeError; pyc `0`.
+- Evidence: W9.7 / `w97_sum_minmax.py`: `sum("ab")` → TypeError (int+str);
+  `sum("")` → `0`; tuple/bytes kept. Parent: type 3 not walked; `addOne`
+  replaced a failed `PyNumber_Add` with `0`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
 - Blocks merge: no
-- Notes: Found reviewing W9.5. SWE left this on purpose. Do not demand
-  in W9.5.
+- Notes: Wave 9 W9.7. Coordinator: `-O0`/`-O2` match CPython 3.14.
+  Message is int+str, not the older “can't sum strings”. Leftover
+  str/bytes start is I-176. None items skipped is I-177.
 
 ### I-171  `SortedWithCmp` still skips tuple / str / bytes
 - Status: fixed
@@ -1162,15 +1165,17 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   do not use these.
 
 ### I-173  empty `min`/`max` is None, not TypeError
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `MinList`/`MaxList` `n==0` → `defaultVal` or `nullptr`.
-  `min(())` / `min([])` / `min("")` — CPython TypeError; pyc `None`.
-  `min([], default=99)` already matches.
-- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_MinList`, `PyBuiltin_MaxList`)
+- Evidence: W9.7: `min([])` / `min(())` / `min("")` / `max([])` → ValueError;
+  `min([], default=99)` → `99`; `min([], default=None)` → `None`.
+  Parent: `n==0` → `nullptr` (prints None). Register originally said
+  TypeError; CPython 3.14 is ValueError.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_MinList`, `PyBuiltin_MaxList`),
+  `src/Compiler.cpp` (omitted default → `Pyc_MissingDefault`)
 - Blocks merge: no
-- Notes: Found reviewing W9.5. Empty list was already None; tuple walk
-  extends the same path.
+- Notes: Wave 9 W9.7. Coordinator: `-O0`/`-O2` match CPython. Sentinel
+  distinguishes omitted default vs `default=None` (I-178 closed here).
 
 ### I-174  `any`/`all`/`sorted`/`sum`/`min`/`max` of None/int/bool/float/dict
 - Status: open
@@ -1202,6 +1207,37 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Found reviewing W9.6. Inline `key=cmp_to_key(cmp)` (ticket
   cases) is fine. First-class `s=sorted` is I-172. Do not demand in W9.6.
+
+### I-176  `sum` with str/bytes/bytearray start is not TypeError
+- Status: open
+- Severity: wrong-answer
+- Evidence: CPython 3.14 rejects start of those types even on an empty
+  iterable. `sum([], "")` / `sum("", "")` — CPython TypeError; pyc
+  returns the start. `sum("ab", "")` concatenates.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
+- Blocks merge: no
+- Notes: Found reviewing W9.7. Ticket cases use default start 0.
+
+### I-177  `sum` skips None items
+- Status: open
+- Severity: wrong-answer
+- Evidence: `addOne`: `if (!item) return;`
+  `sum([1, None])` — CPython TypeError; pyc `1`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Sum2`)
+- Blocks merge: no
+- Notes: Found reviewing W9.7. `sum([1, "a"])` now TypeErrors.
+
+### I-178  empty `min`/`max` with `default=None` is ValueError
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.7 resume: `Pyc_MissingDefault` sentinel. `min([], default=None)`
+  → `None`; `min([])` → ValueError. Parent after first W9.7 landing:
+  both were ValueError (None is nullptr).
+- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp`, `include/pyc/runtime.h`,
+  `src/codegen/Codegen.cpp`
+- Blocks merge: no
+- Notes: Wave 9 W9.7. Coordinator: `-O0`/`-O2` match CPython. First-class
+  `m=min; m([], default=None)` still I-172.
 
 ---
 

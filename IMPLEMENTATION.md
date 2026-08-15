@@ -32,6 +32,7 @@ Confirmed later and closed (do not re-open from a paragraph below):
   (`type==0/4`) then call `__specialized_*`; miss is the boxed callee.
   See “W4.3 Design Decision” below for the original review. Leftover
   native-join look-ahead is I-112.
+- `zip` is N-way (list of N-tuples), not only 2-tuples (I-156 / I-160).
 
 ## Design Choices of Omission
 
@@ -3095,7 +3096,8 @@ list branch; tuple-vs-list always unequal, matching CPython's `(1,2) ==
 `os.path.splitext` (2-tuple), `os.path.split` (2-tuple, newly implemented),
 `operator.itemgetter`/`attrgetter` multi-key results (tuple),
 `struct.unpack` (tuple), `str.partition`/`rpartition` (3-tuple),
-`enumerate`/`zip` (list of 2-tuples), `dict.items` (list of 2-tuples).
+`enumerate` (list of 2-tuples), `zip` (list of N-tuples; 2-arg is pairs),
+`dict.items` (list of 2-tuples).
 Also fixed: `complex.real`/`.imag` attribute reads (previously returned
 None — `Pyc_GetItem` now handles type 13); `os.path.split` was entirely
 missing (now implemented, returning a 2-tuple); `str.split`/`rsplit`

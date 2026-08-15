@@ -4963,6 +4963,35 @@ print(sorted(b"bac", key=cmp_to_key(cmp)))
 print(sorted([3, 1, 2], key=cmp_to_key(cmp)))
 print(sorted((3, 1, 2), key=cmp_to_key(cmp), reverse=True))
 """, "195\n195\n205\n6\n[1, 2, 3]\n['a', 'b', 'c']\n[97, 98, 99]\n[1, 2, 3]\n[3, 2, 1]\n"),
+    # W9.7 / I-170 I-173: sum(str) TypeError; empty min/max ValueError.
+    ("""try:
+    print(sum("ab"))
+except TypeError as e:
+    print(type(e).__name__)
+print(sum(""))
+print(sum((1, 2, 3)))
+print(sum(b"ab"))
+try:
+    print(min([]))
+except ValueError as e:
+    print(type(e).__name__)
+try:
+    print(min(()))
+except ValueError as e:
+    print(type(e).__name__)
+try:
+    print(min(""))
+except ValueError as e:
+    print(type(e).__name__)
+try:
+    print(max([]))
+except ValueError as e:
+    print(type(e).__name__)
+print(min([], default=99))
+print(min([], default=None))
+print(min([1, 2]))
+print(max([3, 1]))
+""", "TypeError\n0\n6\n195\nValueError\nValueError\nValueError\nValueError\n99\nNone\n1\n3\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5016,6 +5045,8 @@ FILE_CASES = [
     ("w95_seq.py", []),
     # W9.6: sum(bytes); SortedWithCmp walks tuple/str/bytes.
     ("w96_seq.py", []),
+    # W9.7: sum(str) TypeError; empty min/max ValueError.
+    ("w97_sum_minmax.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

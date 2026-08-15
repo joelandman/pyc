@@ -5604,6 +5604,10 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "assign", {runtimeStarList}, srcSlot);
                 ir.addInstruction(currentFunc, "br", {}, joinL);
                 ir.addInstruction(currentFunc, "label", {}, joinL);
+                if (defaultName.empty()) {
+                    defaultName = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"Pyc_MissingDefault"}, defaultName);
+                }
                 std::string res = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call",
                     {fnLst, srcSlot, keyName, defaultName}, res);
@@ -6132,6 +6136,10 @@ class LoweringVisitor {
             std::vector<std::string> posArgs(argRes.begin(),
                 argRes.begin() + std::min(posArgCount, argRes.size()));
             if (posArgs.size() == 1) {
+                if (defaultName.empty()) {
+                    defaultName = "$t" + std::to_string(tempCounter++);
+                    ir.addInstruction(currentFunc, "call", {"Pyc_MissingDefault"}, defaultName);
+                }
                 std::string res = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {fnLst, posArgs[0], keyName, defaultName}, res);
                 noteType(res, "boxed");

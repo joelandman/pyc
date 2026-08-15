@@ -95,6 +95,15 @@ extern char** environ;
 // never freed or duplicated by ownership paths).
 static constexpr int IMMORTAL_REFCOUNT = 0x3fffffff;
 
+// I-178: omitted min/max `default=` vs `default=None` (None is nullptr).
+// File-scope object; only the address is compared. Immortal so a later
+// DECREF of the call result is a no-op. Do not walk list/dict/str.
+static PyObject pyc_missing_default_obj;
+extern "C" PyObject* Pyc_MissingDefault(void) {
+    pyc_missing_default_obj.refcount = IMMORTAL_REFCOUNT;
+    return &pyc_missing_default_obj;
+}
+
 // Forward declaration of the try-stack head, used by division/modulo
 // zero-division reporting (we raise when an enclosing try is in scope, and
 // print-and-exit otherwise).
@@ -5651,33 +5660,37 @@ PyObject* PyBuiltin_Sum2(PyObject* lst, PyObject* start) {
     if (!lst) return start ? (Py_INCREF(start), start) : PyInt_FromLong(0);
     if (pyc_super_not_iterable(lst)) return nullptr;
     PyObject* total = start ? (Py_INCREF(start), start) : PyInt_FromLong(0);
-    auto addOne = [&](PyObject* item) {
-        if (!item) return;
+    // PyNumber_Add already TypeErrors on int+str (I-170). Do not replace a
+    // failed add with 0 — that made sum("ab") print 0 instead of raising.
+    auto addOne = [&](PyObject* item) -> bool {
+        if (!item) return true;
         PyObject* next = PyNumber_Add(total, item);
         Py_DECREF(total);
-        total = next ? next : PyInt_FromLong(0);
+        total = next;
+        return next != nullptr;
     };
     if (lst->type == 1) {
         if (lst->list_item_type == 1) {
-            for (auto val : lst->ilist) addOne(PyInt_FromLong(val));
+            for (auto val : lst->ilist) if (!addOne(PyInt_FromLong(val))) return nullptr;
         } else if (lst->list_item_type == 2) {
-            for (auto val : lst->flist) addOne(PyFloat_FromDouble(val));
+            for (auto val : lst->flist) if (!addOne(PyFloat_FromDouble(val))) return nullptr;
         } else {
-            for (auto* item : lst->list) addOne(item);
+            for (auto* item : lst->list) if (!addOne(item)) return nullptr;
         }
     } else if (lst->type == 2) {
-        for (auto& pair : lst->dict) addOne(pair.first);
+        for (auto& pair : lst->dict) if (!addOne(pair.first)) return nullptr;
     } else if (lst->type == 20) {
-        for (auto* e : lst->setElems) addOne(e);
-    } else if ((lst->type == 7 && !lst->cell_content) ||
-               lst->type == 17 || lst->type == 18) {
-        // Tuple and bytes/bytearray. Items of 17/18 are ints (I-169).
-        // Do not walk type 3: CPython TypeErrors on sum(str) (I-170).
+        for (auto* e : lst->setElems) if (!addOne(e)) return nullptr;
+    } else if (pyc_is_seq_walk(lst)) {
+        // Tuple, str, bytes/bytearray. Items of 17/18 are ints (I-169).
+        // Type 3 walks 1-char strings; addOne TypeErrors on int+str (I-170).
+        // Empty str: n==0, return start/0.
         size_t n = pyc_zip_seq_len(lst);
         for (size_t i = 0; i < n; ++i) {
             PyObject* item = pyc_zip_seq_item(lst, i);
-            addOne(item);
+            bool ok = addOne(item);
             if (item) Py_DECREF(item);
+            if (!ok) return nullptr;
         }
     }
     return total;
@@ -6926,8 +6939,10 @@ PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
     if (pyc_super_not_iterable(lst)) return nullptr;
     bool isList = lst && lst->type == 1;
     bool isSeq = pyc_is_seq_walk(lst);
+    bool missingDef = defaultVal == Pyc_MissingDefault();
     if (!isList && !isSeq) {
-        if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
+        // I-174: unknown tags still print None when default is omitted.
+        if (defaultVal && !missingDef) { Py_INCREF(defaultVal); return defaultVal; }
         return nullptr;
     }
     size_t n = 0;
@@ -6939,7 +6954,9 @@ PyObject* PyBuiltin_MinList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
         n = pyc_zip_seq_len(lst);
     }
     if (n == 0) {
-        if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
+        if (defaultVal && !missingDef) { Py_INCREF(defaultVal); return defaultVal; }
+        if (!defaultVal) return nullptr;  // default=None
+        pyc_raise_msg("ValueError", "min() iterable argument is empty");
         return nullptr;
     }
     auto getItem = [&](size_t i) -> PyObject* {
@@ -6968,8 +6985,9 @@ PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
     if (pyc_super_not_iterable(lst)) return nullptr;
     bool isList = lst && lst->type == 1;
     bool isSeq = pyc_is_seq_walk(lst);
+    bool missingDef = defaultVal == Pyc_MissingDefault();
     if (!isList && !isSeq) {
-        if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
+        if (defaultVal && !missingDef) { Py_INCREF(defaultVal); return defaultVal; }
         return nullptr;
     }
     size_t n = 0;
@@ -6981,7 +6999,9 @@ PyObject* PyBuiltin_MaxList(PyObject* lst, PyObject* key, PyObject* defaultVal) 
         n = pyc_zip_seq_len(lst);
     }
     if (n == 0) {
-        if (defaultVal) { Py_INCREF(defaultVal); return defaultVal; }
+        if (defaultVal && !missingDef) { Py_INCREF(defaultVal); return defaultVal; }
+        if (!defaultVal) return nullptr;  // default=None
+        pyc_raise_msg("ValueError", "max() iterable argument is empty");
         return nullptr;
     }
     auto getItem = [&](size_t i) -> PyObject* {
@@ -12023,7 +12043,7 @@ static PyObject* pyc_adapt_print(PyObject* args) {
 }
 static PyObject* pyc_adapt_min(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) return nullptr;
-    if (args->list.size() == 1) return PyBuiltin_MinList(args->list[0], nullptr, nullptr);
+    if (args->list.size() == 1) return PyBuiltin_MinList(args->list[0], nullptr, Pyc_MissingDefault());
     // Multiple positional args: compare pairwise
     PyObject* best = args->list[0];
     if (best) Py_INCREF(best);
@@ -12037,7 +12057,7 @@ static PyObject* pyc_adapt_min(PyObject* args) {
 }
 static PyObject* pyc_adapt_max(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) return nullptr;
-    if (args->list.size() == 1) return PyBuiltin_MaxList(args->list[0], nullptr, nullptr);
+    if (args->list.size() == 1) return PyBuiltin_MaxList(args->list[0], nullptr, Pyc_MissingDefault());
     PyObject* best = args->list[0];
     if (best) Py_INCREF(best);
     for (size_t i = 1; i < args->list.size(); ++i) {
