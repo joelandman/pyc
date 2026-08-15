@@ -6241,6 +6241,10 @@ PyObject* PyBuiltin_Map(PyObject* func, PyObject* iterable) {
     } else if (iterable->type == 3) {
         for (size_t i = 0; i < iterable->str.size(); ++i)
             items.push_back(PyUnicode_FromStringAndSize(iterable->str.data() + i, 1));
+    } else if (iterable->type == 17 || iterable->type == 18) {
+        // I-205: bytes/bytearray items are ints 0–255 (same as zip).
+        for (size_t i = 0; i < iterable->str.size(); ++i)
+            items.push_back(pyc_zip_seq_item(iterable, i));
     } else {
         return PyList_New(0);
     }
@@ -6304,6 +6308,10 @@ PyObject* PyBuiltin_MapN(PyObject* func, PyObject* iterables) {
         } else if (iter->type == 3) {
             for (size_t k = 0; k < iter->str.size(); ++k)
                 items.push_back(PyUnicode_FromStringAndSize(iter->str.data() + k, 1));
+        } else if (iter->type == 17 || iter->type == 18) {
+            // I-205: a bytes/bytearray column must walk, not empty the result.
+            for (size_t k = 0; k < iter->str.size(); ++k)
+                items.push_back(pyc_zip_seq_item(iter, k));
         } else if (iter->type == 20) {
             for (auto* e : iter->setElems) { if (e) Py_INCREF(e); items.push_back(e); }
         } else if (iter->type == 2) {
@@ -6375,6 +6383,10 @@ PyObject* PyBuiltin_Filter(PyObject* func, PyObject* iterable) {
     } else if (iterable->type == 3) {
         for (size_t i = 0; i < iterable->str.size(); ++i)
             items.push_back(PyUnicode_FromStringAndSize(iterable->str.data() + i, 1));
+    } else if (iterable->type == 17 || iterable->type == 18) {
+        // I-205: bytes/bytearray items are ints 0–255 (same as zip).
+        for (size_t i = 0; i < iterable->str.size(); ++i)
+            items.push_back(pyc_zip_seq_item(iterable, i));
     } else {
         return PyList_New(0);
     }
@@ -6836,6 +6848,15 @@ PyObject* Pyc_GetSlice(PyObject* obj, PyObject* start, PyObject* stop, PyObject*
             return nullptr;
         }
         pyc_raise_msg("KeyError", "slice(None, None, None)");
+        return nullptr;
+    }
+    // I-204: non-sequences TypeError before n / step-0 (int[::0] is
+    // TypeError, not ValueError). list/tuple/str/bytes stay sliceable.
+    if (obj->type != 1 && obj->type != 7 && obj->type != 3 &&
+        obj->type != 17 && obj->type != 18) {
+        std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
+                          "' object is not subscriptable";
+        pyc_raise_msg("TypeError", msg.c_str());
         return nullptr;
     }
     long n;
@@ -13242,6 +13263,21 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
             default: return 0;
         }
     }
+    // I-206: mixed K vs non-K. Ordering TypeError; eq/ne are False/True.
+    // Two Ks still use cmp (I-203) in the type-2 block below.
+    {
+        bool aIsK = pyc_cmp_to_key_parts(a, true, nullptr, nullptr);
+        bool bIsK = pyc_cmp_to_key_parts(b, true, nullptr, nullptr);
+        if (aIsK != bIsK) {
+            switch (op) {
+                case 0: return 0;
+                case 1: return 1;
+                default:
+                    pyc_raise_msg("TypeError", "other argument must be K instance");
+                    return 0;
+            }
+        }
+    }
     // Dict equality. CPython compares keys and values (order-independent).
     // We do the same: equal iff same keys and equal values. For ordering
     // (`<`, etc.), raise TypeError — we conservatively return 0.
@@ -14525,21 +14561,22 @@ static PyObject* pyc_apply_impl(PyObject* token, PyObject* argList, PyObject* kw
     }
     if (!haveTok) {
         if (token->type == 2) {
-            // I-203: cmp_to_key factory (has callable "cmp_to_key", no
-            // "obj") is not a class. Check before instantiation/__call__.
+            // I-203 / I-206: factory ({"cmp_to_key": cmp}) and K (plus
+            // "obj") are both 1-arg wrappers. Extra args TypeError.
+            // Applying a K returns a new K wrapping the argument.
             PyObject* cmpFn = nullptr;
-            if (pyc_cmp_to_key_parts(token, false, &cmpFn, nullptr) && cmpFn) {
+            if ((pyc_cmp_to_key_parts(token, false, &cmpFn, nullptr) ||
+                 pyc_cmp_to_key_parts(token, true, &cmpFn, nullptr)) && cmpFn) {
                 PyObject* cb = PyBuiltin_Callable(cmpFn);
                 int ok = PyObject_TruthValue(cb);
                 if (cb) Py_DECREF(cb);
                 if (ok) {
-                    PyObject* arg0 = nullptr;
-                    if (!argList || argList->type != 1 || argList->list.empty()) {
+                    if (!argList || argList->type != 1 || argList->list.size() != 1) {
                         pyc_raise_msg("TypeError",
                                       "cmp_to_key wrapper expected 1 argument");
                         return nullptr;
                     }
-                    arg0 = argList->list[0];
+                    PyObject* arg0 = argList->list[0];
                     PyObject* d = PyDict_New();
                     PyObject* k1 = PyUnicode_FromString("cmp_to_key");
                     PyDict_SetItem(d, k1, cmpFn);

@@ -1475,33 +1475,59 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   `{"cmp_to_key": cmp}`; K adds `"obj"`. No `__class__`. Leftover I-206.
 
 ### I-204  `GetSlice` of int / set / bool / float is `[]`
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `1[:]` / `{1}[:]` / `True[:]` / `(1.0)[:]` — CPython TypeError;
-  pyc `[]`. `Pyc_GetSlice` unknown-type tail still uses `n=0`.
+- Evidence: W9.17 / `w917_tail.py`: `n[:]` / `{1}[:]` / `True[:]` / `1.0[:]`
+  → TypeError; `[1,2,3][1:]` / `"abc"[1:]` kept. Parent: `[]`.
 - Files: `src/runtime/Runtime.cpp` (`Pyc_GetSlice`)
 - Blocks merge: no
-- Notes: Found reviewing W9.16. None stays I-058. list/tuple/str/bytes
-  slices kept.
+- Notes: Wave 9 W9.17. Coordinator: `-O0`/`-O2` match CPython. TypeError
+  before step-0 (`1[::0]` TypeError). None still `[]` (I-058). Other
+  unknown tags (complex/function) TypeError too.
 
 ### I-205  `map`/`filter` of bytes / bytearray is `[]`
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `list(map(str, b"ab"))` — CPython `['97', '98']`; pyc `[]`.
-  `list(filter(None, b"ab"))` — CPython `[97, 98]`; pyc `[]`.
+- Evidence: W9.17: `list(map(str, b"ab"))` → `['97', '98']`;
+  `list(filter(None, b"ab"))` → `[97, 98]`; same for bytearray.
+  Parent: `[]`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Map`, `MapN`, `Filter`)
 - Blocks merge: no
-- Notes: Found reviewing W9.16. zip/sum/reversed already walk 17/18.
+- Notes: Wave 9 W9.17. Coordinator: `-O0`/`-O2` match CPython. Items
+  are ints 0–255 via `pyc_zip_seq_item`. Leftover I-208 (complex/function).
 
 ### I-206  `cmp_to_key` extra-arg / mixed ordering / K-as-key
-- Status: open
-- Severity: latent
-- Evidence: `k(3, 4)` returns K(3); CPython TypeError. `k(3) < 1` is False
-  not TypeError. `sorted([3,1,2], key=k(3))` keeps `[3,1,2]` (None keys)
-  not TypeError.
+- Status: fixed
+- Severity: wrong-answer
+- Evidence: W9.17 (CPython 3.14): `k(3,4)` / `k(3)<1` → TypeError;
+  `sorted([3,1,2], key=k(3))` → `[1,2,3]`; `k(3)(1).obj` → `1`;
+  `k(3)<k(1)` / `sorted(..., key=k)` kept. Parent: dict / False /
+  `[3,1,2]` / None.
 - Files: `src/runtime/Runtime.cpp` (`pyc_apply_impl`, `PyObject_CompareBool`)
 - Blocks merge: no
-- Notes: Found reviewing W9.16 / I-203. 0-arg `k()` is TypeError.
+- Notes: Wave 9 W9.17. Coordinator: `-O0`/`-O2` match CPython. KeyWrapper
+  is callable (rewraps). Mixed eq `k(3)==3` still False (I-209).
+  `k(3)()` TypeErrors (arity).
+
+### I-208  `map`/`filter` of complex / function still `[]`
+- Status: open
+- Severity: wrong-answer
+- Evidence: `list(map(str, 1+2j))` / `list(map(str, (lambda: 0)))` —
+  CPython TypeError; pyc `[]`.
+- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Map`, `MapN`, `Filter`)
+- Blocks merge: no
+- Notes: Found reviewing W9.17. I-202 gated 0/4/5; I-205 added 17/18.
+  Else still empty default.
+
+### I-209  `k(3) == 3` is False, not TypeError
+- Status: open
+- Severity: wrong-answer
+- Evidence: `k=cmp_to_key(cmp); k(3)==3` — CPython TypeError
+  (`other argument must be K instance`); pyc False. Ordering mixed
+  (`k(3)<1`) is TypeError (I-206).
+- Files: `src/runtime/Runtime.cpp` (`PyObject_CompareBool`)
+- Blocks merge: no
+- Notes: Found reviewing W9.17. Ticket allowed eq to stay False.
 
 ---
 

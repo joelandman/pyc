@@ -5255,6 +5255,9 @@ except TypeError as e:
     # W9.16 / I-201 I-202 I-203: GetSlice; map/filter of scalars; cmp_to_key callable.
     (open(__file__.replace("runner.py", "w916_slice.py")).read(),
      "TypeError\nTypeError\nTypeError\nKeyError\n[2, 3]\n(2, 3)\nbc\nTypeError\nTypeError\nTypeError\nTypeError\n['1', '2']\n[1, 2]\n['1']\nFalse\nTrue\nTrue\nTrue\n[1, 2, 3]\n3\n"),
+    # W9.17 / I-204 I-205 I-206: GetSlice scalars; map/filter bytes; cmp_to_key leftovers.
+    (open(__file__.replace("runner.py", "w917_tail.py")).read(),
+     "TypeError\nTypeError\nTypeError\nTypeError\n[2, 3]\nbc\n['97', '98']\n[97, 98]\n['97', '98']\n[97, 98]\n['1', '2']\nTypeError\nTypeError\n[1, 2, 3]\nFalse\nTrue\n[1, 2, 3]\n3\n1\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5328,6 +5331,8 @@ FILE_CASES = [
     ("w915_wa.py", []),
     # W9.16: GetSlice class/instance/module/dict; map/filter scalars; cmp_to_key callable.
     ("w916_slice.py", []),
+    # W9.17: GetSlice int/set/bool/float; map/filter bytes; cmp_to_key leftovers.
+    ("w917_tail.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),
