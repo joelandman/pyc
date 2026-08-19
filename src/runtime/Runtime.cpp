@@ -4461,7 +4461,19 @@ static PyObject* pyc_set_from_iter(PyObject* iterable) {
     return r;
 }
 
+static bool pyc_set_none_operand(PyObject* a, PyObject* b, const char* op) {
+    if (a && b) return false;
+    std::string msg = std::string("unsupported operand type(s) for ") + op + ": '";
+    msg += pyc_builtin_type_name(a);
+    msg += "' and '";
+    msg += pyc_builtin_type_name(b);
+    msg += "'";
+    pyc_raise_msg("TypeError", msg.c_str());
+    return true;
+}
+
 PyObject* PySet_Union(PyObject* a, PyObject* b) {
+    if (pyc_set_none_operand(a, b, "|")) return nullptr;
     PyObject* r = PySet_New();
     if (a && a->type == 20) {
         for (auto* e : a->setElems) {
@@ -4483,8 +4495,8 @@ PyObject* PySet_Union(PyObject* a, PyObject* b) {
 }
 
 PyObject* PySet_Intersection(PyObject* a, PyObject* b) {
+    if (pyc_set_none_operand(a, b, "&")) return nullptr;
     PyObject* r = PySet_New();
-    if (!a || !b) return r;
     PyObject* la = pyc_set_iter_to_list(a);
     for (auto* e : la->list) {
         int inB = 0;
@@ -4503,8 +4515,8 @@ PyObject* PySet_Intersection(PyObject* a, PyObject* b) {
 }
 
 PyObject* PySet_Difference(PyObject* a, PyObject* b) {
+    if (pyc_set_none_operand(a, b, "-")) return nullptr;
     PyObject* r = PySet_New();
-    if (!a) return r;
     PyObject* la = pyc_set_iter_to_list(a);
     for (auto* e : la->list) {
         int inB = 0;
@@ -10298,6 +10310,7 @@ struct PycFile {
     std::string path;
     std::string mode;
     FILE* fp;
+    std::string encoding;
 };
 static std::unordered_map<PyObject*, PycFile> g_pycFiles;
 struct PycBufIO {
@@ -10559,10 +10572,15 @@ static PyObject* pyc_file_exit_adapter(PyObject* args) {
     return PyBuiltin_FileClose(args->list[0]);
 }
 
-extern "C" PyObject* PyBuiltin_Open(PyObject* path, PyObject* mode) {
+extern "C" PyObject* PyBuiltin_Open(PyObject* path, PyObject* mode, PyObject* encoding) {
     if (!pyc_is_path_like(path)) return nullptr;
     std::string pathStr = path->str;
     std::string modeStr = (mode && mode->type == 3) ? mode->str : std::string("r");
+    bool binary = modeStr.find('b') != std::string::npos;
+    if (binary && encoding && encoding->type == 3) {
+        pyc_raise_msg("ValueError", "binary mode doesn't take an encoding argument");
+        return nullptr;
+    }
     FILE* fp = std::fopen(pathStr.c_str(), modeStr.c_str());
     if (!fp) {
         std::fprintf(stderr, "FileNotFoundError: [Errno 2] No such file or directory: '%s'\n", pathStr.c_str());
@@ -10581,7 +10599,16 @@ extern "C" PyObject* PyBuiltin_Open(PyObject* path, PyObject* mode) {
     addTok("read",      "pyc_file_read");
     addTok("readline",  "pyc_file_readline");
     addTok("close",     "pyc_file_close");
-    g_pycFiles[d] = {pathStr, modeStr, fp};
+    std::string enc;
+    if (!binary) {
+        enc = (encoding && encoding->type == 3 && !encoding->str.empty())
+            ? encoding->str : std::string("utf-8");
+        PyObject* ek = PyUnicode_FromString("encoding");
+        PyObject* ev = PyUnicode_FromStringAndSize(enc.data(), enc.size());
+        PyDict_SetItem(d, ek, ev);
+        Py_DECREF(ek); Py_DECREF(ev);
+    }
+    g_pycFiles[d] = {pathStr, modeStr, fp, enc};
     return d;
 }
 
@@ -12067,9 +12094,11 @@ extern "C" PyObject* PyCollections_Subtract(PyObject* args) {
 // "deque" tag — the generic dict-dispatch path can't attach a custom
 // tag to its result).
 extern "C" PyObject* PyCollections_Deque(PyObject* iterable) {
-    // 0-arg deque() is empty. None is also null here (same slot).
-    // Leftover tags TypeError via the set iterable walker (I-215).
-    if (!iterable) return PyList_New(0);
+    if (iterable == Pyc_MissingDefault()) return PyList_New(0);
+    if (!iterable) {
+        pyc_raise_msg("TypeError", "'NoneType' object is not iterable");
+        return nullptr;
+    }
     return pyc_set_iter_to_list(iterable);
 }
 extern "C" PyObject* PyDeque_Appendleft(PyObject* obj, PyObject* item) {
@@ -14048,6 +14077,11 @@ int PyObject_CompareBool(PyObject* a, PyObject* b, int op) {
                 pyc_raise_msg("AttributeError", "object");
             else
                 pyc_raise_msg("TypeError", "other argument must be K instance");
+            return 0;
+        }
+        if (!aIsK && pyc_cmp_to_key_parts(a, false, nullptr, nullptr) &&
+            pyc_cmp_to_key_parts(b, false, nullptr, nullptr)) {
+            pyc_raise_msg("AttributeError", "object");
             return 0;
         }
     }
@@ -17423,7 +17457,7 @@ extern "C" PyObject* PyTempfile_NamedTemporaryFile(PyObject* args) {
     ::close(fd);
     PyObject* mode = PyUnicode_FromString("w+");
     PyObject* path = PyUnicode_FromString(tmpl);
-    PyObject* f = PyBuiltin_Open(path, mode);
+    PyObject* f = PyBuiltin_Open(path, mode, nullptr);
     Py_DECREF(mode); Py_DECREF(path);
     return f;
 }

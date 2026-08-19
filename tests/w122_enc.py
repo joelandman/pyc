@@ -1,0 +1,21 @@
+# W12.2 / I-225: open(..., encoding=)
+p = "/tmp/pyc_w122_enc.txt"
+f = open(p, "w", encoding="utf-8")
+print(f.encoding)
+f.write("hi")
+f.close()
+f = open(p, encoding="utf-8")
+print(f.read())
+print(f.encoding)
+f.close()
+try:
+    open(p, "rb", encoding="utf-8")
+except ValueError:
+    print("bin-enc")
+f = open(p, "rb")
+print(f.read())
+f.close()
+f = open(p, "w")
+f.write("ok")
+f.close()
+print(open(p).read())

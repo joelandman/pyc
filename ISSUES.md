@@ -1625,33 +1625,33 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 9 W9.21. Coordinator: `-O0`/`-O2` match CPython.
 
 ### I-217  `deque(None)` is `[]`, not TypeError
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `deque(None)` — CPython TypeError; pyc `[]`. 0-arg `deque()`
-  is correctly `[]`; both are nullptr at the runtime helper.
-- Files: `src/runtime/Runtime.cpp` (`PyCollections_Deque`)
+- Evidence: W12.1 / `w121_wa.py`: `deque()` → `[]`; `deque(None)` →
+  TypeError. Parent: both empty.
+- Files: `src/runtime/Runtime.cpp` (`PyCollections_Deque`),
+  `src/Compiler.cpp` (`Pyc_MissingDefault` on 0-arg)
 - Blocks merge: no
-- Notes: Found reviewing W9.21. Distinguishing needs a missing-vs-None
-  sentinel (same class as I-173). Do not sneak.
+- Notes: Wave 12 W12.1. 0-arg is MissingDefault; None is nullptr.
 
 ### I-218  set `|` / `&` / `-` of None is silent
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `{1} | None` — CPython TypeError; pyc `{1}`.
-  `{1} & None` — CPython TypeError; pyc `set()`.
-  `{1} - None` — CPython TypeError; pyc `{1}`.
-- Files: `src/runtime/Runtime.cpp` (`PySet_Union`, `Intersection`, `Difference`)
+- Evidence: W12.1 / `w121_wa.py`: `{1} | None` / `&` / `-` → TypeError;
+  `{1} | {2}` kept. Parent: `{1}` / `set()` / `{1}`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_set_none_operand`)
 - Blocks merge: no
-- Notes: Found reviewing W9.21. `{1}.update(None)` already TypeErrors.
+- Notes: Wave 12 W12.1. `^` leftover if it still swallows None.
 
 ### I-219  `cmp_to_key` factory `==` factory is True, not AttributeError
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `k=cmp_to_key(cmp); k == k` — CPython 3.14 AttributeError;
-  pyc True (generic dict eq). Two Ks with `.obj` still cmp (I-203).
+- Evidence: W12.1 / `w121_wa.py`: `k==k` → AttributeError; `k(3)<k(1)`
+  still False. Parent: True.
 - Files: `src/runtime/Runtime.cpp` (`PyObject_CompareBool`)
 - Blocks merge: no
-- Notes: Found reviewing W9.21 / I-211. Same CPython arm as factory==K.
+- Notes: Wave 12 W12.1. Two factories (no `obj`) AttributeError before
+  dict eq. Two Ks still cmp (I-203).
 
 ### I-222  Boxed / first-class file methods still miss
 - Status: fixed
@@ -1688,14 +1688,17 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 11 W11.1. Uses `pyc_file_or_unreadable` + `pyc_file_make_data`.
 
 ### I-225  `read()` on write-only; `encoding=`; `readline(n)`
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: W11.1 write-only `read()`. W11.2 closed `readline(n)`
-  (`f.readline(2)` → `'he'`; boxed `[open(p)][0].readline(2)`). Leftover:
-  `encoding=` dropped.
-- Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp`
+- Evidence: W12.2 / `w122_enc.py`: `open(p,"w",encoding="utf-8").encoding`
+  → `utf-8`; readback `hi`; `open(...,"rb",encoding="utf-8")` ValueError;
+  default `open` still works. Parent: encoding dropped; `open(p,encoding=)`
+  used the encoding string as fopen mode.
+- Files: `src/Compiler.cpp` (`open` + npos), `src/runtime/Runtime.cpp`
+  (`PyBuiltin_Open` 3-arg), `src/codegen/Codegen.cpp`
 - Blocks merge: no
-- Notes: Found reviewing W10.1. `PyBuiltin_FileReadlineN` + proven arm.
+- Notes: Wave 12 W12.2. Text `f.encoding` stored on the file dict. No
+  real codec; payload is still UTF-8 bytes. Binary has no `.encoding`.
 
 ### I-226  `Path.rglob` / `**` glob still missing
 - Status: fixed

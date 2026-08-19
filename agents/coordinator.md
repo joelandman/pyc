@@ -74,3 +74,5 @@ PYC_BINARY=./build/pyc python3 tests/o2_smoke.py
 
 Wave 0 → Wave 1 correctness → Wave 2 dispatch → Wave 3 polish → Wave 4 perf
 → Wave 5 close-out (`agents/wave5.md`). I-014 implement is W5.8 (optional).
+Wave 11 stdlib fill-out (`agents/wave11.md`) landed. Next: Wave 12
+leftover correctness (`agents/wave12.md`).

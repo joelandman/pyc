@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **811/811** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796, 800, 802, 804, 806) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **815/815** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796, 800, 802, 804, 806, 811, 813) are stale.
 
 ---
 
@@ -192,15 +192,11 @@ consumers either call `pyc_ensure_boxed_list()` or branch on `list_item_type`
 
 ## File I/O
 
-`open(path, mode)` / `open(Path)` / `with open(...) as f:` — `.write()`,
-`.read()` / `.read(n)`, `.readline()`, `.readlines()`, `.close()`.
-`open(..., "rb")` returns bytes; `readlines()` on `"rb"` is `list[bytes]`;
-`write(bytes)` / `write(bytearray)` in `"wb"`; str on `"wb"` / bytes on text
-is TypeError; write-only `read()` is OSError; closed `readlines()` is
-ValueError ([I-118](ISSUES.md)/[I-223](ISSUES.md)/[I-224](ISSUES.md)/[I-227](ISSUES.md)).
-Boxed `[f].read()` / mixed-param file methods work ([I-222](ISSUES.md)).
-`readline(n)` honors size. Leftover: bound `h = f.read`, `encoding=`
-([I-228](ISSUES.md)/[I-225](ISSUES.md)).
+`open(path, mode)` / `open(Path)` / `open(..., encoding=)` / `with open(...) as f:` —
+`.write()`, `.read()` / `.read(n)`, `.readline()` / `.readline(n)`,
+`.readlines()`, `.close()`, `.encoding` (text). `open(..., "rb")` returns
+bytes; `encoding=` on `"rb"` is ValueError. No real codec (payload is UTF-8).
+Leftover: bound `h = f.read` ([I-228](ISSUES.md)).
 
 ---
 

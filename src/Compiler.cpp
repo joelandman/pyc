@@ -4777,7 +4777,13 @@ class LoweringVisitor {
     // noteType(res, "deque") drives the typeOf-gated .appendleft()/
     // .popleft()/.rotate() dispatch below.
     std::string lowerDequeConstruct(const std::vector<std::string>& posArgs) {
-        std::string arg = posArgs.empty() ? "" : posArgs[0];
+        std::string arg;
+        if (posArgs.empty()) {
+            arg = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"Pyc_MissingDefault"}, arg);
+        } else {
+            arg = posArgs[0];
+        }
         std::string res = "$t" + std::to_string(tempCounter++);
         ir.addInstruction(currentFunc, "call", {"PyCollections_Deque", arg}, res, "list");
         noteType(res, "deque");
@@ -6113,10 +6119,28 @@ class LoweringVisitor {
         // dict is annotated as "dict" so the with-statement and
         // method-call dispatch find the entries.
         if (funcName == "open") {
+            size_t npos = 0;
+            for (size_t i = 1; i < node->children.size(); ++i) {
+                const auto* ch = node->children[i].get();
+                if (!ch || ch->type == "Keyword" || ch->type == "Starred") continue;
+                ++npos;
+            }
             std::string path = argRes.size() > 0 ? argRes[0] : "";
-            std::string mode = argRes.size() > 1 ? argRes[1] : "";
+            std::string mode = npos >= 2 && argRes.size() > 1 ? argRes[1] : "";
+            if (mode.empty()) {
+                mode = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "nconst", {}, mode, "none");
+            }
+            std::string enc;
+            for (const auto& kv : kwArgs) {
+                if (kv.first == "encoding") enc = kv.second;
+            }
+            if (enc.empty()) {
+                enc = "$c" + std::to_string(tempCounter++);
+                ir.addInstruction(currentFunc, "nconst", {}, enc, "none");
+            }
             std::string res = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Open", path, mode}, res);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Open", path, mode, enc}, res);
             // "file", not "dict" — see the typeOf(obj)=="file" branch in
             // lowerMethodCall for why plain "dict" typing broke .write().
             noteType(res, "file");

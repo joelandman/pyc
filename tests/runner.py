@@ -5301,6 +5301,12 @@ except TypeError as e:
     # W11.5–W11.20: time, glob**, os, math/cmath/re/operator, new modules.
     (open(__file__.replace("runner.py", "w11_rest.py")).read(),
      "1970-01-01\n2020\nTrue\n['a.txt', 'b.txt']\nTrue\nok\n4\n10\nTrue\n7\na\\.b\nTrue\n['a.py']\nhi\nb'xy'\n['a', 'b c', 'd']\nTrue\n772b71c8a2997e768be01d9711e4a4f34a24ef33\n{'a': 1, 'b': True, 'c': 'x'}\n1 2\n1\nb'hellohellohello'\nTrue\nTrue\n1\nTrue\n4\n8\ntb\n"),
+    # W12.1 / I-217 I-218 I-219
+    (open(__file__.replace("runner.py", "w121_wa.py")).read(),
+     "[]\ndeque-none\nor-none\nand-none\nsub-none\n{1, 2}\nfactory-eq\nFalse\n"),
+    # W12.2 / I-225: open(..., encoding=)
+    (open(__file__.replace("runner.py", "w122_enc.py")).read(),
+     "utf-8\nhi\nutf-8\nbin-enc\nb'hi'\nok\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5402,6 +5408,10 @@ FILE_CASES = [
     ("w11_rest.py", []),
     # W11.18 argparse
     ("w11_argparse.py", ["hello", "--x", "3"]),
+    # W12.1 / I-217 I-218 I-219
+    ("w121_wa.py", []),
+    # W12.2 / I-225: open(..., encoding=)
+    ("w122_enc.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

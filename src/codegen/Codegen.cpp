@@ -287,8 +287,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* builtinLenTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
     llvm::Function::Create(builtinLenTy, llvm::Function::ExternalLinkage, "PyBuiltin_Len", module.get());
 
-    // PyBuiltin_Open(path, mode) -> file dict (2 args).
-    llvm::FunctionType* builtinOpenTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+    // PyBuiltin_Open(path, mode, encoding) -> file dict.
+    llvm::FunctionType* builtinOpenTy = llvm::FunctionType::get(
+        pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(builtinOpenTy, llvm::Function::ExternalLinkage, "PyBuiltin_Open", module.get());
 
     llvm::FunctionType* printNewlineTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
