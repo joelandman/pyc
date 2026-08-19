@@ -26,6 +26,28 @@ namespace fs = std::filesystem;
 
 namespace pyc {
 
+static bool pyc_have_gold_plugin() {
+    static int cached = -1;
+    if (cached >= 0) return cached == 1;
+    cached = 0;
+    FILE* p = popen("clang++ -print-file-name=LLVMgold.so 2>/dev/null", "r");
+    if (!p) return false;
+    char buf[512];
+    if (fgets(buf, sizeof(buf), p)) {
+        buf[strcspn(buf, "\n")] = 0;
+        if (buf[0] && std::string(buf) != "LLVMgold.so" && fs::exists(buf))
+            cached = 1;
+    }
+    pclose(p);
+    return cached == 1;
+}
+
+static const char* pyc_thin_lto_link() {
+    if (pyc_have_gold_plugin())
+        return "-flto=thin -Wl,--allow-multiple-definition ";
+    return "-Wl,--allow-multiple-definition ";
+}
+
 // Forward declaration: defined near DiscoveredModule/discoverDottedModule
 // below, but used by LoweringVisitor::lower's ImportFrom handling above
 // that point in the file. See the definition for full documentation.
@@ -12427,7 +12449,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
              }
 
              if (useLTO) {
-                 linkCmd += instrOutput + ".o -flto=thin -Wl,--allow-multiple-definition ";
+                 linkCmd += instrOutput + ".o ";
+                 linkCmd += pyc_thin_lto_link();
              } else {
                  linkCmd += instrOutput + ".o ";
              }
@@ -13184,7 +13207,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         // -O4/O5: add PGO profile-use flag when a profile is provided.
         // -O4: add ThinLTO-specific link flags for better parallelism and optimization.
         if (useLTO) {
-            linkCmd += outputPath + ".o -flto=thin -Wl,--allow-multiple-definition ";
+            linkCmd += outputPath + ".o ";
+            linkCmd += pyc_thin_lto_link();
             if (optLevel >= 4) {
                 linkCmd += "-flto-jobs=0 ";
             }

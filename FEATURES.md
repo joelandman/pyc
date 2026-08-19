@@ -292,7 +292,8 @@ Boxed-receiver methods (function parameters) use arity-specific
 ([I-015](ISSUES.md)).
 
 `-O0` = no LTO, no LLVM passes (what the runner uses). `-O2` is the user default
-(LTO of `runtime.bc` + LLVM O2). Verify both.
+(LTO of `runtime.bc` + LLVM O2). Link-time `-flto=thin` is omitted when the
+LLVMgold plugin is missing (W12.5). Verify both.
 
 ---
 

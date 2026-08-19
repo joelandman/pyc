@@ -108,10 +108,12 @@ SWR hunts the same token pattern on StringIO / hashobj / argparse.
 I-112 Codegen lock. Abort on FILE_CASE or nbody mismatch.
 I-158 can be its own tiny Compiler slice after I-112 releases Codegen.
 
-### W12.5 — `-O2` gold plugin (optional)
+### W12.5 — `-O2` gold plugin (optional) — done
 
-CMake / Compiler link line. No semantic change. Prove
-`tests/o2_smoke.py` and one import-suite file link.
+Skip `-flto=thin` when `clang++ -print-file-name=LLVMgold.so` is
+missing (this machine). Compile-time runtime.bc LTO still runs.
+`o2_smoke` 2/2; import suite tests 1–6 compile and run. ThinLTO
+finalize via lld FPE'd hello.py — not used.
 
 ---
 
