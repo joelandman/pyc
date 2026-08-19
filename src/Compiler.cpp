@@ -9688,6 +9688,11 @@ class LoweringVisitor {
             noteType(res, "bytes");
             return res;
         }
+        if (methodName == "update" && typeOf(obj) == "hashobj") {
+            std::string arg = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyHashlib_Update", obj, arg}, res);
+            return res;
+        }
         // file.write(x) — pre-existing bug found while investigating this
         // phase's calling conventions: open()'s returned dict used to be
         // typed "dict", so .write() fell through to the generic
@@ -9745,7 +9750,11 @@ class LoweringVisitor {
             return res;
         }
         if (typeOf(obj) == "file" && methodName == "readline") {
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_FileReadline", obj}, res);
+            if (args.empty()) {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_FileReadline", obj}, res);
+            } else {
+                ir.addInstruction(currentFunc, "call", {"PyBuiltin_FileReadlineN", obj, args[0]}, res);
+            }
             return res;
         }
         if (typeOf(obj) == "file" && methodName == "close") {
@@ -9798,6 +9807,12 @@ class LoweringVisitor {
         if (methodName == "glob" && typeOf(obj) == "path") {
             std::string pat = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyPathlib_Glob", obj, pat}, res, "list");
+            noteType(res, "list");
+            return res;
+        }
+        if (methodName == "rglob" && typeOf(obj) == "path") {
+            std::string pat = args.empty() ? "" : args[0];
+            ir.addInstruction(currentFunc, "call", {"PyPathlib_Rglob", obj, pat}, res, "list");
             noteType(res, "list");
             return res;
         }
@@ -11669,21 +11684,22 @@ static std::string sanitizeModuleIdent(const std::string& dottedName) {
 static const std::unordered_map<std::string, std::vector<std::string>>& syntheticModuleExports() {
     static const std::unordered_map<std::string, std::vector<std::string>> table = {
         {"re",         {"finditer", "findall", "compile", "match", "search", "sub", "split",
-                        "IGNORECASE", "MULTILINE", "DOTALL"}},
+                        "escape", "IGNORECASE", "MULTILINE", "DOTALL"}},
         {"os",         {"environ", "path", "unlink", "remove", "rename", "getcwd",
-                        "listdir", "makedirs"}},
+                        "listdir", "makedirs", "walk", "stat", "chmod"}},
         {"subprocess", {"call", "check_output"}},
         {"functools",  {"cmp_to_key", "reduce", "partial", "wraps", "lru_cache"}},
         {"operator",   {"add", "sub", "mul", "truediv", "mod", "eq", "ne", "lt", "gt",
-                        "le", "ge", "not_", "neg", "itemgetter", "attrgetter"}},
-        {"cmath",      {"sqrt", "log", "exp", "sin", "cos", "tan"}},
-        {"time",       {"perf_counter"}},
+                        "le", "ge", "not_", "neg", "itemgetter", "attrgetter", "abs"}},
+        {"cmath",      {"sqrt", "log", "exp", "sin", "cos", "tan", "phase"}},
+        {"time",       {"perf_counter", "time", "sleep", "strftime", "localtime", "gmtime"}},
         {"math",       {"sqrt", "floor", "ceil", "trunc", "pow", "log", "log2", "log10",
                          "exp", "sin", "cos", "tan", "asin", "acos", "atan", "atan2",
                          "hypot", "fabs", "fmod", "degrees", "radians", "isnan", "isinf",
-                         "isfinite", "gcd", "factorial", "pi", "e", "tau", "inf", "nan"}},
+                         "isfinite", "gcd", "factorial", "isqrt", "comb",
+                         "pi", "e", "tau", "inf", "nan"}},
         {"json",       {"dumps", "loads"}},
-        {"random",     {"seed", "random", "randrange", "randint", "uniform", "choice", "shuffle"}},
+        {"random",     {"seed", "random", "randrange", "randint", "uniform", "choice", "shuffle", "sample"}},
         {"itertools",  {"chain", "product", "combinations", "permutations", "starmap",
                          "islice", "zip_longest", "accumulate", "takewhile", "dropwhile",
                          "compress", "groupby"}},
@@ -11707,7 +11723,24 @@ static const std::unordered_map<std::string, std::vector<std::string>>& syntheti
         {"shutil",     {"copyfile", "move", "rmtree"}},
         {"glob",       {"glob"}},
         {"csv",        {"reader", "writer"}},
-        {"decimal",    {"Decimal"}},
+        {"decimal",    {"Decimal", "getcontext", "localcontext"}},
+        {"fnmatch",    {"fnmatch", "filter"}},
+        {"io",         {"StringIO", "BytesIO"}},
+        {"tempfile",   {"mkstemp", "NamedTemporaryFile", "TemporaryDirectory"}},
+        {"pprint",     {"pprint", "pformat"}},
+        {"errno",      {"ENOENT", "EACCES", "EEXIST", "EINVAL", "EPERM", "EISDIR", "ENOTDIR"}},
+        {"stat",       {"S_IFDIR", "S_IFREG", "S_IRUSR", "S_IWUSR", "S_IXUSR", "S_ISDIR", "S_ISREG"}},
+        {"shlex",      {"split"}},
+        {"filecmp",    {"cmp"}},
+        {"hmac",       {"new"}},
+        {"secrets",    {"token_bytes", "token_hex"}},
+        {"tomllib",    {"loads", "load"}},
+        {"fractions",  {"Fraction"}},
+        {"argparse",   {"ArgumentParser"}},
+        {"zlib",       {"compress", "decompress"}},
+        {"gzip",       {"compress", "decompress"}},
+        {"warnings",   {"warn"}},
+        {"traceback",  {"format_exception"}},
     };
     return table;
 }
@@ -12373,7 +12406,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
              }
              linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
                  pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
-                 runtimeLink + " " + pythonLibLink + " -lpcre2-8 -lmpdec -o " + instrOutput + " -O3";
+                 runtimeLink + " " + pythonLibLink + " -lpcre2-8 -lmpdec -lz -o " + instrOutput + " -O3";
             linkCmd += " -fprofile-instr-generate=" + instrOutput + ".profraw";
             if (debugInfo) linkCmd += " -g";
 
@@ -12966,7 +12999,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
              linkCmd += bitcodePath + " -flto -flto-partitions=0 -Wl,--allow-multiple-definition ";
              linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
                  pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
-                 runtimeLink + " " + pythonLibLink + " -lpcre2-8 -lmpdec -o " + outputPath + " -O3";
+                 runtimeLink + " " + pythonLibLink + " -lpcre2-8 -lmpdec -lz -o " + outputPath + " -O3";
             if (!pgoProfile.empty()) {
                 linkCmd += " -fprofile-use=" + pgoProfile;
             }
@@ -13133,7 +13166,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         }
         linkCmd += "-x c " + b7CFile + " -x none -I" + sourceDir + "/include " +
             pythonIncludes + " " + sourceDir + "/src/runtime/MainWrapper.cpp" +
-            runtimeLink + " " + moduleObjects + " " + pythonLibLink + " -lpcre2-8 -lmpdec -o " + outputPath + " -O" + std::to_string(std::min(optLevel, 3));
+            runtimeLink + " " + moduleObjects + " " + pythonLibLink + " -lpcre2-8 -lmpdec -lz -o " + outputPath + " -O" + std::to_string(std::min(optLevel, 3));
         if (optLevel >= 4 && !pgoProfile.empty()) {
             linkCmd += " -fprofile-use=" + pgoProfile;
         }

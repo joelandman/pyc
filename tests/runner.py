@@ -5280,6 +5280,27 @@ except TypeError as e:
     # W10.2 / I-117: pathlib PurePath, parts, resolve, glob, multi-arg Path.
     (open(__file__.replace("runner.py", "w117_path.py")).read(),
      "c\n('a', 'b', 'c')\na/b/c\ny\nx/y\n('/', 'tmp', 'foo')\n['a.txt', 'c.txt']\na.txt\nTrue\nTrue\n"),
+    # W11.1 / I-223 I-224 I-225 I-227: wb write(bytes), rb readlines,
+    # closed readlines, write-only read, open(Path).
+    (open(__file__.replace("runner.py", "w111_io.py")).read(),
+     "b'hello\\nworld'\n[b'hello\\n', b'world']\nclosed\nte-text\nte-bin\nb'AB'\nnot-readable\npathok\n"),
+    # W11.2 / I-222 I-225: boxed file methods; readline(n).
+    (open(__file__.replace("runner.py", "w112_io.py")).read(),
+     "hello\nworld\n'hello\\n'\n'world'\n['hello\\n', 'world']\nxyz\n'he'\n'llo\\n'\n'he'\nuser\nhello\nworld\nno-dict-read\n"),
+    # W11.3 / I-119: hashlib .update() incremental.
+    (open(__file__.replace("runner.py", "w113_hash.py")).read(),
+     "5eb63bbbe01eeed093cb22bb8f5acdc3\n5eb63bbbe01eeed093cb22bb8f5acdc3\n"
+     "a9993e364706816aba3e25717850c26c9cd0d89d\na9993e364706816aba3e25717850c26c9cd0d89d\n"
+     "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881\n"
+     "b'-q\\x16B\\xb7&\\xb0D\\x01b|\\xa9\\xfb\\xac2\\xf5\\xc8S\\x0f\\xb1\\x90<\\xc4\\xdb\\x02%\\x87\\x17\\x92\\x1aH\\x81'\n"
+     "49f68a5c8493ec2c0bf489821c21fc3b\n49f68a5c8493ec2c0bf489821c21fc3b\n"
+     "user\n1\nfbade9e36a3f36d3d676c1b808451dd7\nfbade9e36a3f36d3d676c1b808451dd7\n"),
+    # W11.4 / I-120: decimal.getcontext / localcontext.
+    (open(__file__.replace("runner.py", "w114_dec.py")).read(),
+     "28\n0.33333\n0.143\n5\n28\n"),
+    # W11.5–W11.20: time, glob**, os, math/cmath/re/operator, new modules.
+    (open(__file__.replace("runner.py", "w11_rest.py")).read(),
+     "1970-01-01\n2020\nTrue\n['a.txt', 'b.txt']\nTrue\nok\n4\n10\nTrue\n7\na\\.b\nTrue\n['a.py']\nhi\nb'xy'\n['a', 'b c', 'd']\nTrue\n772b71c8a2997e768be01d9711e4a4f34a24ef33\n{'a': 1, 'b': True, 'c': 'x'}\n1 2\n1\nb'hellohellohello'\nTrue\nTrue\n1\nTrue\n4\n8\ntb\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5369,6 +5390,18 @@ FILE_CASES = [
     ("w116_dt.py", []),
     # W10.2 / I-117: pathlib PurePath, parts, resolve, glob, multi-arg Path.
     ("w117_path.py", []),
+    # W11.1 / I-223 I-224 I-225 I-227: file leftovers.
+    ("w111_io.py", []),
+    # W11.2 / I-222 I-225: boxed file methods; readline(n).
+    ("w112_io.py", []),
+    # W11.3 / I-119: hashlib .update() incremental.
+    ("w113_hash.py", []),
+    # W11.4 / I-120: decimal.getcontext / localcontext.
+    ("w114_dec.py", []),
+    # W11.5–W11.20 remaining stdlib.
+    ("w11_rest.py", []),
+    # W11.18 argparse
+    ("w11_argparse.py", ["hello", "--x", "3"]),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

@@ -414,12 +414,17 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     llvm::FunctionType* joinpathTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
     llvm::Function::Create(joinpathTy, llvm::Function::ExternalLinkage, "PyPathlib_Joinpath", module.get());
     llvm::Function::Create(joinpathTy, llvm::Function::ExternalLinkage, "PyPathlib_Glob", module.get());
+    llvm::Function::Create(joinpathTy, llvm::Function::ExternalLinkage, "PyPathlib_Rglob", module.get());
     // hashlib: same direct-call convention. PyHashlib_Md5/Sha1/Sha256 take
     // the data string; PyHashlib_Hexdigest/Digest take the hash-object receiver.
     for (const char* name : {"PyHashlib_Md5", "PyHashlib_Sha1", "PyHashlib_Sha256",
                               "PyHashlib_Hexdigest", "PyHashlib_Digest"}) {
         llvm::FunctionType* oneArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy}, false);
         llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, name, module.get());
+    }
+    {
+        llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
+        llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyHashlib_Update", module.get());
     }
     // copy.copy/deepcopy: same direct-call convention, one ptr arg (the
     // value to copy) -> ptr.
@@ -436,6 +441,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         llvm::Function::Create(oneArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_FileClose", module.get());
         llvm::FunctionType* twoArgTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, pyObjectPtrTy}, false);
         llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_FileReadN", module.get());
+        llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_FileReadlineN", module.get());
+        llvm::Function::Create(twoArgTy, llvm::Function::ExternalLinkage, "PyBuiltin_FileWrite", module.get());
     }
     // csv.writer(f) / .writerow(row): direct-call convention.
     {

@@ -28,6 +28,8 @@
 #include <pcre2.h>
 
 #include <mpdecimal.h>
+#include <zlib.h>
+#include <errno.h>
 
 #include "pyc/runtime.h"
 #include "pyc/object_struct.h"
@@ -40,6 +42,9 @@
 // conversion functions).
 static mpd_context_t g_decCtx;
 static bool g_decCtxInit = false;
+static PyObject* g_decContextObj = nullptr;
+static std::vector<int64_t> g_decPrecStack;
+static PyObject* g_osEnviron = nullptr;
 static mpd_context_t* pyc_dec_ctx() {
     if (!g_decCtxInit) {
         mpd_defaultcontext(&g_decCtx);
@@ -4932,6 +4937,7 @@ static PyObject* makeReModuleDict() {
     add("search",   "PyBuiltin_ReSearch");
     add("sub",      "PyBuiltin_ReSub");
     add("split",    "PyBuiltin_ReSplit");
+    add("escape",   "PyRe_Escape");
     // Real flag values (matching CPython's re.IGNORECASE=2/MULTILINE=8/
     // DOTALL=16 exactly) so `re.IGNORECASE` etc. evaluate to a real int
     // usable both positionally and via `flags=` — previously these were
@@ -5036,6 +5042,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
             addTok("neg",        "PyOperator_Neg");
             addTok("itemgetter", "PyOperator_Itemgetter");
             addTok("attrgetter", "PyOperator_Attrgetter");
+            addTok("abs",        "PyOperator_Abs");
             return pyc_mark_module(d);
         }
         if (modName->str == "os") {
@@ -5105,12 +5112,191 @@ PyObject* pyc_import_failed(PyObject* modName) {
             return makeCsvModuleDict();
         }
         if (modName->str == "decimal") {
-            // Empty: decimal.Decimal(...) construction is always
-            // intercepted structurally in Compiler.cpp (same rationale as
-            // pathlib.Path above — Decimal has exactly one constructor).
-            // This dict exists only so `import decimal` doesn't report
-            // ImportError.
-            return pyc_mark_module(PyDict_New());
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto add = [&](const char* name, const char* token) {
+                PyObject* k = PyUnicode_FromString(name);
+                PyObject* v = PyUnicode_FromString(token);
+                PyDict_SetItem(d, k, v);
+                Py_DECREF(k); Py_DECREF(v);
+            };
+            add("getcontext", "PyDecimal_GetContext");
+            add("localcontext", "PyDecimal_LocalContext");
+            return d;
+        }
+        if (modName->str == "fnmatch") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto add = [&](const char* n, const char* t) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* v = PyUnicode_FromString(t);
+                PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            };
+            add("fnmatch", "PyFnmatch_Fnmatch");
+            add("filter", "PyFnmatch_Filter");
+            return d;
+        }
+        if (modName->str == "io") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto add = [&](const char* n, const char* t) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* v = PyUnicode_FromString(t);
+                PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            };
+            add("StringIO", "PyIO_StringIO");
+            add("BytesIO", "PyIO_BytesIO");
+            return d;
+        }
+        if (modName->str == "tempfile") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto add = [&](const char* n, const char* t) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* v = PyUnicode_FromString(t);
+                PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            };
+            add("mkstemp", "PyTempfile_Mkstemp");
+            add("NamedTemporaryFile", "PyTempfile_NamedTemporaryFile");
+            add("TemporaryDirectory", "PyTempfile_TemporaryDirectory");
+            return d;
+        }
+        if (modName->str == "pprint") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto add = [&](const char* n, const char* t) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* v = PyUnicode_FromString(t);
+                PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            };
+            add("pprint", "PyPprint_Pprint");
+            add("pformat", "PyPprint_Pformat");
+            return d;
+        }
+        if (modName->str == "errno") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto addi = [&](const char* n, long v) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* val = PyInt_FromLong(v);
+                PyDict_SetItem(d, k, val); Py_DECREF(k); Py_DECREF(val);
+            };
+            addi("ENOENT", ENOENT);
+            addi("EACCES", EACCES);
+            addi("EEXIST", EEXIST);
+            addi("EINVAL", EINVAL);
+            addi("EPERM", EPERM);
+            addi("EISDIR", EISDIR);
+            addi("ENOTDIR", ENOTDIR);
+            return d;
+        }
+        if (modName->str == "stat") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto addi = [&](const char* n, long v) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* val = PyInt_FromLong(v);
+                PyDict_SetItem(d, k, val); Py_DECREF(k); Py_DECREF(val);
+            };
+            addi("S_IFDIR", S_IFDIR);
+            addi("S_IFREG", S_IFREG);
+            addi("S_IRUSR", S_IRUSR);
+            addi("S_IWUSR", S_IWUSR);
+            addi("S_IXUSR", S_IXUSR);
+            auto add = [&](const char* n, const char* t) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* v = PyUnicode_FromString(t);
+                PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            };
+            add("S_ISDIR", "PyStat_ISDIR");
+            add("S_ISREG", "PyStat_ISREG");
+            return d;
+        }
+        if (modName->str == "shlex") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            PyObject* k = PyUnicode_FromString("split");
+            PyObject* v = PyUnicode_FromString("PyShlex_Split");
+            PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            return d;
+        }
+        if (modName->str == "filecmp") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            PyObject* k = PyUnicode_FromString("cmp");
+            PyObject* v = PyUnicode_FromString("PyFilecmp_Cmp");
+            PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            return d;
+        }
+        if (modName->str == "hmac") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            PyObject* k = PyUnicode_FromString("new");
+            PyObject* v = PyUnicode_FromString("PyHmac_New");
+            PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            return d;
+        }
+        if (modName->str == "secrets") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto add = [&](const char* n, const char* t) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* v = PyUnicode_FromString(t);
+                PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            };
+            add("token_bytes", "PySecrets_TokenBytes");
+            add("token_hex", "PySecrets_TokenHex");
+            return d;
+        }
+        if (modName->str == "tomllib") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto add = [&](const char* n, const char* t) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* v = PyUnicode_FromString(t);
+                PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            };
+            add("loads", "PyTomllib_Loads");
+            add("load", "PyTomllib_Load");
+            return d;
+        }
+        if (modName->str == "fractions") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            PyObject* k = PyUnicode_FromString("Fraction");
+            PyObject* v = PyUnicode_FromString("PyFractions_Fraction");
+            PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            return d;
+        }
+        if (modName->str == "argparse") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            PyObject* k = PyUnicode_FromString("ArgumentParser");
+            PyObject* v = PyUnicode_FromString("PyArgparse_Parser");
+            PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            return d;
+        }
+        if (modName->str == "zlib") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto add = [&](const char* n, const char* t) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* v = PyUnicode_FromString(t);
+                PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            };
+            add("compress", "PyZlib_Compress");
+            add("decompress", "PyZlib_Decompress");
+            return d;
+        }
+        if (modName->str == "gzip") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            auto add = [&](const char* n, const char* t) {
+                PyObject* k = PyUnicode_FromString(n);
+                PyObject* v = PyUnicode_FromString(t);
+                PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            };
+            add("compress", "PyGzip_Compress");
+            add("decompress", "PyGzip_Decompress");
+            return d;
+        }
+        if (modName->str == "warnings") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            PyObject* k = PyUnicode_FromString("warn");
+            PyObject* v = PyUnicode_FromString("PyWarnings_Warn");
+            PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            return d;
+        }
+        if (modName->str == "traceback") {
+            PyObject* d = pyc_mark_module(PyDict_New());
+            PyObject* k = PyUnicode_FromString("format_exception");
+            PyObject* v = PyUnicode_FromString("PyTraceback_FormatException");
+            PyDict_SetItem(d, k, v); Py_DECREF(k); Py_DECREF(v);
+            return d;
         }
         if (modName->str == "cmath") {
             PyObject* d = PyDict_New();
@@ -5127,6 +5313,7 @@ PyObject* pyc_import_failed(PyObject* modName) {
             add("sin", "PyCmath_Sin");
             add("cos", "PyCmath_Cos");
             add("tan", "PyCmath_Tan");
+            add("phase", "PyCmath_Phase");
             return pyc_mark_module(d);
         }
         if (modName->str == "time") {
@@ -5141,6 +5328,17 @@ PyObject* pyc_import_failed(PyObject* modName) {
             v = PyUnicode_FromString("Pyc_Time_PerfCounter");
             PyDict_SetItem(d, k, v);
             Py_DECREF(k); Py_DECREF(v);
+            auto addT = [&](const char* name, const char* token) {
+                PyObject* kk = PyUnicode_FromString(name);
+                PyObject* vv = PyUnicode_FromString(token);
+                PyDict_SetItem(d, kk, vv);
+                Py_DECREF(kk); Py_DECREF(vv);
+            };
+            addT("time", "Pyc_Time_Time");
+            addT("sleep", "Pyc_Time_Sleep");
+            addT("strftime", "Pyc_Time_Strftime");
+            addT("localtime", "Pyc_Time_Localtime");
+            addT("gmtime", "Pyc_Time_Gmtime");
             return pyc_mark_module(d);
         }
     }
@@ -5150,7 +5348,10 @@ PyObject* pyc_import_failed(PyObject* modName) {
                     "'subprocess', 'cmath', 'time', 'math', 'json', 'random', 'itertools', "
                     "'collections', 'datetime', 'pathlib', 'hashlib', 'base64', 'struct', "
                     "'heapq', 'bisect', 'statistics', 'string', 'textwrap', 'uuid', 'copy', "
-                    "'operator', 'shutil', 'glob', and 'csv' modules; real module loading "
+                    "'operator', 'shutil', 'glob', 'csv', 'decimal', 'fnmatch', 'io', "
+                    "'tempfile', 'pprint', 'errno', 'stat', 'shlex', 'filecmp', 'hmac', "
+                    "'secrets', 'tomllib', 'fractions', 'argparse', 'zlib', 'gzip', "
+                    "'warnings', and 'traceback' modules; real module loading "
                     "is not yet implemented)\n", name);
     fflush(stderr);
     return nullptr;
@@ -5546,7 +5747,19 @@ PyObject* Pyc_SetItem(PyObject* obj, PyObject* key, PyObject* val) {
     }
     // CPython allows None dict keys. None is the null PyObject* here, so
     // handle dicts before the !key TypeError (I-128).
-    if (obj->type == 2) { PyDict_SetItem(obj, key, val); return nullptr; }
+    if (obj->type == 2) {
+        PyDict_SetItem(obj, key, val);
+        if (g_decContextObj && obj == g_decContextObj && key && key->type == 3
+            && key->str == "prec" && val && (val->type == 0 || val->type == 5)
+            && val->value > 0) {
+            mpd_qsetprec(pyc_dec_ctx(), (mpd_ssize_t)val->value);
+        }
+        if (g_osEnviron && obj == g_osEnviron && key && key->type == 3
+            && val && val->type == 3) {
+            ::setenv(key->str.c_str(), val->str.c_str(), 1);
+        }
+        return nullptr;
+    }
     if (!key) {
         std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
                           "' object does not support item assignment";
@@ -8731,6 +8944,7 @@ extern "C" PyObject* PyPathlib_Joinpath(PyObject* obj, PyObject* parts) {
 }
 
 static bool pyc_fnmatch(const char* name, const char* pat);
+extern "C" PyObject* PyPathlib_Rglob(PyObject* obj, PyObject* pattern);
 
 // Path.glob(pattern): non-recursive, files in this directory matching
 // fnmatch. Returns a list of Path. No ** / rglob.
@@ -8738,7 +8952,15 @@ extern "C" PyObject* PyPathlib_Glob(PyObject* obj, PyObject* pattern) {
     PyObject* out = PyList_New(0);
     if (!pyc_is_path_like(obj) || !pattern || pattern->type != 3) return out;
     std::string dirPart = obj->str.empty() ? std::string(".") : obj->str;
-    const std::string& basePart = pattern->str;
+    std::string leaf;
+    bool rec = false;
+    {
+        const std::string& pat = pattern->str;
+        if (pat.size() >= 3 && pat.compare(0, 3, "**/") == 0) { rec = true; leaf = pat.substr(3); }
+        else if (pat == "**") { rec = true; leaf = "*"; }
+        else leaf = pat;
+    }
+    if (rec) return PyPathlib_Rglob(obj, pattern);
     std::string prefix = dirPart;
     if (prefix != "/" && !prefix.empty() && prefix.back() != '/') prefix += '/';
     DIR* d = ::opendir(dirPart.c_str());
@@ -8747,8 +8969,8 @@ extern "C" PyObject* PyPathlib_Glob(PyObject* obj, PyObject* pattern) {
     struct dirent* ent;
     while ((ent = ::readdir(d)) != nullptr) {
         if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
-        if (ent->d_name[0] == '.' && !basePart.empty() && basePart[0] != '.') continue;
-        if (pyc_fnmatch(ent->d_name, basePart.c_str())) {
+        if (ent->d_name[0] == '.' && !leaf.empty() && leaf[0] != '.') continue;
+        if (pyc_fnmatch(ent->d_name, leaf.c_str())) {
             matches.push_back(prefix + ent->d_name);
         }
     }
@@ -9030,43 +9252,58 @@ static void pyc_sha256(const std::string& msg, uint8_t out[32]) {
     }
 }
 
-// hashlib.md5/sha1/sha256(data) — direct-call convention (like datetime's
-// constructors): computes the digest immediately (data is always fully
-// known at call time; no .update() streaming support — out of scope,
-// documented). Returns a dict with the raw digest bytes stashed under an
-// internal marker key; .hexdigest() (also direct-call, typeOf-gated on
-// "hashobj" in Compiler.cpp) reads that key directly rather than going
-// through the generic dict/Pyc_Apply dispatch, sidestepping the
-// receiver-prepending pitfall found and fixed in open()/.write() above.
-// Stashes both the hex digest (str) and the raw digest (real bytes, type
-// 17) under reserved keys — .hexdigest() reads the former, .digest() (new
-// alongside the bytes type) reads the latter.
-static PyObject* pyc_make_hashobj(const std::string& hexHash, const uint8_t* raw, size_t rawLen) {
-    PyObject* d = PyDict_New();
+// hashlib objects are type-2 dicts plus this sidetable (I-119). Do not
+// register (2, "update") — that would steal dict/Counter/user update.
+enum PycHashAlgo { PYC_HASH_MD5, PYC_HASH_SHA1, PYC_HASH_SHA256 };
+struct PycHash {
+    PycHashAlgo algo;
+    std::string data;
+};
+static std::unordered_map<PyObject*, PycHash> g_pycHashes;
+
+static void pyc_hash_store_digest(PyObject* d, const PycHash& h) {
+    uint8_t raw[32];
+    size_t n = 16;
+    if (h.algo == PYC_HASH_MD5) pyc_md5(h.data, raw);
+    else if (h.algo == PYC_HASH_SHA1) { pyc_sha1(h.data, raw); n = 20; }
+    else { pyc_sha256(h.data, raw); n = 32; }
+    std::string hex = pyc_bytes_to_hex(raw, n);
     PyObject* k = PyUnicode_FromString("__pyc_hexdigest__");
-    PyObject* v = PyUnicode_FromString(hexHash.c_str());
+    PyObject* v = PyUnicode_FromString(hex.c_str());
     PyDict_SetItem(d, k, v);
     Py_DECREF(k); Py_DECREF(v);
     PyObject* k2 = PyUnicode_FromString("__pyc_digest__");
-    PyObject* v2 = PyBytes_FromStringAndSize((const char*)raw, rawLen);
+    PyObject* v2 = PyBytes_FromStringAndSize((const char*)raw, n);
     PyDict_SetItem(d, k2, v2);
     Py_DECREF(k2); Py_DECREF(v2);
+}
+
+static PyObject* pyc_make_hashobj(PycHashAlgo algo, const std::string& data) {
+    PyObject* d = PyDict_New();
+    PycHash h{algo, data};
+    g_pycHashes[d] = h;
+    pyc_hash_store_digest(d, h);
     return d;
 }
 extern "C" PyObject* PyHashlib_Md5(PyObject* data) {
-    uint8_t digest[16];
-    pyc_md5(pyc_is_bytes_like(data) ? data->str : std::string(), digest);
-    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 16), digest, 16);
+    return pyc_make_hashobj(PYC_HASH_MD5, pyc_is_bytes_like(data) ? data->str : std::string());
 }
 extern "C" PyObject* PyHashlib_Sha1(PyObject* data) {
-    uint8_t digest[20];
-    pyc_sha1(pyc_is_bytes_like(data) ? data->str : std::string(), digest);
-    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 20), digest, 20);
+    return pyc_make_hashobj(PYC_HASH_SHA1, pyc_is_bytes_like(data) ? data->str : std::string());
 }
 extern "C" PyObject* PyHashlib_Sha256(PyObject* data) {
-    uint8_t digest[32];
-    pyc_sha256(pyc_is_bytes_like(data) ? data->str : std::string(), digest);
-    return pyc_make_hashobj(pyc_bytes_to_hex(digest, 32), digest, 32);
+    return pyc_make_hashobj(PYC_HASH_SHA256, pyc_is_bytes_like(data) ? data->str : std::string());
+}
+extern "C" PyObject* PyHashlib_Update(PyObject* self, PyObject* data) {
+    auto it = g_pycHashes.find(self);
+    if (it == g_pycHashes.end()) return nullptr;
+    if (!pyc_is_bytes_like(data)) {
+        pyc_raise_msg("TypeError", "object supporting the buffer API required");
+        return nullptr;
+    }
+    it->second.data += data->str;
+    pyc_hash_store_digest(self, it->second);
+    return nullptr;
 }
 extern "C" PyObject* PyHashlib_Hexdigest(PyObject* self) {
     if (!self || self->type != 2) return PyUnicode_FromString("");
@@ -10063,6 +10300,13 @@ struct PycFile {
     FILE* fp;
 };
 static std::unordered_map<PyObject*, PycFile> g_pycFiles;
+struct PycBufIO {
+    std::string buf;
+    size_t pos;
+    bool binary;
+};
+static std::unordered_map<PyObject*, PycBufIO> g_pycBufIO;
+static std::unordered_set<PyObject*> g_pycParsers;
 
 // Forward-declared up next to Py_DECREF, which calls this as a dict is
 // being freed. Every table below is keyed by the dict's address, and a
@@ -10089,58 +10333,22 @@ static void pyc_forget_dict_sidetables(PyObject* d) {
         if (oit->second.fp) std::fclose(oit->second.fp);
         g_pycFiles.erase(oit);
     }
-}
-
-static PyObject* pyc_file_write_adapter(PyObject* args) {
-    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
-    PyObject* self = args->list[0];
-    auto it = g_pycFiles.find(self);
-    if (it == g_pycFiles.end() || !it->second.fp) return nullptr;
-    PyObject* data = args->list[1];
-    if (data && data->type == 3) {
-        std::fwrite(data->str.data(), 1, data->str.size(), it->second.fp);
-        std::fflush(it->second.fp);
-    }
-    return nullptr;
-}
-
-// file.readlines() -> list[str], keeping each line's trailing "\n"
-// (verified against real CPython: only the final line lacks it if the
-// file itself doesn't end with a newline) — the file-read prerequisite
-// for csv.reader(f.readlines()). Reads from the current file position
-// to EOF (matches real readlines() on a freshly-opened file; doesn't
-// track/restore position across multiple calls specially, same as
-// CPython). Direct-call convention (self is the receiver, dispatched
-// via a typeOf(obj)=="file" branch in Compiler.cpp, mirroring the
-// .write() fix) rather than token+registry, for the same reason
-// .write() needed it: the receiver must be explicit, not inferred from
-// a non-bound generic dict dispatch.
-extern "C" PyObject* PyBuiltin_FileReadlines(PyObject* self) {
-    PyObject* out = PyList_New(0);
-    auto it = g_pycFiles.find(self);
-    if (it == g_pycFiles.end() || !it->second.fp) return out;
-    FILE* fp = it->second.fp;
-    std::string line;
-    int c;
-    while ((c = std::fgetc(fp)) != EOF) {
-        line += (char)c;
-        if (c == '\n') {
-            PyObject* s = PyUnicode_FromString(line.c_str());
-            PyList_Append(out, s);
-            Py_DECREF(s);
-            line.clear();
-        }
-    }
-    if (!line.empty()) {
-        PyObject* s = PyUnicode_FromString(line.c_str());
-        PyList_Append(out, s);
-        Py_DECREF(s);
-    }
-    return out;
+    g_pycHashes.erase(d);
+    g_pycBufIO.erase(d);
+    g_pycParsers.erase(d);
 }
 
 static bool pyc_file_is_binary(const std::string& mode) {
     return mode.find('b') != std::string::npos;
+}
+
+static bool pyc_file_mode_readable(const std::string& mode) {
+    return mode.find('r') != std::string::npos || mode.find('+') != std::string::npos;
+}
+
+static bool pyc_file_mode_writable(const std::string& mode) {
+    return mode.find('w') != std::string::npos || mode.find('a') != std::string::npos
+        || mode.find('x') != std::string::npos || mode.find('+') != std::string::npos;
 }
 
 static PyObject* pyc_file_make_data(const std::string& buf, bool binary) {
@@ -10157,9 +10365,82 @@ static PycFile* pyc_file_or_closed(PyObject* self) {
     return &it->second;
 }
 
+static PycFile* pyc_file_or_unreadable(PyObject* self) {
+    PycFile* f = pyc_file_or_closed(self);
+    if (!f) return nullptr;
+    if (!pyc_file_mode_readable(f->mode)) {
+        pyc_raise_msg("OSError", "not readable");
+        return nullptr;
+    }
+    return f;
+}
+
+extern "C" PyObject* PyBuiltin_FileWrite(PyObject* self, PyObject* data) {
+    auto it = g_pycFiles.find(self);
+    if (it == g_pycFiles.end() || !it->second.fp) {
+        pyc_raise_msg("ValueError", "I/O operation on closed file.");
+        return nullptr;
+    }
+    if (!pyc_file_mode_writable(it->second.mode)) {
+        pyc_raise_msg("OSError", "not writable");
+        return nullptr;
+    }
+    bool binary = pyc_file_is_binary(it->second.mode);
+    if (binary) {
+        if (!data || (data->type != 17 && data->type != 18)) {
+            std::string msg = std::string("a bytes-like object is required, not '")
+                + pyc_builtin_type_name(data) + "'";
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
+    } else {
+        if (!data || data->type != 3) {
+            std::string msg = std::string("write() argument must be str, not ")
+                + pyc_builtin_type_name(data);
+            pyc_raise_msg("TypeError", msg.c_str());
+            return nullptr;
+        }
+    }
+    std::fwrite(data->str.data(), 1, data->str.size(), it->second.fp);
+    std::fflush(it->second.fp);
+    return nullptr;
+}
+
+static PyObject* pyc_file_write_adapter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    return PyBuiltin_FileWrite(args->list[0], args->list[1]);
+}
+
+// file.readlines() — list[str] in text mode, list[bytes] in "rb".
+// Closed file is ValueError (I-224). Write-only is OSError (I-225).
+extern "C" PyObject* PyBuiltin_FileReadlines(PyObject* self) {
+    PycFile* f = pyc_file_or_unreadable(self);
+    if (!f) return nullptr;
+    FILE* fp = f->fp;
+    bool binary = pyc_file_is_binary(f->mode);
+    PyObject* out = PyList_New(0);
+    std::string line;
+    int c;
+    while ((c = std::fgetc(fp)) != EOF) {
+        line += (char)c;
+        if (c == '\n') {
+            PyObject* s = pyc_file_make_data(line, binary);
+            PyList_Append(out, s);
+            Py_DECREF(s);
+            line.clear();
+        }
+    }
+    if (!line.empty()) {
+        PyObject* s = pyc_file_make_data(line, binary);
+        PyList_Append(out, s);
+        Py_DECREF(s);
+    }
+    return out;
+}
+
 // file.read() — rest of the file. Text mode returns str; "rb" returns bytes.
 extern "C" PyObject* PyBuiltin_FileRead(PyObject* self) {
-    PycFile* f = pyc_file_or_closed(self);
+    PycFile* f = pyc_file_or_unreadable(self);
     if (!f) return nullptr;
     FILE* fp = f->fp;
     bool binary = pyc_file_is_binary(f->mode);
@@ -10173,7 +10454,7 @@ extern "C" PyObject* PyBuiltin_FileRead(PyObject* self) {
 
 // file.read(n) — up to n chars (text) or bytes (binary). n < 0 means all.
 extern "C" PyObject* PyBuiltin_FileReadN(PyObject* self, PyObject* nObj) {
-    PycFile* f = pyc_file_or_closed(self);
+    PycFile* f = pyc_file_or_unreadable(self);
     if (!f) return nullptr;
     long n = (nObj && (nObj->type == 0 || nObj->type == 5)) ? nObj->value : -1;
     if (n < 0) return PyBuiltin_FileRead(self);
@@ -10188,13 +10469,30 @@ extern "C" PyObject* PyBuiltin_FileReadN(PyObject* self, PyObject* nObj) {
 
 // file.readline() — one line including '\n', or remainder; EOF → '' / b''.
 extern "C" PyObject* PyBuiltin_FileReadline(PyObject* self) {
-    PycFile* f = pyc_file_or_closed(self);
+    PycFile* f = pyc_file_or_unreadable(self);
     if (!f) return nullptr;
     FILE* fp = f->fp;
     bool binary = pyc_file_is_binary(f->mode);
     std::string line;
     int c;
     while ((c = std::fgetc(fp)) != EOF) {
+        line += (char)c;
+        if (c == '\n') break;
+    }
+    return pyc_file_make_data(line, binary);
+}
+
+// file.readline(n) — at most n chars/bytes, still stop at newline.
+extern "C" PyObject* PyBuiltin_FileReadlineN(PyObject* self, PyObject* nObj) {
+    PycFile* f = pyc_file_or_unreadable(self);
+    if (!f) return nullptr;
+    long n = (nObj && (nObj->type == 0 || nObj->type == 5)) ? nObj->value : -1;
+    if (n < 0) return PyBuiltin_FileReadline(self);
+    bool binary = pyc_file_is_binary(f->mode);
+    if (n == 0) return pyc_file_make_data(std::string(), binary);
+    std::string line;
+    int c;
+    while ((long)line.size() < n && (c = std::fgetc(f->fp)) != EOF) {
         line += (char)c;
         if (c == '\n') break;
     }
@@ -10221,6 +10519,8 @@ static PyObject* pyc_file_read_adapter(PyObject* args) {
 
 static PyObject* pyc_file_readline_adapter(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    if (args->list.size() >= 2)
+        return PyBuiltin_FileReadlineN(args->list[0], args->list[1]);
     return PyBuiltin_FileReadline(args->list[0]);
 }
 
@@ -10260,7 +10560,7 @@ static PyObject* pyc_file_exit_adapter(PyObject* args) {
 }
 
 extern "C" PyObject* PyBuiltin_Open(PyObject* path, PyObject* mode) {
-    if (!path || path->type != 3) return nullptr;
+    if (!pyc_is_path_like(path)) return nullptr;
     std::string pathStr = path->str;
     std::string modeStr = (mode && mode->type == 3) ? mode->str : std::string("r");
     FILE* fp = std::fopen(pathStr.c_str(), modeStr.c_str());
@@ -10709,6 +11009,8 @@ static PyObject* makeMathModuleDict() {
     addTok("isfinite", "PyMath_Isfinite");
     addTok("gcd", "PyMath_Gcd");
     addTok("factorial", "PyMath_Factorial");
+    addTok("isqrt", "PyMath_Isqrt");
+    addTok("comb", "PyMath_Comb");
     addFloat("pi", kPyMathPi);
     addFloat("e", kPyMathE);
     addFloat("tau", kPyMathTau);
@@ -11187,6 +11489,7 @@ static PyObject* makeRandomModuleDict() {
     addTok("uniform", "PyRandom_Uniform");
     addTok("choice", "PyRandom_Choice");
     addTok("shuffle", "PyRandom_Shuffle");
+    addTok("sample", "PyRandom_Sample");
     return d;
 }
 
@@ -12361,6 +12664,7 @@ static PyObject* makeOsModuleDict() {
         Py_DECREF(k); Py_DECREF(v);
     }
     PyDict_SetItem(d, env_key, env_val);
+    g_osEnviron = env_val;
     Py_DECREF(env_key); Py_DECREF(env_val);
     // os.path -> dict with exists/isfile/isdir/unlink/join/basename/
     // dirname/splitext/abspath tokens
@@ -12397,6 +12701,9 @@ static PyObject* makeOsModuleDict() {
     addTopTok("getcwd",   "PyBuiltin_OsGetcwd");
     addTopTok("listdir",  "PyBuiltin_OsListdir");
     addTopTok("makedirs", "PyBuiltin_OsMakedirs");
+    addTopTok("walk",     "PyBuiltin_OsWalk");
+    addTopTok("stat",     "PyBuiltin_OsStat");
+    addTopTok("chmod",    "PyBuiltin_OsChmod");
     return d;
 }
 
@@ -13009,6 +13316,59 @@ static PyObject* pyc_adapt_bytearray(PyObject* args) {
 // `os.path.exists(p)`. Without this registration, Pyc_Apply returns
 // null for the token. Idempotent (safe to call multiple times).
 extern "C" PyObject* Pyc_Time_PerfCounter(PyObject* args);
+extern "C" PyObject* PyDecimal_GetContext(PyObject* args);
+extern "C" PyObject* PyDecimal_LocalContext(PyObject* args);
+static PyObject* pyc_dec_enter_adapter(PyObject* args);
+static PyObject* pyc_dec_exit_adapter(PyObject* args);
+extern "C" PyObject* Pyc_Time_Time(PyObject* args);
+extern "C" PyObject* Pyc_Time_Sleep(PyObject* args);
+extern "C" PyObject* Pyc_Time_Strftime(PyObject* args);
+extern "C" PyObject* Pyc_Time_Localtime(PyObject* args);
+extern "C" PyObject* Pyc_Time_Gmtime(PyObject* args);
+extern "C" PyObject* PyBuiltin_OsWalk(PyObject* args);
+extern "C" PyObject* PyBuiltin_OsStat(PyObject* args);
+extern "C" PyObject* PyBuiltin_OsChmod(PyObject* args);
+extern "C" PyObject* PyMath_Isqrt(PyObject* args);
+extern "C" PyObject* PyMath_Comb(PyObject* args);
+extern "C" PyObject* PyCmath_Phase(PyObject* args);
+extern "C" PyObject* PyRandom_Sample(PyObject* args);
+extern "C" PyObject* PyOperator_Abs(PyObject* args);
+extern "C" PyObject* PyRe_Escape(PyObject* args);
+extern "C" PyObject* PyFnmatch_Fnmatch(PyObject* args);
+extern "C" PyObject* PyFnmatch_Filter(PyObject* args);
+extern "C" PyObject* PyIO_StringIO(PyObject* args);
+extern "C" PyObject* PyIO_BytesIO(PyObject* args);
+extern "C" PyObject* PyTempfile_Mkstemp(PyObject* args);
+extern "C" PyObject* PyTempfile_NamedTemporaryFile(PyObject* args);
+extern "C" PyObject* PyTempfile_TemporaryDirectory(PyObject* args);
+static PyObject* pyc_td_enter(PyObject* args);
+static PyObject* pyc_td_exit(PyObject* args);
+extern "C" PyObject* PyPprint_Pprint(PyObject* args);
+extern "C" PyObject* PyPprint_Pformat(PyObject* args);
+extern "C" PyObject* PyStat_ISDIR(PyObject* args);
+extern "C" PyObject* PyStat_ISREG(PyObject* args);
+extern "C" PyObject* PyShlex_Split(PyObject* args);
+extern "C" PyObject* PyFilecmp_Cmp(PyObject* args);
+extern "C" PyObject* PyHmac_New(PyObject* args);
+extern "C" PyObject* PySecrets_TokenBytes(PyObject* args);
+extern "C" PyObject* PySecrets_TokenHex(PyObject* args);
+extern "C" PyObject* PyTomllib_Loads(PyObject* args);
+extern "C" PyObject* PyTomllib_Load(PyObject* args);
+extern "C" PyObject* PyFractions_Fraction(PyObject* args);
+extern "C" PyObject* PyArgparse_Parser(PyObject* args);
+static PyObject* pyc_ap_add(PyObject* args);
+static PyObject* pyc_ap_parse(PyObject* args);
+extern "C" PyObject* PyZlib_Compress(PyObject* args);
+extern "C" PyObject* PyZlib_Decompress(PyObject* args);
+extern "C" PyObject* PyGzip_Compress(PyObject* args);
+extern "C" PyObject* PyGzip_Decompress(PyObject* args);
+extern "C" PyObject* PyWarnings_Warn(PyObject* args);
+extern "C" PyObject* PyTraceback_FormatException(PyObject* args);
+static PyObject* pyc_bufio_read(PyObject* args);
+static PyObject* pyc_bufio_write(PyObject* args);
+static PyObject* pyc_bufio_getvalue(PyObject* args);
+static PyObject* pyc_bufio_seek(PyObject* args);
+static PyObject* pyc_bufio_close(PyObject* args);
 extern "C" void pyc_setup_callables(void) {
     static bool done = false;
     if (done) return;
@@ -13098,6 +13458,59 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("pyc_file_enter",                pyc_file_enter_adapter);
     pyc_register_callable("pyc_file_exit",                 pyc_file_exit_adapter);
     pyc_register_callable("Pyc_Time_PerfCounter",          Pyc_Time_PerfCounter);
+    pyc_register_callable("PyDecimal_GetContext",          PyDecimal_GetContext);
+    pyc_register_callable("PyDecimal_LocalContext",        PyDecimal_LocalContext);
+    pyc_register_callable("pyc_dec_enter",                 pyc_dec_enter_adapter);
+    pyc_register_callable("pyc_dec_exit",                  pyc_dec_exit_adapter);
+    pyc_register_callable("Pyc_Time_Time",                 Pyc_Time_Time);
+    pyc_register_callable("Pyc_Time_Sleep",                Pyc_Time_Sleep);
+    pyc_register_callable("Pyc_Time_Strftime",             Pyc_Time_Strftime);
+    pyc_register_callable("Pyc_Time_Localtime",            Pyc_Time_Localtime);
+    pyc_register_callable("Pyc_Time_Gmtime",               Pyc_Time_Gmtime);
+    pyc_register_callable("PyBuiltin_OsWalk",              PyBuiltin_OsWalk);
+    pyc_register_callable("PyBuiltin_OsStat",              PyBuiltin_OsStat);
+    pyc_register_callable("PyBuiltin_OsChmod",             PyBuiltin_OsChmod);
+    pyc_register_callable("PyMath_Isqrt",                  PyMath_Isqrt);
+    pyc_register_callable("PyMath_Comb",                   PyMath_Comb);
+    pyc_register_callable("PyCmath_Phase",                 PyCmath_Phase);
+    pyc_register_callable("PyRandom_Sample",               PyRandom_Sample);
+    pyc_register_callable("PyOperator_Abs",                PyOperator_Abs);
+    pyc_register_callable("PyRe_Escape",                   PyRe_Escape);
+    pyc_register_callable("PyFnmatch_Fnmatch",             PyFnmatch_Fnmatch);
+    pyc_register_callable("PyFnmatch_Filter",              PyFnmatch_Filter);
+    pyc_register_callable("PyIO_StringIO",                 PyIO_StringIO);
+    pyc_register_callable("PyIO_BytesIO",                  PyIO_BytesIO);
+    pyc_register_callable("pyc_bufio_read",                pyc_bufio_read);
+    pyc_register_callable("pyc_bufio_write",               pyc_bufio_write);
+    pyc_register_callable("pyc_bufio_getvalue",            pyc_bufio_getvalue);
+    pyc_register_callable("pyc_bufio_seek",                pyc_bufio_seek);
+    pyc_register_callable("pyc_bufio_close",               pyc_bufio_close);
+    pyc_register_callable("PyTempfile_Mkstemp",            PyTempfile_Mkstemp);
+    pyc_register_callable("PyTempfile_NamedTemporaryFile", PyTempfile_NamedTemporaryFile);
+    pyc_register_callable("PyTempfile_TemporaryDirectory", PyTempfile_TemporaryDirectory);
+    pyc_register_callable("pyc_td_enter",                  pyc_td_enter);
+    pyc_register_callable("pyc_td_exit",                   pyc_td_exit);
+    pyc_register_callable("PyPprint_Pprint",               PyPprint_Pprint);
+    pyc_register_callable("PyPprint_Pformat",              PyPprint_Pformat);
+    pyc_register_callable("PyStat_ISDIR",                  PyStat_ISDIR);
+    pyc_register_callable("PyStat_ISREG",                  PyStat_ISREG);
+    pyc_register_callable("PyShlex_Split",                 PyShlex_Split);
+    pyc_register_callable("PyFilecmp_Cmp",                 PyFilecmp_Cmp);
+    pyc_register_callable("PyHmac_New",                    PyHmac_New);
+    pyc_register_callable("PySecrets_TokenBytes",          PySecrets_TokenBytes);
+    pyc_register_callable("PySecrets_TokenHex",            PySecrets_TokenHex);
+    pyc_register_callable("PyTomllib_Loads",               PyTomllib_Loads);
+    pyc_register_callable("PyTomllib_Load",                PyTomllib_Load);
+    pyc_register_callable("PyFractions_Fraction",          PyFractions_Fraction);
+    pyc_register_callable("PyArgparse_Parser",             PyArgparse_Parser);
+    pyc_register_callable("pyc_ap_add",                    pyc_ap_add);
+    pyc_register_callable("pyc_ap_parse",                  pyc_ap_parse);
+    pyc_register_callable("PyZlib_Compress",               PyZlib_Compress);
+    pyc_register_callable("PyZlib_Decompress",             PyZlib_Decompress);
+    pyc_register_callable("PyGzip_Compress",               PyGzip_Compress);
+    pyc_register_callable("PyGzip_Decompress",             PyGzip_Decompress);
+    pyc_register_callable("PyWarnings_Warn",               PyWarnings_Warn);
+    pyc_register_callable("PyTraceback_FormatException",   PyTraceback_FormatException);
     pyc_register_callable("PyMath_Sqrt",     PyMath_Sqrt);
     pyc_register_callable("PyMath_Floor",    PyMath_Floor);
     pyc_register_callable("PyMath_Ceil",     PyMath_Ceil);
@@ -14393,6 +14806,54 @@ extern "C" PyObject* PyDecimal_Quantize(PyObject* self, PyObject* q) {
     mpd_qquantize(r, a, b, pyc_dec_ctx(), &status);
     return pyc_decimal_wrap(r);
 }
+
+static void pyc_dec_sync_prec_obj() {
+    if (!g_decContextObj) {
+        g_decContextObj = PyDict_New();
+        g_decContextObj->refcount = IMMORTAL_REFCOUNT;
+    }
+    PyObject* k = PyUnicode_FromString("prec");
+    PyObject* v = PyInt_FromLong((long)pyc_dec_ctx()->prec);
+    PyDict_SetItem(g_decContextObj, k, v);
+    Py_DECREF(k); Py_DECREF(v);
+}
+
+extern "C" PyObject* PyDecimal_GetContext(PyObject* args) {
+    (void)args;
+    pyc_dec_sync_prec_obj();
+    Py_INCREF(g_decContextObj);
+    return g_decContextObj;
+}
+
+static PyObject* pyc_dec_enter_adapter(PyObject* args) {
+    (void)args;
+    g_decPrecStack.push_back((int64_t)pyc_dec_ctx()->prec);
+    return PyDecimal_GetContext(nullptr);
+}
+
+static PyObject* pyc_dec_exit_adapter(PyObject* args) {
+    (void)args;
+    if (!g_decPrecStack.empty()) {
+        mpd_qsetprec(pyc_dec_ctx(), (mpd_ssize_t)g_decPrecStack.back());
+        g_decPrecStack.pop_back();
+        pyc_dec_sync_prec_obj();
+    }
+    return nullptr;
+}
+
+extern "C" PyObject* PyDecimal_LocalContext(PyObject* args) {
+    (void)args;
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("__enter__", "pyc_dec_enter");
+    addTok("__exit__", "pyc_dec_exit");
+    return d;
+}
 // str()/print() and int()/float() conversion for Decimal are handled
 // directly in PyObject_PrintBase/PyBuiltin_Int/PyBuiltin_Float above —
 // no separate PyDecimal_ToStr/ToInt/ToFloat needed.
@@ -15553,6 +16014,7 @@ PYC_WRAP0(pyc_bm_path_is_dir, PyPathlib_IsDir)
 PYC_WRAP0(pyc_bm_path_mkdir, PyPathlib_Mkdir)
 PYC_WRAP0(pyc_bm_path_resolve, PyPathlib_Resolve)
 PYC_WRAP1(pyc_bm_path_glob, PyPathlib_Glob)
+PYC_WRAP1(pyc_bm_path_rglob, PyPathlib_Rglob)
 PYC_WRAP0(pyc_bm_dt_isoformat, PyDateTime_Isoformat)
 PYC_WRAP0(pyc_bm_dt_weekday, PyDateTime_Weekday)
 PYC_WRAP0(pyc_bm_dt_isoweekday, PyDateTime_Isoweekday)
@@ -15802,6 +16264,7 @@ static void pyc_init_builtin_method_tables(
     tables[16]["joinpath"] = pyc_bm_path_joinpath;
     tables[16]["resolve"] = pyc_bm_path_resolve;
     tables[16]["glob"] = pyc_bm_path_glob;
+    tables[16]["rglob"] = pyc_bm_path_rglob;
 
     // date/datetime (tag 14) and timedelta (tag 15).
     tables[14]["isoformat"] = pyc_bm_dt_isoformat;
@@ -15887,6 +16350,75 @@ static PyObject* pyc_call_builtin_method(PyObject* receiver, PyObject* nameObj,
         return nullptr;
     }
     const std::string& m = nameObj->str;
+    // Files are type-2 dicts in g_pycFiles. Do not register (2, "read")
+    // — that would steal user C.read and plain dicts (I-222 / I-030).
+    if (g_pycFiles.find(receiver) != g_pycFiles.end()) {
+        if (m == "read") {
+            if (a0) return PyBuiltin_FileReadN(receiver, a0);
+            return PyBuiltin_FileRead(receiver);
+        }
+        if (m == "readline") {
+            if (a0) return PyBuiltin_FileReadlineN(receiver, a0);
+            return PyBuiltin_FileReadline(receiver);
+        }
+        if (m == "readlines") return PyBuiltin_FileReadlines(receiver);
+        if (m == "write") return PyBuiltin_FileWrite(receiver, a0);
+        if (m == "close") return PyBuiltin_FileClose(receiver);
+        std::string fmsg = std::string("'file' object has no attribute '") + m + "'";
+        pyc_raise_msg("AttributeError", fmsg.c_str());
+        return nullptr;
+    }
+    if (g_pycHashes.find(receiver) != g_pycHashes.end()) {
+        if (m == "update") return PyHashlib_Update(receiver, a0);
+        if (m == "hexdigest") return PyHashlib_Hexdigest(receiver);
+        if (m == "digest") return PyHashlib_Digest(receiver);
+        std::string hmsg = std::string("'hash' object has no attribute '") + m + "'";
+        pyc_raise_msg("AttributeError", hmsg.c_str());
+        return nullptr;
+    }
+    if (g_pycBufIO.find(receiver) != g_pycBufIO.end()) {
+        PyObject* al = argsList;
+        PyObject* owned = nullptr;
+        if (!al) {
+            owned = PyList_New(0);
+            PyList_Append(owned, receiver);
+            if (a0) PyList_Append(owned, a0);
+            if (a1) PyList_Append(owned, a1);
+            al = owned;
+        }
+        PyObject* r = nullptr;
+        if (m == "read") r = pyc_bufio_read(al);
+        else if (m == "write") r = pyc_bufio_write(al);
+        else if (m == "getvalue") r = pyc_bufio_getvalue(al);
+        else if (m == "seek") r = pyc_bufio_seek(al);
+        else if (m == "close") r = pyc_bufio_close(al);
+        else {
+            std::string bmsg = std::string("'StringIO' object has no attribute '") + m + "'";
+            pyc_raise_msg("AttributeError", bmsg.c_str());
+        }
+        if (owned) Py_DECREF(owned);
+        return r;
+    }
+    if (g_pycParsers.count(receiver)) {
+        PyObject* al = argsList;
+        PyObject* owned = nullptr;
+        if (!al) {
+            owned = PyList_New(0);
+            PyList_Append(owned, receiver);
+            if (a0) PyList_Append(owned, a0);
+            if (a1) PyList_Append(owned, a1);
+            al = owned;
+        }
+        PyObject* r = nullptr;
+        if (m == "add_argument") r = pyc_ap_add(al);
+        else if (m == "parse_args") r = pyc_ap_parse(al);
+        else {
+            std::string amsg = std::string("'ArgumentParser' object has no attribute '") + m + "'";
+            pyc_raise_msg("AttributeError", amsg.c_str());
+        }
+        if (owned) Py_DECREF(owned);
+        return r;
+    }
     // f.__call__(...) is Pyc_Apply(f, args), not a bound method (I-012).
     if (receiver->type == 11 && m == "__call__") {
         PyObject* owned = nullptr;
@@ -16431,8 +16963,911 @@ extern "C" int pyc_is_float(PyObject* obj) {
 // ---- time.perf_counter implementation ----
 extern "C" PyObject* Pyc_Time_PerfCounter(PyObject* args) {
     (void)args;
-    // Use a very simple approach - just return a constant float
     return PyFloat_FromDouble(1.23456789);
+}
+
+static PyObject* pyc_args0(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    return args->list[0];
+}
+
+extern "C" PyObject* Pyc_Time_Time(PyObject* args) {
+    (void)args;
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0)
+        return PyFloat_FromDouble(0);
+    return PyFloat_FromDouble((double)ts.tv_sec + (double)ts.tv_nsec / 1e9);
+}
+
+extern "C" PyObject* Pyc_Time_Sleep(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    double sec = 0;
+    if (a && a->type == 4) sec = a->dvalue;
+    else if (a && (a->type == 0 || a->type == 5)) sec = (double)a->value;
+    if (sec > 0) {
+        struct timespec ts;
+        ts.tv_sec = (time_t)sec;
+        ts.tv_nsec = (long)((sec - (double)ts.tv_sec) * 1e9);
+        nanosleep(&ts, nullptr);
+    }
+    return nullptr;
+}
+
+static PyObject* pyc_tm_tuple(const struct tm* t) {
+    PyObject* tup = PyTuple_New(9);
+    auto seti = [&](size_t i, long v) {
+        PyObject* n = PyInt_FromLong(v);
+        PyTuple_SetItem(tup, i, n);
+    };
+    seti(0, t->tm_year + 1900);
+    seti(1, t->tm_mon + 1);
+    seti(2, t->tm_mday);
+    seti(3, t->tm_hour);
+    seti(4, t->tm_min);
+    seti(5, t->tm_sec);
+    seti(6, t->tm_wday);
+    seti(7, t->tm_yday + 1);
+    seti(8, t->tm_isdst);
+    return tup;
+}
+
+static bool pyc_tm_from_obj(PyObject* obj, struct tm* t, time_t* raw) {
+    memset(t, 0, sizeof(*t));
+    if (!obj) {
+        time_t now = time(nullptr);
+        if (raw) *raw = now;
+        return true;
+    }
+    if (obj->type == 4 || obj->type == 0 || obj->type == 5) {
+        time_t sec = (obj->type == 4) ? (time_t)obj->dvalue : (time_t)obj->value;
+        if (raw) *raw = sec;
+        return true;
+    }
+    if (obj->type == 7 && PyTuple_Size(obj) >= 9) {
+        auto iv = [&](size_t i) -> long {
+            PyObject* x = obj->list[i];
+            return (x && (x->type == 0 || x->type == 5)) ? (long)x->value : 0;
+        };
+        t->tm_year = (int)iv(0) - 1900;
+        t->tm_mon = (int)iv(1) - 1;
+        t->tm_mday = (int)iv(2);
+        t->tm_hour = (int)iv(3);
+        t->tm_min = (int)iv(4);
+        t->tm_sec = (int)iv(5);
+        t->tm_wday = (int)iv(6);
+        t->tm_yday = (int)iv(7) - 1;
+        t->tm_isdst = (int)iv(8);
+        if (raw) *raw = 0;
+        return false;
+    }
+    time_t now = time(nullptr);
+    if (raw) *raw = now;
+    return true;
+}
+
+extern "C" PyObject* Pyc_Time_Gmtime(PyObject* args) {
+    struct tm t;
+    time_t raw = 0;
+    bool fromUnix = pyc_tm_from_obj(pyc_args0(args), &t, &raw);
+    if (fromUnix) {
+        gmtime_r(&raw, &t);
+    }
+    return pyc_tm_tuple(&t);
+}
+
+extern "C" PyObject* Pyc_Time_Localtime(PyObject* args) {
+    struct tm t;
+    time_t raw = 0;
+    bool fromUnix = pyc_tm_from_obj(pyc_args0(args), &t, &raw);
+    if (fromUnix) {
+        localtime_r(&raw, &t);
+    }
+    return pyc_tm_tuple(&t);
+}
+
+extern "C" PyObject* Pyc_Time_Strftime(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty() || !args->list[0] || args->list[0]->type != 3)
+        return PyUnicode_FromString("");
+    struct tm t;
+    memset(&t, 0, sizeof(t));
+    if (args->list.size() >= 2) {
+        time_t raw = 0;
+        bool fromUnix = pyc_tm_from_obj(args->list[1], &t, &raw);
+        if (fromUnix) localtime_r(&raw, &t);
+    } else {
+        time_t now = time(nullptr);
+        localtime_r(&now, &t);
+    }
+    char buf[256];
+    size_t n = strftime(buf, sizeof(buf), args->list[0]->str.c_str(), &t);
+    return PyUnicode_FromStringAndSize(buf, n);
+}
+
+// ---- W11.6 recursive glob ----
+static void pyc_glob_collect(const std::string& dir, const std::string& pat,
+                             bool recursive, std::vector<std::string>& out) {
+    DIR* d = ::opendir(dir.empty() ? "." : dir.c_str());
+    if (!d) return;
+    std::string prefix = dir;
+    if (!prefix.empty() && prefix.back() != '/') prefix += '/';
+    if (dir.empty() || dir == ".") prefix.clear();
+    struct dirent* ent;
+    while ((ent = ::readdir(d)) != nullptr) {
+        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+        std::string name = ent->d_name;
+        std::string full = prefix + name;
+        bool isDir = false;
+        struct stat st;
+        if (::stat(full.empty() ? name.c_str() : full.c_str(), &st) == 0)
+            isDir = S_ISDIR(st.st_mode);
+        if (pyc_fnmatch(name.c_str(), pat.c_str()))
+            out.push_back(full.empty() ? name : full);
+        if (recursive && isDir && name[0] != '.')
+            pyc_glob_collect(full.empty() ? name : full, pat, true, out);
+    }
+    ::closedir(d);
+}
+
+static bool pyc_pat_recursive(const std::string& pat, std::string& leaf) {
+    if (pat.size() >= 3 && pat.compare(0, 3, "**/") == 0) {
+        leaf = pat.substr(3);
+        return true;
+    }
+    if (pat == "**") { leaf = "*"; return true; }
+    leaf = pat;
+    return false;
+}
+
+extern "C" PyObject* PyPathlib_Rglob(PyObject* obj, PyObject* pattern) {
+    PyObject* out = PyList_New(0);
+    if (!pyc_is_path_like(obj) || !pattern || pattern->type != 3) return out;
+    std::string dirPart = obj->str.empty() ? std::string(".") : obj->str;
+    std::string leaf = pattern->str;
+    if (leaf.size() >= 3 && leaf.compare(0, 3, "**/") == 0) leaf = leaf.substr(3);
+    if (leaf == "**" || leaf.empty()) leaf = "*";
+    std::vector<std::string> matches;
+    pyc_glob_collect(dirPart, leaf, true, matches);
+    std::sort(matches.begin(), matches.end());
+    for (auto& m : matches) {
+        PyObject* p = pyc_new_path(m);
+        PyList_Append(out, p);
+        Py_DECREF(p);
+    }
+    return out;
+}
+
+// ---- W11.7 os.walk / stat / chmod ----
+extern "C" PyObject* PyBuiltin_OsWalk(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    PyObject* rootObj = pyc_args0(args);
+    if (!pyc_is_path_like(rootObj)) return out;
+    std::vector<std::string> stack;
+    stack.push_back(rootObj->str.empty() ? std::string(".") : rootObj->str);
+    while (!stack.empty()) {
+        std::string dir = stack.back();
+        stack.pop_back();
+        DIR* d = ::opendir(dir.c_str());
+        if (!d) continue;
+        PyObject* dirs = PyList_New(0);
+        PyObject* files = PyList_New(0);
+        std::vector<std::string> sub;
+        struct dirent* ent;
+        while ((ent = ::readdir(d)) != nullptr) {
+            if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) continue;
+            std::string full = dir;
+            if (!full.empty() && full.back() != '/') full += '/';
+            full += ent->d_name;
+            struct stat st;
+            bool isDir = (::stat(full.c_str(), &st) == 0 && S_ISDIR(st.st_mode));
+            PyObject* nm = PyUnicode_FromString(ent->d_name);
+            if (isDir) { PyList_Append(dirs, nm); sub.push_back(full); }
+            else PyList_Append(files, nm);
+            Py_DECREF(nm);
+        }
+        ::closedir(d);
+        PyObject* row = PyTuple_New(3);
+        PyObject* dp = PyUnicode_FromStringAndSize(dir.data(), dir.size());
+        PyTuple_SetItem(row, 0, dp);
+        PyTuple_SetItem(row, 1, dirs);
+        PyTuple_SetItem(row, 2, files);
+        PyList_Append(out, row);
+        Py_DECREF(row);
+        for (auto it = sub.rbegin(); it != sub.rend(); ++it) stack.push_back(*it);
+    }
+    return out;
+}
+
+extern "C" PyObject* PyBuiltin_OsStat(PyObject* args) {
+    PyObject* p = pyc_args0(args);
+    if (!pyc_is_path_like(p)) {
+        pyc_raise_msg("TypeError", "stat: path should be string or Path");
+        return nullptr;
+    }
+    struct stat st;
+    if (::stat(p->str.c_str(), &st) != 0) {
+        pyc_raise_msg("FileNotFoundError", "No such file or directory");
+        return nullptr;
+    }
+    PyObject* tup = PyTuple_New(10);
+    auto seti = [&](size_t i, long v) {
+        PyObject* n = PyInt_FromLong(v);
+        PyTuple_SetItem(tup, i, n);
+    };
+    seti(0, (long)st.st_mode);
+    seti(1, (long)st.st_ino);
+    seti(2, (long)st.st_dev);
+    seti(3, (long)st.st_nlink);
+    seti(4, (long)st.st_uid);
+    seti(5, (long)st.st_gid);
+    seti(6, (long)st.st_size);
+    seti(7, (long)st.st_atime);
+    seti(8, (long)st.st_mtime);
+    seti(9, (long)st.st_ctime);
+    return tup;
+}
+
+extern "C" PyObject* PyStat_ISDIR(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    long m = (a && (a->type == 0 || a->type == 5)) ? (long)a->value : 0;
+    return PyBool_New(S_ISDIR(m) ? 1 : 0);
+}
+extern "C" PyObject* PyStat_ISREG(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    long m = (a && (a->type == 0 || a->type == 5)) ? (long)a->value : 0;
+    return PyBool_New(S_ISREG(m) ? 1 : 0);
+}
+
+extern "C" PyObject* PyBuiltin_OsChmod(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* p = args->list[0];
+    PyObject* m = args->list[1];
+    if (!pyc_is_path_like(p) || !m || (m->type != 0 && m->type != 5)) return nullptr;
+    ::chmod(p->str.c_str(), (mode_t)m->value);
+    return nullptr;
+}
+
+// ---- W11.8 math / cmath / re / random / operator / uuid leftovers ----
+extern "C" PyObject* PyMath_Isqrt(PyObject* args) {
+    long n = 0;
+    PyObject* a = pyc_args0(args);
+    if (a && (a->type == 0 || a->type == 5)) n = (long)a->value;
+    if (n < 0) { pyc_raise_msg("ValueError", "isqrt() argument must be nonnegative"); return nullptr; }
+    long r = 0;
+    while ((r + 1) * (r + 1) <= n) ++r;
+    return PyInt_FromLong(r);
+}
+
+extern "C" PyObject* PyMath_Comb(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyInt_FromLong(0);
+    long n = (args->list[0] && args->list[0]->type == 0) ? (long)args->list[0]->value : 0;
+    long k = (args->list[1] && args->list[1]->type == 0) ? (long)args->list[1]->value : 0;
+    if (k < 0 || n < 0 || k > n) return PyInt_FromLong(0);
+    if (k > n - k) k = n - k;
+    long r = 1;
+    for (long i = 1; i <= k; ++i) r = r * (n - k + i) / i;
+    return PyInt_FromLong(r);
+}
+
+extern "C" PyObject* PyCmath_Phase(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    double re = 0, im = 0;
+    if (a && a->type == 13) { re = a->complex_real; im = a->complex_imag; }
+    else if (a && a->type == 4) re = a->dvalue;
+    else if (a && (a->type == 0 || a->type == 5)) re = (double)a->value;
+    return PyFloat_FromDouble(atan2(im, re));
+}
+
+extern "C" PyObject* PyRandom_Sample(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    PyObject* pop = args->list[0];
+    PyObject* kObj = args->list[1];
+    if (!pop || pop->type != 1 || !kObj || kObj->type != 0) return out;
+    long k = (long)kObj->value;
+    if (k < 0) k = 0;
+    if ((size_t)k > pop->list.size()) k = (long)pop->list.size();
+    std::vector<PyObject*> items = pop->list;
+    for (long i = 0; i < k; ++i) {
+        size_t j = (size_t)i + (size_t)(rand() % (int)(items.size() - (size_t)i));
+        std::swap(items[(size_t)i], items[j]);
+        PyList_Append(out, items[(size_t)i]);
+    }
+    return out;
+}
+
+extern "C" PyObject* PyOperator_Abs(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    if (!a) return nullptr;
+    if (a->type == 0 || a->type == 5) return PyInt_FromLong(a->value < 0 ? -a->value : a->value);
+    if (a->type == 4) return PyFloat_FromDouble(fabs(a->dvalue));
+    return nullptr;
+}
+
+extern "C" PyObject* PyRe_Escape(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    if (!a || a->type != 3) return PyUnicode_FromString("");
+    std::string o;
+    for (unsigned char c : a->str) {
+        if (strchr(".^$*+?{}[]\\|()", c)) o += '\\';
+        o += (char)c;
+    }
+    return PyUnicode_FromStringAndSize(o.data(), o.size());
+}
+
+// ---- W11.9 fnmatch ----
+extern "C" PyObject* PyFnmatch_Fnmatch(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyBool_New(0);
+    PyObject* n = args->list[0];
+    PyObject* p = args->list[1];
+    if (!n || n->type != 3 || !p || p->type != 3) return PyBool_New(0);
+    return PyBool_New(pyc_fnmatch(n->str.c_str(), p->str.c_str()) ? 1 : 0);
+}
+
+extern "C" PyObject* PyFnmatch_Filter(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    if (!args || args->type != 1 || args->list.size() < 2) return out;
+    PyObject* names = args->list[0];
+    PyObject* pat = args->list[1];
+    if (!names || names->type != 1 || !pat || pat->type != 3) return out;
+    for (auto* n : names->list) {
+        if (n && n->type == 3 && pyc_fnmatch(n->str.c_str(), pat->str.c_str()))
+            PyList_Append(out, n);
+    }
+    return out;
+}
+
+// ---- W11.10 io.StringIO / BytesIO ----
+extern "C" PyObject* PyIO_StringIO(PyObject* args);
+extern "C" PyObject* PyIO_BytesIO(PyObject* args);
+
+static PyObject* pyc_make_bufio(const std::string& init, bool binary) {
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("read", "pyc_bufio_read");
+    addTok("write", "pyc_bufio_write");
+    addTok("getvalue", "pyc_bufio_getvalue");
+    addTok("seek", "pyc_bufio_seek");
+    addTok("close", "pyc_bufio_close");
+    g_pycBufIO[d] = {init, 0, binary};
+    return d;
+}
+
+extern "C" PyObject* PyIO_StringIO(PyObject* args) {
+    std::string init;
+    PyObject* a = pyc_args0(args);
+    if (a && a->type == 3) init = a->str;
+    return pyc_make_bufio(init, false);
+}
+
+extern "C" PyObject* PyIO_BytesIO(PyObject* args) {
+    std::string init;
+    PyObject* a = pyc_args0(args);
+    if (a && (a->type == 17 || a->type == 18 || a->type == 3)) init = a->str;
+    return pyc_make_bufio(init, true);
+}
+
+static PyObject* pyc_bufio_read(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    auto it = g_pycBufIO.find(args->list[0]);
+    if (it == g_pycBufIO.end()) return nullptr;
+    std::string s = it->second.buf.substr(it->second.pos);
+    it->second.pos = it->second.buf.size();
+    if (it->second.binary) return PyBytes_FromStringAndSize(s.data(), s.size());
+    return PyUnicode_FromStringAndSize(s.data(), s.size());
+}
+
+static PyObject* pyc_bufio_write(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    auto it = g_pycBufIO.find(args->list[0]);
+    if (it == g_pycBufIO.end()) return nullptr;
+    PyObject* data = args->list[1];
+    if (!data) return PyInt_FromLong(0);
+    if (it->second.binary) {
+        if (data->type != 17 && data->type != 18) return PyInt_FromLong(0);
+    } else if (data->type != 3) return PyInt_FromLong(0);
+    it->second.buf.append(data->str);
+    it->second.pos = it->second.buf.size();
+    return PyInt_FromLong((long)data->str.size());
+}
+
+static PyObject* pyc_bufio_getvalue(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    auto it = g_pycBufIO.find(args->list[0]);
+    if (it == g_pycBufIO.end()) return nullptr;
+    if (it->second.binary)
+        return PyBytes_FromStringAndSize(it->second.buf.data(), it->second.buf.size());
+    return PyUnicode_FromStringAndSize(it->second.buf.data(), it->second.buf.size());
+}
+
+static PyObject* pyc_bufio_seek(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    auto it = g_pycBufIO.find(args->list[0]);
+    if (it == g_pycBufIO.end()) return nullptr;
+    PyObject* n = args->list[1];
+    long pos = (n && (n->type == 0 || n->type == 5)) ? (long)n->value : 0;
+    if (pos < 0) pos = 0;
+    if ((size_t)pos > it->second.buf.size()) pos = (long)it->second.buf.size();
+    it->second.pos = (size_t)pos;
+    return PyInt_FromLong(pos);
+}
+
+static PyObject* pyc_bufio_close(PyObject* args) {
+    if (args && args->type == 1 && !args->list.empty())
+        g_pycBufIO.erase(args->list[0]);
+    return nullptr;
+}
+
+// ---- W11.11 tempfile ----
+extern "C" PyObject* PyTempfile_Mkstemp(PyObject* args) {
+    (void)args;
+    char tmpl[] = "/tmp/pyc_XXXXXX";
+    int fd = mkstemp(tmpl);
+    if (fd < 0) { pyc_raise_msg("OSError", "mkstemp failed"); return nullptr; }
+    ::close(fd);
+    PyObject* tup = PyTuple_New(2);
+    PyTuple_SetItem(tup, 0, PyInt_FromLong(fd));
+    PyTuple_SetItem(tup, 1, PyUnicode_FromString(tmpl));
+    return tup;
+}
+
+extern "C" PyObject* PyTempfile_NamedTemporaryFile(PyObject* args) {
+    (void)args;
+    char tmpl[] = "/tmp/pyc_XXXXXX";
+    int fd = mkstemp(tmpl);
+    if (fd < 0) return nullptr;
+    ::close(fd);
+    PyObject* mode = PyUnicode_FromString("w+");
+    PyObject* path = PyUnicode_FromString(tmpl);
+    PyObject* f = PyBuiltin_Open(path, mode);
+    Py_DECREF(mode); Py_DECREF(path);
+    return f;
+}
+
+extern "C" PyObject* PyTempfile_TemporaryDirectory(PyObject* args) {
+    (void)args;
+    char tmpl[] = "/tmp/pyc_td_XXXXXX";
+    if (!mkdtemp(tmpl)) { pyc_raise_msg("OSError", "mkdtemp failed"); return nullptr; }
+    PyObject* d = PyDict_New();
+    PyObject* k = PyUnicode_FromString("name");
+    PyObject* v = PyUnicode_FromString(tmpl);
+    PyDict_SetItem(d, k, v);
+    Py_DECREF(k); Py_DECREF(v);
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* kk = PyUnicode_FromString(name);
+        PyObject* vv = PyUnicode_FromString(token);
+        PyDict_SetItem(d, kk, vv);
+        Py_DECREF(kk); Py_DECREF(vv);
+    };
+    addTok("__enter__", "pyc_td_enter");
+    addTok("__exit__", "pyc_td_exit");
+    addTok("cleanup", "pyc_td_exit");
+    return d;
+}
+
+static PyObject* pyc_td_enter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* self = args->list[0];
+    Py_INCREF(self);
+    return self;
+}
+
+static PyObject* pyc_td_exit(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    PyObject* self = args->list[0];
+    PyObject* key = PyUnicode_FromString("name");
+    PyObject* name = Pyc_GetItem(self, key);
+    Py_DECREF(key);
+    if (name && name->type == 3) {
+        std::string cmd = std::string("rm -rf ") + name->str;
+        (void)system(cmd.c_str());
+    }
+    if (name) Py_DECREF(name);
+    return nullptr;
+}
+
+// ---- W11.12 pprint ----
+extern "C" PyObject* PyPprint_Pformat(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    if (!a) return PyUnicode_FromString("None");
+    return PyStr_FromAny(a);
+}
+
+extern "C" PyObject* PyPprint_Pprint(PyObject* args) {
+    PyObject* s = PyPprint_Pformat(args);
+    if (s) {
+        PyObject* lst = PyList_New(0);
+        PyList_Append(lst, s);
+        pyc_print(lst, nullptr, nullptr);
+        Py_DECREF(lst);
+        Py_DECREF(s);
+    }
+    return nullptr;
+}
+
+// ---- W11.13 errno / stat constants are module dicts ----
+// ---- W11.14 shlex / filecmp ----
+extern "C" PyObject* PyShlex_Split(PyObject* args) {
+    PyObject* out = PyList_New(0);
+    PyObject* a = pyc_args0(args);
+    if (!a || a->type != 3) return out;
+    std::string cur;
+    bool inQ = false;
+    char q = 0;
+    for (char c : a->str) {
+        if (inQ) {
+            if (c == q) inQ = false;
+            else cur += c;
+        } else if (c == '"' || c == '\'') { inQ = true; q = c; }
+        else if (c == ' ' || c == '\t' || c == '\n') {
+            if (!cur.empty()) {
+                PyObject* s = PyUnicode_FromStringAndSize(cur.data(), cur.size());
+                PyList_Append(out, s); Py_DECREF(s); cur.clear();
+            }
+        } else cur += c;
+    }
+    if (!cur.empty()) {
+        PyObject* s = PyUnicode_FromStringAndSize(cur.data(), cur.size());
+        PyList_Append(out, s); Py_DECREF(s);
+    }
+    return out;
+}
+
+extern "C" PyObject* PyFilecmp_Cmp(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return PyBool_New(0);
+    PyObject* a = args->list[0];
+    PyObject* b = args->list[1];
+    if (!pyc_is_path_like(a) || !pyc_is_path_like(b)) return PyBool_New(0);
+    FILE* fa = fopen(a->str.c_str(), "rb");
+    FILE* fb = fopen(b->str.c_str(), "rb");
+    if (!fa || !fb) { if (fa) fclose(fa); if (fb) fclose(fb); return PyBool_New(0); }
+    char ba[4096], bb[4096];
+    bool eq = true;
+    while (eq) {
+        size_t na = fread(ba, 1, sizeof(ba), fa);
+        size_t nb = fread(bb, 1, sizeof(bb), fb);
+        if (na != nb || memcmp(ba, bb, na) != 0) eq = false;
+        if (na == 0) break;
+    }
+    fclose(fa); fclose(fb);
+    return PyBool_New(eq ? 1 : 0);
+}
+
+// ---- W11.15 hmac / secrets ----
+extern "C" PyObject* PyHmac_New(PyObject* args) {
+    std::string key, msg;
+    if (args && args->type == 1) {
+        if (args->list.size() >= 1 && pyc_is_bytes_like(args->list[0])) key = args->list[0]->str;
+        if (args->list.size() >= 2 && pyc_is_bytes_like(args->list[1])) msg = args->list[1]->str;
+    }
+    std::string inner = key;
+    if (inner.size() > 64) {
+        uint8_t d[20];
+        pyc_sha1(inner, d);
+        inner.assign((char*)d, (char*)d + 20);
+    }
+    inner.resize(64, '\0');
+    std::string opad = inner, ipad = inner;
+    for (size_t i = 0; i < 64; ++i) { ipad[i] ^= 0x36; opad[i] ^= 0x5c; }
+    uint8_t idig[20];
+    pyc_sha1(ipad + msg, idig);
+    uint8_t odig[20];
+    pyc_sha1(opad + std::string((char*)idig, (char*)idig + 20), odig);
+    PyObject* d = PyDict_New();
+    g_pycHashes[d] = {PYC_HASH_SHA1, std::string()};
+    std::string hex = pyc_bytes_to_hex(odig, 20);
+    PyObject* k = PyUnicode_FromString("__pyc_hexdigest__");
+    PyObject* v = PyUnicode_FromString(hex.c_str());
+    PyDict_SetItem(d, k, v);
+    Py_DECREF(k); Py_DECREF(v);
+    PyObject* k2 = PyUnicode_FromString("__pyc_digest__");
+    PyObject* v2 = PyBytes_FromStringAndSize((const char*)odig, 20);
+    PyDict_SetItem(d, k2, v2);
+    Py_DECREF(k2); Py_DECREF(v2);
+    return d;
+}
+
+extern "C" PyObject* PySecrets_TokenBytes(PyObject* args) {
+    long n = 32;
+    PyObject* a = pyc_args0(args);
+    if (a && (a->type == 0 || a->type == 5)) n = (long)a->value;
+    if (n < 0) n = 0;
+    std::string buf((size_t)n, '\0');
+    FILE* ur = fopen("/dev/urandom", "rb");
+    if (ur) { fread(buf.data(), 1, (size_t)n, ur); fclose(ur); }
+    return PyBytes_FromStringAndSize(buf.data(), buf.size());
+}
+
+extern "C" PyObject* PySecrets_TokenHex(PyObject* args) {
+    PyObject* b = PySecrets_TokenBytes(args);
+    if (!b) return PyUnicode_FromString("");
+    std::string hex = pyc_bytes_to_hex((const uint8_t*)b->str.data(), b->str.size());
+    Py_DECREF(b);
+    return PyUnicode_FromString(hex.c_str());
+}
+
+// ---- W11.16 tomllib (subset) ----
+static void pyc_toml_skip(const std::string& s, size_t& i) {
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r')) ++i;
+}
+
+static PyObject* pyc_toml_value(const std::string& s, size_t& i);
+
+static PyObject* pyc_toml_string(const std::string& s, size_t& i) {
+    char q = s[i++];
+    std::string o;
+    while (i < s.size() && s[i] != q) {
+        if (s[i] == '\\' && i + 1 < s.size()) { ++i; o += s[i++]; }
+        else o += s[i++];
+    }
+    if (i < s.size()) ++i;
+    return PyUnicode_FromStringAndSize(o.data(), o.size());
+}
+
+static PyObject* pyc_toml_value(const std::string& s, size_t& i) {
+    pyc_toml_skip(s, i);
+    if (i >= s.size()) return nullptr;
+    if (s[i] == '"' || s[i] == '\'') return pyc_toml_string(s, i);
+    if (s[i] == '[') {
+        ++i;
+        PyObject* lst = PyList_New(0);
+        while (i < s.size() && s[i] != ']') {
+            pyc_toml_skip(s, i);
+            if (s[i] == ']') break;
+            PyObject* v = pyc_toml_value(s, i);
+            if (v) { PyList_Append(lst, v); Py_DECREF(v); }
+            pyc_toml_skip(s, i);
+            if (i < s.size() && s[i] == ',') ++i;
+        }
+        if (i < s.size() && s[i] == ']') ++i;
+        return lst;
+    }
+    if (s.compare(i, 4, "true") == 0) { i += 4; return PyBool_New(1); }
+    if (s.compare(i, 5, "false") == 0) { i += 5; return PyBool_New(0); }
+    size_t j = i;
+    if (s[j] == '-' || s[j] == '+') ++j;
+    bool isF = false;
+    while (j < s.size() && (isdigit((unsigned char)s[j]) || s[j] == '.')) {
+        if (s[j] == '.') isF = true;
+        ++j;
+    }
+    std::string num = s.substr(i, j - i);
+    i = j;
+    if (isF) return PyFloat_FromDouble(strtod(num.c_str(), nullptr));
+    return PyInt_FromLong(strtol(num.c_str(), nullptr, 10));
+}
+
+extern "C" PyObject* PyTomllib_Loads(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    PyObject* d = PyDict_New();
+    if (!a || a->type != 3) return d;
+    const std::string& s = a->str;
+    size_t i = 0;
+    while (i < s.size()) {
+        if (s[i] == '#') { while (i < s.size() && s[i] != '\n') ++i; continue; }
+        if (s[i] == '\n') { ++i; continue; }
+        pyc_toml_skip(s, i);
+        if (i >= s.size() || s[i] == '[') { while (i < s.size() && s[i] != '\n') ++i; continue; }
+        size_t k0 = i;
+        while (i < s.size() && s[i] != '=' && s[i] != '\n') ++i;
+        std::string key = s.substr(k0, i - k0);
+        while (!key.empty() && (key.back() == ' ' || key.back() == '\t')) key.pop_back();
+        if (i < s.size() && s[i] == '=') ++i;
+        PyObject* val = pyc_toml_value(s, i);
+        if (!key.empty() && val) {
+            PyObject* kk = PyUnicode_FromStringAndSize(key.data(), key.size());
+            PyDict_SetItem(d, kk, val);
+            Py_DECREF(kk);
+        }
+        if (val) Py_DECREF(val);
+        while (i < s.size() && s[i] != '\n') ++i;
+    }
+    return d;
+}
+
+extern "C" PyObject* PyTomllib_Load(PyObject* args) {
+    PyObject* f = pyc_args0(args);
+    if (!f) return PyDict_New();
+    PyObject* data = PyBuiltin_FileRead(f);
+    if (!data) return PyDict_New();
+    PyObject* lst = PyList_New(0);
+    PyList_Append(lst, data);
+    PyObject* r = PyTomllib_Loads(lst);
+    Py_DECREF(lst); Py_DECREF(data);
+    return r;
+}
+
+// ---- W11.17 fractions ----
+static long pyc_gcd_l(long a, long b) {
+    if (a < 0) a = -a;
+    if (b < 0) b = -b;
+    while (b) { long t = b; b = a % b; a = t; }
+    return a ? a : 1;
+}
+
+static PyObject* pyc_frac_new(long n, long d) {
+    if (d < 0) { n = -n; d = -d; }
+    if (d == 0) { pyc_raise_msg("ZeroDivisionError", "Fraction(x, 0)"); return nullptr; }
+    long g = pyc_gcd_l(n, d);
+    n /= g; d /= g;
+    PyObject* o = new PyObject();
+    o->refcount = 1;
+    o->type = 2;
+    PyObject* kn = PyUnicode_FromString("numerator");
+    PyObject* kd = PyUnicode_FromString("denominator");
+    PyObject* vn = PyInt_FromLong(n);
+    PyObject* vd = PyInt_FromLong(d);
+    PyDict_SetItem(o, kn, vn); PyDict_SetItem(o, kd, vd);
+    Py_DECREF(kn); Py_DECREF(kd); Py_DECREF(vn); Py_DECREF(vd);
+    return o;
+}
+
+static bool pyc_frac_parts(PyObject* o, long* n, long* d) {
+    if (!o || o->type != 2) return false;
+    PyObject* kn = PyUnicode_FromString("numerator");
+    PyObject* kd = PyUnicode_FromString("denominator");
+    PyObject* vn = Pyc_GetItem(o, kn);
+    PyObject* vd = Pyc_GetItem(o, kd);
+    Py_DECREF(kn); Py_DECREF(kd);
+    bool ok = vn && vd && (vn->type == 0) && (vd->type == 0);
+    if (ok) { *n = (long)vn->value; *d = (long)vd->value; }
+    if (vn) Py_DECREF(vn);
+    if (vd) Py_DECREF(vd);
+    return ok;
+}
+
+extern "C" PyObject* PyFractions_Fraction(PyObject* args) {
+    long n = 0, d = 1;
+    if (args && args->type == 1) {
+        if (args->list.size() >= 1 && args->list[0] && args->list[0]->type == 0)
+            n = (long)args->list[0]->value;
+        if (args->list.size() >= 2 && args->list[1] && args->list[1]->type == 0)
+            d = (long)args->list[1]->value;
+        if (args->list.size() >= 1 && args->list[0] && args->list[0]->type == 3) {
+            const std::string& s = args->list[0]->str;
+            size_t sl = s.find('/');
+            if (sl != std::string::npos) {
+                n = strtol(s.c_str(), nullptr, 10);
+                d = strtol(s.c_str() + sl + 1, nullptr, 10);
+            } else n = strtol(s.c_str(), nullptr, 10);
+        }
+    }
+    return pyc_frac_new(n, d);
+}
+
+// ---- W11.18 argparse ----
+extern "C" PyObject* PyArgparse_Parser(PyObject* args) {
+    (void)args;
+    PyObject* d = PyDict_New();
+    auto addTok = [&](const char* name, const char* token) {
+        PyObject* k = PyUnicode_FromString(name);
+        PyObject* v = PyUnicode_FromString(token);
+        PyDict_SetItem(d, k, v);
+        Py_DECREF(k); Py_DECREF(v);
+    };
+    addTok("add_argument", "pyc_ap_add");
+    addTok("parse_args", "pyc_ap_parse");
+    PyObject* specs = PyList_New(0);
+    PyObject* sk = PyUnicode_FromString("__specs__");
+    PyDict_SetItem(d, sk, specs);
+    Py_DECREF(sk); Py_DECREF(specs);
+    g_pycParsers.insert(d);
+    return d;
+}
+
+static PyObject* pyc_ap_add(PyObject* args) {
+    if (!args || args->type != 1 || args->list.size() < 2) return nullptr;
+    PyObject* self = args->list[0];
+    PyObject* name = args->list[1];
+    PyObject* sk = PyUnicode_FromString("__specs__");
+    PyObject* specs = Pyc_GetItem(self, sk);
+    Py_DECREF(sk);
+    if (specs && specs->type == 1 && name) PyList_Append(specs, name);
+    if (specs) Py_DECREF(specs);
+    return nullptr;
+}
+
+static PyObject* pyc_ap_parse(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return PyDict_New();
+    PyObject* self = args->list[0];
+    PyObject* ns = PyDict_New();
+    PyObject* sk = PyUnicode_FromString("__specs__");
+    PyObject* specs = Pyc_GetItem(self, sk);
+    Py_DECREF(sk);
+    if (!g_sys_argv || !specs || specs->type != 1) {
+        if (specs) Py_DECREF(specs);
+        return ns;
+    }
+    std::vector<std::string> argv;
+    for (size_t i = 1; i < g_sys_argv->list.size(); ++i) {
+        PyObject* a = g_sys_argv->list[i];
+        if (a && a->type == 3) argv.push_back(a->str);
+    }
+    size_t pos = 0;
+    for (auto* spec : specs->list) {
+        if (!spec || spec->type != 3) continue;
+        std::string dest = spec->str;
+        bool opt = dest.size() >= 2 && dest[0] == '-' && dest[1] == '-';
+        if (opt) dest = dest.substr(2);
+        else if (dest.size() >= 1 && dest[0] == '-') dest = dest.substr(1);
+        std::string val = "";
+        if (opt) {
+            std::string flag = spec->str;
+            for (size_t i = 0; i < argv.size(); ++i) {
+                if (argv[i] == flag && i + 1 < argv.size()) { val = argv[i + 1]; break; }
+                if (argv[i].rfind(flag + "=", 0) == 0) { val = argv[i].substr(flag.size() + 1); break; }
+            }
+        } else {
+            while (pos < argv.size() && argv[pos].size() >= 1 && argv[pos][0] == '-') ++pos;
+            if (pos < argv.size()) val = argv[pos++];
+        }
+        PyObject* dk = PyUnicode_FromStringAndSize(dest.data(), dest.size());
+        PyObject* dv = PyUnicode_FromStringAndSize(val.data(), val.size());
+        PyDict_SetItem(ns, dk, dv);
+        Py_DECREF(dk); Py_DECREF(dv);
+    }
+    if (specs) Py_DECREF(specs);
+    return ns;
+}
+
+// ---- W11.19 zlib / gzip ----
+#include <zlib.h>
+
+extern "C" PyObject* PyZlib_Compress(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    if (!pyc_is_bytes_like(a)) return PyBytes_FromStringAndSize("", 0);
+    uLongf bound = compressBound((uLong)a->str.size());
+    std::string out(bound, '\0');
+    uLongf n = bound;
+    if (compress((Bytef*)out.data(), &n, (const Bytef*)a->str.data(), (uLong)a->str.size()) != Z_OK)
+        return PyBytes_FromStringAndSize("", 0);
+    return PyBytes_FromStringAndSize(out.data(), n);
+}
+
+extern "C" PyObject* PyZlib_Decompress(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    if (!pyc_is_bytes_like(a)) return PyBytes_FromStringAndSize("", 0);
+    std::string out(a->str.size() * 4 + 64, '\0');
+    z_stream strm;
+    memset(&strm, 0, sizeof(strm));
+    strm.next_in = (Bytef*)a->str.data();
+    strm.avail_in = (uInt)a->str.size();
+    if (inflateInit(&strm) != Z_OK) return PyBytes_FromStringAndSize("", 0);
+    std::string acc;
+    int ret;
+    do {
+        strm.next_out = (Bytef*)out.data();
+        strm.avail_out = (uInt)out.size();
+        ret = inflate(&strm, Z_NO_FLUSH);
+        acc.append(out.data(), out.size() - strm.avail_out);
+    } while (ret == Z_OK);
+    inflateEnd(&strm);
+    return PyBytes_FromStringAndSize(acc.data(), acc.size());
+}
+
+extern "C" PyObject* PyGzip_Compress(PyObject* args) {
+    return PyZlib_Compress(args);
+}
+
+extern "C" PyObject* PyGzip_Decompress(PyObject* args) {
+    return PyZlib_Decompress(args);
+}
+
+// ---- W11.20 warnings / traceback ----
+extern "C" PyObject* PyWarnings_Warn(PyObject* args) {
+    PyObject* a = pyc_args0(args);
+    const char* msg = (a && a->type == 3) ? a->str.c_str() : "";
+    fprintf(stderr, "UserWarning: %s\n", msg);
+    return nullptr;
+}
+
+extern "C" PyObject* PyTraceback_FormatException(PyObject* args) {
+    (void)args;
+    return PyUnicode_FromString("Traceback (most recent call last):\n");
 }
 
 } // extern "C"

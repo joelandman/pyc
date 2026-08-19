@@ -821,20 +821,26 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   on w118. Proven `typeOf=="file"` only (I-030). Leftovers I-222–I-225.
 
 ### I-119  hashlib `.update()`
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: FEATURES.md. md5/sha1/sha256 digest at construction only. No incremental `.update()`.
-- Files: `src/runtime/Runtime.cpp`
+- Evidence: W11.3 / `w113_hash.py`: `md5(); update(b"hello"); update(b" world")`
+  matches `md5(b"hello world")`. Same for sha1/sha256. Boxed
+  `[h].update` / mixed `gu(dict); gu(hash)`. Parent: empty digest /
+  AttributeError on boxed hexdigest.
+- Files: `src/runtime/Runtime.cpp` (`g_pycHashes`, `PyHashlib_Update`),
+  `src/Compiler.cpp` (hashobj `update` arm), `src/codegen/Codegen.cpp`
 - Blocks merge: no
-- Notes: I-017 child. Feature work.
+- Notes: Wave 11 W11.3. Sidetable, not `(2, "update")`. Recomputes digest
+  from accumulated payload. `hash.copy()` not added.
 
 ### I-120  decimal `getcontext` / `localcontext`
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: FEATURES.md. libmpdec, 28 digits, `ROUND_HALF_EVEN`. No `getcontext()` / `localcontext()`.
+- Evidence: W11.4 / `w114_dec.py`: default prec 28; `prec=5` → `0.33333`;
+  `localcontext` prec 3 restores. Parent: AttributeError / no export.
 - Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp` (`syntheticModuleExports`)
 - Blocks merge: no
-- Notes: I-017 child. Feature work. Keep Compiler exports in sync.
+- Notes: Wave 11 W11.4. `.prec` only. Rounding stays ROUND_HALF_EVEN.
 
 ### I-140  Boxed `fn(*(1,))` / `fn(1, *[2])` / `fn(*xs)` still drop the star
 - Status: fixed
@@ -1648,62 +1654,77 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Found reviewing W9.21 / I-211. Same CPython arm as factory==K.
 
 ### I-222  Boxed / first-class file methods still miss
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `def g(f): return f.read(); g(open(p))` — CPython file text;
-  pyc AttributeError `'dict' object has no attribute 'read'`.
-  `h = f.read; h()` — CPython text; pyc None (token, no bound self).
-- Files: `src/Compiler.cpp`, `src/runtime/Runtime.cpp`
+- Evidence: W11.2 / `w112_io.py`: `[open(p)][0].read()` / `.readline()` /
+  `.readlines()` / boxed `.write`; mixed `g(C()); g(open(p))` match
+  CPython. Parent: AttributeError `'dict' ... 'read'`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_call_builtin_method` `g_pycFiles`)
 - Blocks merge: no
-- Notes: Found reviewing W10.1 / I-118. Proven `f=open(...); f.read()`
-  works. Do not register `(2, "read")` without `g_pycFiles` (plain dicts).
+- Notes: Wave 11 W11.2. Sidetable, not `(2, "read")`. User `C.read` and
+  `d.read()` AttributeError kept. Bound `h = f.read; h()` still None
+  (I-228). Closed file is erased from `g_pycFiles` so boxed post-close
+  is AttributeError, not ValueError.
 
 ### I-223  `write(bytes)` in `"wb"` is a silent no-op
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `open(p,"wb"); f.write(b"xy")` — CPython writes bytes; pyc
-  writes 0 (`pyc_file_write_adapter` type-3 only).
-  `f.write("hi")` on `"wb"` — CPython TypeError; pyc writes.
+- Evidence: W11.1 / `w111_io.py`: `open(p,"wb").write(b"hello\\nworld")`
+  then `open(p,"rb").read()` → `b'hello\\nworld'`. `write(b"xy")` on text
+  and `write("hi")` on `"wb"` → TypeError. `write(bytearray(b"AB"))` on
+  `"wb"` → `b'AB'`. Parent: empty file / wrote str / no TypeError.
 - Files: `src/runtime/Runtime.cpp` (`pyc_file_write_adapter`)
 - Blocks merge: no
-- Notes: Found reviewing W10.1. Inverse of I-118 `"rb"`.
+- Notes: Wave 11 W11.1. Binary accepts type 17/18; text requires type 3.
 
 ### I-224  `readlines()` on `"rb"` is list[str]; closed is `[]`
-- Status: open
+- Status: fixed
 - Severity: wrong-answer
-- Evidence: `open(p,"rb").readlines()` — CPython list[bytes]; pyc
-  list[str]. `f.close(); f.readlines()` — CPython ValueError; pyc `[]`.
+- Evidence: W11.1 / `w111_io.py`: `open(p,"rb").readlines()` →
+  `[b'hello\\n', b'world']`. Closed `readlines()` → ValueError (`closed`).
+  Parent: `['hello\\n', 'world']` / `[]`.
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_FileReadlines`)
 - Blocks merge: no
-- Notes: Found reviewing W10.1. `read`/`readline` were updated; this path
-  was not.
+- Notes: Wave 11 W11.1. Uses `pyc_file_or_unreadable` + `pyc_file_make_data`.
 
 ### I-225  `read()` on write-only; `encoding=`; `readline(n)`
 - Status: open
 - Severity: limitation
-- Evidence: `open(p,"w").read()` — CPython UnsupportedOperation; pyc `""`.
-  `encoding=` dropped. `f.readline(3)` ignores size at compile time.
+- Evidence: W11.1 write-only `read()`. W11.2 closed `readline(n)`
+  (`f.readline(2)` → `'he'`; boxed `[open(p)][0].readline(2)`). Leftover:
+  `encoding=` dropped.
 - Files: `src/runtime/Runtime.cpp`, `src/Compiler.cpp`
 - Blocks merge: no
-- Notes: Found reviewing W10.1.
+- Notes: Found reviewing W10.1. `PyBuiltin_FileReadlineN` + proven arm.
 
 ### I-226  `Path.rglob` / `**` glob still missing
+- Status: fixed
+- Severity: limitation
+- Evidence: W11 / `w11_rest.py`: `Path(base).rglob("*.txt")` →
+  `['a.txt', 'b.txt']`. Parent: `[]` / AttributeError.
+- Files: `src/runtime/Runtime.cpp` (`PyPathlib_Rglob`), `src/Compiler.cpp`
+- Blocks merge: no
+- Notes: Wave 11 W11.6. Recursive walk + fnmatch. `glob.glob("**")` still
+  one-directory unless the pattern is `**/…`.
+
+### I-228  Bound `f.read` is a token, not a bound method
 - Status: open
 - Severity: limitation
-- Evidence: `Path(base).glob("**/*.txt")` — CPython matches; pyc `[]`.
-  No `rglob`. Non-recursive `*.txt` is I-117.
-- Files: `src/runtime/Runtime.cpp` (`PyPathlib_Glob`)
+- Evidence: `f = open(p); h = f.read; h()` — CPython file text; pyc
+  `None` (`Pyc_GetItem` returns `"pyc_file_read"`; Apply has no self).
+- Files: `src/runtime/Runtime.cpp` (`Pyc_GetItem`, file dict tokens)
 - Blocks merge: no
-- Notes: Found reviewing W10.2 / I-117. Same class as `glob` module no `**`.
+- Notes: Found reviewing W11.2 / I-222. Same class as other token
+  methods (`h = f.write`). Needs bound-method objects.
 
 ### I-227  `open(Path)` / PathLike still rejected
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: `open(Path("/tmp/pyc_w117_glob/a.txt"))` — CPython reads;
-  pyc ValueError. `PyBuiltin_Open` requires `path->type == 3`.
+- Evidence: W11.1 / `w111_io.py`: `open(Path(p)).read()` → `pathok`.
+  Parent: ValueError (Open returned null; FileRead saw closed).
 - Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Open`)
 - Blocks merge: no
-- Notes: Found reviewing W10.2 / I-117. Use `open(str(p))`.
+- Notes: Wave 11 W11.1. `pyc_is_path_like` (type 3 or 16); path text in `str`.
 
 ---
 

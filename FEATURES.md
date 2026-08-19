@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **800/800** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **811/811** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796, 800, 802, 804, 806) are stale.
 
 ---
 
@@ -192,10 +192,15 @@ consumers either call `pyc_ensure_boxed_list()` or branch on `list_item_type`
 
 ## File I/O
 
-`open(path, mode)` / `with open(...) as f:` — `.write()`, `.read()` / `.read(n)`,
-`.readline()`, `.readlines()`, `.close()`. `open(..., "rb")` returns bytes
-([I-118](ISSUES.md)). Leftover: boxed `g(f).read()`, `write(bytes)` in `"wb"`,
-`readlines()` on `"rb"` ([I-222](ISSUES.md)–[I-224](ISSUES.md)).
+`open(path, mode)` / `open(Path)` / `with open(...) as f:` — `.write()`,
+`.read()` / `.read(n)`, `.readline()`, `.readlines()`, `.close()`.
+`open(..., "rb")` returns bytes; `readlines()` on `"rb"` is `list[bytes]`;
+`write(bytes)` / `write(bytearray)` in `"wb"`; str on `"wb"` / bytes on text
+is TypeError; write-only `read()` is OSError; closed `readlines()` is
+ValueError ([I-118](ISSUES.md)/[I-223](ISSUES.md)/[I-224](ISSUES.md)/[I-227](ISSUES.md)).
+Boxed `[f].read()` / mixed-param file methods work ([I-222](ISSUES.md)).
+`readline(n)` honors size. Leftover: bound `h = f.read`, `encoding=`
+([I-228](ISSUES.md)/[I-225](ISSUES.md)).
 
 ---
 
@@ -218,29 +223,41 @@ runtime module dicts. Keep them in sync.
 | Module | What works | Deliberate gaps |
 |--------|------------|-----------------|
 | `sys` | `argv`, `stderr`, `modules` | |
-| `time` | `perf_counter` | rest of `time` |
-| `re` | search/match/finditer/findall/sub/split/compile; `IGNORECASE`/`MULTILINE`/`DOTALL`; `count=`/`maxsplit=`; `.group(i)` | `VERBOSE`/`ASCII`; named groups; compiled-pattern methods |
-| `os` / `os.path` | exists/isfile/isdir/join/basename/dirname/`split`/`splitext` (2-tuples)/abspath; unlink/remove/rename/getcwd/listdir/makedirs (`exist_ok` always true); `environ` (read-only snapshot) | writes to `environ` do not affect the process |
-| `pathlib` | `Path` / `PurePath`, multi-arg ctor, `/`, `.exists`/`.is_dir`/`.joinpath`, `.parts`, `.resolve`, `.glob` (one dir) | `rglob` / `**`, `open(Path)` ([I-226](ISSUES.md)/[I-227](ISSUES.md)) |
+| `time` | `perf_counter`, `time`, `sleep`, `strftime`, `localtime`, `gmtime` (9-tuple) | `struct_time` attrs; tz |
+| `re` | search/match/finditer/findall/sub/split/compile/`escape`; `IGNORECASE`/`MULTILINE`/`DOTALL`; `count=`/`maxsplit=`; `.group(i)` | `VERBOSE`/`ASCII`; named groups; compiled-pattern methods |
+| `os` / `os.path` | exists/isfile/isdir/join/basename/dirname/`split`/`splitext` (2-tuples)/abspath; unlink/remove/rename/getcwd/listdir/makedirs; `walk`/`stat`/`chmod`; `environ` (writes call `setenv`) | `stat` is a 10-tuple not `os.stat_result` |
+| `pathlib` | `Path` / `PurePath`, multi-arg ctor, `/`, `.exists`/`.is_dir`/`.joinpath`, `.parts`, `.resolve`, `.glob` / `.rglob`, `open(Path)` | |
 | `subprocess` | `call`, `check_output` | |
 | `math` | ~25 libm functions + `pi`/`e`/`tau`/`inf`/`nan` | |
-| `cmath` | `sqrt`, `log`, `exp`, `sin`, `cos`, `tan` | |
+| `cmath` | `sqrt`, `log`, `exp`, `sin`, `cos`, `tan`, `phase` | |
 | `json` | `dumps`/`loads` | `indent`/`sort_keys`/custom encoder |
-| `random` | MT19937 matching CPython: seed/random/randrange/randint/uniform/choice/shuffle | |
+| `random` | MT19937 matching CPython: seed/random/randrange/randint/uniform/choice/shuffle/`sample` | |
 | `itertools` | chain, `chain.from_iterable`, product, combinations, permutations, starmap, islice (2-arg), zip_longest, accumulate, takewhile, dropwhile, compress, groupby | `count`/`cycle`/unbounded `repeat` (no lazy iterators) |
 | `collections` | `Counter` (`.most_common`/`.elements`/`.subtract`/`.update`, `__missing__`); `deque`; `namedtuple`; `defaultdict` | `Counter` is a dict + side table, not a subclass; deque/namedtuple print as list/dict |
 | `datetime` | `date`/`datetime`/`timedelta`, arithmetic, comparisons, `.isoformat`/`.strftime`/`.strptime`/`.fromisoformat` | µs, tz, `datetime` is not a `date` subclass ([I-113](ISSUES.md)/[I-114](ISSUES.md)/[I-115](ISSUES.md)) |
-| `hashlib` | md5/sha1/sha256; `str`/`bytes`/`bytearray`; `.hexdigest()`/`.digest()` | no `.update()` (digest at construction) |
+| `hashlib` | md5/sha1/sha256; `str`/`bytes`/`bytearray`; `.update()`; `.hexdigest()`/`.digest()` | `copy()` |
 | `base64` | `b64encode`/`b64decode` → bytes | |
 | `struct` | common pack/unpack codes; `unpack` → tuple | native align, `n`/`N` |
 | `heapq` / `bisect` / `statistics` | standard helpers; statistics preserves exact int when all-int and division is even | full `Fraction` arithmetic |
 | `string` / `textwrap` / `copy` / `uuid` | subset | |
 | `functools` | `reduce`, `partial`, `wraps` (no-op on `__name__`/`__doc__`), `lru_cache` (unbounded; `maxsize` ignored) | |
-| `operator` | arithmetic/comparison wrappers; `itemgetter`/`attrgetter` (multi-key → tuple) | |
+| `operator` | arithmetic/comparison wrappers; `abs`; `itemgetter`/`attrgetter` (multi-key → tuple) | |
 | `shutil` | `copyfile`, `move`, `rmtree` | |
 | `glob` | `*` `?` `[seq]` in one directory | no `**` |
 | `csv` | `reader(lines)`, `writer(f).writerow` | dialects, embedded newlines in quoted fields |
-| `decimal` | `Decimal` arithmetic, `.quantize`, conversions | `getcontext`/`localcontext` |
+| `decimal` | `Decimal` arithmetic, `.quantize`, conversions; `getcontext`/`localcontext` (`.prec`) | other Context fields |
+| `fnmatch` | `fnmatch`, `filter` | `translate` |
+| `io` | `StringIO` / `BytesIO` (`read`/`write`/`getvalue`/`seek`) | `IOBase` hierarchy |
+| `tempfile` | `mkstemp`, `NamedTemporaryFile`, `TemporaryDirectory` | `SpooledTemporaryFile` |
+| `pprint` | `pprint`, `pformat` | `PrettyPrinter` |
+| `errno` / `stat` | common constants; `S_ISDIR` / `S_ISREG` | full constant set |
+| `shlex` / `filecmp` | `split`; `cmp` | `shlex` class; `cmpfiles` |
+| `hmac` / `secrets` | `hmac.new` (SHA-1) + `.hexdigest`; `token_hex` / `token_bytes` | other digestmods |
+| `tomllib` | `loads` / `load` (tables of scalars/lists) | nested tables, dates |
+| `fractions` | `Fraction` (`numerator`/`denominator`) | arithmetic ops |
+| `argparse` | `ArgumentParser` + `add_argument` + `parse_args` | subparsers, groups |
+| `zlib` / `gzip` | `compress` / `decompress` | gzip header; incremental |
+| `warnings` / `traceback` | `warn`; `format_exception` stub | filters; full tb format |
 
 `itertools.product`/`combinations`/`permutations`/`zip_longest` entries,
 `os.path.split`/`splitext`, `struct.unpack`, `enumerate` pairs / `zip` N-tuples,
