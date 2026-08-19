@@ -1711,14 +1711,15 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   one-directory unless the pattern is `**/…`.
 
 ### I-228  Bound `f.read` is a token, not a bound method
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: `f = open(p); h = f.read; h()` — CPython file text; pyc
-  `None` (`Pyc_GetItem` returns `"pyc_file_read"`; Apply has no self).
-- Files: `src/runtime/Runtime.cpp` (`Pyc_GetItem`, file dict tokens)
+- Evidence: W12.3 / `w123_bound.py`: `h=f.write; h("hello")` / `f.read`
+  / `readline` / `readlines` / `close` match CPython. Parent: `None`.
+- Files: `src/runtime/Runtime.cpp` (`pyc_bind_if_file_method`, `pyc_apply_impl`)
 - Blocks merge: no
-- Notes: Found reviewing W11.2 / I-222. Same class as other token
-  methods (`h = f.write`). Needs bound-method objects.
+- Notes: Wave 12 W12.3. GetItem on a `g_pycFiles` callable token returns
+  `{__pyc_bound_self__, __pyc_bound_token__}`. Apply prepends self unless
+  args[0] is already that file (`with` / proven write). StringIO leftover.
 
 ### I-227  `open(Path)` / PathLike still rejected
 - Status: fixed

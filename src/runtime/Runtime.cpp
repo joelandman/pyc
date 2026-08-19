@@ -5539,6 +5539,8 @@ static PyObject* pyc_new_path(const std::string& s) {
     return o;
 }
 
+static PyObject* pyc_bind_if_file_method(PyObject* obj, PyObject* val);
+
 PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
     if (!obj || !key) return nullptr;
     // Complex number attribute reads (.real/.imag) — handled directly
@@ -5609,7 +5611,11 @@ PyObject* Pyc_GetItem(PyObject* obj, PyObject* key) {
     if (obj->type == 2) {
         for (auto& pair : obj->dict) {
             if (PyObject_CompareBool(pair.first, key, 0)) {
-                if (pair.second) Py_INCREF(pair.second); // return new ref
+                if (pair.second) Py_INCREF(pair.second);
+                if (PyObject* b = pyc_bind_if_file_method(obj, pair.second)) {
+                    Py_DECREF(pair.second);
+                    return b;
+                }
                 return pair.second;
             }
         }
@@ -10313,6 +10319,20 @@ struct PycFile {
     std::string encoding;
 };
 static std::unordered_map<PyObject*, PycFile> g_pycFiles;
+
+static PyObject* pyc_bind_if_file_method(PyObject* obj, PyObject* val) {
+    if (!obj || !val || val->type != 3) return nullptr;
+    if (g_pycFiles.find(obj) == g_pycFiles.end()) return nullptr;
+    if (g_callableRegistry.find(val->str) == g_callableRegistry.end()) return nullptr;
+    PyObject* d = PyDict_New();
+    PyObject* ks = PyUnicode_FromString("__pyc_bound_self__");
+    PyDict_SetItem(d, ks, obj);
+    Py_DECREF(ks);
+    PyObject* kt = PyUnicode_FromString("__pyc_bound_token__");
+    PyDict_SetItem(d, kt, val);
+    Py_DECREF(kt);
+    return d;
+}
 struct PycBufIO {
     std::string buf;
     size_t pos;
@@ -10537,6 +10557,11 @@ static PyObject* pyc_file_readline_adapter(PyObject* args) {
     return PyBuiltin_FileReadline(args->list[0]);
 }
 
+static PyObject* pyc_file_readlines_adapter(PyObject* args) {
+    if (!args || args->type != 1 || args->list.empty()) return nullptr;
+    return PyBuiltin_FileReadlines(args->list[0]);
+}
+
 static PyObject* pyc_file_close_adapter(PyObject* args) {
     if (!args || args->type != 1 || args->list.empty()) return nullptr;
     return PyBuiltin_FileClose(args->list[0]);
@@ -10598,6 +10623,7 @@ extern "C" PyObject* PyBuiltin_Open(PyObject* path, PyObject* mode, PyObject* en
     addTok("write",     "pyc_file_write");
     addTok("read",      "pyc_file_read");
     addTok("readline",  "pyc_file_readline");
+    addTok("readlines", "pyc_file_readlines");
     addTok("close",     "pyc_file_close");
     std::string enc;
     if (!binary) {
@@ -13483,6 +13509,7 @@ extern "C" void pyc_setup_callables(void) {
     pyc_register_callable("pyc_file_write",                pyc_file_write_adapter);
     pyc_register_callable("pyc_file_read",                 pyc_file_read_adapter);
     pyc_register_callable("pyc_file_readline",             pyc_file_readline_adapter);
+    pyc_register_callable("pyc_file_readlines",            pyc_file_readlines_adapter);
     pyc_register_callable("pyc_file_close",                pyc_file_close_adapter);
     pyc_register_callable("pyc_file_enter",                pyc_file_enter_adapter);
     pyc_register_callable("pyc_file_exit",                 pyc_file_exit_adapter);
@@ -15416,6 +15443,30 @@ static PyObject* pyc_apply_impl(PyObject* token, PyObject* argList, PyObject* kw
     }
     if (!haveTok) {
         if (token->type == 2) {
+            PyObject* bself = nullptr;
+            PyObject* btok = nullptr;
+            for (auto& kv : token->dict) {
+                if (!kv.first || kv.first->type != 3) continue;
+                if (kv.first->str == "__pyc_bound_self__") bself = kv.second;
+                else if (kv.first->str == "__pyc_bound_token__") btok = kv.second;
+            }
+            if (bself && btok) {
+                bool already = argList && argList->type == 1 && !argList->list.empty()
+                    && argList->list[0] == bself;
+                PyObject* args = argList;
+                PyObject* owned = nullptr;
+                if (!already) {
+                    owned = PyList_New(0);
+                    PyList_Append(owned, bself);
+                    if (argList && argList->type == 1) {
+                        for (auto* a : argList->list) PyList_Append(owned, a);
+                    }
+                    args = owned;
+                }
+                PyObject* r = pyc_apply_impl(btok, args, kwDict);
+                if (owned) Py_DECREF(owned);
+                return r;
+            }
             // I-203 / I-206: factory ({"cmp_to_key": cmp}) and K (plus
             // "obj") are both 1-arg wrappers. Extra args TypeError.
             // Applying a K returns a new K wrapping the argument.

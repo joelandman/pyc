@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **815/815** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796, 800, 802, 804, 806, 811, 813) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **817/817** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796, 800, 802, 804, 806, 811, 813, 815) are stale.
 
 ---
 
@@ -196,7 +196,7 @@ consumers either call `pyc_ensure_boxed_list()` or branch on `list_item_type`
 `.write()`, `.read()` / `.read(n)`, `.readline()` / `.readline(n)`,
 `.readlines()`, `.close()`, `.encoding` (text). `open(..., "rb")` returns
 bytes; `encoding=` on `"rb"` is ValueError. No real codec (payload is UTF-8).
-Leftover: bound `h = f.read` ([I-228](ISSUES.md)).
+Bound `h = f.read; h()` works ([I-228](ISSUES.md)).
 
 ---
 

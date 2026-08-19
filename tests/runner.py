@@ -5307,6 +5307,9 @@ except TypeError as e:
     # W12.2 / I-225: open(..., encoding=)
     (open(__file__.replace("runner.py", "w122_enc.py")).read(),
      "utf-8\nhi\nutf-8\nbin-enc\nb'hi'\nok\n"),
+    # W12.3 / I-228: bound file methods
+    (open(__file__.replace("runner.py", "w123_bound.py")).read(),
+     "hello\nworld\n'hello\\n'\n'world'\n['hello\\n', 'world']\nclosed\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5412,6 +5415,8 @@ FILE_CASES = [
     ("w121_wa.py", []),
     # W12.2 / I-225: open(..., encoding=)
     ("w122_enc.py", []),
+    # W12.3 / I-228: bound file methods
+    ("w123_bound.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),
