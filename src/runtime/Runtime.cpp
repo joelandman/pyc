@@ -7724,18 +7724,9 @@ PyObject* PyBuiltin_List(PyObject* obj) {
     if (obj->type == 20) {
         return PySet_ToList(obj);
     }
-    // Nested generator defs compile as __nesteddef_N and their calls are
-    // not wrapped with clear→call→get_buffer. The function appends yields
-    // to the thread-local buffer and returns 0 (implicit). `for x in
-    // inner_gen()` then list()s that int. Drain pending yields so the
-    // loop sees them; list(1) with an empty buffer stays TypeError (I-149).
-    // list(C()) / list(None) do not take this arm (I-154 / I-149).
-    if (obj->type == 0) {
-        PyObject* pending = pyc_get_yield_buffer();
-        if (pending && PyList_Size(pending) > 0) return pending;
-        if (pending) Py_DECREF(pending);
-    }
     // int/float/bool/etc. — CPython TypeError, not [] (I-149).
+    // Nested gens are wrapped at the call site (I-158); do not drain
+    // the yield buffer for a leftover int.
     std::string msg = std::string("'") + pyc_builtin_type_name(obj) +
                       "' object is not iterable";
     pyc_raise_msg("TypeError", msg.c_str());

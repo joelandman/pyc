@@ -5310,6 +5310,9 @@ except TypeError as e:
     # W12.3 / I-228: bound file methods
     (open(__file__.replace("runner.py", "w123_bound.py")).read(),
      "hello\nworld\n'hello\\n'\n'world'\n['hello\\n', 'world']\nclosed\n"),
+    # W12.4 / I-158: nested generator wrap; list(int) does not drain yields.
+    (open(__file__.replace("runner.py", "w124_gen.py")).read(),
+     "[1, 2]\nte\n[7]\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5417,6 +5420,8 @@ FILE_CASES = [
     ("w122_enc.py", []),
     # W12.3 / I-228: bound file methods
     ("w123_bound.py", []),
+    # W12.4 / I-158: nested generator wrap.
+    ("w124_gen.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

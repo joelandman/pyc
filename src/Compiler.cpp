@@ -279,6 +279,8 @@ class LoweringVisitor {
                 // to the unique synthetic (for direct calls and value/bundle construction).
                 lambdaAliases[node->id] = defIRName;
             }
+            if (generatorFunctions.count(node->id) && defIRName != node->id)
+                generatorFunctions.insert(defIRName);
 
             ir.addFunction(defIRName, bareParams);
             knownIRFunctions.insert(defIRName);
@@ -3365,6 +3367,7 @@ class LoweringVisitor {
     bool containsYield(const ASTNode* node) const {
         if (!node) return false;
         if (node->type == "YieldExpr") return true;
+        if (node->type == "FunctionDef" || node->type == "Lambda") return false;
         for (const auto& c : node->children) {
             if (containsYield(c.get())) return true;
         }

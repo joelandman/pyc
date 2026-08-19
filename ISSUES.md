@@ -1000,12 +1000,17 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 9 W9.1. Coordinator: `-O0`/`-O2` match CPython. Super (`type==7 && cell_content`) still TypeError (I-013). Non-list/tuple leftover is I-159. Do not re-open I-151.
 
 ### I-158  Nested generator calls are unwrapped; `list(int)` drains yield buffer
-- Status: open
+- Status: fixed
 - Severity: latent
-- Evidence: W8.4 regression fix. `scanForGenerators` records the Python name, not `__nesteddef_N`, so `inner_gen()` is a raw call that returns `0` after `pyc_yield_collect`. `PyBuiltin_List` on a type-0 int now drains a non-empty yield buffer so `list(nested_gen())` still works. `list(1)` inside a generator after yields would steal that buffer.
-- Files: `src/Compiler.cpp` (`scanForGenerators`), `src/runtime/Runtime.cpp` (`PyBuiltin_List`)
+- Evidence: W12.4 / `w124_gen.py`: `list(inner())` → `[1, 2]`; `list(1)`
+  after a yield → TypeError; `list(g())` → `[7]`. Parent: `[]` / stolen
+  buffer / empty.
+- Files: `src/Compiler.cpp` (`containsYield` skips nested defs; IR name
+  registered), `src/runtime/Runtime.cpp` (`PyBuiltin_List` no drain)
 - Blocks merge: no
-- Notes: Found fixing W8.4 runner DIFF. Real fix is Compiler wrap of `__nesteddef_*`. Do not demand in W8.4.
+- Notes: Wave 12 W12.4. Outer was wrongly marked a generator because
+  `containsYield` walked into `def inner`. `print(outer())` then
+  DECREF'd the real list and printed an empty yield buffer.
 
 ### I-159  `zip` of str / dict / set / bytes / None is empty
 - Status: fixed
