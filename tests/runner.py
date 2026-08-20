@@ -5323,6 +5323,8 @@ except TypeError as e:
      "3000\n[1000, 2001]\n3001\n2011\n3001\n[1000, 2002]\n18887\n[1000, 'z']\n1000\n"),
     (open(__file__.replace("runner.py", "w016_mutual.py")).read(),
      "True\nTrue\nFalse\n5\n"),
+    (open(__file__.replace("runner.py", "w016_cplx.py")).read(),
+     "[3.0, 4.0]\n"),
     (open(__file__.replace("runner.py", "w_apply.py")).read(),
      "7\n4.0\n2\n30\n"),
 ]
@@ -5440,6 +5442,7 @@ FILE_CASES = [
     ("w011_type.py", []),
     ("w016_arena.py", []),
     ("w016_mutual.py", []),
+    ("w016_cplx.py", []),
     ("w_apply.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness

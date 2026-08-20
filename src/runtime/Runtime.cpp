@@ -17219,7 +17219,10 @@ extern "C" int pyc_is_float(PyObject* obj) {
 // ---- time.perf_counter implementation ----
 extern "C" PyObject* Pyc_Time_PerfCounter(PyObject* args) {
     (void)args;
-    return PyFloat_FromDouble(1.23456789);
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+        return PyFloat_FromDouble(0);
+    return PyFloat_FromDouble((double)ts.tv_sec + (double)ts.tv_nsec / 1e9);
 }
 
 static PyObject* pyc_args0(PyObject* args) {

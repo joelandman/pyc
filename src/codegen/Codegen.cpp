@@ -2239,22 +2239,28 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     displayName = displayName.substr(dot + 1);
             }
             std::string tbFile = !f.sourceFile.empty() ? f.sourceFile : tbFallbackFile;
-            if (llvm::Function* pushFn = module->getFunction("Pyc_PushFrame")) {
-                llvm::Value* fileStr = builder.CreateGlobalStringPtr(tbFile, "tb.file." + f.name);
-                llvm::Value* funcStr = builder.CreateGlobalStringPtr(displayName, "tb.func." + f.name);
-                builder.CreateCall(pushFn, {fileStr, funcStr});
+            if (!funcIsSpecialized) {
+                if (llvm::Function* pushFn = module->getFunction("Pyc_PushFrame")) {
+                    llvm::Value* fileStr = builder.CreateGlobalStringPtr(tbFile, "tb.file." + f.name);
+                    llvm::Value* funcStr = builder.CreateGlobalStringPtr(displayName, "tb.func." + f.name);
+                    builder.CreateCall(pushFn, {fileStr, funcStr});
+                }
             }
         }
         llvm::Value* arenaMark = nullptr;
-        if (llvm::Function* saveFn = module->getFunction("Pyc_ArenaSave"))
-            arenaMark = builder.CreateCall(saveFn, {}, "arena.mark");
+        if (!funcIsSpecialized) {
+            if (llvm::Function* saveFn = module->getFunction("Pyc_ArenaSave"))
+                arenaMark = builder.CreateCall(saveFn, {}, "arena.mark");
+        }
         auto emitPopFrame = [&]() {
             if (arenaMark) {
                 if (llvm::Function* restFn = module->getFunction("Pyc_ArenaRestore"))
                     builder.CreateCall(restFn, {arenaMark});
             }
-            if (llvm::Function* popFn = module->getFunction("Pyc_PopFrame"))
-                builder.CreateCall(popFn, {});
+            if (!funcIsSpecialized) {
+                if (llvm::Function* popFn = module->getFunction("Pyc_PopFrame"))
+                    builder.CreateCall(popFn, {});
+            }
         };
 
         llvm::BasicBlock* curBlock = entry;
@@ -2292,7 +2298,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             // I-009: update the top frame's line before the op runs so a
             // raise (explicit or runtime) records this statement. Skip if
             // the block is already terminated or the line did not change.
-            if (!curBlock->getTerminator() && inst.lineno > 0 && inst.lineno != lastTbLine) {
+            if (!funcIsSpecialized && !curBlock->getTerminator() && inst.lineno > 0 && inst.lineno != lastTbLine) {
                 lastTbLine = inst.lineno;
                 if (llvm::Function* setLn = module->getFunction("Pyc_SetLineno")) {
                     builder.CreateCall(setLn, {

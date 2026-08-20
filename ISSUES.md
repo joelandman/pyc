@@ -76,10 +76,10 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   (`Pyc_Arena*`), `src/codegen/Codegen.cpp`, `src/Compiler.cpp`
 - Blocks merge: no
 - Notes: Non-escaping int/float boxes use a stack-disciplined arena;
-  escapers stay on malloc/freelist. Container stores inherit the
-  container's escape bit. All-float A6 variants return native float.
-  Mutual recursion gets peer `__specialized_*`. List/dict *objects*
-  are not arena-allocated (C++ members).
+  escapers stay on malloc/freelist.   Container stores inherit the container's escape bit. Native float
+  return only when the body return type is proven float (all-float
+  args are not enough: `cplx(re,im)` returns a list). Mutual recursion
+  gets peer `__specialized_*`. List/dict *objects* stay malloc.
 
 ### I-017  Datetime / pathlib / bytes / hashlib / struct / decimal subsets
 - Status: accepted

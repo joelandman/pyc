@@ -2339,10 +2339,6 @@ class LoweringVisitor {
         if (sigMatchesInference &&
             (origFunc->returnType == "int" || origFunc->returnType == "float")) {
             variant.nativeReturnType = origFunc->returnType;
-        } else {
-            bool allF = !sig.empty();
-            for (char c : sig) if (c != 'f') allF = false;
-            if (allF) variant.nativeReturnType = "float";
         }
         ir.functions.push_back(std::move(variant));
         return true;
