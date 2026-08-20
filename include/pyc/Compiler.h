@@ -14,7 +14,8 @@ public:
                    const std::string& targetArch = "",
                    const std::string& venvPath = "",
                    bool dynamicLink = false,
-                   const std::string& pythonPath = "");
+                   const std::string& pythonPath = "",
+                   bool escapeDump = false);
 };
 
 } // namespace pyc

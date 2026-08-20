@@ -5319,6 +5319,10 @@ except TypeError as e:
     # I-011 / I-016: type objects; float-return A6.
     (open(__file__.replace("runner.py", "w011_type.py")).read(),
      "<class 'int'>\nint\nTrue\nfloat\nNoneType\nbool\nTrue\nFalse\ntype\nDog\nTrue\nTrue\n2.0\n3.0\n"),
+    (open(__file__.replace("runner.py", "w016_arena.py")).read(),
+     "3000\n[1000, 2001]\n3001\n2011\n"),
+    (open(__file__.replace("runner.py", "w016_mutual.py")).read(),
+     "True\nTrue\nFalse\n5\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5432,6 +5436,8 @@ FILE_CASES = [
     ("w112_join.py", []),
     # I-011 / I-016: type objects; float-return A6.
     ("w011_type.py", []),
+    ("w016_arena.py", []),
+    ("w016_mutual.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

@@ -80,7 +80,10 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Blocks merge: no
 - Notes: Partial: all-float A6 variants now get `nativeReturnType=float`
   even when the body guess was int; int/float freelist cap 256→1024.
-  Arena + escape analysis still not done.
+  Slice 1: `analyzeEscapes` marks non-escaping IR temps. `--escape-dump`.
+  Slice 2: non-escaping int/float boxes use `Pyc_ArenaInt`/`Float`.
+  Slice 3: mutual recursion gets peer `__specialized_*` via call-edge
+  type propagation (`even`/`odd`, `a`/`b`). Container EA still conservative.
 
 ### I-017  Datetime / pathlib / bytes / hashlib / struct / decimal subsets
 - Status: accepted

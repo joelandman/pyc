@@ -117,6 +117,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
     // Declare runtime functions (from include/pyc/runtime.h)
     llvm::FunctionType* fromLongTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt64Ty(context)}, false);
     llvm::Function::Create(fromLongTy, llvm::Function::ExternalLinkage, "PyInt_FromLong", module.get());
+    llvm::FunctionType* arenaSaveTy = llvm::FunctionType::get(llvm::Type::getInt64Ty(context), false);
+    llvm::Function::Create(arenaSaveTy, llvm::Function::ExternalLinkage, "Pyc_ArenaSave", module.get());
+    llvm::FunctionType* arenaRestoreTy = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(context), {llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(arenaRestoreTy, llvm::Function::ExternalLinkage, "Pyc_ArenaRestore", module.get());
+    llvm::Function::Create(fromLongTy, llvm::Function::ExternalLinkage, "Pyc_ArenaInt", module.get());
+    llvm::FunctionType* arenaFloatTy = llvm::FunctionType::get(
+        pyObjectPtrTy, {llvm::Type::getDoubleTy(context)}, false);
+    llvm::Function::Create(arenaFloatTy, llvm::Function::ExternalLinkage, "Pyc_ArenaFloat", module.get());
 
     llvm::FunctionType* listNewTy = llvm::FunctionType::get(pyObjectPtrTy, {llvm::Type::getInt64Ty(context)}, false);
     llvm::Function::Create(listNewTy, llvm::Function::ExternalLinkage, "PyList_New", module.get());
@@ -1911,7 +1920,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         };
 
         auto boxI64 = [&](llvm::Value* val, const std::string& name = "") -> llvm::Value* {
-            llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
+            bool arena = !name.empty() && f.nonEscapingTemps.count(name);
+            llvm::Function* fromLong = module->getFunction(arena ? "Pyc_ArenaInt" : "PyInt_FromLong");
             if (!fromLong) return llvm::ConstantPointerNull::get(pyObjectPtrTy);
             return builder.CreateCall(fromLong, {val}, name);
         };
@@ -1960,7 +1970,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
         };
 
         auto boxDouble = [&](llvm::Value* val, const std::string& name = "") -> llvm::Value* {
-            llvm::Function* fromDouble = module->getFunction("PyFloat_FromDouble");
+            bool arena = !name.empty() && f.nonEscapingTemps.count(name);
+            llvm::Function* fromDouble = module->getFunction(
+                arena ? "Pyc_ArenaFloat" : "PyFloat_FromDouble");
             if (!fromDouble) return llvm::ConstantPointerNull::get(pyObjectPtrTy);
             return builder.CreateCall(fromDouble, {val}, name);
         };
@@ -2132,7 +2144,14 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                 builder.CreateCall(pushFn, {fileStr, funcStr});
             }
         }
+        llvm::Value* arenaMark = nullptr;
+        if (llvm::Function* saveFn = module->getFunction("Pyc_ArenaSave"))
+            arenaMark = builder.CreateCall(saveFn, {}, "arena.mark");
         auto emitPopFrame = [&]() {
+            if (arenaMark) {
+                if (llvm::Function* restFn = module->getFunction("Pyc_ArenaRestore"))
+                    builder.CreateCall(restFn, {arenaMark});
+            }
             if (llvm::Function* popFn = module->getFunction("Pyc_PopFrame"))
                 builder.CreateCall(popFn, {});
         };
@@ -2532,7 +2551,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     errno = 0;
                     long v = std::strtol(val.c_str(), &end, 10);
                     (void)end; (void)errno;
-                    llvm::Function* fromLong = module->getFunction("PyInt_FromLong");
+                    bool arena = f.nonEscapingTemps.count(inst.result);
+                    llvm::Function* fromLong = module->getFunction(
+                        arena ? "Pyc_ArenaInt" : "PyInt_FromLong");
                     if (fromLong) {
                         llvm::Value* boxed = builder.CreateCall(fromLong,
                             {llvm::ConstantInt::get(context, llvm::APInt(64, v))}, inst.result);

@@ -3,6 +3,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <set>
 
 namespace pyc {
@@ -103,6 +104,10 @@ struct IRFunction {
     // Python-visible name for TypeError / frames (qualname or "<lambda>").
     // Empty means use `name` (the IR symbol).
     std::string displayName;
+    // I-016 slice 1: names that escape this function (ret / global / retained
+    // call arg). Compiler temps not in this set are nonEscapingTemps.
+    std::unordered_set<std::string> escapingValues;
+    std::unordered_set<std::string> nonEscapingTemps;
 };
 
  class ModuleIR {
@@ -124,5 +129,7 @@ struct IRFunction {
      void setFunctionGlobals(const std::string& funcName, const std::vector<std::string>& globals);
      void addModuleGlobal(const std::string& name);
  };
+
+void analyzeEscapes(ModuleIR& ir, bool dump = false);
 
 } // namespace pyc

@@ -24,7 +24,8 @@ int main(int argc, char** argv) {
                       << "  --venv [PATH]  use virtual environment (optional path)\n"
                       << "  --python[=path]  specify Python installation path (auto-detects version)\n"
                       << "  --pystdlib PATH  specify Python standard library path (deprecated, use --python)\n"
-                      << "  --dynamic-link  link modules dynamically instead of statically\n";
+                      << "  --dynamic-link  link modules dynamically instead of statically\n"
+                      << "  --escape-dump   print I-016 escape-analysis counts (stderr)\n";
             return 0;
         }
     }
@@ -69,6 +70,7 @@ int main(int argc, char** argv) {
     std::string pythonPath;
     std::string pystdlibPath;
     bool dynamicLink = false;
+    bool escapeDump = false;
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "-o" && i + 1 < argc) output = argv[++i];
@@ -91,6 +93,7 @@ int main(int argc, char** argv) {
         else if (arg.rfind("-march=", 0) == 0) march = arg.substr(7);
         else if (arg.rfind("--target-arch=", 0) == 0) targetArch = arg.substr(14);
         else if (arg == "--dynamic-link") dynamicLink = true;
+        else if (arg == "--escape-dump") escapeDump = true;
         else if (arg.rfind("--venv=", 0) == 0) venvPath = arg.substr(7);
         else if (arg == "--venv" && i + 1 < argc) venvPath = argv[++i];
         else if (arg.rfind("--python=", 0) == 0) pythonPath = arg.substr(9);
@@ -101,6 +104,6 @@ int main(int argc, char** argv) {
     }
     pyc::Compiler c;
     if (c.compile(input, output, useStatic, optLevel, emitLLVM, emitASM, verbose, debugInfo,
-                  pgoInstrument, pgoProfile, pgoGenerateProfile, mcpu, march, targetArch, venvPath, dynamicLink, pythonPath)) return 0;
+                  pgoInstrument, pgoProfile, pgoGenerateProfile, mcpu, march, targetArch, venvPath, dynamicLink, pythonPath, escapeDump)) return 0;
     return 1;
 }

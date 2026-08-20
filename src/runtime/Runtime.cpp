@@ -554,6 +554,51 @@ PyObject* PyInt_FromLong(long v) {
     return obj;
 }
 
+static thread_local PyObject** g_arena_slots = nullptr;
+static thread_local int g_arena_cap = 0;
+static thread_local int g_arena_used = 0;
+
+static PyObject* arenaAlloc(int type) {
+    if (g_arena_used >= g_arena_cap) {
+        int ncap = g_arena_cap ? g_arena_cap * 2 : 256;
+        PyObject** nslots = new PyObject*[ncap];
+        for (int i = 0; i < g_arena_cap; ++i) nslots[i] = g_arena_slots[i];
+        for (int i = g_arena_cap; i < ncap; ++i) {
+            nslots[i] = new PyObject();
+            nslots[i]->refcount = IMMORTAL_REFCOUNT;
+            nslots[i]->type = type;
+        }
+        delete[] g_arena_slots;
+        g_arena_slots = nslots;
+        g_arena_cap = ncap;
+    }
+    PyObject* obj = g_arena_slots[g_arena_used++];
+    obj->refcount = IMMORTAL_REFCOUNT;
+    obj->type = type;
+    obj->value = 0;
+    obj->dvalue = 0.0;
+    return obj;
+}
+
+int64_t Pyc_ArenaSave() { return g_arena_used; }
+
+void Pyc_ArenaRestore(int64_t mark) {
+    if (mark >= 0 && mark <= (int64_t)g_arena_used) g_arena_used = (int)mark;
+}
+
+PyObject* Pyc_ArenaInt(long v) {
+    if (PyObject* cached = getSmallInt(v)) return cached;
+    PyObject* obj = arenaAlloc(0);
+    obj->value = v;
+    return obj;
+}
+
+PyObject* Pyc_ArenaFloat(double v) {
+    PyObject* obj = arenaAlloc(4);
+    obj->dvalue = v;
+    return obj;
+}
+
 // ---- Operator/protocol dunder-method dispatch ----
 // Found and fixed while bug hunting: apart from __init__/__str__/__repr__
 // (and, as of this session, __classmethod__/@property), essentially no

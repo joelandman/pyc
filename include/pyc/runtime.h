@@ -10,6 +10,10 @@ extern "C" {
 typedef struct PyObject PyObject;
 
 PyObject* PyInt_FromLong(long v);
+int64_t   Pyc_ArenaSave(void);
+void      Pyc_ArenaRestore(int64_t mark);
+PyObject* Pyc_ArenaInt(long v);
+PyObject* Pyc_ArenaFloat(double v);
 PyObject* PyList_New(size_t size);
 PyObject* PyList_GetItem(PyObject* list, size_t index);
 size_t    PyList_Size(PyObject* list);

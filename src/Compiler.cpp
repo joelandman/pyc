@@ -2293,79 +2293,140 @@ class LoweringVisitor {
                 }
             }
 
-            // Record which signatures have specialized variants (for codegen type guards)
             origFunc->specializedSignatures = uniqueSigs;
+            for (const auto& sig : uniqueSigs) addSpecializedVariant(funcName, sig);
+        }
+        propagateMutualSpecializations();
+    }
 
-            for (const auto& sig : uniqueSigs) {
-                std::string variantName = "__specialized_" + funcName + "_" + sig;
-                bool alreadyExists = false;
-                for (const auto& f : ir.functions) {
-                    if (f.name == variantName) { alreadyExists = true; break; }
-                }
-                if (alreadyExists) continue;
+    IRFunction* findIRFunc(const std::string& name) {
+        for (auto& f : ir.functions)
+            if (f.name == name) return &f;
+        return nullptr;
+    }
 
-                // Create the variant
-                IRFunction variant;
-                variant.name = variantName;
+    bool addSpecializedVariant(const std::string& funcName, const std::string& sig) {
+        IRFunction* origFunc = findIRFunc(funcName);
+        if (!origFunc || sig.empty()) return false;
+        origFunc->specializedSignatures.insert(sig);
+        if (sig.size() != origFunc->args.size()) return false;
+        std::string variantName = "__specialized_" + funcName + "_" + sig;
+        if (findIRFunc(variantName)) return false;
 
-                // Build parameter list: cells (if any) + original param names
-                // (codegen detects native types from variant name prefix)
-                for (const auto& cell : origFunc->freeCellVars) {
-                    variant.args.push_back(cell + "_cell");
-                }
-                for (size_t i = 0; i < origFunc->args.size(); ++i) {
-                    variant.args.push_back(origFunc->args[i]);
-                }
-                variant.paramNames = origFunc->paramNames;
-                variant.defaultGlobals = origFunc->defaultGlobals;
-                variant.cellVars = origFunc->cellVars;
-                variant.freeCellVars = origFunc->freeCellVars;
-                variant.displayName = origFunc->displayName;
+        IRFunction variant;
+        variant.name = variantName;
+        for (const auto& cell : origFunc->freeCellVars)
+            variant.args.push_back(cell + "_cell");
+        for (size_t i = 0; i < origFunc->args.size(); ++i)
+            variant.args.push_back(origFunc->args[i]);
+        variant.paramNames = origFunc->paramNames;
+        variant.defaultGlobals = origFunc->defaultGlobals;
+        variant.cellVars = origFunc->cellVars;
+        variant.freeCellVars = origFunc->freeCellVars;
+        variant.displayName = origFunc->displayName;
+        variant.body = origFunc->body;
 
-                // Copy instructions — variants have the same body as original.
-                // Codegen uses the variant name to allocate native param slots.
-                variant.body = origFunc->body;
-
-                // A6 native return: if the original function has a proven numeric return
-                // type, the variant returns a native i64/double instead of a boxed
-                // PyObject*. This eliminates PyInt_FromLong/PyFloat_FromDouble on every
-                // return and enables fully native recursive chains (e.g. fib(n-1)+fib(n-2)
-                // becomes a native i64 add with no boxing at any recursion level).
-                //
-                // origFunc->returnType comes from a body-only static guess
-                // (inferParamTypesFromBody) made before real call-site types are
-                // known, and origFunc->numericLocals/numericFloatLocals record which
-                // params that same guess assumed int/float. If THIS variant's actual
-                // (call-site-derived) signature disagrees with that guess for any
-                // param — e.g. `def f(y): return y ** 2` guessed y as int, but the
-                // only real call site passes a float — the guessed return type is
-                // unreliable: forcing a native i64/double return type here would
-                // make the LLVM function type disagree with what the body actually
-                // computes, crashing codegen. Skip native-return propagation for
-                // this variant and fall back to the safe, always-correct boxed
-                // return path. Found via `def f(y): return y ** 2; f(3.5)`.
-                bool sigMatchesInference = true;
-                for (size_t i = 0; i < sig.size() && i < origFunc->args.size(); ++i) {
-                    const std::string& pname = origFunc->args[i];
-                    bool guessedInt = std::find(origFunc->numericLocals.begin(), origFunc->numericLocals.end(), pname) != origFunc->numericLocals.end();
-                    bool guessedFloat = std::find(origFunc->numericFloatLocals.begin(), origFunc->numericFloatLocals.end(), pname) != origFunc->numericFloatLocals.end();
-                    if ((sig[i] == 'f' && guessedInt) || (sig[i] == 'i' && guessedFloat)) {
-                        sigMatchesInference = false;
-                        break;
-                    }
-                }
-                if (sigMatchesInference &&
-                    (origFunc->returnType == "int" || origFunc->returnType == "float")) {
-                    variant.nativeReturnType = origFunc->returnType;
-                } else {
-                    bool allF = !sig.empty();
-                    for (char c : sig) if (c != 'f') allF = false;
-                    if (allF) variant.nativeReturnType = "float";
-                }
-
-                ir.functions.push_back(variant);
+        bool sigMatchesInference = true;
+        for (size_t i = 0; i < sig.size() && i < origFunc->args.size(); ++i) {
+            const std::string& pname = origFunc->args[i];
+            bool guessedInt = std::find(origFunc->numericLocals.begin(), origFunc->numericLocals.end(), pname) != origFunc->numericLocals.end();
+            bool guessedFloat = std::find(origFunc->numericFloatLocals.begin(), origFunc->numericFloatLocals.end(), pname) != origFunc->numericFloatLocals.end();
+            if ((sig[i] == 'f' && guessedInt) || (sig[i] == 'i' && guessedFloat)) {
+                sigMatchesInference = false;
+                break;
             }
         }
+        if (sigMatchesInference &&
+            (origFunc->returnType == "int" || origFunc->returnType == "float")) {
+            variant.nativeReturnType = origFunc->returnType;
+        } else {
+            bool allF = !sig.empty();
+            for (char c : sig) if (c != 'f') allF = false;
+            if (allF) variant.nativeReturnType = "float";
+        }
+        ir.functions.push_back(std::move(variant));
+        return true;
+    }
+
+    static bool isArithOp(const std::string& op) {
+        return op == "add" || op == "sub" || op == "mul" || op == "neg" ||
+               op == "i64add" || op == "mod" || op == "div" || op == "truediv" ||
+               op == "lshift" || op == "rshift" || op == "bitor" || op == "bitand" ||
+               op == "bitxor";
+    }
+
+    void propagateMutualSpecializations() {
+        bool changed = true;
+        int guard = 0;
+        while (changed && guard++ < 16) {
+            changed = false;
+            std::vector<std::pair<std::string, std::set<std::string>>> specs;
+            for (const auto& f : ir.functions) {
+                if (f.name.rfind("__specialized_", 0) == 0) continue;
+                if (f.specializedSignatures.empty()) continue;
+                specs.push_back({f.name, f.specializedSignatures});
+            }
+            for (const auto& kv : specs) {
+                IRFunction* orig = findIRFunc(kv.first);
+                if (!orig) continue;
+                for (const auto& sig : kv.second) {
+                    if (propagateCallsFrom(*orig, sig)) changed = true;
+                }
+            }
+        }
+    }
+
+    bool propagateCallsFrom(const IRFunction& orig, const std::string& sig) {
+        if (sig.size() != orig.args.size()) return false;
+        std::unordered_map<std::string, char> ty;
+        for (size_t i = 0; i < orig.args.size(); ++i) ty[orig.args[i]] = sig[i];
+        bool added = false;
+        for (const auto& inst : orig.body) {
+            if (inst.op == "assign" || inst.op == "i64assign" || inst.op == "f64assign") {
+                if (!inst.operands.empty() && !inst.result.empty()) {
+                    auto it = ty.find(inst.operands[0].name);
+                    if (it != ty.end()) ty[inst.result] = it->second;
+                    else if (inst.op == "i64assign") ty[inst.result] = 'i';
+                    else if (inst.op == "f64assign") ty[inst.result] = 'f';
+                }
+            } else if (inst.op == "i64const" || inst.op == "const") {
+                if (!inst.result.empty() && !inst.operands.empty()) {
+                    const std::string& v = inst.operands[0].name;
+                    if (!v.empty() && v[0] != '"' && v[0] != '\'') ty[inst.result] = 'i';
+                }
+            } else if (inst.op == "fconst") {
+                if (!inst.result.empty()) ty[inst.result] = 'f';
+            } else if (isArithOp(inst.op)) {
+                char acc = 0;
+                bool ok = !inst.operands.empty();
+                for (const auto& o : inst.operands) {
+                    auto it = ty.find(o.name);
+                    if (it == ty.end()) { ok = false; break; }
+                    if (!acc) acc = it->second;
+                    else if (it->second == 'f') acc = 'f';
+                }
+                if (ok && acc && !inst.result.empty()) ty[inst.result] = acc;
+            } else if (inst.op == "call" && !inst.operands.empty()) {
+                const std::string& callee = inst.operands[0].name;
+                if (callee.rfind("Py", 0) == 0 || callee.rfind("Pyc_", 0) == 0 ||
+                    callee.rfind("pyc_", 0) == 0 || callee == orig.name)
+                    continue;
+                IRFunction* g = findIRFunc(callee);
+                if (!g || g->args.empty()) continue;
+                size_t ncells = g->freeCellVars.size();
+                if (1 + ncells + g->args.size() != inst.operands.size()) continue;
+                std::string csig;
+                bool allNum = true;
+                for (size_t i = 0; i < g->args.size(); ++i) {
+                    auto it = ty.find(inst.operands[1 + ncells + i].name);
+                    if (it == ty.end()) { allNum = false; break; }
+                    csig += it->second;
+                }
+                if (allNum && !csig.empty() && addSpecializedVariant(callee, csig))
+                    added = true;
+            }
+        }
+        return added;
     }
 
     // Type stability tracking: Infer and propagate container element types.
@@ -11899,7 +11960,8 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
                          const std::string& targetArch,
                           const std::string& venvPath,
                           bool dynamicLink,
-                          const std::string& pythonPath) {
+                          const std::string& pythonPath,
+                          bool escapeDump) {
     if (verbose) std::cout << "DEBUG: compile called with pythonPath=" << pythonPath << "\n";
     
     // Handle virtual environment path
@@ -12765,6 +12827,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         ModuleIR ir;
         ir.moduleName = mainBasename;
         lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals, inputPath);
+        analyzeEscapes(ir, escapeDump);
         Codegen codegen;
         auto module = codegen.generate(ir, context, "pyc_" + mainBasename, debugInfo);
         if (!module) {
