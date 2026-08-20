@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **827/827** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796, 800, 802, 804, 806, 811, 813, 815, 817, 819, 821, 823, 825) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **829/829** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796, 800, 802, 804, 806, 811, 813, 815, 817, 819, 821, 823, 825, 827) are stale.
 
 ---
 
@@ -280,13 +280,14 @@ Optional: `-DPYC_RUNTIME_BC_DEBUG=ON` adds `-g` to `runtime.bc` ([I-044](ISSUES.
 A1 type tracking · A2 native `range` loops · A3 native arithmetic ·
 A4 homogeneous numeric lists · A5 numeric-local sinking · A6 single-signature
 specialization · A7 allocation counters · container typing · P0 structured
-unpack · P1 scalar freelist · Phase 27 param/return inference.
+unpack · P1 scalar freelist · I-016 non-escaping int/float arena + mutual A6 ·
+Phase 27 param/return inference.
 
 A6 generates a native variant only when **all** call sites agree. Mixed
 int/float sites stay boxed. Direct calls with a boxed `PyObject*` arg
 speculate into `__specialized_*` behind a `type==0/4` tag check
-([I-014](ISSUES.md) W5.8); miss stays on the boxed callee. `Pyc_Apply`
-is still boxed. Native join of the variant result is leftover I-112.
+([I-014](ISSUES.md) W5.8); miss stays on the boxed callee. `__apply__`
+adapters speculate the same way for `g=f; g(...)` (no `*`/`**`/cells).
 
 Boxed-receiver methods (function parameters) use arity-specific
 `Pyc_CallMethodOrBuiltin0/1/2` and a `(tag, name)` lookup

@@ -7136,6 +7136,26 @@ class LoweringVisitor {
                 // We need to pass this temp directly to Pyc_Apply since it contains the token string.
                 // No additional handling needed - the temp holds the string token.
             }
+            std::string applyTarget = funcName;
+            if (auto lit = lambdaAliases.find(funcName); lit != lambdaAliases.end())
+                applyTarget = lit->second;
+            if (!tokenTempForApply.empty()) {
+                if (auto lit = lambdaAliases.find(tokenTempForApply); lit != lambdaAliases.end())
+                    applyTarget = lit->second;
+            }
+            if (!bundleCallee.empty()) {
+                auto bit = bundleToSynthetic.find(bundleCallee);
+                if (bit != bundleToSynthetic.end()) applyTarget = bit->second;
+            }
+            if (bundleCallee.empty() && knownIRFunctions.count(applyTarget) && !argRes.empty()) {
+                std::vector<std::string> sig;
+                for (size_t i = 0; i < argRes.size(); ++i) {
+                    std::string t = typeOf(argRes[i]);
+                    if (t == "i64") t = "int";
+                    sig.push_back(t);
+                }
+                callSiteTypes[applyTarget].push_back(sig);
+            }
             std::string res = "$t" + std::to_string(tempCounter++);
             if (!indirectKwDictTemp.empty()) {
                 ir.addInstruction(currentFunc, "call",

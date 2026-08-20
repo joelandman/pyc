@@ -1454,6 +1454,107 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             cargs.push_back(kwargsVal ? kwargsVal : llvm::ConstantPointerNull::get(pyObjectPtrTy));
         }
 
+        bool canSpec = !hasVar && !hasKwVar && ncells == 0 && userFixed > 0
+            && cargs.size() == userFixed && !f.specializedSignatures.empty();
+        llvm::FunctionType* specBoxI64Ty = llvm::FunctionType::get(
+            pyObjectPtrTy, {llvm::Type::getInt64Ty(context)}, false);
+        llvm::FunctionType* specBoxF64Ty = llvm::FunctionType::get(
+            pyObjectPtrTy, {llvm::Type::getDoubleTy(context)}, false);
+        if (canSpec) {
+            std::vector<std::pair<std::string, llvm::Function*>> applyCands;
+            llvm::Type* i64TyA = llvm::Type::getInt64Ty(context);
+            llvm::Type* i32TyA = llvm::Type::getInt32Ty(context);
+            for (const auto& sig : f.specializedSignatures) {
+                if (sig.size() != userFixed) continue;
+                llvm::Function* spec = module->getFunction(
+                    "__specialized_" + f.name + "_" + sig);
+                if (!spec || spec->arg_size() != userFixed) continue;
+                llvm::FunctionType* sty = spec->getFunctionType();
+                bool argsOk = true;
+                for (size_t u = 0; u < userFixed; ++u) {
+                    llvm::Type* pt = sty->getParamType(u);
+                    if (sig[u] == 'i' && pt != i64TyA) argsOk = false;
+                    if (sig[u] == 'f' && !pt->isDoubleTy()) argsOk = false;
+                }
+                if (argsOk) applyCands.push_back({sig, spec});
+            }
+            if (!applyCands.empty()) {
+                llvm::BasicBlock* fbBB = llvm::BasicBlock::Create(context, "apply.spec.fb", adapter);
+                auto emitTag = [&](llvm::Value* obj, char expect,
+                                   llvm::BasicBlock* passBB, llvm::BasicBlock* failBB,
+                                   const std::string& tag) {
+                    llvm::BasicBlock* tagBB = llvm::BasicBlock::Create(
+                        context, tag + ".tag", adapter);
+                    llvm::Value* isnull = abuilder.CreateICmpEQ(
+                        obj, llvm::ConstantPointerNull::get(pyObjectPtrTy), tag + ".isnull");
+                    abuilder.CreateCondBr(isnull, failBB, tagBB);
+                    abuilder.SetInsertPoint(tagBB);
+                    llvm::Value* typeVal = abuilder.CreateAlignedLoad(
+                        i32TyA, abuilder.CreateStructGEP(pyObjectTy, obj, 1, tag + ".tptr"),
+                        llvm::Align(4), tag + ".type");
+                    unsigned expectTag = (expect == 'f') ? 4u : 0u;
+                    llvm::Value* ok = abuilder.CreateICmpEQ(
+                        typeVal, llvm::ConstantInt::get(i32TyA, expectTag), tag + ".ok");
+                    abuilder.CreateCondBr(ok, passBB, failBB);
+                };
+                llvm::BasicBlock* tryBB = abuilder.GetInsertBlock();
+                for (size_t ci = 0; ci < applyCands.size(); ++ci) {
+                    const std::string& sig = applyCands[ci].first;
+                    llvm::Function* specFn = applyCands[ci].second;
+                    bool last = (ci + 1 == applyCands.size());
+                    llvm::BasicBlock* nextTry = last ? fbBB
+                        : llvm::BasicBlock::Create(context,
+                            "apply.spec.try." + std::to_string(ci), adapter);
+                    llvm::BasicBlock* specBB = llvm::BasicBlock::Create(
+                        context, "apply.spec.then." + std::to_string(ci), adapter);
+                    llvm::BasicBlock* passSoFar = tryBB;
+                    for (size_t u = 0; u < userFixed; ++u) {
+                        llvm::BasicBlock* nextPass = specBB;
+                        if (u + 1 < userFixed) {
+                            nextPass = llvm::BasicBlock::Create(
+                                context, "apply.spec.chk." + std::to_string(ci)
+                                    + "." + std::to_string(u), adapter);
+                        }
+                        abuilder.SetInsertPoint(passSoFar);
+                        emitTag(cargs[u], sig[u], nextPass, nextTry,
+                                "as." + std::to_string(ci) + "." + std::to_string(u));
+                        passSoFar = nextPass;
+                    }
+                    abuilder.SetInsertPoint(specBB);
+                    std::vector<llvm::Value*> specArgs;
+                    for (size_t u = 0; u < userFixed; ++u) {
+                        if (sig[u] == 'f') {
+                            specArgs.push_back(abuilder.CreateAlignedLoad(
+                                llvm::Type::getDoubleTy(context),
+                                abuilder.CreateStructGEP(pyObjectTy, cargs[u], 3),
+                                llvm::Align(8), "as.f" + std::to_string(u)));
+                        } else {
+                            specArgs.push_back(abuilder.CreateAlignedLoad(
+                                i64TyA,
+                                abuilder.CreateStructGEP(pyObjectTy, cargs[u], 2),
+                                llvm::Align(8), "as.i" + std::to_string(u)));
+                        }
+                    }
+                    llvm::Value* sr = abuilder.CreateCall(specFn, specArgs, "as.r");
+                    if (sr->getType() == i64TyA) {
+                        llvm::Function* box = module->getFunction("PyInt_FromLong");
+                        if (!box) box = llvm::Function::Create(
+                            specBoxI64Ty, llvm::Function::ExternalLinkage,
+                            "PyInt_FromLong", module.get());
+                        sr = abuilder.CreateCall(box, {sr}, "as.boxi");
+                    } else if (sr->getType()->isDoubleTy()) {
+                        llvm::Function* box = module->getFunction("PyFloat_FromDouble");
+                        if (!box) box = llvm::Function::Create(
+                            specBoxF64Ty, llvm::Function::ExternalLinkage,
+                            "PyFloat_FromDouble", module.get());
+                        sr = abuilder.CreateCall(box, {sr}, "as.boxf");
+                    }
+                    abuilder.CreateRet(sr);
+                    tryBB = nextTry;
+                }
+                abuilder.SetInsertPoint(fbBB);
+            }
+        }
         llvm::Value* r = abuilder.CreateCall(real, cargs, "r");
         abuilder.CreateRet(r);
     }

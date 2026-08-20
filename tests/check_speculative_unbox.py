@@ -120,6 +120,45 @@ def main():
         else:
             print("PASS %s has an int-tag check" % caller)
 
+    apply_src = (
+        "def add(a, b):\n"
+        "    return a + b\n"
+        "g = add\n"
+        "print(g(3, 4))\n"
+    )
+    with tempfile.TemporaryDirectory() as td:
+        py = os.path.join(td, "apply.py")
+        out = os.path.join(td, "apply")
+        with open(py, "w") as f:
+            f.write(apply_src)
+        c = subprocess.run(
+            [pyc, py, "--emit-llvm", "-O0", "-o", out],
+            capture_output=True, text=True, timeout=30,
+        )
+        ll_path = out + ".ll"
+        if c.returncode != 0 or not os.path.exists(ll_path):
+            print("FAIL apply compile --emit-llvm -O0")
+            sys.stdout.write(c.stderr or c.stdout or "")
+            sys.exit(1)
+        ll = open(ll_path, encoding="utf-8").read()
+    afns = functions(ll)
+    apply_fn = None
+    for name in afns:
+        if name.startswith("__apply__add"):
+            apply_fn = name
+            break
+    if apply_fn is None:
+        print("FAIL no __apply__add adapter")
+        failed += 1
+    elif not re.search(r"call\s+\S+\s+@__specialized_add_ii\b", afns[apply_fn]):
+        print("FAIL %s does not call __specialized_add_ii" % apply_fn)
+        failed += 1
+    elif not has_int_tag_check(afns[apply_fn]):
+        print("FAIL %s lacks a type==0 guard" % apply_fn)
+        failed += 1
+    else:
+        print("PASS %s speculates into __specialized_add_ii" % apply_fn)
+
     if failed:
         print("check_speculative_unbox: %d check(s) failed" % failed)
         sys.exit(1)

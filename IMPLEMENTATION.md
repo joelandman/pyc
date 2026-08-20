@@ -2648,10 +2648,13 @@ errors.
 
 #### Planned (not implemented)
 - IR-level constant folding
-- Full arena allocator beyond scalar freelist
+- Full arena allocator beyond scalar freelist — **landed for non-escaping
+  int/float** (I-016: `analyzeEscapes` + `Pyc_ArenaInt`/`Float`). List/dict
+  objects stay malloc (C++ members). Left here so old checklists are not
+  re-read as open work.
 - Dead code elimination at pyc-IR level (`src/ir/LLVMDCE.cpp` is LLVM-IR DCE, already landed)
 - Native `**` / rsqrt and full mass/mag float chain in nbody
-- Extend recursive specialization to mutual recursion and float-returning functions
+- Extend recursive specialization to mutual recursion and float-returning functions — **landed** (I-016 slice 3; all-float A6 native return).
 - Insertion-ordered dicts — **landed** (vector-of-pairs; ISSUES I-106). Left here only so old “planned” checklists are not re-read as open work.
 - **Generalized multi-dispatch specialization**: generate one specialized variant
   per distinct call-site type signature (e.g. `__specialized_add_ii` and

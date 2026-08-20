@@ -64,26 +64,22 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
   nbody 100 matches CPython at `-O0` and `-O2`.
 - Files: `src/codegen/Codegen.cpp` (call-site dispatch)
 - Blocks merge: no
-- Notes: Wave 5 W5.8. Apply / `__apply__N` / tag 5 / `pyc_global_*` native
-  slots not touched. Native join is effectively dead (look-ahead is
-  `assign` only; proven locals are `i64assign`/`f64assign`) — leftover
-  landmine is I-112. Sig cascade is `std::set` lex order (`fi` before
-  `ii`); extra checks, not wrong. Closures usually have no variants
-  (arity mismatch in `generateSpecializedVariants`). I-016 not in this
-  slice. I-111 still open (Runtime TypeError).
+- Notes: Wave 5 W5.8.   `__apply__` (no `*`/`**`/cells) tag-checks into `__specialized_*`
+  for `g=f; g(...)`. Tag 5 / closures / Apply still boxed. Native join
+  leftover was I-112 (fixed).
 
 ### I-016  Arena allocator / escape analysis / float-return A6
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: IMPLEMENTATION.md Planned; PERFORMANCE_BASELINE / PROFILE_NBODY leftovers.
-- Files: Runtime allocator, Codegen, Compiler `generateSpecializedVariants`
+- Evidence: `w016_arena.py`, `w016_mutual.py`; `--escape-dump` on nbody/fib.
+- Files: `src/ir/IR.cpp` (`analyzeEscapes`), `src/runtime/Runtime.cpp`
+  (`Pyc_Arena*`), `src/codegen/Codegen.cpp`, `src/Compiler.cpp`
 - Blocks merge: no
-- Notes: Partial: all-float A6 variants now get `nativeReturnType=float`
-  even when the body guess was int; int/float freelist cap 256→1024.
-  Slice 1: `analyzeEscapes` marks non-escaping IR temps. `--escape-dump`.
-  Slice 2: non-escaping int/float boxes use `Pyc_ArenaInt`/`Float`.
-  Slice 3: mutual recursion gets peer `__specialized_*` via call-edge
-  type propagation (`even`/`odd`, `a`/`b`). Container EA still conservative.
+- Notes: Non-escaping int/float boxes use a stack-disciplined arena;
+  escapers stay on malloc/freelist. Container stores inherit the
+  container's escape bit. All-float A6 variants return native float.
+  Mutual recursion gets peer `__specialized_*`. List/dict *objects*
+  are not arena-allocated (C++ members).
 
 ### I-017  Datetime / pathlib / bytes / hashlib / struct / decimal subsets
 - Status: accepted

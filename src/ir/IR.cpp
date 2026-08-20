@@ -80,25 +80,49 @@ static bool isRuntimeName(const std::string& c) {
     return c.rfind("Py", 0) == 0 || c.rfind("Pyc_", 0) == 0 || c.rfind("pyc_", 0) == 0;
 }
 
-static void markRetainedCallArgs(const IRInstruction& inst, std::unordered_set<std::string>& escaping) {
+static bool isExtractCallee(const std::string& c) {
+    return c.find("GetItem") != std::string::npos ||
+           c.find("Unpack") != std::string::npos ||
+           c == "Pyc_GetItem" || c == "PyObject_GetAttr";
+}
+
+static void markRetainedCallArgs(const IRInstruction& inst,
+                                 std::unordered_set<std::string>& escaping,
+                                 std::vector<std::pair<std::string, std::string>>& storeEdges,
+                                 std::vector<std::pair<std::string, std::string>>& extractEdges) {
     if (inst.operands.empty()) return;
     const std::string& callee = inst.operands[0].name;
     auto markFrom = [&](size_t i0) {
         for (size_t i = i0; i < inst.operands.size(); ++i)
             if (!inst.operands[i].name.empty()) escaping.insert(inst.operands[i].name);
     };
+    auto store = [&](const std::string& val, const std::string& container) {
+        if (!val.empty() && !container.empty()) storeEdges.push_back({val, container});
+    };
     if (callee == "Pyc_Apply" || callee == "pyc_raise" || callee == "pyc_reraise") {
         markFrom(1);
         return;
     }
-    if (callee == "PyList_Append" || callee == "PyCell_New" || callee == "PyCell_Set") {
+    if (callee == "PyCell_New" || callee == "PyCell_Set") {
         if (inst.operands.size() >= 2) escaping.insert(inst.operands.back().name);
         return;
     }
-    if (callee.find("SetItem") != std::string::npos || callee.find("SetAttr") != std::string::npos) {
-        if (inst.operands.size() >= 2) escaping.insert(inst.operands.back().name);
-        if (callee.find("Dict") != std::string::npos && inst.operands.size() >= 3)
-            escaping.insert(inst.operands[inst.operands.size() - 2].name);
+    if (callee == "PyList_Append" && inst.operands.size() >= 3) {
+        store(inst.operands.back().name, inst.operands[1].name);
+        return;
+    }
+    if (callee.find("SetItem") != std::string::npos && inst.operands.size() >= 3) {
+        store(inst.operands.back().name, inst.operands[1].name);
+        if (callee.find("Dict") != std::string::npos && inst.operands.size() >= 4)
+            store(inst.operands[inst.operands.size() - 2].name, inst.operands[1].name);
+        return;
+    }
+    if (callee.find("SetAttr") != std::string::npos && inst.operands.size() >= 2) {
+        escaping.insert(inst.operands.back().name);
+        return;
+    }
+    if (isExtractCallee(callee) && inst.operands.size() >= 2 && !inst.result.empty()) {
+        extractEdges.push_back({inst.operands[1].name, inst.result});
         return;
     }
     if (!isRuntimeName(callee)) markFrom(1);
@@ -117,6 +141,8 @@ void analyzeEscapes(ModuleIR& ir, bool dump) {
         std::unordered_set<std::string> definedTemps;
         std::unordered_set<std::string> escaping;
         std::vector<std::pair<std::string, std::string>> assignEdges;
+        std::vector<std::pair<std::string, std::string>> storeEdges;
+        std::vector<std::pair<std::string, std::string>> extractEdges;
 
         for (const auto& a : f.args) escaping.insert(a);
 
@@ -129,10 +155,13 @@ void analyzeEscapes(ModuleIR& ir, bool dump) {
                 for (const auto& o : inst.operands)
                     if (!o.name.empty()) escaping.insert(o.name);
             } else if (inst.op == "call") {
-                markRetainedCallArgs(inst, escaping);
+                markRetainedCallArgs(inst, escaping, storeEdges, extractEdges);
             } else if (inst.op == "list") {
                 for (const auto& o : inst.operands)
-                    if (!o.name.empty()) escaping.insert(o.name);
+                    if (!o.name.empty() && !inst.result.empty())
+                        storeEdges.push_back({o.name, inst.result});
+            } else if (inst.op == "subscript" && inst.operands.size() >= 1 && !inst.result.empty()) {
+                extractEdges.push_back({inst.operands[0].name, inst.result});
             } else if (inst.op == "assign") {
                 if (!inst.operands.empty() && !inst.result.empty()) {
                     assignEdges.push_back({inst.operands[0].name, inst.result});
@@ -146,6 +175,14 @@ void analyzeEscapes(ModuleIR& ir, bool dump) {
         while (changed) {
             changed = false;
             for (const auto& e : assignEdges) {
+                if (escaping.count(e.second) && escaping.insert(e.first).second)
+                    changed = true;
+            }
+            for (const auto& e : extractEdges) {
+                if (escaping.count(e.second) && escaping.insert(e.first).second)
+                    changed = true;
+            }
+            for (const auto& e : storeEdges) {
                 if (escaping.count(e.second) && escaping.insert(e.first).second)
                     changed = true;
             }
