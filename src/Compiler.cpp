@@ -2357,6 +2357,10 @@ class LoweringVisitor {
                 if (sigMatchesInference &&
                     (origFunc->returnType == "int" || origFunc->returnType == "float")) {
                     variant.nativeReturnType = origFunc->returnType;
+                } else {
+                    bool allF = !sig.empty();
+                    for (char c : sig) if (c != 'f') allF = false;
+                    if (allF) variant.nativeReturnType = "float";
                 }
 
                 ir.functions.push_back(variant);
@@ -6637,12 +6641,12 @@ class LoweringVisitor {
             noteType(res, "bool");
             return res;
         }
-        // type(x) → PyBuiltin_Type(x)  (returns a string like "<class 'int'>")
+        // type(x) → PyBuiltin_Type(x)  (type object, I-011)
         if (funcName == "type") {
             std::string arg = argRes.empty() ? "" : argRes[0];
             std::string res = "$t" + std::to_string(tempCounter++);
-            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Type", arg}, res, "str");
-            noteType(res, "str");
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_Type", arg}, res);
+            noteType(res, "boxed");
             return res;
         }
         // callable(x) → PyBuiltin_Callable(x)  (returns True/False)

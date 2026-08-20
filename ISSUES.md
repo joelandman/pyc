@@ -21,12 +21,16 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 ## Open
 
 ### I-011  `type()` is a display string, not a type object
-- Status: open
+- Status: fixed
 - Severity: limitation
-- Evidence: IMPLEMENTATION.md. `type(x).__name__` is parsed out of `"<class '…'>"`. User classes omit `__main__.`.
-- Files: `src/runtime/Runtime.cpp` (`PyBuiltin_Type`, `Pyc_GetAttr`)
+- Evidence: `w011_type.py`: `type(1)` prints `<class 'int'>`; `__name__`
+  `int`; `type(1) is type(2)`; `isinstance(1, type(1))`; `type(type(1))`
+  is `type`; `type(Dog()) is Dog`. Parent: display strings; `is` False.
+- Files: `src/runtime/Runtime.cpp` (`pyc_intern_type`, `PyBuiltin_Type`,
+  print, `Pyc_IsInstance`), `src/Compiler.cpp` (`noteType` boxed)
 - Blocks merge: no
-- Notes: Architectural. Not scheduled before Wave 3.
+- Notes: Immortal type-2 dicts (`list_item_type==4`). No new tag (I-013).
+  Not full type objects (no `__mro__` on builtins, no `type.__new__`).
 
 ### I-012  Functions lack `__name__` / `__doc__` / `__call__` attributes
 - Status: fixed
@@ -72,9 +76,11 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Status: open
 - Severity: limitation
 - Evidence: IMPLEMENTATION.md Planned; PERFORMANCE_BASELINE / PROFILE_NBODY leftovers.
-- Files: Runtime allocator, Codegen
+- Files: Runtime allocator, Codegen, Compiler `generateSpecializedVariants`
 - Blocks merge: no
-- Notes: Wave 4, after W4.1/W4.2.
+- Notes: Partial: all-float A6 variants now get `nativeReturnType=float`
+  even when the body guess was int; int/float freelist cap 256→1024.
+  Arena + escape analysis still not done.
 
 ### I-017  Datetime / pathlib / bytes / hashlib / struct / decimal subsets
 - Status: accepted
@@ -564,22 +570,15 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 - Notes: Wave 6 W6.1. `//` `/` `%` `**` `Negate` / bitwise leftovers are I-125.
 
 ### I-112  Speculative native join look-ahead misses i64assign; fallback unbox unguarded
-- Status: open
+- Status: fixed
 - Severity: latent
-- Evidence: `Codegen.cpp` ~3701–3752. Join dest is the first `op=="assign"`
-  whose source is the call temp. Proven locals use `i64assign` /
-  `f64assign` (`Compiler.cpp` 7766–7774, 8248), so `joinKind` stays Boxed
-  and `convertToJoin` never unboxes today. If that look-ahead is widened
-  without changing `convertToJoin`, fallback (tag miss → generic call)
-  still does `unboxToI64` / `unboxToDouble` on the boxed result:
-  `None` → 0 (`unboxToI64` dummy) or GEP-null crash (`unboxToDouble`);
-  a float box through an i64 join reads field 2, not `dvalue`.
-  Also leaks the fallback new-ref when join is native.
-- Files: `src/codegen/Codegen.cpp` (`convertToJoin`, assign look-ahead)
+- Evidence: W12 / `w112_join.py`: `s=0; s=add(s,x)` in a range loop →
+  `4`/`8`. Look-ahead now sees `i64assign`/`f64assign`. Fallback boxed
+  result is tag-checked (null / type≠0/4 → 0) and DECREF'd.
+- Files: `src/codegen/Codegen.cpp` (`unboxJoinSteal`, assign look-ahead)
 - Blocks merge: no
-- Notes: Found reviewing W5.8 / I-014. Not hit by `w58_unbox` /
-  `check_speculative_unbox`. Do not enable native join without a
-  tag-checked convert and a DECREF of the boxed fallback result.
+- Notes: Wave 12. Coordinator: runner 821/821, o2_smoke 2/2, nbody 100
+  matches at `-O0`/`-O2`. Spec path still uses native `convertToJoin`.
 
 ### I-121  Remaining tag-7 super consumers after I-057
 - Status: fixed

@@ -2,7 +2,7 @@
 
 What compiles today. Open gaps live in [ISSUES.md](ISSUES.md). Design history lives in [IMPLEMENTATION.md](IMPLEMENTATION.md). When this file disagrees with `tests/runner.py` or the `pyc` binary, **trust the executable**.
 
-Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **819/819** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796, 800, 802, 804, 806, 811, 813, 815, 817) are stale.
+Test inventory (see `tests/runner.py` and `test/import_tests/`): runner reports **823/823** (`CASES` + `FILE_CASES` + dispatch/traceback/gdb/unbox checks), compiled at `-O0` and compared to CPython; plus a 9-case import suite. `make check` runs the runner, the import suite, and a thin `-O2` smoke. Counts in older docs (300, 499, 557, 627, 632, 637, 742, 752, 780, 782, 784, 786, 788, 790, 792, 794, 796, 800, 802, 804, 806, 811, 813, 815, 817, 819, 821) are stale.
 
 ---
 
@@ -135,8 +135,9 @@ Many of these are first-class values (`sorted(words, key=len)`, `funcs = [abs, s
 
 `cmp_to_key` + `sorted(..., reverse=)` is supported.
 
-`type(x)` returns a **display string** (`<class 'int'>`), not a type object.
-`type(x).__name__` is parsed out of that string ([I-011](ISSUES.md)).
+`type(x)` returns a type object (`type(1) is type(2)`; `__name__`;
+`isinstance(1, type(1))`). Builtin types are immortal singletons.
+Not full CPython type objects ([I-011](ISSUES.md)).
 
 ---
 

@@ -5313,6 +5313,12 @@ except TypeError as e:
     # W12.4 / I-158: nested generator wrap; list(int) does not drain yields.
     (open(__file__.replace("runner.py", "w124_gen.py")).read(),
      "[1, 2]\nte\n[7]\n"),
+    # I-112: native join of speculative add into i64 local.
+    (open(__file__.replace("runner.py", "w112_join.py")).read(),
+     "4\n8\n3\n"),
+    # I-011 / I-016: type objects; float-return A6.
+    (open(__file__.replace("runner.py", "w011_type.py")).read(),
+     "<class 'int'>\nint\nTrue\nfloat\nNoneType\nbool\nTrue\nFalse\ntype\nDog\nTrue\nTrue\n2.0\n3.0\n"),
 ]
 FILE_CASES = [
     ("opt_range_loop.py", []),
@@ -5422,6 +5428,10 @@ FILE_CASES = [
     ("w123_bound.py", []),
     # W12.4 / I-158: nested generator wrap.
     ("w124_gen.py", []),
+    # I-112: native join of speculative add into i64 local.
+    ("w112_join.py", []),
+    # I-011 / I-016: type objects; float-return A6.
+    ("w011_type.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),

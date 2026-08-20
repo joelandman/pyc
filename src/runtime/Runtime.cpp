@@ -161,6 +161,108 @@ static PyObject* pyc_mark_module(PyObject* d) {
 static bool pyc_is_module(PyObject* o) {
     return o && o->type == 2 && o->list_item_type == 3;
 }
+static bool pyc_is_type_obj(PyObject* o) {
+    return o && o->type == 2 && o->list_item_type == 4;
+}
+
+static PyObject* g_type_by_code[21];
+static PyObject* g_type_none;
+static PyObject* g_type_super;
+static PyObject* g_type_func;
+static PyObject* g_type_type;
+static PyObject* g_type_date;
+static PyObject* g_type_datetime;
+static std::unordered_map<std::string, PyObject*> g_exc_types;
+static bool g_types_ready = false;
+
+static PyObject* pyc_intern_type(const char* name, int code) {
+    PyObject* d = PyDict_New();
+    d->list_item_type = 4;
+    d->refcount = IMMORTAL_REFCOUNT;
+    std::string disp = name;
+    size_t dot = disp.rfind('.');
+    std::string shortn = (dot == std::string::npos) ? disp : disp.substr(dot + 1);
+    PyObject* kn = PyUnicode_FromString("__name__");
+    PyObject* vn = PyUnicode_FromString(shortn.c_str());
+    PyDict_SetItem(d, kn, vn);
+    Py_DECREF(kn); Py_DECREF(vn);
+    PyObject* kd = PyUnicode_FromString("__pyc_display__");
+    PyObject* vd = PyUnicode_FromString(name);
+    PyDict_SetItem(d, kd, vd);
+    Py_DECREF(kd); Py_DECREF(vd);
+    PyObject* kc = PyUnicode_FromString("__pyc_typecode__");
+    PyObject* vc = PyInt_FromLong(code);
+    PyDict_SetItem(d, kc, vc);
+    Py_DECREF(kc); Py_DECREF(vc);
+    return d;
+}
+
+static void pyc_init_types() {
+    if (g_types_ready) return;
+    g_types_ready = true;
+    for (int i = 0; i < 21; ++i) g_type_by_code[i] = nullptr;
+    g_type_by_code[0] = pyc_intern_type("int", 0);
+    g_type_by_code[1] = pyc_intern_type("list", 1);
+    g_type_by_code[2] = pyc_intern_type("dict", 2);
+    g_type_by_code[3] = pyc_intern_type("str", 3);
+    g_type_by_code[4] = pyc_intern_type("float", 4);
+    g_type_by_code[5] = pyc_intern_type("bool", 5);
+    g_type_by_code[7] = pyc_intern_type("tuple", 7);
+    g_type_by_code[10] = pyc_intern_type("Exception", 10);
+    g_type_by_code[11] = pyc_intern_type("function", 11);
+    g_type_by_code[13] = pyc_intern_type("complex", 13);
+    g_type_by_code[14] = pyc_intern_type("datetime.date", 14);
+    g_type_by_code[15] = pyc_intern_type("datetime.timedelta", 15);
+    g_type_by_code[17] = pyc_intern_type("bytes", 17);
+    g_type_by_code[18] = pyc_intern_type("bytearray", 18);
+    g_type_by_code[19] = pyc_intern_type("decimal.Decimal", 19);
+    g_type_by_code[20] = pyc_intern_type("set", 20);
+    g_type_none = pyc_intern_type("NoneType", 6);
+    g_type_super = pyc_intern_type("super", 7);
+    g_type_func = g_type_by_code[11];
+    g_type_type = pyc_intern_type("type", -1);
+    g_type_date = pyc_intern_type("datetime.date", 14);
+    g_type_datetime = pyc_intern_type("datetime.datetime", 14);
+}
+
+static int pyc_type_code(PyObject* ty) {
+    if (!pyc_is_type_obj(ty)) return -2;
+    for (auto& kv : ty->dict) {
+        if (kv.first && kv.first->type == 3 && kv.first->str == "__pyc_typecode__"
+            && kv.second && kv.second->type == 0)
+            return (int)kv.second->value;
+    }
+    return -2;
+}
+
+static PyObject* pyc_exc_instance_mro(PyObject* exc);
+
+static std::string pyc_type_obj_name(PyObject* ty) {
+    if (pyc_is_type_obj(ty)) {
+        for (auto& kv : ty->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == "__pyc_display__"
+                && kv.second && kv.second->type == 3)
+                return kv.second->str;
+        }
+        for (auto& kv : ty->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == "__name__"
+                && kv.second && kv.second->type == 3)
+                return kv.second->str;
+        }
+    }
+    if (pyc_is_class_dict(ty)) {
+        for (auto& kv : ty->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == "__mro__"
+                && kv.second && kv.second->type == 1 && PyList_Size(kv.second) > 0) {
+                PyObject* first = PyList_GetItemI64(kv.second, 0);
+                std::string name = (first && first->type == 3) ? first->str : "object";
+                if (first) Py_DECREF(first);
+                return name;
+            }
+        }
+    }
+    return "object";
+}
 // I-203: cmp_to_key factory is {"cmp_to_key": cmp} with no "obj".
 // A K object is that plus "obj". Borrowed refs. requireObj selects
 // factory (false) vs K (true).
@@ -392,7 +494,7 @@ static std::atomic<long> alloc_set_count{0};
 
 // P1: thread-local free-lists for short-lived boxed ints/floats (nbody hot path).
 // Caps keep memory bounded; overflow falls back to delete/new.
-static constexpr int PYC_FREELIST_CAP = 256;
+static constexpr int PYC_FREELIST_CAP = 1024;
 static thread_local PyObject* g_float_freelist[PYC_FREELIST_CAP];
 static thread_local int g_float_freelist_n = 0;
 static thread_local PyObject* g_int_freelist[PYC_FREELIST_CAP];
@@ -1756,6 +1858,9 @@ static int PyObject_PrintElement(PyObject* obj, FILE* fp) {
         if (n == 1) fprintf(fp, ",");
         return fprintf(fp, ")");
     }
+    if (pyc_is_type_obj(obj) || pyc_is_class_dict(obj)) {
+        return fprintf(fp, "<class '%s'>", pyc_type_obj_name(obj).c_str());
+    }
     if (obj->type == 2) {
         // Nested dict — open brace, recurse, close.
         fprintf(fp, "{");
@@ -1969,6 +2074,10 @@ static int PyObject_PrintBase(PyObject* obj, FILE* fp) {
         fprintf(fp, ")\n");
         fflush(fp);
         return 0;
+    }
+    if (pyc_is_type_obj(obj) || pyc_is_class_dict(obj)) {
+        int r = fprintf(fp, "<class '%s'>\n", pyc_type_obj_name(obj).c_str());
+        fflush(fp); return r;
     }
     if (obj->type == 2 && pyc_instance_is_exception(obj)) {
         // User-defined exception subclass instance: print str(e) (the
@@ -2663,50 +2772,36 @@ PyObject* PyBuiltin_Bool(PyObject* obj) {
 // type(x) — returns a string naming the runtime type of x. We use the
 // same names CPython uses so user code that compares to type names works.
 PyObject* PyBuiltin_Type(PyObject* obj) {
-    if (!obj) return PyUnicode_FromString("<class 'NoneType'>");
-    switch (obj->type) {
-        case 0: return PyUnicode_FromString("<class 'int'>");
-        case 1: return PyUnicode_FromString("<class 'list'>");
-        case 7: return PyUnicode_FromString(
-            pyc_is_super(obj) ? "<class 'super'>" : "<class 'tuple'>");
-        case 2: {
-            // Class instance (has a "__class__" entry) vs a genuine
-            // plain dict — found and fixed while bug hunting: type(e)
-            // for a caught user-defined exception (or any user-defined
-            // class instance) previously showed the generic '<class
-            // 'dict'>' instead of the real class name. Uses the same
-            // __mro__[0] lookup already relied on for super() and for
-            // structured-exception-style matching on a class instance
-            // (see pyc_exc_instance_mro's comment, far above) — despite
-            // the name, it's general-purpose, not exception-specific.
-            PyObject* mro = pyc_exc_instance_mro(obj);
-            if (mro && mro->type == 1 && PyList_Size(mro) > 0) {
-                PyObject* first = PyList_GetItemI64(mro, 0);
-                std::string name = (first && first->type == 3) ? first->str : "dict";
-                if (first) Py_DECREF(first);
-                return PyUnicode_FromString(("<class '" + name + "'>").c_str());
+    pyc_init_types();
+    PyObject* t = nullptr;
+    if (!obj) t = g_type_none;
+    else if (pyc_is_type_obj(obj)) t = g_type_type;
+    else if (pyc_is_class_dict(obj)) t = g_type_type;
+    else if (pyc_is_super(obj)) t = g_type_super;
+    else if (obj->type == 2) {
+        for (auto& kv : obj->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == "__class__"
+                && kv.second) {
+                t = kv.second;
+                break;
             }
-            return PyUnicode_FromString("<class 'dict'>");
         }
-        case 3: return PyUnicode_FromString("<class 'str'>");
-        case 4: return PyUnicode_FromString("<class 'float'>");
-        case 5: return PyUnicode_FromString("<class 'bool'>");
-        case 6: return PyUnicode_FromString("<class 'cell'>");
-        case 10:
-            // Structured (builtin) exception — found and fixed
-            // alongside the type-2 case above: previously fell through
-            // to the generic '<class 'object'>' default.
-            return PyUnicode_FromString(("<class '" + obj->str + "'>").c_str());
-        case 13: return PyUnicode_FromString("<class 'complex'>");
-        case 14: return PyUnicode_FromString(pyc_as_datetime(obj)->hasTime
-                     ? "<class 'datetime.datetime'>" : "<class 'datetime.date'>");
-        case 15: return PyUnicode_FromString("<class 'datetime.timedelta'>");
-        case 17: return PyUnicode_FromString("<class 'bytes'>");
-        case 18: return PyUnicode_FromString("<class 'bytearray'>");
-        case 19: return PyUnicode_FromString("<class 'decimal.Decimal'>");
-        case 20: return PyUnicode_FromString("<class 'set'>");
-        default: return PyUnicode_FromString("<class 'object'>");
+        if (!t) t = g_type_by_code[2];
+    } else if (obj->type == 14) {
+        t = pyc_as_datetime(obj)->hasTime ? g_type_datetime : g_type_date;
+    } else if (obj->type == 10) {
+        auto it = g_exc_types.find(obj->str);
+        if (it == g_exc_types.end()) {
+            t = pyc_intern_type(obj->str.c_str(), 10);
+            g_exc_types[obj->str] = t;
+        } else t = it->second;
+    } else if (obj->type >= 0 && obj->type < 21 && g_type_by_code[obj->type]) {
+        t = g_type_by_code[obj->type];
+    } else {
+        t = g_type_type;
     }
+    if (t) Py_INCREF(t);
+    return t;
 }
 
 // Forward declaration: the callable registry is defined far below (B4/B8
@@ -6684,18 +6779,60 @@ PyObject* PyBuiltin_Filter(PyObject* func, PyObject* iterable) {
 }
 
 // typecode: 0=int, 1=list, 2=dict, 3=str, 4=float, 5=bool; -1=unknown→True
-PyObject* Pyc_IsInstance(PyObject* obj, PyObject* typecode) {
-    if (!typecode || typecode->type != 0 || typecode->value < 0)
-        return PyBool_New(1);
-    int code = (int)typecode->value;
-    if (code == 6) {
-        // NoneType: None is the only instance (represented as null ptr).
-        return PyBool_New(obj == nullptr ? 1 : 0);
+static bool pyc_isinstance_code(PyObject* obj, int code) {
+    if (code == 6) return obj == nullptr;
+    if (!obj) return false;
+    if (obj->type == code) return true;
+    if (code == 0 && obj->type == 5) return true;
+    return false;
+}
+
+PyObject* Pyc_IsInstance(PyObject* obj, PyObject* classinfo) {
+    if (!classinfo) return PyBool_New(0);
+    if (classinfo->type == 0) {
+        int code = (int)classinfo->value;
+        if (code < 0) return PyBool_New(0);
+        return PyBool_New(pyc_isinstance_code(obj, code) ? 1 : 0);
     }
-    if (!obj) return PyBool_New(0);
-    bool ok = (obj->type == code) ||
-              (code == 0 && obj->type == 5);  // bool is-a int
-    return PyBool_New(ok ? 1 : 0);
+    if (pyc_is_type_obj(classinfo)) {
+        int code = pyc_type_code(classinfo);
+        if (code == -1) return PyBool_New(pyc_is_type_obj(obj) || pyc_is_class_dict(obj) ? 1 : 0);
+        return PyBool_New(pyc_isinstance_code(obj, code) ? 1 : 0);
+    }
+    if (pyc_is_class_dict(classinfo) && obj && obj->type == 2) {
+        for (auto& kv : obj->dict) {
+            if (kv.first && kv.first->type == 3 && kv.first->str == "__class__"
+                && kv.second == classinfo)
+                return PyBool_New(1);
+        }
+        PyObject* mro = pyc_exc_instance_mro(obj);
+        if (mro && mro->type == 1) {
+            size_t n = PyList_Size(mro);
+            for (size_t i = 0; i < n; ++i) {
+                PyObject* m = PyList_GetItemI64(mro, (long)i);
+                bool hit = false;
+                if (m && m->type == 3 && classinfo) {
+                    std::string want = pyc_type_obj_name(classinfo);
+                    hit = (m->str == want);
+                }
+                if (m) Py_DECREF(m);
+                if (hit) return PyBool_New(1);
+            }
+        }
+        return PyBool_New(0);
+    }
+    if (classinfo->type == 7) {
+        size_t n = PyTuple_Size(classinfo);
+        for (size_t i = 0; i < n; ++i) {
+            PyObject* el = classinfo->list[i];
+            PyObject* r = Pyc_IsInstance(obj, el);
+            int ok = r && r->value;
+            if (r) Py_DECREF(r);
+            if (ok) return PyBool_New(1);
+        }
+        return PyBool_New(0);
+    }
+    return PyBool_New(0);
 }
 
 // Pyc_IsSubclass(cls, parent) — checks if cls is a subclass of parent.
@@ -12941,6 +13078,7 @@ static PyObject* stdout_write_adapter(PyObject* args) {
 void pyc_setup_sys(int argc, char** argv) {
     if (g_sys_module != nullptr) return;
 
+    pyc_init_types();
     // Lazily initialise immortal singletons (True, False, small ints).
     // These are used by code paths called below (PyInt_FromLong, PyBool_New).
     initSmallInts();
@@ -13331,15 +13469,8 @@ static PyObject* pyc_adapt_zip(PyObject* args) {
     return PyBuiltin_ZipN(args);
 }
 static PyObject* pyc_adapt_isinstance(PyObject* args) {
-    // Note: isinstance as a value is limited — the compile-time typecode
-    // resolution can't happen here. Fall back to a basic type-name check.
     PyObject* a = arg0(args); PyObject* b = arg1(args);
-    if (!a || !b) return PyBool_New(0);
-    // b is typically a type name string; compare against type(a)
-    PyObject* t = PyBuiltin_Type(a);
-    bool match = (t && b->type == 3 && t->str == b->str);
-    if (t) Py_DECREF(t);
-    return PyBool_New(match ? 1 : 0);
+    return Pyc_IsInstance(a, b);
 }
 static PyObject* pyc_adapt_complex(PyObject* args) {
     PyObject* a = arg0(args); PyObject* b = arg1(args);
@@ -16689,6 +16820,10 @@ PyObject* Pyc_GetAttr(PyObject* obj, PyObject* attrName) {
             Py_INCREF(obj);
             return obj;
         }
+    }
+    if (obj && pyc_is_class_dict(obj) &&
+        attrName && attrName->type == 3 && attrName->str == "__name__") {
+        return PyUnicode_FromString(pyc_type_obj_name(obj).c_str());
     }
     // type(x).__name__ — found and fixed while bug hunting: confirmed
     // broken for every type, not just a caught exception instance as

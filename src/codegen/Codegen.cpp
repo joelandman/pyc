@@ -3866,7 +3866,9 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                             }
                             std::string assignDest;
                             for (const auto& later : f.body) {
-                                if (later.op == "assign" && !later.operands.empty()
+                                if ((later.op == "assign" || later.op == "i64assign"
+                                     || later.op == "f64assign")
+                                    && !later.operands.empty()
                                     && later.operands[0].name == inst.result) {
                                     assignDest = later.result;
                                     break;
@@ -3917,6 +3919,53 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                                 if (v->getType() == i64TyCall)
                                     return builder.CreateSIToFP(v, doubleTyCall, sid + ".i2f");
                                 return unboxToDouble(v);
+                            };
+
+                            auto unboxJoinSteal = [&](llvm::Value* boxed) -> llvm::Value* {
+                                unsigned want = (joinKind == JoinKind::F64) ? 4u : 0u;
+                                llvm::Type* outTy = joinTy;
+                                llvm::Function* dec = module->getFunction("Py_DECREF");
+                                llvm::BasicBlock* nullBB = llvm::BasicBlock::Create(
+                                    context, sid + ".jn", func);
+                                llvm::BasicBlock* chkBB = llvm::BasicBlock::Create(
+                                    context, sid + ".jt", func);
+                                llvm::BasicBlock* okBB = llvm::BasicBlock::Create(
+                                    context, sid + ".jo", func);
+                                llvm::BasicBlock* badBB = llvm::BasicBlock::Create(
+                                    context, sid + ".jb", func);
+                                llvm::BasicBlock* doneBB = llvm::BasicBlock::Create(
+                                    context, sid + ".jd", func);
+                                llvm::Value* isnull = builder.CreateICmpEQ(
+                                    boxed, llvm::ConstantPointerNull::get(pyObjectPtrTy),
+                                    sid + ".jnull");
+                                builder.CreateCondBr(isnull, nullBB, chkBB);
+                                builder.SetInsertPoint(chkBB);
+                                llvm::Value* tptr = builder.CreateStructGEP(
+                                    pyObjectTy, boxed, 1, sid + ".jtp");
+                                llvm::Value* tv = builder.CreateAlignedLoad(
+                                    i32TyCall, tptr, llvm::Align(4), sid + ".jty");
+                                llvm::Value* ok = builder.CreateICmpEQ(
+                                    tv, llvm::ConstantInt::get(i32TyCall, want), sid + ".jok");
+                                builder.CreateCondBr(ok, okBB, badBB);
+                                builder.SetInsertPoint(okBB);
+                                unsigned fld = (joinKind == JoinKind::F64) ? 3u : 2u;
+                                llvm::Value* fptr = builder.CreateStructGEP(
+                                    pyObjectTy, boxed, fld, sid + ".jfp");
+                                llvm::Value* got = builder.CreateAlignedLoad(
+                                    outTy, fptr, llvm::Align(8), sid + ".jv");
+                                if (dec) builder.CreateCall(dec, {boxed});
+                                builder.CreateBr(doneBB);
+                                builder.SetInsertPoint(badBB);
+                                if (dec) builder.CreateCall(dec, {boxed});
+                                builder.CreateBr(doneBB);
+                                builder.SetInsertPoint(nullBB);
+                                builder.CreateBr(doneBB);
+                                builder.SetInsertPoint(doneBB);
+                                llvm::PHINode* p = builder.CreatePHI(outTy, 3, sid + ".jp");
+                                p->addIncoming(got, okBB);
+                                p->addIncoming(llvm::Constant::getNullValue(outTy), badBB);
+                                p->addIncoming(llvm::Constant::getNullValue(outTy), nullBB);
+                                return p;
                             };
 
                             llvm::BasicBlock* originBB = builder.GetInsertBlock();
@@ -4053,7 +4102,8 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                                 if (fbWasNative[i] && argDecrefFb)
                                     builder.CreateCall(argDecrefFb, {boxedArgs[i]});
                             }
-                            llvm::Value* fbConv = convertToJoin(fbRes);
+                            llvm::Value* fbConv = (joinKind == JoinKind::Boxed)
+                                ? convertToJoin(fbRes) : unboxJoinSteal(fbRes);
                             llvm::BasicBlock* fbEnd = builder.GetInsertBlock();
                             builder.CreateBr(joinBB);
                             phiInc.push_back({fbConv, fbEnd});
