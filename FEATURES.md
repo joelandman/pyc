@@ -299,10 +299,33 @@ LLVMgold plugin is missing (W12.5). Verify both.
 
 ---
 
-## Intentionally Unsupported
+## MVP boundary
 
-`exec()` / `eval()` · compiling real CPython stdlib · JIT · lazy compilation ·
-tail-call optimization · `memoryview` / buffer protocol · `bytes %` formatting.
+pyc is an AOT compiler for a **Python subset** (scripts, numeric kernels, CLI,
+files, modest classes, the synthetic stdlib above). The runner (838/838) and
+`-O2` nbody/unroll are that subset. It will **not** run “most Python on disk.”
+Unsupported constructs should fail **loudly** (`ImportError`, missing syntax),
+not compile CPython or SEGV.
+
+**In MVP:** language core (`if`/`for`/`class`/`try`/`with`/`match`), boxed
+runtime, synthetic modules, native int/float/`list_float` fast paths. User
+classes work (instance dicts — correct, slow). Perf of `Body.x` / nested unpack
+is not an MVP gate.
+
+**Out of MVP** (do not treat as tickets; [I-229](ISSUES.md)):
+
+| Item | Why | If ever |
+|------|-----|---------|
+| Real CPython stdlib / NumPy | Never compile CPython `.py`. NumPy is a second compiler (dtype/`ndarray`/I-013/buffer protocol). | More synthetics or thin C shims only. Keep `ImportError`. |
+| `async` / `await` | Needs coroutines + an event loop (state machines). | After real generators (below). Do not lower `async def` as `def`. |
+| Lazy generators / unbounded itertools | Genexps and many itertools are **eager**. `count`/`cycle` would hang/OOM. | Yield state machines, then lazy itertools. |
+| Threads / `multiprocessing` | Refcounts and Runtime maps are not atomic (`I-049`). No `pickle`. | Atomic `INCREF` + locks, then threads only. Multiprocessing last. |
+
+Also unsupported: `exec()` / `eval()` · compiling real CPython stdlib · JIT ·
+lazy compilation · tail-call optimization · `memoryview` / buffer protocol ·
+`bytes %` formatting.
+
+If those four are ever done, order: generators → async → threads → NumPy.
 
 ---
 

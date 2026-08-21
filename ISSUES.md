@@ -20,6 +20,23 @@ When this file disagrees with the `pyc` binary or `tests/runner.py`, trust the e
 
 ## Open
 
+### I-229  Out of MVP: stdlib/NumPy, async, lazy generators, threads
+- Status: wontfix
+- Severity: limitation
+- Evidence: FEATURES.md “MVP boundary”. 838/838 is the supported subset.
+  Random GitHub Python fails on **imports / async / exec**, not missing `if`.
+- Files: FEATURES.md, AGENTS.md (never compile CPython stdlib)
+- Blocks merge: no
+- Notes: Not tickets. (1) Real stdlib/NumPy — keep `ImportError`; synthetics
+  or C shims only; no embedding CPython; NumPy needs a new tag (I-013) and
+  buffer protocol (explicitly out). (3) `async`/`await` — coroutine state
+  machines + synthetic asyncio; months; don’t compile as sync. (4) Lazy
+  `yield` / `itertools.count` — AOT state machines; eager materialize is OK
+  for MVP; don’t materialize `count()`. (5) Threads — whole-runtime atomic
+  refcounts; multiprocessing needs pickle/IPC. If ever: (4) then (3) then
+  (5) then NumPy. I-049 remains a Runtime-author landmine, not an end-user
+  feature.
+
 ### I-011  `type()` is a display string, not a type object
 - Status: fixed
 - Severity: limitation
