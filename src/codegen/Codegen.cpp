@@ -42,13 +42,15 @@
 #include <llvm/Support/MemoryBuffer.h>
 #include <unordered_map>
 #include <unordered_set>
+#include <map>
+#include <utility>
 #include <fstream>
 #include <iostream>
 #include <filesystem>
 
 namespace pyc {
 
-std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext& context, const std::string& moduleName, bool debugInfo) {
+std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext& context, const std::string& moduleName, bool debugInfo, bool emitTbLines) {
     auto module = std::make_unique<llvm::Module>(moduleName, context);
     llvm::IRBuilder<> builder(context);
 
@@ -173,6 +175,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
 
     llvm::FunctionType* listGetItemDoubleTy = llvm::FunctionType::get(llvm::Type::getDoubleTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context)}, false);
     llvm::Function::Create(listGetItemDoubleTy, llvm::Function::ExternalLinkage, "PyList_GetItemDouble", module.get());
+    llvm::FunctionType* flistPtrTy = llvm::FunctionType::get(
+        llvm::PointerType::getUnqual(context), {pyObjectPtrTy}, false);
+    llvm::Function::Create(flistPtrTy, llvm::Function::ExternalLinkage, "PyList_FListPtr", module.get());
+    llvm::FunctionType* seqGetObjTy = llvm::FunctionType::get(pyObjectPtrTy, {pyObjectPtrTy, llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(seqGetObjTy, llvm::Function::ExternalLinkage, "PySeq_GetItemObj", module.get());
+    llvm::FunctionType* seqGetDblTy = llvm::FunctionType::get(llvm::Type::getDoubleTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context)}, false);
+    llvm::Function::Create(seqGetDblTy, llvm::Function::ExternalLinkage, "PySeq_GetItemDouble", module.get());
+    llvm::FunctionType* seqSetDblTy = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), llvm::Type::getDoubleTy(context)}, false);
+    llvm::Function::Create(seqSetDblTy, llvm::Function::ExternalLinkage, "PySeq_SetItemDouble", module.get());
 
     llvm::FunctionType* listSetItemInt64Ty = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {pyObjectPtrTy, llvm::Type::getInt64Ty(context), llvm::Type::getInt64Ty(context)}, false);
     llvm::Function::Create(listSetItemInt64Ty, llvm::Function::ExternalLinkage, "PyList_SetItemInt64", module.get());
@@ -2298,7 +2309,7 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
             // I-009: update the top frame's line before the op runs so a
             // raise (explicit or runtime) records this statement. Skip if
             // the block is already terminated or the line did not change.
-            if (!funcIsSpecialized && !curBlock->getTerminator() && inst.lineno > 0 && inst.lineno != lastTbLine) {
+            if (emitTbLines && !funcIsSpecialized && !curBlock->getTerminator() && inst.lineno > 0 && inst.lineno != lastTbLine) {
                 lastTbLine = inst.lineno;
                 if (llvm::Function* setLn = module->getFunction("Pyc_SetLineno")) {
                     builder.CreateCall(setLn, {
@@ -3624,6 +3635,62 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                           continue;
                       }
                   }
+                  if (funcName == "PySeq_GetItemObj" && inst.operands.size() >= 3) {
+                      std::string seqName = inst.operands[1].name;
+                      std::string idxName = inst.operands[2].name;
+                      llvm::Value* seqVal = getAsPyObject(seqName);
+                      llvm::Value* idxVal = getOrLoad(idxName);
+                      if (idxVal && idxVal->getType() != llvm::Type::getInt64Ty(context))
+                          idxVal = unboxToI64(idxVal);
+                      llvm::Function* fn = module->getFunction("PySeq_GetItemObj");
+                      if (fn && seqVal && idxVal) {
+                          llvm::Value* item = builder.CreateCall(fn, {seqVal, idxVal}, inst.result);
+                          if (!inst.result.empty()) {
+                              valueMap[inst.result] = item;
+                              markOwned(inst.result);
+                          }
+                          emitDecRefIfOwnedSameBlock(idxName);
+                          continue;
+                      }
+                  }
+                  if ((funcName == "PySeq_GetItemDouble" || funcName == "PyList_FListLoad")
+                      && inst.operands.size() >= 3) {
+                      std::string seqName = inst.operands[1].name;
+                      std::string idxName = inst.operands[2].name;
+                      llvm::Value* seqVal = getAsPyObject(seqName);
+                      llvm::Value* idxVal = getOrLoad(idxName);
+                      if (idxVal && idxVal->getType() != llvm::Type::getInt64Ty(context))
+                          idxVal = unboxToI64(idxVal);
+                      llvm::Function* fn = module->getFunction("PySeq_GetItemDouble");
+                      if (fn && seqVal && idxVal) {
+                          llvm::Value* d = builder.CreateCall(fn, {seqVal, idxVal}, inst.result + ".double");
+                          if (!inst.result.empty()) valueMap[inst.result] = d;
+                          emitDecRefIfOwnedSameBlock(idxName);
+                          continue;
+                      }
+                  }
+                  if (funcName == "PyList_FListStore" && inst.operands.size() >= 4) {
+                      std::string listName = inst.operands[1].name;
+                      std::string idxName = inst.operands[2].name;
+                      std::string valName = inst.operands[3].name;
+                      llvm::Value* listVal = getAsPyObject(listName);
+                      llvm::Value* idxVal = getOrLoad(idxName);
+                      llvm::Value* valVal = getOrLoad(valName);
+                      if (valVal && !valVal->getType()->isDoubleTy()) {
+                          if (valVal->getType() == llvm::Type::getInt64Ty(context))
+                              valVal = builder.CreateSIToFP(valVal, llvm::Type::getDoubleTy(context));
+                          else
+                              valVal = unboxToDouble(valVal);
+                      }
+                      if (idxVal && idxVal->getType() != llvm::Type::getInt64Ty(context))
+                          idxVal = unboxToI64(idxVal);
+                      llvm::Function* setFn = module->getFunction("PySeq_SetItemDouble");
+                      if (setFn && listVal && idxVal && valVal)
+                          builder.CreateCall(setFn, {listVal, idxVal, valVal});
+                      emitDecRefIfOwnedSameBlock(idxName);
+                      emitDecRefIfOwnedSameBlock(valName);
+                      continue;
+                  }
                   // unpack2/3: operands = [func, list, e0, e1, (e2)]
                   if ((funcName == "PyList_Unpack2" || funcName == "PyList_Unpack3") &&
                       inst.operands.size() >= 4) {
@@ -3667,31 +3734,30 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                          if (idxVal->getType() != llvm::Type::getInt64Ty(context)) {
                              idxVal = unboxToI64(idxVal);
                          }
-                         llvm::Value* nativeVal = nullptr;
-                         if (inst.resultType == "int") {
-                             llvm::Function* getInt64 = module->getFunction("PyList_GetItemInt64");
-                             if (getInt64) {
-                                 nativeVal = builder.CreateCall(getInt64, {listVal, idxVal}, inst.result + ".i64");
-                             }
-                         } else {
-                             llvm::Function* getDouble = module->getFunction("PyList_GetItemDouble");
-                             if (getDouble) {
-                                 nativeVal = builder.CreateCall(getDouble, {listVal, idxVal}, inst.result + ".double");
-                             }
-                         }
-                         if (nativeVal) {
-                             // Box into valueMap; native arithmetic still unboxes via resultType.
-                             llvm::Value* boxed = (inst.resultType == "int")
-                                 ? boxI64(nativeVal, inst.result + ".boxed")
-                                 : boxDouble(nativeVal, inst.result + ".boxed");
-                             if (!inst.result.empty()) {
-                                 valueMap[inst.result] = boxed;
-                                 markOwned(inst.result);
-                             }
-                             emitDecRefIfOwnedSameBlock(listName);
-                             emitDecRefIfOwnedSameBlock(idxName);
-                             continue;
-                         }
+                          llvm::Value* nativeVal = nullptr;
+                          if (inst.resultType == "int") {
+                              llvm::Function* getInt64 = module->getFunction("PyList_GetItemInt64");
+                              if (getInt64) {
+                                  nativeVal = builder.CreateCall(getInt64, {listVal, idxVal}, inst.result + ".i64");
+                              }
+                          } else {
+                              llvm::Function* getDouble = module->getFunction("PyList_GetItemDouble");
+                              if (getDouble) {
+                                  nativeVal = builder.CreateCall(getDouble, {listVal, idxVal}, inst.result + ".double");
+                              }
+                          }
+                          if (nativeVal) {
+                              llvm::Value* boxed = (inst.resultType == "int")
+                                  ? boxI64(nativeVal, inst.result + ".boxed")
+                                  : boxDouble(nativeVal, inst.result + ".boxed");
+                              if (!inst.result.empty()) {
+                                  valueMap[inst.result] = boxed;
+                                  markOwned(inst.result);
+                              }
+                              emitDecRefIfOwnedSameBlock(listName);
+                              emitDecRefIfOwnedSameBlock(idxName);
+                              continue;
+                          }
                           // Fall through to generic path if native functions not found.
                       }
                   }

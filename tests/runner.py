@@ -5325,6 +5325,17 @@ except TypeError as e:
      "True\nTrue\nFalse\n5\n"),
     (open(__file__.replace("runner.py", "w016_cplx.py")).read(),
      "[3.0, 4.0]\n"),
+    (open(__file__.replace("runner.py", "w_nbody_tuple.py")).read(),
+     "-1.500000\n1.000000\n"),
+    ("a=[1.0,2.0,3.0]\ni=0\nwhile i<3:\n    a[0]=a[0]+a[1]\n    i=i+1\nprint(a[0])\n",
+     "7.0\n"),
+    ("""t = ([1.0, 2.0], [0.0, 0.0], 5.0)
+([x, y], v, m) = t
+v[0] += m * x
+print("%.1f" % x)
+print("%.1f" % v[0])
+print("%.1f" % m)
+""", "1.0\n5.0\n5.0\n"),
     (open(__file__.replace("runner.py", "w_apply.py")).read(),
      "7\n4.0\n2\n30\n"),
 ]
@@ -5443,6 +5454,7 @@ FILE_CASES = [
     ("w016_arena.py", []),
     ("w016_mutual.py", []),
     ("w016_cplx.py", []),
+    ("w_nbody_tuple.py", []),
     ("w_apply.py", []),
     ("nbody.py", ["100"]),
     # New test files for completeness

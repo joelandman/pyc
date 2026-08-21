@@ -1203,6 +1203,74 @@ void PyList_SetItemInt64(PyObject* list, long index, long v) {
     }
 }
 
+__attribute__((always_inline))
+__attribute__((always_inline))
+static bool pyc_seq_index(PyObject* seq, int64_t index, size_t* outi) {
+    if (!seq) return false;
+    size_t n = 0;
+    if (seq->type == 1) n = PyList_Size(seq);
+    else if (seq->type == 7) n = PyTuple_Size(seq);
+    else return false;
+    if (index < 0) index += (int64_t)n;
+    if (index < 0 || (size_t)index >= n) return false;
+    *outi = (size_t)index;
+    return true;
+}
+
+__attribute__((always_inline))
+PyObject* PySeq_GetItemObj(PyObject* seq, int64_t index) {
+    size_t i;
+    if (!pyc_seq_index(seq, index, &i)) return nullptr;
+    if (seq->list_item_type == 1) {
+        if (i < seq->ilist.size()) return PyInt_FromLong(seq->ilist[i]);
+        return nullptr;
+    }
+    if (seq->list_item_type == 2) {
+        if (i < seq->flist.size()) return PyFloat_FromDouble(seq->flist[i]);
+        return nullptr;
+    }
+    if (i < seq->list.size()) {
+        PyObject* item = seq->list[i];
+        if (item) Py_INCREF(item);
+        return item;
+    }
+    return nullptr;
+}
+
+__attribute__((always_inline))
+double PySeq_GetItemDouble(PyObject* seq, int64_t index) {
+    size_t i;
+    if (!pyc_seq_index(seq, index, &i)) return 0.0;
+    if (seq->list_item_type == 2 && i < seq->flist.size())
+        return seq->flist[i];
+    if (seq->list_item_type == 1 && i < seq->ilist.size())
+        return (double)seq->ilist[i];
+    if (i < seq->list.size()) {
+        PyObject* el = seq->list[i];
+        if (el && el->type == 4) return el->dvalue;
+        if (el && (el->type == 0 || el->type == 5)) return (double)el->value;
+    }
+    return 0.0;
+}
+
+double* PyList_FListPtr(PyObject* list) {
+    if (list && list->type == 1 && list->list_item_type == 2 && !list->flist.empty())
+        return list->flist.data();
+    return nullptr;
+}
+
+__attribute__((always_inline))
+void PySeq_SetItemDouble(PyObject* seq, int64_t index, double v) {
+    size_t i;
+    if (!pyc_seq_index(seq, index, &i)) return;
+    if (seq->type == 1 && seq->list_item_type == 2 && i < seq->flist.size()) {
+        seq->flist[i] = v;
+        return;
+    }
+    if (seq->type == 1)
+        PyList_SetItemDouble(seq, (long)index, v);
+}
+
 double PyList_GetItemDouble(PyObject* list, long index) {
     index = pyc_normalize_list_index(list, index);
     if (index < 0) {

@@ -10,7 +10,7 @@ namespace pyc {
 
 class Codegen {
 public:
-    std::unique_ptr<llvm::Module> generate(ModuleIR& ir, llvm::LLVMContext& context, const std::string& moduleName, bool debugInfo = false);
+    std::unique_ptr<llvm::Module> generate(ModuleIR& ir, llvm::LLVMContext& context, const std::string& moduleName, bool debugInfo = false, bool emitTbLines = true);
     bool emitObject(llvm::Module* module, const std::string& outputPath);
     bool emitObject(llvm::Module* module, const std::string& outputPath,
                     const std::string& mcpu, const std::string& march);

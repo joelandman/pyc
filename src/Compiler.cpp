@@ -4417,6 +4417,27 @@ class LoweringVisitor {
         }
         std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         std::string right = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
+        // A param used with a proven numeric operand inherits that type
+        // (dt * (r ** -1.5) — inferParamTypesFromBody only sees Name×const).
+        auto promoteParamFromOther = [&](const ASTNode* side, const std::string& sideName,
+                                         const std::string& otherType) {
+            if (!side || side->type != "Name" || sideName.empty()) return;
+            if (otherType != "float" && otherType != "int") return;
+            std::string cur = typeOf(sideName);
+            if (cur == "float" || cur == "int" || cur == "i64") return;
+            bool isParam = false;
+            for (const auto& fn : ir.functions) {
+                if (fn.name != currentFunc) continue;
+                for (const auto& a : fn.args)
+                    if (a == sideName) { isParam = true; break; }
+                break;
+            }
+            if (isParam) noteType(sideName, otherType);
+        };
+        if (!node->children.empty())
+            promoteParamFromOther(node->children[0].get(), left, typeOf(right));
+        if (node->children.size() > 1)
+            promoteParamFromOther(node->children[1].get(), right, typeOf(left));
         // B16: Complex arithmetic — if both operands are complex, emit complex calls
         if (op == "add" || op == "sub" || op == "mul" || op == "truediv") {
             std::string funcName;
@@ -7981,6 +8002,24 @@ class LoweringVisitor {
             elemTypeList.push_back(t);
         }
         std::string listRes = "$t" + std::to_string(tempCounter++);
+        auto recordIndexTypes = [&]() {
+            for (auto& fn : ir.functions) {
+                if (fn.name != currentFunc) continue;
+                std::unordered_map<size_t, std::string> idxMap;
+                for (size_t i = 0; i < n; ++i) {
+                    idxMap[i] = elemTypeList[i];
+                    if (elemTypeList[i] == "list_float" || elemTypeList[i] == "float_list")
+                        fn.containerElementTypes[listRes][i] = "float_list";
+                    else if (elemTypeList[i] == "list_int" || elemTypeList[i] == "int_list")
+                        fn.containerElementTypes[listRes][i] = "int_list";
+                    else if (elemTypeList[i] == "float" || elemTypeList[i] == "int")
+                        fn.containerElementTypes[listRes][i] = elemTypeList[i];
+                }
+                fn.subscriptElementTypes[listRes] = idxMap;
+                fn.listElementTypes[listRes] = elemTypeList;
+                break;
+            }
+        };
         if (node->type == "Tuple") {
             // Handle tuple literal — emit a real tuple (type 7).
             std::string sizeConst = "$c" + std::to_string(tempCounter++);
@@ -7992,6 +8031,16 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "const", {std::to_string(i)}, idxConst);
                 ir.addInstruction(currentFunc, "call", {"PyTuple_SetItemBoxed", listRes, idxConst, elems[i]}, "");
             }
+            // Nested/mixed tuples only. Homogeneous (1,2,3) must not look
+            // like a typed list — GetItemInt64 is list-only and returns 0.
+            bool usefulLayout = false;
+            for (const auto& t : elemTypeList) {
+                if (t == "list_float" || t == "float_list" ||
+                    t == "list_int" || t == "int_list" ||
+                    t == "list" || t == "tuple")
+                    usefulLayout = true;
+            }
+            if (usefulLayout) recordIndexTypes();
         } else {
             // Handle list literal
             if (allInt) {
@@ -8011,24 +8060,7 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "const", {std::to_string(n)}, sizeConst);
                 ir.addInstruction(currentFunc, "call", {"PyList_NewBoxed", sizeConst}, listRes);
                 noteType(listRes, "list");
-                for (auto& fn : ir.functions) {
-                    if (fn.name == currentFunc) {
-                        std::unordered_map<size_t, std::string> idxMap;
-                        for (size_t i = 0; i < n; ++i) {
-                            idxMap[i] = elemTypeList[i];
-                            // P0: also record container kinds for nested list elements
-                            if (elemTypeList[i] == "list_float" || elemTypeList[i] == "float_list")
-                                fn.containerElementTypes[listRes][i] = "float_list";
-                            else if (elemTypeList[i] == "list_int" || elemTypeList[i] == "int_list")
-                                fn.containerElementTypes[listRes][i] = "int_list";
-                            else if (elemTypeList[i] == "float" || elemTypeList[i] == "int")
-                                fn.containerElementTypes[listRes][i] = elemTypeList[i];
-                        }
-                        fn.subscriptElementTypes[listRes] = idxMap;
-                        fn.listElementTypes[listRes] = elemTypeList;
-                        break;
-                    }
-                }
+                recordIndexTypes();
             }
 
             bool containsTok = false;
@@ -8249,8 +8281,8 @@ class LoweringVisitor {
             // dict/boxed (d["k"]=99 must go through Pyc_SetItem).
             std::string objType = typeOf(obj);
             std::string valType = typeOf(val);
-            bool isIntList = (objType == "list_int");
-            bool isFloatList = (objType == "list_float");
+            bool isIntList = (objType == "list_int") || knownIntLists.count(obj);
+            bool isFloatList = (objType == "list_float") || knownFloatLists.count(obj);
             bool objIsList = isIntList || isFloatList || objType == "list" ||
                              knownFloatLists.count(obj) || knownIntLists.count(obj);
             bool valIsInt = (valType == "int" || valType == "i64" || valType == "bool");
@@ -8261,7 +8293,7 @@ class LoweringVisitor {
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64", obj, idx, val}, dummy);
             } else if (isFloatList && valIsFloat) {
                 dummy = "$t" + std::to_string(tempCounter++);
-                ir.addInstruction(currentFunc, "call", {"PyList_SetItemDouble", obj, idx, val}, dummy);
+                ir.addInstruction(currentFunc, "call", {"PyList_FListStore", obj, idx, val}, dummy);
             } else if (objIsList && valIsFloat) {
                 dummy = "$t" + std::to_string(tempCounter++);
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemDoubleAuto", obj, idx, val}, dummy);
@@ -8459,8 +8491,6 @@ class LoweringVisitor {
                     copyLayoutMaps(value, target->id);
                     killNumericLocal(target->id);
                 } else if (vt == "float") {
-                    // Typed float for binop resultType; keep boxed storage for unpack
-                    // sources (GetItemObj) to avoid breaking offset_momentum / energy.
                     noteType(target->id, "float");
                     killNumericLocal(target->id);
                 } else if (vt == "int" || vt == "i64") {
@@ -8574,13 +8604,12 @@ class LoweringVisitor {
         if (childStructuredLayout.count(value))
             childBody = childStructuredLayout[value];
 
-        bool parentFloatList = (typeOf(value) == "list_float") || knownFloatLists.count(value);
+        bool parentFloatList = knownFloatLists.count(value) || typeOf(value) == "list_float";
         bool parentIntList = (typeOf(value) == "list_int") || knownIntLists.count(value);
 
         const size_t n = target->children.size();
         std::vector<std::string> elems(n);
 
-        // Bulk unpack 2/3-element tuples (nbody pair/body spine) — one runtime call
         if (n == 2 || n == 3) {
             for (size_t i = 0; i < n; ++i)
                 elems[i] = "$t" + std::to_string(tempCounter++);
@@ -8727,7 +8756,7 @@ class LoweringVisitor {
             bool isIntList = (objType == "list_int") || knownIntLists.count(obj);
             std::string cur = "$t" + std::to_string(tempCounter++);
             if (isFloatList) {
-                ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, cur, "float");
+                ir.addInstruction(currentFunc, "call", {"PyList_FListLoad", obj, idx}, cur, "float");
                 noteType(cur, "float");
                 numericFloatLocals.insert(cur);
             } else if (isIntList) {
@@ -8750,7 +8779,7 @@ class LoweringVisitor {
             bool valIsFloat = (valType == "float" || resultType == "float");
             bool valIsInt = (valType == "int" || valType == "i64" || resultType == "int");
             if (isFloatList && valIsFloat) {
-                ir.addInstruction(currentFunc, "call", {"PyList_SetItemDouble", obj, idx, res}, dummy);
+                ir.addInstruction(currentFunc, "call", {"PyList_FListStore", obj, idx, res}, dummy);
             } else if (isIntList && valIsInt) {
                 ir.addInstruction(currentFunc, "call", {"PyList_SetItemInt64", obj, idx, res}, dummy);
             } else if (valIsFloat) {
@@ -9019,7 +9048,11 @@ class LoweringVisitor {
                 noteType(res, "int");
             }
         }
-        ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, res, elemType);
+        if (elemType == "float" &&
+            (typeOf(obj) == "list_float" || knownFloatLists.count(obj)))
+            ir.addInstruction(currentFunc, "call", {"PyList_FListLoad", obj, idx}, res, "float");
+        else
+            ir.addInstruction(currentFunc, "call", {"Pyc_Subscript", obj, idx}, res, elemType);
         // B4: if the container is a list we built that contained callable tokens, or the
         // container name is marked as holding tokens, mark the subscript result as a token temp.
         if (listsContainingCallableTokens.count(obj) || namesThatMayHoldCallableTokens.count(obj)) {
@@ -12328,7 +12361,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             ir.moduleName = mainBasename;
             lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals, inputPath);
             Codegen codegen;
-            auto module = codegen.generate(ir, context, "pyc_" + mainBasename, debugInfo);
+            auto module = codegen.generate(ir, context, "pyc_" + mainBasename, debugInfo, optLevel < 2);
             if (!module) {
                 std::cerr << "Warning: Codegen failed for " << inputPath << "\n";
                 return false;
@@ -12350,7 +12383,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
                 ir.addInstruction("__module__", "call", {"PyDict_New"}, modDict);
                 ir.addInstruction("__module__", "ret", {modDict});
                 Codegen codegen;
-                module = codegen.generate(ir, context, "pyc_" + sanitized, debugInfo);
+                module = codegen.generate(ir, context, "pyc_" + sanitized, debugInfo, optLevel < 2);
                 if (!module) {
                     std::cerr << "Warning: Codegen failed for namespace package " << dm.dottedName << ", skipping\n";
                     continue;
@@ -12366,7 +12399,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
                 ir.moduleName = sanitized;
                 lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals, dm.filePath, packageContextOf(dm));
                 Codegen codegen;
-                module = codegen.generate(ir, context, "pyc_" + sanitized, debugInfo);
+                module = codegen.generate(ir, context, "pyc_" + sanitized, debugInfo, optLevel < 2);
                 if (!module) {
                     std::cerr << "Warning: Codegen failed for " << dm.filePath << ", skipping\n";
                     continue;
@@ -12845,7 +12878,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
         lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals, inputPath);
         analyzeEscapes(ir, escapeDump);
         Codegen codegen;
-        auto module = codegen.generate(ir, context, "pyc_" + mainBasename, debugInfo);
+        auto module = codegen.generate(ir, context, "pyc_" + mainBasename, debugInfo, optLevel < 2);
         if (!module) {
             std::cerr << "Warning: Codegen failed for " << inputPath << "\n";
             return false;
@@ -12874,7 +12907,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             ir.addInstruction("__module__", "ret", {modDict});
 
             Codegen codegen;
-            module = codegen.generate(ir, context, "pyc_" + sanitized, debugInfo);
+            module = codegen.generate(ir, context, "pyc_" + sanitized, debugInfo, optLevel < 2);
             if (!module) {
                 std::cerr << "Warning: Codegen failed for namespace package " << dm.dottedName << ", skipping\n";
                 continue;
@@ -12891,7 +12924,7 @@ bool Compiler::compile(const std::string& inputPath, const std::string& outputPa
             lowerAST(ast.get(), ir, compiledModules, importedModuleGlobals, dm.filePath, packageContextOf(dm));
 
             Codegen codegen;
-            module = codegen.generate(ir, context, "pyc_" + sanitized, debugInfo);
+            module = codegen.generate(ir, context, "pyc_" + sanitized, debugInfo, optLevel < 2);
             if (!module) {
                 std::cerr << "Warning: Codegen failed for " << dm.filePath << ", skipping\n";
                 continue;
