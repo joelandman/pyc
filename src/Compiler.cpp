@@ -395,6 +395,11 @@ class LoweringVisitor {
                             markStructuredList(slot, structuredElementLayout[defVal]);
                         if (pairOfStructuredLayout.count(defVal))
                             markPairOfStructured(slot, pairOfStructuredLayout[defVal]);
+                        noteType(slot, typeOf(defVal));
+                        if (knownFloatLists.count(defVal) || typeOf(defVal) == "list_float")
+                            knownFloatLists.insert(slot);
+                        if (knownIntLists.count(defVal) || typeOf(defVal) == "list_int")
+                            knownIntLists.insert(slot);
                         defaults.push_back(slot);
                     }
                 }
@@ -870,6 +875,10 @@ class LoweringVisitor {
                         markStructuredList(pname, structuredElementLayout[slot]);
                     if (pairOfStructuredLayout.count(slot))
                         markPairOfStructured(pname, pairOfStructuredLayout[slot]);
+                    if (knownFloatLists.count(slot) || typeOf(slot) == "list_float")
+                        knownFloatLists.insert(pname);
+                    if (knownIntLists.count(slot) || typeOf(slot) == "list_int")
+                        knownIntLists.insert(pname);
                     // Also from original default expr names (SYSTEM/PAIRS) if slot chase missed
                     if (!structuredElementLayout.count(pname) && !pairOfStructuredLayout.count(pname)) {
                         if (pname == "bodies" && structuredElementLayout.count("SYSTEM"))
@@ -3144,6 +3153,7 @@ class LoweringVisitor {
       std::unordered_map<std::string, std::vector<std::string>> structuredElementLayout;
       // P0: list name/temp → body layout L meaning List[(L,L)] (nbody PAIRS).
       std::unordered_map<std::string, std::vector<std::string>> pairOfStructuredLayout;
+      std::unordered_map<std::string, size_t> provenListLen;
       // P0: temp that is one pair-of-bodies item → body layout for each child.
       std::unordered_map<std::string, std::vector<std::string>> childStructuredLayout;
 
@@ -3270,6 +3280,9 @@ class LoweringVisitor {
           }
           if (dictValueLayouts.count(src)) {
               dictValueLayouts[dst] = dictValueLayouts[src];
+          }
+          if (provenListLen.count(src)) {
+              provenListLen[dst] = provenListLen[src];
           }
           for (auto& fn : ir.functions) {
               if (fn.name != currentFunc) continue;
@@ -4362,8 +4375,40 @@ class LoweringVisitor {
                 return res;
             }
         }
+        std::string powLeftReuse;
         if (op == "pow" && node->children.size() > 1 && node->children[1]) {
             const ASTNode* rc = node->children[1].get();
+            const ASTNode* expN = rc;
+            bool expNeg = false;
+            if (rc->type == "UnaryOp" && rc->op == "USub" && !rc->children.empty() && rc->children[0]) {
+                expN = rc->children[0].get();
+                expNeg = true;
+            }
+            if (expN->type == "Constant" && expN->is_float) {
+                char* fend = nullptr;
+                double expf = std::strtod(expN->value.c_str(), &fend);
+                if (expNeg) expf = -expf;
+                if (expf == -1.5) {
+                    powLeftReuse = lowerExpr(node->children[0].get());
+                    std::string lt = typeOf(powLeftReuse);
+                    if (complexVars.count(powLeftReuse) == 0 &&
+                        (lt == "float" || lt == "int" || lt == "i64")) {
+                        std::string sres = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "sqrt", {powLeftReuse}, sres, "float");
+                        noteType(sres, "float");
+                        std::string den = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "mul", {powLeftReuse, sres}, den, "float");
+                        noteType(den, "float");
+                        std::string one = "$c" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "fconst", {"1.0"}, one, "float");
+                        noteType(one, "float");
+                        std::string res = "$t" + std::to_string(tempCounter++);
+                        ir.addInstruction(currentFunc, "truediv", {one, den}, res, "float");
+                        noteType(res, "float");
+                        return res;
+                    }
+                }
+            }
             if (rc->type == "Constant" && !rc->is_float && !rc->is_str && !rc->is_none && !rc->is_bool) {
                 char* eend = nullptr;
                 errno = 0;
@@ -4415,7 +4460,8 @@ class LoweringVisitor {
                 }
             }
         }
-        std::string left = lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
+        std::string left = !powLeftReuse.empty() ? powLeftReuse
+            : lowerExpr(node->children.empty() ? nullptr : node->children[0].get());
         std::string right = lowerExpr(node->children.size() > 1 ? node->children[1].get() : nullptr);
         // A param used with a proven numeric operand inherits that type
         // (dt * (r ** -1.5) — inferParamTypesFromBody only sees Name×const).
@@ -6349,6 +6395,8 @@ class LoweringVisitor {
             copyLayoutMaps(arg, res);
             if (structuredElementLayout.count(arg))
                 markStructuredList(res, structuredElementLayout[arg]);
+            if (provenListLen.count(arg))
+                provenListLen[res] = provenListLen[arg];
             return res;
         }
         // tuple(x) -> PyBuiltin_Tuple(x). Now that pyc has a real tuple
@@ -7275,6 +7323,9 @@ class LoweringVisitor {
                 if (it != structuredElementLayout.end() && !it->second.empty()) {
                     markPairOfStructured(res, it->second);
                 }
+                auto lit = provenListLen.find(argRes[0]);
+                if (lit != provenListLen.end() && lit->second >= 1)
+                    provenListLen[res] = lit->second * (lit->second - 1) / 2;
             }
             // S5: Propagate container element types from callee return type to call result.
             // If funcName returns a list with known element types, the call result inherits them.
@@ -7651,21 +7702,23 @@ class LoweringVisitor {
         // correctly.
         std::string iterElemType = "boxed";
         if (typeOf(listVal) == "match_list") iterElemType = "match";
-        // Materialise the iterator as a list. For list iterables this is
-        // a no-op; for dicts (iterate keys), strings (iterate characters),
-        // and other sequences it converts to a list of elements. We can't
-        // know the static type at lowering time, so always go through
-        // PyBuiltin_List which is cheap for lists and correct otherwise.
-        std::string listRes = "$t" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", listVal}, listRes);
-        if (iterElemType != "boxed") noteType(listRes, "match_list");
-        // P0: layouts must survive List() + slot assign or pairs/bodies typing is lost
-        copyLayoutMaps(iterSrc, listRes);
-        if (structuredElementLayout.count(iterSrc))
-            markStructuredList(listRes, structuredElementLayout[iterSrc]);
-        if (pairOfStructuredLayout.count(iterSrc))
-            markPairOfStructured(listRes, pairOfStructuredLayout[iterSrc]);
-        listVal = listRes;
+        std::string iterTy = typeOf(listVal);
+        bool alreadyList = (iterTy == "list" || iterTy == "list_float" || iterTy == "list_int"
+            || iterTy == "match_list" || iterTy == "list_values_typed"
+            || knownFloatLists.count(listVal) || knownIntLists.count(listVal)
+            || structuredElementLayout.count(iterSrc) || pairOfStructuredLayout.count(iterSrc)
+            || structuredElementLayout.count(listVal) || pairOfStructuredLayout.count(listVal));
+        if (!alreadyList) {
+            std::string listRes = "$t" + std::to_string(tempCounter++);
+            ir.addInstruction(currentFunc, "call", {"PyBuiltin_List", listVal}, listRes);
+            if (iterElemType != "boxed") noteType(listRes, "match_list");
+            copyLayoutMaps(iterSrc, listRes);
+            if (structuredElementLayout.count(iterSrc))
+                markStructuredList(listRes, structuredElementLayout[iterSrc]);
+            if (pairOfStructuredLayout.count(iterSrc))
+                markPairOfStructured(listRes, pairOfStructuredLayout[iterSrc]);
+            listVal = listRes;
+        }
         // Store iterator in a slot so owned refs (e.g. sorted() result) are freed
         // at scope exit instead of leaking when emitDecRefIfOwnedSameBlock is blocked
         // inside the loop body (different block from the iterator definition).
@@ -7680,7 +7733,14 @@ class LoweringVisitor {
 
         // Native i64 length + index (avoids boxed PyNumber_Add on idx+1)
         std::string lenI64 = "__len_i64_" + std::to_string(tempCounter++);
-        ir.addInstruction(currentFunc, "call", {"PyList_SizeI64", listVal}, lenI64, "i64");
+        auto plen = provenListLen.find(listVal);
+        if (plen == provenListLen.end()) plen = provenListLen.find(iterSrc);
+        if (plen != provenListLen.end()) {
+            ir.addInstruction(currentFunc, "i64const",
+                {std::to_string((long long)plen->second)}, lenI64, "i64");
+        } else {
+            ir.addInstruction(currentFunc, "call", {"PyList_SizeI64", listVal}, lenI64, "i64");
+        }
         noteType(lenI64, "i64");
         numericLocals.insert(lenI64);
 
@@ -8101,6 +8161,7 @@ class LoweringVisitor {
             }
             if (containsBundle) listsContainingBundles.insert(listRes);
         }
+        if (n > 0) provenListLen[listRes] = n;
         return listRes;
     }
 
@@ -8167,9 +8228,18 @@ class LoweringVisitor {
          if (commonValType == "boxed") commonValType = "";
          if (!commonValType.empty())
              tempContainerElementTypes[dictRes] = commonValType;
-         if (haveLayout && layoutAgree && !commonLayout.empty())
-             dictValueLayouts[dictRes] = commonLayout;
-         return dictRes;
+          if (haveLayout && layoutAgree && !commonLayout.empty())
+              dictValueLayouts[dictRes] = commonLayout;
+          {
+              size_t nkeys = 0;
+              for (size_t i = 0; i + 1 < node->children.size(); i += 2) {
+                  const ASTNode* kn = node->children[i].get();
+                  if (kn && kn->type == "DictUnpack") continue;
+                  ++nkeys;
+              }
+              if (nkeys > 0) provenListLen[dictRes] = nkeys;
+          }
+          return dictRes;
      }
 
     std::string lowerAttribute(const ASTNode* node) {
@@ -10291,6 +10361,8 @@ class LoweringVisitor {
             if (dlit != dictValueLayouts.end() && !dlit->second.empty()) {
                 markStructuredList(res, dlit->second);
             }
+            if (provenListLen.count(obj))
+                provenListLen[res] = provenListLen[obj];
         } else if (methodName == "update" && isRealDictReceiver(attr, obj)) {
             std::string arg = args.empty() ? "" : args[0];
             ir.addInstruction(currentFunc, "call", {"PyDict_Update", obj, arg}, res);

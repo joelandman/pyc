@@ -5329,6 +5329,8 @@ except TypeError as e:
      "-1.500000\n1.000000\n"),
     ("a=[1.0,2.0,3.0]\ni=0\nwhile i<3:\n    a[0]=a[0]+a[1]\n    i=i+1\nprint(a[0])\n",
      "7.0\n"),
+    ("print(\"%.6f\" % (4.0 ** -1.5))\n", "0.125000\n"),
+    ("xs=[1,2,3]\ns=0\nfor x in xs:\n    s=s+x\nprint(s)\n", "6\n"),
     ("""t = ([1.0, 2.0], [0.0, 0.0], 5.0)
 ([x, y], v, m) = t
 v[0] += m * x
@@ -5457,6 +5459,7 @@ FILE_CASES = [
     ("w_nbody_tuple.py", []),
     ("w_apply.py", []),
     ("nbody.py", ["100"]),
+    ("nbody_unroll.py", ["100"]),
     # New test files for completeness
     ("fib.py", []),
     ("fibn.py", ["10"]),

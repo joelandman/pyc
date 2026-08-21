@@ -3064,6 +3064,15 @@ std::unique_ptr<llvm::Module> Codegen::generate(ModuleIR& ir, llvm::LLVMContext&
                     if (lhsNativeB) builder.CreateCall(decrefB, {lhs});
                     if (rhsNativeB) builder.CreateCall(decrefB, {rhs});
                 }
+            } else if (inst.op == "sqrt") {
+                std::string opName = inst.operands.empty() ? "" : inst.operands[0].name;
+                llvm::Value* v = unboxToDouble(getOrLoad(opName));
+                llvm::Value* s = builder.CreateUnaryIntrinsic(llvm::Intrinsic::sqrt, v, nullptr, inst.result + ".sqrt");
+                valueMap[inst.result] = s;
+                llvm::Value* raw = opName.empty() ? nullptr : getOrLoad(opName);
+                if (raw && !raw->getType()->isDoubleTy() && !raw->getType()->isIntegerTy())
+                    emitDecRefIfOwned(opName);
+                continue;
             } else if (inst.op == "neg") {
                 // Unary minus. For proven numeric resultType, keep native result (i64/double)
                 // so it can participate in further unboxed arithmetic (A3 widening).
