@@ -4,6 +4,8 @@
 The metric may never regress. This compares a fresh run against the committed
 baseline and fails if:
 
+  * the run used a different CPython oracle than the baseline (refused, not
+    reported as a regression -- they are simply not comparable), or
   * the pass rate dropped, or
   * any case got worse (MATCH -> anything, or a new P0), or
   * a case that used to be scored became quarantined (silent scope reduction).
@@ -70,6 +72,24 @@ def main() -> int:
     curr, cmap = load(args.current)
 
     failures: list[str] = []
+
+    # A baseline is only meaningful relative to the oracle that produced it.
+    # Comparing across CPython versions would report legitimate behavioural
+    # differences as regressions, so refuse rather than mislead.
+    base_oracle = base.get("oracle", {}).get("version", "")
+    curr_oracle = curr.get("oracle", {}).get("version", "")
+    if base_oracle and curr_oracle and base_oracle != curr_oracle:
+        print(f"{RED}{BOLD}ORACLE MISMATCH{RST}")
+        print(f"  baseline recorded against CPython {base_oracle}")
+        print(f"  current run used CPython          {curr_oracle}")
+        print("\n  These are not comparable. Re-record the baseline against "
+              "the same\n  oracle, or point CI at the matching sysroot "
+              "(--sysroot).")
+        return 2
+    if not base_oracle or not curr_oracle:
+        print(f"{YEL}note{RST}: oracle version missing from "
+              f"{'baseline' if not base_oracle else 'current'} — comparison "
+              "is unverified")
 
     # 1. pass rate
     drop = base["pass_rate"] - curr["pass_rate"]

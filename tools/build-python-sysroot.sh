@@ -221,7 +221,12 @@ configure_build() {
     "--prefix=$PREFIX"
     "--with-ensurepip=install"
   )
-  local env_prefix=()
+  # A sysroot must be self-contained: the installed interpreter has to find its
+  # own libpython without help from the environment. Without this RPATH the
+  # binary dies with "libpython3.X.so.1.0: cannot open shared object file" on
+  # any machine that does not happen to carry $PREFIX/lib in LD_LIBRARY_PATH --
+  # which is precisely the portability bug this script exists to avoid.
+  local env_prefix=("LDFLAGS=-Wl,-rpath,${PREFIX}/lib")
 
   if (( TIER == 1 )); then
     # Shared libpython for the dynamic binary; the static libpython3.X.a comes
@@ -234,7 +239,7 @@ configure_build() {
     # and starts, then dies on `import math` — 77 of the stdlib's C modules
     # are dlopen'ed .so in a stock build.
     args+=("--disable-shared")
-    env_prefix=("MODULE_BUILDTYPE=static")
+    env_prefix+=("MODULE_BUILDTYPE=static")
   fi
 
   args+=("--with-static-libpython")   # explicit; the default, but load-bearing
@@ -314,9 +319,17 @@ verify() {
   if (( DRY_RUN )); then info "(dry run — skipping verification)"; return 0; fi
   [[ -x "$py" ]] || die "no interpreter at $py"
 
+  # Verify with LD_LIBRARY_PATH scrubbed. Otherwise a developer machine that
+  # already exports $PREFIX/lib will report a sysroot healthy that is broken
+  # everywhere else.
+  local py_clean=(env -u LD_LIBRARY_PATH "$py")
+  "${py_clean[@]}" -c 'pass' 2>/dev/null || die \
+    "interpreter cannot run without LD_LIBRARY_PATH set — the RPATH is missing,
+  so this sysroot is not self-contained and will fail on other machines"
+
   # 1. interpreter runs, and int is arbitrary precision (CHARTER I2)
   local got want="15511210043330985984000000"
-  got="$("$py" -c 'import math;print(math.factorial(25))')"
+  got="$("${py_clean[@]}" -c 'import math;print(math.factorial(25))')"
   [[ "$got" == "$want" ]] || die "interpreter sanity failed: factorial(25) = $got"
   info "interpreter OK — $("$py" -V 2>&1)"
 

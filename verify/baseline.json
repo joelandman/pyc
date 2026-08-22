@@ -1,4 +1,9 @@
 {
+  "oracle": {
+    "path": "/home/joe/local/bin/python3",
+    "version": "3.14.7",
+    "machine": "x86_64"
+  },
   "pass_rate": 97.76119402985074,
   "scored": 804,
   "matched": 786,

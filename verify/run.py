@@ -117,6 +117,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
+    args._resolved_oracle = oracle
     runner = DifferentialRunner(
         oracle=oracle,
         compiler=CompilerAdapter(pyc, tuple(args.pyc_flag)),
@@ -153,6 +154,29 @@ def main() -> int:
     elapsed = time.time() - started
     results.sort(key=lambda r: (r.verdict.value, r.case.name))
     return report(results, args, elapsed)
+
+
+def _oracle_identity(args) -> dict:
+    """Record which CPython produced this ground truth.
+
+    A baseline is only meaningful relative to its oracle: a different CPython
+    can legitimately give different verdicts, which would otherwise read as a
+    regression. check_regression.py refuses to compare across a mismatch.
+    """
+    import subprocess
+    exe = getattr(args, "_resolved_oracle", None)
+    if exe is None:
+        return {}
+    try:
+        v = subprocess.run([str(exe), "-c",
+                            "import sys,platform;"
+                            "print('%d.%d.%d' % sys.version_info[:3]);"
+                            "print(platform.machine())"],
+                           capture_output=True, text=True, timeout=30)
+        ver, machine = (v.stdout.strip().splitlines() + ["", ""])[:2]
+    except (OSError, subprocess.SubprocessError):
+        ver, machine = "", ""
+    return {"path": str(exe), "version": ver, "machine": machine}
 
 
 def report(results: list[Result], args, elapsed: float) -> int:
@@ -192,6 +216,7 @@ def report(results: list[Result], args, elapsed: float) -> int:
 
     if args.json:
         args.json.write_text(json.dumps({
+            "oracle": _oracle_identity(args),
             "pass_rate": rate,
             "scored": len(scored),
             "matched": matched,
