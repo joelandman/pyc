@@ -11,6 +11,8 @@ REPO    := $(abspath $(CURDIR)/..)
 RUN     := $(CURDIR)/run.py
 CHECK   := $(CURDIR)/check_regression.py
 JOBS    ?= $(shell nproc 2>/dev/null || echo 4)
+# Match the PR gate. See .github/workflows/verify.yml.
+PYCFLAGS ?= --pyc-flag=-O0
 SYSROOT ?=
 OUT     ?= $(CURDIR)/current.json
 
@@ -24,14 +26,14 @@ endif
 
 ## Seconds. The developer inner loop: language corpus, fail only on P0.
 fast:
-	@$(RUN) --corpus $(CURDIR)/corpus/language \
+	@$(RUN) --corpus $(CURDIR)/corpus/language $(PYCFLAGS) \
 	  --jobs $(JOBS) --run-timeout 10 --compile-timeout 60 \
 	  --show 6 --fail-on P0 $(ORACLE_ARGS)
 
 ## The pre-push / PR-equivalent gate.
 verify:
 	@$(RUN) --corpus $(CURDIR)/corpus/language --corpus $(CURDIR)/corpus/programs \
-	  --jobs $(JOBS) --run-timeout 15 --compile-timeout 90 \
+	  $(PYCFLAGS) --jobs $(JOBS) --run-timeout 15 --compile-timeout 90 \
 	  --show 12 --json $(OUT) $(ORACLE_ARGS)
 	@$(CHECK) --current $(OUT)
 

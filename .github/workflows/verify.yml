@@ -20,10 +20,14 @@ concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Match the version used on the development machine (libmpdec-dev 4.0.1-6).
+  MPDEC_VERSION: "4.0.1"
+
 jobs:
   differential:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -43,9 +47,60 @@ jobs:
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh 22
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libmpdec-dev libpcre2-dev zlib1g-dev \
-            python3-dev
+            cmake ninja-build libpcre2-dev zlib1g-dev python3-dev
           echo "LLVM_DIR=$(llvm-config-22 --cmakedir)" >> "$GITHUB_ENV"
+
+      # Ubuntu 24.04 dropped the mpdecimal source package, so libmpdec-dev
+      # cannot be apt-installed here -- CMakeLists.txt treats it as a hard
+      # dependency (decimal.Decimal in the old runtime). Build it from source,
+      # pinned, so CI does not depend on a package that no longer exists.
+      #
+      # This step disappears with the rebuild: decimal will come from real
+      # CPython, making libmpdec CPython's dependency rather than ours.
+      - name: Cache libmpdec
+        id: mpdec
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/libmpdec*
+          key: mpdec-${{ env.MPDEC_VERSION }}-${{ runner.os }}
+
+      - name: Build libmpdec from source
+        if: steps.mpdec.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          cd /tmp
+          curl -fsSLO "https://www.bytereef.org/software/mpdecimal/releases/mpdecimal-${MPDEC_VERSION}.tar.gz"
+          tar xf "mpdecimal-${MPDEC_VERSION}.tar.gz"
+          cd "mpdecimal-${MPDEC_VERSION}"
+          ./configure --prefix=/usr/local
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      # The runner's system python3 is 3.12, and pyc's frontend calls
+      # PyObject_GetOptionalAttrString, which CPython added in 3.13 -- so the
+      # tree has an undeclared minimum of CPython >= 3.13 just to BUILD. It
+      # compiles on the dev machine only because CMake finds a local 3.14.
+      #
+      # Building our own sysroot fixes that AND makes CI's differential oracle
+      # the same CPython the baseline was recorded against, which a system
+      # python3 could never be. --no-pgo because PGO costs 20-40 min and only
+      # affects speed, never observable behaviour, so the oracle is identical.
+      - name: Cache CPython sysroot
+        id: sysroot
+        uses: actions/cache@v4
+        with:
+          path: ~/opt/py-sysroots
+          key: sysroot-cp314-3.14.7-tier1-nopgo-${{ hashFiles('tools/build-python-sysroot.sh') }}
+
+      - name: Build CPython sysroot
+        if: steps.sysroot.outputs.cache-hit != 'true'
+        run: ./tools/build-python-sysroot.sh --version 3.14.7 --no-pgo --jobs "$(nproc)"
+
+      - name: Record oracle
+        run: |
+          echo "SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1" >> "$GITHUB_ENV"
+          "$HOME/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14" -VV
 
       - name: Build pyc
         run: |
@@ -53,20 +108,23 @@ jobs:
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=clang++-22 \
-            -DLLVM_DIR="$LLVM_DIR"
+            -DLLVM_DIR="$LLVM_DIR" \
+            -DPython3_ROOT_DIR="$SYSROOT" \
+            -DPython3_FIND_STRATEGY=LOCATION
           cmake --build build -j"$(nproc)"
-
-      # The oracle must be a real CPython. The runner's system python3 is the
-      # oracle here; once the sysroot model lands, restore a cached sysroot
-      # built by tools/build-python-sysroot.sh and pass --sysroot instead.
-      - name: Record oracle
-        run: python3 -VV
 
       - name: Differential run
         run: |
+          # -O0: 7.1x faster than the default -O2 + runtime-bitcode LTO
+          # (24.6s vs 174.8s per 40 cases), which is the difference between a
+          # gate that fits in a PR and one that does not. The nightly metric
+          # covers default flags. baseline.json is recorded at -O0 to match;
+          # check_regression.py refuses to compare across a flag mismatch.
           ./verify/run.py \
             --corpus verify/corpus/language \
             --corpus verify/corpus/programs \
+            --pyc-flag=-O0 \
+            --sysroot "$SYSROOT" \
             --jobs "$(nproc)" \
             --run-timeout 15 --compile-timeout 90 \
             --show 12 \

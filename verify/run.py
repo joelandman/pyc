@@ -92,7 +92,7 @@ def main() -> int:
     out.add_argument("--show", type=int, default=8,
                      help="how many findings to show diffs for (0 = none)")
     out.add_argument("--quiet", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(_normalize_argv(sys.argv[1:]))
 
     pyc = args.pyc or find_pyc()
     if pyc is None:
@@ -117,6 +117,7 @@ def main() -> int:
               file=sys.stderr)
         return 2
 
+    args._resolved_oracle = oracle
     runner = DifferentialRunner(
         oracle=oracle,
         compiler=CompilerAdapter(pyc, tuple(args.pyc_flag)),
@@ -153,6 +154,49 @@ def main() -> int:
     elapsed = time.time() - started
     results.sort(key=lambda r: (r.verdict.value, r.case.name))
     return report(results, args, elapsed)
+
+
+def _normalize_argv(argv: list[str]) -> list[str]:
+    """Let `--pyc-flag -O0` work as well as `--pyc-flag=-O0`.
+
+    argparse treats any value beginning with '-' as another option, so the
+    natural spelling fails with "expected one argument". Passing optimization
+    flags is the whole point of this option, so rewrite the separated form
+    rather than leaving a trap and a footnote.
+    """
+    out, i = [], 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--pyc-flag" and i + 1 < len(argv):
+            out.append(f"--pyc-flag={argv[i + 1]}")
+            i += 2
+            continue
+        out.append(a)
+        i += 1
+    return out
+
+
+def _oracle_identity(args) -> dict:
+    """Record which CPython produced this ground truth.
+
+    A baseline is only meaningful relative to its oracle: a different CPython
+    can legitimately give different verdicts, which would otherwise read as a
+    regression. check_regression.py refuses to compare across a mismatch.
+    """
+    import subprocess
+    exe = getattr(args, "_resolved_oracle", None)
+    if exe is None:
+        return {}
+    try:
+        v = subprocess.run([str(exe), "-c",
+                            "import sys,platform;"
+                            "print('%d.%d.%d' % sys.version_info[:3]);"
+                            "print(platform.machine())"],
+                           capture_output=True, text=True, timeout=30)
+        ver, machine = (v.stdout.strip().splitlines() + ["", ""])[:2]
+    except (OSError, subprocess.SubprocessError):
+        ver, machine = "", ""
+    return {"path": str(exe), "version": ver, "machine": machine}
 
 
 def report(results: list[Result], args, elapsed: float) -> int:
@@ -192,6 +236,8 @@ def report(results: list[Result], args, elapsed: float) -> int:
 
     if args.json:
         args.json.write_text(json.dumps({
+            "oracle": _oracle_identity(args),
+            "subject": {"pyc_flags": list(args.pyc_flag)},
             "pass_rate": rate,
             "scored": len(scored),
             "matched": matched,

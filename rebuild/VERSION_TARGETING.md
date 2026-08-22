@@ -122,6 +122,15 @@ The AST is then exactly the target's, by construction. No host≥target
 constraint. `pyc` itself links no libpython at all, so the compiler binary is
 version-agnostic and trivially distributable.
 
+**Evidence from the old tree (found in CI, 2026-08-22).** The existing
+frontend calls `PyObject_GetOptionalAttrString`, which CPython added in **3.13**
+(5 call sites). Nothing in the README, `AGENTS.md`, or `CMakeLists.txt` declares
+a minimum CPython, and the tree builds on the development machine only because
+CMake happens to find a local 3.14. On a stock ubuntu-24.04 runner with
+`python3-dev` 3.12 the build fails outright. This is exactly the coupling (a)
+produces: the compiler is welded to the CPython it links, including to an
+undeclared *minimum version*, and nobody notices until the machine changes.
+
 **Adopt (b).** The subprocess and serialization cost is negligible beside LLVM
 codegen, and it buys three things (b) alone provides: targeting a CPython newer
 than the one pyc was built against, a compiler binary with no libpython
