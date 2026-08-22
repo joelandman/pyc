@@ -27,7 +27,7 @@ env:
 jobs:
   differential:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -115,9 +115,15 @@ jobs:
 
       - name: Differential run
         run: |
+          # -O0: 7.1x faster than the default -O2 + runtime-bitcode LTO
+          # (24.6s vs 174.8s per 40 cases), which is the difference between a
+          # gate that fits in a PR and one that does not. The nightly metric
+          # covers default flags. baseline.json is recorded at -O0 to match;
+          # check_regression.py refuses to compare across a flag mismatch.
           ./verify/run.py \
             --corpus verify/corpus/language \
             --corpus verify/corpus/programs \
+            --pyc-flag=-O0 \
             --sysroot "$SYSROOT" \
             --jobs "$(nproc)" \
             --run-timeout 15 --compile-timeout 90 \

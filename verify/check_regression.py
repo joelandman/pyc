@@ -4,8 +4,8 @@
 The metric may never regress. This compares a fresh run against the committed
 baseline and fails if:
 
-  * the run used a different CPython oracle than the baseline (refused, not
-    reported as a regression -- they are simply not comparable), or
+  * the run used a different CPython oracle, or different pyc flags, than the
+    baseline (refused, not reported as a regression -- not comparable), or
   * the pass rate dropped, or
   * any case got worse (MATCH -> anything, or a new P0), or
   * a case that used to be scored became quarantined (silent scope reduction).
@@ -90,6 +90,20 @@ def main() -> int:
         print(f"{YEL}note{RST}: oracle version missing from "
               f"{'baseline' if not base_oracle else 'current'} — comparison "
               "is unverified")
+
+    # Flags matter as much as the oracle: the old tree has documented -O0/-O2
+    # divergence, so an -O0 run and an -O2 baseline are not comparable.
+    base_flags = base.get("subject", {}).get("pyc_flags")
+    curr_flags = curr.get("subject", {}).get("pyc_flags")
+    if base_flags is not None and curr_flags is not None \
+            and base_flags != curr_flags:
+        print(f"{RED}{BOLD}COMPILER FLAG MISMATCH{RST}")
+        print(f"  baseline recorded with pyc flags {base_flags or '[]  (defaults)'}")
+        print(f"  current run used                 {curr_flags or '[]  (defaults)'}")
+        print("\n  Not comparable. Use the same flags, or keep a separate "
+              "baseline\n  per configuration (the PR gate and the nightly "
+              "metric each have one).")
+        return 2
 
     # 1. pass rate
     drop = base["pass_rate"] - curr["pass_rate"]

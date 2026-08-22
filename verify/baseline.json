@@ -4,11 +4,16 @@
     "version": "3.14.7",
     "machine": "x86_64"
   },
+  "subject": {
+    "pyc_flags": [
+      "-O0"
+    ]
+  },
   "pass_rate": 97.76119402985074,
   "scored": 804,
   "matched": 786,
   "quarantined": 2,
-  "elapsed_seconds": 2428.3742368221283,
+  "elapsed_seconds": 339.0962128639221,
   "counts": {
     "SILENT_WRONG_ANSWER": 5,
     "COMPILE_ERROR": 4,
