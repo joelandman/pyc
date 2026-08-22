@@ -1,0 +1,5659 @@
+{
+  "pass_rate": 97.76119402985074,
+  "scored": 804,
+  "matched": 786,
+  "quarantined": 2,
+  "elapsed_seconds": 2428.3742368221283,
+  "counts": {
+    "SILENT_WRONG_ANSWER": 5,
+    "COMPILE_ERROR": 4,
+    "STDERR_DIFF": 9,
+    "MATCH": 786,
+    "QUARANTINE_NONDETERMINISTIC": 1,
+    "QUARANTINE_ORACLE_FAILED": 1
+  },
+  "results": [
+    {
+      "case": "case_273.py",
+      "path": "verify/corpus/language/case_273.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "case_274.py",
+      "path": "verify/corpus/language/case_274.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "case_275.py",
+      "path": "verify/corpus/language/case_275.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "case_525.py",
+      "path": "verify/corpus/language/case_525.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "w11_argparse.py",
+      "path": "verify/corpus/programs/w11_argparse.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "case_005.py",
+      "path": "verify/corpus/language/case_005.py",
+      "verdict": "COMPILE_ERROR",
+      "priority": "P2",
+      "detail": "Traceback (most recent call last):"
+    },
+    {
+      "case": "case_453.py",
+      "path": "verify/corpus/language/case_453.py",
+      "verdict": "COMPILE_ERROR",
+      "priority": "P2",
+      "detail": "Traceback (most recent call last):"
+    },
+    {
+      "case": "case_454.py",
+      "path": "verify/corpus/language/case_454.py",
+      "verdict": "COMPILE_ERROR",
+      "priority": "P2",
+      "detail": "Traceback (most recent call last):"
+    },
+    {
+      "case": "case_456.py",
+      "path": "verify/corpus/language/case_456.py",
+      "verdict": "COMPILE_ERROR",
+      "priority": "P2",
+      "detail": "Traceback (most recent call last):"
+    },
+    {
+      "case": "case_208.py",
+      "path": "verify/corpus/language/case_208.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "case_209.py",
+      "path": "verify/corpus/language/case_209.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "fibn.py",
+      "path": "verify/corpus/programs/fibn.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "mandelbrot.py",
+      "path": "verify/corpus/programs/mandelbrot.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "nbody.py",
+      "path": "verify/corpus/programs/nbody.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "nbody8.py",
+      "path": "verify/corpus/programs/nbody8.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "nbody_soa.py",
+      "path": "verify/corpus/programs/nbody_soa.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "nbody_unroll.py",
+      "path": "verify/corpus/programs/nbody_unroll.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "opt_args_defaults.py",
+      "path": "verify/corpus/programs/opt_args_defaults.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "b7_import.py",
+      "path": "verify/corpus/programs/b7_import.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "b7_importfrom.py",
+      "path": "verify/corpus/programs/b7_importfrom.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "b7_importstar.py",
+      "path": "verify/corpus/programs/b7_importstar.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "builtins.py",
+      "path": "verify/corpus/programs/builtins.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "builtins2.py",
+      "path": "verify/corpus/programs/builtins2.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_001.py",
+      "path": "verify/corpus/language/case_001.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_002.py",
+      "path": "verify/corpus/language/case_002.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_003.py",
+      "path": "verify/corpus/language/case_003.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_004.py",
+      "path": "verify/corpus/language/case_004.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_006.py",
+      "path": "verify/corpus/language/case_006.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_007.py",
+      "path": "verify/corpus/language/case_007.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_008.py",
+      "path": "verify/corpus/language/case_008.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_009.py",
+      "path": "verify/corpus/language/case_009.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_010.py",
+      "path": "verify/corpus/language/case_010.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_011.py",
+      "path": "verify/corpus/language/case_011.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_012.py",
+      "path": "verify/corpus/language/case_012.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_013.py",
+      "path": "verify/corpus/language/case_013.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_014.py",
+      "path": "verify/corpus/language/case_014.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_015.py",
+      "path": "verify/corpus/language/case_015.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_016.py",
+      "path": "verify/corpus/language/case_016.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_017.py",
+      "path": "verify/corpus/language/case_017.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_018.py",
+      "path": "verify/corpus/language/case_018.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_019.py",
+      "path": "verify/corpus/language/case_019.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_020.py",
+      "path": "verify/corpus/language/case_020.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_021.py",
+      "path": "verify/corpus/language/case_021.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_022.py",
+      "path": "verify/corpus/language/case_022.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_023.py",
+      "path": "verify/corpus/language/case_023.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_024.py",
+      "path": "verify/corpus/language/case_024.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_025.py",
+      "path": "verify/corpus/language/case_025.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_026.py",
+      "path": "verify/corpus/language/case_026.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_027.py",
+      "path": "verify/corpus/language/case_027.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_028.py",
+      "path": "verify/corpus/language/case_028.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_029.py",
+      "path": "verify/corpus/language/case_029.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_030.py",
+      "path": "verify/corpus/language/case_030.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_031.py",
+      "path": "verify/corpus/language/case_031.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_032.py",
+      "path": "verify/corpus/language/case_032.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_033.py",
+      "path": "verify/corpus/language/case_033.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_034.py",
+      "path": "verify/corpus/language/case_034.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_035.py",
+      "path": "verify/corpus/language/case_035.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_036.py",
+      "path": "verify/corpus/language/case_036.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_037.py",
+      "path": "verify/corpus/language/case_037.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_038.py",
+      "path": "verify/corpus/language/case_038.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_039.py",
+      "path": "verify/corpus/language/case_039.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_040.py",
+      "path": "verify/corpus/language/case_040.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_041.py",
+      "path": "verify/corpus/language/case_041.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_042.py",
+      "path": "verify/corpus/language/case_042.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_043.py",
+      "path": "verify/corpus/language/case_043.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_044.py",
+      "path": "verify/corpus/language/case_044.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_045.py",
+      "path": "verify/corpus/language/case_045.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_046.py",
+      "path": "verify/corpus/language/case_046.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_047.py",
+      "path": "verify/corpus/language/case_047.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_048.py",
+      "path": "verify/corpus/language/case_048.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_049.py",
+      "path": "verify/corpus/language/case_049.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_050.py",
+      "path": "verify/corpus/language/case_050.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_051.py",
+      "path": "verify/corpus/language/case_051.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_052.py",
+      "path": "verify/corpus/language/case_052.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_053.py",
+      "path": "verify/corpus/language/case_053.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_054.py",
+      "path": "verify/corpus/language/case_054.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_055.py",
+      "path": "verify/corpus/language/case_055.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_056.py",
+      "path": "verify/corpus/language/case_056.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_057.py",
+      "path": "verify/corpus/language/case_057.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_058.py",
+      "path": "verify/corpus/language/case_058.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_059.py",
+      "path": "verify/corpus/language/case_059.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_060.py",
+      "path": "verify/corpus/language/case_060.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_061.py",
+      "path": "verify/corpus/language/case_061.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_062.py",
+      "path": "verify/corpus/language/case_062.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_063.py",
+      "path": "verify/corpus/language/case_063.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_064.py",
+      "path": "verify/corpus/language/case_064.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_065.py",
+      "path": "verify/corpus/language/case_065.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_066.py",
+      "path": "verify/corpus/language/case_066.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_067.py",
+      "path": "verify/corpus/language/case_067.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_068.py",
+      "path": "verify/corpus/language/case_068.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_069.py",
+      "path": "verify/corpus/language/case_069.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_070.py",
+      "path": "verify/corpus/language/case_070.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_071.py",
+      "path": "verify/corpus/language/case_071.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_072.py",
+      "path": "verify/corpus/language/case_072.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_073.py",
+      "path": "verify/corpus/language/case_073.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_074.py",
+      "path": "verify/corpus/language/case_074.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_075.py",
+      "path": "verify/corpus/language/case_075.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_076.py",
+      "path": "verify/corpus/language/case_076.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_077.py",
+      "path": "verify/corpus/language/case_077.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_078.py",
+      "path": "verify/corpus/language/case_078.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_079.py",
+      "path": "verify/corpus/language/case_079.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_080.py",
+      "path": "verify/corpus/language/case_080.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_081.py",
+      "path": "verify/corpus/language/case_081.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_082.py",
+      "path": "verify/corpus/language/case_082.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_083.py",
+      "path": "verify/corpus/language/case_083.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_084.py",
+      "path": "verify/corpus/language/case_084.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_085.py",
+      "path": "verify/corpus/language/case_085.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_086.py",
+      "path": "verify/corpus/language/case_086.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_087.py",
+      "path": "verify/corpus/language/case_087.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_088.py",
+      "path": "verify/corpus/language/case_088.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_089.py",
+      "path": "verify/corpus/language/case_089.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_090.py",
+      "path": "verify/corpus/language/case_090.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_091.py",
+      "path": "verify/corpus/language/case_091.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_092.py",
+      "path": "verify/corpus/language/case_092.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_093.py",
+      "path": "verify/corpus/language/case_093.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_094.py",
+      "path": "verify/corpus/language/case_094.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_095.py",
+      "path": "verify/corpus/language/case_095.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_096.py",
+      "path": "verify/corpus/language/case_096.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_097.py",
+      "path": "verify/corpus/language/case_097.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_098.py",
+      "path": "verify/corpus/language/case_098.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_099.py",
+      "path": "verify/corpus/language/case_099.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_100.py",
+      "path": "verify/corpus/language/case_100.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_101.py",
+      "path": "verify/corpus/language/case_101.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_102.py",
+      "path": "verify/corpus/language/case_102.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_103.py",
+      "path": "verify/corpus/language/case_103.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_104.py",
+      "path": "verify/corpus/language/case_104.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_105.py",
+      "path": "verify/corpus/language/case_105.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_106.py",
+      "path": "verify/corpus/language/case_106.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_107.py",
+      "path": "verify/corpus/language/case_107.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_108.py",
+      "path": "verify/corpus/language/case_108.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_109.py",
+      "path": "verify/corpus/language/case_109.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_110.py",
+      "path": "verify/corpus/language/case_110.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_111.py",
+      "path": "verify/corpus/language/case_111.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_112.py",
+      "path": "verify/corpus/language/case_112.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_113.py",
+      "path": "verify/corpus/language/case_113.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_114.py",
+      "path": "verify/corpus/language/case_114.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_115.py",
+      "path": "verify/corpus/language/case_115.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_116.py",
+      "path": "verify/corpus/language/case_116.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_117.py",
+      "path": "verify/corpus/language/case_117.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_118.py",
+      "path": "verify/corpus/language/case_118.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_119.py",
+      "path": "verify/corpus/language/case_119.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_120.py",
+      "path": "verify/corpus/language/case_120.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_121.py",
+      "path": "verify/corpus/language/case_121.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_122.py",
+      "path": "verify/corpus/language/case_122.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_123.py",
+      "path": "verify/corpus/language/case_123.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_124.py",
+      "path": "verify/corpus/language/case_124.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_125.py",
+      "path": "verify/corpus/language/case_125.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_126.py",
+      "path": "verify/corpus/language/case_126.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_127.py",
+      "path": "verify/corpus/language/case_127.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_128.py",
+      "path": "verify/corpus/language/case_128.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_129.py",
+      "path": "verify/corpus/language/case_129.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_130.py",
+      "path": "verify/corpus/language/case_130.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_131.py",
+      "path": "verify/corpus/language/case_131.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_132.py",
+      "path": "verify/corpus/language/case_132.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_133.py",
+      "path": "verify/corpus/language/case_133.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_134.py",
+      "path": "verify/corpus/language/case_134.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_135.py",
+      "path": "verify/corpus/language/case_135.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_136.py",
+      "path": "verify/corpus/language/case_136.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_137.py",
+      "path": "verify/corpus/language/case_137.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_138.py",
+      "path": "verify/corpus/language/case_138.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_139.py",
+      "path": "verify/corpus/language/case_139.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_140.py",
+      "path": "verify/corpus/language/case_140.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_141.py",
+      "path": "verify/corpus/language/case_141.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_142.py",
+      "path": "verify/corpus/language/case_142.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_143.py",
+      "path": "verify/corpus/language/case_143.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_144.py",
+      "path": "verify/corpus/language/case_144.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_145.py",
+      "path": "verify/corpus/language/case_145.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_146.py",
+      "path": "verify/corpus/language/case_146.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_147.py",
+      "path": "verify/corpus/language/case_147.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_148.py",
+      "path": "verify/corpus/language/case_148.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_149.py",
+      "path": "verify/corpus/language/case_149.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_150.py",
+      "path": "verify/corpus/language/case_150.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_151.py",
+      "path": "verify/corpus/language/case_151.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_152.py",
+      "path": "verify/corpus/language/case_152.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_153.py",
+      "path": "verify/corpus/language/case_153.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_154.py",
+      "path": "verify/corpus/language/case_154.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_155.py",
+      "path": "verify/corpus/language/case_155.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_156.py",
+      "path": "verify/corpus/language/case_156.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_157.py",
+      "path": "verify/corpus/language/case_157.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_158.py",
+      "path": "verify/corpus/language/case_158.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_159.py",
+      "path": "verify/corpus/language/case_159.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_160.py",
+      "path": "verify/corpus/language/case_160.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_161.py",
+      "path": "verify/corpus/language/case_161.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_162.py",
+      "path": "verify/corpus/language/case_162.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_163.py",
+      "path": "verify/corpus/language/case_163.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_164.py",
+      "path": "verify/corpus/language/case_164.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_165.py",
+      "path": "verify/corpus/language/case_165.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_166.py",
+      "path": "verify/corpus/language/case_166.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_167.py",
+      "path": "verify/corpus/language/case_167.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_168.py",
+      "path": "verify/corpus/language/case_168.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_169.py",
+      "path": "verify/corpus/language/case_169.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_170.py",
+      "path": "verify/corpus/language/case_170.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_171.py",
+      "path": "verify/corpus/language/case_171.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_172.py",
+      "path": "verify/corpus/language/case_172.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_173.py",
+      "path": "verify/corpus/language/case_173.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_174.py",
+      "path": "verify/corpus/language/case_174.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_175.py",
+      "path": "verify/corpus/language/case_175.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_176.py",
+      "path": "verify/corpus/language/case_176.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_177.py",
+      "path": "verify/corpus/language/case_177.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_178.py",
+      "path": "verify/corpus/language/case_178.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_179.py",
+      "path": "verify/corpus/language/case_179.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_180.py",
+      "path": "verify/corpus/language/case_180.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_181.py",
+      "path": "verify/corpus/language/case_181.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_182.py",
+      "path": "verify/corpus/language/case_182.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_183.py",
+      "path": "verify/corpus/language/case_183.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_184.py",
+      "path": "verify/corpus/language/case_184.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_185.py",
+      "path": "verify/corpus/language/case_185.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_186.py",
+      "path": "verify/corpus/language/case_186.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_187.py",
+      "path": "verify/corpus/language/case_187.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_188.py",
+      "path": "verify/corpus/language/case_188.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_189.py",
+      "path": "verify/corpus/language/case_189.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_190.py",
+      "path": "verify/corpus/language/case_190.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_191.py",
+      "path": "verify/corpus/language/case_191.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_192.py",
+      "path": "verify/corpus/language/case_192.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_193.py",
+      "path": "verify/corpus/language/case_193.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_194.py",
+      "path": "verify/corpus/language/case_194.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_195.py",
+      "path": "verify/corpus/language/case_195.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_196.py",
+      "path": "verify/corpus/language/case_196.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_197.py",
+      "path": "verify/corpus/language/case_197.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_198.py",
+      "path": "verify/corpus/language/case_198.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_199.py",
+      "path": "verify/corpus/language/case_199.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_200.py",
+      "path": "verify/corpus/language/case_200.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_201.py",
+      "path": "verify/corpus/language/case_201.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_202.py",
+      "path": "verify/corpus/language/case_202.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_203.py",
+      "path": "verify/corpus/language/case_203.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_204.py",
+      "path": "verify/corpus/language/case_204.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_205.py",
+      "path": "verify/corpus/language/case_205.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_206.py",
+      "path": "verify/corpus/language/case_206.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_207.py",
+      "path": "verify/corpus/language/case_207.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_210.py",
+      "path": "verify/corpus/language/case_210.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_211.py",
+      "path": "verify/corpus/language/case_211.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_212.py",
+      "path": "verify/corpus/language/case_212.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_213.py",
+      "path": "verify/corpus/language/case_213.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_214.py",
+      "path": "verify/corpus/language/case_214.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_215.py",
+      "path": "verify/corpus/language/case_215.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_216.py",
+      "path": "verify/corpus/language/case_216.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_217.py",
+      "path": "verify/corpus/language/case_217.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_218.py",
+      "path": "verify/corpus/language/case_218.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_219.py",
+      "path": "verify/corpus/language/case_219.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_220.py",
+      "path": "verify/corpus/language/case_220.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_221.py",
+      "path": "verify/corpus/language/case_221.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_222.py",
+      "path": "verify/corpus/language/case_222.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_223.py",
+      "path": "verify/corpus/language/case_223.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_224.py",
+      "path": "verify/corpus/language/case_224.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_225.py",
+      "path": "verify/corpus/language/case_225.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_226.py",
+      "path": "verify/corpus/language/case_226.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_227.py",
+      "path": "verify/corpus/language/case_227.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_228.py",
+      "path": "verify/corpus/language/case_228.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_229.py",
+      "path": "verify/corpus/language/case_229.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_230.py",
+      "path": "verify/corpus/language/case_230.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_231.py",
+      "path": "verify/corpus/language/case_231.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_232.py",
+      "path": "verify/corpus/language/case_232.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_233.py",
+      "path": "verify/corpus/language/case_233.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_234.py",
+      "path": "verify/corpus/language/case_234.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_235.py",
+      "path": "verify/corpus/language/case_235.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_236.py",
+      "path": "verify/corpus/language/case_236.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_237.py",
+      "path": "verify/corpus/language/case_237.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_238.py",
+      "path": "verify/corpus/language/case_238.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_239.py",
+      "path": "verify/corpus/language/case_239.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_240.py",
+      "path": "verify/corpus/language/case_240.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_241.py",
+      "path": "verify/corpus/language/case_241.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_242.py",
+      "path": "verify/corpus/language/case_242.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_243.py",
+      "path": "verify/corpus/language/case_243.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_244.py",
+      "path": "verify/corpus/language/case_244.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_245.py",
+      "path": "verify/corpus/language/case_245.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_246.py",
+      "path": "verify/corpus/language/case_246.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_247.py",
+      "path": "verify/corpus/language/case_247.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_248.py",
+      "path": "verify/corpus/language/case_248.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_249.py",
+      "path": "verify/corpus/language/case_249.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_250.py",
+      "path": "verify/corpus/language/case_250.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_251.py",
+      "path": "verify/corpus/language/case_251.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_252.py",
+      "path": "verify/corpus/language/case_252.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_253.py",
+      "path": "verify/corpus/language/case_253.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_254.py",
+      "path": "verify/corpus/language/case_254.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_255.py",
+      "path": "verify/corpus/language/case_255.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_256.py",
+      "path": "verify/corpus/language/case_256.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_257.py",
+      "path": "verify/corpus/language/case_257.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_258.py",
+      "path": "verify/corpus/language/case_258.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_259.py",
+      "path": "verify/corpus/language/case_259.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_260.py",
+      "path": "verify/corpus/language/case_260.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_261.py",
+      "path": "verify/corpus/language/case_261.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_262.py",
+      "path": "verify/corpus/language/case_262.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_263.py",
+      "path": "verify/corpus/language/case_263.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_264.py",
+      "path": "verify/corpus/language/case_264.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_265.py",
+      "path": "verify/corpus/language/case_265.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_266.py",
+      "path": "verify/corpus/language/case_266.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_267.py",
+      "path": "verify/corpus/language/case_267.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_268.py",
+      "path": "verify/corpus/language/case_268.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_269.py",
+      "path": "verify/corpus/language/case_269.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_270.py",
+      "path": "verify/corpus/language/case_270.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_271.py",
+      "path": "verify/corpus/language/case_271.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_272.py",
+      "path": "verify/corpus/language/case_272.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_276.py",
+      "path": "verify/corpus/language/case_276.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_277.py",
+      "path": "verify/corpus/language/case_277.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_278.py",
+      "path": "verify/corpus/language/case_278.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_279.py",
+      "path": "verify/corpus/language/case_279.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_280.py",
+      "path": "verify/corpus/language/case_280.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_281.py",
+      "path": "verify/corpus/language/case_281.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_282.py",
+      "path": "verify/corpus/language/case_282.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_283.py",
+      "path": "verify/corpus/language/case_283.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_284.py",
+      "path": "verify/corpus/language/case_284.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_285.py",
+      "path": "verify/corpus/language/case_285.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_286.py",
+      "path": "verify/corpus/language/case_286.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_287.py",
+      "path": "verify/corpus/language/case_287.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_288.py",
+      "path": "verify/corpus/language/case_288.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_289.py",
+      "path": "verify/corpus/language/case_289.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_290.py",
+      "path": "verify/corpus/language/case_290.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_291.py",
+      "path": "verify/corpus/language/case_291.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_292.py",
+      "path": "verify/corpus/language/case_292.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_293.py",
+      "path": "verify/corpus/language/case_293.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_294.py",
+      "path": "verify/corpus/language/case_294.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_295.py",
+      "path": "verify/corpus/language/case_295.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_296.py",
+      "path": "verify/corpus/language/case_296.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_297.py",
+      "path": "verify/corpus/language/case_297.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_298.py",
+      "path": "verify/corpus/language/case_298.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_299.py",
+      "path": "verify/corpus/language/case_299.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_300.py",
+      "path": "verify/corpus/language/case_300.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_301.py",
+      "path": "verify/corpus/language/case_301.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_302.py",
+      "path": "verify/corpus/language/case_302.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_303.py",
+      "path": "verify/corpus/language/case_303.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_304.py",
+      "path": "verify/corpus/language/case_304.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_305.py",
+      "path": "verify/corpus/language/case_305.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_306.py",
+      "path": "verify/corpus/language/case_306.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_307.py",
+      "path": "verify/corpus/language/case_307.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_308.py",
+      "path": "verify/corpus/language/case_308.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_309.py",
+      "path": "verify/corpus/language/case_309.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_310.py",
+      "path": "verify/corpus/language/case_310.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_311.py",
+      "path": "verify/corpus/language/case_311.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_312.py",
+      "path": "verify/corpus/language/case_312.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_313.py",
+      "path": "verify/corpus/language/case_313.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_314.py",
+      "path": "verify/corpus/language/case_314.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_315.py",
+      "path": "verify/corpus/language/case_315.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_316.py",
+      "path": "verify/corpus/language/case_316.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_317.py",
+      "path": "verify/corpus/language/case_317.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_318.py",
+      "path": "verify/corpus/language/case_318.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_319.py",
+      "path": "verify/corpus/language/case_319.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_320.py",
+      "path": "verify/corpus/language/case_320.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_321.py",
+      "path": "verify/corpus/language/case_321.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_322.py",
+      "path": "verify/corpus/language/case_322.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_323.py",
+      "path": "verify/corpus/language/case_323.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_324.py",
+      "path": "verify/corpus/language/case_324.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_325.py",
+      "path": "verify/corpus/language/case_325.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_326.py",
+      "path": "verify/corpus/language/case_326.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_327.py",
+      "path": "verify/corpus/language/case_327.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_328.py",
+      "path": "verify/corpus/language/case_328.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_329.py",
+      "path": "verify/corpus/language/case_329.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_330.py",
+      "path": "verify/corpus/language/case_330.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_331.py",
+      "path": "verify/corpus/language/case_331.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_332.py",
+      "path": "verify/corpus/language/case_332.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_333.py",
+      "path": "verify/corpus/language/case_333.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_334.py",
+      "path": "verify/corpus/language/case_334.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_335.py",
+      "path": "verify/corpus/language/case_335.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_336.py",
+      "path": "verify/corpus/language/case_336.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_337.py",
+      "path": "verify/corpus/language/case_337.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_338.py",
+      "path": "verify/corpus/language/case_338.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_339.py",
+      "path": "verify/corpus/language/case_339.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_340.py",
+      "path": "verify/corpus/language/case_340.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_341.py",
+      "path": "verify/corpus/language/case_341.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_342.py",
+      "path": "verify/corpus/language/case_342.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_343.py",
+      "path": "verify/corpus/language/case_343.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_344.py",
+      "path": "verify/corpus/language/case_344.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_345.py",
+      "path": "verify/corpus/language/case_345.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_346.py",
+      "path": "verify/corpus/language/case_346.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_347.py",
+      "path": "verify/corpus/language/case_347.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_348.py",
+      "path": "verify/corpus/language/case_348.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_349.py",
+      "path": "verify/corpus/language/case_349.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_350.py",
+      "path": "verify/corpus/language/case_350.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_351.py",
+      "path": "verify/corpus/language/case_351.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_352.py",
+      "path": "verify/corpus/language/case_352.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_353.py",
+      "path": "verify/corpus/language/case_353.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_354.py",
+      "path": "verify/corpus/language/case_354.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_355.py",
+      "path": "verify/corpus/language/case_355.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_356.py",
+      "path": "verify/corpus/language/case_356.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_357.py",
+      "path": "verify/corpus/language/case_357.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_358.py",
+      "path": "verify/corpus/language/case_358.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_359.py",
+      "path": "verify/corpus/language/case_359.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_360.py",
+      "path": "verify/corpus/language/case_360.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_361.py",
+      "path": "verify/corpus/language/case_361.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_362.py",
+      "path": "verify/corpus/language/case_362.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_363.py",
+      "path": "verify/corpus/language/case_363.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_364.py",
+      "path": "verify/corpus/language/case_364.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_365.py",
+      "path": "verify/corpus/language/case_365.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_366.py",
+      "path": "verify/corpus/language/case_366.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_367.py",
+      "path": "verify/corpus/language/case_367.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_368.py",
+      "path": "verify/corpus/language/case_368.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_369.py",
+      "path": "verify/corpus/language/case_369.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_370.py",
+      "path": "verify/corpus/language/case_370.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_371.py",
+      "path": "verify/corpus/language/case_371.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_372.py",
+      "path": "verify/corpus/language/case_372.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_373.py",
+      "path": "verify/corpus/language/case_373.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_374.py",
+      "path": "verify/corpus/language/case_374.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_375.py",
+      "path": "verify/corpus/language/case_375.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_376.py",
+      "path": "verify/corpus/language/case_376.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_377.py",
+      "path": "verify/corpus/language/case_377.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_378.py",
+      "path": "verify/corpus/language/case_378.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_379.py",
+      "path": "verify/corpus/language/case_379.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_380.py",
+      "path": "verify/corpus/language/case_380.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_381.py",
+      "path": "verify/corpus/language/case_381.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_382.py",
+      "path": "verify/corpus/language/case_382.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_383.py",
+      "path": "verify/corpus/language/case_383.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_384.py",
+      "path": "verify/corpus/language/case_384.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_385.py",
+      "path": "verify/corpus/language/case_385.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_386.py",
+      "path": "verify/corpus/language/case_386.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_387.py",
+      "path": "verify/corpus/language/case_387.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_388.py",
+      "path": "verify/corpus/language/case_388.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_389.py",
+      "path": "verify/corpus/language/case_389.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_390.py",
+      "path": "verify/corpus/language/case_390.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_391.py",
+      "path": "verify/corpus/language/case_391.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_392.py",
+      "path": "verify/corpus/language/case_392.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_393.py",
+      "path": "verify/corpus/language/case_393.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_394.py",
+      "path": "verify/corpus/language/case_394.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_395.py",
+      "path": "verify/corpus/language/case_395.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_396.py",
+      "path": "verify/corpus/language/case_396.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_397.py",
+      "path": "verify/corpus/language/case_397.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_398.py",
+      "path": "verify/corpus/language/case_398.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_399.py",
+      "path": "verify/corpus/language/case_399.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_400.py",
+      "path": "verify/corpus/language/case_400.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_401.py",
+      "path": "verify/corpus/language/case_401.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_402.py",
+      "path": "verify/corpus/language/case_402.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_403.py",
+      "path": "verify/corpus/language/case_403.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_404.py",
+      "path": "verify/corpus/language/case_404.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_405.py",
+      "path": "verify/corpus/language/case_405.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_406.py",
+      "path": "verify/corpus/language/case_406.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_407.py",
+      "path": "verify/corpus/language/case_407.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_408.py",
+      "path": "verify/corpus/language/case_408.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_409.py",
+      "path": "verify/corpus/language/case_409.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_410.py",
+      "path": "verify/corpus/language/case_410.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_411.py",
+      "path": "verify/corpus/language/case_411.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_412.py",
+      "path": "verify/corpus/language/case_412.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_413.py",
+      "path": "verify/corpus/language/case_413.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_414.py",
+      "path": "verify/corpus/language/case_414.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_415.py",
+      "path": "verify/corpus/language/case_415.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_416.py",
+      "path": "verify/corpus/language/case_416.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_417.py",
+      "path": "verify/corpus/language/case_417.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_418.py",
+      "path": "verify/corpus/language/case_418.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_419.py",
+      "path": "verify/corpus/language/case_419.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_420.py",
+      "path": "verify/corpus/language/case_420.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_421.py",
+      "path": "verify/corpus/language/case_421.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_422.py",
+      "path": "verify/corpus/language/case_422.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_423.py",
+      "path": "verify/corpus/language/case_423.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_424.py",
+      "path": "verify/corpus/language/case_424.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_425.py",
+      "path": "verify/corpus/language/case_425.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_426.py",
+      "path": "verify/corpus/language/case_426.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_427.py",
+      "path": "verify/corpus/language/case_427.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_428.py",
+      "path": "verify/corpus/language/case_428.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_429.py",
+      "path": "verify/corpus/language/case_429.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_430.py",
+      "path": "verify/corpus/language/case_430.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_431.py",
+      "path": "verify/corpus/language/case_431.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_432.py",
+      "path": "verify/corpus/language/case_432.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_433.py",
+      "path": "verify/corpus/language/case_433.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_434.py",
+      "path": "verify/corpus/language/case_434.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_435.py",
+      "path": "verify/corpus/language/case_435.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_436.py",
+      "path": "verify/corpus/language/case_436.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_437.py",
+      "path": "verify/corpus/language/case_437.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_438.py",
+      "path": "verify/corpus/language/case_438.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_439.py",
+      "path": "verify/corpus/language/case_439.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_440.py",
+      "path": "verify/corpus/language/case_440.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_441.py",
+      "path": "verify/corpus/language/case_441.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_442.py",
+      "path": "verify/corpus/language/case_442.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_443.py",
+      "path": "verify/corpus/language/case_443.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_444.py",
+      "path": "verify/corpus/language/case_444.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_445.py",
+      "path": "verify/corpus/language/case_445.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_446.py",
+      "path": "verify/corpus/language/case_446.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_447.py",
+      "path": "verify/corpus/language/case_447.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_448.py",
+      "path": "verify/corpus/language/case_448.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_449.py",
+      "path": "verify/corpus/language/case_449.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_450.py",
+      "path": "verify/corpus/language/case_450.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_451.py",
+      "path": "verify/corpus/language/case_451.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_452.py",
+      "path": "verify/corpus/language/case_452.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_455.py",
+      "path": "verify/corpus/language/case_455.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_457.py",
+      "path": "verify/corpus/language/case_457.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_458.py",
+      "path": "verify/corpus/language/case_458.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_459.py",
+      "path": "verify/corpus/language/case_459.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_460.py",
+      "path": "verify/corpus/language/case_460.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_461.py",
+      "path": "verify/corpus/language/case_461.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_462.py",
+      "path": "verify/corpus/language/case_462.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_463.py",
+      "path": "verify/corpus/language/case_463.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_464.py",
+      "path": "verify/corpus/language/case_464.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_465.py",
+      "path": "verify/corpus/language/case_465.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_466.py",
+      "path": "verify/corpus/language/case_466.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_467.py",
+      "path": "verify/corpus/language/case_467.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_468.py",
+      "path": "verify/corpus/language/case_468.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_469.py",
+      "path": "verify/corpus/language/case_469.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_470.py",
+      "path": "verify/corpus/language/case_470.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_471.py",
+      "path": "verify/corpus/language/case_471.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_472.py",
+      "path": "verify/corpus/language/case_472.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_473.py",
+      "path": "verify/corpus/language/case_473.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_474.py",
+      "path": "verify/corpus/language/case_474.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_475.py",
+      "path": "verify/corpus/language/case_475.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_476.py",
+      "path": "verify/corpus/language/case_476.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_477.py",
+      "path": "verify/corpus/language/case_477.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_478.py",
+      "path": "verify/corpus/language/case_478.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_479.py",
+      "path": "verify/corpus/language/case_479.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_480.py",
+      "path": "verify/corpus/language/case_480.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_481.py",
+      "path": "verify/corpus/language/case_481.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_482.py",
+      "path": "verify/corpus/language/case_482.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_483.py",
+      "path": "verify/corpus/language/case_483.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_484.py",
+      "path": "verify/corpus/language/case_484.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_485.py",
+      "path": "verify/corpus/language/case_485.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_486.py",
+      "path": "verify/corpus/language/case_486.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_487.py",
+      "path": "verify/corpus/language/case_487.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_488.py",
+      "path": "verify/corpus/language/case_488.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_489.py",
+      "path": "verify/corpus/language/case_489.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_490.py",
+      "path": "verify/corpus/language/case_490.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_491.py",
+      "path": "verify/corpus/language/case_491.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_492.py",
+      "path": "verify/corpus/language/case_492.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_493.py",
+      "path": "verify/corpus/language/case_493.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_494.py",
+      "path": "verify/corpus/language/case_494.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_495.py",
+      "path": "verify/corpus/language/case_495.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_496.py",
+      "path": "verify/corpus/language/case_496.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_497.py",
+      "path": "verify/corpus/language/case_497.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_498.py",
+      "path": "verify/corpus/language/case_498.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_499.py",
+      "path": "verify/corpus/language/case_499.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_500.py",
+      "path": "verify/corpus/language/case_500.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_501.py",
+      "path": "verify/corpus/language/case_501.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_502.py",
+      "path": "verify/corpus/language/case_502.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_503.py",
+      "path": "verify/corpus/language/case_503.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_504.py",
+      "path": "verify/corpus/language/case_504.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_505.py",
+      "path": "verify/corpus/language/case_505.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_506.py",
+      "path": "verify/corpus/language/case_506.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_508.py",
+      "path": "verify/corpus/language/case_508.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_509.py",
+      "path": "verify/corpus/language/case_509.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_510.py",
+      "path": "verify/corpus/language/case_510.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_511.py",
+      "path": "verify/corpus/language/case_511.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_512.py",
+      "path": "verify/corpus/language/case_512.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_513.py",
+      "path": "verify/corpus/language/case_513.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_514.py",
+      "path": "verify/corpus/language/case_514.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_515.py",
+      "path": "verify/corpus/language/case_515.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_516.py",
+      "path": "verify/corpus/language/case_516.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_517.py",
+      "path": "verify/corpus/language/case_517.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_518.py",
+      "path": "verify/corpus/language/case_518.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_519.py",
+      "path": "verify/corpus/language/case_519.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_520.py",
+      "path": "verify/corpus/language/case_520.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_521.py",
+      "path": "verify/corpus/language/case_521.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_522.py",
+      "path": "verify/corpus/language/case_522.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_523.py",
+      "path": "verify/corpus/language/case_523.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_524.py",
+      "path": "verify/corpus/language/case_524.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_526.py",
+      "path": "verify/corpus/language/case_526.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_527.py",
+      "path": "verify/corpus/language/case_527.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_528.py",
+      "path": "verify/corpus/language/case_528.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_529.py",
+      "path": "verify/corpus/language/case_529.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_530.py",
+      "path": "verify/corpus/language/case_530.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_531.py",
+      "path": "verify/corpus/language/case_531.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_532.py",
+      "path": "verify/corpus/language/case_532.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_533.py",
+      "path": "verify/corpus/language/case_533.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_534.py",
+      "path": "verify/corpus/language/case_534.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_535.py",
+      "path": "verify/corpus/language/case_535.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_536.py",
+      "path": "verify/corpus/language/case_536.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_537.py",
+      "path": "verify/corpus/language/case_537.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_538.py",
+      "path": "verify/corpus/language/case_538.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_539.py",
+      "path": "verify/corpus/language/case_539.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_540.py",
+      "path": "verify/corpus/language/case_540.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_541.py",
+      "path": "verify/corpus/language/case_541.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_542.py",
+      "path": "verify/corpus/language/case_542.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_543.py",
+      "path": "verify/corpus/language/case_543.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_544.py",
+      "path": "verify/corpus/language/case_544.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_545.py",
+      "path": "verify/corpus/language/case_545.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_546.py",
+      "path": "verify/corpus/language/case_546.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_547.py",
+      "path": "verify/corpus/language/case_547.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_548.py",
+      "path": "verify/corpus/language/case_548.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_549.py",
+      "path": "verify/corpus/language/case_549.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_550.py",
+      "path": "verify/corpus/language/case_550.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_551.py",
+      "path": "verify/corpus/language/case_551.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_552.py",
+      "path": "verify/corpus/language/case_552.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_553.py",
+      "path": "verify/corpus/language/case_553.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_554.py",
+      "path": "verify/corpus/language/case_554.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_555.py",
+      "path": "verify/corpus/language/case_555.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_556.py",
+      "path": "verify/corpus/language/case_556.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_557.py",
+      "path": "verify/corpus/language/case_557.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_558.py",
+      "path": "verify/corpus/language/case_558.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_559.py",
+      "path": "verify/corpus/language/case_559.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_560.py",
+      "path": "verify/corpus/language/case_560.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_561.py",
+      "path": "verify/corpus/language/case_561.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_562.py",
+      "path": "verify/corpus/language/case_562.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_563.py",
+      "path": "verify/corpus/language/case_563.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_564.py",
+      "path": "verify/corpus/language/case_564.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_565.py",
+      "path": "verify/corpus/language/case_565.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_566.py",
+      "path": "verify/corpus/language/case_566.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_567.py",
+      "path": "verify/corpus/language/case_567.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_568.py",
+      "path": "verify/corpus/language/case_568.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_569.py",
+      "path": "verify/corpus/language/case_569.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_570.py",
+      "path": "verify/corpus/language/case_570.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_571.py",
+      "path": "verify/corpus/language/case_571.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_572.py",
+      "path": "verify/corpus/language/case_572.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_573.py",
+      "path": "verify/corpus/language/case_573.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_574.py",
+      "path": "verify/corpus/language/case_574.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_575.py",
+      "path": "verify/corpus/language/case_575.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_576.py",
+      "path": "verify/corpus/language/case_576.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_577.py",
+      "path": "verify/corpus/language/case_577.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_578.py",
+      "path": "verify/corpus/language/case_578.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_579.py",
+      "path": "verify/corpus/language/case_579.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_580.py",
+      "path": "verify/corpus/language/case_580.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_581.py",
+      "path": "verify/corpus/language/case_581.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_582.py",
+      "path": "verify/corpus/language/case_582.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_583.py",
+      "path": "verify/corpus/language/case_583.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_584.py",
+      "path": "verify/corpus/language/case_584.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_585.py",
+      "path": "verify/corpus/language/case_585.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_586.py",
+      "path": "verify/corpus/language/case_586.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_587.py",
+      "path": "verify/corpus/language/case_587.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_588.py",
+      "path": "verify/corpus/language/case_588.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_589.py",
+      "path": "verify/corpus/language/case_589.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_590.py",
+      "path": "verify/corpus/language/case_590.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_591.py",
+      "path": "verify/corpus/language/case_591.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_592.py",
+      "path": "verify/corpus/language/case_592.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_593.py",
+      "path": "verify/corpus/language/case_593.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_594.py",
+      "path": "verify/corpus/language/case_594.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_595.py",
+      "path": "verify/corpus/language/case_595.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_596.py",
+      "path": "verify/corpus/language/case_596.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_597.py",
+      "path": "verify/corpus/language/case_597.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_598.py",
+      "path": "verify/corpus/language/case_598.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_599.py",
+      "path": "verify/corpus/language/case_599.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_600.py",
+      "path": "verify/corpus/language/case_600.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_601.py",
+      "path": "verify/corpus/language/case_601.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_602.py",
+      "path": "verify/corpus/language/case_602.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_603.py",
+      "path": "verify/corpus/language/case_603.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_604.py",
+      "path": "verify/corpus/language/case_604.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_605.py",
+      "path": "verify/corpus/language/case_605.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_606.py",
+      "path": "verify/corpus/language/case_606.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_607.py",
+      "path": "verify/corpus/language/case_607.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_608.py",
+      "path": "verify/corpus/language/case_608.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_609.py",
+      "path": "verify/corpus/language/case_609.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_610.py",
+      "path": "verify/corpus/language/case_610.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_611.py",
+      "path": "verify/corpus/language/case_611.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_612.py",
+      "path": "verify/corpus/language/case_612.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_613.py",
+      "path": "verify/corpus/language/case_613.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_614.py",
+      "path": "verify/corpus/language/case_614.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_615.py",
+      "path": "verify/corpus/language/case_615.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_616.py",
+      "path": "verify/corpus/language/case_616.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_617.py",
+      "path": "verify/corpus/language/case_617.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_618.py",
+      "path": "verify/corpus/language/case_618.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_619.py",
+      "path": "verify/corpus/language/case_619.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_620.py",
+      "path": "verify/corpus/language/case_620.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_621.py",
+      "path": "verify/corpus/language/case_621.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_622.py",
+      "path": "verify/corpus/language/case_622.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_623.py",
+      "path": "verify/corpus/language/case_623.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_624.py",
+      "path": "verify/corpus/language/case_624.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_625.py",
+      "path": "verify/corpus/language/case_625.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_626.py",
+      "path": "verify/corpus/language/case_626.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_627.py",
+      "path": "verify/corpus/language/case_627.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_628.py",
+      "path": "verify/corpus/language/case_628.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_629.py",
+      "path": "verify/corpus/language/case_629.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_630.py",
+      "path": "verify/corpus/language/case_630.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_631.py",
+      "path": "verify/corpus/language/case_631.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_632.py",
+      "path": "verify/corpus/language/case_632.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_633.py",
+      "path": "verify/corpus/language/case_633.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_634.py",
+      "path": "verify/corpus/language/case_634.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_635.py",
+      "path": "verify/corpus/language/case_635.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_636.py",
+      "path": "verify/corpus/language/case_636.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_637.py",
+      "path": "verify/corpus/language/case_637.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_638.py",
+      "path": "verify/corpus/language/case_638.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_639.py",
+      "path": "verify/corpus/language/case_639.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_640.py",
+      "path": "verify/corpus/language/case_640.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_641.py",
+      "path": "verify/corpus/language/case_641.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_642.py",
+      "path": "verify/corpus/language/case_642.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_643.py",
+      "path": "verify/corpus/language/case_643.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_644.py",
+      "path": "verify/corpus/language/case_644.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_645.py",
+      "path": "verify/corpus/language/case_645.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_646.py",
+      "path": "verify/corpus/language/case_646.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_647.py",
+      "path": "verify/corpus/language/case_647.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_648.py",
+      "path": "verify/corpus/language/case_648.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_649.py",
+      "path": "verify/corpus/language/case_649.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_650.py",
+      "path": "verify/corpus/language/case_650.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_651.py",
+      "path": "verify/corpus/language/case_651.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_652.py",
+      "path": "verify/corpus/language/case_652.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_653.py",
+      "path": "verify/corpus/language/case_653.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_654.py",
+      "path": "verify/corpus/language/case_654.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_655.py",
+      "path": "verify/corpus/language/case_655.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_656.py",
+      "path": "verify/corpus/language/case_656.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_657.py",
+      "path": "verify/corpus/language/case_657.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_658.py",
+      "path": "verify/corpus/language/case_658.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_659.py",
+      "path": "verify/corpus/language/case_659.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_660.py",
+      "path": "verify/corpus/language/case_660.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_661.py",
+      "path": "verify/corpus/language/case_661.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_662.py",
+      "path": "verify/corpus/language/case_662.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_663.py",
+      "path": "verify/corpus/language/case_663.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_664.py",
+      "path": "verify/corpus/language/case_664.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_665.py",
+      "path": "verify/corpus/language/case_665.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_666.py",
+      "path": "verify/corpus/language/case_666.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_667.py",
+      "path": "verify/corpus/language/case_667.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_668.py",
+      "path": "verify/corpus/language/case_668.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_669.py",
+      "path": "verify/corpus/language/case_669.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_670.py",
+      "path": "verify/corpus/language/case_670.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_671.py",
+      "path": "verify/corpus/language/case_671.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_672.py",
+      "path": "verify/corpus/language/case_672.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_673.py",
+      "path": "verify/corpus/language/case_673.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_674.py",
+      "path": "verify/corpus/language/case_674.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_675.py",
+      "path": "verify/corpus/language/case_675.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_676.py",
+      "path": "verify/corpus/language/case_676.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_677.py",
+      "path": "verify/corpus/language/case_677.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_678.py",
+      "path": "verify/corpus/language/case_678.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_679.py",
+      "path": "verify/corpus/language/case_679.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_680.py",
+      "path": "verify/corpus/language/case_680.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_681.py",
+      "path": "verify/corpus/language/case_681.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_682.py",
+      "path": "verify/corpus/language/case_682.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_683.py",
+      "path": "verify/corpus/language/case_683.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_684.py",
+      "path": "verify/corpus/language/case_684.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_685.py",
+      "path": "verify/corpus/language/case_685.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_686.py",
+      "path": "verify/corpus/language/case_686.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_687.py",
+      "path": "verify/corpus/language/case_687.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_688.py",
+      "path": "verify/corpus/language/case_688.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_689.py",
+      "path": "verify/corpus/language/case_689.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_690.py",
+      "path": "verify/corpus/language/case_690.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_691.py",
+      "path": "verify/corpus/language/case_691.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_692.py",
+      "path": "verify/corpus/language/case_692.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_693.py",
+      "path": "verify/corpus/language/case_693.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_694.py",
+      "path": "verify/corpus/language/case_694.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_695.py",
+      "path": "verify/corpus/language/case_695.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_696.py",
+      "path": "verify/corpus/language/case_696.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_697.py",
+      "path": "verify/corpus/language/case_697.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_698.py",
+      "path": "verify/corpus/language/case_698.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_699.py",
+      "path": "verify/corpus/language/case_699.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_700.py",
+      "path": "verify/corpus/language/case_700.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_701.py",
+      "path": "verify/corpus/language/case_701.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_702.py",
+      "path": "verify/corpus/language/case_702.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_703.py",
+      "path": "verify/corpus/language/case_703.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_704.py",
+      "path": "verify/corpus/language/case_704.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_705.py",
+      "path": "verify/corpus/language/case_705.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_706.py",
+      "path": "verify/corpus/language/case_706.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_707.py",
+      "path": "verify/corpus/language/case_707.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_708.py",
+      "path": "verify/corpus/language/case_708.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_709.py",
+      "path": "verify/corpus/language/case_709.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_710.py",
+      "path": "verify/corpus/language/case_710.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_711.py",
+      "path": "verify/corpus/language/case_711.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_712.py",
+      "path": "verify/corpus/language/case_712.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_713.py",
+      "path": "verify/corpus/language/case_713.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "closures.py",
+      "path": "verify/corpus/programs/closures.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "features.py",
+      "path": "verify/corpus/programs/features.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "fib.py",
+      "path": "verify/corpus/programs/fib.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "generators.py",
+      "path": "verify/corpus/programs/generators.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "hash.py",
+      "path": "verify/corpus/programs/hash.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "hello.py",
+      "path": "verify/corpus/programs/hello.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "modifiers.py",
+      "path": "verify/corpus/programs/modifiers.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_function_call.py",
+      "path": "verify/corpus/programs/opt_function_call.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_homogeneous_list.py",
+      "path": "verify/corpus/programs/opt_homogeneous_list.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_mixed_code.py",
+      "path": "verify/corpus/programs/opt_mixed_code.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_nested_destructuring.py",
+      "path": "verify/corpus/programs/opt_nested_destructuring.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_numeric_lists.py",
+      "path": "verify/corpus/programs/opt_numeric_lists.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_numeric_locals.py",
+      "path": "verify/corpus/programs/opt_numeric_locals.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_numeric_loop.py",
+      "path": "verify/corpus/programs/opt_numeric_loop.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_range_loop.py",
+      "path": "verify/corpus/programs/opt_range_loop.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "range.py",
+      "path": "verify/corpus/programs/range.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "regex.py",
+      "path": "verify/corpus/programs/regex.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "regex_g.py",
+      "path": "verify/corpus/programs/regex_g.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "sets.py",
+      "path": "verify/corpus/programs/sets.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "sprintf.py",
+      "path": "verify/corpus/programs/sprintf.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "unpack_comp.py",
+      "path": "verify/corpus/programs/unpack_comp.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "utils.py",
+      "path": "verify/corpus/programs/utils.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w011_type.py",
+      "path": "verify/corpus/programs/w011_type.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w016_arena.py",
+      "path": "verify/corpus/programs/w016_arena.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w016_cplx.py",
+      "path": "verify/corpus/programs/w016_cplx.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w016_mutual.py",
+      "path": "verify/corpus/programs/w016_mutual.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w111_io.py",
+      "path": "verify/corpus/programs/w111_io.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w112_io.py",
+      "path": "verify/corpus/programs/w112_io.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w112_join.py",
+      "path": "verify/corpus/programs/w112_join.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w113_hash.py",
+      "path": "verify/corpus/programs/w113_hash.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w114_dec.py",
+      "path": "verify/corpus/programs/w114_dec.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w116_dt.py",
+      "path": "verify/corpus/programs/w116_dt.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w117_path.py",
+      "path": "verify/corpus/programs/w117_path.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w118_io.py",
+      "path": "verify/corpus/programs/w118_io.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w11_rest.py",
+      "path": "verify/corpus/programs/w11_rest.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w121_wa.py",
+      "path": "verify/corpus/programs/w121_wa.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w122_enc.py",
+      "path": "verify/corpus/programs/w122_enc.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w123_bound.py",
+      "path": "verify/corpus/programs/w123_bound.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w124_gen.py",
+      "path": "verify/corpus/programs/w124_gen.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w58_unbox.py",
+      "path": "verify/corpus/programs/w58_unbox.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w61_runtime.py",
+      "path": "verify/corpus/programs/w61_runtime.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w61b_runtime.py",
+      "path": "verify/corpus/programs/w61b_runtime.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w61c_runtime.py",
+      "path": "verify/corpus/programs/w61c_runtime.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w62_str_range.py",
+      "path": "verify/corpus/programs/w62_str_range.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w62b_index.py",
+      "path": "verify/corpus/programs/w62b_index.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w63_call.py",
+      "path": "verify/corpus/programs/w63_call.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w64_mod_super.py",
+      "path": "verify/corpus/programs/w64_mod_super.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w71_call.py",
+      "path": "verify/corpus/programs/w71_call.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w71b_kw.py",
+      "path": "verify/corpus/programs/w71b_kw.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w72_path.py",
+      "path": "verify/corpus/programs/w72_path.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w73_getattr.py",
+      "path": "verify/corpus/programs/w73_getattr.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w81_star.py",
+      "path": "verify/corpus/programs/w81_star.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w82_runtime.py",
+      "path": "verify/corpus/programs/w82_runtime.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w83_method.py",
+      "path": "verify/corpus/programs/w83_method.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w84_runtime.py",
+      "path": "verify/corpus/programs/w84_runtime.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w85_star.py",
+      "path": "verify/corpus/programs/w85_star.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w910_class.py",
+      "path": "verify/corpus/programs/w910_class.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w911_class.py",
+      "path": "verify/corpus/programs/w911_class.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w912_class.py",
+      "path": "verify/corpus/programs/w912_class.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w913_inst.py",
+      "path": "verify/corpus/programs/w913_inst.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w914_map.py",
+      "path": "verify/corpus/programs/w914_map.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w915_wa.py",
+      "path": "verify/corpus/programs/w915_wa.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w916_slice.py",
+      "path": "verify/corpus/programs/w916_slice.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w917_tail.py",
+      "path": "verify/corpus/programs/w917_tail.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w918_tail.py",
+      "path": "verify/corpus/programs/w918_tail.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w919_tail.py",
+      "path": "verify/corpus/programs/w919_tail.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w91_zip.py",
+      "path": "verify/corpus/programs/w91_zip.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w920_set.py",
+      "path": "verify/corpus/programs/w920_set.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w921_tail.py",
+      "path": "verify/corpus/programs/w921_tail.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w92_zip.py",
+      "path": "verify/corpus/programs/w92_zip.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w93_enum.py",
+      "path": "verify/corpus/programs/w93_enum.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w94_rev.py",
+      "path": "verify/corpus/programs/w94_rev.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w95_seq.py",
+      "path": "verify/corpus/programs/w95_seq.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w96_seq.py",
+      "path": "verify/corpus/programs/w96_seq.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w97_sum_minmax.py",
+      "path": "verify/corpus/programs/w97_sum_minmax.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w98_adapt.py",
+      "path": "verify/corpus/programs/w98_adapt.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w99_adapt.py",
+      "path": "verify/corpus/programs/w99_adapt.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w_apply.py",
+      "path": "verify/corpus/programs/w_apply.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w_nbody_tuple.py",
+      "path": "verify/corpus/programs/w_nbody_tuple.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_507.py",
+      "path": "verify/corpus/language/case_507.py",
+      "verdict": "QUARANTINE_NONDETERMINISTIC",
+      "priority": "-",
+      "detail": "CPython output not reproducible across runs"
+    },
+    {
+      "case": "mbs.py",
+      "path": "verify/corpus/programs/mbs.py",
+      "verdict": "QUARANTINE_ORACLE_FAILED",
+      "priority": "-",
+      "detail": "CPython itself timed out"
+    }
+  ]
+}

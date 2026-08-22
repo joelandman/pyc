@@ -1,0 +1,16 @@
+# W10.2 / I-116: datetime strftime / strptime / fromisoformat.
+from datetime import date, datetime
+d = date(2024, 3, 15)
+print(d.strftime("%Y-%m-%d"))
+print(d.strftime("%Y/%m/%d"))
+print(d.strftime("%%Y"))
+dt = datetime(2024, 3, 15, 14, 30, 5)
+print(dt.strftime("%Y-%m-%d %H:%M:%S"))
+print(dt.strftime("%Y-%m-%dT%H:%M:%S"))
+print(date.fromisoformat("2024-03-15").isoformat())
+print(datetime.fromisoformat("2024-03-15T14:30:05").isoformat())
+print(datetime.fromisoformat("2024-03-15 14:30:05").isoformat())
+print(datetime.strptime("2024-03-15 14:30:05", "%Y-%m-%d %H:%M:%S").isoformat())
+print(date.strptime("2024-03-15", "%Y-%m-%d").isoformat())
+print(d.year)
+print(dt.hour)

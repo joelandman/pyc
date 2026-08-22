@@ -118,3 +118,39 @@ process is the silent-wrong-answer class in its purest form, and no amount of
 snippet testing would surface it.
 
 0.0% is the correct starting number and should be published as-is (I6).
+
+## The two baselines, and why the gap is the whole point
+
+Same compiler (`build/pyc` at `4fdd2cf`), same harness, same oracle, same day:
+
+| Corpus | Pass rate |
+|---|---|
+| The old tree's own rescued tests (806 programs) | **97.76%** (786/804) |
+| CPython `Lib/test/`, 60-file sample | **0.0%** (0/52) |
+
+That gap is the review's thesis expressed as a number. A suite built alongside
+a compiler measures the subset that compiler was built for, and reports near
+100% forever. It cannot see the distance to real Python, which is why I6 makes
+`Lib/test` — a corpus nobody here wrote — the published metric.
+
+### The hardcoded expectations were certifying pyc's bugs
+
+Worse than uninformative. Three examples, all of which the old runner reported
+as **passing**:
+
+`case_273` / `case_274` use `cmp_to_key(...)` without importing it. CPython
+raises `NameError`. The old runner's recorded expectation is
+`'[1, 1, 3, 4, 5]\n'` — which is what pyc prints, because pyc exposes
+`cmp_to_key` as a magic builtin. Verified: pyc prints exactly that and exits 0.
+
+`case_525` calls `hashlib.md5("hello world")` on a `str`. CPython raises
+`TypeError` (it requires bytes). The recorded expectation is the digest pyc
+produces.
+
+The expectations were evidently captured from pyc's own output, so the suite
+certified the compiler's deviations as correct and locked them in. This is not
+a hypothetical failure mode of hardcoded expectations — it is what happened
+here, and it is the concrete reason CHARTER I5 forbids them.
+
+The harness flags all five as **P0**: pyc accepts programs Python rejects and
+silently produces answers Python never would.

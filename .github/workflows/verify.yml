@@ -1,0 +1,82 @@
+# PR gate. Fast, blocking, runs on every push and pull request.
+#
+# Scope: the rescued corpus (verify/corpus). NOT the full Lib/test metric --
+# that lives in metric.yml on a schedule, because it is too slow to block a PR.
+#
+# This gate enforces CHARTER I6 (the metric may never regress) via
+# verify/check_regression.py, not by requiring a fixed pass rate. A project
+# starting at 0.0% still gets a meaningful gate on day one: nothing may get
+# worse, and no new P0 may appear.
+name: verify
+
+on:
+  push:
+    branches: [main, devel]
+  pull_request:
+    branches: [main, devel]
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  differential:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # LLVM 22 is newer than what ubuntu-24.04 ships, so it comes from
+      # apt.llvm.org. This is the slowest install step; cache it.
+      - name: Cache apt archives
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-llvm22-${{ runner.os }}-v1
+
+      - name: Install toolchain
+        run: |
+          set -euxo pipefail
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build libmpdec-dev libpcre2-dev zlib1g-dev \
+            python3-dev
+          echo "LLVM_DIR=$(llvm-config-22 --cmakedir)" >> "$GITHUB_ENV"
+
+      - name: Build pyc
+        run: |
+          set -euxo pipefail
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++-22 \
+            -DLLVM_DIR="$LLVM_DIR"
+          cmake --build build -j"$(nproc)"
+
+      # The oracle must be a real CPython. The runner's system python3 is the
+      # oracle here; once the sysroot model lands, restore a cached sysroot
+      # built by tools/build-python-sysroot.sh and pass --sysroot instead.
+      - name: Record oracle
+        run: python3 -VV
+
+      - name: Differential run
+        run: |
+          ./verify/run.py \
+            --corpus verify/corpus/language \
+            --corpus verify/corpus/programs \
+            --jobs "$(nproc)" \
+            --run-timeout 15 --compile-timeout 90 \
+            --show 12 \
+            --json current.json
+
+      - name: Monotonicity gate (I6)
+        run: ./verify/check_regression.py --current current.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: differential-results
+          path: current.json

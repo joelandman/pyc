@@ -1,0 +1,104 @@
+# The north-star metric (CHARTER I6): pass rate over CPython's own Lib/test.
+#
+# Scheduled, not per-PR: the full suite is far too slow to block a merge, and
+# the number is a trend rather than a gate. It is published low and honest.
+#
+# The gate on this workflow is monotonicity, same as verify.yml. A drop must be
+# explained, not absorbed.
+name: metric
+
+on:
+  schedule:
+    - cron: "0 6 * * *"      # nightly, 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      libtest_limit:
+        description: "Cap the number of Lib/test files (blank = all)"
+        required: false
+        default: ""
+
+concurrency:
+  group: metric
+  cancel-in-progress: false
+
+jobs:
+  libtest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: devel
+
+      - name: Install toolchain
+        run: |
+          set -euxo pipefail
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build libmpdec-dev libpcre2-dev zlib1g-dev python3-dev
+          echo "LLVM_DIR=$(llvm-config-22 --cmakedir)" >> "$GITHUB_ENV"
+
+      # A PGO CPython sysroot takes 20-40 min to build, so it must never be
+      # rebuilt per run. Key on the build script; bump when it changes.
+      - name: Cache CPython sysroot
+        id: sysroot
+        uses: actions/cache@v4
+        with:
+          path: ~/opt/py-sysroots
+          key: sysroot-cp314-3.14.7-tier1-${{ hashFiles('tools/build-python-sysroot.sh') }}
+
+      - name: Build CPython sysroot
+        if: steps.sysroot.outputs.cache-hit != 'true'
+        run: ./tools/build-python-sysroot.sh --version 3.14.7 --jobs "$(nproc)"
+
+      - name: Build pyc
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER=clang++-22 -DLLVM_DIR="$LLVM_DIR"
+          cmake --build build -j"$(nproc)"
+
+      - name: Lib/test metric
+        run: |
+          SYSROOT=~/opt/py-sysroots/cp314-3.14.7-tier1
+          LIMIT=""
+          if [ -n "${{ inputs.libtest_limit }}" ]; then
+            LIMIT="--libtest-limit ${{ inputs.libtest_limit }}"
+          fi
+          ./verify/run.py --libtest $LIMIT \
+            --sysroot "$SYSROOT" \
+            --stdlib "$SYSROOT/lib/python3.14" \
+            --jobs "$(nproc)" \
+            --run-timeout 30 --compile-timeout 120 \
+            --show 20 \
+            --json libtest.json
+
+      - name: Monotonicity gate (I6)
+        run: |
+          ./verify/check_regression.py \
+            --baseline verify/baseline-libtest.json \
+            --current libtest.json
+
+      - name: Publish the number
+        if: always()
+        run: |
+          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open("libtest.json"))
+          print("## CPython `Lib/test/` pass rate\n")
+          print(f"### **{d['pass_rate']:.2f}%**  ({d['matched']}/{d['scored']} scored)\n")
+          print("| verdict | count |\n|---|---|")
+          for k, v in sorted(d["counts"].items()):
+              print(f"| `{k}` | {v} |")
+          p0 = d["counts"].get("SILENT_WRONG_ANSWER", 0)
+          if p0:
+              print(f"\n**{p0} P0 silent wrong answer(s)** — ranked above every crash (CHARTER I1).")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: libtest-metric
+          path: libtest.json

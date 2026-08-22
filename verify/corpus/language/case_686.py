@@ -1,0 +1,15 @@
+# corpus case — ground truth is CPython at run time (CHARTER I5).
+print("banana".rindex("n", 0, 3))
+print("banana".rindex("a", 2, 4))
+print("banana".rindex("a"))
+print([1, 2, 1].index(1, 1))
+print((1, 2, 1).index(1, 1))
+print([1, 2, 1].index(1))
+print([1, 2, 1].count(1))
+try:
+    print([1, 2, 1].index(1, 1, 2))
+except ValueError as e:
+    print(type(e).__name__)
+def f(xs):
+    return xs.index(1, 1)
+print(f([1, 2, 1]))
