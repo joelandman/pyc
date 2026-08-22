@@ -20,6 +20,10 @@ concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # Match the version used on the development machine (libmpdec-dev 4.0.1-6).
+  MPDEC_VERSION: "4.0.1"
+
 jobs:
   differential:
     runs-on: ubuntu-24.04
@@ -43,9 +47,35 @@ jobs:
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh 22
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libmpdec-dev libpcre2-dev zlib1g-dev \
-            python3-dev
+            cmake ninja-build libpcre2-dev zlib1g-dev python3-dev
           echo "LLVM_DIR=$(llvm-config-22 --cmakedir)" >> "$GITHUB_ENV"
+
+      # Ubuntu 24.04 dropped the mpdecimal source package, so libmpdec-dev
+      # cannot be apt-installed here -- CMakeLists.txt treats it as a hard
+      # dependency (decimal.Decimal in the old runtime). Build it from source,
+      # pinned, so CI does not depend on a package that no longer exists.
+      #
+      # This step disappears with the rebuild: decimal will come from real
+      # CPython, making libmpdec CPython's dependency rather than ours.
+      - name: Cache libmpdec
+        id: mpdec
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/lib/libmpdec*
+          key: mpdec-${{ env.MPDEC_VERSION }}-${{ runner.os }}
+
+      - name: Build libmpdec from source
+        if: steps.mpdec.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          cd /tmp
+          curl -fsSLO "https://www.bytereef.org/software/mpdecimal/releases/mpdecimal-${MPDEC_VERSION}.tar.gz"
+          tar xf "mpdecimal-${MPDEC_VERSION}.tar.gz"
+          cd "mpdecimal-${MPDEC_VERSION}"
+          ./configure --prefix=/usr/local
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
 
       - name: Build pyc
         run: |

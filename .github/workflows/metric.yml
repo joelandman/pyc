@@ -38,8 +38,20 @@ jobs:
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh 22
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libmpdec-dev libpcre2-dev zlib1g-dev python3-dev
+            cmake ninja-build libpcre2-dev zlib1g-dev python3-dev \
+            libssl-dev libffi-dev libbz2-dev liblzma-dev libsqlite3-dev \
+            libreadline-dev libncurses-dev uuid-dev
           echo "LLVM_DIR=$(llvm-config-22 --cmakedir)" >> "$GITHUB_ENV"
+
+      # See verify.yml: ubuntu-24.04 has no mpdecimal package.
+      - name: Build libmpdec from source
+        run: |
+          set -euxo pipefail
+          cd /tmp
+          curl -fsSLO https://www.bytereef.org/software/mpdecimal/releases/mpdecimal-4.0.1.tar.gz
+          tar xf mpdecimal-4.0.1.tar.gz && cd mpdecimal-4.0.1
+          ./configure --prefix=/usr/local && make -j"$(nproc)"
+          sudo make install && sudo ldconfig
 
       # A PGO CPython sysroot takes 20-40 min to build, so it must never be
       # rebuilt per run. Key on the build script; bump when it changes.
