@@ -11,7 +11,7 @@ name: verify
 
 on:
   push:
-    branches: [main, devel]
+    branches: [main, devel, ci-smoke]   # ci-smoke: TEMPORARY, remove before merge
   pull_request:
     branches: [main, devel]
   workflow_dispatch:
