@@ -1,0 +1,120 @@
+# verify — differential harness (agent A5)
+
+Owns the correctness bar. Reports to the user, not to the feature agents;
+its results may not be overridden by them (`rebuild/AGENT_DIRECTIVES.md`, A5).
+
+## The one rule
+
+**No test in this tree stores an expected output.** The oracle is a real
+CPython binary, executed at run time, every run. There is deliberately nowhere
+in `differential.py` to put an expected value.
+
+This is CHARTER I5, and it exists because of how the old tree drifted: 662
+inline `(source, expected)` pairs, with the expected string documented as the
+source of truth. Such a suite measures "does the curated subset still work" and
+stays green forever while the gap to real Python never narrows.
+
+## Usage
+
+```bash
+./verify/run.py --corpus tests/                 # a directory of programs
+./verify/run.py --libtest                       # CPython Lib/test — the metric
+./verify/run.py --file prog.py --show 4         # one program, with diffs
+./verify/run.py --corpus tests/ --fail-on P0    # CI gate
+./verify/run.py --corpus tests/ --json out.json # machine-readable
+```
+
+The subject binary comes from `--pyc`, `$PYC_BINARY`, or `./build/pyc`. The
+oracle comes from `--oracle`, or `--sysroot DIR` (read from that sysroot's
+`pyc-sysroot.json`), or the running interpreter. Prefer `--sysroot`: a
+divergence must be measured against the runtime actually being targeted, and
+that makes the parse oracle and the differential oracle the same binary
+(`rebuild/VERSION_TARGETING.md`).
+
+## Verdicts, worst first
+
+| | Verdict | Meaning |
+|---|---|---|
+| **P0** | `SILENT_WRONG_ANSWER` | pyc exited 0 and produced something other than Python's answer |
+| P1 | `CRASH` | pyc failed loudly — bad, but honest |
+| P1 | `HANG` | pyc exceeded the timeout; CPython did not |
+| P2 | `COMPILE_ERROR` | pyc refused to compile |
+| P3 | `STDERR_DIFF` | right answer, wrong diagnostics |
+| — | `MATCH` | |
+| — | `QUARANTINE_*` | no reproducible ground truth; excluded from scoring |
+
+**P0 outranks every crash.** That ordering is CHARTER I1 and is not a
+severity heuristic: a compiler that crashes is a compiler you can trust to
+tell you when it failed. One that returns 5 as `None`, or `math.factorial(25)`
+as a wrapped int64, silently corrupts every result downstream. Nothing in the
+reporting path may reorder this.
+
+**P2 is not a bug.** A compile error is the *correct* response to an
+unsupported construct (I1: fail loudly, never silently). Coverage gaps should
+present as P2 and get resolved by implementing the feature — never by
+downgrading the check.
+
+## How nondeterminism is handled
+
+Not with normalization rules. Hand-written normalizers — strip hex addresses,
+strip timings, sort set output — are a standing invitation to mask a real
+divergence, and you find out years later that the masking rule was hiding a
+bug.
+
+Instead the harness **runs the oracle twice** and quarantines any case whose
+own output is not reproducible. A case either has a stable ground truth or it
+is excluded from scoring. This cannot hide a divergence, because it never
+edits output before comparing it.
+
+`PYTHONHASHSEED=0` is pinned for the oracle so str-keyed set/dict iteration
+order is stable between runs. That is not normalization: pyc is still compared
+against whatever order CPython actually produces.
+
+## The metric (CHARTER I6)
+
+`--libtest` scores against CPython's own `Lib/test/`. It is the only number
+that cannot be gamed by adding more snippets, and it is published low and
+honest from day one.
+
+`corpus.py` skips some `Lib/test` files — C-API internals, tests that build
+extensions or re-exec the interpreter, GUI toolkits. Each exclusion carries a
+reason in the source, because the skip list is a statement about what the
+metric measures. Grow the corpus; never quietly shrink it.
+
+Note what running these files directly does and does not prove: many are
+`unittest` modules with no `main` block, so both sides produce empty output and
+the case reduces to an import test. That is still meaningful — it proves the
+module-level code (imports, class bodies, decorators, annotations) compiles and
+runs. Driving them under a unittest runner for deeper execution is a later
+increment, and will lower the score when it lands. That is correct and
+expected; do not treat the drop as a regression.
+
+## Extending
+
+- New corpus source → a generator of `Case` in `corpus.py`. It must not know
+  an expected output; if it needs one, the design is wrong.
+- New compiler CLI → `CompilerAdapter` in `differential.py` is the only place
+  that knows how pyc is invoked, so the harness survives the rebuild.
+- Property-based / generated programs are welcome. They fit the model exactly:
+  the oracle supplies the ground truth, so generated input costs nothing extra.
+
+## Baseline (2026-08-22)
+
+Measured against the **old tree**'s `build/pyc` at `352ed91`, oracle CPython
+3.14.7. This is the number the rebuild has to beat, recorded now so progress is
+measurable from the first commit rather than asserted.
+
+| Corpus | Pass rate |
+|---|---|
+| CPython `Lib/test/`, 60-file sample | **0.0%** (0/52 scored, 8 quarantined) |
+
+Breakdown: 30 `COMPILE_ERROR`, 11 `CRASH`, 8 `STDERR_DIFF`, **3 P0
+`SILENT_WRONG_ANSWER`**.
+
+The P0s are the finding worth reading. In `Lib/test/test_atexit.py`, pyc emits
+six `ImportError:` lines to stderr and then **exits 0** — it imported nothing,
+ran nothing, and reported success. An `ImportError` that does not fail the
+process is the silent-wrong-answer class in its purest form, and no amount of
+snippet testing would surface it.
+
+0.0% is the correct starting number and should be published as-is (I6).

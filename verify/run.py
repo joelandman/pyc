@@ -1,0 +1,222 @@
+#!/usr/bin/env python3
+"""pyc differential verification harness (agent A5).
+
+  ./verify/run.py --corpus tests/                    # a directory of programs
+  ./verify/run.py --libtest                          # CPython Lib/test metric
+  ./verify/run.py --corpus tests/ --json out.json    # machine-readable
+  ./verify/run.py --corpus tests/ --fail-on P0       # CI gate
+
+The oracle is a real CPython binary. No expected output is stored anywhere in
+this tree, by construction (CHARTER I5).
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import json
+import sys
+import sysconfig
+import time
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from verify import corpus as corpus_mod  # noqa: E402
+from verify.differential import (  # noqa: E402
+    Case, CompilerAdapter, DifferentialRunner, Result, Verdict,
+)
+
+BOLD, DIM, RED, YEL, GRN, CYA, RST = (
+    "\033[1m", "\033[90m", "\033[31m", "\033[33m", "\033[32m", "\033[36m", "\033[0m"
+)
+
+_COLOR = {
+    Verdict.SILENT_WRONG_ANSWER: RED,
+    Verdict.CRASH: YEL,
+    Verdict.HANG: YEL,
+    Verdict.COMPILE_ERROR: CYA,
+    Verdict.STDERR_DIFF: DIM,
+    Verdict.MATCH: GRN,
+}
+
+
+def find_pyc() -> Path | None:
+    import os
+    if (env := os.environ.get("PYC_BINARY")):
+        p = Path(env)
+        if p.exists():
+            return p
+    for c in ("build/pyc", "pyc", "build/bin/pyc"):
+        p = Path(c)
+        if p.exists():
+            return p.resolve()
+    return None
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    src = ap.add_argument_group("corpus")
+    src.add_argument("--corpus", type=Path, action="append", default=[],
+                     help="directory of standalone .py programs (repeatable)")
+    src.add_argument("--recursive", action="store_true")
+    src.add_argument("--libtest", action="store_true",
+                     help="CPython Lib/test/ — the completeness metric (I6)")
+    src.add_argument("--libtest-limit", type=int, default=None)
+    src.add_argument("--file", type=Path, action="append", default=[],
+                     help="a single program (repeatable)")
+
+    cfg = ap.add_argument_group("configuration")
+    cfg.add_argument("--pyc", type=Path, default=None, help="the pyc binary")
+    cfg.add_argument("--pyc-flag", action="append", default=[],
+                     help="extra flag passed to pyc (repeatable)")
+    cfg.add_argument("--oracle", type=Path, default=None,
+                     help="CPython binary (default: this interpreter)")
+    cfg.add_argument("--sysroot", type=Path, default=None,
+                     help="read the oracle from a pyc-sysroot.json manifest")
+    cfg.add_argument("--stdlib", type=Path, default=None,
+                     help="stdlib root for --libtest (default: oracle's own)")
+    cfg.add_argument("--jobs", "-j", type=int, default=0, help="0 = cpu_count")
+    cfg.add_argument("--run-timeout", type=float, default=30.0)
+    cfg.add_argument("--compile-timeout", type=float, default=180.0)
+    cfg.add_argument("--no-nondeterminism-probe", action="store_true",
+                     help="skip the double-run oracle stability check (faster, "
+                          "but nondeterministic cases become false findings)")
+
+    out = ap.add_argument_group("output")
+    out.add_argument("--json", type=Path, default=None)
+    out.add_argument("--fail-on", choices=["P0", "P1", "P2", "P3", "any", "never"],
+                     default="never", help="exit nonzero at or above this priority")
+    out.add_argument("--show", type=int, default=8,
+                     help="how many findings to show diffs for (0 = none)")
+    out.add_argument("--quiet", action="store_true")
+    args = ap.parse_args()
+
+    pyc = args.pyc or find_pyc()
+    if pyc is None:
+        print("error: no pyc binary (use --pyc or set PYC_BINARY)", file=sys.stderr)
+        return 2
+
+    oracle = (args.oracle
+              or corpus_mod.resolve_sysroot_oracle(args.sysroot)
+              or Path(sys.executable))
+
+    cases: list[Case] = []
+    for d in args.corpus:
+        cases += list(corpus_mod.from_directory(d, recursive=args.recursive))
+    for f in args.file:
+        cases.append(Case(path=f))
+    if args.libtest:
+        stdlib = args.stdlib or Path(sysconfig.get_paths()["stdlib"])
+        cases += list(corpus_mod.from_cpython_libtest(stdlib,
+                                                      limit=args.libtest_limit))
+    if not cases:
+        print("error: empty corpus (pass --corpus, --file, or --libtest)",
+              file=sys.stderr)
+        return 2
+
+    runner = DifferentialRunner(
+        oracle=oracle,
+        compiler=CompilerAdapter(pyc, tuple(args.pyc_flag)),
+        run_timeout=args.run_timeout,
+        compile_timeout=args.compile_timeout,
+        nondeterminism_probe=not args.no_nondeterminism_probe,
+    )
+
+    if not args.quiet:
+        print(f"{BOLD}pyc differential verification{RST}")
+        print(f"  subject  {pyc}")
+        print(f"  oracle   {oracle}")
+        print(f"  cases    {len(cases)}\n")
+
+    started = time.time()
+    jobs = args.jobs or None
+    results: list[Result] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
+        futs = {ex.submit(runner.run, c): c for c in cases}
+        done = 0
+        for fut in concurrent.futures.as_completed(futs):
+            try:
+                res = fut.result()
+            except Exception as e:  # harness bug, not a compiler finding
+                res = Result(futs[fut], Verdict.QUARANTINE_ORACLE_FAILED,
+                             detail=f"harness error: {e!r}")
+            results.append(res)
+            done += 1
+            if not args.quiet:
+                c = _COLOR.get(res.verdict, DIM)
+                print(f"  {done:>4}/{len(cases)}  {c}{res.verdict.name:<28}{RST} "
+                      f"{res.case.name}")
+
+    elapsed = time.time() - started
+    results.sort(key=lambda r: (r.verdict.value, r.case.name))
+    return report(results, args, elapsed)
+
+
+def report(results: list[Result], args, elapsed: float) -> int:
+    counts = Counter(r.verdict for r in results)
+    scored = [r for r in results if r.verdict.is_scored]
+    matched = counts[Verdict.MATCH]
+    rate = (100.0 * matched / len(scored)) if scored else 0.0
+
+    print(f"\n{BOLD}Summary{RST}  ({elapsed:.1f}s)")
+    for v in Verdict:
+        if counts[v]:
+            c = _COLOR.get(v, DIM)
+            tag = f"{v.priority:<3}" if v.is_finding else "   "
+            print(f"  {tag} {c}{v.name:<28}{RST} {counts[v]:>5}")
+
+    quarantined = len(results) - len(scored)
+    print(f"\n  {BOLD}pass rate  {rate:5.1f}%{RST}  "
+          f"({matched}/{len(scored)} scored"
+          + (f", {quarantined} quarantined)" if quarantined else ")"))
+
+    p0 = counts[Verdict.SILENT_WRONG_ANSWER]
+    if p0:
+        print(f"\n  {RED}{BOLD}{p0} SILENT WRONG ANSWER(S){RST} — "
+              f"pyc exited 0 and produced non-Python results.")
+        print(f"  {DIM}CHARTER I1 ranks these above every crash.{RST}")
+
+    if args.show:
+        shown = [r for r in results if r.verdict.is_finding][: args.show]
+        if shown:
+            print(f"\n{BOLD}Findings{RST}")
+            for r in shown:
+                c = _COLOR.get(r.verdict, DIM)
+                print(f"\n  {c}[{r.verdict.priority}] {r.verdict.name}{RST}  "
+                      f"{BOLD}{r.case.name}{RST}")
+                for line in r.diff_block().splitlines():
+                    print(f"    {DIM}{line}{RST}")
+
+    if args.json:
+        args.json.write_text(json.dumps({
+            "pass_rate": rate,
+            "scored": len(scored),
+            "matched": matched,
+            "quarantined": quarantined,
+            "elapsed_seconds": elapsed,
+            "counts": {v.name: counts[v] for v in Verdict if counts[v]},
+            "results": [{
+                "case": r.case.name,
+                "path": str(r.case.path),
+                "verdict": r.verdict.name,
+                "priority": r.verdict.priority,
+                "detail": r.detail,
+            } for r in results],
+        }, indent=2) + "\n")
+        print(f"\n  wrote {args.json}")
+
+    if args.fail_on == "never":
+        return 0
+    if args.fail_on == "any":
+        return 1 if any(r.verdict.is_finding for r in results) else 0
+    threshold = int(args.fail_on[1])
+    worst = [r for r in results
+             if r.verdict.is_finding and int(r.verdict.priority[1]) <= threshold]
+    return 1 if worst else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
