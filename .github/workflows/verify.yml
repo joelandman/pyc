@@ -77,26 +77,48 @@ jobs:
           sudo make install
           sudo ldconfig
 
+      # The runner's system python3 is 3.12, and pyc's frontend calls
+      # PyObject_GetOptionalAttrString, which CPython added in 3.13 -- so the
+      # tree has an undeclared minimum of CPython >= 3.13 just to BUILD. It
+      # compiles on the dev machine only because CMake finds a local 3.14.
+      #
+      # Building our own sysroot fixes that AND makes CI's differential oracle
+      # the same CPython the baseline was recorded against, which a system
+      # python3 could never be. --no-pgo because PGO costs 20-40 min and only
+      # affects speed, never observable behaviour, so the oracle is identical.
+      - name: Cache CPython sysroot
+        id: sysroot
+        uses: actions/cache@v4
+        with:
+          path: ~/opt/py-sysroots
+          key: sysroot-cp314-3.14.7-tier1-nopgo-${{ hashFiles('tools/build-python-sysroot.sh') }}
+
+      - name: Build CPython sysroot
+        if: steps.sysroot.outputs.cache-hit != 'true'
+        run: ./tools/build-python-sysroot.sh --version 3.14.7 --no-pgo --jobs "$(nproc)"
+
+      - name: Record oracle
+        run: |
+          echo "SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1" >> "$GITHUB_ENV"
+          "$HOME/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14" -VV
+
       - name: Build pyc
         run: |
           set -euxo pipefail
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_COMPILER=clang++-22 \
-            -DLLVM_DIR="$LLVM_DIR"
+            -DLLVM_DIR="$LLVM_DIR" \
+            -DPython3_ROOT_DIR="$SYSROOT" \
+            -DPython3_FIND_STRATEGY=LOCATION
           cmake --build build -j"$(nproc)"
-
-      # The oracle must be a real CPython. The runner's system python3 is the
-      # oracle here; once the sysroot model lands, restore a cached sysroot
-      # built by tools/build-python-sysroot.sh and pass --sysroot instead.
-      - name: Record oracle
-        run: python3 -VV
 
       - name: Differential run
         run: |
           ./verify/run.py \
             --corpus verify/corpus/language \
             --corpus verify/corpus/programs \
+            --sysroot "$SYSROOT" \
             --jobs "$(nproc)" \
             --run-timeout 15 --compile-timeout 90 \
             --show 12 \
