@@ -16,6 +16,12 @@
 #include "pyc/rt/capi.hpp"
 
 #include <string>
+#include <map>
+
+namespace pyc {
+std::vector<std::string> function_locals(const std::vector<std::string>&,
+                                        const std::vector<pyc::ast::stmt>&);
+}
 
 namespace pyc {
 namespace {
@@ -30,9 +36,9 @@ public:
     bool lower_module(const ast::mod& node) {
         const Module* mm = std::get_if<Module>(&node.v);
         if (!mm) return err("only a module can be compiled", "mod", {});
-        mod_.functions.push_back(ir::Function{"__main__", {}, {}, 1});
-        fn_ = &mod_.functions.back();
-        fn_->blocks.push_back(ir::Block{"entry", {}});
+        mod_.functions.push_back(ir::Function{"__main__", {}, {}, {}, 1});
+        fn_idx_ = mod_.functions.size() - 1;
+        cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
         for (const stmt& s : mm->body)
             if (!lower_stmt(s)) return false;
@@ -44,8 +50,18 @@ public:
 private:
     ir::Module& mod_;
     DiagnosticSink& diags_;
-    ir::Function* fn_ = nullptr;
+    // An INDEX, not a pointer: mod_.functions grows while a nested def is
+    // lowered, and a raw pointer into a vector that reallocates is a
+    // use-after-free. ASAN caught exactly that here.
+    std::size_t fn_idx_ = 0;
+    // Named cur() rather than fn(): lower_call has a local `fn` holding the
+    // callable, and a shadowed accessor there compiles into a call on a Value.
+    ir::Function*       cur()       { return &mod_.functions[fn_idx_]; }
+    const ir::Function* cur() const { return &mod_.functions[fn_idx_]; }
     std::size_t blk_ = 0;
+    // name -> slot, for the function currently being lowered. Empty at module
+    // level, where every name is a global.
+    std::map<std::string, std::uint32_t> locals_;
 
     bool err(std::string msg, std::string construct, SourceLoc loc) {
         diags_.report(Diagnostic{Diagnostic::Severity::Error, std::move(msg),
@@ -64,7 +80,7 @@ private:
             || op == ir::Op::Return || op == ir::Op::ReturnErr;
     }
     bool terminated() const {
-        const auto& is = fn_->blocks[blk_].instrs;
+        const auto& is = cur()->blocks[blk_].instrs;
         return !is.empty() && is_terminator(is.back().op);
     }
     // Anything after a terminator is unreachable, and a block with two
@@ -75,7 +91,7 @@ private:
     // then tries to branch out of.
     void emit(ir::Instr i) {
         if (terminated()) return;
-        fn_->blocks[blk_].instrs.push_back(std::move(i));
+        cur()->blocks[blk_].instrs.push_back(std::move(i));
     }
 
     // Every call goes through §4's table, so ownership is never guessed.
@@ -96,7 +112,7 @@ private:
                       symbol, loc);
             return {};
         }
-        ir::Value out = fn_->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         std::vector<ir::Value> saved = args;
         ir::Instr in{ir::Op::CallCApi, std::move(args), out,
                      sym->returns, symbol, 0, 0, loc, std::nullopt};
@@ -115,8 +131,8 @@ private:
     // --- blocks ------------------------------------------------------------
 
     std::uint32_t new_block(std::string label) {
-        fn_->blocks.push_back(ir::Block{std::move(label), {}});
-        return static_cast<std::uint32_t>(fn_->blocks.size() - 1);
+        cur()->blocks.push_back(ir::Block{std::move(label), {}});
+        return static_cast<std::uint32_t>(cur()->blocks.size() - 1);
     }
     void set_block(std::uint32_t b) { blk_ = b; }
 
@@ -159,10 +175,10 @@ private:
             [&](const Pass&)     { /* nothing to emit */ },
             // Everything else is a diagnostic, one arm each. No generic arm:
             // a node kind added upstream must break this build (I4).
-            [&](const FunctionDef& n)      { ok = unsupported("function definitions", n.loc); },
+            [&](const FunctionDef& n)      { ok = lower_functiondef(n); },
             [&](const AsyncFunctionDef& n) { ok = unsupported("async function definitions", n.loc); },
             [&](const ClassDef& n)         { ok = unsupported("class definitions", n.loc); },
-            [&](const Return& n)           { ok = unsupported("return", n.loc); },
+            [&](const Return& n)           { ok = lower_return(n); },
             [&](const Delete& n)           { ok = unsupported("del", n.loc); },
             [&](const AugAssign& n)        { ok = unsupported("augmented assignment", n.loc); },
             [&](const AnnAssign& n)        { ok = unsupported("annotated assignment", n.loc); },
@@ -179,7 +195,12 @@ private:
             [&](const Assert& n)           { ok = unsupported("assert", n.loc); },
             [&](const Import& n)           { ok = unsupported("import", n.loc); },
             [&](const ImportFrom& n)       { ok = unsupported("from-import", n.loc); },
-            [&](const Global& n)           { ok = unsupported("global", n.loc); },
+            [&](const Global&)             {
+                // No code to emit: function_locals() has already excluded
+                // these names, so every reference resolves to the global
+                // path by construction. `nonlocal` is different -- it needs
+                // closure cells -- and stays unsupported.
+            },
             [&](const Nonlocal& n)         { ok = unsupported("nonlocal", n.loc); },
             [&](const Break& n)            {
                 if (loops_.empty()) ok = err("break outside a loop", "break", n.loc);
@@ -204,12 +225,100 @@ private:
     ir::Value lower_predicate(const expr& e, bool* ok) {
         ir::Value v = lower_expr(e, ok);
         if (!*ok) return {};
-        ir::Value t = fn_->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        ir::Value t = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
         SourceLoc loc{};
         emit(ir::Instr{ir::Op::IsTrue, {v}, t, Ownership::NotAnObject,
                        "PyObject_IsTrue", 0, 0, loc, make_landing_pad(loc)});
         if (owns(v)) release(v, loc);
         return t;
+    }
+
+    bool lower_functiondef(const FunctionDef& n) {
+        if (!n.decorator_list.empty()) return unsupported("decorators", n.loc);
+        const arguments& a = *n.args;
+        if (!a.posonlyargs.empty()) return unsupported("positional-only parameters", n.loc);
+        if (!a.kwonlyargs.empty())  return unsupported("keyword-only parameters", n.loc);
+        if (!a.defaults.empty())    return unsupported("default arguments", n.loc);
+        if (a.vararg)               return unsupported("*args", n.loc);
+        if (a.kwarg)                return unsupported("**kwargs", n.loc);
+
+        std::vector<std::string> params;
+        for (const arg& p : a.args) params.push_back(p.arg);
+
+        // Save the enclosing function's state: a nested def is lowered into a
+        // separate ir::Function, and must not inherit the outer local map.
+        std::size_t outer_fn = fn_idx_;
+        std::size_t outer_blk = blk_;
+        auto outer_locals = locals_;
+        auto outer_owned = owned_;
+        auto outer_loops = loops_;
+
+        mod_.functions.push_back(ir::Function{n.name, params, {}, {}, 1});
+        fn_idx_ = mod_.functions.size() - 1;
+        cur()->locals = function_locals(params, n.body);
+        locals_.clear();
+        for (std::uint32_t i = 0; i < cur()->locals.size(); ++i)
+            locals_[cur()->locals[i]] = i;
+        owned_.clear();
+        loops_.clear();
+        cur()->blocks.push_back(ir::Block{"entry", {}});
+        blk_ = 0;
+
+        bool ok = true;
+        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
+        if (ok) {
+            // Falling off the end returns None, always.
+            ir::Value none = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstNone, {}, none, Ownership::Owned, "",
+                           0, 0, n.loc, std::nullopt});
+            emit(ir::Instr{ir::Op::Return, {none}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+        }
+
+        fn_idx_ = outer_fn; blk_ = outer_blk; locals_ = outer_locals;
+        owned_ = outer_owned; loops_ = outer_loops;
+        if (!ok) return false;
+
+        // Bind the callable in the enclosing scope, by the same store path any
+        // other assignment uses -- a def is not special.
+        ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::MakeFunction, {}, fv, Ownership::Owned,
+                       n.name, 0, 0, n.loc, make_landing_pad(n.loc)});
+        mark_owned(fv);
+        store_name(n.name, fv, n.loc);
+        return true;
+    }
+
+    bool lower_return(const Return& n) {
+        bool ok = true;
+        ir::Value v;
+        if (n.value) { v = lower_expr(**n.value, &ok); if (!ok) return false; }
+        else {
+            v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstNone, {}, v, Ownership::Owned, "",
+                           0, 0, n.loc, std::nullopt});
+            mark_owned(v);
+        }
+        // The returned reference is handed to the caller, so it must NOT be
+        // released here -- but every OTHER live temporary must be, or an early
+        // return leaks exactly what a landing pad would have freed.
+        for (auto it = owned_.rbegin(); it != owned_.rend(); ++it)
+            if (it->id != v.id) emit_decref(*it, n.loc);
+        emit(ir::Instr{ir::Op::Return, {v}, std::nullopt, Ownership::NotAnObject,
+                       "", 0, 0, n.loc, std::nullopt});
+        return true;
+    }
+
+    // One store path for every binding form: def, assignment, everything.
+    void store_name(const std::string& name, const ir::Value& v, const SourceLoc& loc) {
+        auto it = locals_.find(name);
+        if (it != locals_.end())
+            emit(ir::Instr{ir::Op::StoreLocal, {v}, std::nullopt,
+                           Ownership::NotAnObject, name, it->second, 0, loc, std::nullopt});
+        else
+            emit(ir::Instr{ir::Op::StoreGlobal, {v}, std::nullopt,
+                           Ownership::NotAnObject, name, 0, 0, loc, std::nullopt});
+        if (owns(v)) release(v, loc);
     }
 
     bool lower_if(const If& n) {
@@ -278,11 +387,7 @@ private:
             return unsupported("multiple assignment targets", a.loc);
         const Name* n = std::get_if<Name>(&a.targets[0].v);
         if (!n) return unsupported("assignment to anything but a bare name", a.loc);
-        emit(ir::Instr{ir::Op::StoreGlobal, {v}, std::nullopt,
-                       Ownership::NotAnObject, n->id, 0, 0, a.loc, std::nullopt});
-        // PyDict_SetItem-style stores INCREF; our temporary reference is then
-        // surplus and must go, or every assignment leaks.
-        if (owns(v)) release(v, a.loc);
+        store_name(n->id, v, a.loc);
         return true;
     }
 
@@ -343,7 +448,7 @@ private:
     }
 
     ir::Value lower_const(const Constant& c, bool* ok) {
-        ir::Value out = fn_->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         ir::Instr in{ir::Op::ConstNone, {}, out, Ownership::Owned, "", 0, 0,
                      c.loc, std::nullopt};
         std::visit(ov{
@@ -369,9 +474,17 @@ private:
     ir::Value lower_name(const Name& n, bool* ok) {
         // No builtin is special here. `print` is a global load like any other,
         // which is precisely why print/len/sum cannot diverge (I3).
-        ir::Value out = fn_->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        emit(ir::Instr{ir::Op::LoadGlobal, {}, out, Ownership::Owned,
-                       n.id, 0, 0, n.loc, make_landing_pad(n.loc)});
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        auto it = locals_.find(n.id);
+        if (it != locals_.end()) {
+            // May raise UnboundLocalError: a local read before assignment is
+            // an error, not a fallback to the global of the same name.
+            emit(ir::Instr{ir::Op::LoadLocal, {}, out, Ownership::Owned,
+                           n.id, it->second, 0, n.loc, make_landing_pad(n.loc)});
+        } else {
+            emit(ir::Instr{ir::Op::LoadGlobal, {}, out, Ownership::Owned,
+                           n.id, 0, 0, n.loc, make_landing_pad(n.loc)});
+        }
         mark_owned(out);
         *ok = true;
         return out;
@@ -387,7 +500,7 @@ private:
             args.push_back(v);
         }
         if (!c.keywords.empty()) { *ok = unsupported("keyword arguments", c.loc); return {}; }
-        ir::Value out = fn_->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         std::vector<ir::Value> saved = args;
         emit(ir::Instr{ir::Op::CallObject, std::move(args), out,
                        Ownership::Owned, "", 0, 0, c.loc, make_landing_pad(c.loc)});

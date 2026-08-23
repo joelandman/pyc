@@ -23,6 +23,10 @@ BLOCK = re.compile(r"^  (\S+):$")
 DEF = re.compile(r"^    %(\d+) = ")
 USE = re.compile(r"%(\d+)")
 DECREF = re.compile(r"^    decref %(\d+)$")
+# `ret %N` hands the reference to the caller: ownership is TRANSFERRED, not
+# leaked. Counting it as a leak is a false positive, and a checker that cries
+# wolf gets ignored just as surely as one that stays silent.
+RET_VAL = re.compile(r"^    ret %(\d+)$")
 OWNED = re.compile(r"; owned")
 
 
@@ -47,7 +51,7 @@ def check(ir: str) -> list[str]:
             defined.add(d.group(1))
             if OWNED.search(line):
                 owned.add(d.group(1))
-        r = DECREF.match(line)
+        r = DECREF.match(line) or RET_VAL.match(line)
         if r:
             released[r.group(1)] = released.get(r.group(1), 0) + 1
         for u in USE.findall(line.split("=")[-1] if d else line):
@@ -60,7 +64,7 @@ def check(ir: str) -> list[str]:
     # unambiguous defect from this vantage point.
     for v in sorted(owned, key=int):
         if v not in released:
-            problems.append(f"owned %{v} is never released (leak)")
+            problems.append(f"owned %{v} is never released or returned (leak)")
     return problems
 
 

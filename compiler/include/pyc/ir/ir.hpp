@@ -57,6 +57,9 @@ enum class Op {
     ReturnErr,
     // truthiness for a branch predicate: PyObject_IsTrue, -1 on error
     IsTrue,
+    // Build a callable from a lowered function and bind it in the enclosing
+    // scope. Codegen turns this into a PyCFunction over the emitted C entry.
+    MakeFunction,
 };
 
 const char* op_name(Op op);
@@ -86,6 +89,9 @@ struct Block {
 struct Function {
     std::string name;
     std::vector<std::string> params;
+    // Fast locals, CPython-style: a name assigned anywhere in the body is
+    // local throughout, so the slot set is fixed before lowering begins.
+    std::vector<std::string> locals;
     std::vector<Block> blocks;
     std::uint32_t next_value = 1;    // 0 reserved for "no value"
 
@@ -95,6 +101,7 @@ struct Function {
 struct Module {
     std::string source_file;
     std::vector<Function> functions;   // functions[0] is the module body
+
 };
 
 std::string to_string(const Module& m);

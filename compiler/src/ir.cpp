@@ -25,6 +25,7 @@ const char* op_name(Op op) {
         case Op::Return:      return "ret";
         case Op::ReturnErr:   return "ret.err";
         case Op::IsTrue:      return "istrue";
+        case Op::MakeFunction: return "makefunc";
     }
     return "?";
 }
@@ -47,7 +48,12 @@ std::string to_string(const Module& m) {
         o << "\nfunc " << f.name << "(";
         for (std::size_t i = 0; i < f.params.size(); ++i)
             o << (i ? ", " : "") << f.params[i];
-        o << "):\n";
+        o << ")";
+        if (!f.locals.empty()) {
+            o << "  ; locals:";
+            for (const std::string& l : f.locals) o << " " << l;
+        }
+        o << "\n";
         for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {
             const Block& b = f.blocks[bi];
             o << "  " << (b.label.empty() ? "bb" + std::to_string(bi) : b.label) << ":\n";
