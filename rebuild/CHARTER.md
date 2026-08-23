@@ -55,6 +55,23 @@ runtime (forecloses wheels forever), and a hybrid unboxed/CPython boundary
 and performance both go to die). The hybrid may be revisited *only* after the
 completeness metric in §4 exceeds 80%.
 
+## 2a. Implementation decisions (settled — do not relitigate)
+
+- **C++20.** Chosen for first-class LLVM API access and native C-API interop,
+  which matters because A2's entire job is talking to libpython.
+- **I4's totality is enforced, not merely intended.** Verified on this
+  toolchain: a `std::visit` over an overload set that omits an alternative is a
+  hard **compile error**, not a warning. Generated `std::variant` AST nodes
+  therefore give I4's "adding a node kind breaks the build" guarantee natively.
+  The one hole is a generic `auto` arm, which compiles and silently swallows —
+  so **generic arms are banned in visitors over `pyc::ast` / `pyc::ir`**, and a
+  build lint enforces it. See `INTERFACES.md` §2.3.
+- **JSON across the parse boundary**, revisitable on profiling evidence; it is
+  an implementation detail behind `INTERFACES.md` §2.1.
+
+Layer interfaces are frozen in **`INTERFACES.md` (v1)**. Amending them requires
+A0 sign-off and a version bump.
+
 ## 3. Invariants
 
 Each inverts an observed failure of the previous tree. Cited failures are

@@ -65,7 +65,10 @@ with a hardcoded expected value. Approving any performance change that alters
 an observable result.
 
 **DONE WHEN.** Layer interfaces are written down and frozen before the layers
-below them are implemented.
+below them are implemented. **Done: `INTERFACES.md` v1, 2026-08-22.** A0's
+remaining standing duty is to guard them — an interface change requires a
+version bump and a changelog entry, and §5 changes silently invalidate every
+recorded baseline.
 
 **NOT YOURS.** Nothing — but amendments to CHARTER.md require the user's
 explicit sign-off, since the charter encodes their product decisions.
@@ -73,6 +76,8 @@ explicit sign-off, since the charter encodes their product decisions.
 ---
 
 ## A1 — Frontend (typed AST)
+
+**INTERFACE.** `INTERFACES.md` §2 (and §1.1 for diagnostics). Frozen; do not change it unilaterally.
 
 **CONTRACT.** Expose a statically-typed AST, **generated per target** — from
 the target interpreter's `_field_types` (3.13+) or its `Python.asdl` (<=3.12) —
@@ -113,6 +118,8 @@ is what proves I8 rather than asserting it.
 
 ## A2 — Object model & runtime binding
 
+**INTERFACE.** `INTERFACES.md` §4. Frozen; do not change it unilaterally.
+
 **CONTRACT.** Expose the CPython C-API to the rest of the compiler: object
 representation, refcounting/lifetime discipline, exception propagation,
 GIL handling, and the embedding entry point (`Py_Initialize`, frozen stdlib,
@@ -138,6 +145,8 @@ CPython debug build with `Py_REF_DEBUG` showing zero leaks on the test corpus.
 ---
 
 ## A3 — Lowering & type inference
+
+**INTERFACE.** `INTERFACES.md` §2, §3, §4. Frozen; do not change it unilaterally.
 
 **CONTRACT.** Typed AST → typed SSA IR. Own the **type lattice** and the
 dataflow analysis that proves types. Emit unboxed native operations where a
@@ -166,6 +175,8 @@ must transparently become a bignum, not wrap).
 ---
 
 ## A4 — Backend, linking & deployment
+
+**INTERFACE.** `INTERFACES.md` §3, §5. Frozen; do not change it unilaterally.
 
 **CONTRACT.** Typed SSA IR → LLVM IR → object code → linked executable. Owns
 opt levels, `--static`, wheel discovery and linking, and `-g`/DWARF.
@@ -200,6 +211,8 @@ over it in codegen.
 ---
 
 ## A5 — Verification (independent)
+
+**INTERFACE.** `INTERFACES.md` §5 — and nothing else. Frozen; do not change it unilaterally.
 
 **CONTRACT.** Owns the differential harness and the completeness metric. This
 agent **reports to the user, not to the feature agents**, and its results may
