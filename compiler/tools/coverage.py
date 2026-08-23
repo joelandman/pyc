@@ -45,22 +45,34 @@ def main() -> int:
     ap.add_argument("--python", default="python3")
     ap.add_argument("--parser-cwd", default="compiler")
     ap.add_argument("--top", type=int, default=12)
+    ap.add_argument("--record", type=Path, default=None,
+                    help="write the measured line to a file, for pasting into "
+                         "a commit message verbatim")
     ap.add_argument("corpus", nargs="+", type=Path)
     args = ap.parse_args()
 
     run = Runner(args.lower, args.python, args.parser_cwd)
 
+    # Invalidate the record BEFORE measuring. If the run refuses or crashes,
+    # a stale file must not survive to be pasted into a commit message as if
+    # it were this run's result -- which is the same stale-number failure the
+    # record exists to prevent.
+    if args.record and args.record.exists():
+        args.record.unlink()
+
     # Prove the instrument works before trusting any number it produces.
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         good = Path(td) / "good.py"; good.write_text("x = 1 + 2\n")
-        # Must be something the compiler genuinely cannot lower. This probe
-        # goes stale by design as coverage grows. `import os`, `class C: pass` and a try
-        # statement were the first three choices; the self-check refused each
+        # Must be something the compiler genuinely cannot lower. A generator
+        # expression needs real generators, so it should outlast the others. This probe
+        # goes stale by design as coverage grows. `import os`, `class C: pass`, a try statement
+        # a lambda and a list
+        # comprehension were the first five choices; the self-check refused each
         # time the feature landed, rather than reporting a number from a blind
         # instrument. Update it when the refusal fires -- that is the guard
         # working, not a nuisance.
-        bad = Path(td) / "bad.py";  bad.write_text("f = lambda x: x\n")
+        bad = Path(td) / "bad.py";  bad.write_text("g = (x for x in y)\n")
         sc.require_detects(
             "coverage probe",
             lambda p: [] if run.outcome(str(p)) == "ok" else [run.outcome(str(p))],
@@ -75,7 +87,13 @@ def main() -> int:
     counts = collections.Counter(outcomes)
     ok = counts.pop("ok", 0)
     total = len(outcomes)
-    print(f"\n{BOLD}  lowered {ok}/{total} ({100*ok/total:.1f}%){RST}\n")
+    line = f"lowered {ok}/{total} ({100*ok/total:.1f}%)"
+    print(f"\n{BOLD}  {line}{RST}\n")
+    # A number in a commit message must be pasted from a real run, never
+    # recalled or estimated. Twice now an estimate went in and had to be
+    # amended, so the measurement is made available as text to copy.
+    if args.record:
+        args.record.write_text(line + "\n")
     if counts:
         print("  blockers:")
         for k, v in counts.most_common(args.top):

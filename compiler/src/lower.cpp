@@ -16,7 +16,9 @@
 #include "pyc/rt/capi.hpp"
 
 #include <string>
+#include <functional>
 #include <map>
+#include <set>
 
 namespace pyc {
 std::vector<std::string> function_locals(const std::vector<std::string>&,
@@ -282,6 +284,288 @@ private:
                        "PyObject_IsTrue", 0, 0, loc, make_landing_pad(loc)});
         if (owns(v)) release(v, loc);
         return t;
+    }
+
+    struct Loop { std::uint32_t head, done; };
+
+    // Saved lowering state while a nested function is built.
+    struct FnScope {
+        std::size_t fn, blk;
+        std::map<std::string, std::uint32_t> locals;
+        std::vector<ir::Value> owned, frame, class_ns;
+        std::vector<Loop> loops;
+        std::vector<std::uint32_t> tries;
+    };
+
+    FnScope begin_function(const std::string& name,
+                           const std::vector<std::string>& params,
+                           const std::vector<std::string>& locals) {
+        FnScope sc{fn_idx_, blk_, locals_, owned_, frame_owned_, class_ns_,
+                   loops_, try_stack_};
+        mod_.functions.push_back(ir::Function{name, params, {}, {}, 1});
+        fn_idx_ = mod_.functions.size() - 1;
+        cur()->locals = locals;
+        locals_.clear();
+        for (std::uint32_t i = 0; i < locals.size(); ++i) locals_[locals[i]] = i;
+        owned_.clear(); frame_owned_.clear(); class_ns_.clear();
+        loops_.clear(); try_stack_.clear();
+        cur()->blocks.push_back(ir::Block{"entry", {}});
+        blk_ = 0;
+        return sc;
+    }
+
+    std::size_t end_function(const FnScope& sc) {
+        std::size_t made = fn_idx_;
+        fn_idx_ = sc.fn; blk_ = sc.blk; locals_ = sc.locals;
+        owned_ = sc.owned; frame_owned_ = sc.frame; class_ns_ = sc.class_ns;
+        loops_ = sc.loops; try_stack_ = sc.tries;
+        return made;
+    }
+
+    ir::Value make_function_value(std::size_t idx, const std::string& name,
+                                  const SourceLoc& loc) {
+        ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        ir::Instr mk{ir::Op::MakeFunction, {}, fv, Ownership::Owned, name,
+                     0, 0, loc, make_landing_pad(loc)};
+        mk.imm = (std::int64_t)idx;
+        mk.has_imm = true;
+        emit(std::move(mk));
+        mark_owned(fv);
+        return fv;
+    }
+
+    // Names a nested construct reads that are LOCALS of the enclosing
+    // function. Without closures these cannot be reached from the synthetic
+    // function, so they are either passed as hidden arguments (comprehensions,
+    // where we control the call) or refused (lambda, where the user calls it).
+    void free_locals(const expr& e, std::set<std::string>& bound,
+                     std::set<std::string>& out) {
+        struct Scan {
+            const std::map<std::string, std::uint32_t>& locals;
+            std::set<std::string>& bound;
+            std::set<std::string>& out;
+            void name(const std::string& id) {
+                if (!bound.count(id) && locals.count(id)) out.insert(id);
+            }
+        } sc{locals_, bound, out};
+        walk_names(e, sc.bound, [&](const std::string& id){ sc.name(id); });
+    }
+
+    template <class F>
+    void walk_names(const expr& e, std::set<std::string>& bound, F&& f) {
+        // Deliberately conservative and simple: collect every Name read. Over-
+        // reporting costs a redundant hidden argument; under-reporting would
+        // silently read the wrong variable.
+        std::function<void(const expr&)> go = [&](const expr& x) {
+            std::visit(ov{
+                [&](const Name& n){ f(n.id); },
+                [&](const BinOp& n){ go(*n.left); go(*n.right); },
+                [&](const BoolOp& n){ for (const expr& v : n.values) go(v); },
+                [&](const UnaryOp& n){ go(*n.operand); },
+                [&](const Compare& n){ go(*n.left); for (const expr& v : n.comparators) go(v); },
+                [&](const Call& n){ go(*n.func); for (const expr& v : n.args) go(v);
+                                    for (const keyword& k : n.keywords) go(*k.value); },
+                [&](const Attribute& n){ go(*n.value); },
+                [&](const Subscript& n){ go(*n.value); go(*n.slice); },
+                [&](const IfExp& n){ go(*n.test); go(*n.body); go(*n.orelse); },
+                [&](const Tuple& n){ for (const expr& v : n.elts) go(v); },
+                [&](const List& n){ for (const expr& v : n.elts) go(v); },
+                [&](const Set& n){ for (const expr& v : n.elts) go(v); },
+                [&](const Dict& n){ for (const auto& k : n.keys) if (k && *k) go(**k);
+                                    for (const expr& v : n.values) go(v); },
+                [&](const Starred& n){ go(*n.value); },
+                [&](const Slice& n){ if (n.lower && *n.lower) go(**n.lower);
+                                     if (n.upper && *n.upper) go(**n.upper);
+                                     if (n.step && *n.step) go(**n.step); },
+                [&](const NamedExpr& n){ go(*n.value); },
+                [&](const Lambda& n){ go(*n.body); },
+                [&](const ListComp& n){ go(*n.elt); for (const comprehension& c : n.generators) go(*c.iter); },
+                [&](const SetComp& n){ go(*n.elt); for (const comprehension& c : n.generators) go(*c.iter); },
+                [&](const DictComp& n){ go(*n.key); go(*n.value);
+                                        for (const comprehension& c : n.generators) go(*c.iter); },
+                [&](const GeneratorExp& n){ go(*n.elt); for (const comprehension& c : n.generators) go(*c.iter); },
+                [&](const Await& n){ go(*n.value); },
+                [&](const Yield& n){ if (n.value) go(**n.value); },
+                [&](const YieldFrom& n){ go(*n.value); },
+                [&](const FormattedValue& n){ go(*n.value); },
+                [&](const JoinedStr& n){ for (const expr& v : n.values) go(v); },
+                [&](const TemplateStr& n){ for (const expr& v : n.values) go(v); },
+                [&](const Interpolation& n){ go(*n.value); },
+                [&](const Constant&){},
+            }, x.v);
+        };
+        go(e);
+    }
+
+    ir::Value lower_lambda(const Lambda& n, bool* ok) {
+        const arguments& a = *n.args;
+        if (!a.posonlyargs.empty() || !a.kwonlyargs.empty() || !a.defaults.empty()
+            || a.vararg || a.kwarg) {
+            *ok = unsupported("this lambda parameter form", n.loc);
+            return {};
+        }
+        std::vector<std::string> params;
+        for (const arg& p : a.args) params.push_back(p.arg);
+
+        // A lambda is called by the USER, so a captured enclosing local cannot
+        // be smuggled in as a hidden argument the way a comprehension's can.
+        // That needs real closure cells. Measured: 3 such lambdas in the
+        // corpus against 40 total, so this is refused rather than approximated.
+        std::set<std::string> bound(params.begin(), params.end());
+        std::set<std::string> captured;
+        free_locals(*n.body, bound, captured);
+        if (!captured.empty()) {
+            *ok = err("lambda captures the enclosing local '" + *captured.begin()
+                      + "'; closures are not implemented", "lambda-closure", n.loc);
+            return {};
+        }
+
+        FnScope sc = begin_function("<lambda>", params, params);
+        bool bok = true;
+        ir::Value r = lower_expr(*n.body, &bok);
+        if (bok)
+            emit(ir::Instr{ir::Op::Return, {r}, std::nullopt, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+        std::size_t idx = end_function(sc);
+        if (!bok) { *ok = false; return {}; }
+        *ok = true;
+        return make_function_value(idx, "<lambda>", n.loc);
+    }
+
+    // A comprehension is a separate SCOPE in Python 3: its loop variable does
+    // not leak. Inlining it would leak, which is an observable difference, so
+    // it becomes a synthetic function exactly as CPython compiles it. The
+    // iterator is passed as `.0`; captured enclosing locals follow as extra
+    // hidden parameters, which works here because we emit the call ourselves.
+    ir::Value lower_comp(const std::vector<comprehension>& gens,
+                         const expr* elt, const expr* key,
+                         const char* kind, const SourceLoc& loc, bool* ok) {
+        if (gens.size() != 1) { *ok = unsupported("nested comprehensions", loc); return {}; }
+        const comprehension& g = gens[0];
+        if (g.is_async) { *ok = unsupported("async comprehensions", loc); return {}; }
+        if (!std::holds_alternative<Name>(g.target->v)) {
+            *ok = unsupported("unpacking in a comprehension target", loc);
+            return {};
+        }
+        const std::string var = std::get<Name>(g.target->v).id;
+
+        std::set<std::string> bound{var};
+        std::set<std::string> captured;
+        free_locals(*elt, bound, captured);
+        if (key) free_locals(*key, bound, captured);
+        for (const expr& c : g.ifs) free_locals(c, bound, captured);
+        std::vector<std::string> caps(captured.begin(), captured.end());
+
+        // Evaluate the ITERABLE in the enclosing scope, as Python does.
+        ir::Value seq = lower_expr(*g.iter, ok);
+        if (!*ok) return {};
+        ir::Value iter = call_capi("PyObject_GetIter", {seq}, loc, ok, {seq});
+        if (!*ok) return {};
+        mark_owned(iter);
+
+        std::vector<ir::Value> capvals;
+        for (const std::string& c : caps) {
+            ir::Value v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            auto it = locals_.find(c);
+            emit(ir::Instr{ir::Op::LoadLocal, {}, v, Ownership::Owned, c,
+                           it->second, 0, loc, make_landing_pad(loc)});
+            mark_owned(v);
+            capvals.push_back(v);
+        }
+
+        std::vector<std::string> params{".0"};
+        for (const std::string& c : caps) params.push_back(c);
+        std::vector<std::string> locals = params;
+        locals.push_back(var);
+        locals.push_back(".acc");
+
+        std::string fname = std::string("<") + kind + "comp>";
+        FnScope sc = begin_function(fname, params, locals);
+        bool bok = true;
+        ir::Value acc;
+        if (std::string(kind) == "list")
+            acc = call_capi_imm("PyList_New", {}, 0, 0, loc, &bok);
+        else if (std::string(kind) == "set")
+            acc = call_capi("PySet_New", {ir::Value{}}, loc, &bok);
+        else
+            acc = call_capi("PyDict_New", {}, loc, &bok);
+        if (bok) {
+            mark_owned(acc);
+            store_name(".acc", acc, loc);
+            ir::Value it0 = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, it0, Ownership::Owned, ".0",
+                           0, 0, loc, make_landing_pad(loc)});
+            mark_owned(it0);
+            frame_owned_.push_back(it0);
+
+            std::uint32_t head = new_block("comp.head");
+            std::uint32_t body = new_block("comp.body");
+            std::uint32_t done = new_block("comp.done");
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", head, 0, loc, std::nullopt});
+            set_block(head);
+            ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::IterNext, {it0}, item, Ownership::Owned, "",
+                           body, done, loc, make_landing_pad(loc)});
+            set_block(body);
+            mark_owned(item);
+            store_name(var, item, loc);
+
+            std::uint32_t cont = head;
+            for (const expr& cond : g.ifs) {
+                ir::Value t = lower_predicate(cond, &bok);
+                if (!bok) break;
+                std::uint32_t keep = new_block("comp.keep");
+                emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt,
+                               Ownership::NotAnObject, "", keep, cont, loc,
+                               std::nullopt});
+                set_block(keep);
+            }
+            if (bok) {
+                ir::Value accv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::LoadLocal, {}, accv, Ownership::Owned,
+                               ".acc", (std::uint32_t)(locals.size() - 1), 0, loc,
+                               make_landing_pad(loc)});
+                mark_owned(accv);
+                if (std::string(kind) == "list") {
+                    ir::Value v = lower_expr(*elt, &bok);
+                    if (bok) call_capi("PyList_Append", {accv, v}, loc, &bok, {v, accv});
+                } else if (std::string(kind) == "set") {
+                    ir::Value v = lower_expr(*elt, &bok);
+                    if (bok) call_capi("PySet_Add", {accv, v}, loc, &bok, {v, accv});
+                } else {
+                    ir::Value k = lower_expr(*key, &bok);
+                    ir::Value v = bok ? lower_expr(*elt, &bok) : ir::Value{};
+                    if (bok) call_capi("PyDict_SetItem", {accv, k, v}, loc, &bok, {k, v, accv});
+                }
+                if (bok)
+                    emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                                   "", head, 0, loc, std::nullopt});
+                set_block(done);
+                frame_owned_.pop_back();
+                if (owns(it0)) release(it0, loc);
+                ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::LoadLocal, {}, out, Ownership::Owned,
+                               ".acc", (std::uint32_t)(locals.size() - 1), 0, loc,
+                               make_landing_pad(loc)});
+                emit(ir::Instr{ir::Op::Return, {out}, std::nullopt,
+                               Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+            }
+        }
+        std::size_t idx = end_function(sc);
+        if (!bok) { *ok = false; return {}; }
+
+        ir::Value fnv = make_function_value(idx, fname, loc);
+        std::vector<ir::Value> args{fnv, iter};
+        for (const ir::Value& c : capvals) args.push_back(c);
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        std::vector<ir::Value> saved = args;
+        emit(ir::Instr{ir::Op::CallObject, args, out, Ownership::Owned, "",
+                       0, 0, loc, make_landing_pad(loc)});
+        for (const ir::Value& a : saved) if (owns(a)) release(a, loc);
+        mark_owned(out);
+        *ok = true;
+        return out;
     }
 
     bool lower_functiondef(const FunctionDef& n) {
@@ -788,7 +1072,6 @@ private:
     }
 
     std::uint32_t pad_n_ = 0;
-    struct Loop { std::uint32_t head, done; };
     std::vector<Loop> loops_;
 
     bool lower_expr_stmt(const Expr& e) {
@@ -845,13 +1128,13 @@ private:
             [&](const BoolOp& n)        { out = lower_boolop(n, ok); },
             [&](const NamedExpr& n)     { *ok = unsupported("walrus", n.loc); },
             [&](const UnaryOp& n)       { out = lower_unaryop(n, ok); },
-            [&](const Lambda& n)        { *ok = unsupported("lambda", n.loc); },
+            [&](const Lambda& n)        { out = lower_lambda(n, ok); },
             [&](const IfExp& n)         { out = lower_ifexp(n, ok); },
             [&](const Dict& n)          { out = lower_dict(n, ok); },
             [&](const Set& n)           { out = lower_set(n, ok); },
-            [&](const ListComp& n)      { *ok = unsupported("list comprehensions", n.loc); },
-            [&](const SetComp& n)       { *ok = unsupported("set comprehensions", n.loc); },
-            [&](const DictComp& n)      { *ok = unsupported("dict comprehensions", n.loc); },
+            [&](const ListComp& n)      { out = lower_comp(n.generators, &*n.elt, nullptr, "list", n.loc, ok); },
+            [&](const SetComp& n)       { out = lower_comp(n.generators, &*n.elt, nullptr, "set", n.loc, ok); },
+            [&](const DictComp& n)      { out = lower_comp(n.generators, &*n.value, &*n.key, "dict", n.loc, ok); },
             [&](const GeneratorExp& n)  { *ok = unsupported("generator expressions", n.loc); },
             [&](const Await& n)         { *ok = unsupported("await", n.loc); },
             [&](const Yield& n)         { *ok = unsupported("yield", n.loc); },
