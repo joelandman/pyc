@@ -226,6 +226,18 @@ private:
                 o_ << "  " << v(*in.result) << " = zext i1 " << c << " to i32\n";
                 break;
             }
+            case Op::DelGlobal: {
+                need("declare i32 @pyc_rt_del_global(ptr)");
+                o_ << "  " << v(*in.result) << " = call i32 @pyc_rt_del_global(ptr "
+                   << cstr(in.text) << ")\n";
+                check(in, v(*in.result), false);
+                break;
+            }
+            case Op::IntConst: {
+                // A machine int materialised as an i32 the call site widens.
+                o_ << "  " << v(*in.result) << " = add i32 0, " << in.text << "\n";
+                break;
+            }
             case Op::ConstComplex: {
                 need("declare ptr @PyComplex_FromDoubles(double, double)");
                 std::string re = in.text.substr(0, in.text.find(' '));

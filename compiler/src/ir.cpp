@@ -34,6 +34,8 @@ const char* op_name(Op op) {
         case Op::Raise:       return "raise";
         case Op::Unpack:      return "unpack";
         case Op::ConstComplex: return "const.complex";
+        case Op::IntConst:    return "int.const";
+        case Op::DelGlobal:   return "del.global";
         case Op::MakeFunction: return "makefunc";
     }
     return "?";

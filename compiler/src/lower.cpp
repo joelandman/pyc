@@ -246,7 +246,27 @@ private:
             },
             [&](const Try& n)              { ok = lower_try(n); },
             [&](const TryStar& n)          { ok = unsupported("try/except*", n.loc); },
-            [&](const Assert& n)           { ok = unsupported("assert", n.loc); },
+            [&](const Assert& n)           {
+                // `assert c, m` is `if not c: raise AssertionError(m)`. The
+                // message expression is evaluated ONLY on failure.
+                ir::Value t = lower_predicate(*n.test, &ok);
+                if (!ok) return;
+                std::uint32_t fail_b = new_block("assert.fail");
+                std::uint32_t okb    = new_block("assert.ok");
+                emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt,
+                               Ownership::NotAnObject, "", okb, fail_b, n.loc,
+                               std::nullopt});
+                set_block(fail_b);
+                ir::Value m = ir::Value{};
+                if (n.msg) { m = lower_expr(**n.msg, &ok); if (!ok) return; }
+                call_capi("pyc_rt_assert_fail", {m}, n.loc, &ok,
+                          m.valid() ? std::vector<ir::Value>{m} : std::vector<ir::Value>{});
+                if (!ok) return;
+                std::uint32_t pad = make_landing_pad(n.loc);
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", pad, 0, n.loc, std::nullopt});
+                set_block(okb);
+            },
             [&](const Import& n)           { ok = lower_import(n); },
             [&](const ImportFrom& n)       { ok = lower_import_from(n); },
             [&](const Global&)             {
@@ -441,13 +461,15 @@ private:
     ir::Value lower_comp(const std::vector<comprehension>& gens,
                          const expr* elt, const expr* key,
                          const char* kind, const SourceLoc& loc, bool* ok) {
-        if (gens.size() != 1) { *ok = unsupported("nested comprehensions", loc); return {}; }
         const comprehension& g = gens[0];
         if (g.is_async) { *ok = unsupported("async comprehensions", loc); return {}; }
         // `for k, v in pairs` binds several names; collect them all so the
         // synthetic function declares a slot for each.
         std::vector<std::string> vars;
-        collect_target_names(*g.target, vars);
+        for (const comprehension& c : gens) {
+            if (c.is_async) { *ok = unsupported("async comprehensions", loc); return {}; }
+            collect_target_names(*c.target, vars);
+        }
         if (vars.empty()) {
             *ok = unsupported("this comprehension target", loc);
             return {};
@@ -458,7 +480,12 @@ private:
         std::set<std::string> captured;
         free_locals(*elt, bound, captured);
         if (key) free_locals(*key, bound, captured);
-        for (const expr& c : g.ifs) free_locals(c, bound, captured);
+        for (const comprehension& c : gens) {
+            for (const expr& cond : c.ifs) free_locals(cond, bound, captured);
+            // Only the FIRST iterable is evaluated outside; later ones are
+            // expressions inside the comprehension and may capture too.
+            if (&c != &gens[0]) free_locals(*c.iter, bound, captured);
+        }
         std::vector<std::string> caps(captured.begin(), captured.end());
 
         // Evaluate the ITERABLE in the enclosing scope, as Python does.
@@ -503,51 +530,77 @@ private:
             mark_owned(it0);
             frame_owned_.push_back(it0);
 
-            std::uint32_t head = new_block("comp.head");
-            std::uint32_t body = new_block("comp.body");
-            std::uint32_t done = new_block("comp.done");
-            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                           "", head, 0, loc, std::nullopt});
-            set_block(head);
-            ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-            emit(ir::Instr{ir::Op::IterNext, {it0}, item, Ownership::Owned, "",
-                           body, done, loc, make_landing_pad(loc)});
-            set_block(body);
-            mark_owned(item);
-            if (std::holds_alternative<Name>(g.target->v)) store_name(var, item, loc);
-            else if (!store_target(*g.target, item, loc)) bok = false;
-
-            std::uint32_t cont = head;
-            for (const expr& cond : g.ifs) {
-                ir::Value t = lower_predicate(cond, &bok);
-                if (!bok) break;
-                std::uint32_t keep = new_block("comp.keep");
-                emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt,
-                               Ownership::NotAnObject, "", keep, cont, loc,
-                               std::nullopt});
-                set_block(keep);
-            }
-            if (bok) {
-                ir::Value accv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-                emit(ir::Instr{ir::Op::LoadLocal, {}, accv, Ownership::Owned,
-                               ".acc", (std::uint32_t)(locals.size() - 1), 0, loc,
-                               make_landing_pad(loc)});
-                mark_owned(accv);
-                if (std::string(kind) == "list") {
-                    ir::Value v = lower_expr(*elt, &bok);
-                    if (bok) call_capi("PyList_Append", {accv, v}, loc, &bok, {v, accv});
-                } else if (std::string(kind) == "set") {
-                    ir::Value v = lower_expr(*elt, &bok);
-                    if (bok) call_capi("PySet_Add", {accv, v}, loc, &bok, {v, accv});
-                } else {
-                    ir::Value k = lower_expr(*key, &bok);
-                    ir::Value v = bok ? lower_expr(*elt, &bok) : ir::Value{};
-                    if (bok) call_capi("PyDict_SetItem", {accv, k, v}, loc, &bok, {k, v, accv});
-                }
-                if (bok)
+            // Nest the generators: each one is a loop whose body is the
+            // next, and the innermost body accumulates. Written recursively
+            // because the shape IS recursive -- flattening it would need an
+            // explicit stack of loop headers for no benefit.
+            std::function<bool(std::size_t, const ir::Value&)> nest =
+                [&](std::size_t gi, const ir::Value& iter_v) -> bool {
+                    const comprehension& gg = gens[gi];
+                    std::uint32_t head = new_block("comp.head");
+                    std::uint32_t body = new_block("comp.body");
+                    std::uint32_t done = new_block("comp.done");
                     emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                    "", head, 0, loc, std::nullopt});
-                set_block(done);
+                    set_block(head);
+                    ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                    emit(ir::Instr{ir::Op::IterNext, {iter_v}, item, Ownership::Owned,
+                                   "", body, done, loc, make_landing_pad(loc)});
+                    set_block(body);
+                    mark_owned(item);
+                    if (!store_target(*gg.target, item, loc)) return false;
+
+                    bool bk = true;
+                    for (const expr& cond : gg.ifs) {
+                        ir::Value t = lower_predicate(cond, &bk);
+                        if (!bk) return false;
+                        std::uint32_t keep = new_block("comp.keep");
+                        emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt,
+                                       Ownership::NotAnObject, "", keep, head, loc,
+                                       std::nullopt});
+                        set_block(keep);
+                    }
+
+                    if (gi + 1 < gens.size()) {
+                        ir::Value sub = lower_expr(*gens[gi + 1].iter, &bk);
+                        if (!bk) return false;
+                        ir::Value subit = call_capi("PyObject_GetIter", {sub}, loc,
+                                                    &bk, {sub});
+                        if (!bk) return false;
+                        mark_owned(subit);
+                        frame_owned_.push_back(subit);
+                        if (!nest(gi + 1, subit)) return false;
+                        frame_owned_.pop_back();
+                        if (owns(subit)) release(subit, loc);
+                    } else {
+                        ir::Value accv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                        emit(ir::Instr{ir::Op::LoadLocal, {}, accv, Ownership::Owned,
+                                       ".acc", (std::uint32_t)(locals.size() - 1), 0,
+                                       loc, make_landing_pad(loc)});
+                        mark_owned(accv);
+                        std::string kk(kind);
+                        if (kk == "list") {
+                            ir::Value v = lower_expr(*elt, &bk);
+                            if (bk) call_capi("PyList_Append", {accv, v}, loc, &bk, {v, accv});
+                        } else if (kk == "set") {
+                            ir::Value v = lower_expr(*elt, &bk);
+                            if (bk) call_capi("PySet_Add", {accv, v}, loc, &bk, {v, accv});
+                        } else {
+                            ir::Value k2 = lower_expr(*key, &bk);
+                            ir::Value v = bk ? lower_expr(*elt, &bk) : ir::Value{};
+                            if (bk) call_capi("PyDict_SetItem", {accv, k2, v}, loc, &bk,
+                                              {k2, v, accv});
+                        }
+                        if (!bk) return false;
+                    }
+                    emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                                   "", head, 0, loc, std::nullopt});
+                    set_block(done);
+                    return true;
+                };
+
+            bok = nest(0, it0);
+            if (bok) {
                 frame_owned_.pop_back();
                 if (owns(it0)) release(it0, loc);
                 ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
@@ -871,7 +924,12 @@ private:
                     if (!ok) return;
                     call_capi("PyObject_DelItem", {obj, key}, n.loc, &ok, {obj, key});
                 },
-                [&](const Name& n2)      { ok = unsupported("del of a name", n2.loc); },
+                [&](const Name& n2)      {
+                    if (locals_.count(n2.id)) { ok = unsupported("del of a local", n2.loc); return; }
+                    ir::Value r = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+                    emit(ir::Instr{ir::Op::DelGlobal, {}, r, Ownership::NotAnObject,
+                                   n2.id, 0, 0, n.loc, make_landing_pad(n.loc)});
+                },
                 [&](const Tuple& n2)     { ok = unsupported("del of a tuple target", n2.loc); },
                 [&](const List& n2)      { ok = unsupported("del of a list target", n2.loc); },
                 [&](const Starred& n2)   { ok = bad_target("a starred target", n2.loc); },
@@ -906,18 +964,44 @@ private:
 
     // `a, b = value` and its nested forms. The arity check and CPython's
     // exact wording live in the runtime helper; here we only distribute.
+    // A machine integer constant, for C-API parameters typed as integers.
+    void emit_int_const(const ir::Value& dst, std::int64_t n, const SourceLoc& loc) {
+        ir::Instr in{ir::Op::IntConst, {}, dst, Ownership::NotAnObject,
+                     std::to_string(n), 0, 0, loc, std::nullopt};
+        emit(std::move(in));
+    }
+
     bool unpack_into(const std::vector<expr>& targets, const ir::Value& v,
                      const SourceLoc& loc) {
-        for (const expr& t : targets)
-            if (std::holds_alternative<Starred>(t.v))
-                return unsupported("starred target in unpacking", loc);
         bool ok = true;
-        ir::Value tup = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        ir::Instr in{ir::Op::Unpack, {v}, tup, Ownership::Owned, "",
-                     0, 0, loc, make_landing_pad(loc)};
-        in.imm = (std::int64_t)targets.size();
-        in.has_imm = true;
-        emit(std::move(in));
+        int star = -1;
+        for (std::size_t i = 0; i < targets.size(); ++i)
+            if (std::holds_alternative<Starred>(targets[i].v)) {
+                if (star >= 0) return err("two starred targets in one assignment",
+                                          "assignment-target", loc);
+                star = (int)i;
+            }
+        ir::Value tup;
+        if (star >= 0) {
+            // `a, *rest, b = v`: the star absorbs whatever the fixed positions
+            // leave, so the split is a run-time decision.
+            std::int64_t before = star;
+            std::int64_t after = (std::int64_t)targets.size() - star - 1;
+            ir::Value nb = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+            ir::Value na = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+            emit_int_const(nb, before, loc);
+            emit_int_const(na, after, loc);
+            tup = call_capi("pyc_rt_unpack_ex", {v, nb, na}, loc, &ok);
+            if (!ok) return false;
+            mark_owned(tup);
+        } else {
+            tup = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            ir::Instr in{ir::Op::Unpack, {v}, tup, Ownership::Owned, "",
+                         0, 0, loc, make_landing_pad(loc)};
+            in.imm = (std::int64_t)targets.size();
+            in.has_imm = true;
+            emit(std::move(in));
+        }
         mark_owned(tup);
         if (owns(v)) release(v, loc);
         for (std::size_t i = 0; i < targets.size(); ++i) {
@@ -930,10 +1014,20 @@ private:
             if (!ok) return false;
             mark_owned(item);
             // Recurses, so `(a, (b, c)) = ...` works by construction.
-            if (!store_target(targets[i], item, loc)) return false;
+            const expr* tgt = &targets[i];
+            if (const Starred* st = std::get_if<Starred>(&tgt->v)) tgt = &*st->value;
+            if (!store_target(*tgt, item, loc)) return false;
         }
         if (owns(tup)) release(tup, loc);
         return true;
+    }
+
+    void store_target_keep(const expr& t, const ir::Value& v,
+                           const SourceLoc& loc, bool* ok) {
+        bool was = owns(v);
+        if (was) forget(v);
+        *ok = store_target(t, v, loc);
+        if (was) mark_owned(v);
     }
 
     bool bad_target(const char* what, const SourceLoc& loc) {
@@ -1286,9 +1380,7 @@ private:
 
     bool lower_for(const For& n) {
         if (!n.orelse.empty()) return unsupported("for/else", n.loc);
-        if (!std::holds_alternative<Name>(n.target->v))
-            return unsupported("unpacking in a for target", n.loc);
-        const Name& tgt = std::get<Name>(n.target->v);
+
 
         bool ok = true;
         ir::Value seq = lower_expr(*n.iter, &ok);
@@ -1314,7 +1406,9 @@ private:
 
         set_block(body);
         mark_owned(item);
-        store_name(tgt.id, item, n.loc);          // store_name releases item
+        // Any assignable target works, so `for k, v in pairs` unpacks through
+        // the same path a plain assignment does.
+        if (!store_target(*n.target, item, n.loc)) return false;
         loops_.push_back({head, done});
         for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
         loops_.pop_back();
@@ -1367,9 +1461,13 @@ private:
         bool ok = true;
         ir::Value v = lower_expr(*a.value, &ok);
         if (!ok) return false;
-        if (a.targets.size() != 1)
-            return unsupported("multiple assignment targets", a.loc);
-        return store_target(a.targets[0], v, a.loc);
+        // `a = b = 1` binds every target to the SAME object, left to right.
+        for (std::size_t i = 0; i + 1 < a.targets.size(); ++i) {
+            bool ok2 = true;
+            store_target_keep(a.targets[i], v, a.loc, &ok2);
+            if (!ok2) return false;
+        }
+        return store_target(a.targets.back(), v, a.loc);
     }
 
     // --- expressions -------------------------------------------------------
@@ -1496,6 +1594,11 @@ private:
     ir::Value lower_call(const Call& c, bool* ok) {
         ir::Value fn = lower_expr(*c.func, ok);
         if (!*ok) return {};
+        bool starred = false;
+        for (const expr& a : c.args)
+            if (std::holds_alternative<Starred>(a.v)) starred = true;
+        if (starred) return lower_call_starred(c, fn, ok);
+
         std::vector<ir::Value> args{fn};
         for (const expr& a : c.args) {
             ir::Value v = lower_expr(a, ok);
@@ -1560,13 +1663,38 @@ private:
     // §4's table records -- so call_capi does NOT emit a decref for the
     // element afterwards. Emitting one would be a double free, and it is the
     // exact entry my curated steal list got wrong the first time.
+    // `[*a, b]` splices a's contents rather than nesting it, so the size is
+    // not known until run time: build a list, then convert.
+    ir::Value lower_spliced(const std::vector<expr>& elts, const char* kind,
+                            const SourceLoc& loc, bool* ok) {
+        ir::Value lst = call_capi_imm("PyList_New", {}, 0, 0, loc, ok);
+        if (!*ok) return {};
+        mark_owned(lst);
+        for (const expr& e : elts) {
+            if (const Starred* st = std::get_if<Starred>(&e.v)) {
+                ir::Value v = lower_expr(*st->value, ok);
+                if (!*ok) return {};
+                call_capi("pyc_rt_extend", {lst, v}, loc, ok, {v});
+            } else {
+                ir::Value v = lower_expr(e, ok);
+                if (!*ok) return {};
+                call_capi("PyList_Append", {lst, v}, loc, ok, {v});
+            }
+            if (!*ok) return {};
+        }
+        std::string k(kind);
+        if (k == "PyList") return lst;             // already a list
+        const char* conv = (k == "PyTuple") ? "PySequence_Tuple" : "PySet_New";
+        ir::Value out = call_capi(conv, {lst}, loc, ok, {lst});
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
     ir::Value lower_sequence(const std::vector<expr>& elts, const char* prefix,
                              const SourceLoc& loc, bool* ok) {
         for (const expr& e : elts)
-            if (std::holds_alternative<Starred>(e.v)) {
-                *ok = unsupported("star-unpacking in a literal", loc);
-                return {};
-            }
+            if (std::holds_alternative<Starred>(e.v))
+                return lower_spliced(elts, prefix, loc, ok);
         std::string mk = std::string(prefix) + "_New";
         std::string set = std::string(prefix) + "_SetItem";
         ir::Value seq = call_capi_imm(mk.c_str(), {}, (std::int64_t)elts.size(), 0, loc, ok);
@@ -1584,10 +1712,8 @@ private:
 
     ir::Value lower_set(const Set& n, bool* ok) {
         for (const expr& e : n.elts)
-            if (std::holds_alternative<Starred>(e.v)) {
-                *ok = unsupported("star-unpacking in a set literal", n.loc);
-                return {};
-            }
+            if (std::holds_alternative<Starred>(e.v))
+                return lower_spliced(n.elts, "PySet", n.loc, ok);
         // PySet_New takes a nullable iterable; NULL means empty. The arity
         // check rejects the zero-argument form, which is how this was found.
         ir::Value s2 = call_capi("PySet_New", {ir::Value{}}, n.loc, ok);
@@ -1909,6 +2035,36 @@ private:
     // A call with keywords goes through PyObject_Call(callable, args, kwargs)
     // rather than the vectorcall fast path: building the tuple and dict is the
     // straightforward form, and correctness comes first (CHARTER §1).
+    // f(*xs, k=v): the positional count is only known at run time, so the
+    // argument tuple is built by splicing and the call goes through
+    // PyObject_Call rather than the vectorcall fast path.
+    ir::Value lower_call_starred(const Call& c, const ir::Value& fn, bool* ok) {
+        ir::Value tup = lower_spliced(c.args, "PyTuple", c.loc, ok);
+        if (!*ok) return {};
+        ir::Value kw;
+        if (!c.keywords.empty()) {
+            for (const keyword& k : c.keywords)
+                if (!k.arg) { *ok = unsupported("** unpacking in a call", c.loc); return {}; }
+            kw = call_capi("PyDict_New", {}, c.loc, ok);
+            if (!*ok) return {};
+            mark_owned(kw);
+            for (const keyword& k : c.keywords) {
+                ir::Value key = const_str(*k.arg, c.loc);
+                ir::Value val = lower_expr(*k.value, ok);
+                if (!*ok) return {};
+                call_capi("PyDict_SetItem", {kw, key, val}, c.loc, ok, {key, val});
+                if (!*ok) return {};
+            }
+        } else {
+            kw = ir::Value{};                       // NULL: no keywords
+        }
+        std::vector<ir::Value> consume{fn, tup};
+        if (kw.valid()) consume.push_back(kw);
+        ir::Value out = call_capi("PyObject_Call", {fn, tup, kw}, c.loc, ok, consume);
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
     ir::Value lower_call_kw(const Call& c, const ir::Value& fn,
                             const std::vector<ir::Value>& all, bool* ok) {
         for (const keyword& k : c.keywords)

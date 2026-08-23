@@ -336,3 +336,71 @@ extern "C" int pyc_rt_exit_exc(PyObject* exitf) {
     PyErr_SetRaisedException(exc);                        // steals exc
     return 0;
 }
+
+extern "C" int pyc_rt_extend(PyObject* list, PyObject* iterable) {
+    PyObject* it = PyObject_GetIter(iterable);
+    if (!it) return -1;
+    for (;;) {
+        PyObject* item = PyIter_Next(it);
+        if (!item) break;
+        int r = PyList_Append(list, item);
+        Py_DECREF(item);
+        if (r < 0) { Py_DECREF(it); return -1; }
+    }
+    Py_DECREF(it);
+    return PyErr_Occurred() ? -1 : 0;
+}
+
+extern "C" PyObject* pyc_rt_unpack_ex(PyObject* value, Py_ssize_t nbefore,
+                                      Py_ssize_t nafter) {
+    PyObject* all = PySequence_Tuple(value);
+    if (!all) return nullptr;
+    Py_ssize_t n = PyTuple_GET_SIZE(all);
+    if (n < nbefore + nafter) {
+        PyErr_Format(PyExc_ValueError,
+                     "not enough values to unpack (expected at least %zd, got %zd)",
+                     nbefore + nafter, n);
+        Py_DECREF(all);
+        return nullptr;
+    }
+    PyObject* out = PyTuple_New(nbefore + 1 + nafter);
+    if (!out) { Py_DECREF(all); return nullptr; }
+    for (Py_ssize_t i = 0; i < nbefore; ++i) {
+        PyObject* v = PyTuple_GET_ITEM(all, i);
+        Py_INCREF(v);
+        PyTuple_SET_ITEM(out, i, v);
+    }
+    PyObject* mid = PyList_New(0);
+    if (!mid) { Py_DECREF(all); Py_DECREF(out); return nullptr; }
+    for (Py_ssize_t i = nbefore; i < n - nafter; ++i) {
+        if (PyList_Append(mid, PyTuple_GET_ITEM(all, i)) < 0) {
+            Py_DECREF(mid); Py_DECREF(all); Py_DECREF(out); return nullptr;
+        }
+    }
+    PyTuple_SET_ITEM(out, nbefore, mid);            // steals mid
+    for (Py_ssize_t i = 0; i < nafter; ++i) {
+        PyObject* v = PyTuple_GET_ITEM(all, n - nafter + i);
+        Py_INCREF(v);
+        PyTuple_SET_ITEM(out, nbefore + 1 + i, v);
+    }
+    Py_DECREF(all);
+    return out;
+}
+
+extern "C" int pyc_rt_assert_fail(PyObject* msg) {
+    if (msg) PyErr_SetObject(PyExc_AssertionError, msg);
+    else     PyErr_SetNone(PyExc_AssertionError);
+    return -1;
+}
+
+extern "C" int pyc_rt_del_global(const char* name) {
+    PyObject* g = globals_dict();
+    if (!g) return -1;
+    if (PyDict_DelItemString(g, name) < 0) {
+        // CPython reports a missing global as NameError, not KeyError.
+        PyErr_Clear();
+        PyErr_Format(PyExc_NameError, "name '%s' is not defined", name);
+        return -1;
+    }
+    return 0;
+}

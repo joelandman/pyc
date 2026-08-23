@@ -192,6 +192,10 @@ _PYC_RUNTIME = {
     "pyc_rt_cm_enter":     ("PyObject*", "+1", ["PyObject*"]),
     "pyc_rt_exit_normal":  ("int", "", ["PyObject*"]),
     "pyc_rt_exit_exc":     ("int", "", ["PyObject*"]),
+    "pyc_rt_extend":       ("int", "", ["PyObject*", "PyObject*"]),
+    "pyc_rt_assert_fail":  ("int", "", ["PyObject*"]),
+    "pyc_rt_del_global":   ("int", "", ["const char*"]),
+    "pyc_rt_unpack_ex":    ("PyObject*", "+1", ["PyObject*", "Py_ssize_t", "Py_ssize_t"]),
 }
 
 

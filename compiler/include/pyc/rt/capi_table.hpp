@@ -829,6 +829,10 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"pyc_rt_cm_enter", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_exit_normal", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_exit_exc", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_extend", Ownership::NotAnObject, true, 2, {}, false, "", false, "", "oo"},
+    {"pyc_rt_assert_fail", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_del_global", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "p"},
+    {"pyc_rt_unpack_ex", Ownership::Owned, true, 3, {}, false, "", false, "", "oii"},
     {"PyArg_Parse", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
     {"PyArg_ParseTuple", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
     {"PyArg_ParseTupleAndKeywords", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
@@ -1057,6 +1061,6 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"Py_PACK_VERSION", Ownership::Unknown, true, 0, {}, false, "", true, "3.14", ""},
 };
 
-inline constexpr int kCApiSymbolCount = 1044;
+inline constexpr int kCApiSymbolCount = 1048;
 
 }  // namespace pyc::rt

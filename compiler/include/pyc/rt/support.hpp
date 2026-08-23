@@ -95,6 +95,20 @@ int pyc_rt_exit_normal(PyObject* exitf);       // exit(None, None, None)
 //  -1  __exit__ itself failed
 int pyc_rt_exit_exc(PyObject* exitf);
 
+// Append every item of `iterable` to `list`. Used for `*x` in a call or a
+// literal, where the star's contents are spliced rather than nested.
+int pyc_rt_extend(PyObject* list, PyObject* iterable);
+
+// `assert cond, msg` -- raises AssertionError. msg may be NULL.
+int pyc_rt_assert_fail(PyObject* msg);
+// `del name` at module scope.
+int pyc_rt_del_global(const char* name);
+
+// Extended unpacking: `a, *rest, b = value`. Returns a tuple of
+// nbefore + 1 + nafter items whose middle element is a list holding whatever
+// the fixed positions did not claim.
+PyObject* pyc_rt_unpack_ex(PyObject* value, Py_ssize_t nbefore, Py_ssize_t nafter);
+
 #ifdef __cplusplus
 }
 #endif

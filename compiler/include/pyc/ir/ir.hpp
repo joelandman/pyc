@@ -63,6 +63,10 @@ enum class Op {
     Is,
     // Logical negation of a machine int, for `not in` and `is not`.
     IntNot,
+    // `del name` at module scope; `text` is the name (a C string).
+    DelGlobal,
+    // A machine integer (not a PyObject), for C-API integer parameters.
+    IntConst,
     // A complex literal. `text` is "<real> <imag>"; both are raw doubles,
     // so this cannot go through the generic PyObject* call path.
     ConstComplex,
