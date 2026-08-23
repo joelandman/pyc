@@ -9,15 +9,15 @@
       "-O0"
     ]
   },
-  "pass_rate": 96.76966292134831,
+  "pass_rate": 97.3314606741573,
   "scored": 712,
-  "matched": 689,
+  "matched": 693,
   "quarantined": 1,
-  "elapsed_seconds": 168.70815181732178,
+  "elapsed_seconds": 166.2002613544464,
   "counts": {
-    "COMPILE_ERROR": 17,
+    "COMPILE_ERROR": 13,
     "STDERR_DIFF": 6,
-    "MATCH": 689,
+    "MATCH": 693,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
@@ -29,46 +29,32 @@
       "detail": "compiler exited 1 with no diagnostic"
     },
     {
-      "case": "case_104.py",
-      "path": "verify/corpus/language/case_104.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "error: invalid LLVM IR input: Instruction does not dominate all uses!"
-    },
-    {
-      "case": "case_105.py",
-      "path": "verify/corpus/language/case_105.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "error: invalid LLVM IR input: Instruction does not dominate all uses!"
-    },
-    {
       "case": "case_265.py",
       "path": "verify/corpus/language/case_265.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-8gaquyz8/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-vswo6ye8/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_266.py",
       "path": "verify/corpus/language/case_266.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3y5xy39s/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-9atmp61_/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_267.py",
       "path": "verify/corpus/language/case_267.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gx_xu0t_/case_267.py:2:9: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-vxoh_g45/case_267.py:2:9: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_449.py",
       "path": "verify/corpus/language/case_449.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-hn3_fpla/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
+      "detail": "/tmp/pyc-verify-nh4v2ce2/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
     },
     {
       "case": "case_453.py",
@@ -96,49 +82,35 @@
       "path": "verify/corpus/language/case_470.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3190z4xr/case_470.py:6:0: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-e8y135io/case_470.py:6:0: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_472.py",
       "path": "verify/corpus/language/case_472.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-s4qhruj0/case_472.py:15:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-fvp5h14z/case_472.py:15:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_474.py",
       "path": "verify/corpus/language/case_474.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-u6aa201t/case_474.py:3:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-z9yhgj8y/case_474.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_475.py",
       "path": "verify/corpus/language/case_475.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-bzjso7wo/case_475.py:3:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-ivdeype8/case_475.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_476.py",
       "path": "verify/corpus/language/case_476.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vuq_tw4u/case_476.py:3:4: error: cannot compile try/finally yet [try/finally]"
-    },
-    {
-      "case": "case_645.py",
-      "path": "verify/corpus/language/case_645.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.roiUuZGed2/mod.ll:797:12: error: use of undefined value '%bb28'"
-    },
-    {
-      "case": "case_685.py",
-      "path": "verify/corpus/language/case_685.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "error: invalid LLVM IR input: Instruction does not dominate all uses!"
+      "detail": "/tmp/pyc-verify-ief3nfks/case_476.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_208.py",
@@ -892,6 +864,20 @@
     {
       "case": "case_103.py",
       "path": "verify/corpus/language/case_103.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_104.py",
+      "path": "verify/corpus/language/case_104.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_105.py",
+      "path": "verify/corpus/language/case_105.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4537,6 +4523,13 @@
       "detail": ""
     },
     {
+      "case": "case_645.py",
+      "path": "verify/corpus/language/case_645.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_646.py",
       "path": "verify/corpus/language/case_646.py",
       "verdict": "MATCH",
@@ -4805,6 +4798,13 @@
     {
       "case": "case_684.py",
       "path": "verify/corpus/language/case_684.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_685.py",
+      "path": "verify/corpus/language/case_685.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""

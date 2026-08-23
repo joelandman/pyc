@@ -780,6 +780,10 @@ private:
         auto outer_locals = locals_;
         auto outer_owned = owned_;
         auto outer_loops = loops_;
+        // try_stack_ too: a def inside a try otherwise emitted landing pads
+        // branching to the ENCLOSING function's handler block, which is not a
+        // label in this function at all.
+        auto outer_tries = try_stack_;
         // frame_owned_ must be saved too. A method lowered inside a class body
         // would otherwise inherit the class's namespace dict, and its landing
         // pads would emit a decref for a value defined in a DIFFERENT
@@ -885,6 +889,7 @@ private:
         for (const std::string& fv2 : freevars) cells_[fv2] = locals_[fv2];
         owned_.clear();
         loops_.clear();
+        try_stack_.clear();
         frame_owned_.clear();
         class_ns_.clear();          // a method body is not a class body
         auto outer_qual = qual_;
@@ -935,7 +940,7 @@ private:
         }
 
         fn_idx_ = outer_fn; blk_ = outer_blk; locals_ = outer_locals;
-        owned_ = outer_owned; loops_ = outer_loops;
+        owned_ = outer_owned; loops_ = outer_loops; try_stack_ = outer_tries;
         frame_owned_ = outer_frame; class_ns_ = outer_class_ns;
         cells_ = outer_cells; enclosing_cells_ = outer_enclosing;
         qual_ = outer_qual;
@@ -2256,18 +2261,27 @@ private:
         std::uint32_t jb = new_block("ifexp.join");
         emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
                        "", tb, fb, n.loc, std::nullopt});
+        // Each arm must be lowered against the owned set as it stands at the
+        // BRANCH, not as the other arm left it. Carrying the then-value into
+        // the else arm put it in that arm's landing pads, which then decref a
+        // value defined only on the path not taken -- LLVM rejects it as
+        // "does not dominate all uses", and without that check it would be a
+        // double free on the error path.
+        auto at_branch = owned_;
         set_block(tb);
         ir::Value a = lower_expr(*n.body, ok);   if (!*ok) return {};
         std::uint32_t ae = (std::uint32_t)blk_;
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", jb, 0, n.loc, std::nullopt});
+        owned_ = at_branch;
         set_block(fb);
         ir::Value b = lower_expr(*n.orelse, ok); if (!*ok) return {};
         std::uint32_t be = (std::uint32_t)blk_;
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", jb, 0, n.loc, std::nullopt});
         set_block(jb);
-        forget(a); forget(b);
+        // Past the join only the phi is live, on top of what was live before.
+        owned_ = at_branch;
         return emit_phi({a, b}, {ae, be}, n.loc);
     }
 
