@@ -178,8 +178,35 @@ one loses an exception, which is a silent wrong answer (I1).
 static contract; `PyModule_AddObjectRef` never steals. A contract that cannot
 be expressed statically is one we refuse rather than approximate.
 
-**Known gap:** `refcounts.dat` is not exhaustive of the C-API —
-`PyModule_AddObjectRef` is absent from it, so the recommended replacement is
-not yet in the table either. Symbols outside the table cannot be emitted by
-lowering (INTERFACES §4), so this needs a supplementary source before A3 can
-use them.
+### Two sources, merged
+
+`refcounts.dat` is not exhaustive, so `Misc/stable_abi.toml` is merged in as a
+second, independent source. It records which symbols exist, that they are
+stable-ABI, and **when each was added** — but carries no refcount data.
+
+| | count |
+|---|---|
+| union | 1,039 |
+| in both | 556 |
+| `refcounts.dat` only | 257 |
+| stable-ABI only — ownership **Unknown** | 225 |
+
+A stable-ABI-only symbol arrives `Ownership::Unknown` and is **not emittable**.
+That is the point: the merge makes the gap *enumerable and blocked* rather than
+invisible. It does not close it. `emittable()` is the single question lowering
+asks, and it is false for both banned symbols and unknown ones.
+
+`added` gives the C-API half of I8: `PyModule_AddObjectRef` is `added = 3.10`,
+so `available_in(3, 9)` is false and targeting 3.9 with it is a version error
+rather than a link failure.
+
+Ownership for unknown symbols is curated **one at a time**, from the C-API
+docs, and validated: an override for a symbol `refcounts.dat` already records
+is treated as a *conflict* and refuses to generate, because one of the two must
+be wrong and silently preferring either bakes in a contradiction. With 225
+candidates, bulk-guessing would be the worst available trade — a wrong entry
+leaks or double-frees.
+
+So far exactly one is curated: `PyModule_AddObjectRef`, because `_BANNED`
+points at it as the safe replacement for `PyModule_AddObject` and a
+recommendation that cannot be emitted is useless.

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import re
 import sys
 
 # Parameters that STEAL a reference. Not derivable from refcounts.dat.
@@ -50,6 +51,20 @@ _STEALS = {
     "PyException_SetContext":    ["ctx"],
 }
 
+# Ownership for symbols no source records. stable_abi.toml lists them but
+# carries no refcount data, so they arrive Unknown and are not emittable.
+# Curate ONE AT A TIME, with the C-API docs as justification -- a wrong entry
+# here leaks or double-frees, and there are 226 candidates, so bulk-guessing
+# would be the worst possible trade.
+#
+# Format: name -> (return type as refcounts.dat would spell it, refcount field)
+_OWNERSHIP_OVERRIDES = {
+    # Returns int (0 / -1), holds its own reference, never steals. It exists
+    # precisely because PyModule_AddObject's success-only steal is unsafe, so
+    # it is the replacement _BANNED points at and must be usable.
+    "PyModule_AddObjectRef": ("int", ""),
+}
+
 # Symbols lowering must NOT emit, with the reason and the replacement.
 # A contract that cannot be expressed statically is a contract we refuse.
 _BANNED = {
@@ -60,6 +75,35 @@ _BANNED = {
     "PyEval_CallObject": ("removed/deprecated; use PyObject_CallObject"),
     "PyEval_CallFunction": ("removed/deprecated; use PyObject_CallFunction"),
 }
+
+
+def parse_stable_abi(path: str) -> dict:
+    """Misc/stable_abi.toml -> {name: {"added": "3.x"}}.
+
+    A second, independent source. It records which symbols exist and are
+    stable-ABI, and WHEN each was added -- but carries no ownership data. So it
+    widens coverage without answering the refcount question: a symbol present
+    only here is marked Ownership::Unknown and is not emittable.
+
+    Parsed with a regex rather than tomllib so the generator runs under the
+    host python regardless of version.
+    """
+    out: dict[str, dict] = {}
+    cur = None
+    for line in open(path, encoding="utf-8", errors="replace"):
+        m = re.match(r"\[function\.([A-Za-z_][A-Za-z0-9_]*)\]", line.strip())
+        if m:
+            cur = m.group(1)
+            out[cur] = {}
+            continue
+        if line.startswith("["):
+            cur = None
+            continue
+        if cur and line.startswith((" ", "\t")):
+            m2 = re.match(r"(\w+)\s*=\s*'([^']*)'", line.strip())
+            if m2:
+                out[cur][m2.group(1)] = m2.group(2)
+    return out
 
 
 def parse(path: str) -> dict:
@@ -81,6 +125,8 @@ def parse(path: str) -> dict:
 
 
 def ownership(typ: str, rc: str) -> str:
+    if rc == "unknown":
+        return "Unknown"
     if not typ.startswith("PyObject") and not typ.startswith("PyTypeObject"):
         return "NotAnObject"
     if rc == "+1":   return "Owned"
@@ -103,11 +149,38 @@ def may_raise(typ: str, rc: str) -> bool:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("refcounts_dat")
+    ap.add_argument("--stable-abi", default=None,
+                    help="Misc/stable_abi.toml, for symbols refcounts.dat omits")
     ap.add_argument("-o", "--out", default="-")
     ap.add_argument("--source-version", default="unknown")
     args = ap.parse_args()
 
     funcs = parse(args.refcounts_dat)
+    stable = parse_stable_abi(args.stable_abi) if args.stable_abi else {}
+
+    # Symbols the stable ABI has but refcounts.dat does not. Included so the
+    # gap is enumerable rather than invisible, but with ownership Unknown, so
+    # lowering still cannot emit them (INTERFACES §4).
+    for name, meta in stable.items():
+        if name not in funcs:
+            funcs[name] = {"ret": ("<unknown>", "unknown"), "params": [],
+                           "_stable_only": True, "_added": meta.get("added", "")}
+
+    # Apply curated ownership, and validate it. An override for a symbol that
+    # refcounts.dat already describes is a conflict, not a refinement: one of
+    # the two is wrong and silently preferring either is how contradictions
+    # get baked in.
+    for name, (typ, rc) in _OWNERSHIP_OVERRIDES.items():
+        if name not in funcs:
+            print(f"gen_capi_table: WARNING: ownership override for {name!r}, "
+                  f"which no source lists at all", file=sys.stderr)
+            continue
+        if not funcs[name].get("_stable_only"):
+            print(f"gen_capi_table: ownership override for {name!r} conflicts "
+                  f"with refcounts.dat, which already records it",
+                  file=sys.stderr)
+            return 2
+        funcs[name]["ret"] = (typ, rc)
 
     # Validate the curated lists against the data. An unmatched steal
     # annotation is FATAL: it fails open, and failing open here means a
@@ -152,14 +225,17 @@ def main() -> int:
     w("namespace pyc::rt {")
     w("")
     w("inline constexpr CApiSymbol kCApiSymbols[] = {")
-    n_owned = n_bor = n_steal = n_banned = 0
+    n_owned = n_bor = n_steal = n_banned = n_unknown = 0
     for name, f in funcs.items():
         if not f["ret"]:
             continue
         typ, rc = f["ret"]
+        meta = stable.get(name, {})
+        added = f.get("_added", meta.get("added", ""))
         own = ownership(typ, rc)
         n_owned += own == "Owned"
         n_bor += own == "Borrowed"
+        n_unknown += own == "Unknown"
         steals = _STEALS.get(name, [])
         idx = [i for i, p in enumerate(f["params"]) if p["name"] in steals]
         n_steal += bool(idx)
@@ -170,7 +246,9 @@ def main() -> int:
           f'{"true" if may_raise(typ, rc) else "false"}, '
           f'{len(f["params"])}, {steal_init}, '
           f'{"true" if banned else "false"}, '
-          f'"{banned if banned else ""}"}},')
+          f'"{banned if banned else ""}", '
+          f'{"true" if name in stable else "false"}, '
+          f'"{added}"}},')
     w("};")
     w("")
     w(f"inline constexpr int kCApiSymbolCount = "
@@ -186,6 +264,7 @@ def main() -> int:
         print(f"{len(funcs)} symbols -> {args.out}")
         print(f"  Owned {n_owned}  Borrowed {n_bor}  "
               f"steal-annotated {n_steal}  banned {n_banned}")
+        print(f"  stable-ABI only, ownership UNKNOWN (not emittable): {n_unknown}")
     return 0
 
 
