@@ -25,6 +25,8 @@ const char* op_name(Op op) {
         case Op::Return:      return "ret";
         case Op::ReturnErr:   return "ret.err";
         case Op::IsTrue:      return "istrue";
+        case Op::Is:          return "is";
+        case Op::IntNot:      return "int.not";
         case Op::MakeFunction: return "makefunc";
     }
     return "?";
@@ -63,7 +65,7 @@ std::string to_string(const Module& m) {
                 o << op_name(in.op);
                 if (!in.text.empty()) o << " \"" << in.text << "\"";
                 for (const Value& a : in.args) o << " %" << a.id;
-                if (in.imm) o << " #" << in.imm;
+                if (in.has_imm) o << " #" << in.imm;
                 if (in.op == Op::Br) o << " -> bb" << in.target;
                 if (in.op == Op::CondBr)
                     o << " -> bb" << in.target << ", bb" << in.target_else;

@@ -132,6 +132,7 @@ private:
         ir::Instr in{ir::Op::CallCApi, args, out, sym->returns, symbol,
                      0, 0, loc, std::nullopt};
         in.imm = imm;
+        in.has_imm = (imm_pos >= 0);
         if (sym->may_raise) in.on_error = make_landing_pad(loc);
         emit(std::move(in));
 
@@ -552,7 +553,7 @@ private:
             [&](const BinOp& b)    { out = lower_binop(b, ok); },
             [&](const BoolOp& n)        { *ok = unsupported("boolean operators", n.loc); },
             [&](const NamedExpr& n)     { *ok = unsupported("walrus", n.loc); },
-            [&](const UnaryOp& n)       { *ok = unsupported("unary operators", n.loc); },
+            [&](const UnaryOp& n)       { out = lower_unaryop(n, ok); },
             [&](const Lambda& n)        { *ok = unsupported("lambda", n.loc); },
             [&](const IfExp& n)         { *ok = unsupported("conditional expressions", n.loc); },
             [&](const Dict& n)          { out = lower_dict(n, ok); },
@@ -564,7 +565,7 @@ private:
             [&](const Await& n)         { *ok = unsupported("await", n.loc); },
             [&](const Yield& n)         { *ok = unsupported("yield", n.loc); },
             [&](const YieldFrom& n)     { *ok = unsupported("yield from", n.loc); },
-            [&](const Compare& n)       { *ok = unsupported("comparisons", n.loc); },
+            [&](const Compare& n)       { out = lower_compare(n, ok); },
             [&](const FormattedValue& n){ *ok = unsupported("f-string interpolation", n.loc); },
             [&](const JoinedStr& n)     { *ok = unsupported("f-strings", n.loc); },
             [&](const TemplateStr& n)   { *ok = unsupported("t-strings", n.loc); },
@@ -698,7 +699,7 @@ private:
             }
         std::string mk = std::string(prefix) + "_New";
         std::string set = std::string(prefix) + "_SetItem";
-        ir::Value seq = call_capi_imm(mk.c_str(), {}, (std::int64_t)elts.size(), -1, loc, ok);
+        ir::Value seq = call_capi_imm(mk.c_str(), {}, (std::int64_t)elts.size(), 0, loc, ok);
         if (!*ok) return {};
         mark_owned(seq);
         for (std::size_t i = 0; i < elts.size(); ++i) {
@@ -752,6 +753,98 @@ private:
             if (!*ok) return {};
         }
         return d;
+    }
+
+    // Box a machine int (0/1) as a Python bool.
+    ir::Value box_bool(const ir::Value& i, const SourceLoc& loc, bool* ok) {
+        ir::Value out = call_capi("PyBool_FromLong", {i}, loc, ok);
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
+    ir::Value int_not(const ir::Value& i, const SourceLoc& loc) {
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        emit(ir::Instr{ir::Op::IntNot, {i}, out, Ownership::NotAnObject, "",
+                       0, 0, loc, std::nullopt});
+        return out;
+    }
+
+    ir::Value lower_compare(const Compare& n, bool* ok) {
+        // `a < b < c` means `a < b and b < c` with b evaluated once, so it
+        // needs short-circuit control flow and a value that outlives a branch
+        // -- i.e. phi nodes, which the IR does not have yet. Refused loudly
+        // rather than lowered as `(a < b) < c`, which is a different program.
+        // Measured on the corpus: 181 single comparisons, 4 chained.
+        if (n.ops.size() != 1 || n.comparators.size() != 1) {
+            *ok = unsupported("chained comparisons", n.loc);
+            return {};
+        }
+        ir::Value l = lower_expr(*n.left, ok);        if (!*ok) return {};
+        ir::Value r = lower_expr(n.comparators[0], ok); if (!*ok) return {};
+
+        ir::Value out;
+        std::visit(ov{
+            // Py_LT=0 Py_LE=1 Py_EQ=2 Py_NE=3 Py_GT=4 Py_GE=5
+            [&](const Lt&)    { out = rich(l, r, 0, n.loc, ok); },
+            [&](const LtE&)   { out = rich(l, r, 1, n.loc, ok); },
+            [&](const Eq&)    { out = rich(l, r, 2, n.loc, ok); },
+            [&](const NotEq&) { out = rich(l, r, 3, n.loc, ok); },
+            [&](const Gt&)    { out = rich(l, r, 4, n.loc, ok); },
+            [&](const GtE&)   { out = rich(l, r, 5, n.loc, ok); },
+            [&](const Is&)    { out = identity(l, r, false, n.loc, ok); },
+            [&](const IsNot&) { out = identity(l, r, true,  n.loc, ok); },
+            // `x in y` is PySequence_Contains(y, x): the container first.
+            [&](const In&)    { out = contains(r, l, false, n.loc, ok); },
+            [&](const NotIn&) { out = contains(r, l, true,  n.loc, ok); },
+        }, n.ops[0].v);
+        return out;
+    }
+
+    ir::Value rich(const ir::Value& l, const ir::Value& r, std::int64_t opid,
+                   const SourceLoc& loc, bool* ok) {
+        ir::Value out = call_capi("PyObject_RichCompare", {l, r}, loc, ok,
+                                  {l, r}, opid, 2);
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
+    ir::Value identity(const ir::Value& l, const ir::Value& r, bool negate,
+                       const SourceLoc& loc, bool* ok) {
+        ir::Value b = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        emit(ir::Instr{ir::Op::Is, {l, r}, b, Ownership::NotAnObject, "",
+                       0, 0, loc, std::nullopt});
+        if (owns(l)) release(l, loc);
+        if (owns(r)) release(r, loc);
+        if (negate) b = int_not(b, loc);
+        return box_bool(b, loc, ok);
+    }
+
+    ir::Value contains(const ir::Value& seq, const ir::Value& item, bool negate,
+                       const SourceLoc& loc, bool* ok) {
+        ir::Value i = call_capi("PySequence_Contains", {seq, item}, loc, ok,
+                                {seq, item});
+        if (!*ok) return {};
+        if (negate) i = int_not(i, loc);
+        return box_bool(i, loc, ok);
+    }
+
+    ir::Value lower_unaryop(const UnaryOp& n, bool* ok) {
+        ir::Value v = lower_expr(*n.operand, ok);
+        if (!*ok) return {};
+        ir::Value out;
+        std::visit(ov{
+            [&](const USub&)   { out = call_capi("PyNumber_Negative", {v}, n.loc, ok, {v});
+                                 if (*ok) mark_owned(out); },
+            [&](const UAdd&)   { out = call_capi("PyNumber_Positive", {v}, n.loc, ok, {v});
+                                 if (*ok) mark_owned(out); },
+            [&](const Invert&) { out = call_capi("PyNumber_Invert", {v}, n.loc, ok, {v});
+                                 if (*ok) mark_owned(out); },
+            // `not x` is truthiness-based, so it goes through the protocol and
+            // yields a real bool -- never a bitwise trick on the operand.
+            [&](const Not&)    { ir::Value i = call_capi("PyObject_Not", {v}, n.loc, ok, {v});
+                                 if (*ok) out = box_bool(i, n.loc, ok); },
+        }, n.op.v);
+        return out;
     }
 
     ir::Value const_str(const std::string& text, const SourceLoc& loc) {

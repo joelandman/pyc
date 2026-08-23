@@ -57,6 +57,12 @@ enum class Op {
     ReturnErr,
     // truthiness for a branch predicate: PyObject_IsTrue, -1 on error
     IsTrue,
+    // Pointer identity. NOT a C-API call: `is` is defined as object identity,
+    // so it is a machine comparison and cannot raise. (Py_Is exists but has no
+    // recorded ownership contract, so §4 would refuse it anyway.)
+    Is,
+    // Logical negation of a machine int, for `not in` and `is not`.
+    IntNot,
     // Build a callable from a lowered function and bind it in the enclosing
     // scope. Codegen turns this into a PyCFunction over the emitted C entry.
     MakeFunction,
@@ -85,6 +91,10 @@ struct Instr {
     // operands are PyObject* and which are machine integers. Last in the
     // struct so existing aggregate initialisers keep their meaning.
     std::int64_t imm = 0;
+    // Whether `imm` is meaningful. Without this, an immediate of 0 -- Py_LT,
+    // or index 0 of a container -- prints as absent, so `a < b` and a call
+    // with no immediate look identical in the IR dump.
+    bool has_imm = false;
 };
 
 struct Block {
