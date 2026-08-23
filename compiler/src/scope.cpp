@@ -124,6 +124,18 @@ std::vector<std::string> function_locals(const std::vector<std::string>& params,
     return out;
 }
 
+// Names this body explicitly declares `nonlocal`. These are free by
+// declaration, NOT by being read: `nonlocal x` followed only by `x = 3` reads
+// x nowhere, so a reads-based analysis classifies it as neither local nor free
+// and the store silently falls through to the global of the same name. That is
+// exactly the silent-wrong-answer shape I1 exists to forbid, so the
+// declaration itself has to feed the free-variable set.
+std::set<std::string> declared_nonlocals(const std::vector<stmt>& body) {
+    Collector c;
+    c.block(body);
+    return c.declared_nonlocal;
+}
+
 // Names read anywhere inside NESTED functions/lambdas/comprehensions of this
 // body. Intersected with the enclosing function's locals, this is exactly the
 // set that must live in cells: a variable is only a cell variable because

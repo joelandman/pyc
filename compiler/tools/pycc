@@ -10,13 +10,26 @@ set -euo pipefail
 SYSROOT="${PYC_SYSROOT:-$HOME/opt/py-sysroots/cp314-3.14.7-tier1}"
 LOWER="${PYC_LOWER:-/tmp/pyc_lower}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SRC=""; OUT="a.out"; KEEP=0
+SRC=""; OUT="a.out"; KEEP=0; EMIT_LLVM=0; OPT="-O1"
+# A bare `*)` arm here silently turned any mistyped flag into the source file
+# name: `--pyc-flag=-O0` reached realpath as `-O0` and the resulting failure
+# looked like a compiler bug. Unknown flags are refused, and the source is
+# accepted exactly once.
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -o) OUT="$2"; shift 2;;
     --sysroot) SYSROOT="$2"; shift 2;;
     --keep) KEEP=1; shift;;
-    *) SRC="$1"; shift;;
+    --emit-llvm) EMIT_LLVM=1; shift;;
+    # pyc has no optimiser of its own yet (A3 is outstanding). -O selects the
+    # BACKEND optimisation level applied to the generated LLVM, which is where
+    # compile time actually goes. It is not a claim that pyc optimises.
+    -O0|-O1|-O2|-O3) OPT="$1"; shift;;
+    --) shift; if [[ $# -gt 0 ]]; then SRC="$1"; shift; fi;;
+    -*) echo "pycc: unknown option '$1'" >&2; exit 2;;
+    *)
+      [[ -z "$SRC" ]] || { echo "pycc: more than one input file ('$SRC', '$1')" >&2; exit 2; }
+      SRC="$1"; shift;;
   esac
 done
 [[ -n "$SRC" ]] || { echo "usage: pycc FILE [-o OUT]" >&2; exit 2; }
@@ -33,6 +46,7 @@ PYTHONPATH="$REPO/compiler${PYTHONPATH:+:$PYTHONPATH}" \
   "$PY" -m pyc_parse "$(realpath "$SRC")" > "$TMP/ast.json" 2>"$TMP/parse.err" || {
   cat "$TMP/parse.err" >&2; exit 1; }
 "$LOWER" "$TMP/ast.json" --emit-llvm > "$TMP/mod.ll" || exit 1
+if [[ $EMIT_LLVM == 1 ]]; then cp "$TMP/mod.ll" "$OUT"; exit 0; fi
 
 INC="$($SYSROOT/bin/python3.14-config --includes)"
 LIBPL="$($PY -c 'import sysconfig;print(sysconfig.get_config_var("LIBPL"))')"
@@ -45,7 +59,7 @@ static int body(void) { return __pyc_main(nullptr); }
 int main(int argc, char** argv) { return pyc_rt_main(argc, argv, body); }
 EOC
 
-"${PYC_CXX:-clang++}" -std=c++20 -O1 -rdynamic $INC -I "$REPO/compiler/include" \
+"${PYC_CXX:-clang++}" -std=c++20 "$OPT" -rdynamic $INC -I "$REPO/compiler/include" \
   "$TMP/mod.ll" "$TMP/main.cpp" \
   "$REPO/compiler/src/rt/entry.cpp" "$REPO/compiler/src/rt/support.cpp" \
   "$LIB" -lm -lpthread -ldl -lutil -lz -o "$OUT"

@@ -25,6 +25,7 @@ namespace pyc {
 std::vector<std::string> function_locals(const std::vector<std::string>&,
                                         const std::vector<pyc::ast::stmt>&);
 std::set<std::string> nested_reads(const std::vector<pyc::ast::stmt>&);
+std::set<std::string> declared_nonlocals(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> nested_reads_expr(const pyc::ast::expr&);
 }
 
@@ -245,7 +246,16 @@ private:
             [&](const AsyncWith& n)        { ok = unsupported("async with", n.loc); },
             [&](const Match& n)            { ok = unsupported("match", n.loc); },
             [&](const Raise& n)            {
-                if (!n.exc) { ok = unsupported("bare raise", n.loc); return; }
+                if (!n.exc) {
+                    // Re-raise whatever is currently being handled.
+                    call_capi("pyc_rt_reraise", {}, n.loc, &ok);
+                    if (!ok) return;
+                    std::uint32_t pad = make_landing_pad(n.loc);
+                    emit(ir::Instr{ir::Op::Br, {}, std::nullopt,
+                                   Ownership::NotAnObject, "", pad, 0, n.loc,
+                                   std::nullopt});
+                    return;
+                }
                 if (n.cause) { ok = unsupported("raise ... from", n.loc); return; }
                 ir::Value e = lower_expr(**n.exc, &ok);
                 if (!ok) return;
@@ -501,7 +511,7 @@ private:
         std::size_t idx = end_function(sc);
         if (!bok) { *ok = false; return {}; }
         *ok = true;
-        ir::Value out = make_function_value(idx, "<lambda>", n.loc, closure_cells,
+        ir::Value out = make_function_value(idx, qualname("<lambda>"), n.loc, closure_cells,
                                             lam_defaults);
         for (const ir::Value& c : closure_cells) if (owns(c)) release(c, n.loc);
         if (lam_defaults.valid() && owns(lam_defaults)) release(lam_defaults, n.loc);
@@ -755,6 +765,10 @@ private:
             }
         }
 
+        // The qualname is fixed BEFORE the body is lowered, because lowering
+        // the body pushes this function's own scope onto qual_.
+        const std::string fn_qualname = qualname(n.name);
+
         // Save the enclosing function's state: a nested def is lowered into a
         // separate ir::Function, and must not inherit the outer local map.
         std::size_t outer_fn = fn_idx_;
@@ -793,6 +807,9 @@ private:
             std::set<std::string> reads = inner;
             std::set<std::string> none;
             stmt_names(n.body, none, reads);        // names read directly too
+            // A `nonlocal` name is free even if it is only ever written.
+            std::set<std::string> nl = declared_nonlocals(n.body);
+            reads.insert(nl.begin(), nl.end());
             std::set<std::string> own(own_locals.begin(), own_locals.end());
             for (const std::string& r : reads) {
                 if (own.count(r)) continue;
@@ -801,6 +818,17 @@ private:
                      !in_enclosing && it != enclosing_cells_.rend(); ++it)
                     in_enclosing = it->count(r) > 0;
                 if (in_enclosing) freevars.push_back(r);
+            }
+            // CPython rejects `nonlocal x` with no binding in any enclosing
+            // function scope at compile time. Falling through to the global
+            // would run, and quietly write the wrong variable.
+            for (const std::string& x : nl) {
+                bool bound_outward = false;
+                for (const std::string& f2 : freevars) if (f2 == x) { bound_outward = true; break; }
+                if (!bound_outward) {
+                    return err("no binding for nonlocal '" + x + "' found",
+                               "nonlocal", n.loc);
+                }
             }
         }
         // Closure cells for the nested function come from THIS function's
@@ -836,6 +864,11 @@ private:
         loops_.clear();
         frame_owned_.clear();
         class_ns_.clear();          // a method body is not a class body
+        auto outer_qual = qual_;
+        // A name bound inside a function body is qualified through <locals>.
+        // A method's qualname is "C.foo", so the class prefix stays, but the
+        // enclosing FUNCTION contributes "name.<locals>".
+        qual_.push_back(n.name + ".<locals>");
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
 
@@ -882,6 +915,7 @@ private:
         owned_ = outer_owned; loops_ = outer_loops;
         frame_owned_ = outer_frame; class_ns_ = outer_class_ns;
         cells_ = outer_cells; enclosing_cells_ = outer_enclosing;
+        qual_ = outer_qual;
         if (!ok) return false;
 
         // Bind the callable in the enclosing scope, by the same store path any
@@ -896,7 +930,7 @@ private:
         std::vector<ir::Value> mkargs{defaults.valid() ? defaults : ir::Value{}};
         for (const ir::Value& c : closure_cells) mkargs.push_back(c);
         ir::Instr mk{ir::Op::MakeFunction, mkargs,
-                     fv, Ownership::Owned, n.name,
+                     fv, Ownership::Owned, fn_qualname,
                      (std::uint32_t)(vararg_slot + 1),
                      (std::uint32_t)(kwarg_slot + 1),
                      n.loc, make_landing_pad(n.loc)};
@@ -1156,6 +1190,14 @@ private:
     // rather than a local or global slot. That is what makes `def m(self)`
     // inside a class become a method instead of a module-level function.
     std::vector<ir::Value> class_ns_;
+    // __qualname__ prefix components. CPython puts the qualname, not the bare
+    // name, in argument-binding TypeErrors: "C.foo()", "outer.<locals>.inner()".
+    std::vector<std::string> qual_;
+    std::string qualname(const std::string& name) const {
+        std::string q;
+        for (const std::string& c : qual_) { q += c; q += "."; }
+        return q + name;
+    }
 
     // Bind without consuming the caller's reference. The namespace INCREFs,
     // so the value remains ours to use afterwards -- which is what makes
@@ -1263,8 +1305,37 @@ private:
         if (!sym) return unsupported("this augmented operator", n.loc);
 
         bool ok = true;
-        ir::Value cur_v = lower_expr(*n.target, &ok);      // read the target
+        // The target must be evaluated EXACTLY ONCE. Reading it with
+        // lower_expr and then writing it with store_target evaluates the
+        // object expression twice, so `get_box().n += 1` called get_box()
+        // twice -- visible whenever that expression has a side effect.
+        // Evaluate the base (and subscript key) once here and reuse them.
+        ir::Value base, key;
+        bool has_base = false, has_key = false;
+        std::visit(ov{
+            [&](const Attribute& a) {
+                base = lower_expr(*a.value, &ok); has_base = ok;
+            },
+            [&](const Subscript& a) {
+                base = lower_expr(*a.value, &ok); if (!ok) return;
+                key = lower_expr(*a.slice, &ok);  if (!ok) return;
+                has_base = has_key = true;
+            },
+            [&](const auto&) {},
+        }, n.target->v);
         if (!ok) return false;
+
+        ir::Value cur_v;
+        if (has_key) {
+            cur_v = call_capi("PyObject_GetItem", {base, key}, n.loc, &ok);
+        } else if (has_base) {
+            ir::Value nm = const_str(std::get<Attribute>(n.target->v).attr, n.loc);
+            cur_v = call_capi("PyObject_GetAttr", {base, nm}, n.loc, &ok, {nm});
+        } else {
+            cur_v = lower_expr(*n.target, &ok);            // plain name
+        }
+        if (!ok) return false;
+        mark_owned(cur_v);
         ir::Value rhs = lower_expr(*n.value, &ok);
         if (!ok) return false;
         ir::Value out;
@@ -1279,6 +1350,18 @@ private:
         }
         if (!ok) return false;
         mark_owned(out);
+        // Write back through the SAME base/key, not a re-evaluation.
+        if (has_key) {
+            call_capi("PyObject_SetItem", {base, key, out}, n.loc, &ok, {base, key});
+            if (ok && owns(out)) release(out, n.loc);
+            return ok;
+        }
+        if (has_base) {
+            ir::Value nm = const_str(std::get<Attribute>(n.target->v).attr, n.loc);
+            call_capi("PyObject_SetAttr", {base, nm, out}, n.loc, &ok, {base, nm});
+            if (ok && owns(out)) release(out, n.loc);
+            return ok;
+        }
         return store_target(*n.target, out, n.loc);
     }
 
@@ -1353,12 +1436,23 @@ private:
     }
 
     bool lower_try(const Try& n) {
-        // Measured on the corpus before choosing scope: 207 try/except, 8
-        // involving finally, no bare `except:` and no except*. finally must
-        // run on every exit path -- normal, exceptional, break, continue,
-        // return -- which is a different problem, so it is refused rather
-        // than approximated.
-        if (!n.finalbody.empty()) return unsupported("try/finally", n.loc);
+        if (!n.finalbody.empty()) {
+            // try/finally is REFUSED, after an attempt at duplication proved
+            // unsound. Emitting the cleanup twice -- once on the normal path,
+            // once on the unwind path -- works for a single try, but the
+            // landing-pad model snapshots the live set at pad-creation time,
+            // and under nesting the two copies' pads become cross-reachable:
+            // a pad in one copy then decrefs a value defined only in the
+            // other. LLVM caught it as "use of undefined value"; without that
+            // check it would have been a double free.
+            //
+            // Doing it properly needs what CPython's bytecode has and this IR
+            // does not: a way to run one copy of the cleanup and return to
+            // wherever control came from. That is a real addition, not a
+            // patch, so the refusal stands rather than shipping something
+            // subtly wrong.
+            return unsupported("try/finally", n.loc);
+        }
         if (n.handlers.empty()) return unsupported("try without except", n.loc);
 
         std::uint32_t dispatch = new_block("except.dispatch");
@@ -1382,6 +1476,12 @@ private:
         if (!ok) return false;
         mark_owned(exc);
         frame_owned_.push_back(exc);
+        // Record what is being handled, so a bare `raise` inside the handler
+        // has something to re-raise.
+        ir::Value prev_handled = call_capi("pyc_rt_push_handled", {exc}, n.loc, &ok);
+        if (!ok) return false;
+        mark_owned(prev_handled);
+        frame_owned_.push_back(prev_handled);
 
         for (const excepthandler& h : n.handlers) {
             const ExceptHandler& eh = std::get<ExceptHandler>(h.v);
@@ -1403,6 +1503,8 @@ private:
             set_block(body_b);
             if (eh.name) store_name(*eh.name, exc, n.loc);   // INCREFs; exc stays ours
             for (const stmt& s2 : eh.body) if (!lower_stmt(s2)) return false;
+            call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
+            if (!ok) return false;
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                            "", after, 0, n.loc, std::nullopt});
             set_block(next_b);
@@ -1411,7 +1513,11 @@ private:
         // No handler matched: put the exception back and propagate. The
         // reference is STOLEN by SetRaisedException, so it must not be
         // released afterwards -- §4's table makes that automatic.
-        frame_owned_.pop_back();
+        call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
+        if (!ok) return false;
+        frame_owned_.pop_back();          // prev_handled
+        if (owns(prev_handled)) release(prev_handled, n.loc);
+        frame_owned_.pop_back();          // exc
         call_capi("PyErr_SetRaisedException", {exc}, n.loc, &ok);
         if (!ok) return false;
         forget(exc);
@@ -1420,11 +1526,29 @@ private:
                        "", pad, 0, n.loc, std::nullopt});
 
         set_block(after);
+        if (owns(prev_handled)) release(prev_handled, n.loc);
         return true;
     }
 
+    static bool exits_block(const stmt& s2) {
+        bool e = false;
+        std::visit(ov{
+            [&](const Return&){ e = true; }, [&](const Break&){ e = true; },
+            [&](const Continue&){ e = true; },
+            [&](const Expr&){}, [&](const Assign&){}, [&](const AugAssign&){},
+            [&](const AnnAssign&){}, [&](const If&){}, [&](const While&){},
+            [&](const For&){}, [&](const AsyncFor&){}, [&](const With&){},
+            [&](const AsyncWith&){}, [&](const Try&){}, [&](const TryStar&){},
+            [&](const Match&){}, [&](const FunctionDef&){},
+            [&](const AsyncFunctionDef&){}, [&](const ClassDef&){},
+            [&](const Import&){}, [&](const ImportFrom&){}, [&](const Global&){},
+            [&](const Nonlocal&){}, [&](const Pass&){}, [&](const Raise&){},
+            [&](const Assert&){}, [&](const Delete&){}, [&](const TypeAlias&){},
+        }, s2.v);
+        return e;
+    }
+
     bool lower_classdef(const ClassDef& n) {
-        if (!n.decorator_list.empty()) return unsupported("class decorators", n.loc);
         if (!n.keywords.empty()) return unsupported("metaclass= and class keywords", n.loc);
 
         bool ok = true;
@@ -1450,14 +1574,16 @@ private:
         // redirected into ns. A class body is not a closure: it executes once,
         // immediately, which is why it needs no separate ir::Function.
         class_ns_.push_back(ns);
+        qual_.push_back(n.name);
         frame_owned_.push_back(ns);
         frame_owned_.push_back(bases);
         auto saved_locals = locals_;
         locals_.clear();                  // names in a class body are not fast locals
         for (const stmt& s2 : n.body)
-            if (!lower_stmt(s2)) { class_ns_.pop_back(); return false; }
+            if (!lower_stmt(s2)) { class_ns_.pop_back(); qual_.pop_back(); return false; }
         locals_ = saved_locals;
         class_ns_.pop_back();
+        qual_.pop_back();
         frame_owned_.pop_back();
         frame_owned_.pop_back();
 
@@ -1467,6 +1593,8 @@ private:
         mark_owned(cls);
         if (owns(bases)) release(bases, n.loc);
         if (owns(ns)) release(ns, n.loc);
+        cls = apply_decorators(n.decorator_list, cls, n.loc, &ok);
+        if (!ok) return false;
         store_name(n.name, cls, n.loc);
         return true;
     }
@@ -1492,7 +1620,14 @@ private:
         if (n.level && *n.level > 0)
             return unsupported("relative imports", n.loc);
         for (const alias& a : n.names)
-            if (a.name == "*") return unsupported("wildcard imports", n.loc);
+            if (a.name == "*") {
+                bool wok = true;
+                std::string m2 = n.module ? *n.module : std::string();
+                if (m2.empty()) return unsupported("wildcard import without a module", n.loc);
+                ir::Value mod = emit_import(m2, false, n.loc);
+                call_capi("pyc_rt_import_star", {mod}, n.loc, &wok, {mod});
+                return wok;
+            }
         std::string mod = n.module ? *n.module : std::string();
         if (mod.empty()) return unsupported("import from an unnamed module", n.loc);
 
@@ -1658,8 +1793,8 @@ private:
             [&](const Yield& n)         { *ok = unsupported("yield", n.loc); },
             [&](const YieldFrom& n)     { *ok = unsupported("yield from", n.loc); },
             [&](const Compare& n)       { out = lower_compare(n, ok); },
-            [&](const FormattedValue& n){ *ok = unsupported("f-string interpolation", n.loc); },
-            [&](const JoinedStr& n)     { *ok = unsupported("f-strings", n.loc); },
+            [&](const FormattedValue& n){ out = lower_formatted(n, ok); },
+            [&](const JoinedStr& n)     { out = lower_joined(n, ok); },
             [&](const TemplateStr& n)   { *ok = unsupported("t-strings", n.loc); },
             [&](const Interpolation& n) { *ok = unsupported("t-string interpolation", n.loc); },
             [&](const Attribute& n)     { out = lower_attribute(n, ok); },
@@ -1875,10 +2010,6 @@ private:
     }
 
     ir::Value lower_dict(const Dict& n, bool* ok) {
-        // A null key marks `**mapping` unpacking (INTERFACES §2.3). It needs
-        // PyDict_Update, not SetItem, so it is refused rather than mis-lowered.
-        for (const auto& k : n.keys)
-            if (!k || !*k) { *ok = unsupported("** unpacking in a dict literal", n.loc); return {}; }
         if (n.keys.size() != n.values.size()) {
             *ok = err("dict literal has mismatched keys and values", "Dict", n.loc);
             return {};
@@ -1887,6 +2018,15 @@ private:
         if (!*ok) return {};
         mark_owned(d);
         for (std::size_t i = 0; i < n.keys.size(); ++i) {
+            // A null key marks `**mapping` (INTERFACES §2.3): merge rather
+            // than insert.
+            if (!n.keys[i] || !*n.keys[i]) {
+                ir::Value m = lower_expr(n.values[i], ok);
+                if (!*ok) return {};
+                call_capi("PyDict_Update", {d, m}, n.loc, ok, {m});
+                if (!*ok) return {};
+                continue;
+            }
             ir::Value k = lower_expr(**n.keys[i], ok);
             if (!*ok) return {};
             ir::Value v = lower_expr(n.values[i], ok);
@@ -2168,6 +2308,61 @@ private:
         return out;
     }
 
+    // One interpolation: conversion (!r/!s/!a) first, then format spec.
+    // The order matters -- `f"{x!r:>10}"` pads the repr, not the value.
+    ir::Value lower_formatted(const FormattedValue& n, bool* ok) {
+        ir::Value v = lower_expr(*n.value, ok);
+        if (!*ok) return {};
+        // conversion is -1 when absent; otherwise the ASCII code of r/s/a.
+        if (n.conversion == 's' || n.conversion == 'r' || n.conversion == 'a') {
+            const char* sym = n.conversion == 'r' ? "PyObject_Repr"
+                            : n.conversion == 's' ? "PyObject_Str"
+                                                  : "PyObject_ASCII";
+            v = call_capi(sym, {v}, n.loc, ok, {v});
+            if (!*ok) return {};
+            mark_owned(v);
+        }
+        ir::Value spec;
+        if (n.format_spec && *n.format_spec) {
+            spec = lower_expr(**n.format_spec, ok);
+            if (!*ok) return {};
+        }
+        // A null spec means "no spec", which is not the same as an empty one
+        // for objects with a custom __format__.
+        ir::Value out = call_capi("PyObject_Format", {v, spec}, n.loc, ok,
+                                  spec.valid() ? std::vector<ir::Value>{v, spec}
+                                               : std::vector<ir::Value>{v});
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
+    // f"a{b}c" is the concatenation of its parts. Built with a list and
+    // PyUnicode_Join so the cost is one allocation rather than one per piece.
+    ir::Value lower_joined(const JoinedStr& n, bool* ok) {
+        if (n.values.empty()) return const_str("", n.loc);
+        if (n.values.size() == 1) {
+            ir::Value only = lower_expr(n.values[0], ok);
+            if (!*ok) return {};
+            // A lone literal part is already a str; a lone interpolation was
+            // formatted above, so both are strings already.
+            return only;
+        }
+        ir::Value parts = call_capi_imm("PyList_New", {}, 0, 0, n.loc, ok);
+        if (!*ok) return {};
+        mark_owned(parts);
+        for (const expr& e : n.values) {
+            ir::Value v = lower_expr(e, ok);
+            if (!*ok) return {};
+            call_capi("PyList_Append", {parts, v}, n.loc, ok, {v});
+            if (!*ok) return {};
+        }
+        ir::Value sep = const_str("", n.loc);
+        ir::Value out = call_capi("PyUnicode_Join", {sep, parts}, n.loc, ok,
+                                  {sep, parts});
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
     ir::Value const_str(const std::string& text, const SourceLoc& loc) {
         ir::Value v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::ConstStr, {}, v, Ownership::Owned, text,
@@ -2182,25 +2377,34 @@ private:
     // f(*xs, k=v): the positional count is only known at run time, so the
     // argument tuple is built by splicing and the call goes through
     // PyObject_Call rather than the vectorcall fast path.
+    // Build the keyword dict, splicing any `**mapping` with PyDict_Update.
+    // A later key wins, which is the order Python specifies.
+    ir::Value build_kwargs(const std::vector<keyword>& kws,
+                           const SourceLoc& loc, bool* ok) {
+        ir::Value kw = call_capi("PyDict_New", {}, loc, ok);
+        if (!*ok) return {};
+        mark_owned(kw);
+        for (const keyword& k : kws) {
+            ir::Value val = lower_expr(*k.value, ok);
+            if (!*ok) return {};
+            if (k.arg) {
+                ir::Value key = const_str(*k.arg, loc);
+                call_capi("PyDict_SetItem", {kw, key, val}, loc, ok, {key, val});
+            } else {
+                call_capi("PyDict_Update", {kw, val}, loc, ok, {val});
+            }
+            if (!*ok) return {};
+        }
+        return kw;
+    }
+
     ir::Value lower_call_starred(const Call& c, const ir::Value& fn, bool* ok) {
         ir::Value tup = lower_spliced(c.args, "PyTuple", c.loc, ok);
         if (!*ok) return {};
         ir::Value kw;
         if (!c.keywords.empty()) {
-            for (const keyword& k : c.keywords)
-                if (!k.arg) { *ok = unsupported("** unpacking in a call", c.loc); return {}; }
-            kw = call_capi("PyDict_New", {}, c.loc, ok);
+            kw = build_kwargs(c.keywords, c.loc, ok);
             if (!*ok) return {};
-            mark_owned(kw);
-            for (const keyword& k : c.keywords) {
-                ir::Value key = const_str(*k.arg, c.loc);
-                ir::Value val = lower_expr(*k.value, ok);
-                if (!*ok) return {};
-                call_capi("PyDict_SetItem", {kw, key, val}, c.loc, ok, {key, val});
-                if (!*ok) return {};
-            }
-        } else {
-            kw = ir::Value{};                       // NULL: no keywords
         }
         std::vector<ir::Value> consume{fn, tup};
         if (kw.valid()) consume.push_back(kw);
@@ -2211,9 +2415,6 @@ private:
 
     ir::Value lower_call_kw(const Call& c, const ir::Value& fn,
                             const std::vector<ir::Value>& all, bool* ok) {
-        for (const keyword& k : c.keywords)
-            if (!k.arg) { *ok = unsupported("** unpacking in a call", c.loc); return {}; }
-
         std::size_t npos = all.size() - 1;              // all[0] is the callable
         ir::Value tup = call_capi_imm("PyTuple_New", {}, (std::int64_t)npos, 0, c.loc, ok);
         if (!*ok) return {};
@@ -2225,16 +2426,8 @@ private:
                           (std::int64_t)i, 1, c.loc, ok);
             if (!*ok) return {};
         }
-        ir::Value kw = call_capi("PyDict_New", {}, c.loc, ok);
+        ir::Value kw = build_kwargs(c.keywords, c.loc, ok);
         if (!*ok) return {};
-        mark_owned(kw);
-        for (const keyword& k : c.keywords) {
-            ir::Value key = const_str(*k.arg, c.loc);
-            ir::Value val = lower_expr(*k.value, ok);
-            if (!*ok) return {};
-            call_capi("PyDict_SetItem", {kw, key, val}, c.loc, ok, {key, val});
-            if (!*ok) return {};
-        }
         ir::Value out = call_capi("PyObject_Call", {fn, tup, kw}, c.loc, ok,
                                   {fn, tup, kw});
         if (*ok) mark_owned(out);

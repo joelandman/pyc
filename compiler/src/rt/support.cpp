@@ -2,6 +2,8 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <string>
+#include <vector>
 #include <new>
 
 extern "C" {
@@ -80,12 +82,24 @@ PyObject* trampoline(PyObject* self, PyObject* args, PyObject* kwargs) {
     if (!b) return nullptr;
     Py_ssize_t npos = PyTuple_GET_SIZE(args);
     if (npos > b->nargs && b->vararg < 0) {
-        PyErr_Format(PyExc_TypeError,
-                     "%s() takes %d positional argument%s but %zd %s given",
-                     b->name, b->nargs, b->nargs == 1 ? "" : "s", npos,
-                     npos == 1 ? "was" : "were");
+        // CPython names the whole accepted RANGE when defaults make the lower
+        // bound differ: "takes from 1 to 2 positional arguments".
+        Py_ssize_t ndef0 = b->defaults ? PyTuple_GET_SIZE(b->defaults) : 0;
+        if (ndef0 > 0)
+            PyErr_Format(PyExc_TypeError,
+                         "%s() takes from %zd to %d positional argument%s "
+                         "but %zd %s given",
+                         b->name, (Py_ssize_t)b->nargs - ndef0, b->nargs,
+                         b->nargs == 1 ? "" : "s", npos,
+                         npos == 1 ? "was" : "were");
+        else
+            PyErr_Format(PyExc_TypeError,
+                         "%s() takes %d positional argument%s but %zd %s given",
+                         b->name, b->nargs, b->nargs == 1 ? "" : "s", npos,
+                         npos == 1 ? "was" : "were");
         return nullptr;
     }
+    std::vector<const char*> missing;
     PyObject** locals = new (std::nothrow) PyObject*[b->nlocals ? b->nlocals : 1];
     if (!locals) return PyErr_NoMemory();
     for (int i = 0; i < b->nlocals; ++i) locals[i] = nullptr;
@@ -157,9 +171,22 @@ PyObject* trampoline(PyObject* self, PyObject* args, PyObject* kwargs) {
                 locals[i] = d;
                 continue;
             }
+            missing.push_back(b->argnames[i]);
+        }
+        if (!missing.empty()) {
+            // CPython reports ALL missing parameters in one message, counted
+            // and joined: "missing 2 required positional arguments: 'a' and
+            // 'b'"; three or more use an Oxford comma.
+            std::string names;
+            for (std::size_t k2 = 0; k2 < missing.size(); ++k2) {
+                if (k2) names += (missing.size() == 2) ? " and "
+                               : (k2 + 1 == missing.size() ? ", and " : ", ");
+                names += "'"; names += missing[k2]; names += "'";
+            }
             PyErr_Format(PyExc_TypeError,
-                         "%s() missing required argument '%s'",
-                         b->name, b->argnames[i]);
+                         "%s() missing %zd required positional argument%s: %s",
+                         b->name, (Py_ssize_t)missing.size(),
+                         missing.size() == 1 ? "" : "s", names.c_str());
             goto fail;
         }
     }
@@ -432,4 +459,69 @@ extern "C" PyObject* pyc_rt_cell_get(PyObject* cell) {
         PyErr_SetString(PyExc_NameError,
                         "free variable referenced before assignment in enclosing scope");
     return v;
+}
+
+extern "C" int pyc_rt_reraise(void) {
+    PyObject* exc = PyErr_GetHandledException();
+    if (!exc) {
+        PyErr_SetString(PyExc_RuntimeError, "No active exception to reraise");
+        return -1;
+    }
+    PyErr_SetRaisedException(exc);        // steals exc
+    return -1;
+}
+
+extern "C" int pyc_rt_import_star(PyObject* mod) {
+    // Honour __all__ when present; otherwise copy public names, which is what
+    // `import *` means. Copying everything would drag in imported modules and
+    // private helpers the author did not intend to export.
+    PyObject* g = globals_dict();
+    if (!g) return -1;
+    PyObject* all = PyObject_GetAttrString(mod, "__all__");
+    if (all) {
+        PyObject* seq = PySequence_Fast(all, "__all__ must be a sequence");
+        Py_DECREF(all);
+        if (!seq) return -1;
+        Py_ssize_t n = PySequence_Fast_GET_SIZE(seq);
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject* nm = PySequence_Fast_GET_ITEM(seq, i);   // borrowed
+            PyObject* v = PyObject_GetAttr(mod, nm);
+            if (!v) { Py_DECREF(seq); return -1; }
+            int r = PyDict_SetItem(g, nm, v);
+            Py_DECREF(v);
+            if (r < 0) { Py_DECREF(seq); return -1; }
+        }
+        Py_DECREF(seq);
+        return 0;
+    }
+    PyErr_Clear();
+    PyObject* d = PyObject_GetAttrString(mod, "__dict__");
+    if (!d) return -1;
+    PyObject *k, *v;
+    Py_ssize_t pos = 0;
+    while (PyDict_Next(d, &pos, &k, &v)) {
+        const char* ks = PyUnicode_AsUTF8(k);
+        if (!ks) { Py_DECREF(d); return -1; }
+        if (ks[0] == '_') continue;
+        if (PyDict_SetItem(g, k, v) < 0) { Py_DECREF(d); return -1; }
+    }
+    Py_DECREF(d);
+    return 0;
+}
+
+extern "C" PyObject* pyc_rt_push_handled(PyObject* exc) {
+    PyObject* prev = PyErr_GetHandledException();     // new ref or NULL
+    Py_XINCREF(exc);
+    PyErr_SetHandledException(exc);                   // steals
+    // NULL would be indistinguishable from failure at the call site, so an
+    // absent previous exception is reported as None.
+    if (!prev) Py_RETURN_NONE;
+    return prev;
+}
+
+extern "C" int pyc_rt_pop_handled(PyObject* prev) {
+    PyObject* p = (prev == Py_None) ? nullptr : prev;
+    Py_XINCREF(p);
+    PyErr_SetHandledException(p);                     // steals
+    return 0;
 }

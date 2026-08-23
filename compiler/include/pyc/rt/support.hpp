@@ -110,6 +110,17 @@ int pyc_rt_del_global(const char* name);
 // simply return NULL with no exception set, which would look like a crash.
 PyObject* pyc_rt_cell_get(PyObject* cell);
 
+// Bare `raise`: re-raise whatever exception is currently being handled.
+int pyc_rt_reraise(void);
+// Entering/leaving an except block. CPython keeps a separate "currently
+// handled" exception, which is what bare `raise` and sys.exc_info() read --
+// clearing the raised error is not the same thing. push returns the previous
+// handled exception so nesting restores correctly.
+PyObject* pyc_rt_push_handled(PyObject* exc);
+int pyc_rt_pop_handled(PyObject* prev);
+// `from mod import *`
+int pyc_rt_import_star(PyObject* mod);
+
 // Extended unpacking: `a, *rest, b = value`. Returns a tuple of
 // nbefore + 1 + nafter items whose middle element is a list holding whatever
 // the fixed positions did not claim.

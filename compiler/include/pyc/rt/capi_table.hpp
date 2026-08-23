@@ -832,6 +832,11 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"pyc_rt_extend", Ownership::NotAnObject, true, 2, {}, false, "", false, "", "oo"},
     {"pyc_rt_assert_fail", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_del_global", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "p"},
+    {"pyc_rt_reraise", Ownership::NotAnObject, true, 0, {}, false, "", false, "", ""},
+    {"pyc_rt_push_handled", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_pop_handled", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_import_star", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_cell_get", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_unpack_ex", Ownership::Owned, true, 3, {}, false, "", false, "", "oii"},
     {"PyArg_Parse", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
     {"PyArg_ParseTuple", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
@@ -881,7 +886,7 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"PyOS_vsnprintf", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
     {"PyObject_ClearWeakRefs", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
     {"PyObject_DelItemString", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
-    {"PyObject_Format", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
+    {"PyObject_Format", Ownership::Owned, true, 2, {}, false, "", true, "3.2", "oo"},
     {"PyObject_Free", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
     {"PyObject_Malloc", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
     {"PyObject_Realloc", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
@@ -989,7 +994,7 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"PyThreadState_GetFrame", Ownership::Unknown, true, 0, {}, false, "", true, "3.10", ""},
     {"PyThreadState_GetID", Ownership::Unknown, true, 0, {}, false, "", true, "3.10", ""},
     {"PyThreadState_GetInterpreter", Ownership::Unknown, true, 0, {}, false, "", true, "3.10", ""},
-    {"PyModule_AddObjectRef", Ownership::NotAnObject, true, 0, {}, false, "", true, "3.10", ""},
+    {"PyModule_AddObjectRef", Ownership::NotAnObject, true, 3, {}, false, "", true, "3.10", "opo"},
     {"PyCodec_Unregister", Ownership::Unknown, true, 0, {}, false, "", true, "3.10", ""},
     {"PyErr_SetInterruptEx", Ownership::Unknown, true, 0, {}, false, "", true, "3.10", ""},
     {"Py_Is", Ownership::Unknown, true, 0, {}, false, "", true, "3.10", ""},
@@ -1006,7 +1011,7 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"PyBuffer_SizeFromFormat", Ownership::Unknown, true, 0, {}, false, "", true, "3.11", ""},
     {"PyBuffer_FromContiguous", Ownership::Unknown, true, 0, {}, false, "", true, "3.11", ""},
     {"PyObject_CopyData", Ownership::Unknown, true, 0, {}, false, "", true, "3.11", ""},
-    {"PyErr_GetHandledException", Ownership::Unknown, true, 0, {}, false, "", true, "3.11", ""},
+    {"PyErr_GetHandledException", Ownership::Owned, true, 0, {}, false, "", true, "3.11", ""},
     {"PyErr_SetHandledException", Ownership::Unknown, true, 0, {}, false, "", true, "3.11", ""},
     {"PyType_FromMetaclass", Ownership::Unknown, true, 0, {}, false, "", true, "3.12", ""},
     {"PyVectorcall_NARGS", Ownership::Unknown, true, 0, {}, false, "", true, "3.12", ""},
@@ -1061,6 +1066,6 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"Py_PACK_VERSION", Ownership::Unknown, true, 0, {}, false, "", true, "3.14", ""},
 };
 
-inline constexpr int kCApiSymbolCount = 1048;
+inline constexpr int kCApiSymbolCount = 1053;
 
 }  // namespace pyc::rt

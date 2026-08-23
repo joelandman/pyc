@@ -67,7 +67,14 @@ _OWNERSHIP_OVERRIDES = {
     # Returns int (0 / -1), holds its own reference, never steals. It exists
     # precisely because PyModule_AddObject's success-only steal is unsafe, so
     # it is the replacement _BANNED points at and must be usable.
-    "PyModule_AddObjectRef": ("int", ""),
+    "PyModule_AddObjectRef": ("int", "", ["PyObject*", "const char*", "PyObject*"]),
+    # Documented as returning a new reference to the exception currently being
+    # handled, or NULL when there is none. Needed for bare `raise`.
+    "PyErr_GetHandledException": ("PyObject*", "+1", []),
+    # Returns a new reference to the formatted string. format_spec may be NULL,
+    # which means "no spec" -- not the same as an empty one for a type with a
+    # custom __format__.
+    "PyObject_Format": ("PyObject*", "+1", ["PyObject*", "PyObject*"]),
 }
 
 # Symbols lowering must NOT emit, with the reason and the replacement.
@@ -195,6 +202,11 @@ _PYC_RUNTIME = {
     "pyc_rt_extend":       ("int", "", ["PyObject*", "PyObject*"]),
     "pyc_rt_assert_fail":  ("int", "", ["PyObject*"]),
     "pyc_rt_del_global":   ("int", "", ["const char*"]),
+    "pyc_rt_reraise":      ("int", "", []),
+    "pyc_rt_push_handled": ("PyObject*", "+1", ["PyObject*"]),
+    "pyc_rt_pop_handled":  ("int", "", ["PyObject*"]),
+    "pyc_rt_import_star":  ("int", "", ["PyObject*"]),
+    "pyc_rt_cell_get":     ("PyObject*", "+1", ["PyObject*"]),
     "pyc_rt_unpack_ex":    ("PyObject*", "+1", ["PyObject*", "Py_ssize_t", "Py_ssize_t"]),
 }
 
@@ -227,7 +239,7 @@ def main() -> int:
     # refcounts.dat already describes is a conflict, not a refinement: one of
     # the two is wrong and silently preferring either is how contradictions
     # get baked in.
-    for name, (typ, rc) in _OWNERSHIP_OVERRIDES.items():
+    for name, (typ, rc, ptypes) in _OWNERSHIP_OVERRIDES.items():
         if name not in funcs:
             print(f"gen_capi_table: WARNING: ownership override for {name!r}, "
                   f"which no source lists at all", file=sys.stderr)
@@ -238,6 +250,8 @@ def main() -> int:
                   file=sys.stderr)
             return 2
         funcs[name]["ret"] = (typ, rc)
+        funcs[name]["params"] = [{"type": t, "name": f"a{i}", "rc": ""}
+                                 for i, t in enumerate(ptypes)]
 
     # Validate the curated lists against the data. An unmatched steal
     # annotation is FATAL: it fails open, and failing open here means a
