@@ -42,9 +42,16 @@ TMP="$(mktemp -d)"; trap '[[ $KEEP == 1 ]] || rm -rf "$TMP"' EXIT
 # PYTHONPATH so pyc_parse is importable from ANY cwd. Without it pycc only
 # worked when run from compiler/, which is exactly the kind of accidental
 # dependence on the caller's directory that the sysroot script hit three times.
-PYTHONPATH="$REPO/compiler${PYTHONPATH:+:$PYTHONPATH}" \
-  "$PY" -m pyc_parse "$(realpath "$SRC")" > "$TMP/ast.json" 2>"$TMP/parse.err" || {
-  cat "$TMP/parse.err" >&2; exit 1; }
+# A SyntaxError comes back as a structured envelope on STDOUT with a non-zero
+# exit, not as text on stderr. Exiting here on the status alone discarded it:
+# the user saw a bare exit 1 with no diagnostic. Hand the envelope to the
+# lowering stage, which renders it in the standard file:line:col form.
+if ! PYTHONPATH="$REPO/compiler${PYTHONPATH:+:$PYTHONPATH}" \
+     "$PY" -m pyc_parse "$(realpath "$SRC")" > "$TMP/ast.json" 2>"$TMP/parse.err"; then
+  [[ -s "$TMP/parse.err" ]] && cat "$TMP/parse.err" >&2
+  [[ -s "$TMP/ast.json" ]] && "$LOWER" "$TMP/ast.json" >/dev/null
+  exit 1
+fi
 "$LOWER" "$TMP/ast.json" --emit-llvm > "$TMP/mod.ll" || exit 1
 if [[ $EMIT_LLVM == 1 ]]; then cp "$TMP/mod.ll" "$OUT"; exit 0; fi
 

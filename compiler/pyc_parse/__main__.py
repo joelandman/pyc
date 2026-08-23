@@ -55,11 +55,25 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         tree = ast.parse(src, filename=args.file, **({"feature_version": fv} if fv else {}))
+        # ast.parse is NOT the whole of Python's syntax. `return` outside a
+        # function, `yield` outside a function, `await` outside async, a
+        # duplicate parameter name: ast.parse accepts all of them and compile()
+        # rejects them. Parsing alone would let pyc compile programs CPython
+        # refuses to run. Compiling to bytecode and throwing it away is the
+        # cheapest way to inherit those rules instead of reimplementing them
+        # (I3: use the protocol, do not re-derive it at the callsite).
+        #
+        # feature_version deliberately does NOT apply here: it is a parser
+        # option, and this call exists only for its checks.
+        compile(tree, args.file, "exec")
     except SyntaxError as e:
         # Structured so the driver can render a §1.1 Diagnostic rather than
         # reformatting a traceback.
         json.dump({"schema_version": SCHEMA_VERSION, "error": {
-            "kind": "SyntaxError", "message": e.msg, "file": e.filename,
+            # The exact class, not the base: CPython distinguishes
+            # IndentationError and TabError from SyntaxError, and reporting
+            # the base for all three loses what the user needs to see.
+            "kind": type(e).__name__, "message": e.msg, "file": e.filename,
             "line": e.lineno, "col": e.offset,
         }}, sys.stdout)
         sys.stdout.write("\n")

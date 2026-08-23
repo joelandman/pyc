@@ -9,108 +9,80 @@
       "-O0"
     ]
   },
-  "pass_rate": 97.3314606741573,
+  "pass_rate": 97.8932584269663,
   "scored": 712,
-  "matched": 693,
+  "matched": 697,
   "quarantined": 1,
-  "elapsed_seconds": 166.2002613544464,
+  "elapsed_seconds": 170.26719999313354,
   "counts": {
-    "COMPILE_ERROR": 13,
+    "COMPILE_ERROR": 9,
     "STDERR_DIFF": 6,
-    "MATCH": 693,
+    "MATCH": 697,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
-    {
-      "case": "case_005.py",
-      "path": "verify/corpus/language/case_005.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "compiler exited 1 with no diagnostic"
-    },
     {
       "case": "case_265.py",
       "path": "verify/corpus/language/case_265.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vswo6ye8/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-jl3w2p0n/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_266.py",
       "path": "verify/corpus/language/case_266.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9atmp61_/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-mq1u97rm/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_267.py",
       "path": "verify/corpus/language/case_267.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vxoh_g45/case_267.py:2:9: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-ks5j_w28/case_267.py:2:9: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_449.py",
       "path": "verify/corpus/language/case_449.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-nh4v2ce2/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
-    },
-    {
-      "case": "case_453.py",
-      "path": "verify/corpus/language/case_453.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "compiler exited 1 with no diagnostic"
-    },
-    {
-      "case": "case_454.py",
-      "path": "verify/corpus/language/case_454.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "compiler exited 1 with no diagnostic"
-    },
-    {
-      "case": "case_456.py",
-      "path": "verify/corpus/language/case_456.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "compiler exited 1 with no diagnostic"
+      "detail": "/tmp/pyc-verify-ys2a532r/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
     },
     {
       "case": "case_470.py",
       "path": "verify/corpus/language/case_470.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-e8y135io/case_470.py:6:0: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-hj4ynq1h/case_470.py:6:0: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_472.py",
       "path": "verify/corpus/language/case_472.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-fvp5h14z/case_472.py:15:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-u6s_sexm/case_472.py:15:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_474.py",
       "path": "verify/corpus/language/case_474.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-z9yhgj8y/case_474.py:3:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-p05v1g8n/case_474.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_475.py",
       "path": "verify/corpus/language/case_475.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ivdeype8/case_475.py:3:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-o1931qcg/case_475.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_476.py",
       "path": "verify/corpus/language/case_476.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ief3nfks/case_476.py:3:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-gvk2j8sj/case_476.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_208.py",
@@ -178,6 +150,13 @@
     {
       "case": "case_004.py",
       "path": "verify/corpus/language/case_004.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_005.py",
+      "path": "verify/corpus/language/case_005.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3249,8 +3228,29 @@
       "detail": ""
     },
     {
+      "case": "case_453.py",
+      "path": "verify/corpus/language/case_453.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_454.py",
+      "path": "verify/corpus/language/case_454.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_455.py",
       "path": "verify/corpus/language/case_455.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_456.py",
+      "path": "verify/corpus/language/case_456.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""

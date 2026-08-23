@@ -27,6 +27,26 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "json: %s (line %d)\n", perr.message.c_str(), perr.line);
         return 2;
     }
+    // A parse failure arrives as a structured `error` envelope on stdout, not
+    // as text on stderr. Rendering it here is what makes a SyntaxError reach
+    // the user: pycc redirects our stdin's producer into a file, so an
+    // unrendered envelope was reported as a silent exit-1 with no diagnostic
+    // at all -- a compiler that fails without saying why (INTERFACES §1.1).
+    if (const json::Value* ev = doc.find(doc.root(), "error")) {
+        auto str = [&](const char* k, const char* dflt) {
+            const json::Value* v = doc.find(*ev, k);
+            return v ? std::string(doc.str_of(*v)) : std::string(dflt);
+        };
+        auto num = [&](const char* k) {
+            const json::Value* v = doc.find(*ev, k);
+            return v ? (int)v->number : 0;
+        };
+        std::fprintf(stderr, "%s:%d:%d: error: %s [%s]\n",
+                     str("file", "<input>").c_str(), num("line"), num("col"),
+                     str("message", "invalid syntax").c_str(),
+                     str("kind", "SyntaxError").c_str());
+        return 1;
+    }
     const json::Value* astv = doc.find(doc.root(), "ast");
     if (!astv) { std::fprintf(stderr, "envelope has no 'ast'\n"); return 2; }
     const json::Value* fv = doc.find(doc.root(), "file");
