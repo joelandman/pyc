@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Compile a Python file to a native executable (INTERFACES.md §5, first cut).
+#
+#   pycc prog.py -o prog [--sysroot DIR] [--emit-llvm]
+#
+# Tier 1 by construction: static libpython plus -rdynamic, so the binary has no
+# libpython dependency yet can still dlopen extension modules and wheels.
+set -euo pipefail
+
+SYSROOT="${PYC_SYSROOT:-$HOME/opt/py-sysroots/cp314-3.14.7-tier1}"
+LOWER="${PYC_LOWER:-/tmp/pyc_lower}"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SRC=""; OUT="a.out"; KEEP=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -o) OUT="$2"; shift 2;;
+    --sysroot) SYSROOT="$2"; shift 2;;
+    --keep) KEEP=1; shift;;
+    *) SRC="$1"; shift;;
+  esac
+done
+[[ -n "$SRC" ]] || { echo "usage: pycc FILE [-o OUT]" >&2; exit 2; }
+
+PY="$SYSROOT/bin/python3.14"
+TMP="$(mktemp -d)"; trap '[[ $KEEP == 1 ]] || rm -rf "$TMP"' EXIT
+
+# Parse with the TARGET interpreter (VERSION_TARGETING.md): the AST is the
+# target's by construction, and pyc links no libpython itself.
+# PYTHONPATH so pyc_parse is importable from ANY cwd. Without it pycc only
+# worked when run from compiler/, which is exactly the kind of accidental
+# dependence on the caller's directory that the sysroot script hit three times.
+PYTHONPATH="$REPO/compiler${PYTHONPATH:+:$PYTHONPATH}" \
+  "$PY" -m pyc_parse "$(realpath "$SRC")" > "$TMP/ast.json" 2>"$TMP/parse.err" || {
+  cat "$TMP/parse.err" >&2; exit 1; }
+"$LOWER" "$TMP/ast.json" --emit-llvm > "$TMP/mod.ll" || exit 1
+
+INC="$($SYSROOT/bin/python3.14-config --includes)"
+LIBPL="$($PY -c 'import sysconfig;print(sysconfig.get_config_var("LIBPL"))')"
+LIB="$LIBPL/$($PY -c 'import sysconfig;print(sysconfig.get_config_var("LIBRARY"))')"
+
+cat > "$TMP/main.cpp" <<'EOC'
+#include "pyc/rt/entry.hpp"
+extern "C" int __pyc_main(void*);
+static int body(void) { return __pyc_main(nullptr); }
+int main(int argc, char** argv) { return pyc_rt_main(argc, argv, body); }
+EOC
+
+clang++ -std=c++20 -O1 -rdynamic $INC -I "$REPO/compiler/include" \
+  "$TMP/mod.ll" "$TMP/main.cpp" \
+  "$REPO/compiler/src/rt/entry.cpp" "$REPO/compiler/src/rt/support.cpp" \
+  "$LIB" -lm -lpthread -ldl -lutil -lz -o "$OUT"

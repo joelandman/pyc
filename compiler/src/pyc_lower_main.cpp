@@ -8,6 +8,7 @@
 
 namespace pyc {
 bool lower_to_ir(const ast::mod&, const std::string&, ir::Module&, DiagnosticSink&);
+std::string codegen_llvm(const ir::Module&);
 }
 using namespace pyc;
 
@@ -50,6 +51,11 @@ int main(int argc, char** argv) {
         }
         return 1;
     }
-    std::fputs(ir::to_string(m).c_str(), stdout);
+    // --emit-llvm selects the backend; the default stays the IR dump, which
+    // is what every existing check reads.
+    bool llvm = false;
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--emit-llvm") llvm = true;
+    std::fputs(llvm ? codegen_llvm(m).c_str() : ir::to_string(m).c_str(), stdout);
     return 0;
 }

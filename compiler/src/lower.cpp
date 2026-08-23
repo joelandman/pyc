@@ -128,6 +128,18 @@ private:
                       symbol, loc);
             return {};
         }
+        // The table records the true C arity. Emitting the wrong number of
+        // arguments produces an LLVM declaration that disagrees with the real
+        // function, and the callee then reads garbage -- PyNumber_Power takes
+        // (base, exp, modulus) and a two-argument call segfaults. Checking
+        // here turns that entire class into a compile-time diagnostic.
+        int passed = (int)args.size() + (imm_pos >= 0 ? 1 : 0);
+        if (passed != sym->arity) {
+            *ok = err(std::string("internal: '") + symbol + "' takes "
+                      + std::to_string(sym->arity) + " argument(s), lowering "
+                      "passed " + std::to_string(passed), symbol, loc);
+            return {};
+        }
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         ir::Instr in{ir::Op::CallCApi, args, out, sym->returns, symbol,
                      0, 0, loc, std::nullopt};
@@ -875,6 +887,16 @@ private:
             [&](const MatMult&)  { sym = "PyNumber_MatrixMultiply"; },
         }, b.op.v);
         if (!sym) { *ok = unsupported("this binary operator", b.loc); return {}; }
+        // PyNumber_Power is ternary: `a ** b` is pow(a, b, None).
+        if (std::string(sym) == "PyNumber_Power") {
+            ir::Value none = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstNone, {}, none, Ownership::Owned, "",
+                           0, 0, b.loc, std::nullopt});
+            mark_owned(none);
+            ir::Value out2 = call_capi(sym, {l, r, none}, b.loc, ok, {l, r, none});
+            if (*ok) mark_owned(out2);
+            return out2;
+        }
         ir::Value out = call_capi(sym, {l, r}, b.loc, ok, {l, r});
         if (*ok) mark_owned(out);
         return out;
