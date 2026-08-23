@@ -102,3 +102,32 @@ proves the schema; two prove I8.
 `_ALIASES` in `extract_schema.py` is a **curated list with no programmatic
 marker** — review it whenever the target version moves, because this failure
 mode is silent by construction.
+
+## C++ deserializer fidelity (2026-08-22)
+
+| Target | Files | ok | mismatch | error | skipped |
+|---|---|---|---|---|---|
+| CPython 3.14.7 | 14,641 | **14,637** | 0 | 0 | 4 |
+| CPython 3.13.15 | 2,582 | **2,578** | 0 | 0 | 4 |
+
+Checked structurally: the C++ reader emits a node-kind histogram and CPython
+counts the same tree, so any dropped subtree, field, or node kind changes a
+count. **FAITHFUL on both targets** — 17,215 files, one toolchain, target
+supplied as data.
+
+### The three under-described corners of CPython's reflection
+
+`_field_types` is the schema source, and it under-describes itself in three
+places. Each was a silent guess that real code turned into a real bug, and each
+is now a curated list whose *absence* fails loudly:
+
+| Constant | Problem | Failure without it |
+|---|---|---|
+| `_ALIASES` | deprecated names are still subclasses (`Num` under `Constant` ≤3.13) | `Constant` dropped entirely from the 3.13 schema |
+| `_NULLABLE_ELEMENTS` | `None` *inside* a list, not expressed by `list[ast.expr]` | `{**a, **b}` and kwonly-without-default shift every later element |
+| `_OBJECT_FIELDS` | `object` means three different things | t-strings and `case None:` fail to deserialize |
+
+All three must be reviewed when the target version moves. `_NULLABLE_ELEMENTS`
+is empirical (a scan of all 14,641 files found exactly two fields);
+`_OBJECT_FIELDS` is enforced — an unlisted `object` field makes `gen_ast.py`
+refuse to generate rather than guess.
