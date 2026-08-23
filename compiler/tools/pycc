@@ -45,7 +45,7 @@ static int body(void) { return __pyc_main(nullptr); }
 int main(int argc, char** argv) { return pyc_rt_main(argc, argv, body); }
 EOC
 
-clang++ -std=c++20 -O1 -rdynamic $INC -I "$REPO/compiler/include" \
+"${PYC_CXX:-clang++}" -std=c++20 -O1 -rdynamic $INC -I "$REPO/compiler/include" \
   "$TMP/mod.ll" "$TMP/main.cpp" \
   "$REPO/compiler/src/rt/entry.cpp" "$REPO/compiler/src/rt/support.cpp" \
   "$LIB" -lm -lpthread -ldl -lutil -lz -o "$OUT"

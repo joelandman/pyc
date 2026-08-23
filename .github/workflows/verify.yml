@@ -1,7 +1,13 @@
 # PR gate. Fast, blocking, runs on every push and pull request.
 #
-# Scope: the rescued corpus (verify/corpus). NOT the full Lib/test metric --
-# that lives in metric.yml on a schedule, because it is too slow to block a PR.
+# Scope: the NEW tree (compiler/) against the rescued corpus. NOT the full
+# Lib/test metric -- that lives in metric.yml on a schedule, because it is too
+# slow to block a PR.
+#
+# The old tree under src/ is deliberately NOT built or gated here. Its 97.8%
+# came with five P0 silent wrong answers and hardcoded expectations that had
+# recorded its own bugs as correct; keeping that gate green would enforce the
+# property the architecture review argued is worthless.
 #
 # This gate enforces CHARTER I6 (the metric may never regress) via
 # verify/check_regression.py, not by requiring a fixed pass rate. A project
@@ -19,10 +25,6 @@ on:
 concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
-
-env:
-  # Match the version used on the development machine (libmpdec-dev 4.0.1-6).
-  MPDEC_VERSION: "4.0.1"
 
 jobs:
   differential:
@@ -46,36 +48,14 @@ jobs:
           wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh 22
+          # The new tree needs clang++ (to compile it, and to assemble the
+          # LLVM IR it emits) plus CPython's build deps for the sysroot.
+          # libmpdec and the LLVM CMake package were old-tree dependencies:
+          # its runtime reimplemented decimal, which now comes from CPython.
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libpcre2-dev zlib1g-dev python3-dev
-          echo "LLVM_DIR=$(llvm-config-22 --cmakedir)" >> "$GITHUB_ENV"
-
-      # Ubuntu 24.04 dropped the mpdecimal source package, so libmpdec-dev
-      # cannot be apt-installed here -- CMakeLists.txt treats it as a hard
-      # dependency (decimal.Decimal in the old runtime). Build it from source,
-      # pinned, so CI does not depend on a package that no longer exists.
-      #
-      # This step disappears with the rebuild: decimal will come from real
-      # CPython, making libmpdec CPython's dependency rather than ours.
-      - name: Cache libmpdec
-        id: mpdec
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/lib/libmpdec*
-          key: mpdec-${{ env.MPDEC_VERSION }}-${{ runner.os }}
-
-      - name: Build libmpdec from source
-        if: steps.mpdec.outputs.cache-hit != 'true'
-        run: |
-          set -euxo pipefail
-          cd /tmp
-          curl -fsSLO "https://www.bytereef.org/software/mpdecimal/releases/mpdecimal-${MPDEC_VERSION}.tar.gz"
-          tar xf "mpdecimal-${MPDEC_VERSION}.tar.gz"
-          cd "mpdecimal-${MPDEC_VERSION}"
-          ./configure --prefix=/usr/local
-          make -j"$(nproc)"
-          sudo make install
-          sudo ldconfig
+            zlib1g-dev libssl-dev libffi-dev libbz2-dev liblzma-dev \
+            libsqlite3-dev libreadline-dev libncurses-dev uuid-dev
+          echo "PYC_CXX=clang++-22" >> "$GITHUB_ENV"
 
       # The runner's system python3 is 3.12, and pyc's frontend calls
       # PyObject_GetOptionalAttrString, which CPython added in 3.13 -- so the
@@ -107,28 +87,50 @@ jobs:
           echo "SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1" >> "$GITHUB_ENV"
           "$HOME/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14" -VV
 
-      - name: Build pyc
+      - name: Build the compiler
         run: |
           set -euxo pipefail
-          cmake -S . -B build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER=clang++-22 \
-            -DLLVM_DIR="$LLVM_DIR" \
-            -DPython3_ROOT_DIR="$SYSROOT" \
-            -DPython3_FIND_STRATEGY=LOCATION
-          cmake --build build -j"$(nproc)"
+          # The new tree has no CMake yet: it is a handful of translation
+          # units, so it is built directly. Replace this when a build system
+          # lands rather than growing the command.
+          clang++-22 -std=c++20 -O2 -I compiler/include \
+            compiler/src/pyc_lower_main.cpp compiler/src/lower.cpp \
+            compiler/src/scope.cpp compiler/src/ir.cpp compiler/src/codegen.cpp \
+            compiler/src/capi.cpp compiler/src/ast_support.cpp \
+            compiler/src/json.cpp -o "$RUNNER_TEMP/pyc_lower"
+          echo "PYC_LOWER=$RUNNER_TEMP/pyc_lower" >> "$GITHUB_ENV"
+
+      - name: Static checks
+        run: |
+          set -euxo pipefail
+          # A generic `auto` arm silently swallows every node kind CPython adds
+          # later; this is the one hole in I4's C++20 guarantee.
+          ./compiler/tools/lint_visitors.py compiler/
+          # IR well-formedness. Both tools prove they can FAIL before
+          # reporting (selfcheck.py), so a green result means something.
+          ./compiler/tools/check_ir_wellformed.py \
+            --lower "$RUNNER_TEMP/pyc_lower" \
+            --python "$SYSROOT/bin/python3.14" \
+            compiler/tests/*.py
+
+      - name: Smoke — the compiler produces a running binary
+        run: |
+          set -euxo pipefail
+          echo 'print(2 ** 200)' > "$RUNNER_TEMP/smoke.py"
+          PYC_LOWER="$RUNNER_TEMP/pyc_lower" ./compiler/tools/pycc \
+            "$RUNNER_TEMP/smoke.py" -o "$RUNNER_TEMP/smoke"
+          got="$("$RUNNER_TEMP/smoke")"
+          want="$("$SYSROOT/bin/python3.14" "$RUNNER_TEMP/smoke.py")"
+          [ "$got" = "$want" ] || { echo "smoke mismatch: $got != $want"; exit 1; }
+          # Tier 1: no libpython dependency, yet dlopen still works.
+          ! ldd "$RUNNER_TEMP/smoke" | grep -qi libpython \
+            || { echo "smoke binary has a libpython dependency"; exit 1; }
 
       - name: Differential run
         run: |
-          # -O0: 7.1x faster than the default -O2 + runtime-bitcode LTO
-          # (24.6s vs 174.8s per 40 cases), which is the difference between a
-          # gate that fits in a PR and one that does not. The nightly metric
-          # covers default flags. baseline.json is recorded at -O0 to match;
-          # check_regression.py refuses to compare across a flag mismatch.
-          ./verify/run.py \
+          PYC_LOWER="$RUNNER_TEMP/pyc_lower" ./verify/run.py \
             --corpus verify/corpus/language \
-            --corpus verify/corpus/programs \
-            --pyc-flag=-O0 \
+            --pyc "$PWD/compiler/tools/pycc" \
             --sysroot "$SYSROOT" \
             --jobs "$(nproc)" \
             --run-timeout 15 --compile-timeout 90 \
@@ -136,7 +138,14 @@ jobs:
             --json current.json
 
       - name: Monotonicity gate (I6)
-        run: ./verify/check_regression.py --current current.json
+        run: |
+          # Gate against the NEW tree's baseline. The old tree's
+          # verify/baseline.json records 97.8% with FIVE P0 silent wrong
+          # answers, and gating on it would enforce exactly the property the
+          # review argued is worthless.
+          ./verify/check_regression.py \
+            --baseline compiler/baseline-language.json \
+            --current current.json
 
       - uses: actions/upload-artifact@v4
         if: always()
