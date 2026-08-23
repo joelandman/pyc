@@ -66,3 +66,39 @@ parse under the interpreter are skipped and excluded from the denominator —
 The schema keeps `AugLoad`, `AugStore` and `Param`, which are vestigial in
 modern Python but remain real classes. Over-inclusion costs a dead visitor arm;
 under-inclusion would be a silent miss. I1 makes that trade obvious.
+
+## Totality result (2026-08-22)
+
+`INTERFACES.md` §2.4 requires the round-trip to hold on **two** targets.
+
+| Target | Files | ok | mismatch | error | skipped |
+|---|---|---|---|---|---|
+| CPython 3.14.7 | 14,641 | **14,637** | 0 | 0 | 4 |
+| CPython 3.13.15 | 2,582 | **2,578** | 0 | 0 | 4 |
+
+Both **TOTAL**: every node, field, and source attribute survived
+parse → encode → real JSON → decode → `ast.dump(include_attributes=True)`.
+
+The corpora differ in size because the 3.14 install carries a full
+scientific stack (numpy, sympy, torch, nuitka) while the fresh 3.13 sysroot has
+only numpy. Both cover the whole stdlib and `Lib/test`. The 4 skips on each are
+files that do not parse under that interpreter — deliberate bad-syntax
+fixtures, reported rather than hidden.
+
+Schema delta between the targets is exactly the expected two nodes
+(`TemplateStr`, `Interpolation` — PEP 750), with no field drift. The 3.13
+header contains no `TemplateStr`; both compile independently from one
+toolchain. That is I8: targets are data.
+
+### What the two targets caught
+
+Only running the second one exposed that `Constant` was being **silently
+dropped** from the 3.13 schema: CPython keeps `Num`/`Str`/`Bytes`/
+`NameConstant`/`Ellipsis` as subclasses of `Constant` through 3.13 and removes
+them in 3.14, so "has subclasses" read as "is abstract" and a 3.13 header would
+have had no literals in the language at all. 3.14 alone was clean. One target
+proves the schema; two prove I8.
+
+`_ALIASES` in `extract_schema.py` is a **curated list with no programmatic
+marker** — review it whenever the target version moves, because this failure
+mode is silent by construction.
