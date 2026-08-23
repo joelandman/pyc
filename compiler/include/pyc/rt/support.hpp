@@ -65,6 +65,16 @@ int pyc_rt_raise(PyObject* exc);
 // is part of observable behaviour and belongs where it can be read.
 PyObject* pyc_rt_unpack(PyObject* value, Py_ssize_t n);
 
+// Make a class-body value behave like a method when it needs to.
+//
+// A compiled function is a PyCFunction, which is NOT a descriptor, so it never
+// binds self. A plain Python function is, which is why CPython needs no such
+// step. But a decorator may already have produced a descriptor -- property,
+// staticmethod, classmethod -- and wrapping THAT would break it, turning
+// `@property def v` into a bound method instead of a computed attribute.
+// So the wrap is conditional on the value still being one of ours.
+PyObject* pyc_rt_bind_method(PyObject* v);
+
 #ifdef __cplusplus
 }
 #endif

@@ -21,6 +21,13 @@ using ir::Ownership;
 
 namespace {
 
+// LLVM rejects `double 0` -- a floating literal must look floating. %.17g
+// yields a bare integer for whole values, so give it a fractional part.
+std::string fp(const std::string& text) {
+    if (text.find_first_of(".eEnN") == std::string::npos) return text + ".0";
+    return text;
+}
+
 std::string escape(const std::string& s) {
     static const char* hex = "0123456789ABCDEF";
     std::string o;
@@ -151,7 +158,7 @@ private:
             case Op::ConstFloat:
                 need("declare ptr @PyFloat_FromDouble(double)");
                 o_ << "  " << v(*in.result) << " = call ptr @PyFloat_FromDouble(double "
-                   << in.text << ")\n";
+                   << fp(in.text) << ")\n";
                 check(in, v(*in.result), true);
                 break;
             case Op::ConstBool: {
@@ -217,6 +224,16 @@ private:
                 std::string c = fresh();
                 o_ << "  " << c << " = icmp eq i32 " << v(in.args[0]) << ", 0\n";
                 o_ << "  " << v(*in.result) << " = zext i1 " << c << " to i32\n";
+                break;
+            }
+            case Op::ConstComplex: {
+                need("declare ptr @PyComplex_FromDoubles(double, double)");
+                std::string re = in.text.substr(0, in.text.find(' '));
+                std::string im = in.text.substr(in.text.find(' ') + 1);
+                o_ << "  " << v(*in.result)
+                   << " = call ptr @PyComplex_FromDoubles(double " << fp(re)
+                   << ", double " << fp(im) << ")\n";
+                check(in, v(*in.result), true);
                 break;
             }
             case Op::Unpack: {

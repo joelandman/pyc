@@ -16,6 +16,7 @@
 #include "pyc/rt/capi.hpp"
 
 #include <string>
+#include <cstdio>
 #include <functional>
 #include <map>
 #include <set>
@@ -443,13 +444,17 @@ private:
         if (gens.size() != 1) { *ok = unsupported("nested comprehensions", loc); return {}; }
         const comprehension& g = gens[0];
         if (g.is_async) { *ok = unsupported("async comprehensions", loc); return {}; }
-        if (!std::holds_alternative<Name>(g.target->v)) {
-            *ok = unsupported("unpacking in a comprehension target", loc);
+        // `for k, v in pairs` binds several names; collect them all so the
+        // synthetic function declares a slot for each.
+        std::vector<std::string> vars;
+        collect_target_names(*g.target, vars);
+        if (vars.empty()) {
+            *ok = unsupported("this comprehension target", loc);
             return {};
         }
-        const std::string var = std::get<Name>(g.target->v).id;
+        const std::string var = vars[0];
 
-        std::set<std::string> bound{var};
+        std::set<std::string> bound(vars.begin(), vars.end());
         std::set<std::string> captured;
         free_locals(*elt, bound, captured);
         if (key) free_locals(*key, bound, captured);
@@ -476,7 +481,7 @@ private:
         std::vector<std::string> params{".0"};
         for (const std::string& c : caps) params.push_back(c);
         std::vector<std::string> locals = params;
-        locals.push_back(var);
+        for (const std::string& x : vars) locals.push_back(x);
         locals.push_back(".acc");
 
         std::string fname = std::string("<") + kind + "comp>";
@@ -509,7 +514,8 @@ private:
                            body, done, loc, make_landing_pad(loc)});
             set_block(body);
             mark_owned(item);
-            store_name(var, item, loc);
+            if (std::holds_alternative<Name>(g.target->v)) store_name(var, item, loc);
+            else if (!store_target(*g.target, item, loc)) bok = false;
 
             std::uint32_t cont = head;
             for (const expr& cond : g.ifs) {
@@ -568,8 +574,53 @@ private:
         return out;
     }
 
+    // Every Name read anywhere in a statement list. Used to detect closure
+    // capture before lowering, so it becomes a diagnostic rather than a
+    // NameError at run time (I1).
+    void stmt_names(const std::vector<stmt>& body, std::set<std::string>& bound,
+                    std::set<std::string>& out) {
+        auto note = [&](const expr& e) { free_locals(e, bound, out); };
+        std::function<void(const stmt&)> go = [&](const stmt& s2) {
+            std::visit(ov{
+                [&](const Expr& x){ note(*x.value); },
+                [&](const Return& x){ if (x.value) note(**x.value); },
+                [&](const Assign& x){ note(*x.value); },
+                [&](const AugAssign& x){ note(*x.value); note(*x.target); },
+                [&](const AnnAssign& x){ if (x.value) note(**x.value); },
+                [&](const If& x){ note(*x.test); for (const stmt& y : x.body) go(y);
+                                  for (const stmt& y : x.orelse) go(y); },
+                [&](const While& x){ note(*x.test); for (const stmt& y : x.body) go(y);
+                                     for (const stmt& y : x.orelse) go(y); },
+                [&](const For& x){ note(*x.iter); for (const stmt& y : x.body) go(y);
+                                   for (const stmt& y : x.orelse) go(y); },
+                [&](const AsyncFor& x){ note(*x.iter); for (const stmt& y : x.body) go(y); },
+                [&](const Try& x){ for (const stmt& y : x.body) go(y);
+                                   for (const stmt& y : x.orelse) go(y);
+                                   for (const stmt& y : x.finalbody) go(y);
+                                   for (const excepthandler& h : x.handlers)
+                                       for (const stmt& y : std::get<ExceptHandler>(h.v).body) go(y); },
+                [&](const TryStar& x){ for (const stmt& y : x.body) go(y); },
+                [&](const With& x){ for (const withitem& w : x.items) note(*w.context_expr);
+                                    for (const stmt& y : x.body) go(y); },
+                [&](const AsyncWith& x){ for (const stmt& y : x.body) go(y); },
+                [&](const Raise& x){ if (x.exc) note(**x.exc); },
+                [&](const Assert& x){ note(*x.test); },
+                [&](const Delete& x){ for (const expr& t : x.targets) note(t); },
+                [&](const Match& x){ note(*x.subject);
+                                     for (const match_case& c : x.cases)
+                                         for (const stmt& y : c.body) go(y); },
+                // A nested def's own body is a further scope; its captures are
+                // reported when IT is lowered.
+                [&](const FunctionDef&){}, [&](const AsyncFunctionDef&){},
+                [&](const ClassDef&){}, [&](const Import&){}, [&](const ImportFrom&){},
+                [&](const Global&){}, [&](const Nonlocal&){}, [&](const Pass&){},
+                [&](const Break&){}, [&](const Continue&){}, [&](const TypeAlias&){},
+            }, s2.v);
+        };
+        for (const stmt& s2 : body) go(s2);
+    }
+
     bool lower_functiondef(const FunctionDef& n) {
-        if (!n.decorator_list.empty()) return unsupported("decorators", n.loc);
         const arguments& a = *n.args;
         if (!a.posonlyargs.empty()) return unsupported("positional-only parameters", n.loc);
         if (!a.kwonlyargs.empty())  return unsupported("keyword-only parameters", n.loc);
@@ -579,6 +630,23 @@ private:
 
         std::vector<std::string> params;
         for (const arg& p : a.args) params.push_back(p.arg);
+
+        // A nested def reading an enclosing function's local needs a closure
+        // cell. Without one it silently resolves to a global and raises
+        // NameError at run time -- a crash far from the cause. Refuse at
+        // compile time instead, naming the variable (I1).
+        {
+            std::set<std::string> bound(params.begin(), params.end());
+            for (const std::string& l : function_locals(params, n.body))
+                bound.insert(l);
+            std::set<std::string> captured;
+            stmt_names(n.body, bound, captured);
+            if (!captured.empty())
+                return err("nested function '" + n.name + "' captures the "
+                           "enclosing local '" + *captured.begin()
+                           + "'; closures are not implemented",
+                           "closure", n.loc);
+        }
 
         // Save the enclosing function's state: a nested def is lowered into a
         // separate ir::Function, and must not inherit the outer local map.
@@ -643,14 +711,38 @@ private:
         // on attribute access, which is what a Python function does natively.
         if (!class_ns_.empty()) {
             bool okm = true;
-            ir::Value m = call_capi("PyInstanceMethod_New", {fv}, n.loc, &okm, {fv});
+            fv = apply_decorators(n.decorator_list, fv, n.loc, &okm);
+            if (!okm) return false;
+            ir::Value m = call_capi("pyc_rt_bind_method", {fv}, n.loc, &okm, {fv});
             if (!okm) return false;
             mark_owned(m);
             store_name(n.name, m, n.loc);
             return true;
         }
+        fv = apply_decorators(n.decorator_list, fv, n.loc, &ok);
+        if (!ok) return false;
         store_name(n.name, fv, n.loc);
         return true;
+    }
+
+    // @a @b def f  ->  f = a(b(f)). Applied BOTTOM-UP, i.e. nearest the def
+    // first, which is the order Python specifies and the opposite of how the
+    // list reads.
+    ir::Value apply_decorators(const std::vector<expr>& decos,
+                               ir::Value fv, const SourceLoc& loc, bool* ok) {
+        for (auto it = decos.rbegin(); it != decos.rend(); ++it) {
+            ir::Value d = lower_expr(*it, ok);
+            if (!*ok) return fv;
+            ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            std::vector<ir::Value> args{d, fv};
+            emit(ir::Instr{ir::Op::CallObject, args, out, Ownership::Owned, "",
+                           0, 0, loc, make_landing_pad(loc)});
+            if (owns(d)) release(d, loc);
+            if (owns(fv)) release(fv, loc);
+            mark_owned(out);
+            fv = out;
+        }
+        return fv;
     }
 
     bool lower_return(const Return& n) {
@@ -822,6 +914,17 @@ private:
     // rather than a local or global slot. That is what makes `def m(self)`
     // inside a class become a method instead of a module-level function.
     std::vector<ir::Value> class_ns_;
+
+    // Bind without consuming the caller's reference. The namespace INCREFs,
+    // so the value remains ours to use afterwards -- which is what makes
+    // `(x := f())` evaluate to the same object it binds.
+    void store_name_keep(const std::string& name, const ir::Value& v,
+                         const SourceLoc& loc) {
+        bool was = owns(v);
+        if (was) forget(v);
+        store_name(name, v, loc);
+        if (was) mark_owned(v);
+    }
 
     void store_name(const std::string& name, const ir::Value& v, const SourceLoc& loc) {
         if (!class_ns_.empty()) {
@@ -1201,7 +1304,17 @@ private:
             [&](const Call& c)     { out = lower_call(c, ok); },
             [&](const BinOp& b)    { out = lower_binop(b, ok); },
             [&](const BoolOp& n)        { out = lower_boolop(n, ok); },
-            [&](const NamedExpr& n)     { *ok = unsupported("walrus", n.loc); },
+            [&](const NamedExpr& n)     {
+                out = lower_expr(*n.value, ok);
+                if (!*ok) return;
+                if (!std::holds_alternative<Name>(n.target->v)) {
+                    *ok = unsupported("walrus with a non-name target", n.loc);
+                    return;
+                }
+                // The value is BOTH bound and yielded, so the store must not
+                // consume our reference -- the expression still evaluates to it.
+                store_name_keep(std::get<Name>(n.target->v).id, out, n.loc);
+            },
             [&](const UnaryOp& n)       { out = lower_unaryop(n, ok); },
             [&](const Lambda& n)        { out = lower_lambda(n, ok); },
             [&](const IfExp& n)         { out = lower_ifexp(n, ok); },
@@ -1243,7 +1356,14 @@ private:
             [&](const ConstBool& v)   { in.op = ir::Op::ConstBool;  in.text = v.value ? "True" : "False"; },
             [&](const ConstNone&)     { in.op = ir::Op::ConstNone; },
             [&](const ConstEllipsis&) { *ok = unsupported("Ellipsis literals", c.loc); },
-            [&](const ConstComplex&)  { *ok = unsupported("complex literals", c.loc); },
+            [&](const ConstComplex& v) {
+                in.op = ir::Op::ConstComplex;
+                // LLVM needs a literal it can parse as a double; %.17g is
+                // exact for IEEE-754 round-tripping.
+                char buf[80];
+                std::snprintf(buf, sizeof buf, "%.17g %.17g", v.real, v.imag);
+                in.text = buf;
+            },
             [&](const ConstTuple&)    { *ok = unsupported("tuple constants", c.loc); },
             [&](const ConstFrozenSet&){ *ok = unsupported("frozenset constants", c.loc); },
         }, c.value.v);
@@ -1418,6 +1538,24 @@ private:
         emit(ir::Instr{ir::Op::IntNot, {i}, out, Ownership::NotAnObject, "",
                        0, 0, loc, std::nullopt});
         return out;
+    }
+
+    void collect_target_names(const expr& e, std::vector<std::string>& out) {
+        std::visit(ov{
+            [&](const Name& n){ out.push_back(n.id); },
+            [&](const Tuple& t){ for (const expr& x : t.elts) collect_target_names(x, out); },
+            [&](const List& l){ for (const expr& x : l.elts) collect_target_names(x, out); },
+            [&](const Starred& s2){ if (s2.value) collect_target_names(*s2.value, out); },
+            [&](const Attribute&){}, [&](const Subscript&){},
+            [&](const BinOp&){}, [&](const BoolOp&){}, [&](const NamedExpr&){},
+            [&](const UnaryOp&){}, [&](const Lambda&){}, [&](const IfExp&){},
+            [&](const Dict&){}, [&](const Set&){}, [&](const ListComp&){},
+            [&](const SetComp&){}, [&](const DictComp&){}, [&](const GeneratorExp&){},
+            [&](const Await&){}, [&](const Yield&){}, [&](const YieldFrom&){},
+            [&](const Compare&){}, [&](const Call&){}, [&](const FormattedValue&){},
+            [&](const JoinedStr&){}, [&](const TemplateStr&){}, [&](const Interpolation&){},
+            [&](const Constant&){}, [&](const Slice&){},
+        }, e.v);
     }
 
     ir::Value emit_phi(const std::vector<ir::Value>& vals,

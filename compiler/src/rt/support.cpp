@@ -241,3 +241,9 @@ extern "C" PyObject* pyc_rt_unpack(PyObject* value, Py_ssize_t n) {
     }
     return t;
 }
+
+extern "C" PyObject* pyc_rt_bind_method(PyObject* v) {
+    if (v && PyCFunction_Check(v)) return PyInstanceMethod_New(v);
+    Py_XINCREF(v);              // already a descriptor, or not ours: pass through
+    return v;
+}

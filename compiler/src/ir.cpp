@@ -33,6 +33,7 @@ const char* op_name(Op op) {
         case Op::BuildClass:  return "buildclass";
         case Op::Raise:       return "raise";
         case Op::Unpack:      return "unpack";
+        case Op::ConstComplex: return "const.complex";
         case Op::MakeFunction: return "makefunc";
     }
     return "?";

@@ -182,6 +182,15 @@ def may_raise(typ: str, rc: str) -> bool:
     return typ.strip() not in ("void", "")
 
 
+# Helpers pyc itself provides. They live in the same table so lowering asks
+# exactly one question -- "is this emittable?" -- regardless of who implements
+# the symbol.
+_PYC_RUNTIME = {
+    # name: (return type, refcount, [param types])
+    "pyc_rt_bind_method": ("PyObject*", "+1", ["PyObject*"]),
+}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("refcounts_dat")
@@ -193,6 +202,10 @@ def main() -> int:
 
     funcs = parse(args.refcounts_dat)
     stable = parse_stable_abi(args.stable_abi) if args.stable_abi else {}
+    for name, (rt, rc, ptypes) in _PYC_RUNTIME.items():
+        funcs[name] = {"ret": (rt, rc),
+                       "params": [{"type": t, "name": f"a{i}", "rc": ""}
+                                  for i, t in enumerate(ptypes)]}
 
     # Symbols the stable ABI has but refcounts.dat does not. Included so the
     # gap is enumerable rather than invisible, but with ownership Unknown, so

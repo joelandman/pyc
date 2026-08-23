@@ -63,6 +63,9 @@ enum class Op {
     Is,
     // Logical negation of a machine int, for `not in` and `is not`.
     IntNot,
+    // A complex literal. `text` is "<real> <imag>"; both are raw doubles,
+    // so this cannot go through the generic PyObject* call path.
+    ConstComplex,
     // Unpack a value into exactly `imm` items, yielding a tuple.
     Unpack,
     // Raise an exception; always transfers to the error edge.
