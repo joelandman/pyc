@@ -30,9 +30,17 @@ void      pyc_rt_store_local(PyObject** locals, int slot, PyObject* v);
 // arguments by name. Without it a compiled function is METH_VARARGS and
 // rejects every keyword call -- which turned an honest compile error into a
 // runtime TypeError when keyword CALLS started lowering.
+// `defaults` is a tuple covering the LAST k named parameters, or NULL.
+// vararg_slot / kwarg_slot are local slot indices for *args / **kwargs, or -1.
+//
+// Defaults are evaluated once at DEF time and shared across calls -- the
+// behaviour behind the mutable-default surprise -- so they are built by the
+// caller, not here.
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                int nargs, int nlocals,
-                               const char* const* argnames);
+                               const char* const* argnames,
+                               PyObject* defaults,
+                               int vararg_slot, int kwarg_slot);
 
 // Vectorcall over an argument array.
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs);
@@ -74,6 +82,18 @@ PyObject* pyc_rt_unpack(PyObject* value, Py_ssize_t n);
 // `@property def v` into a bound method instead of a computed attribute.
 // So the wrap is conditional on the value still being one of ours.
 PyObject* pyc_rt_bind_method(PyObject* v);
+
+// Context-manager protocol. __enter__ and __exit__ are looked up on the TYPE,
+// not the instance, which is what the language specifies and what makes the
+// protocol work for classes that define them.
+PyObject* pyc_rt_cm_exit(PyObject* mgr);       // the bound __exit__
+PyObject* pyc_rt_cm_enter(PyObject* mgr);      // result of __enter__
+int pyc_rt_exit_normal(PyObject* exitf);       // exit(None, None, None)
+// Calls exit(type, value, tb) with the exception currently set.
+//   1  suppressed -- the error is cleared and execution continues
+//   0  not suppressed -- the exception is restored for propagation
+//  -1  __exit__ itself failed
+int pyc_rt_exit_exc(PyObject* exitf);
 
 #ifdef __cplusplus
 }

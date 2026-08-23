@@ -188,6 +188,10 @@ def may_raise(typ: str, rc: str) -> bool:
 _PYC_RUNTIME = {
     # name: (return type, refcount, [param types])
     "pyc_rt_bind_method": ("PyObject*", "+1", ["PyObject*"]),
+    "pyc_rt_cm_exit":      ("PyObject*", "+1", ["PyObject*"]),
+    "pyc_rt_cm_enter":     ("PyObject*", "+1", ["PyObject*"]),
+    "pyc_rt_exit_normal":  ("int", "", ["PyObject*"]),
+    "pyc_rt_exit_exc":     ("int", "", ["PyObject*"]),
 }
 
 

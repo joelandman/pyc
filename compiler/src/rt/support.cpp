@@ -65,18 +65,19 @@ namespace {
 // builtin_function_or_method, and the failed SetAttr left an exception set
 // that surfaced later as an unrelated SystemError.
 struct Bound { PycImpl impl; int nargs; int nlocals; PyMethodDef def;
-               char* name; const char* const* argnames; };
+               char* name; const char* const* argnames;
+               PyObject* defaults; int vararg; int kwarg; };
 
 void bound_free(PyObject* cap) {
     Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(cap, "pyc.bound"));
-    if (b) { std::free(b->name); delete b; }
+    if (b) { Py_XDECREF(b->defaults); std::free(b->name); delete b; }
 }
 
 PyObject* trampoline(PyObject* self, PyObject* args, PyObject* kwargs) {
     Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(self, "pyc.bound"));
     if (!b) return nullptr;
     Py_ssize_t npos = PyTuple_GET_SIZE(args);
-    if (npos > b->nargs) {
+    if (npos > b->nargs && b->vararg < 0) {
         PyErr_Format(PyExc_TypeError,
                      "%s() takes %d positional argument%s but %zd %s given",
                      b->name, b->nargs, b->nargs == 1 ? "" : "s", npos,
@@ -86,10 +87,20 @@ PyObject* trampoline(PyObject* self, PyObject* args, PyObject* kwargs) {
     PyObject** locals = new (std::nothrow) PyObject*[b->nlocals ? b->nlocals : 1];
     if (!locals) return PyErr_NoMemory();
     for (int i = 0; i < b->nlocals; ++i) locals[i] = nullptr;
-    for (Py_ssize_t i = 0; i < npos; ++i) {
+    Py_ssize_t nnamed = npos < b->nargs ? npos : b->nargs;
+    for (Py_ssize_t i = 0; i < nnamed; ++i) {
         PyObject* a = PyTuple_GET_ITEM(args, i);    // borrowed
         Py_INCREF(a);
         locals[i] = a;
+    }
+    if (b->vararg >= 0) {
+        PyObject* extra = PyTuple_GetSlice(args, nnamed, npos);
+        if (!extra) goto fail;
+        locals[b->vararg] = extra;                  // owned
+    }
+    if (b->kwarg >= 0) {
+        locals[b->kwarg] = PyDict_New();
+        if (!locals[b->kwarg]) goto fail;
     }
     // Bind keywords by parameter name, rejecting duplicates and unknowns the
     // way CPython does rather than silently ignoring them.
@@ -103,6 +114,12 @@ PyObject* trampoline(PyObject* self, PyObject* args, PyObject* kwargs) {
             for (int i = 0; i < b->nargs; ++i)
                 if (std::strcmp(ks, b->argnames[i]) == 0) { slot = i; break; }
             if (slot < 0) {
+                // Unmatched keywords go to **kwargs when the function has one;
+                // otherwise they are the error CPython gives.
+                if (b->kwarg >= 0) {
+                    if (PyDict_SetItem(locals[b->kwarg], k, val) < 0) goto fail;
+                    continue;
+                }
                 PyErr_Format(PyExc_TypeError,
                              "%s() got an unexpected keyword argument '%s'",
                              b->name, ks);
@@ -118,8 +135,19 @@ PyObject* trampoline(PyObject* self, PyObject* args, PyObject* kwargs) {
             locals[slot] = val;
         }
     }
-    for (int i = 0; i < b->nargs; ++i) {
-        if (!locals[i]) {
+    {
+        // Defaults cover the LAST k parameters, so parameter i takes
+        // defaults[i - (nargs - k)].
+        Py_ssize_t ndef = b->defaults ? PyTuple_GET_SIZE(b->defaults) : 0;
+        Py_ssize_t first_def = b->nargs - ndef;
+        for (int i = 0; i < b->nargs; ++i) {
+            if (locals[i]) continue;
+            if (ndef && i >= first_def) {
+                PyObject* d = PyTuple_GET_ITEM(b->defaults, i - first_def);
+                Py_INCREF(d);
+                locals[i] = d;
+                continue;
+            }
             PyErr_Format(PyExc_TypeError,
                          "%s() missing required argument '%s'",
                          b->name, b->argnames[i]);
@@ -142,11 +170,16 @@ fail:
 
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                int nargs, int nlocals,
-                               const char* const* argnames) {
+                               const char* const* argnames,
+                               PyObject* defaults,
+                               int vararg_slot, int kwarg_slot) {
     char* owned = strdup(name);
     if (!owned) return PyErr_NoMemory();
-    Bound* b = new (std::nothrow) Bound{impl, nargs, nlocals, {}, owned, argnames};
-    if (!b) { std::free(owned); return PyErr_NoMemory(); }
+    Py_XINCREF(defaults);
+    Bound* b = new (std::nothrow) Bound{impl, nargs, nlocals, {}, owned,
+                                        argnames, defaults,
+                                        vararg_slot, kwarg_slot};
+    if (!b) { Py_XDECREF(defaults); std::free(owned); return PyErr_NoMemory(); }
     b->def = PyMethodDef{b->name,
                      reinterpret_cast<PyCFunction>(
                          reinterpret_cast<void(*)()>(trampoline)),
@@ -246,4 +279,60 @@ extern "C" PyObject* pyc_rt_bind_method(PyObject* v) {
     if (v && PyCFunction_Check(v)) return PyInstanceMethod_New(v);
     Py_XINCREF(v);              // already a descriptor, or not ours: pass through
     return v;
+}
+
+namespace {
+PyObject* type_lookup(PyObject* mgr, const char* name) {
+    // Special-method lookup skips the instance dict, as the language requires.
+    PyObject* t = reinterpret_cast<PyObject*>(Py_TYPE(mgr));
+    PyObject* f = PyObject_GetAttrString(t, name);
+    if (!f) {
+        PyErr_Clear();
+        PyErr_Format(PyExc_TypeError,
+                     "'%s' object does not support the context manager protocol",
+                     Py_TYPE(mgr)->tp_name);
+        return nullptr;
+    }
+    return f;
+}
+}  // namespace
+
+extern "C" PyObject* pyc_rt_cm_exit(PyObject* mgr) {
+    PyObject* f = type_lookup(mgr, "__exit__");
+    if (!f) return nullptr;
+    PyObject* bound = PyMethod_Check(f) ? f : PyObject_GetAttrString(mgr, "__exit__");
+    if (bound != f) { Py_DECREF(f); if (!bound) return nullptr; }
+    return bound;
+}
+
+extern "C" PyObject* pyc_rt_cm_enter(PyObject* mgr) {
+    PyObject* f = type_lookup(mgr, "__enter__");
+    if (!f) return nullptr;
+    PyObject* r = PyObject_CallOneArg(f, mgr);
+    Py_DECREF(f);
+    return r;
+}
+
+extern "C" int pyc_rt_exit_normal(PyObject* exitf) {
+    PyObject* r = PyObject_CallFunctionObjArgs(exitf, Py_None, Py_None, Py_None, nullptr);
+    if (!r) return -1;
+    Py_DECREF(r);
+    return 0;
+}
+
+extern "C" int pyc_rt_exit_exc(PyObject* exitf) {
+    PyObject* exc = PyErr_GetRaisedException();          // clears the indicator
+    if (!exc) return 0;
+    PyObject* type = reinterpret_cast<PyObject*>(Py_TYPE(exc));
+    PyObject* tb = PyException_GetTraceback(exc);
+    PyObject* r = PyObject_CallFunctionObjArgs(exitf, type, exc,
+                                               tb ? tb : Py_None, nullptr);
+    Py_XDECREF(tb);
+    if (!r) { Py_DECREF(exc); return -1; }
+    int suppress = PyObject_IsTrue(r);
+    Py_DECREF(r);
+    if (suppress < 0) { Py_DECREF(exc); return -1; }
+    if (suppress) { Py_DECREF(exc); return 1; }
+    PyErr_SetRaisedException(exc);                        // steals exc
+    return 0;
 }

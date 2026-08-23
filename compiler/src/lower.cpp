@@ -232,7 +232,7 @@ private:
             [&](const AsyncFor& n)         { ok = unsupported("async for", n.loc); },
             [&](const While& n)            { ok = lower_while(n); },
             [&](const If& n)               { ok = lower_if(n); },
-            [&](const With& n)             { ok = unsupported("with", n.loc); },
+            [&](const With& n)             { ok = lower_with(n); },
             [&](const AsyncWith& n)        { ok = unsupported("async with", n.loc); },
             [&](const Match& n)            { ok = unsupported("match", n.loc); },
             [&](const Raise& n)            {
@@ -624,12 +624,28 @@ private:
         const arguments& a = *n.args;
         if (!a.posonlyargs.empty()) return unsupported("positional-only parameters", n.loc);
         if (!a.kwonlyargs.empty())  return unsupported("keyword-only parameters", n.loc);
-        if (!a.defaults.empty())    return unsupported("default arguments", n.loc);
-        if (a.vararg)               return unsupported("*args", n.loc);
-        if (a.kwarg)                return unsupported("**kwargs", n.loc);
 
         std::vector<std::string> params;
         for (const arg& p : a.args) params.push_back(p.arg);
+
+        // Defaults are evaluated ONCE, here, in the enclosing scope -- not per
+        // call. That is the behaviour behind the mutable-default surprise, and
+        // evaluating them at call time would be a different language.
+        bool dok = true;
+        ir::Value defaults;
+        if (!a.defaults.empty()) {
+            defaults = call_capi_imm("PyTuple_New", {},
+                                     (std::int64_t)a.defaults.size(), 0, n.loc, &dok);
+            if (!dok) return false;
+            mark_owned(defaults);
+            for (std::size_t i = 0; i < a.defaults.size(); ++i) {
+                ir::Value d = lower_expr(a.defaults[i], &dok);
+                if (!dok) return false;
+                call_capi_imm("PyTuple_SetItem", {defaults, d},
+                              (std::int64_t)i, 1, n.loc, &dok);   // steals d
+                if (!dok) return false;
+            }
+        }
 
         // A nested def reading an enclosing function's local needs a closure
         // cell. Without one it silently resolves to a global and raises
@@ -662,10 +678,17 @@ private:
         auto outer_frame = frame_owned_;
         auto outer_class_ns = class_ns_;
 
+        // *args and **kwargs get their own local slots, after the named
+        // parameters and before everything else the body binds.
+        std::vector<std::string> slotnames = params;
+        int vararg_slot = -1, kwarg_slot = -1;
+        if (a.vararg) { vararg_slot = (int)slotnames.size(); slotnames.push_back((*a.vararg)->arg); }
+        if (a.kwarg)  { kwarg_slot  = (int)slotnames.size(); slotnames.push_back((*a.kwarg)->arg); }
+
         mod_.functions.push_back(ir::Function{n.name, params, {}, {}, 1});
         fn_idx_ = mod_.functions.size() - 1;
         const std::size_t fn_index = fn_idx_;
-        cur()->locals = function_locals(params, n.body);
+        cur()->locals = function_locals(slotnames, n.body);
         locals_.clear();
         for (std::uint32_t i = 0; i < cur()->locals.size(); ++i)
             locals_[cur()->locals[i]] = i;
@@ -698,12 +721,20 @@ private:
         // Reference the function by INDEX, not name. Two classes can each
         // define `who`, and looking it up by name both picked the wrong one
         // and emitted a duplicate LLVM symbol.
-        ir::Instr mk{ir::Op::MakeFunction, {}, fv, Ownership::Owned,
-                     n.name, 0, 0, n.loc, make_landing_pad(n.loc)};
+        // target/target_else carry the *args and **kwargs slot indices,
+        // biased by one so 0 can mean "absent".
+        ir::Instr mk{ir::Op::MakeFunction,
+                     defaults.valid() ? std::vector<ir::Value>{defaults}
+                                      : std::vector<ir::Value>{},
+                     fv, Ownership::Owned, n.name,
+                     (std::uint32_t)(vararg_slot + 1),
+                     (std::uint32_t)(kwarg_slot + 1),
+                     n.loc, make_landing_pad(n.loc)};
         mk.imm = (std::int64_t)fn_index;
         mk.has_imm = true;
         emit(std::move(mk));
         mark_owned(fv);
+        if (defaults.valid() && owns(defaults)) release(defaults, n.loc);
         // Inside a class body, a plain callable is not enough: a
         // PyCFunction in a class dict does NOT bind self, because it is not a
         // descriptor. `C().m()` then fails with "missing required argument
@@ -1024,6 +1055,76 @@ private:
         if (!ok) return false;
         mark_owned(out);
         return store_target(*n.target, out, n.loc);
+    }
+
+    bool lower_with(const With& n) {
+        if (n.items.size() != 1) return unsupported("multiple with items", n.loc);
+        // __exit__ must run on EVERY exit path. break/continue/return would
+        // leave the block without it, and silently skipping cleanup is worse
+        // than refusing -- a file handle stays open, a lock stays held.
+        for (const stmt& s2 : n.body) {
+            bool bad = false;
+            std::visit(ov{
+                [&](const Return&){ bad = true; }, [&](const Break&){ bad = true; },
+                [&](const Continue&){ bad = true; },
+                [&](const Expr&){}, [&](const Assign&){}, [&](const AugAssign&){},
+                [&](const AnnAssign&){}, [&](const If&){}, [&](const While&){},
+                [&](const For&){}, [&](const AsyncFor&){}, [&](const With&){},
+                [&](const AsyncWith&){}, [&](const Try&){}, [&](const TryStar&){},
+                [&](const Match&){}, [&](const FunctionDef&){},
+                [&](const AsyncFunctionDef&){}, [&](const ClassDef&){},
+                [&](const Import&){}, [&](const ImportFrom&){}, [&](const Global&){},
+                [&](const Nonlocal&){}, [&](const Pass&){}, [&](const Raise&){},
+                [&](const Assert&){}, [&](const Delete&){}, [&](const TypeAlias&){},
+            }, s2.v);
+            if (bad) return unsupported("return/break/continue inside with", n.loc);
+        }
+
+        bool ok = true;
+        const withitem& w = n.items[0];
+        ir::Value mgr = lower_expr(*w.context_expr, &ok);
+        if (!ok) return false;
+        // __exit__ is looked up BEFORE __enter__ runs, as CPython does: a
+        // manager missing __exit__ must fail before any setup happens.
+        ir::Value exitf = call_capi("pyc_rt_cm_exit", {mgr}, n.loc, &ok);
+        if (!ok) return false;
+        mark_owned(exitf);
+        frame_owned_.push_back(exitf);
+        ir::Value entered = call_capi("pyc_rt_cm_enter", {mgr}, n.loc, &ok, {mgr});
+        if (!ok) return false;
+        mark_owned(entered);
+        if (w.optional_vars) { if (!store_target(**w.optional_vars, entered, n.loc)) return false; }
+        else if (owns(entered)) release(entered, n.loc);
+
+        std::uint32_t dispatch = new_block("with.unwind");
+        std::uint32_t after    = new_block("with.after");
+        try_stack_.push_back(dispatch);
+        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
+        try_stack_.pop_back();
+        if (!ok) return false;
+
+        call_capi("pyc_rt_exit_normal", {exitf}, n.loc, &ok);
+        if (!ok) return false;
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", after, 0, n.loc, std::nullopt});
+
+        set_block(dispatch);
+        ir::Value sup = call_capi("pyc_rt_exit_exc", {exitf}, n.loc, &ok);
+        if (!ok) return false;
+        std::uint32_t reraise = new_block("with.reraise");
+        emit(ir::Instr{ir::Op::CondBr, {sup}, std::nullopt, Ownership::NotAnObject,
+                       "", after, reraise, n.loc, std::nullopt});
+        set_block(reraise);
+        frame_owned_.pop_back();
+        std::uint32_t pad = make_landing_pad(n.loc);
+        frame_owned_.push_back(exitf);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", pad, 0, n.loc, std::nullopt});
+
+        set_block(after);
+        frame_owned_.pop_back();
+        if (owns(exitf)) release(exitf, n.loc);
+        return true;
     }
 
     bool lower_try(const Try& n) {

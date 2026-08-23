@@ -310,7 +310,7 @@ private:
                 break;
             }
             case Op::MakeFunction: {
-                need("declare ptr @pyc_rt_make_function(ptr, ptr, i32, i32, ptr)");
+                need("declare ptr @pyc_rt_make_function(ptr, ptr, i32, i32, ptr, ptr, i32, i32)");
                 std::size_t ti = (std::size_t)in.imm;
                 bool valid = in.has_imm && ti < m_.functions.size();
                 const ir::Function* t = valid ? &m_.functions[ti] : nullptr;
@@ -320,7 +320,10 @@ private:
                    << cstr(in.text) << ", ptr " << (t ? fname(ti) : "null")
                    << ", i32 " << (t ? t->params.size() : 0)
                    << ", i32 " << (t ? t->locals.size() : 0)
-                   << ", ptr " << names << ")\n";
+                   << ", ptr " << names
+                   << ", ptr " << (in.args.empty() ? "null" : v(in.args[0]))
+                   << ", i32 " << ((int)in.target - 1)
+                   << ", i32 " << ((int)in.target_else - 1) << ")\n";
                 check(in, v(*in.result), true);
                 break;
             }
