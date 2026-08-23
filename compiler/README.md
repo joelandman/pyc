@@ -131,3 +131,55 @@ All three must be reviewed when the target version moves. `_NULLABLE_ELEMENTS`
 is empirical (a scan of all 14,641 files found exactly two fields);
 `_OBJECT_FIELDS` is enforced — an unlisted `object` field makes `gen_ast.py`
 refuse to generate rather than guess.
+
+## A2 — C-API binding (in progress)
+
+```
+include/pyc/rt/capi.hpp         CApiSymbol (INTERFACES §4)
+include/pyc/rt/capi_table.hpp   GENERATED — 813 symbols
+src/capi.cpp                    lookup()
+tools/gen_capi_table.py         refcounts.dat -> the table
+```
+
+Derived from CPython's own `Doc/data/refcounts.dat`, not hand-written.
+Maintaining refcount contracts for 800+ functions by hand is the bookkeeping
+that produces leaks, and CPython already ships the answer.
+
+| | count |
+|---|---|
+| symbols | 813 |
+| returns a new reference (`Owned`) | 312 |
+| returns a borrowed reference | 52 |
+| always returns NULL | 16 |
+| steal-annotated | 6 |
+| banned | 1 |
+
+### What that file is and is not authoritative for
+
+**Returns: authoritative.** `+1` Owned, `0` Borrowed, `null` always-NULL,
+blank means not a `PyObject*`.
+
+**Parameter stealing: absent.** Its own header says so, and it is verifiable —
+`PyList_SetItem`'s stolen `item` records `0`, indistinguishable from a borrow.
+Stealing is therefore a curated list in the generator, validated against the
+data: a name that does not match makes the generator **refuse to run**. That
+guard is not decorative — three of the first six entries silently failed to
+match, because the doc's parameter names are not uniform (`PyList_SetItem`
+calls it `item`; `PyTuple_SetItem` calls the same argument `o`). An unapplied
+steal annotation makes lowering emit a `DECREF` on a stolen reference: a
+double free.
+
+`may_raise` is deliberately conservative — everything except `void` is assumed
+fallible. A redundant error edge is something A3 can optimise away; a missing
+one loses an exception, which is a silent wrong answer (I1).
+
+`_BANNED` carries a reason and a replacement. `PyModule_AddObject` steals
+*only on success*, so its cleanup path differs by outcome and cannot be one
+static contract; `PyModule_AddObjectRef` never steals. A contract that cannot
+be expressed statically is one we refuse rather than approximate.
+
+**Known gap:** `refcounts.dat` is not exhaustive of the C-API —
+`PyModule_AddObjectRef` is absent from it, so the recommended replacement is
+not yet in the table either. Symbols outside the table cannot be emitted by
+lowering (INTERFACES §4), so this needs a supplementary source before A3 can
+use them.
