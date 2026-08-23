@@ -1,0 +1,75 @@
+"""Parse boundary (INTERFACES.md §2.1).
+
+Run BY THE TARGET INTERPRETER, so the AST is the target's by construction:
+
+    <sysroot>/bin/python3.X -m pyc_parse FILE [--feature-version 3.Y]
+
+Emits the JSON envelope on stdout. pyc itself links no libpython.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+import sys
+
+from . import SCHEMA_VERSION, encode_node
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="pyc_parse")
+    ap.add_argument("file")
+    ap.add_argument("--feature-version", default=None,
+                    help="restrict accepted syntax to this X.Y (the -std level)")
+    ap.add_argument("--indent", type=int, default=None)
+    args = ap.parse_args(argv)
+
+    fv = None
+    if args.feature_version:
+        try:
+            major, minor = (int(x) for x in args.feature_version.split(".", 1))
+        except ValueError:
+            print(f"pyc_parse: bad --feature-version {args.feature_version!r}",
+                  file=sys.stderr)
+            return 2
+        if (major, minor) > sys.version_info[:2]:
+            # feature_version only restricts downward; a parser cannot read
+            # syntax newer than itself (VERSION_TARGETING.md, fact 2).
+            print(f"pyc_parse: cannot target {args.feature_version} with a "
+                  f"{sys.version_info[0]}.{sys.version_info[1]} interpreter",
+                  file=sys.stderr)
+            return 2
+        fv = (major, minor)
+
+    try:
+        src = open(args.file, "rb").read()
+    except OSError as e:
+        print(f"pyc_parse: {e}", file=sys.stderr)
+        return 2
+
+    try:
+        tree = ast.parse(src, filename=args.file, **({"feature_version": fv} if fv else {}))
+    except SyntaxError as e:
+        # Structured so the driver can render a §1.1 Diagnostic rather than
+        # reformatting a traceback.
+        json.dump({"schema_version": SCHEMA_VERSION, "error": {
+            "kind": "SyntaxError", "message": e.msg, "file": e.filename,
+            "line": e.lineno, "col": e.offset,
+        }}, sys.stdout)
+        sys.stdout.write("\n")
+        return 1
+
+    json.dump({
+        "schema_version": SCHEMA_VERSION,
+        "python_version": "%d.%d.%d" % sys.version_info[:3],
+        "feature_version": list(fv) if fv else None,
+        "file": args.file,
+        "ast": encode_node(tree),
+    }, sys.stdout, indent=args.indent)
+    sys.stdout.write("\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
