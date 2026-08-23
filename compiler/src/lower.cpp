@@ -384,12 +384,16 @@ private:
     ir::Value make_function_value(std::size_t idx, const std::string& name,
                                   const SourceLoc& loc,
                                   const std::vector<ir::Value>& closure = {},
-                                  ir::Value defaults = {}) {
+                                  ir::Value defaults = {},
+                                  int vararg_slot = -1, int kwarg_slot = -1) {
         ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         std::vector<ir::Value> mkargs{defaults};
         for (const ir::Value& c : closure) mkargs.push_back(c);
+        // Slots are biased by one so 0 can mean "absent", matching the def
+        // path -- MakeFunction reads target/target_else that way.
         ir::Instr mk{ir::Op::MakeFunction, mkargs, fv, Ownership::Owned, name,
-                     0, 0, loc, make_landing_pad(loc)};
+                     (std::uint32_t)(vararg_slot + 1),
+                     (std::uint32_t)(kwarg_slot + 1), loc, make_landing_pad(loc)};
         mk.imm = (std::int64_t)idx;
         mk.has_imm = true;
         emit(std::move(mk));
@@ -462,9 +466,15 @@ private:
 
     ir::Value lower_lambda(const Lambda& n, bool* ok) {
         const arguments& a = *n.args;
-        if (!a.posonlyargs.empty() || !a.kwonlyargs.empty()
-            || a.vararg || a.kwarg) {
-            *ok = unsupported("this lambda parameter form", n.loc);
+        // *args and **kwargs work exactly as they do for a def -- same
+        // trampoline, same slots. Positional-only and keyword-only markers
+        // stay refused: the trampoline binds keywords by NAME, so treating
+        // `lambda a, /: ...` as an ordinary parameter would accept f(a=1),
+        // which CPython rejects. Accepting what CPython rejects is the same
+        // defect as computing the wrong value.
+        if (!a.posonlyargs.empty() || !a.kwonlyargs.empty()) {
+            *ok = unsupported("positional-only or keyword-only lambda parameters",
+                              n.loc);
             return {};
         }
         // Lambda defaults are ordinary defaults: evaluated once, here, in the
@@ -486,13 +496,18 @@ private:
         }
         std::vector<std::string> params;
         for (const arg& p : a.args) params.push_back(p.arg);
+        // *args and **kwargs get their own slots, after the named parameters.
+        std::vector<std::string> slotnames = params;
+        int vararg_slot = -1, kwarg_slot = -1;
+        if (a.vararg) { vararg_slot = (int)slotnames.size(); slotnames.push_back((*a.vararg)->arg); }
+        if (a.kwarg)  { kwarg_slot  = (int)slotnames.size(); slotnames.push_back((*a.kwarg)->arg); }
 
         // A lambda captures through the same cells a nested def does. It used
         // to be refused here because a lambda is called by the USER, so a
         // captured local cannot be passed as a hidden argument the way a
         // comprehension's can -- cells remove that asymmetry.
         std::set<std::string> reads = nested_reads_expr(*n.body);
-        std::set<std::string> own(params.begin(), params.end());
+        std::set<std::string> own(slotnames.begin(), slotnames.end());
         std::vector<std::string> freevars;
         std::vector<ir::Value> closure_cells;
         for (const std::string& r : reads) {
@@ -506,7 +521,7 @@ private:
             mark_owned(c);
             closure_cells.push_back(c);
         }
-        std::vector<std::string> lam_locals = params;
+        std::vector<std::string> lam_locals = slotnames;
         for (const std::string& f2 : freevars) lam_locals.push_back(f2);
 
         FnScope sc = begin_function("<lambda>", params, lam_locals);
@@ -521,7 +536,7 @@ private:
         if (!bok) { *ok = false; return {}; }
         *ok = true;
         ir::Value out = make_function_value(idx, qualname("<lambda>"), n.loc, closure_cells,
-                                            lam_defaults);
+                                            lam_defaults, vararg_slot, kwarg_slot);
         // Guarded, NOT unconditional: the lambda path restores the owned set
         // differently from the def path, and re-marking here double-freed the
         // captured cell -- `return lambda x: x + n` crashed with no output.

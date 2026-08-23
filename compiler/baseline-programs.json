@@ -13,7 +13,7 @@
   "scored": 92,
   "matched": 82,
   "quarantined": 1,
-  "elapsed_seconds": 44.17180252075195,
+  "elapsed_seconds": 44.83084988594055,
   "counts": {
     "COMPILE_ERROR": 2,
     "STDERR_DIFF": 8,
@@ -26,14 +26,14 @@
       "path": "verify/corpus/programs/generators.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cwd6lysz/generators.py:3:4: error: cannot compile yield yet [yield]"
+      "detail": "/tmp/pyc-verify-xofsmy95/generators.py:3:4: error: cannot compile yield yet [yield]"
     },
     {
       "case": "w124_gen.py",
       "path": "verify/corpus/programs/w124_gen.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5_i4e83w/w124_gen.py:4:8: error: cannot compile yield yet [yield]"
+      "detail": "/tmp/pyc-verify-dipqxndu/w124_gen.py:4:8: error: cannot compile yield yet [yield]"
     },
     {
       "case": "fibn.py",

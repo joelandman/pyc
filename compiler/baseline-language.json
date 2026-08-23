@@ -9,25 +9,17 @@
       "-O0"
     ]
   },
-  "pass_rate": 99.01685393258427,
+  "pass_rate": 99.15730337078652,
   "scored": 712,
-  "matched": 705,
+  "matched": 706,
   "quarantined": 1,
-  "elapsed_seconds": 184.58012509346008,
+  "elapsed_seconds": 200.89574313163757,
   "counts": {
-    "COMPILE_ERROR": 1,
     "STDERR_DIFF": 6,
-    "MATCH": 705,
+    "MATCH": 706,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
-    {
-      "case": "case_449.py",
-      "path": "verify/corpus/language/case_449.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-b_1lpqv1/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
-    },
     {
       "case": "case_208.py",
       "path": "verify/corpus/language/case_208.py",
@@ -3167,6 +3159,13 @@
     {
       "case": "case_448.py",
       "path": "verify/corpus/language/case_448.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_449.py",
+      "path": "verify/corpus/language/case_449.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
