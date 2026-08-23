@@ -5,200 +5,198 @@
     "machine": "x86_64"
   },
   "subject": {
-    "pyc_flags": []
+    "pyc_flags": [
+      "-O0"
+    ]
   },
-  "pass_rate": 46.62921348314607,
+  "pass_rate": 93.39887640449439,
   "scored": 712,
-  "matched": 332,
+  "matched": 665,
   "quarantined": 1,
-  "elapsed_seconds": 128.0131664276123,
+  "elapsed_seconds": 183.05440878868103,
   "counts": {
-    "COMPILE_ERROR": 380,
-    "MATCH": 332,
+    "SILENT_WRONG_ANSWER": 3,
+    "CRASH": 21,
+    "COMPILE_ERROR": 17,
+    "STDERR_DIFF": 6,
+    "MATCH": 665,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
+    {
+      "case": "case_473.py",
+      "path": "verify/corpus/language/case_473.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "case_481.py",
+      "path": "verify/corpus/language/case_481.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "case_668.py",
+      "path": "verify/corpus/language/case_668.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "case_375.py",
+      "path": "verify/corpus/language/case_375.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_466.py",
+      "path": "verify/corpus/language/case_466.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_467.py",
+      "path": "verify/corpus/language/case_467.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_468.py",
+      "path": "verify/corpus/language/case_468.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_479.py",
+      "path": "verify/corpus/language/case_479.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_529.py",
+      "path": "verify/corpus/language/case_529.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_538.py",
+      "path": "verify/corpus/language/case_538.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_631.py",
+      "path": "verify/corpus/language/case_631.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_632.py",
+      "path": "verify/corpus/language/case_632.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_633.py",
+      "path": "verify/corpus/language/case_633.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_634.py",
+      "path": "verify/corpus/language/case_634.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_635.py",
+      "path": "verify/corpus/language/case_635.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_636.py",
+      "path": "verify/corpus/language/case_636.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_649.py",
+      "path": "verify/corpus/language/case_649.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_655.py",
+      "path": "verify/corpus/language/case_655.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_660.py",
+      "path": "verify/corpus/language/case_660.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_666.py",
+      "path": "verify/corpus/language/case_666.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_670.py",
+      "path": "verify/corpus/language/case_670.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_680.py",
+      "path": "verify/corpus/language/case_680.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_681.py",
+      "path": "verify/corpus/language/case_681.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
+    {
+      "case": "case_682.py",
+      "path": "verify/corpus/language/case_682.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "pyc failed, but stdout/exit differ from CPython"
+    },
     {
       "case": "case_005.py",
       "path": "verify/corpus/language/case_005.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
       "detail": "compiler exited 1 with no diagnostic"
-    },
-    {
-      "case": "case_016.py",
-      "path": "verify/corpus/language/case_016.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-g5p_j7xy/case_016.py:2:0: error: cannot compile default arguments yet [default arguments]"
-    },
-    {
-      "case": "case_017.py",
-      "path": "verify/corpus/language/case_017.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-8vb3xwym/case_017.py:2:0: error: cannot compile default arguments yet [default arguments]"
-    },
-    {
-      "case": "case_018.py",
-      "path": "verify/corpus/language/case_018.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-s95pnbdx/case_018.py:3:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_019.py",
-      "path": "verify/corpus/language/case_019.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-txq91jfk/case_019.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_020.py",
-      "path": "verify/corpus/language/case_020.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-justdlxi/case_020.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_021.py",
-      "path": "verify/corpus/language/case_021.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-55o_1uys/case_021.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_022.py",
-      "path": "verify/corpus/language/case_022.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ymjhnh60/case_022.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_045.py",
-      "path": "verify/corpus/language/case_045.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-8dp5wq0l/case_045.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_046.py",
-      "path": "verify/corpus/language/case_046.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-uu07vkra/case_046.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_047.py",
-      "path": "verify/corpus/language/case_047.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-nofpxrq2/case_047.py:2:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_048.py",
-      "path": "verify/corpus/language/case_048.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-mi6bbec7/case_048.py:2:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_049.py",
-      "path": "verify/corpus/language/case_049.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-uv08te78/case_049.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_050.py",
-      "path": "verify/corpus/language/case_050.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-9he2dw7f/case_050.py:2:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_051.py",
-      "path": "verify/corpus/language/case_051.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7743vajp/case_051.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_069.py",
-      "path": "verify/corpus/language/case_069.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-i0go67iz/case_069.py:2:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_076.py",
-      "path": "verify/corpus/language/case_076.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.fmpYJ4VJZI/mod.ll:16:39: error: '%v3' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_077.py",
-      "path": "verify/corpus/language/case_077.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.Ms3avj8U3g/mod.ll:16:39: error: '%v3' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_094.py",
-      "path": "verify/corpus/language/case_094.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-5izgxr3f/case_094.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
-    },
-    {
-      "case": "case_095.py",
-      "path": "verify/corpus/language/case_095.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-9hqz1lev/case_095.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
-    },
-    {
-      "case": "case_096.py",
-      "path": "verify/corpus/language/case_096.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4rwvukxi/case_096.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
-    },
-    {
-      "case": "case_097.py",
-      "path": "verify/corpus/language/case_097.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-fso59e26/case_097.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
-    },
-    {
-      "case": "case_100.py",
-      "path": "verify/corpus/language/case_100.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.tc3u1SXDiQ/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_101.py",
-      "path": "verify/corpus/language/case_101.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.DEqPF9zQmO/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_102.py",
-      "path": "verify/corpus/language/case_102.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.W3VmjiZOlC/mod.ll:18:39: error: '%v4' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_103.py",
-      "path": "verify/corpus/language/case_103.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.oxmMPIXp61/mod.ll:38:40: error: '%v11' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_104.py",
@@ -215,1187 +213,32 @@
       "detail": "error: invalid LLVM IR input: Instruction does not dominate all uses!"
     },
     {
-      "case": "case_106.py",
-      "path": "verify/corpus/language/case_106.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-k0k1d7as/case_106.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_107.py",
-      "path": "verify/corpus/language/case_107.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-js3m1b3x/case_107.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_122.py",
-      "path": "verify/corpus/language/case_122.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.pptOIGapfP/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_123.py",
-      "path": "verify/corpus/language/case_123.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.daBY42a4wX/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_129.py",
-      "path": "verify/corpus/language/case_129.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-jqz6ih5l/case_129.py:4:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_138.py",
-      "path": "verify/corpus/language/case_138.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-blg59pp8/case_138.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_143.py",
-      "path": "verify/corpus/language/case_143.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-lo4_43hd/case_143.py:2:0: error: cannot compile multiple assignment targets yet [multiple assignment targets]"
-    },
-    {
-      "case": "case_144.py",
-      "path": "verify/corpus/language/case_144.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-boz1jzb_/case_144.py:2:0: error: cannot compile multiple assignment targets yet [multiple assignment targets]"
-    },
-    {
-      "case": "case_145.py",
-      "path": "verify/corpus/language/case_145.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-gcvhey1j/case_145.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
-    },
-    {
-      "case": "case_146.py",
-      "path": "verify/corpus/language/case_146.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-29_471by/case_146.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
-    },
-    {
-      "case": "case_155.py",
-      "path": "verify/corpus/language/case_155.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-kvp1qal7/case_155.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_156.py",
-      "path": "verify/corpus/language/case_156.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-iezr7djf/case_156.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_157.py",
-      "path": "verify/corpus/language/case_157.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-5_qzmio5/case_157.py:2:2: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_158.py",
-      "path": "verify/corpus/language/case_158.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-hm8dtbta/case_158.py:2:2: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_159.py",
-      "path": "verify/corpus/language/case_159.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-wt7rxs3p/case_159.py:2:2: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_186.py",
-      "path": "verify/corpus/language/case_186.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-fhokatgn/case_186.py:2:2: error: cannot compile dict comprehensions yet [dict comprehensions]"
-    },
-    {
-      "case": "case_187.py",
-      "path": "verify/corpus/language/case_187.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-p08g5nqu/case_187.py:2:2: error: cannot compile dict comprehensions yet [dict comprehensions]"
-    },
-    {
-      "case": "case_188.py",
-      "path": "verify/corpus/language/case_188.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6w625ehx/case_188.py:2:2: error: cannot compile dict comprehensions yet [dict comprehensions]"
-    },
-    {
-      "case": "case_189.py",
-      "path": "verify/corpus/language/case_189.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-5tb_3f7t/case_189.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_190.py",
-      "path": "verify/corpus/language/case_190.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-fjzy3zv8/case_190.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_191.py",
-      "path": "verify/corpus/language/case_191.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-8zjfsr_i/case_191.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_192.py",
-      "path": "verify/corpus/language/case_192.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-lroa249x/case_192.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_193.py",
-      "path": "verify/corpus/language/case_193.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-r21ww2wm/case_193.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_194.py",
-      "path": "verify/corpus/language/case_194.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-_xe_n5tg/case_194.py:4:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_195.py",
-      "path": "verify/corpus/language/case_195.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-bfhjzt69/case_195.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_196.py",
-      "path": "verify/corpus/language/case_196.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-o6onu464/case_196.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_201.py",
-      "path": "verify/corpus/language/case_201.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-qo44810h/case_201.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
-    },
-    {
-      "case": "case_203.py",
-      "path": "verify/corpus/language/case_203.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-r5twsz8x/case_203.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_206.py",
-      "path": "verify/corpus/language/case_206.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.aE46WJ0Sm0/mod.ll:28:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_207.py",
-      "path": "verify/corpus/language/case_207.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.AuCWRnKaQu/mod.ll:28:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_208.py",
-      "path": "verify/corpus/language/case_208.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.19DkixfoKJ/mod.ll:28:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_209.py",
-      "path": "verify/corpus/language/case_209.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.z53Vnjz4d3/mod.ll:26:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_212.py",
-      "path": "verify/corpus/language/case_212.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-tj11q428/case_212.py:2:5: error: cannot compile walrus yet [walrus]"
-    },
-    {
-      "case": "case_213.py",
-      "path": "verify/corpus/language/case_213.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-d015q4nk/case_213.py:2:4: error: cannot compile walrus yet [walrus]"
-    },
-    {
-      "case": "case_214.py",
-      "path": "verify/corpus/language/case_214.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-frtinawk/case_214.py:2:7: error: cannot compile walrus yet [walrus]"
-    },
-    {
-      "case": "case_215.py",
-      "path": "verify/corpus/language/case_215.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-d5yr9xtq/case_215.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_216.py",
-      "path": "verify/corpus/language/case_216.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4jy69khv/case_216.py:3:0: error: cannot compile assert yet [assert]"
-    },
-    {
-      "case": "case_217.py",
-      "path": "verify/corpus/language/case_217.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-hmfkdmys/case_217.py:3:0: error: cannot compile assert yet [assert]"
-    },
-    {
-      "case": "case_218.py",
-      "path": "verify/corpus/language/case_218.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-10xceh96/case_218.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_227.py",
-      "path": "verify/corpus/language/case_227.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.RaoPq93eja/mod.ll:62:40: error: '%v17' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_228.py",
-      "path": "verify/corpus/language/case_228.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.pMRi72HZJV/mod.ll:90:40: error: '%v23' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_229.py",
-      "path": "verify/corpus/language/case_229.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-nrs6ev7p/case_229.py:3:4: error: cannot compile del of a name yet [del of a name]"
-    },
-    {
-      "case": "case_230.py",
-      "path": "verify/corpus/language/case_230.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-40qa9k31/case_230.py:2:0: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_231.py",
-      "path": "verify/corpus/language/case_231.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-yjspj8xf/case_231.py:2:0: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_251.py",
-      "path": "verify/corpus/language/case_251.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-c98ovcb2/case_251.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_252.py",
-      "path": "verify/corpus/language/case_252.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-wc_jzk9m/case_252.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_258.py",
-      "path": "verify/corpus/language/case_258.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ajizi7zz/case_258.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_259.py",
-      "path": "verify/corpus/language/case_259.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7282mbgm/case_259.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
       "case": "case_265.py",
       "path": "verify/corpus/language/case_265.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-05nrfvo0/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-ydoxy4yl/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_266.py",
       "path": "verify/corpus/language/case_266.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-s6y8allz/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-zllghevh/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_267.py",
       "path": "verify/corpus/language/case_267.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0vhc07v0/case_267.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_270.py",
-      "path": "verify/corpus/language/case_270.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-rpmfh8ct/case_270.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_271.py",
-      "path": "verify/corpus/language/case_271.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-k8nc384r/case_271.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_272.py",
-      "path": "verify/corpus/language/case_272.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-mbt19v8j/case_272.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_273.py",
-      "path": "verify/corpus/language/case_273.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7oczeqh9/case_273.py:3:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_274.py",
-      "path": "verify/corpus/language/case_274.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-yr595s73/case_274.py:4:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_275.py",
-      "path": "verify/corpus/language/case_275.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-pvcjrxmx/case_275.py:4:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_277.py",
-      "path": "verify/corpus/language/case_277.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-os4uzw63/case_277.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_278.py",
-      "path": "verify/corpus/language/case_278.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-u4j55vnn/case_278.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_279.py",
-      "path": "verify/corpus/language/case_279.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-xfmbt6ev/case_279.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_280.py",
-      "path": "verify/corpus/language/case_280.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7dqb74ev/case_280.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_282.py",
-      "path": "verify/corpus/language/case_282.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7k82ykwa/case_282.py:3:0: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_283.py",
-      "path": "verify/corpus/language/case_283.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-aoot2vm0/case_283.py:3:0: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_284.py",
-      "path": "verify/corpus/language/case_284.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-9ajis_6l/case_284.py:3:0: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_285.py",
-      "path": "verify/corpus/language/case_285.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-grr4pth_/case_285.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_286.py",
-      "path": "verify/corpus/language/case_286.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-gu3r49go/case_286.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_287.py",
-      "path": "verify/corpus/language/case_287.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-__goya4g/case_287.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_288.py",
-      "path": "verify/corpus/language/case_288.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-rh3ftocq/case_288.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_289.py",
-      "path": "verify/corpus/language/case_289.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-13m_36z6/case_289.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_290.py",
-      "path": "verify/corpus/language/case_290.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-mjhjiaar/case_290.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_291.py",
-      "path": "verify/corpus/language/case_291.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-txm_rjr9/case_291.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_293.py",
-      "path": "verify/corpus/language/case_293.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-08dns8gs/case_293.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_294.py",
-      "path": "verify/corpus/language/case_294.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6wmpo_6f/case_294.py:2:11: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_312.py",
-      "path": "verify/corpus/language/case_312.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-k8k2pskc/case_312.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_313.py",
-      "path": "verify/corpus/language/case_313.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-hcf2irfs/case_313.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_314.py",
-      "path": "verify/corpus/language/case_314.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-rg5c7zk7/case_314.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_315.py",
-      "path": "verify/corpus/language/case_315.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-t0jlahov/case_315.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_316.py",
-      "path": "verify/corpus/language/case_316.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-2hs4kr46/case_316.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_317.py",
-      "path": "verify/corpus/language/case_317.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-fgh8ebez/case_317.py:5:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_318.py",
-      "path": "verify/corpus/language/case_318.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0zrmhufx/case_318.py:2:0: error: cannot compile default arguments yet [default arguments]"
-    },
-    {
-      "case": "case_319.py",
-      "path": "verify/corpus/language/case_319.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-40cbi2a1/case_319.py:4:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_320.py",
-      "path": "verify/corpus/language/case_320.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-9uc89os8/case_320.py:2:0: error: cannot compile default arguments yet [default arguments]"
-    },
-    {
-      "case": "case_321.py",
-      "path": "verify/corpus/language/case_321.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-3g1ao77t/case_321.py:2:0: error: cannot compile default arguments yet [default arguments]"
-    },
-    {
-      "case": "case_322.py",
-      "path": "verify/corpus/language/case_322.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-jtwl88_k/case_322.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_323.py",
-      "path": "verify/corpus/language/case_323.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-gvyfhpcc/case_323.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_324.py",
-      "path": "verify/corpus/language/case_324.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0r0hp01p/case_324.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_327.py",
-      "path": "verify/corpus/language/case_327.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-zl6ql_tp/case_327.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_328.py",
-      "path": "verify/corpus/language/case_328.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-gohfsgky/case_328.py:3:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_329.py",
-      "path": "verify/corpus/language/case_329.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6nhk_66b/case_329.py:3:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_330.py",
-      "path": "verify/corpus/language/case_330.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0fo7uo8q/case_330.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_331.py",
-      "path": "verify/corpus/language/case_331.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-uveg3nm_/case_331.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_332.py",
-      "path": "verify/corpus/language/case_332.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-j36f96cc/case_332.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_333.py",
-      "path": "verify/corpus/language/case_333.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-c0i6dhcw/case_333.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_334.py",
-      "path": "verify/corpus/language/case_334.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7n2kzn1h/case_334.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_335.py",
-      "path": "verify/corpus/language/case_335.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-9moletkf/case_335.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_336.py",
-      "path": "verify/corpus/language/case_336.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ws5vx6h_/case_336.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_337.py",
-      "path": "verify/corpus/language/case_337.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-1z8qpbil/case_337.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_342.py",
-      "path": "verify/corpus/language/case_342.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-hdkcbfiw/case_342.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_343.py",
-      "path": "verify/corpus/language/case_343.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-r89sz6rl/case_343.py:3:4: error: cannot compile *args yet [*args]"
-    },
-    {
-      "case": "case_344.py",
-      "path": "verify/corpus/language/case_344.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-u3_30nlt/case_344.py:3:4: error: cannot compile *args yet [*args]"
-    },
-    {
-      "case": "case_345.py",
-      "path": "verify/corpus/language/case_345.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ujgxlet7/case_345.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_346.py",
-      "path": "verify/corpus/language/case_346.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-rskycdfi/case_346.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_347.py",
-      "path": "verify/corpus/language/case_347.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-2fb2b6mx/case_347.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_348.py",
-      "path": "verify/corpus/language/case_348.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0pe8i5x_/case_348.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_349.py",
-      "path": "verify/corpus/language/case_349.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-f5zey9c6/case_349.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_350.py",
-      "path": "verify/corpus/language/case_350.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-zqn08k26/case_350.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_354.py",
-      "path": "verify/corpus/language/case_354.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-gbwpdp5r/case_354.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_355.py",
-      "path": "verify/corpus/language/case_355.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-_nlv7j2e/case_355.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_356.py",
-      "path": "verify/corpus/language/case_356.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ux0ftdfz/case_356.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_357.py",
-      "path": "verify/corpus/language/case_357.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-vj0btt1e/case_357.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_358.py",
-      "path": "verify/corpus/language/case_358.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-kfy25w9q/case_358.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_359.py",
-      "path": "verify/corpus/language/case_359.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7c38f3zb/case_359.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_360.py",
-      "path": "verify/corpus/language/case_360.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-rgw5uif1/case_360.py:3:6: error: cannot compile dict comprehensions yet [dict comprehensions]"
-    },
-    {
-      "case": "case_361.py",
-      "path": "verify/corpus/language/case_361.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-wv_5w1fr/case_361.py:3:6: error: cannot compile set comprehensions yet [set comprehensions]"
-    },
-    {
-      "case": "case_362.py",
-      "path": "verify/corpus/language/case_362.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-m83dt6ck/case_362.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_363.py",
-      "path": "verify/corpus/language/case_363.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-f8x67uva/case_363.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_364.py",
-      "path": "verify/corpus/language/case_364.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-mva93ege/case_364.py:4:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_365.py",
-      "path": "verify/corpus/language/case_365.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-c341cqfl/case_365.py:4:11: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_366.py",
-      "path": "verify/corpus/language/case_366.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-n6zbhgi_/case_366.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
-    },
-    {
-      "case": "case_367.py",
-      "path": "verify/corpus/language/case_367.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-nwximent/case_367.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
-    },
-    {
-      "case": "case_368.py",
-      "path": "verify/corpus/language/case_368.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-n8nef2b1/case_368.py:2:0: error: cannot compile *args yet [*args]"
-    },
-    {
-      "case": "case_369.py",
-      "path": "verify/corpus/language/case_369.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-_xmqak1k/case_369.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
-    },
-    {
-      "case": "case_370.py",
-      "path": "verify/corpus/language/case_370.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-v3_at9n4/case_370.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_371.py",
-      "path": "verify/corpus/language/case_371.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4umx4bfh/case_371.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_372.py",
-      "path": "verify/corpus/language/case_372.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7fqu70wj/case_372.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_373.py",
-      "path": "verify/corpus/language/case_373.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6gka2x0v/case_373.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_374.py",
-      "path": "verify/corpus/language/case_374.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4t9jnev6/case_374.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_375.py",
-      "path": "verify/corpus/language/case_375.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-rk08273r/case_375.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_377.py",
-      "path": "verify/corpus/language/case_377.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ve1_ihx6/case_377.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_384.py",
-      "path": "verify/corpus/language/case_384.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-o0ihqimp/case_384.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_390.py",
-      "path": "verify/corpus/language/case_390.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-jrmt2bg_/case_390.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_391.py",
-      "path": "verify/corpus/language/case_391.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0p487iqv/case_391.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_392.py",
-      "path": "verify/corpus/language/case_392.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ctu6umf5/case_392.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_393.py",
-      "path": "verify/corpus/language/case_393.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-cjii1gjd/case_393.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_394.py",
-      "path": "verify/corpus/language/case_394.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-us59p_9j/case_394.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_395.py",
-      "path": "verify/corpus/language/case_395.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-zg6en945/case_395.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_396.py",
-      "path": "verify/corpus/language/case_396.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-nbq_qq8n/case_396.py:2:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_397.py",
-      "path": "verify/corpus/language/case_397.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-s3jgc2ck/case_397.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_398.py",
-      "path": "verify/corpus/language/case_398.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-boo99101/case_398.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_399.py",
-      "path": "verify/corpus/language/case_399.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-2gc9tw0r/case_399.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_400.py",
-      "path": "verify/corpus/language/case_400.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-599aigqv/case_400.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_401.py",
-      "path": "verify/corpus/language/case_401.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-oxmdb09v/case_401.py:3:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_402.py",
-      "path": "verify/corpus/language/case_402.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-jjzv_uug/case_402.py:2:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_403.py",
-      "path": "verify/corpus/language/case_403.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-qt6zxok9/case_403.py:5:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_404.py",
-      "path": "verify/corpus/language/case_404.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-jji3r2ja/case_404.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_410.py",
-      "path": "verify/corpus/language/case_410.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-bbo8fi8v/case_410.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_411.py",
-      "path": "verify/corpus/language/case_411.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-patiqvon/case_411.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_416.py",
-      "path": "verify/corpus/language/case_416.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-xdspv6sy/case_416.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_417.py",
-      "path": "verify/corpus/language/case_417.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-47xgzgd8/case_417.py:2:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_418.py",
-      "path": "verify/corpus/language/case_418.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7jzmyc60/case_418.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_419.py",
-      "path": "verify/corpus/language/case_419.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-5m9fi6fm/case_419.py:4:14: error: cannot compile lambda yet [lambda]"
-    },
-    {
-      "case": "case_420.py",
-      "path": "verify/corpus/language/case_420.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-80puqlzr/case_420.py:4:8: error: cannot compile lambda yet [lambda]"
-    },
-    {
-      "case": "case_421.py",
-      "path": "verify/corpus/language/case_421.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-y_fr_oe3/case_421.py:3:11: error: cannot compile lambda yet [lambda]"
-    },
-    {
-      "case": "case_422.py",
-      "path": "verify/corpus/language/case_422.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-fg9757oz/case_422.py:3:4: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_423.py",
-      "path": "verify/corpus/language/case_423.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-lgxe4z6m/case_423.py:4:8: error: cannot compile lambda yet [lambda]"
-    },
-    {
-      "case": "case_424.py",
-      "path": "verify/corpus/language/case_424.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-o2a0uqhe/case_424.py:2:15: error: cannot compile lambda yet [lambda]"
-    },
-    {
-      "case": "case_425.py",
-      "path": "verify/corpus/language/case_425.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-qgzkkd6t/case_425.py:2:18: error: cannot compile lambda yet [lambda]"
-    },
-    {
-      "case": "case_427.py",
-      "path": "verify/corpus/language/case_427.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-zlb7z4sq/case_427.py:2:15: error: cannot compile lambda yet [lambda]"
-    },
-    {
-      "case": "case_429.py",
-      "path": "verify/corpus/language/case_429.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ewz2fy8_/case_429.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_430.py",
-      "path": "verify/corpus/language/case_430.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-cr6pp4sh/case_430.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_431.py",
-      "path": "verify/corpus/language/case_431.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-deumg8y8/case_431.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_432.py",
-      "path": "verify/corpus/language/case_432.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-phqt1hw1/case_432.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_440.py",
-      "path": "verify/corpus/language/case_440.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ofkdhtsb/case_440.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_441.py",
-      "path": "verify/corpus/language/case_441.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4fb7l8eo/case_441.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_442.py",
-      "path": "verify/corpus/language/case_442.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-vb8ic61s/case_442.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-dwgst_95/case_267.py:2:9: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_449.py",
       "path": "verify/corpus/language/case_449.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9l1qx81s/case_449.py:3:13: error: cannot compile star-unpacking yet [star-unpacking]"
-    },
-    {
-      "case": "case_450.py",
-      "path": "verify/corpus/language/case_450.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-gsz4myqa/case_450.py:2:7: error: cannot compile lambda yet [lambda]"
-    },
-    {
-      "case": "case_451.py",
-      "path": "verify/corpus/language/case_451.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-oogxo7_7/case_451.py:3:11: error: cannot compile lambda yet [lambda]"
-    },
-    {
-      "case": "case_452.py",
-      "path": "verify/corpus/language/case_452.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-htb4xla_/case_452.py:2:8: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-5635ky65/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
     },
     {
       "case": "case_453.py",
@@ -1412,13 +255,6 @@
       "detail": "compiler exited 1 with no diagnostic"
     },
     {
-      "case": "case_455.py",
-      "path": "verify/corpus/language/case_455.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-vkkyk4mm/case_455.py:2:12: error: cannot compile lambda yet [lambda]"
-    },
-    {
       "case": "case_456.py",
       "path": "verify/corpus/language/case_456.py",
       "verdict": "COMPILE_ERROR",
@@ -1426,1257 +262,95 @@
       "detail": "compiler exited 1 with no diagnostic"
     },
     {
-      "case": "case_457.py",
-      "path": "verify/corpus/language/case_457.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-3d5gok0u/case_457.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
-    },
-    {
-      "case": "case_458.py",
-      "path": "verify/corpus/language/case_458.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6c5c58d8/case_458.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
-    },
-    {
-      "case": "case_459.py",
-      "path": "verify/corpus/language/case_459.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-z2cb872p/case_459.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
-    },
-    {
-      "case": "case_460.py",
-      "path": "verify/corpus/language/case_460.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-arbrqsf_/case_460.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
-    },
-    {
-      "case": "case_461.py",
-      "path": "verify/corpus/language/case_461.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6f2xhizr/case_461.py:8:8: error: cannot compile nonlocal yet [nonlocal]"
-    },
-    {
-      "case": "case_463.py",
-      "path": "verify/corpus/language/case_463.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.UdFITClm4n/mod.ll:62:40: error: '%v11' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_464.py",
-      "path": "verify/corpus/language/case_464.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.cGGqqoPVo1/mod.ll:112:39: error: '%v7' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_466.py",
-      "path": "verify/corpus/language/case_466.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-mybsnmj1/case_466.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_467.py",
-      "path": "verify/corpus/language/case_467.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-aotvs_hn/case_467.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_468.py",
-      "path": "verify/corpus/language/case_468.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-sp4_9lq1/case_468.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_469.py",
-      "path": "verify/corpus/language/case_469.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-py928eit/case_469.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
       "case": "case_470.py",
       "path": "verify/corpus/language/case_470.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-m0blb9hj/case_470.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_471.py",
-      "path": "verify/corpus/language/case_471.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ke92jxno/case_471.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-j_xumg0h/case_470.py:6:0: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_472.py",
       "path": "verify/corpus/language/case_472.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-nit0j__p/case_472.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_473.py",
-      "path": "verify/corpus/language/case_473.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-k3bk1ib1/case_473.py:10:5: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-1uukb4zb/case_472.py:15:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_474.py",
       "path": "verify/corpus/language/case_474.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9cm5uuy9/case_474.py:3:4: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-cwiekuhg/case_474.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_475.py",
       "path": "verify/corpus/language/case_475.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-h6lwi38w/case_475.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-yzpeua7p/case_475.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_476.py",
       "path": "verify/corpus/language/case_476.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-70ff1ojm/case_476.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_477.py",
-      "path": "verify/corpus/language/case_477.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0wcp3d9g/case_477.py:7:0: error: cannot compile decorators yet [decorators]"
-    },
-    {
-      "case": "case_478.py",
-      "path": "verify/corpus/language/case_478.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-x2z_ifsr/case_478.py:6:12: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_479.py",
-      "path": "verify/corpus/language/case_479.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-z32hgd0p/case_479.py:7:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_480.py",
-      "path": "verify/corpus/language/case_480.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-b2xnzxk4/case_480.py:6:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_481.py",
-      "path": "verify/corpus/language/case_481.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.iU2KZe9dny/mod.ll:40:39: error: '%v7' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_482.py",
-      "path": "verify/corpus/language/case_482.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.HuufaegRbL/mod.ll:28:39: error: '%v5' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_483.py",
-      "path": "verify/corpus/language/case_483.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-_gz0mbse/case_483.py:2:4: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_484.py",
-      "path": "verify/corpus/language/case_484.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-3vzyqfzs/case_484.py:2:4: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_485.py",
-      "path": "verify/corpus/language/case_485.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-eyt_ft4c/case_485.py:2:4: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_486.py",
-      "path": "verify/corpus/language/case_486.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-xzpsh80k/case_486.py:2:4: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_487.py",
-      "path": "verify/corpus/language/case_487.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4jrne46j/case_487.py:2:10: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_488.py",
-      "path": "verify/corpus/language/case_488.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4s6w_1ep/case_488.py:2:10: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_489.py",
-      "path": "verify/corpus/language/case_489.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-hpbvy478/case_489.py:2:6: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_490.py",
-      "path": "verify/corpus/language/case_490.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7ccp2a0c/case_490.py:2:8: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_492.py",
-      "path": "verify/corpus/language/case_492.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-jwfdyc3b/case_492.py:2:14: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_493.py",
-      "path": "verify/corpus/language/case_493.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-tom4b426/case_493.py:2:5: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_494.py",
-      "path": "verify/corpus/language/case_494.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0h04oxzl/case_494.py:2:6: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_495.py",
-      "path": "verify/corpus/language/case_495.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-70sj_lze/case_495.py:2:15: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_496.py",
-      "path": "verify/corpus/language/case_496.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-suv2u3nt/case_496.py:2:8: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_497.py",
-      "path": "verify/corpus/language/case_497.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-nzf2vykr/case_497.py:2:8: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_498.py",
-      "path": "verify/corpus/language/case_498.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-v5a9bnjf/case_498.py:2:8: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_499.py",
-      "path": "verify/corpus/language/case_499.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-c0abafre/case_499.py:2:14: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_500.py",
-      "path": "verify/corpus/language/case_500.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-czt1vx4e/case_500.py:2:8: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_501.py",
-      "path": "verify/corpus/language/case_501.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ag887l4l/case_501.py:2:8: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_502.py",
-      "path": "verify/corpus/language/case_502.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-sf_a72ed/case_502.py:2:4: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_503.py",
-      "path": "verify/corpus/language/case_503.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ditzg6u2/case_503.py:2:8: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_504.py",
-      "path": "verify/corpus/language/case_504.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7s8kx5p4/case_504.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_505.py",
-      "path": "verify/corpus/language/case_505.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-p7qyvzt0/case_505.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_506.py",
-      "path": "verify/corpus/language/case_506.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-d25nnos_/case_506.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_508.py",
-      "path": "verify/corpus/language/case_508.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-_5e1lq0e/case_508.py:2:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_509.py",
-      "path": "verify/corpus/language/case_509.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-y1ucjaqc/case_509.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_510.py",
-      "path": "verify/corpus/language/case_510.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-46cet3ld/case_510.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_511.py",
-      "path": "verify/corpus/language/case_511.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-va7yh5ga/case_511.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_512.py",
-      "path": "verify/corpus/language/case_512.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-tz0k286t/case_512.py:3:0: error: cannot compile with yet [with]"
-    },
-    {
-      "case": "case_513.py",
-      "path": "verify/corpus/language/case_513.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-xhjswa6i/case_513.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_514.py",
-      "path": "verify/corpus/language/case_514.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-68m25ajq/case_514.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_515.py",
-      "path": "verify/corpus/language/case_515.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ux_f3k6s/case_515.py:2:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_517.py",
-      "path": "verify/corpus/language/case_517.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-znqv5qef/case_517.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_519.py",
-      "path": "verify/corpus/language/case_519.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-mavr2944/case_519.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_521.py",
-      "path": "verify/corpus/language/case_521.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-2r8x0r3j/case_521.py:2:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_522.py",
-      "path": "verify/corpus/language/case_522.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-huix09w9/case_522.py:2:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_523.py",
-      "path": "verify/corpus/language/case_523.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-lj8dsghy/case_523.py:2:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_524.py",
-      "path": "verify/corpus/language/case_524.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-9s583_cw/case_524.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_525.py",
-      "path": "verify/corpus/language/case_525.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7gfr7egh/case_525.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_526.py",
-      "path": "verify/corpus/language/case_526.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-70tmcp5p/case_526.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_528.py",
-      "path": "verify/corpus/language/case_528.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-e_2o7xk3/case_528.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_529.py",
-      "path": "verify/corpus/language/case_529.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-2trc1hm6/case_529.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_530.py",
-      "path": "verify/corpus/language/case_530.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-fngylzwb/case_530.py:34:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_531.py",
-      "path": "verify/corpus/language/case_531.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-giehtq49/case_531.py:19:4: error: cannot compile augmented assignment yet [augmented assignment]"
-    },
-    {
-      "case": "case_532.py",
-      "path": "verify/corpus/language/case_532.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-1w4nq548/case_532.py:2:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_533.py",
-      "path": "verify/corpus/language/case_533.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ekk7dkbo/case_533.py:22:0: error: cannot compile augmented assignment yet [augmented assignment]"
-    },
-    {
-      "case": "case_534.py",
-      "path": "verify/corpus/language/case_534.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-cx_wu74h/case_534.py:8:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_535.py",
-      "path": "verify/corpus/language/case_535.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-5j1yvwn5/case_535.py:8:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_536.py",
-      "path": "verify/corpus/language/case_536.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-zjg2u1be/case_536.py:4:9: error: cannot compile ** unpacking in a dict literal yet [** unpacking in a dict literal]"
-    },
-    {
-      "case": "case_538.py",
-      "path": "verify/corpus/language/case_538.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-llc8n2a4/case_538.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_539.py",
-      "path": "verify/corpus/language/case_539.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-jl0h_zam/case_539.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
-    },
-    {
-      "case": "case_546.py",
-      "path": "verify/corpus/language/case_546.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.orpHiVUBhv/mod.ll:39:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_547.py",
-      "path": "verify/corpus/language/case_547.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.cB9CzMsDXG/mod.ll:39:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_548.py",
-      "path": "verify/corpus/language/case_548.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/tmp.MKIMQRGkAG/mod.ll:41:40: error: '%v11' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_586.py",
-      "path": "verify/corpus/language/case_586.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-sp4o321b/case_586.py:2:13: error: cannot compile set comprehensions yet [set comprehensions]"
-    },
-    {
-      "case": "case_587.py",
-      "path": "verify/corpus/language/case_587.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-m_4g2qj9/case_587.py:2:13: error: cannot compile set comprehensions yet [set comprehensions]"
-    },
-    {
-      "case": "case_588.py",
-      "path": "verify/corpus/language/case_588.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ra28f_en/case_588.py:2:13: error: cannot compile set comprehensions yet [set comprehensions]"
-    },
-    {
-      "case": "case_589.py",
-      "path": "verify/corpus/language/case_589.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-y_6bcnfm/case_589.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_602.py",
-      "path": "verify/corpus/language/case_602.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-36td40kx/case_602.py:4:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_603.py",
-      "path": "verify/corpus/language/case_603.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-qb6loro1/case_603.py:4:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_604.py",
-      "path": "verify/corpus/language/case_604.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-w3xn_1xq/case_604.py:2:0: error: cannot compile default arguments yet [default arguments]"
-    },
-    {
-      "case": "case_605.py",
-      "path": "verify/corpus/language/case_605.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-gmjbm6sf/case_605.py:4:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_606.py",
-      "path": "verify/corpus/language/case_606.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-dikdc5r8/case_606.py:4:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_607.py",
-      "path": "verify/corpus/language/case_607.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4br__e7p/case_607.py:5:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_613.py",
-      "path": "verify/corpus/language/case_613.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-1g5_mnlu/case_613.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_614.py",
-      "path": "verify/corpus/language/case_614.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-8xlebq2d/case_614.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_615.py",
-      "path": "verify/corpus/language/case_615.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-eryr6joh/case_615.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_616.py",
-      "path": "verify/corpus/language/case_616.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-umjcfnjk/case_616.py:4:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_617.py",
-      "path": "verify/corpus/language/case_617.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ox0itgn1/case_617.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_618.py",
-      "path": "verify/corpus/language/case_618.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-p_rwya52/case_618.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_619.py",
-      "path": "verify/corpus/language/case_619.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-dp27ukx6/case_619.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_620.py",
-      "path": "verify/corpus/language/case_620.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0m_mrpuu/case_620.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_621.py",
-      "path": "verify/corpus/language/case_621.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-39qmxz7c/case_621.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_622.py",
-      "path": "verify/corpus/language/case_622.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-77lrpbdz/case_622.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_623.py",
-      "path": "verify/corpus/language/case_623.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-79vv8hvo/case_623.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_624.py",
-      "path": "verify/corpus/language/case_624.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-mc5_x6ez/case_624.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_625.py",
-      "path": "verify/corpus/language/case_625.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-_lwtwxrm/case_625.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
-    },
-    {
-      "case": "case_626.py",
-      "path": "verify/corpus/language/case_626.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-olxffkbc/case_626.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_627.py",
-      "path": "verify/corpus/language/case_627.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ts8dr9im/case_627.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_628.py",
-      "path": "verify/corpus/language/case_628.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-64r850p2/case_628.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_629.py",
-      "path": "verify/corpus/language/case_629.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-div7a7hv/case_629.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_630.py",
-      "path": "verify/corpus/language/case_630.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-tp8vx51t/case_630.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_631.py",
-      "path": "verify/corpus/language/case_631.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6txgqpac/case_631.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_632.py",
-      "path": "verify/corpus/language/case_632.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7kvuqbpa/case_632.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_633.py",
-      "path": "verify/corpus/language/case_633.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-uq3heycf/case_633.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_634.py",
-      "path": "verify/corpus/language/case_634.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-x5o1j3ax/case_634.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_635.py",
-      "path": "verify/corpus/language/case_635.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0z4l88qh/case_635.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_636.py",
-      "path": "verify/corpus/language/case_636.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ajyb29pg/case_636.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_637.py",
-      "path": "verify/corpus/language/case_637.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-d56pu2bm/case_637.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_639.py",
-      "path": "verify/corpus/language/case_639.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-74s3eyv1/case_639.py:2:26: error: cannot compile complex literals yet [complex literals]"
-    },
-    {
-      "case": "case_641.py",
-      "path": "verify/corpus/language/case_641.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-qmtove7i/case_641.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_642.py",
-      "path": "verify/corpus/language/case_642.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6t5eufj8/case_642.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_644.py",
-      "path": "verify/corpus/language/case_644.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-y7y87_yb/case_644.py:13:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-78yllkxu/case_476.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_645.py",
       "path": "verify/corpus/language/case_645.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-r0s4sjtf/case_645.py:15:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_646.py",
-      "path": "verify/corpus/language/case_646.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-h3cfsdbm/case_646.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_647.py",
-      "path": "verify/corpus/language/case_647.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ty_gumd0/case_647.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_648.py",
-      "path": "verify/corpus/language/case_648.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6vaxs6fy/case_648.py:6:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_649.py",
-      "path": "verify/corpus/language/case_649.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-uk_s9t8v/case_649.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_650.py",
-      "path": "verify/corpus/language/case_650.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-l7fcyn53/case_650.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_651.py",
-      "path": "verify/corpus/language/case_651.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4qy3ow4x/case_651.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_652.py",
-      "path": "verify/corpus/language/case_652.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-u9jra21s/case_652.py:4:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_654.py",
-      "path": "verify/corpus/language/case_654.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-r0f7wci7/case_654.py:4:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_655.py",
-      "path": "verify/corpus/language/case_655.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-mnvxacik/case_655.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_656.py",
-      "path": "verify/corpus/language/case_656.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-nba0fh1e/case_656.py:4:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_657.py",
-      "path": "verify/corpus/language/case_657.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6xur9rlz/case_657.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_658.py",
-      "path": "verify/corpus/language/case_658.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-8w49qrkv/case_658.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_659.py",
-      "path": "verify/corpus/language/case_659.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6abjg3qp/case_659.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_660.py",
-      "path": "verify/corpus/language/case_660.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-_5lmpvf3/case_660.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_661.py",
-      "path": "verify/corpus/language/case_661.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-9rh427f6/case_661.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_662.py",
-      "path": "verify/corpus/language/case_662.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0uc_h_kp/case_662.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_663.py",
-      "path": "verify/corpus/language/case_663.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-zp3p464h/case_663.py:4:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_664.py",
-      "path": "verify/corpus/language/case_664.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-324xl0gz/case_664.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_665.py",
-      "path": "verify/corpus/language/case_665.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ypv_hq6d/case_665.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_666.py",
-      "path": "verify/corpus/language/case_666.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-o368skot/case_666.py:3:4: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_667.py",
-      "path": "verify/corpus/language/case_667.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-oaxxjm0w/case_667.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_668.py",
-      "path": "verify/corpus/language/case_668.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6guqfxbz/case_668.py:8:4: error: cannot compile lambda yet [lambda]"
-    },
-    {
-      "case": "case_669.py",
-      "path": "verify/corpus/language/case_669.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-tv6pv0ri/case_669.py:2:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_670.py",
-      "path": "verify/corpus/language/case_670.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-8qzp2g40/case_670.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_671.py",
-      "path": "verify/corpus/language/case_671.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-5djvbdrn/case_671.py:3:11: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_672.py",
-      "path": "verify/corpus/language/case_672.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-jhu5woj7/case_672.py:6:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_673.py",
-      "path": "verify/corpus/language/case_673.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-jy2gy962/case_673.py:5:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_674.py",
-      "path": "verify/corpus/language/case_674.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-rqc0lf9y/case_674.py:5:4: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_675.py",
-      "path": "verify/corpus/language/case_675.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-k_kqz7g4/case_675.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_678.py",
-      "path": "verify/corpus/language/case_678.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-74gsar0i/case_678.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_679.py",
-      "path": "verify/corpus/language/case_679.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-htjc7izw/case_679.py:6:4: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_680.py",
-      "path": "verify/corpus/language/case_680.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ghq5jazf/case_680.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_681.py",
-      "path": "verify/corpus/language/case_681.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-afp3xsb2/case_681.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_682.py",
-      "path": "verify/corpus/language/case_682.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-gx7ro8zu/case_682.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_683.py",
-      "path": "verify/corpus/language/case_683.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-t8h8g9ga/case_683.py:3:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_684.py",
-      "path": "verify/corpus/language/case_684.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-hr6vmkmg/case_684.py:5:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/tmp.xxGHbekZeK/mod.ll:797:12: error: use of undefined value '%bb28'"
     },
     {
       "case": "case_685.py",
       "path": "verify/corpus/language/case_685.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ksb6aupl/case_685.py:2:0: error: cannot compile import yet [import]"
+      "detail": "error: invalid LLVM IR input: Instruction does not dominate all uses!"
     },
     {
-      "case": "case_686.py",
-      "path": "verify/corpus/language/case_686.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-kth36vs2/case_686.py:9:0: error: cannot compile try yet [try]"
+      "case": "case_208.py",
+      "path": "verify/corpus/language/case_208.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "case_687.py",
-      "path": "verify/corpus/language/case_687.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-r604hjxz/case_687.py:5:12: error: cannot compile star-unpacking yet [star-unpacking]"
+      "case": "case_209.py",
+      "path": "verify/corpus/language/case_209.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "case_688.py",
-      "path": "verify/corpus/language/case_688.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-8xo9thy5/case_688.py:5:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "case": "case_273.py",
+      "path": "verify/corpus/language/case_273.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "case_689.py",
-      "path": "verify/corpus/language/case_689.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-1prt9eim/case_689.py:2:0: error: cannot compile import yet [import]"
+      "case": "case_274.py",
+      "path": "verify/corpus/language/case_274.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "case_690.py",
-      "path": "verify/corpus/language/case_690.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-zq08cu63/case_690.py:2:0: error: cannot compile import yet [import]"
+      "case": "case_275.py",
+      "path": "verify/corpus/language/case_275.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "case_691.py",
-      "path": "verify/corpus/language/case_691.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-wopyomk6/case_691.py:6:8: error: cannot compile star-unpacking yet [star-unpacking]"
-    },
-    {
-      "case": "case_692.py",
-      "path": "verify/corpus/language/case_692.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7rcxhvop/case_692.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_693.py",
-      "path": "verify/corpus/language/case_693.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-vy8lgshw/case_693.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_694.py",
-      "path": "verify/corpus/language/case_694.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-lvxdhcl3/case_694.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_695.py",
-      "path": "verify/corpus/language/case_695.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-7llfec50/case_695.py:4:10: error: cannot compile star-unpacking yet [star-unpacking]"
-    },
-    {
-      "case": "case_696.py",
-      "path": "verify/corpus/language/case_696.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-pe46_fld/case_696.py:6:15: error: cannot compile star-unpacking yet [star-unpacking]"
-    },
-    {
-      "case": "case_697.py",
-      "path": "verify/corpus/language/case_697.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-lox2pgvu/case_697.py:7:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_698.py",
-      "path": "verify/corpus/language/case_698.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-5y9uvvpj/case_698.py:6:11: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_699.py",
-      "path": "verify/corpus/language/case_699.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-giu8zf37/case_699.py:7:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_701.py",
-      "path": "verify/corpus/language/case_701.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-9o0noqvy/case_701.py:6:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_702.py",
-      "path": "verify/corpus/language/case_702.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-akqspa8p/case_702.py:2:0: error: cannot compile try yet [try]"
-    },
-    {
-      "case": "case_703.py",
-      "path": "verify/corpus/language/case_703.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-thjczd5c/case_703.py:10:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_704.py",
-      "path": "verify/corpus/language/case_704.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-fhztmt85/case_704.py:3:6: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_705.py",
-      "path": "verify/corpus/language/case_705.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-fweuhtzu/case_705.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_706.py",
-      "path": "verify/corpus/language/case_706.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-86iooy8u/case_706.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_707.py",
-      "path": "verify/corpus/language/case_707.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4cenk82y/case_707.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_708.py",
-      "path": "verify/corpus/language/case_708.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-k736tzjq/case_708.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_709.py",
-      "path": "verify/corpus/language/case_709.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ph_cyccz/case_709.py:2:0: error: cannot compile class definitions yet [class definitions]"
-    },
-    {
-      "case": "case_712.py",
-      "path": "verify/corpus/language/case_712.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-laqli_ii/case_712.py:4:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_713.py",
-      "path": "verify/corpus/language/case_713.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-21tt0tah/case_713.py:3:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "case": "case_525.py",
+      "path": "verify/corpus/language/case_525.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
     },
     {
       "case": "case_001.py",
@@ -2772,6 +446,55 @@
     {
       "case": "case_015.py",
       "path": "verify/corpus/language/case_015.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_016.py",
+      "path": "verify/corpus/language/case_016.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_017.py",
+      "path": "verify/corpus/language/case_017.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_018.py",
+      "path": "verify/corpus/language/case_018.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_019.py",
+      "path": "verify/corpus/language/case_019.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_020.py",
+      "path": "verify/corpus/language/case_020.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_021.py",
+      "path": "verify/corpus/language/case_021.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_022.py",
+      "path": "verify/corpus/language/case_022.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -2931,6 +654,55 @@
       "detail": ""
     },
     {
+      "case": "case_045.py",
+      "path": "verify/corpus/language/case_045.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_046.py",
+      "path": "verify/corpus/language/case_046.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_047.py",
+      "path": "verify/corpus/language/case_047.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_048.py",
+      "path": "verify/corpus/language/case_048.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_049.py",
+      "path": "verify/corpus/language/case_049.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_050.py",
+      "path": "verify/corpus/language/case_050.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_051.py",
+      "path": "verify/corpus/language/case_051.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_052.py",
       "path": "verify/corpus/language/case_052.py",
       "verdict": "MATCH",
@@ -3050,6 +822,13 @@
       "detail": ""
     },
     {
+      "case": "case_069.py",
+      "path": "verify/corpus/language/case_069.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_070.py",
       "path": "verify/corpus/language/case_070.py",
       "verdict": "MATCH",
@@ -3087,6 +866,20 @@
     {
       "case": "case_075.py",
       "path": "verify/corpus/language/case_075.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_076.py",
+      "path": "verify/corpus/language/case_076.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_077.py",
+      "path": "verify/corpus/language/case_077.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3204,6 +997,34 @@
       "detail": ""
     },
     {
+      "case": "case_094.py",
+      "path": "verify/corpus/language/case_094.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_095.py",
+      "path": "verify/corpus/language/case_095.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_096.py",
+      "path": "verify/corpus/language/case_096.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_097.py",
+      "path": "verify/corpus/language/case_097.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_098.py",
       "path": "verify/corpus/language/case_098.py",
       "verdict": "MATCH",
@@ -3213,6 +1034,48 @@
     {
       "case": "case_099.py",
       "path": "verify/corpus/language/case_099.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_100.py",
+      "path": "verify/corpus/language/case_100.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_101.py",
+      "path": "verify/corpus/language/case_101.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_102.py",
+      "path": "verify/corpus/language/case_102.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_103.py",
+      "path": "verify/corpus/language/case_103.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_106.py",
+      "path": "verify/corpus/language/case_106.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_107.py",
+      "path": "verify/corpus/language/case_107.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3316,6 +1179,20 @@
       "detail": ""
     },
     {
+      "case": "case_122.py",
+      "path": "verify/corpus/language/case_122.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_123.py",
+      "path": "verify/corpus/language/case_123.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_124.py",
       "path": "verify/corpus/language/case_124.py",
       "verdict": "MATCH",
@@ -3346,6 +1223,13 @@
     {
       "case": "case_128.py",
       "path": "verify/corpus/language/case_128.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_129.py",
+      "path": "verify/corpus/language/case_129.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3407,6 +1291,13 @@
       "detail": ""
     },
     {
+      "case": "case_138.py",
+      "path": "verify/corpus/language/case_138.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_139.py",
       "path": "verify/corpus/language/case_139.py",
       "verdict": "MATCH",
@@ -3430,6 +1321,34 @@
     {
       "case": "case_142.py",
       "path": "verify/corpus/language/case_142.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_143.py",
+      "path": "verify/corpus/language/case_143.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_144.py",
+      "path": "verify/corpus/language/case_144.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_145.py",
+      "path": "verify/corpus/language/case_145.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_146.py",
+      "path": "verify/corpus/language/case_146.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3486,6 +1405,41 @@
     {
       "case": "case_154.py",
       "path": "verify/corpus/language/case_154.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_155.py",
+      "path": "verify/corpus/language/case_155.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_156.py",
+      "path": "verify/corpus/language/case_156.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_157.py",
+      "path": "verify/corpus/language/case_157.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_158.py",
+      "path": "verify/corpus/language/case_158.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_159.py",
+      "path": "verify/corpus/language/case_159.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3673,6 +1627,83 @@
       "detail": ""
     },
     {
+      "case": "case_186.py",
+      "path": "verify/corpus/language/case_186.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_187.py",
+      "path": "verify/corpus/language/case_187.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_188.py",
+      "path": "verify/corpus/language/case_188.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_189.py",
+      "path": "verify/corpus/language/case_189.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_190.py",
+      "path": "verify/corpus/language/case_190.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_191.py",
+      "path": "verify/corpus/language/case_191.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_192.py",
+      "path": "verify/corpus/language/case_192.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_193.py",
+      "path": "verify/corpus/language/case_193.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_194.py",
+      "path": "verify/corpus/language/case_194.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_195.py",
+      "path": "verify/corpus/language/case_195.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_196.py",
+      "path": "verify/corpus/language/case_196.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_197.py",
       "path": "verify/corpus/language/case_197.py",
       "verdict": "MATCH",
@@ -3701,8 +1732,22 @@
       "detail": ""
     },
     {
+      "case": "case_201.py",
+      "path": "verify/corpus/language/case_201.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_202.py",
       "path": "verify/corpus/language/case_202.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_203.py",
+      "path": "verify/corpus/language/case_203.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3722,6 +1767,20 @@
       "detail": ""
     },
     {
+      "case": "case_206.py",
+      "path": "verify/corpus/language/case_206.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_207.py",
+      "path": "verify/corpus/language/case_207.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_210.py",
       "path": "verify/corpus/language/case_210.py",
       "verdict": "MATCH",
@@ -3731,6 +1790,55 @@
     {
       "case": "case_211.py",
       "path": "verify/corpus/language/case_211.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_212.py",
+      "path": "verify/corpus/language/case_212.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_213.py",
+      "path": "verify/corpus/language/case_213.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_214.py",
+      "path": "verify/corpus/language/case_214.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_215.py",
+      "path": "verify/corpus/language/case_215.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_216.py",
+      "path": "verify/corpus/language/case_216.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_217.py",
+      "path": "verify/corpus/language/case_217.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_218.py",
+      "path": "verify/corpus/language/case_218.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3787,6 +1895,41 @@
     {
       "case": "case_226.py",
       "path": "verify/corpus/language/case_226.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_227.py",
+      "path": "verify/corpus/language/case_227.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_228.py",
+      "path": "verify/corpus/language/case_228.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_229.py",
+      "path": "verify/corpus/language/case_229.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_230.py",
+      "path": "verify/corpus/language/case_230.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_231.py",
+      "path": "verify/corpus/language/case_231.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3925,6 +2068,20 @@
       "detail": ""
     },
     {
+      "case": "case_251.py",
+      "path": "verify/corpus/language/case_251.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_252.py",
+      "path": "verify/corpus/language/case_252.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_253.py",
       "path": "verify/corpus/language/case_253.py",
       "verdict": "MATCH",
@@ -3955,6 +2112,20 @@
     {
       "case": "case_257.py",
       "path": "verify/corpus/language/case_257.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_258.py",
+      "path": "verify/corpus/language/case_258.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_259.py",
+      "path": "verify/corpus/language/case_259.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4009,8 +2180,57 @@
       "detail": ""
     },
     {
+      "case": "case_270.py",
+      "path": "verify/corpus/language/case_270.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_271.py",
+      "path": "verify/corpus/language/case_271.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_272.py",
+      "path": "verify/corpus/language/case_272.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_276.py",
       "path": "verify/corpus/language/case_276.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_277.py",
+      "path": "verify/corpus/language/case_277.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_278.py",
+      "path": "verify/corpus/language/case_278.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_279.py",
+      "path": "verify/corpus/language/case_279.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_280.py",
+      "path": "verify/corpus/language/case_280.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4023,8 +2243,92 @@
       "detail": ""
     },
     {
+      "case": "case_282.py",
+      "path": "verify/corpus/language/case_282.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_283.py",
+      "path": "verify/corpus/language/case_283.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_284.py",
+      "path": "verify/corpus/language/case_284.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_285.py",
+      "path": "verify/corpus/language/case_285.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_286.py",
+      "path": "verify/corpus/language/case_286.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_287.py",
+      "path": "verify/corpus/language/case_287.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_288.py",
+      "path": "verify/corpus/language/case_288.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_289.py",
+      "path": "verify/corpus/language/case_289.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_290.py",
+      "path": "verify/corpus/language/case_290.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_291.py",
+      "path": "verify/corpus/language/case_291.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_292.py",
       "path": "verify/corpus/language/case_292.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_293.py",
+      "path": "verify/corpus/language/case_293.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_294.py",
+      "path": "verify/corpus/language/case_294.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4149,6 +2453,97 @@
       "detail": ""
     },
     {
+      "case": "case_312.py",
+      "path": "verify/corpus/language/case_312.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_313.py",
+      "path": "verify/corpus/language/case_313.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_314.py",
+      "path": "verify/corpus/language/case_314.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_315.py",
+      "path": "verify/corpus/language/case_315.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_316.py",
+      "path": "verify/corpus/language/case_316.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_317.py",
+      "path": "verify/corpus/language/case_317.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_318.py",
+      "path": "verify/corpus/language/case_318.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_319.py",
+      "path": "verify/corpus/language/case_319.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_320.py",
+      "path": "verify/corpus/language/case_320.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_321.py",
+      "path": "verify/corpus/language/case_321.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_322.py",
+      "path": "verify/corpus/language/case_322.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_323.py",
+      "path": "verify/corpus/language/case_323.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_324.py",
+      "path": "verify/corpus/language/case_324.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_325.py",
       "path": "verify/corpus/language/case_325.py",
       "verdict": "MATCH",
@@ -4158,6 +2553,83 @@
     {
       "case": "case_326.py",
       "path": "verify/corpus/language/case_326.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_327.py",
+      "path": "verify/corpus/language/case_327.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_328.py",
+      "path": "verify/corpus/language/case_328.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_329.py",
+      "path": "verify/corpus/language/case_329.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_330.py",
+      "path": "verify/corpus/language/case_330.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_331.py",
+      "path": "verify/corpus/language/case_331.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_332.py",
+      "path": "verify/corpus/language/case_332.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_333.py",
+      "path": "verify/corpus/language/case_333.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_334.py",
+      "path": "verify/corpus/language/case_334.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_335.py",
+      "path": "verify/corpus/language/case_335.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_336.py",
+      "path": "verify/corpus/language/case_336.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_337.py",
+      "path": "verify/corpus/language/case_337.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4191,6 +2663,69 @@
       "detail": ""
     },
     {
+      "case": "case_342.py",
+      "path": "verify/corpus/language/case_342.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_343.py",
+      "path": "verify/corpus/language/case_343.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_344.py",
+      "path": "verify/corpus/language/case_344.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_345.py",
+      "path": "verify/corpus/language/case_345.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_346.py",
+      "path": "verify/corpus/language/case_346.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_347.py",
+      "path": "verify/corpus/language/case_347.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_348.py",
+      "path": "verify/corpus/language/case_348.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_349.py",
+      "path": "verify/corpus/language/case_349.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_350.py",
+      "path": "verify/corpus/language/case_350.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_351.py",
       "path": "verify/corpus/language/case_351.py",
       "verdict": "MATCH",
@@ -4212,8 +2747,162 @@
       "detail": ""
     },
     {
+      "case": "case_354.py",
+      "path": "verify/corpus/language/case_354.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_355.py",
+      "path": "verify/corpus/language/case_355.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_356.py",
+      "path": "verify/corpus/language/case_356.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_357.py",
+      "path": "verify/corpus/language/case_357.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_358.py",
+      "path": "verify/corpus/language/case_358.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_359.py",
+      "path": "verify/corpus/language/case_359.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_360.py",
+      "path": "verify/corpus/language/case_360.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_361.py",
+      "path": "verify/corpus/language/case_361.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_362.py",
+      "path": "verify/corpus/language/case_362.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_363.py",
+      "path": "verify/corpus/language/case_363.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_364.py",
+      "path": "verify/corpus/language/case_364.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_365.py",
+      "path": "verify/corpus/language/case_365.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_366.py",
+      "path": "verify/corpus/language/case_366.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_367.py",
+      "path": "verify/corpus/language/case_367.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_368.py",
+      "path": "verify/corpus/language/case_368.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_369.py",
+      "path": "verify/corpus/language/case_369.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_370.py",
+      "path": "verify/corpus/language/case_370.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_371.py",
+      "path": "verify/corpus/language/case_371.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_372.py",
+      "path": "verify/corpus/language/case_372.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_373.py",
+      "path": "verify/corpus/language/case_373.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_374.py",
+      "path": "verify/corpus/language/case_374.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_376.py",
       "path": "verify/corpus/language/case_376.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_377.py",
+      "path": "verify/corpus/language/case_377.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4261,6 +2950,13 @@
       "detail": ""
     },
     {
+      "case": "case_384.py",
+      "path": "verify/corpus/language/case_384.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_385.py",
       "path": "verify/corpus/language/case_385.py",
       "verdict": "MATCH",
@@ -4291,6 +2987,111 @@
     {
       "case": "case_389.py",
       "path": "verify/corpus/language/case_389.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_390.py",
+      "path": "verify/corpus/language/case_390.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_391.py",
+      "path": "verify/corpus/language/case_391.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_392.py",
+      "path": "verify/corpus/language/case_392.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_393.py",
+      "path": "verify/corpus/language/case_393.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_394.py",
+      "path": "verify/corpus/language/case_394.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_395.py",
+      "path": "verify/corpus/language/case_395.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_396.py",
+      "path": "verify/corpus/language/case_396.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_397.py",
+      "path": "verify/corpus/language/case_397.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_398.py",
+      "path": "verify/corpus/language/case_398.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_399.py",
+      "path": "verify/corpus/language/case_399.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_400.py",
+      "path": "verify/corpus/language/case_400.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_401.py",
+      "path": "verify/corpus/language/case_401.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_402.py",
+      "path": "verify/corpus/language/case_402.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_403.py",
+      "path": "verify/corpus/language/case_403.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_404.py",
+      "path": "verify/corpus/language/case_404.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4331,6 +3132,20 @@
       "detail": ""
     },
     {
+      "case": "case_410.py",
+      "path": "verify/corpus/language/case_410.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_411.py",
+      "path": "verify/corpus/language/case_411.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_412.py",
       "path": "verify/corpus/language/case_412.py",
       "verdict": "MATCH",
@@ -4359,6 +3174,76 @@
       "detail": ""
     },
     {
+      "case": "case_416.py",
+      "path": "verify/corpus/language/case_416.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_417.py",
+      "path": "verify/corpus/language/case_417.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_418.py",
+      "path": "verify/corpus/language/case_418.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_419.py",
+      "path": "verify/corpus/language/case_419.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_420.py",
+      "path": "verify/corpus/language/case_420.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_421.py",
+      "path": "verify/corpus/language/case_421.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_422.py",
+      "path": "verify/corpus/language/case_422.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_423.py",
+      "path": "verify/corpus/language/case_423.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_424.py",
+      "path": "verify/corpus/language/case_424.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_425.py",
+      "path": "verify/corpus/language/case_425.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_426.py",
       "path": "verify/corpus/language/case_426.py",
       "verdict": "MATCH",
@@ -4366,8 +3251,43 @@
       "detail": ""
     },
     {
+      "case": "case_427.py",
+      "path": "verify/corpus/language/case_427.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_428.py",
       "path": "verify/corpus/language/case_428.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_429.py",
+      "path": "verify/corpus/language/case_429.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_430.py",
+      "path": "verify/corpus/language/case_430.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_431.py",
+      "path": "verify/corpus/language/case_431.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_432.py",
+      "path": "verify/corpus/language/case_432.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4422,6 +3342,27 @@
       "detail": ""
     },
     {
+      "case": "case_440.py",
+      "path": "verify/corpus/language/case_440.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_441.py",
+      "path": "verify/corpus/language/case_441.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_442.py",
+      "path": "verify/corpus/language/case_442.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_443.py",
       "path": "verify/corpus/language/case_443.py",
       "verdict": "MATCH",
@@ -4464,8 +3405,85 @@
       "detail": ""
     },
     {
+      "case": "case_450.py",
+      "path": "verify/corpus/language/case_450.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_451.py",
+      "path": "verify/corpus/language/case_451.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_452.py",
+      "path": "verify/corpus/language/case_452.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_455.py",
+      "path": "verify/corpus/language/case_455.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_457.py",
+      "path": "verify/corpus/language/case_457.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_458.py",
+      "path": "verify/corpus/language/case_458.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_459.py",
+      "path": "verify/corpus/language/case_459.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_460.py",
+      "path": "verify/corpus/language/case_460.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_461.py",
+      "path": "verify/corpus/language/case_461.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_462.py",
       "path": "verify/corpus/language/case_462.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_463.py",
+      "path": "verify/corpus/language/case_463.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_464.py",
+      "path": "verify/corpus/language/case_464.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4478,8 +3496,267 @@
       "detail": ""
     },
     {
+      "case": "case_469.py",
+      "path": "verify/corpus/language/case_469.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_471.py",
+      "path": "verify/corpus/language/case_471.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_477.py",
+      "path": "verify/corpus/language/case_477.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_478.py",
+      "path": "verify/corpus/language/case_478.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_480.py",
+      "path": "verify/corpus/language/case_480.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_482.py",
+      "path": "verify/corpus/language/case_482.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_483.py",
+      "path": "verify/corpus/language/case_483.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_484.py",
+      "path": "verify/corpus/language/case_484.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_485.py",
+      "path": "verify/corpus/language/case_485.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_486.py",
+      "path": "verify/corpus/language/case_486.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_487.py",
+      "path": "verify/corpus/language/case_487.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_488.py",
+      "path": "verify/corpus/language/case_488.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_489.py",
+      "path": "verify/corpus/language/case_489.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_490.py",
+      "path": "verify/corpus/language/case_490.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_491.py",
       "path": "verify/corpus/language/case_491.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_492.py",
+      "path": "verify/corpus/language/case_492.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_493.py",
+      "path": "verify/corpus/language/case_493.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_494.py",
+      "path": "verify/corpus/language/case_494.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_495.py",
+      "path": "verify/corpus/language/case_495.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_496.py",
+      "path": "verify/corpus/language/case_496.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_497.py",
+      "path": "verify/corpus/language/case_497.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_498.py",
+      "path": "verify/corpus/language/case_498.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_499.py",
+      "path": "verify/corpus/language/case_499.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_500.py",
+      "path": "verify/corpus/language/case_500.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_501.py",
+      "path": "verify/corpus/language/case_501.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_502.py",
+      "path": "verify/corpus/language/case_502.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_503.py",
+      "path": "verify/corpus/language/case_503.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_504.py",
+      "path": "verify/corpus/language/case_504.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_505.py",
+      "path": "verify/corpus/language/case_505.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_506.py",
+      "path": "verify/corpus/language/case_506.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_508.py",
+      "path": "verify/corpus/language/case_508.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_509.py",
+      "path": "verify/corpus/language/case_509.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_510.py",
+      "path": "verify/corpus/language/case_510.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_511.py",
+      "path": "verify/corpus/language/case_511.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_512.py",
+      "path": "verify/corpus/language/case_512.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_513.py",
+      "path": "verify/corpus/language/case_513.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_514.py",
+      "path": "verify/corpus/language/case_514.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_515.py",
+      "path": "verify/corpus/language/case_515.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4492,8 +3769,22 @@
       "detail": ""
     },
     {
+      "case": "case_517.py",
+      "path": "verify/corpus/language/case_517.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_518.py",
       "path": "verify/corpus/language/case_518.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_519.py",
+      "path": "verify/corpus/language/case_519.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4506,6 +3797,41 @@
       "detail": ""
     },
     {
+      "case": "case_521.py",
+      "path": "verify/corpus/language/case_521.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_522.py",
+      "path": "verify/corpus/language/case_522.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_523.py",
+      "path": "verify/corpus/language/case_523.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_524.py",
+      "path": "verify/corpus/language/case_524.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_526.py",
+      "path": "verify/corpus/language/case_526.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_527.py",
       "path": "verify/corpus/language/case_527.py",
       "verdict": "MATCH",
@@ -4513,8 +3839,71 @@
       "detail": ""
     },
     {
+      "case": "case_528.py",
+      "path": "verify/corpus/language/case_528.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_530.py",
+      "path": "verify/corpus/language/case_530.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_531.py",
+      "path": "verify/corpus/language/case_531.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_532.py",
+      "path": "verify/corpus/language/case_532.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_533.py",
+      "path": "verify/corpus/language/case_533.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_534.py",
+      "path": "verify/corpus/language/case_534.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_535.py",
+      "path": "verify/corpus/language/case_535.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_536.py",
+      "path": "verify/corpus/language/case_536.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_537.py",
       "path": "verify/corpus/language/case_537.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_539.py",
+      "path": "verify/corpus/language/case_539.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4557,6 +3946,27 @@
     {
       "case": "case_545.py",
       "path": "verify/corpus/language/case_545.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_546.py",
+      "path": "verify/corpus/language/case_546.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_547.py",
+      "path": "verify/corpus/language/case_547.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_548.py",
+      "path": "verify/corpus/language/case_548.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4821,6 +4231,34 @@
       "detail": ""
     },
     {
+      "case": "case_586.py",
+      "path": "verify/corpus/language/case_586.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_587.py",
+      "path": "verify/corpus/language/case_587.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_588.py",
+      "path": "verify/corpus/language/case_588.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_589.py",
+      "path": "verify/corpus/language/case_589.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_590.py",
       "path": "verify/corpus/language/case_590.py",
       "verdict": "MATCH",
@@ -4905,6 +4343,48 @@
       "detail": ""
     },
     {
+      "case": "case_602.py",
+      "path": "verify/corpus/language/case_602.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_603.py",
+      "path": "verify/corpus/language/case_603.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_604.py",
+      "path": "verify/corpus/language/case_604.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_605.py",
+      "path": "verify/corpus/language/case_605.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_606.py",
+      "path": "verify/corpus/language/case_606.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_607.py",
+      "path": "verify/corpus/language/case_607.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_608.py",
       "path": "verify/corpus/language/case_608.py",
       "verdict": "MATCH",
@@ -4940,8 +4420,148 @@
       "detail": ""
     },
     {
+      "case": "case_613.py",
+      "path": "verify/corpus/language/case_613.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_614.py",
+      "path": "verify/corpus/language/case_614.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_615.py",
+      "path": "verify/corpus/language/case_615.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_616.py",
+      "path": "verify/corpus/language/case_616.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_617.py",
+      "path": "verify/corpus/language/case_617.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_618.py",
+      "path": "verify/corpus/language/case_618.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_619.py",
+      "path": "verify/corpus/language/case_619.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_620.py",
+      "path": "verify/corpus/language/case_620.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_621.py",
+      "path": "verify/corpus/language/case_621.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_622.py",
+      "path": "verify/corpus/language/case_622.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_623.py",
+      "path": "verify/corpus/language/case_623.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_624.py",
+      "path": "verify/corpus/language/case_624.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_625.py",
+      "path": "verify/corpus/language/case_625.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_626.py",
+      "path": "verify/corpus/language/case_626.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_627.py",
+      "path": "verify/corpus/language/case_627.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_628.py",
+      "path": "verify/corpus/language/case_628.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_629.py",
+      "path": "verify/corpus/language/case_629.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_630.py",
+      "path": "verify/corpus/language/case_630.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_637.py",
+      "path": "verify/corpus/language/case_637.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_638.py",
       "path": "verify/corpus/language/case_638.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_639.py",
+      "path": "verify/corpus/language/case_639.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4954,6 +4574,20 @@
       "detail": ""
     },
     {
+      "case": "case_641.py",
+      "path": "verify/corpus/language/case_641.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_642.py",
+      "path": "verify/corpus/language/case_642.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_643.py",
       "path": "verify/corpus/language/case_643.py",
       "verdict": "MATCH",
@@ -4961,8 +4595,176 @@
       "detail": ""
     },
     {
+      "case": "case_644.py",
+      "path": "verify/corpus/language/case_644.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_646.py",
+      "path": "verify/corpus/language/case_646.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_647.py",
+      "path": "verify/corpus/language/case_647.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_648.py",
+      "path": "verify/corpus/language/case_648.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_650.py",
+      "path": "verify/corpus/language/case_650.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_651.py",
+      "path": "verify/corpus/language/case_651.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_652.py",
+      "path": "verify/corpus/language/case_652.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_653.py",
       "path": "verify/corpus/language/case_653.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_654.py",
+      "path": "verify/corpus/language/case_654.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_656.py",
+      "path": "verify/corpus/language/case_656.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_657.py",
+      "path": "verify/corpus/language/case_657.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_658.py",
+      "path": "verify/corpus/language/case_658.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_659.py",
+      "path": "verify/corpus/language/case_659.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_661.py",
+      "path": "verify/corpus/language/case_661.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_662.py",
+      "path": "verify/corpus/language/case_662.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_663.py",
+      "path": "verify/corpus/language/case_663.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_664.py",
+      "path": "verify/corpus/language/case_664.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_665.py",
+      "path": "verify/corpus/language/case_665.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_667.py",
+      "path": "verify/corpus/language/case_667.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_669.py",
+      "path": "verify/corpus/language/case_669.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_671.py",
+      "path": "verify/corpus/language/case_671.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_672.py",
+      "path": "verify/corpus/language/case_672.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_673.py",
+      "path": "verify/corpus/language/case_673.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_674.py",
+      "path": "verify/corpus/language/case_674.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_675.py",
+      "path": "verify/corpus/language/case_675.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4982,8 +4784,197 @@
       "detail": ""
     },
     {
+      "case": "case_678.py",
+      "path": "verify/corpus/language/case_678.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_679.py",
+      "path": "verify/corpus/language/case_679.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_683.py",
+      "path": "verify/corpus/language/case_683.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_684.py",
+      "path": "verify/corpus/language/case_684.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_686.py",
+      "path": "verify/corpus/language/case_686.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_687.py",
+      "path": "verify/corpus/language/case_687.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_688.py",
+      "path": "verify/corpus/language/case_688.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_689.py",
+      "path": "verify/corpus/language/case_689.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_690.py",
+      "path": "verify/corpus/language/case_690.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_691.py",
+      "path": "verify/corpus/language/case_691.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_692.py",
+      "path": "verify/corpus/language/case_692.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_693.py",
+      "path": "verify/corpus/language/case_693.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_694.py",
+      "path": "verify/corpus/language/case_694.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_695.py",
+      "path": "verify/corpus/language/case_695.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_696.py",
+      "path": "verify/corpus/language/case_696.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_697.py",
+      "path": "verify/corpus/language/case_697.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_698.py",
+      "path": "verify/corpus/language/case_698.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_699.py",
+      "path": "verify/corpus/language/case_699.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_700.py",
       "path": "verify/corpus/language/case_700.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_701.py",
+      "path": "verify/corpus/language/case_701.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_702.py",
+      "path": "verify/corpus/language/case_702.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_703.py",
+      "path": "verify/corpus/language/case_703.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_704.py",
+      "path": "verify/corpus/language/case_704.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_705.py",
+      "path": "verify/corpus/language/case_705.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_706.py",
+      "path": "verify/corpus/language/case_706.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_707.py",
+      "path": "verify/corpus/language/case_707.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_708.py",
+      "path": "verify/corpus/language/case_708.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_709.py",
+      "path": "verify/corpus/language/case_709.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4998,6 +4989,20 @@
     {
       "case": "case_711.py",
       "path": "verify/corpus/language/case_711.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_712.py",
+      "path": "verify/corpus/language/case_712.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_713.py",
+      "path": "verify/corpus/language/case_713.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
