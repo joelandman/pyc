@@ -21,7 +21,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import selfcheck as sc
 
 GRN, RED, DIM, BOLD, RST = "\033[32m", "\033[31m", "\033[90m", "\033[1m", "\033[0m"
-TERM = re.compile(r"^    (br|condbr|ret|ret\.err)\b")
+# Terminators. This list must track ir::Op -- codegen has its own is_term()
+# and the two are coupled by nothing but attention, which has now cost three
+# false failures (ret, phi, iter.next). Worth deriving from one source if it
+# happens again.
+# Terminators. iter.next has a RESULT (the item), so the optional `%N = `
+# prefix is not cosmetic -- without it the terminator is invisible and every
+# for.head block reads as unterminated.
+#
+# This list must track ir::Op. Codegen has its own is_term() and the two are
+# coupled by nothing but attention, which has now cost three false failures
+# (ret, phi, iter.next). Worth deriving from one source if it happens again.
+TERM = re.compile(r"^    (?:%\d+ = )?(br|condbr|ret|ret\.err|iter\.next)\b")
 BLOCK = re.compile(r"^  (\S+):$")
 DEF = re.compile(r"^    %(\d+) = ")
 USE = re.compile(r"%(\d+)")
@@ -30,6 +41,11 @@ DECREF = re.compile(r"^    decref %(\d+)$")
 # leaked. Counting it as a leak is a false positive, and a checker that cries
 # wolf gets ignored just as surely as one that stays silent.
 RET_VAL = re.compile(r"^    ret %(\d+)$")
+# A phi CONSUMES its incoming values: ownership transfers to the phi result,
+# which is then released once for whichever path was taken. Counting the
+# operands as leaked is the same false positive as `ret %N` was.
+PHI = re.compile(r"^    %\d+ = phi ")
+PHI_IN = re.compile(r"\[%(\d+),")
 OWNED = re.compile(r"; owned")
 
 
@@ -57,8 +73,13 @@ def check(ir: str) -> list[str]:
         r = DECREF.match(line) or RET_VAL.match(line)
         if r:
             released[r.group(1)] = released.get(r.group(1), 0) + 1
+        if PHI.match(line):
+            for inc in PHI_IN.findall(line):
+                released[inc] = released.get(inc, 0) + 1
         for u in USE.findall(line.split("=")[-1] if d else line):
-            if u not in defined:
+            # %0 is the null sentinel (a nullable C-API argument such as
+            # PySet_New(NULL)), not a value, so it has no definition.
+            if u != "0" and u not in defined:
                 problems.append(f"value %{u} used before definition")
     if block is not None and terms != 1:
         problems.append(f"block '{block}' has {terms} terminators")
