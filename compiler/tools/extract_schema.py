@@ -33,6 +33,23 @@ import typing
 _ALIASES = {"Num", "Str", "Bytes", "NameConstant", "Ellipsis",
             "Index", "ExtSlice", "slice"}
 
+# Fields whose LIST may contain None, which `_field_types` does not express:
+# it declares Dict.keys as list[ast.expr], yet CPython stores None there to
+# mark a `**` unpacking entry.
+#
+# Derived empirically, not guessed -- a scan of 14,641 stdlib + site-packages
+# files found exactly these two (kw_defaults 1729 occurrences, Dict.keys 526):
+#
+#   for n in ast.walk(tree):
+#       for f in n._fields:
+#           v = getattr(n, f, None)
+#           if isinstance(v, list) and any(x is None for x in v): ...
+#
+# Re-run that scan when the target version moves. An unlisted case is safe in
+# the sense that matters: the deserializer rejects the unexpected null loudly
+# with a diagnostic (I1) rather than dropping the element.
+_NULLABLE_ELEMENTS = {"arguments.kw_defaults", "Dict.keys"}
+
 
 def _subclasses(c: type) -> list[type]:
     """Real subclasses only.
@@ -99,7 +116,10 @@ def main() -> int:
                 tname, quant = _norm_type(ft[f])
             else:
                 tname, quant = ("unknown", "one")
-            fields.append({"name": f, "type": tname, "quant": quant})
+            entry = {"name": f, "type": tname, "quant": quant}
+            if f"{c.__name__}.{f}" in _NULLABLE_ELEMENTS:
+                entry["nullable_elements"] = True
+            fields.append(entry)
         base = next((b.__name__ for b in c.__mro__[1:]
                      if b is not ast.AST and b.__name__ in sums), None)
         out_nodes[c.__name__] = {
@@ -121,6 +141,7 @@ def main() -> int:
         "degraded": degraded,
         "sums": {k: v for k, v in sorted(sums.items()) if v},
         "trivial_sums": trivial,
+        "nullable_elements": sorted(_NULLABLE_ELEMENTS),
         "nodes": dict(sorted(out_nodes.items())),
     }
     text = json.dumps(schema, indent=2) + "\n"

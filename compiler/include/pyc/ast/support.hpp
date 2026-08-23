@@ -7,11 +7,9 @@
 #include <variant>
 #include <vector>
 
-namespace pyc {
+#include "pyc/diagnostics.hpp"   // SourceLoc
 
-struct SourceLoc {
-    int line = 0, col = 0, end_line = 0, end_col = 0;
-};
+namespace pyc {
 
 // Value-semantic indirection. AST sum types are recursive, so a node cannot
 // hold another by value; Box gives pointer indirection with value semantics,

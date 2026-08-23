@@ -291,7 +291,7 @@ struct Delete {
     SourceLoc loc;
 };
 struct Dict {
-    std::vector<::pyc::ast::expr> keys;
+    std::vector<std::optional<Box<::pyc::ast::expr>>> keys;
     std::vector<::pyc::ast::expr> values;
     SourceLoc loc;
 };
@@ -593,7 +593,7 @@ struct arguments {
     std::vector<::pyc::ast::arg> args;
     std::optional<Box<::pyc::ast::arg>> vararg;
     std::vector<::pyc::ast::arg> kwonlyargs;
-    std::vector<::pyc::ast::expr> kw_defaults;
+    std::vector<std::optional<Box<::pyc::ast::expr>>> kw_defaults;
     std::optional<Box<::pyc::ast::arg>> kwarg;
     std::vector<::pyc::ast::expr> defaults;
 };
