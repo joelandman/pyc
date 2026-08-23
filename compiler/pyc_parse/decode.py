@@ -12,6 +12,9 @@ import ast
 import base64
 
 
+_LITERAL_FIELDS = {("Constant", "value"), ("MatchSingleton", "value")}
+
+
 def _dec_constant(d):
     t = d["t"]
     if t == "none":      return None
@@ -54,7 +57,7 @@ def decode_node(d: dict) -> ast.AST:
         if f not in d:
             continue
         v = d[f]
-        setattr(node, f, _dec_constant(v) if (f == "value" and kind == "Constant")
+        setattr(node, f, _dec_constant(v) if (kind, f) in _LITERAL_FIELDS
                 else _dec_value(v))
     for a in cls._attributes:
         if a in d:

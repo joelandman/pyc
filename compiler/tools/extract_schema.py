@@ -50,6 +50,21 @@ _ALIASES = {"Num", "Str", "Bytes", "NameConstant", "Ellipsis",
 # with a diagnostic (I1) rather than dropping the element.
 _NULLABLE_ELEMENTS = {"arguments.kw_defaults", "Dict.keys"}
 
+# `_field_types` reports `object` for anything it cannot type, and that covers
+# three different things. Constant.value and MatchSingleton.value hold Python
+# LITERALS; Interpolation.str (PEP 750) is an ordinary str holding the source
+# text of the interpolation. Collapsing them all to "a literal" makes both
+# t-strings and `case None:` fail to deserialize.
+#
+# Curated deliberately: an `object` field NOT listed here keeps type "object",
+# and gen_ast.py then refuses to generate, naming the field. Guessing is how
+# this bug happened in the first place.
+_OBJECT_FIELDS = {
+    "Constant.value":       "constant",
+    "MatchSingleton.value": "constant",
+    "Interpolation.str":    "str",
+}
+
 
 def _subclasses(c: type) -> list[type]:
     """Real subclasses only.
@@ -116,6 +131,8 @@ def main() -> int:
                 tname, quant = _norm_type(ft[f])
             else:
                 tname, quant = ("unknown", "one")
+            if tname == "object":
+                tname = _OBJECT_FIELDS.get(f"{c.__name__}.{f}", "object")
             entry = {"name": f, "type": tname, "quant": quant}
             if f"{c.__name__}.{f}" in _NULLABLE_ELEMENTS:
                 entry["nullable_elements"] = True
@@ -142,6 +159,7 @@ def main() -> int:
         "sums": {k: v for k, v in sorted(sums.items()) if v},
         "trivial_sums": trivial,
         "nullable_elements": sorted(_NULLABLE_ELEMENTS),
+        "object_fields": dict(sorted(_OBJECT_FIELDS.items())),
         "nodes": dict(sorted(out_nodes.items())),
     }
     text = json.dumps(schema, indent=2) + "\n"

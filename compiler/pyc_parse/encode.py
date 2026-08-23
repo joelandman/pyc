@@ -16,6 +16,13 @@ import ast
 import base64
 
 
+# Fields holding a Python LITERAL rather than a child node. Mirrors
+# _OBJECT_FIELDS in compiler/tools/extract_schema.py; keep the two in step.
+# MatchSingleton.value was previously emitted bare, so `case None:` decoded as
+# a missing tagged constant.
+_LITERAL_FIELDS = {("Constant", "value"), ("MatchSingleton", "value")}
+
+
 def _has_surrogates(s: str) -> bool:
     return any(0xD800 <= ord(c) <= 0xDFFF for c in s)
 
@@ -88,8 +95,9 @@ def encode_node(node: ast.AST) -> dict:
         if not hasattr(node, f):
             continue
         v = getattr(node, f)
-        out[f] = _enc_constant(v) if (f == "value" and isinstance(node, ast.Constant)) \
-            else _enc_value(v)
+        out[f] = (_enc_constant(v)
+                  if (type(node).__name__, f) in _LITERAL_FIELDS
+                  else _enc_value(v))
     for a in node._attributes:
         if hasattr(node, a):
             av = getattr(node, a)

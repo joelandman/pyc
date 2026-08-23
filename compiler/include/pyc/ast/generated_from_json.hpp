@@ -464,7 +464,7 @@ inline bool from_json(Interactive& out, const JsonCtx& c, const json::Value& v, 
 inline bool from_json(Interpolation& out, const JsonCtx& c, const json::Value& v, Depth d) {
     if (!d.ok(c)) return false;
     if (!node_one(out.value, c, c.doc.find(v, "value"), d.next())) return false;
-    if (!const_from_json(out.str, c, c.doc.find(v, "str"))) return false;
+    if (!str_one(out.str, c, c.doc.find(v, "str"))) return false;
     if (!i64_one(out.conversion, c, c.doc.find(v, "conversion"))) return false;
     if (!node_opt(out.format_spec, c, c.doc.find(v, "format_spec"), d.next())) return false;
     loc_from_json(out.loc, c, v);

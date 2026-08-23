@@ -43,8 +43,13 @@ def cxx(name: str) -> str:
 
 def cpp_type(f: dict, sums: set[str], trivial: set[str], nodes: set[str]) -> str:
     t, q = f["type"], f["quant"]
-    if t == "object":                       # Constant.value and friends
+    if t == "constant":                     # a Python literal
         return "ConstantValue"
+    if t == "object":
+        raise SystemExit(
+            f"gen_ast: field of untyped `object` is not resolved. Add it to "
+            f"_OBJECT_FIELDS in extract_schema.py with its real type -- "
+            f"guessing produced silently broken t-strings and `case None:`.")
     if t in SCALARS:
         base = SCALARS[t]
         return {"one": base, "opt": f"std::optional<{base}>",
@@ -217,7 +222,7 @@ def gen_from_json(s: dict) -> str:
             fn, ft, q = f["name"], f["type"], f["quant"]
             acc = f'c.doc.find(v, "{fn}")'
             dst = f"out.{cxx(fn)}"
-            if ft == "object":
+            if ft == "constant":
                 w(f"    if (!const_from_json({dst}, c, {acc})) return false;")
             elif ft in SCALARS:
                 fn_name = {"str": "str", "int": "i64", "bool": "boolean"}[ft]
@@ -282,7 +287,7 @@ def gen_walk(s: dict) -> str:
         w(f'    s.on("{name}");')
         for f in info["fields"]:
             t, q, fn = f["type"], f["quant"], cxx(f["name"])
-            if t in SCALARS or t == "object" or t in trivial:
+            if t in SCALARS or t in ("object", "constant") or t in trivial:
                 continue
             if q == "one":
                 w(f"    if (n.{fn}) walk(*n.{fn}, s);")

@@ -378,7 +378,7 @@ struct Interactive {
 };
 struct Interpolation {
     Box<::pyc::ast::expr> value;
-    ConstantValue str;
+    std::string str;
     std::int64_t conversion;
     std::optional<Box<::pyc::ast::expr>> format_spec;
     SourceLoc loc;
