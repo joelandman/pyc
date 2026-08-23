@@ -16,6 +16,11 @@ import sys
 
 from . import SCHEMA_VERSION, encode_node
 
+# Real code nests deeper than CPython's default 1000 frames allows once each
+# AST level costs several: sympy's resolvent_lookup.py reaches depth 568.
+# ast.parse itself copes; a recursive encoder does not, without this.
+sys.setrecursionlimit(60000)
+
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="pyc_parse")

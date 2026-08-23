@@ -1,6 +1,6 @@
 # Layer Interfaces
 
-**Status: frozen v1 (2026-08-22).** Owned by A0. Changes require A0 sign-off, a
+**Status: frozen v1.1 (2026-08-22).** Owned by A0. Changes require A0 sign-off, a
 version bump, and a note in this file's changelog. A1–A4 build against these;
 they are what let the layers proceed independently.
 
@@ -69,7 +69,34 @@ public:
 coverage gaps present as P2 `COMPILE_ERROR` in the harness rather than as P0
 silent wrong answers.
 
-### 1.2 Target description
+### 1.2 Tree depth (binding on §2 and §3)
+
+**Any traversal of `pyc::ast` or `pyc::ir` must survive a tree ~600 levels
+deep.** This is a property of real code, not a pathology: sympy's
+`polys/numberfields/resolvent_lookup.py` has an AST **568 levels deep**, and
+CPython's own parser handles it. A recursive walker with a fat frame per level
+will exhaust a default 8 MB stack well before that.
+
+Measured 2026-08-22: a naive recursive encoder blew Python's 1000-frame limit
+on that file, because each AST level costs several frames. The same arithmetic
+applies to a C++ recursive descent.
+
+Consequences, binding:
+
+- A recursive traversal MUST be depth-bounded and fail with a §1.1
+  `Error` naming the limit — never a stack overflow, which is an
+  uncontrollable crash and cannot be reported as a diagnostic (I1).
+- Prefer an explicit worklist/stack over native recursion in the hot walkers
+  (A1's deserializer, A3's lowering). Native recursion is acceptable only
+  where the depth is provably bounded by something other than user input.
+- A thread that walks user trees must be given a stack sized for this
+  explicitly, not left at the platform default.
+
+A stack overflow here would present as a P1 `CRASH` in the harness at best,
+and as a silent miscompile at worst — both avoidable by treating depth as an
+input parameter rather than an assumption.
+
+### 1.3 Target description
 
 Defined in `VERSION_TARGETING.md`; consumed by A1 (schema + parse), A2
 (headers, libpython) and A4 (link, wheel tags). Loaded from the sysroot's
@@ -130,7 +157,36 @@ using Expr = std::variant<BinOp, Call, Name, Constant, TemplateStr /*3.14*/,
 }
 ```
 
-### 2.3 Exhaustiveness — how I4 is *enforced*, not merely intended
+### 2.3 Encoding hazards (found by the §2.4 proof, not by review)
+
+JSON looks able to carry a Python value and quietly cannot, in two places.
+Both are settled; a future transport change must preserve both properties.
+
+- **`int` is arbitrary precision.** Carried as decimal *text*. A JSON number
+  truncates silently above 2^53 — the same failure as the old runtime's
+  `math.factorial(25)`, relocated to the serializer. `ConstBigInt` keeps it as
+  text in C++ too; materialising it is the runtime's job.
+- **`str` is a sequence of code points and may hold lone surrogates.** JSON
+  escapes astral characters *as* surrogate pairs, so a decoder recombines two
+  surrogate code points into one astral character: 2 in, 1 out. CPython's own
+  `Lib/test/datetimetester.py` contains a lone `\ud83d`. Strings containing
+  surrogates therefore travel as base64 of `utf-8/surrogatepass`.
+
+The second was **not** anticipated by reasoning about the schema; only running
+the proof over real code surfaced it. That is the argument for §2.4.
+
+### 2.4 Totality proof
+
+A1 is done when, for every `.py` file in CPython's `Lib/`, parse → encode →
+decode → `ast.dump(include_attributes=True)` compares equal, **on two targets**.
+Comparing *with* attributes is deliberate: it proves `SourceLoc` survives,
+which `-g` and every diagnostic depend on.
+
+Files that do not parse under the target are excluded from the denominator
+(`Lib/test` ships deliberate bad-syntax fixtures); they are reported, never
+silently dropped.
+
+### 2.5 Exhaustiveness — how I4 is *enforced*, not merely intended
 
 Verified on this toolchain (g++ 13, `-std=c++20`): a `std::visit` over an
 overload set that **omits an alternative is a hard compile error**
@@ -271,5 +327,8 @@ Left to each layer, so freezing these interfaces does not over-constrain:
 
 ## Changelog
 
+- **v1.1 — 2026-08-22.** Added §1.2 (tree depth), §2.2a (encoding
+  hazards) and §2.4 (totality proof); renumbered exhaustiveness to §2.5.
+  Additive only — no existing contract changed.
 - **v1 — 2026-08-22.** Initial freeze. C++20; JSON parse boundary; `std::visit`
   exhaustiveness plus a catch-all ban as the I4 mechanism.

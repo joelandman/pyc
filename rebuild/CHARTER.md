@@ -65,7 +65,7 @@ completeness metric in §4 exceeds 80%.
   therefore give I4's "adding a node kind breaks the build" guarantee natively.
   The one hole is a generic `auto` arm, which compiles and silently swallows —
   so **generic arms are banned in visitors over `pyc::ast` / `pyc::ir`**, and a
-  build lint enforces it. See `INTERFACES.md` §2.3.
+  build lint enforces it. See `INTERFACES.md` §2.5.
 - **JSON across the parse boundary**, revisitable on profiling evidence; it is
   an implementation detail behind `INTERFACES.md` §2.1.
 

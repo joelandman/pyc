@@ -21,11 +21,18 @@ import concurrent.futures
 import json
 import sys
 import sysconfig
+import threading
 import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from pyc_parse import decode_node, encode_node  # noqa: E402
+
+# Deeply nested literals (sympy reaches AST depth 568) exceed both the Python
+# frame limit and a default 8 MB thread stack. Raise both, so a legitimate
+# file is not misreported as a harness failure.
+sys.setrecursionlimit(60000)
+threading.stack_size(256 * 1024 * 1024)
 
 RED, GRN, YEL, DIM, BOLD, RST = (
     "\033[31m", "\033[32m", "\033[33m", "\033[90m", "\033[1m", "\033[0m")

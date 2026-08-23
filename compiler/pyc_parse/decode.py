@@ -21,6 +21,7 @@ def _dec_constant(d):
     if t == "float":     return float(d["v"])
     if t == "complex":   return complex(float(d["re"]), float(d["im"]))
     if t == "str":       return d["v"]
+    if t == "str_raw":   return base64.b64decode(d["v"]).decode("utf-8", "surrogatepass")
     if t == "bytes":     return base64.b64decode(d["v"])
     if t == "tuple":     return tuple(_dec_constant(x) for x in d["v"])
     if t == "frozenset": return frozenset(_dec_constant(x) for x in d["v"])
@@ -35,6 +36,8 @@ def _dec_value(v):
             return decode_node(v)
         if "_bytes" in v:
             return base64.b64decode(v["_bytes"])
+        if "_str_raw" in v:
+            return base64.b64decode(v["_str_raw"]).decode("utf-8", "surrogatepass")
         raise ValueError(f"unknown object in field position: {sorted(v)!r}")
     return v
 

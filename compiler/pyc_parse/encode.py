@@ -16,6 +16,27 @@ import ast
 import base64
 
 
+def _has_surrogates(s: str) -> bool:
+    return any(0xD800 <= ord(c) <= 0xDFFF for c in s)
+
+
+def _enc_str(v: str):
+    """Python str is a sequence of CODE POINTS and may hold lone surrogates.
+
+    JSON cannot carry those: it escapes astral characters *as* surrogate
+    pairs, so a decoder silently recombines two surrogate code points into one
+    astral character -- 2 in, 1 out. CPython's own Lib/test/datetimetester.py
+    contains lone surrogates, so this is not hypothetical.
+
+    Strings that contain surrogates therefore travel as base64 of
+    utf-8/surrogatepass. Everything else stays readable text.
+    """
+    if _has_surrogates(v):
+        return {"t": "str_raw",
+                "v": base64.b64encode(v.encode("utf-8", "surrogatepass")).decode("ascii")}
+    return {"t": "str", "v": v}
+
+
 def _enc_constant(v):
     # Order matters: bool before int (bool is a subclass), and None/Ellipsis
     # are singletons rather than values.
@@ -32,7 +53,7 @@ def _enc_constant(v):
     if isinstance(v, complex):
         return {"t": "complex", "re": repr(v.real), "im": repr(v.imag)}
     if isinstance(v, str):
-        return {"t": "str", "v": v}
+        return _enc_str(v)
     if isinstance(v, bytes):
         return {"t": "bytes", "v": base64.b64encode(v).decode("ascii")}
     if isinstance(v, tuple):
@@ -49,6 +70,9 @@ def _enc_value(v):
         return [_enc_value(x) for x in v]
     # Bare field values: identifiers, docstrings, int flags (level, conversion,
     # is_async), and None for optional fields.
+    if isinstance(v, str) and _has_surrogates(v):
+        return {"_str_raw": base64.b64encode(
+            v.encode("utf-8", "surrogatepass")).decode("ascii")}
     if v is None or isinstance(v, (str, int, float, bool)):
         return v
     if isinstance(v, bytes):
