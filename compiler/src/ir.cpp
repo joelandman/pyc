@@ -28,6 +28,7 @@ const char* op_name(Op op) {
         case Op::Is:          return "is";
         case Op::IntNot:      return "int.not";
         case Op::Phi:         return "phi";
+        case Op::IterNext:    return "iter.next";
         case Op::MakeFunction: return "makefunc";
     }
     return "?";
@@ -76,6 +77,8 @@ std::string to_string(const Module& m) {
                 if (in.op == Op::Br) o << " -> bb" << in.target;
                 if (in.op == Op::CondBr)
                     o << " -> bb" << in.target << ", bb" << in.target_else;
+                if (in.op == Op::IterNext)
+                    o << " -> body bb" << in.target << ", done bb" << in.target_else;
                 if (in.result && in.result_ownership != Ownership::NotAnObject)
                     o << "  ; " << own_name(in.result_ownership);
                 if (in.on_error) {

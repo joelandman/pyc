@@ -7,14 +7,14 @@
   "subject": {
     "pyc_flags": []
   },
-  "pass_rate": 37.92134831460674,
+  "pass_rate": 46.62921348314607,
   "scored": 712,
-  "matched": 270,
+  "matched": 332,
   "quarantined": 1,
-  "elapsed_seconds": 114.84417963027954,
+  "elapsed_seconds": 128.0131664276123,
   "counts": {
-    "COMPILE_ERROR": 442,
-    "MATCH": 270,
+    "COMPILE_ERROR": 380,
+    "MATCH": 332,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
@@ -30,1512 +30,1372 @@
       "path": "verify/corpus/language/case_016.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-js9cniis/case_016.py:2:0: error: cannot compile default arguments yet [default arguments]"
+      "detail": "/tmp/pyc-verify-g5p_j7xy/case_016.py:2:0: error: cannot compile default arguments yet [default arguments]"
     },
     {
       "case": "case_017.py",
       "path": "verify/corpus/language/case_017.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-u59_amij/case_017.py:2:0: error: cannot compile default arguments yet [default arguments]"
+      "detail": "/tmp/pyc-verify-8vb3xwym/case_017.py:2:0: error: cannot compile default arguments yet [default arguments]"
     },
     {
       "case": "case_018.py",
       "path": "verify/corpus/language/case_018.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-z3pcgcf0/case_018.py:3:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-s95pnbdx/case_018.py:3:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_019.py",
       "path": "verify/corpus/language/case_019.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7lq9l2mv/case_019.py:3:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-txq91jfk/case_019.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_020.py",
       "path": "verify/corpus/language/case_020.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-46zopdg1/case_020.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-justdlxi/case_020.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_021.py",
       "path": "verify/corpus/language/case_021.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vx3zgpkw/case_021.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-55o_1uys/case_021.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_022.py",
       "path": "verify/corpus/language/case_022.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-srcr6q2u/case_022.py:3:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-ymjhnh60/case_022.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_045.py",
       "path": "verify/corpus/language/case_045.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-75emrexq/case_045.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-8dp5wq0l/case_045.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_046.py",
       "path": "verify/corpus/language/case_046.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-med3dwuc/case_046.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-uu07vkra/case_046.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_047.py",
       "path": "verify/corpus/language/case_047.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-pokpqv_u/case_047.py:2:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-nofpxrq2/case_047.py:2:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_048.py",
       "path": "verify/corpus/language/case_048.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rgycq610/case_048.py:2:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-mi6bbec7/case_048.py:2:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_049.py",
       "path": "verify/corpus/language/case_049.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-msf1xxpi/case_049.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-uv08te78/case_049.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_050.py",
       "path": "verify/corpus/language/case_050.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5vz4wyiv/case_050.py:2:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-9he2dw7f/case_050.py:2:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_051.py",
       "path": "verify/corpus/language/case_051.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-bljub_kn/case_051.py:3:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-7743vajp/case_051.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_069.py",
       "path": "verify/corpus/language/case_069.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-v5sishhk/case_069.py:2:6: error: cannot compile f-strings yet [f-strings]"
-    },
-    {
-      "case": "case_070.py",
-      "path": "verify/corpus/language/case_070.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-m1cvcmvi/case_070.py:2:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_071.py",
-      "path": "verify/corpus/language/case_071.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-k2ij1rj0/case_071.py:2:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_072.py",
-      "path": "verify/corpus/language/case_072.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ridgjtfg/case_072.py:2:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_073.py",
-      "path": "verify/corpus/language/case_073.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-xpm9kigf/case_073.py:2:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_074.py",
-      "path": "verify/corpus/language/case_074.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-42v4arom/case_074.py:2:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_075.py",
-      "path": "verify/corpus/language/case_075.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-bw1g7pez/case_075.py:2:6: error: cannot compile boolean operators yet [boolean operators]"
+      "detail": "/tmp/pyc-verify-i0go67iz/case_069.py:2:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_076.py",
       "path": "verify/corpus/language/case_076.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.QJM1mXsPUY/mod.ll:16:39: error: '%v3' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.fmpYJ4VJZI/mod.ll:16:39: error: '%v3' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_077.py",
       "path": "verify/corpus/language/case_077.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.5OF3bRkNqY/mod.ll:16:39: error: '%v3' defined with type 'i32' but expected 'ptr'"
-    },
-    {
-      "case": "case_078.py",
-      "path": "verify/corpus/language/case_078.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-vhp9l5hu/case_078.py:3:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_079.py",
-      "path": "verify/corpus/language/case_079.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-uelhin3k/case_079.py:3:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_080.py",
-      "path": "verify/corpus/language/case_080.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ok_nc8p4/case_080.py:3:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_081.py",
-      "path": "verify/corpus/language/case_081.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ld4l9cvw/case_081.py:2:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_082.py",
-      "path": "verify/corpus/language/case_082.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-evs2q_mt/case_082.py:2:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_083.py",
-      "path": "verify/corpus/language/case_083.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-hk9l3wr_/case_083.py:3:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_084.py",
-      "path": "verify/corpus/language/case_084.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-yrx567wi/case_084.py:3:6: error: cannot compile boolean operators yet [boolean operators]"
-    },
-    {
-      "case": "case_085.py",
-      "path": "verify/corpus/language/case_085.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-46odrl65/case_085.py:2:6: error: cannot compile boolean operators yet [boolean operators]"
+      "detail": "/tmp/tmp.Ms3avj8U3g/mod.ll:16:39: error: '%v3' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_094.py",
       "path": "verify/corpus/language/case_094.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ttx61sdt/case_094.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
+      "detail": "/tmp/pyc-verify-5izgxr3f/case_094.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
     },
     {
       "case": "case_095.py",
       "path": "verify/corpus/language/case_095.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-nx55z3br/case_095.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
+      "detail": "/tmp/pyc-verify-9hqz1lev/case_095.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
     },
     {
       "case": "case_096.py",
       "path": "verify/corpus/language/case_096.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-neb2rfx2/case_096.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
+      "detail": "/tmp/pyc-verify-4rwvukxi/case_096.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
     },
     {
       "case": "case_097.py",
       "path": "verify/corpus/language/case_097.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-t0_l_bbw/case_097.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
+      "detail": "/tmp/pyc-verify-fso59e26/case_097.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
     },
     {
       "case": "case_100.py",
       "path": "verify/corpus/language/case_100.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.Bmx2Hi0ImD/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.tc3u1SXDiQ/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_101.py",
       "path": "verify/corpus/language/case_101.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.noq0S7vfEW/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.DEqPF9zQmO/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_102.py",
       "path": "verify/corpus/language/case_102.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.7pd1WhA23I/mod.ll:18:39: error: '%v4' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.W3VmjiZOlC/mod.ll:18:39: error: '%v4' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_103.py",
       "path": "verify/corpus/language/case_103.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.LoKtUJR7RR/mod.ll:38:40: error: '%v11' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.oxmMPIXp61/mod.ll:38:40: error: '%v11' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_104.py",
       "path": "verify/corpus/language/case_104.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-i1ybz4dg/case_104.py:3:6: error: cannot compile conditional expressions yet [conditional expressions]"
+      "detail": "error: invalid LLVM IR input: Instruction does not dominate all uses!"
     },
     {
       "case": "case_105.py",
       "path": "verify/corpus/language/case_105.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-eqxeai2b/case_105.py:3:6: error: cannot compile conditional expressions yet [conditional expressions]"
+      "detail": "error: invalid LLVM IR input: Instruction does not dominate all uses!"
     },
     {
       "case": "case_106.py",
       "path": "verify/corpus/language/case_106.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0ocuwu1q/case_106.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-k0k1d7as/case_106.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_107.py",
       "path": "verify/corpus/language/case_107.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-xtsqulk7/case_107.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-js3m1b3x/case_107.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_122.py",
       "path": "verify/corpus/language/case_122.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.MlXCqSsmiO/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.pptOIGapfP/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_123.py",
       "path": "verify/corpus/language/case_123.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.bwqJjx8t3O/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.daBY42a4wX/mod.ll:36:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_129.py",
       "path": "verify/corpus/language/case_129.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-15_hot0g/case_129.py:4:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-jqz6ih5l/case_129.py:4:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_138.py",
       "path": "verify/corpus/language/case_138.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ya63ha_k/case_138.py:3:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-blg59pp8/case_138.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_143.py",
       "path": "verify/corpus/language/case_143.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-oc6tuzic/case_143.py:2:0: error: cannot compile multiple assignment targets yet [multiple assignment targets]"
+      "detail": "/tmp/pyc-verify-lo4_43hd/case_143.py:2:0: error: cannot compile multiple assignment targets yet [multiple assignment targets]"
     },
     {
       "case": "case_144.py",
       "path": "verify/corpus/language/case_144.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5yonptv7/case_144.py:2:0: error: cannot compile multiple assignment targets yet [multiple assignment targets]"
+      "detail": "/tmp/pyc-verify-boz1jzb_/case_144.py:2:0: error: cannot compile multiple assignment targets yet [multiple assignment targets]"
     },
     {
       "case": "case_145.py",
       "path": "verify/corpus/language/case_145.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-f16fz4xo/case_145.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
+      "detail": "/tmp/pyc-verify-gcvhey1j/case_145.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
     },
     {
       "case": "case_146.py",
       "path": "verify/corpus/language/case_146.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7rgdtfhh/case_146.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
-    },
-    {
-      "case": "case_147.py",
-      "path": "verify/corpus/language/case_147.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ye8h1u89/case_147.py:3:6: error: cannot compile chained comparisons yet [chained comparisons]"
-    },
-    {
-      "case": "case_148.py",
-      "path": "verify/corpus/language/case_148.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-fhnbi1pf/case_148.py:3:6: error: cannot compile chained comparisons yet [chained comparisons]"
-    },
-    {
-      "case": "case_149.py",
-      "path": "verify/corpus/language/case_149.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-78w7r8b1/case_149.py:3:6: error: cannot compile chained comparisons yet [chained comparisons]"
+      "detail": "/tmp/pyc-verify-29_471by/case_146.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
     },
     {
       "case": "case_155.py",
       "path": "verify/corpus/language/case_155.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-13taimxg/case_155.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-kvp1qal7/case_155.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_156.py",
       "path": "verify/corpus/language/case_156.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-aptbp237/case_156.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-iezr7djf/case_156.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_157.py",
       "path": "verify/corpus/language/case_157.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-58m0oj5b/case_157.py:2:2: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-5_qzmio5/case_157.py:2:2: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_158.py",
       "path": "verify/corpus/language/case_158.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-tx86t30u/case_158.py:2:2: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-hm8dtbta/case_158.py:2:2: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_159.py",
       "path": "verify/corpus/language/case_159.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rutsvldg/case_159.py:2:2: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-wt7rxs3p/case_159.py:2:2: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_186.py",
       "path": "verify/corpus/language/case_186.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3d9xcv87/case_186.py:2:2: error: cannot compile dict comprehensions yet [dict comprehensions]"
+      "detail": "/tmp/pyc-verify-fhokatgn/case_186.py:2:2: error: cannot compile dict comprehensions yet [dict comprehensions]"
     },
     {
       "case": "case_187.py",
       "path": "verify/corpus/language/case_187.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cm893nje/case_187.py:2:2: error: cannot compile dict comprehensions yet [dict comprehensions]"
+      "detail": "/tmp/pyc-verify-p08g5nqu/case_187.py:2:2: error: cannot compile dict comprehensions yet [dict comprehensions]"
     },
     {
       "case": "case_188.py",
       "path": "verify/corpus/language/case_188.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-xi8jnkpa/case_188.py:2:2: error: cannot compile dict comprehensions yet [dict comprehensions]"
+      "detail": "/tmp/pyc-verify-6w625ehx/case_188.py:2:2: error: cannot compile dict comprehensions yet [dict comprehensions]"
     },
     {
       "case": "case_189.py",
       "path": "verify/corpus/language/case_189.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rza2d6tz/case_189.py:3:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-5tb_3f7t/case_189.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_190.py",
       "path": "verify/corpus/language/case_190.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gc16ixn9/case_190.py:3:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-fjzy3zv8/case_190.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_191.py",
       "path": "verify/corpus/language/case_191.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-8jz5cy93/case_191.py:3:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-8zjfsr_i/case_191.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_192.py",
       "path": "verify/corpus/language/case_192.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qpu0w04m/case_192.py:3:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-lroa249x/case_192.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_193.py",
       "path": "verify/corpus/language/case_193.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-u441v4io/case_193.py:3:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-r21ww2wm/case_193.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_194.py",
       "path": "verify/corpus/language/case_194.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-v10cejj3/case_194.py:4:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-_xe_n5tg/case_194.py:4:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_195.py",
       "path": "verify/corpus/language/case_195.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ulzabr77/case_195.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-bfhjzt69/case_195.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_196.py",
       "path": "verify/corpus/language/case_196.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-zjn76v3e/case_196.py:3:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_199.py",
-      "path": "verify/corpus/language/case_199.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-t_9zeqy_/case_199.py:2:6: error: cannot compile conditional expressions yet [conditional expressions]"
+      "detail": "/tmp/pyc-verify-o6onu464/case_196.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_201.py",
       "path": "verify/corpus/language/case_201.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5u8uqp2k/case_201.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
+      "detail": "/tmp/pyc-verify-qo44810h/case_201.py:3:0: error: cannot compile augmented assignment yet [augmented assignment]"
     },
     {
       "case": "case_203.py",
       "path": "verify/corpus/language/case_203.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-iuks3b6p/case_203.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-r5twsz8x/case_203.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_206.py",
       "path": "verify/corpus/language/case_206.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.DXVhNnaGn2/mod.ll:28:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.aE46WJ0Sm0/mod.ll:28:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_207.py",
       "path": "verify/corpus/language/case_207.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.Ycbl8JCzLY/mod.ll:28:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.AuCWRnKaQu/mod.ll:28:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_208.py",
       "path": "verify/corpus/language/case_208.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.Hw7JoHsrN8/mod.ll:28:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.19DkixfoKJ/mod.ll:28:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_209.py",
       "path": "verify/corpus/language/case_209.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.y4l3ZXYDt3/mod.ll:26:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.z53Vnjz4d3/mod.ll:26:39: error: '%v6' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_212.py",
       "path": "verify/corpus/language/case_212.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-yury5eh6/case_212.py:2:5: error: cannot compile walrus yet [walrus]"
+      "detail": "/tmp/pyc-verify-tj11q428/case_212.py:2:5: error: cannot compile walrus yet [walrus]"
     },
     {
       "case": "case_213.py",
       "path": "verify/corpus/language/case_213.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-fw7u4wyq/case_213.py:2:4: error: cannot compile walrus yet [walrus]"
+      "detail": "/tmp/pyc-verify-d015q4nk/case_213.py:2:4: error: cannot compile walrus yet [walrus]"
     },
     {
       "case": "case_214.py",
       "path": "verify/corpus/language/case_214.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vlk1xguz/case_214.py:2:7: error: cannot compile walrus yet [walrus]"
+      "detail": "/tmp/pyc-verify-frtinawk/case_214.py:2:7: error: cannot compile walrus yet [walrus]"
     },
     {
       "case": "case_215.py",
       "path": "verify/corpus/language/case_215.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-p47_3xks/case_215.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-d5yr9xtq/case_215.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_216.py",
       "path": "verify/corpus/language/case_216.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5e90otkh/case_216.py:3:0: error: cannot compile assert yet [assert]"
+      "detail": "/tmp/pyc-verify-4jy69khv/case_216.py:3:0: error: cannot compile assert yet [assert]"
     },
     {
       "case": "case_217.py",
       "path": "verify/corpus/language/case_217.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-8l2b0ad0/case_217.py:3:0: error: cannot compile assert yet [assert]"
+      "detail": "/tmp/pyc-verify-hmfkdmys/case_217.py:3:0: error: cannot compile assert yet [assert]"
     },
     {
       "case": "case_218.py",
       "path": "verify/corpus/language/case_218.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-v3u7lf9q/case_218.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-10xceh96/case_218.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_227.py",
       "path": "verify/corpus/language/case_227.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.lI18aTpT2Z/mod.ll:62:40: error: '%v17' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.RaoPq93eja/mod.ll:62:40: error: '%v17' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_228.py",
       "path": "verify/corpus/language/case_228.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.4CmFfZljUC/mod.ll:90:40: error: '%v23' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.pMRi72HZJV/mod.ll:90:40: error: '%v23' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_229.py",
       "path": "verify/corpus/language/case_229.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-j2hfhuqo/case_229.py:3:4: error: cannot compile del of a name yet [del of a name]"
+      "detail": "/tmp/pyc-verify-nrs6ev7p/case_229.py:3:4: error: cannot compile del of a name yet [del of a name]"
     },
     {
       "case": "case_230.py",
       "path": "verify/corpus/language/case_230.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ldzul4e7/case_230.py:2:0: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-40qa9k31/case_230.py:2:0: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_231.py",
       "path": "verify/corpus/language/case_231.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-azyz1_wt/case_231.py:2:0: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-yjspj8xf/case_231.py:2:0: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_251.py",
       "path": "verify/corpus/language/case_251.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-q144vnmj/case_251.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-c98ovcb2/case_251.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_252.py",
       "path": "verify/corpus/language/case_252.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-v5hdp17j/case_252.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-wc_jzk9m/case_252.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_258.py",
       "path": "verify/corpus/language/case_258.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-g4g0s6yv/case_258.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-ajizi7zz/case_258.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_259.py",
       "path": "verify/corpus/language/case_259.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5li4ltcd/case_259.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-7282mbgm/case_259.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_265.py",
       "path": "verify/corpus/language/case_265.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-34ygjof6/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-05nrfvo0/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_266.py",
       "path": "verify/corpus/language/case_266.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-76_rfreo/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-s6y8allz/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_267.py",
       "path": "verify/corpus/language/case_267.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-udouf8pb/case_267.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-0vhc07v0/case_267.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_270.py",
       "path": "verify/corpus/language/case_270.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ajy58h94/case_270.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-rpmfh8ct/case_270.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_271.py",
       "path": "verify/corpus/language/case_271.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7sc76vdg/case_271.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-k8nc384r/case_271.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_272.py",
       "path": "verify/corpus/language/case_272.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-i8gyfll_/case_272.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-mbt19v8j/case_272.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_273.py",
       "path": "verify/corpus/language/case_273.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gtolfaqm/case_273.py:3:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-7oczeqh9/case_273.py:3:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_274.py",
       "path": "verify/corpus/language/case_274.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-tiuj4mdp/case_274.py:4:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-yr595s73/case_274.py:4:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_275.py",
       "path": "verify/corpus/language/case_275.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ji2zyfo7/case_275.py:4:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-pvcjrxmx/case_275.py:4:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_277.py",
       "path": "verify/corpus/language/case_277.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-fk_la9vo/case_277.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-os4uzw63/case_277.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_278.py",
       "path": "verify/corpus/language/case_278.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ja933ivm/case_278.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-u4j55vnn/case_278.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_279.py",
       "path": "verify/corpus/language/case_279.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5p6hhfz7/case_279.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-xfmbt6ev/case_279.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_280.py",
       "path": "verify/corpus/language/case_280.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-62tolk8b/case_280.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-7dqb74ev/case_280.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_282.py",
       "path": "verify/corpus/language/case_282.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vhb_5e2d/case_282.py:3:0: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-7k82ykwa/case_282.py:3:0: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_283.py",
       "path": "verify/corpus/language/case_283.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-aayhpxkv/case_283.py:3:0: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-aoot2vm0/case_283.py:3:0: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_284.py",
       "path": "verify/corpus/language/case_284.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-pmv4ci7n/case_284.py:3:0: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-9ajis_6l/case_284.py:3:0: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_285.py",
       "path": "verify/corpus/language/case_285.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-8_z_6gkk/case_285.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-grr4pth_/case_285.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_286.py",
       "path": "verify/corpus/language/case_286.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-zhv3zkz0/case_286.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-gu3r49go/case_286.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_287.py",
       "path": "verify/corpus/language/case_287.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-wtcs8w60/case_287.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-__goya4g/case_287.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_288.py",
       "path": "verify/corpus/language/case_288.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-89rqpa16/case_288.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-rh3ftocq/case_288.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_289.py",
       "path": "verify/corpus/language/case_289.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-_tpyo5fb/case_289.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-13m_36z6/case_289.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_290.py",
       "path": "verify/corpus/language/case_290.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-v6y1uc9x/case_290.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-mjhjiaar/case_290.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_291.py",
       "path": "verify/corpus/language/case_291.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-uil5v_74/case_291.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-txm_rjr9/case_291.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_293.py",
       "path": "verify/corpus/language/case_293.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-jw9qke_t/case_293.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-08dns8gs/case_293.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_294.py",
       "path": "verify/corpus/language/case_294.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5dv_zv90/case_294.py:2:11: error: cannot compile keyword arguments yet [keyword arguments]"
-    },
-    {
-      "case": "case_310.py",
-      "path": "verify/corpus/language/case_310.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-52mu86up/case_310.py:2:4: error: cannot compile chained comparisons yet [chained comparisons]"
+      "detail": "/tmp/pyc-verify-6wmpo_6f/case_294.py:2:11: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_312.py",
       "path": "verify/corpus/language/case_312.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-u3wmsf55/case_312.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-k8k2pskc/case_312.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_313.py",
       "path": "verify/corpus/language/case_313.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-506m_hxp/case_313.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-hcf2irfs/case_313.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_314.py",
       "path": "verify/corpus/language/case_314.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-_08qp4do/case_314.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-rg5c7zk7/case_314.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_315.py",
       "path": "verify/corpus/language/case_315.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cd3eqafx/case_315.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-t0jlahov/case_315.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_316.py",
       "path": "verify/corpus/language/case_316.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-e0ucq58r/case_316.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-2hs4kr46/case_316.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_317.py",
       "path": "verify/corpus/language/case_317.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5opy6vwg/case_317.py:5:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-fgh8ebez/case_317.py:5:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_318.py",
       "path": "verify/corpus/language/case_318.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-xy9o_nq1/case_318.py:2:0: error: cannot compile default arguments yet [default arguments]"
+      "detail": "/tmp/pyc-verify-0zrmhufx/case_318.py:2:0: error: cannot compile default arguments yet [default arguments]"
     },
     {
       "case": "case_319.py",
       "path": "verify/corpus/language/case_319.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-p7bavuvj/case_319.py:4:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-40cbi2a1/case_319.py:4:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_320.py",
       "path": "verify/corpus/language/case_320.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-dz7kgqag/case_320.py:2:0: error: cannot compile default arguments yet [default arguments]"
+      "detail": "/tmp/pyc-verify-9uc89os8/case_320.py:2:0: error: cannot compile default arguments yet [default arguments]"
     },
     {
       "case": "case_321.py",
       "path": "verify/corpus/language/case_321.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1u8cteb6/case_321.py:2:0: error: cannot compile default arguments yet [default arguments]"
+      "detail": "/tmp/pyc-verify-3g1ao77t/case_321.py:2:0: error: cannot compile default arguments yet [default arguments]"
     },
     {
       "case": "case_322.py",
       "path": "verify/corpus/language/case_322.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-yetyiglf/case_322.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-jtwl88_k/case_322.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_323.py",
       "path": "verify/corpus/language/case_323.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0gkzgngh/case_323.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-gvyfhpcc/case_323.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_324.py",
       "path": "verify/corpus/language/case_324.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cf46rue5/case_324.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-0r0hp01p/case_324.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_327.py",
       "path": "verify/corpus/language/case_327.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-zc1c424z/case_327.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-zl6ql_tp/case_327.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_328.py",
       "path": "verify/corpus/language/case_328.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0jjpgx47/case_328.py:3:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-gohfsgky/case_328.py:3:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_329.py",
       "path": "verify/corpus/language/case_329.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-t8g2674o/case_329.py:3:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-6nhk_66b/case_329.py:3:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_330.py",
       "path": "verify/corpus/language/case_330.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ftse9pqh/case_330.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-0fo7uo8q/case_330.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_331.py",
       "path": "verify/corpus/language/case_331.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-flw8jus_/case_331.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-uveg3nm_/case_331.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_332.py",
       "path": "verify/corpus/language/case_332.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-05bltx77/case_332.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-j36f96cc/case_332.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_333.py",
       "path": "verify/corpus/language/case_333.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ol21h6_u/case_333.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-c0i6dhcw/case_333.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_334.py",
       "path": "verify/corpus/language/case_334.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-83r2p54g/case_334.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-7n2kzn1h/case_334.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_335.py",
       "path": "verify/corpus/language/case_335.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-jzi53bw6/case_335.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-9moletkf/case_335.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_336.py",
       "path": "verify/corpus/language/case_336.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-s04uw8nq/case_336.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-ws5vx6h_/case_336.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_337.py",
       "path": "verify/corpus/language/case_337.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7ocnm_u2/case_337.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-1z8qpbil/case_337.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_342.py",
       "path": "verify/corpus/language/case_342.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3s62fkx8/case_342.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-hdkcbfiw/case_342.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_343.py",
       "path": "verify/corpus/language/case_343.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-asvozvii/case_343.py:3:4: error: cannot compile *args yet [*args]"
+      "detail": "/tmp/pyc-verify-r89sz6rl/case_343.py:3:4: error: cannot compile *args yet [*args]"
     },
     {
       "case": "case_344.py",
       "path": "verify/corpus/language/case_344.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mr6a8kgr/case_344.py:3:4: error: cannot compile *args yet [*args]"
+      "detail": "/tmp/pyc-verify-u3_30nlt/case_344.py:3:4: error: cannot compile *args yet [*args]"
     },
     {
       "case": "case_345.py",
       "path": "verify/corpus/language/case_345.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-xwdrr3fk/case_345.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-ujgxlet7/case_345.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_346.py",
       "path": "verify/corpus/language/case_346.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-v1xm_f5r/case_346.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-rskycdfi/case_346.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_347.py",
       "path": "verify/corpus/language/case_347.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rzpdli1h/case_347.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-2fb2b6mx/case_347.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_348.py",
       "path": "verify/corpus/language/case_348.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-xzp6it0y/case_348.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-0pe8i5x_/case_348.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_349.py",
       "path": "verify/corpus/language/case_349.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ax7mrps_/case_349.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-f5zey9c6/case_349.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_350.py",
       "path": "verify/corpus/language/case_350.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-t_eo09f8/case_350.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-zqn08k26/case_350.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_354.py",
       "path": "verify/corpus/language/case_354.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-g22abtt0/case_354.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-gbwpdp5r/case_354.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_355.py",
       "path": "verify/corpus/language/case_355.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1g8pybnt/case_355.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-_nlv7j2e/case_355.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_356.py",
       "path": "verify/corpus/language/case_356.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3l3_7zic/case_356.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-ux0ftdfz/case_356.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_357.py",
       "path": "verify/corpus/language/case_357.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-10rfsme7/case_357.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-vj0btt1e/case_357.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_358.py",
       "path": "verify/corpus/language/case_358.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-q17xeask/case_358.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-kfy25w9q/case_358.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_359.py",
       "path": "verify/corpus/language/case_359.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-onpjblb7/case_359.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-7c38f3zb/case_359.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_360.py",
       "path": "verify/corpus/language/case_360.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-q6bisvj5/case_360.py:3:6: error: cannot compile dict comprehensions yet [dict comprehensions]"
+      "detail": "/tmp/pyc-verify-rgw5uif1/case_360.py:3:6: error: cannot compile dict comprehensions yet [dict comprehensions]"
     },
     {
       "case": "case_361.py",
       "path": "verify/corpus/language/case_361.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-nn8vjkt6/case_361.py:3:6: error: cannot compile set comprehensions yet [set comprehensions]"
+      "detail": "/tmp/pyc-verify-wv_5w1fr/case_361.py:3:6: error: cannot compile set comprehensions yet [set comprehensions]"
     },
     {
       "case": "case_362.py",
       "path": "verify/corpus/language/case_362.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gm3y284t/case_362.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-m83dt6ck/case_362.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_363.py",
       "path": "verify/corpus/language/case_363.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-m08kgqo6/case_363.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-f8x67uva/case_363.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_364.py",
       "path": "verify/corpus/language/case_364.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cacc0qr_/case_364.py:4:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-mva93ege/case_364.py:4:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_365.py",
       "path": "verify/corpus/language/case_365.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1zqw7afa/case_365.py:4:11: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-c341cqfl/case_365.py:4:11: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_366.py",
       "path": "verify/corpus/language/case_366.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-yjidaynq/case_366.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
+      "detail": "/tmp/pyc-verify-n6zbhgi_/case_366.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
     },
     {
       "case": "case_367.py",
       "path": "verify/corpus/language/case_367.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vo7qcbsr/case_367.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
+      "detail": "/tmp/pyc-verify-nwximent/case_367.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
     },
     {
       "case": "case_368.py",
       "path": "verify/corpus/language/case_368.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-sljh65sq/case_368.py:2:0: error: cannot compile *args yet [*args]"
+      "detail": "/tmp/pyc-verify-n8nef2b1/case_368.py:2:0: error: cannot compile *args yet [*args]"
     },
     {
       "case": "case_369.py",
       "path": "verify/corpus/language/case_369.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qo22x9k4/case_369.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
+      "detail": "/tmp/pyc-verify-_xmqak1k/case_369.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
     },
     {
       "case": "case_370.py",
       "path": "verify/corpus/language/case_370.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-sc_nnwjt/case_370.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-v3_at9n4/case_370.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_371.py",
       "path": "verify/corpus/language/case_371.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7bndeb7i/case_371.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-4umx4bfh/case_371.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_372.py",
       "path": "verify/corpus/language/case_372.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-jp8oh4dh/case_372.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-7fqu70wj/case_372.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_373.py",
       "path": "verify/corpus/language/case_373.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-r80fiiba/case_373.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-6gka2x0v/case_373.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_374.py",
       "path": "verify/corpus/language/case_374.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ky671vu2/case_374.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-4t9jnev6/case_374.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_375.py",
       "path": "verify/corpus/language/case_375.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-va2bafs8/case_375.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-rk08273r/case_375.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_377.py",
       "path": "verify/corpus/language/case_377.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-m6ov07rk/case_377.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-ve1_ihx6/case_377.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_384.py",
       "path": "verify/corpus/language/case_384.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9tv9tc2s/case_384.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-o0ihqimp/case_384.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_390.py",
       "path": "verify/corpus/language/case_390.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-j8k3ff4q/case_390.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-jrmt2bg_/case_390.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_391.py",
       "path": "verify/corpus/language/case_391.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-noj9mwqy/case_391.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-0p487iqv/case_391.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_392.py",
       "path": "verify/corpus/language/case_392.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rw_zx012/case_392.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-ctu6umf5/case_392.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_393.py",
       "path": "verify/corpus/language/case_393.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-m757j4_q/case_393.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-cjii1gjd/case_393.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_394.py",
       "path": "verify/corpus/language/case_394.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-yyrx61az/case_394.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-us59p_9j/case_394.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_395.py",
       "path": "verify/corpus/language/case_395.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-__ar51w1/case_395.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-zg6en945/case_395.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_396.py",
       "path": "verify/corpus/language/case_396.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-hkmlacih/case_396.py:2:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-nbq_qq8n/case_396.py:2:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_397.py",
       "path": "verify/corpus/language/case_397.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-pxbxae2b/case_397.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-s3jgc2ck/case_397.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_398.py",
       "path": "verify/corpus/language/case_398.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-8yay086c/case_398.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-boo99101/case_398.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_399.py",
       "path": "verify/corpus/language/case_399.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-en2znz5p/case_399.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-2gc9tw0r/case_399.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_400.py",
       "path": "verify/corpus/language/case_400.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-pvn_izd6/case_400.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-599aigqv/case_400.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_401.py",
       "path": "verify/corpus/language/case_401.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qwtm5suq/case_401.py:3:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-oxmdb09v/case_401.py:3:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_402.py",
       "path": "verify/corpus/language/case_402.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-g5_jbzn9/case_402.py:2:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-jjzv_uug/case_402.py:2:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_403.py",
       "path": "verify/corpus/language/case_403.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-yh0bs0qo/case_403.py:5:6: error: cannot compile f-strings yet [f-strings]"
+      "detail": "/tmp/pyc-verify-qt6zxok9/case_403.py:5:6: error: cannot compile f-strings yet [f-strings]"
     },
     {
       "case": "case_404.py",
       "path": "verify/corpus/language/case_404.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-c875t4fa/case_404.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-jji3r2ja/case_404.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_410.py",
       "path": "verify/corpus/language/case_410.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-sq6gflyb/case_410.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-bbo8fi8v/case_410.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_411.py",
       "path": "verify/corpus/language/case_411.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-23wn7l4x/case_411.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-patiqvon/case_411.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_416.py",
       "path": "verify/corpus/language/case_416.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mmf4ynkz/case_416.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-xdspv6sy/case_416.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_417.py",
       "path": "verify/corpus/language/case_417.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-36tsts35/case_417.py:2:0: error: cannot compile from-import yet [from-import]"
+      "detail": "/tmp/pyc-verify-47xgzgd8/case_417.py:2:0: error: cannot compile from-import yet [from-import]"
     },
     {
       "case": "case_418.py",
       "path": "verify/corpus/language/case_418.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-r8wasort/case_418.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-7jzmyc60/case_418.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_419.py",
       "path": "verify/corpus/language/case_419.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qfwk0_mv/case_419.py:4:14: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-5m9fi6fm/case_419.py:4:14: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_420.py",
       "path": "verify/corpus/language/case_420.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rj5ph00v/case_420.py:4:8: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-80puqlzr/case_420.py:4:8: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_421.py",
       "path": "verify/corpus/language/case_421.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-l3erczl0/case_421.py:3:11: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-y_fr_oe3/case_421.py:3:11: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_422.py",
       "path": "verify/corpus/language/case_422.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-t2o9hf_4/case_422.py:3:4: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-fg9757oz/case_422.py:3:4: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_423.py",
       "path": "verify/corpus/language/case_423.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3ybo971q/case_423.py:4:8: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-lgxe4z6m/case_423.py:4:8: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_424.py",
       "path": "verify/corpus/language/case_424.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-m79n4azz/case_424.py:2:15: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-o2a0uqhe/case_424.py:2:15: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_425.py",
       "path": "verify/corpus/language/case_425.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-bzbn6cu8/case_425.py:2:18: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-qgzkkd6t/case_425.py:2:18: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_427.py",
       "path": "verify/corpus/language/case_427.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-nd1q7kdj/case_427.py:2:15: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-zlb7z4sq/case_427.py:2:15: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_429.py",
       "path": "verify/corpus/language/case_429.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-kceaog5k/case_429.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-ewz2fy8_/case_429.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_430.py",
       "path": "verify/corpus/language/case_430.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5rgt0mqm/case_430.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-cr6pp4sh/case_430.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_431.py",
       "path": "verify/corpus/language/case_431.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-zb5fai28/case_431.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-deumg8y8/case_431.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_432.py",
       "path": "verify/corpus/language/case_432.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-_mrrk9j3/case_432.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
-    },
-    {
-      "case": "case_435.py",
-      "path": "verify/corpus/language/case_435.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-6jy80r09/case_435.py:2:11: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
+      "detail": "/tmp/pyc-verify-phqt1hw1/case_432.py:2:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_440.py",
       "path": "verify/corpus/language/case_440.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-4a0mmw0z/case_440.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-ofkdhtsb/case_440.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_441.py",
       "path": "verify/corpus/language/case_441.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-bhpw3weq/case_441.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-4fb7l8eo/case_441.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_442.py",
       "path": "verify/corpus/language/case_442.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vwh032kv/case_442.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-vb8ic61s/case_442.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_449.py",
       "path": "verify/corpus/language/case_449.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-va9iluw4/case_449.py:3:13: error: cannot compile star-unpacking yet [star-unpacking]"
+      "detail": "/tmp/pyc-verify-9l1qx81s/case_449.py:3:13: error: cannot compile star-unpacking yet [star-unpacking]"
     },
     {
       "case": "case_450.py",
       "path": "verify/corpus/language/case_450.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-r8oo6vgv/case_450.py:2:7: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-gsz4myqa/case_450.py:2:7: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_451.py",
       "path": "verify/corpus/language/case_451.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5aijqvk9/case_451.py:3:11: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-oogxo7_7/case_451.py:3:11: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_452.py",
       "path": "verify/corpus/language/case_452.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1szd7heo/case_452.py:2:8: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-htb4xla_/case_452.py:2:8: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_453.py",
@@ -1556,7 +1416,7 @@
       "path": "verify/corpus/language/case_455.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cbfo282e/case_455.py:2:12: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-vkkyk4mm/case_455.py:2:12: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_456.py",
@@ -1570,1547 +1430,1253 @@
       "path": "verify/corpus/language/case_457.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mxzawkcn/case_457.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
+      "detail": "/tmp/pyc-verify-3d5gok0u/case_457.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
     },
     {
       "case": "case_458.py",
       "path": "verify/corpus/language/case_458.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-n51qvdz7/case_458.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
+      "detail": "/tmp/pyc-verify-6c5c58d8/case_458.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
     },
     {
       "case": "case_459.py",
       "path": "verify/corpus/language/case_459.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cs9kssva/case_459.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
+      "detail": "/tmp/pyc-verify-z2cb872p/case_459.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
     },
     {
       "case": "case_460.py",
       "path": "verify/corpus/language/case_460.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1rzrde_1/case_460.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
+      "detail": "/tmp/pyc-verify-arbrqsf_/case_460.py:6:8: error: cannot compile nonlocal yet [nonlocal]"
     },
     {
       "case": "case_461.py",
       "path": "verify/corpus/language/case_461.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-w47_tk5_/case_461.py:8:8: error: cannot compile nonlocal yet [nonlocal]"
+      "detail": "/tmp/pyc-verify-6f2xhizr/case_461.py:8:8: error: cannot compile nonlocal yet [nonlocal]"
     },
     {
       "case": "case_463.py",
       "path": "verify/corpus/language/case_463.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.6vMYEjDq0R/mod.ll:62:40: error: '%v11' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.UdFITClm4n/mod.ll:62:40: error: '%v11' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_464.py",
       "path": "verify/corpus/language/case_464.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.M54haaUewP/mod.ll:112:39: error: '%v7' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.cGGqqoPVo1/mod.ll:112:39: error: '%v7' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_466.py",
       "path": "verify/corpus/language/case_466.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-6w8x9ic0/case_466.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-mybsnmj1/case_466.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_467.py",
       "path": "verify/corpus/language/case_467.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-nq2oze_0/case_467.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-aotvs_hn/case_467.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_468.py",
       "path": "verify/corpus/language/case_468.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7fwr_mwc/case_468.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-sp4_9lq1/case_468.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_469.py",
       "path": "verify/corpus/language/case_469.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-_m7f08e4/case_469.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-py928eit/case_469.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_470.py",
       "path": "verify/corpus/language/case_470.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ebavbppd/case_470.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-m0blb9hj/case_470.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_471.py",
       "path": "verify/corpus/language/case_471.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-zxqafqt9/case_471.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-ke92jxno/case_471.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_472.py",
       "path": "verify/corpus/language/case_472.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-i7rl0qj2/case_472.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-nit0j__p/case_472.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_473.py",
       "path": "verify/corpus/language/case_473.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-u98j3u09/case_473.py:10:5: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-k3bk1ib1/case_473.py:10:5: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_474.py",
       "path": "verify/corpus/language/case_474.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-2c__5e6g/case_474.py:3:4: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-9cm5uuy9/case_474.py:3:4: error: cannot compile try yet [try]"
     },
     {
       "case": "case_475.py",
       "path": "verify/corpus/language/case_475.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ov9oppon/case_475.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-h6lwi38w/case_475.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_476.py",
       "path": "verify/corpus/language/case_476.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-uoj9mzbb/case_476.py:2:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-70ff1ojm/case_476.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_477.py",
       "path": "verify/corpus/language/case_477.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0gcs7qmo/case_477.py:7:0: error: cannot compile decorators yet [decorators]"
+      "detail": "/tmp/pyc-verify-0wcp3d9g/case_477.py:7:0: error: cannot compile decorators yet [decorators]"
     },
     {
       "case": "case_478.py",
       "path": "verify/corpus/language/case_478.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5r_2wf_5/case_478.py:6:12: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-x2z_ifsr/case_478.py:6:12: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_479.py",
       "path": "verify/corpus/language/case_479.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-b5392en6/case_479.py:7:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-z32hgd0p/case_479.py:7:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_480.py",
       "path": "verify/corpus/language/case_480.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-kdq3e4ft/case_480.py:6:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-b2xnzxk4/case_480.py:6:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_481.py",
       "path": "verify/corpus/language/case_481.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.6ekXEjOclX/mod.ll:40:39: error: '%v7' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.iU2KZe9dny/mod.ll:40:39: error: '%v7' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_482.py",
       "path": "verify/corpus/language/case_482.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.dkwaUaes4k/mod.ll:28:39: error: '%v5' defined with type 'i32' but expected 'ptr'"
+      "detail": "/tmp/tmp.HuufaegRbL/mod.ll:28:39: error: '%v5' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_483.py",
       "path": "verify/corpus/language/case_483.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-6bh0c34f/case_483.py:2:4: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-_gz0mbse/case_483.py:2:4: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_484.py",
       "path": "verify/corpus/language/case_484.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5wn2tmmq/case_484.py:2:4: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-3vzyqfzs/case_484.py:2:4: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_485.py",
       "path": "verify/corpus/language/case_485.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-417nw68c/case_485.py:2:4: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-eyt_ft4c/case_485.py:2:4: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_486.py",
       "path": "verify/corpus/language/case_486.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-wefde7ax/case_486.py:2:4: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-xzpsh80k/case_486.py:2:4: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_487.py",
       "path": "verify/corpus/language/case_487.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-2bktrwy3/case_487.py:2:10: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-4jrne46j/case_487.py:2:10: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_488.py",
       "path": "verify/corpus/language/case_488.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-xtrs6jmz/case_488.py:2:10: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-4s6w_1ep/case_488.py:2:10: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_489.py",
       "path": "verify/corpus/language/case_489.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-p2yokbsb/case_489.py:2:6: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-hpbvy478/case_489.py:2:6: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_490.py",
       "path": "verify/corpus/language/case_490.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qxtjx4s_/case_490.py:2:8: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-7ccp2a0c/case_490.py:2:8: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_492.py",
       "path": "verify/corpus/language/case_492.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-feq6sntb/case_492.py:2:14: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-jwfdyc3b/case_492.py:2:14: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_493.py",
       "path": "verify/corpus/language/case_493.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-pwaq3hkx/case_493.py:2:5: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-tom4b426/case_493.py:2:5: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_494.py",
       "path": "verify/corpus/language/case_494.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3l448kw0/case_494.py:2:6: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-0h04oxzl/case_494.py:2:6: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_495.py",
       "path": "verify/corpus/language/case_495.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rmpp84is/case_495.py:2:15: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-70sj_lze/case_495.py:2:15: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_496.py",
       "path": "verify/corpus/language/case_496.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-831jg9_o/case_496.py:2:8: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-suv2u3nt/case_496.py:2:8: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_497.py",
       "path": "verify/corpus/language/case_497.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-zpafelvx/case_497.py:2:8: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-nzf2vykr/case_497.py:2:8: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_498.py",
       "path": "verify/corpus/language/case_498.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3rc6zegt/case_498.py:2:8: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-v5a9bnjf/case_498.py:2:8: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_499.py",
       "path": "verify/corpus/language/case_499.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rhs4n15i/case_499.py:2:14: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-c0abafre/case_499.py:2:14: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_500.py",
       "path": "verify/corpus/language/case_500.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0yqkuycz/case_500.py:2:8: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-czt1vx4e/case_500.py:2:8: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_501.py",
       "path": "verify/corpus/language/case_501.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-z2xh07gq/case_501.py:2:8: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-ag887l4l/case_501.py:2:8: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_502.py",
       "path": "verify/corpus/language/case_502.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-oz9qehrp/case_502.py:2:4: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-sf_a72ed/case_502.py:2:4: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_503.py",
       "path": "verify/corpus/language/case_503.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-q05vufa3/case_503.py:2:8: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-ditzg6u2/case_503.py:2:8: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_504.py",
       "path": "verify/corpus/language/case_504.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mal4uw64/case_504.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-7s8kx5p4/case_504.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_505.py",
       "path": "verify/corpus/language/case_505.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-c7yq4hol/case_505.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-p7qyvzt0/case_505.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_506.py",
       "path": "verify/corpus/language/case_506.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-95qz9rp7/case_506.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-d25nnos_/case_506.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_508.py",
       "path": "verify/corpus/language/case_508.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-txz_2s10/case_508.py:2:0: error: cannot compile from-import yet [from-import]"
+      "detail": "/tmp/pyc-verify-_5e1lq0e/case_508.py:2:0: error: cannot compile from-import yet [from-import]"
     },
     {
       "case": "case_509.py",
       "path": "verify/corpus/language/case_509.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-j3_ukh1d/case_509.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-y1ucjaqc/case_509.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_510.py",
       "path": "verify/corpus/language/case_510.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-8lanuqfy/case_510.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-46cet3ld/case_510.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_511.py",
       "path": "verify/corpus/language/case_511.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-yc1yjsiu/case_511.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-va7yh5ga/case_511.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_512.py",
       "path": "verify/corpus/language/case_512.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5z_js8f8/case_512.py:3:0: error: cannot compile with yet [with]"
+      "detail": "/tmp/pyc-verify-tz0k286t/case_512.py:3:0: error: cannot compile with yet [with]"
     },
     {
       "case": "case_513.py",
       "path": "verify/corpus/language/case_513.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-f4mmxqjt/case_513.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-xhjswa6i/case_513.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_514.py",
       "path": "verify/corpus/language/case_514.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-2n5ir3r9/case_514.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-68m25ajq/case_514.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_515.py",
       "path": "verify/corpus/language/case_515.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5kij8dll/case_515.py:2:0: error: cannot compile from-import yet [from-import]"
-    },
-    {
-      "case": "case_516.py",
-      "path": "verify/corpus/language/case_516.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4mkusvwb/case_516.py:2:26: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
+      "detail": "/tmp/pyc-verify-ux_f3k6s/case_515.py:2:0: error: cannot compile from-import yet [from-import]"
     },
     {
       "case": "case_517.py",
       "path": "verify/corpus/language/case_517.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-t3dziv5v/case_517.py:2:0: error: cannot compile for loops yet [for loops]"
-    },
-    {
-      "case": "case_518.py",
-      "path": "verify/corpus/language/case_518.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-xuux63ga/case_518.py:18:47: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
+      "detail": "/tmp/pyc-verify-znqv5qef/case_517.py:2:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_519.py",
       "path": "verify/corpus/language/case_519.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9_bw43lz/case_519.py:2:0: error: cannot compile import yet [import]"
-    },
-    {
-      "case": "case_520.py",
-      "path": "verify/corpus/language/case_520.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-b975b0kt/case_520.py:29:5: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
+      "detail": "/tmp/pyc-verify-mavr2944/case_519.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_521.py",
       "path": "verify/corpus/language/case_521.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vs47122f/case_521.py:2:0: error: cannot compile from-import yet [from-import]"
+      "detail": "/tmp/pyc-verify-2r8x0r3j/case_521.py:2:0: error: cannot compile from-import yet [from-import]"
     },
     {
       "case": "case_522.py",
       "path": "verify/corpus/language/case_522.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9_cv3823/case_522.py:2:0: error: cannot compile from-import yet [from-import]"
+      "detail": "/tmp/pyc-verify-huix09w9/case_522.py:2:0: error: cannot compile from-import yet [from-import]"
     },
     {
       "case": "case_523.py",
       "path": "verify/corpus/language/case_523.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-sdx8ehlq/case_523.py:2:0: error: cannot compile from-import yet [from-import]"
+      "detail": "/tmp/pyc-verify-lj8dsghy/case_523.py:2:0: error: cannot compile from-import yet [from-import]"
     },
     {
       "case": "case_524.py",
       "path": "verify/corpus/language/case_524.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3vpszmqw/case_524.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-9s583_cw/case_524.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_525.py",
       "path": "verify/corpus/language/case_525.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-hr1m7q6e/case_525.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-7gfr7egh/case_525.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_526.py",
       "path": "verify/corpus/language/case_526.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-k9zdmihk/case_526.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-70tmcp5p/case_526.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_528.py",
       "path": "verify/corpus/language/case_528.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7v9bpavy/case_528.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-e_2o7xk3/case_528.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_529.py",
       "path": "verify/corpus/language/case_529.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-82kuswc7/case_529.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-2trc1hm6/case_529.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_530.py",
       "path": "verify/corpus/language/case_530.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gktl6ptk/case_530.py:34:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-fngylzwb/case_530.py:34:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_531.py",
       "path": "verify/corpus/language/case_531.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-4mhda1d_/case_531.py:19:4: error: cannot compile augmented assignment yet [augmented assignment]"
+      "detail": "/tmp/pyc-verify-giehtq49/case_531.py:19:4: error: cannot compile augmented assignment yet [augmented assignment]"
     },
     {
       "case": "case_532.py",
       "path": "verify/corpus/language/case_532.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rkut4rvg/case_532.py:2:0: error: cannot compile from-import yet [from-import]"
+      "detail": "/tmp/pyc-verify-1w4nq548/case_532.py:2:0: error: cannot compile from-import yet [from-import]"
     },
     {
       "case": "case_533.py",
       "path": "verify/corpus/language/case_533.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ir4ch17a/case_533.py:22:0: error: cannot compile augmented assignment yet [augmented assignment]"
+      "detail": "/tmp/pyc-verify-ekk7dkbo/case_533.py:22:0: error: cannot compile augmented assignment yet [augmented assignment]"
     },
     {
       "case": "case_534.py",
       "path": "verify/corpus/language/case_534.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-e410a83s/case_534.py:8:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-cx_wu74h/case_534.py:8:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_535.py",
       "path": "verify/corpus/language/case_535.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rbr7crj_/case_535.py:8:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-5j1yvwn5/case_535.py:8:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_536.py",
       "path": "verify/corpus/language/case_536.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-f3exgdwc/case_536.py:4:9: error: cannot compile ** unpacking in a dict literal yet [** unpacking in a dict literal]"
+      "detail": "/tmp/pyc-verify-zjg2u1be/case_536.py:4:9: error: cannot compile ** unpacking in a dict literal yet [** unpacking in a dict literal]"
     },
     {
       "case": "case_538.py",
       "path": "verify/corpus/language/case_538.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-q5rpaf3k/case_538.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-llc8n2a4/case_538.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_539.py",
       "path": "verify/corpus/language/case_539.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qedx9rq8/case_539.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
-    },
-    {
-      "case": "case_540.py",
-      "path": "verify/corpus/language/case_540.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-qu3vi_kp/case_540.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_541.py",
-      "path": "verify/corpus/language/case_541.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-z3bjyc64/case_541.py:2:11: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_542.py",
-      "path": "verify/corpus/language/case_542.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-nte7av6d/case_542.py:2:10: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_544.py",
-      "path": "verify/corpus/language/case_544.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-yjxqfeif/case_544.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
+      "detail": "/tmp/pyc-verify-jl0h_zam/case_539.py:2:0: error: cannot compile **kwargs yet [**kwargs]"
     },
     {
       "case": "case_546.py",
       "path": "verify/corpus/language/case_546.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-75p9fhy_/case_546.py:2:11: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
+      "detail": "/tmp/tmp.orpHiVUBhv/mod.ll:39:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_547.py",
       "path": "verify/corpus/language/case_547.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-kfuva0qj/case_547.py:2:11: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
+      "detail": "/tmp/tmp.cB9CzMsDXG/mod.ll:39:40: error: '%v10' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_548.py",
       "path": "verify/corpus/language/case_548.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3uvov5dl/case_548.py:2:15: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_550.py",
-      "path": "verify/corpus/language/case_550.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-50ynzb1y/case_550.py:2:10: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_551.py",
-      "path": "verify/corpus/language/case_551.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ozj6b73g/case_551.py:2:10: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_552.py",
-      "path": "verify/corpus/language/case_552.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-xwm0zxdh/case_552.py:2:10: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_553.py",
-      "path": "verify/corpus/language/case_553.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-qvlqv10b/case_553.py:2:10: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_554.py",
-      "path": "verify/corpus/language/case_554.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-42zl9bz9/case_554.py:2:10: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_555.py",
-      "path": "verify/corpus/language/case_555.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-1if9rulz/case_555.py:2:17: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_557.py",
-      "path": "verify/corpus/language/case_557.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-w_lbvzm9/case_557.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_558.py",
-      "path": "verify/corpus/language/case_558.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-xyjy3yrj/case_558.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_559.py",
-      "path": "verify/corpus/language/case_559.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-1ejq7h8i/case_559.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_560.py",
-      "path": "verify/corpus/language/case_560.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-8hec9vc1/case_560.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_561.py",
-      "path": "verify/corpus/language/case_561.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-8dmdh83u/case_561.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_562.py",
-      "path": "verify/corpus/language/case_562.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-srsii8q3/case_562.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_563.py",
-      "path": "verify/corpus/language/case_563.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-x7c5ynwd/case_563.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_564.py",
-      "path": "verify/corpus/language/case_564.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-gvv3dwsg/case_564.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_565.py",
-      "path": "verify/corpus/language/case_565.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-bfdarbc_/case_565.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_566.py",
-      "path": "verify/corpus/language/case_566.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-lbv4fgf5/case_566.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_567.py",
-      "path": "verify/corpus/language/case_567.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-9_bmkfwh/case_567.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_568.py",
-      "path": "verify/corpus/language/case_568.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-fy2jscpx/case_568.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_569.py",
-      "path": "verify/corpus/language/case_569.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-spw8jgdc/case_569.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_570.py",
-      "path": "verify/corpus/language/case_570.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-ogx7b4lz/case_570.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_571.py",
-      "path": "verify/corpus/language/case_571.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-qq0q2zcd/case_571.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_572.py",
-      "path": "verify/corpus/language/case_572.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-xkzcka6j/case_572.py:2:4: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_573.py",
-      "path": "verify/corpus/language/case_573.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-_8u0i9ow/case_573.py:2:4: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_574.py",
-      "path": "verify/corpus/language/case_574.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-n_kp_to2/case_574.py:2:4: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_575.py",
-      "path": "verify/corpus/language/case_575.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-j68ch4vp/case_575.py:2:4: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_576.py",
-      "path": "verify/corpus/language/case_576.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-u5jqbt4_/case_576.py:2:4: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_577.py",
-      "path": "verify/corpus/language/case_577.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-rq2dzj1s/case_577.py:2:4: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_578.py",
-      "path": "verify/corpus/language/case_578.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-iaen9zzu/case_578.py:2:13: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_579.py",
-      "path": "verify/corpus/language/case_579.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-k1ddfyy9/case_579.py:2:13: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_580.py",
-      "path": "verify/corpus/language/case_580.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-vzfz2g4k/case_580.py:2:13: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_581.py",
-      "path": "verify/corpus/language/case_581.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-2ho405my/case_581.py:2:13: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_582.py",
-      "path": "verify/corpus/language/case_582.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-rmq9e3h5/case_582.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_583.py",
-      "path": "verify/corpus/language/case_583.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-4n06njwo/case_583.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_584.py",
-      "path": "verify/corpus/language/case_584.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-dns86yfl/case_584.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
-    },
-    {
-      "case": "case_585.py",
-      "path": "verify/corpus/language/case_585.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0zt_ualw/case_585.py:2:6: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
+      "detail": "/tmp/tmp.MKIMQRGkAG/mod.ll:41:40: error: '%v11' defined with type 'i32' but expected 'ptr'"
     },
     {
       "case": "case_586.py",
       "path": "verify/corpus/language/case_586.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-p3t0oudb/case_586.py:2:13: error: cannot compile set comprehensions yet [set comprehensions]"
+      "detail": "/tmp/pyc-verify-sp4o321b/case_586.py:2:13: error: cannot compile set comprehensions yet [set comprehensions]"
     },
     {
       "case": "case_587.py",
       "path": "verify/corpus/language/case_587.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-r0a8fv54/case_587.py:2:13: error: cannot compile set comprehensions yet [set comprehensions]"
+      "detail": "/tmp/pyc-verify-m_4g2qj9/case_587.py:2:13: error: cannot compile set comprehensions yet [set comprehensions]"
     },
     {
       "case": "case_588.py",
       "path": "verify/corpus/language/case_588.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-2ar1mfya/case_588.py:2:13: error: cannot compile set comprehensions yet [set comprehensions]"
+      "detail": "/tmp/pyc-verify-ra28f_en/case_588.py:2:13: error: cannot compile set comprehensions yet [set comprehensions]"
     },
     {
       "case": "case_589.py",
       "path": "verify/corpus/language/case_589.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ocd82v7w/case_589.py:3:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-y_6bcnfm/case_589.py:3:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_602.py",
       "path": "verify/corpus/language/case_602.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-nfxc58_u/case_602.py:4:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-36td40kx/case_602.py:4:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_603.py",
       "path": "verify/corpus/language/case_603.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-io0j0xij/case_603.py:4:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-qb6loro1/case_603.py:4:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_604.py",
       "path": "verify/corpus/language/case_604.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-wbpvh1kn/case_604.py:2:0: error: cannot compile default arguments yet [default arguments]"
+      "detail": "/tmp/pyc-verify-w3xn_1xq/case_604.py:2:0: error: cannot compile default arguments yet [default arguments]"
     },
     {
       "case": "case_605.py",
       "path": "verify/corpus/language/case_605.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1tgsjxca/case_605.py:4:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-gmjbm6sf/case_605.py:4:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_606.py",
       "path": "verify/corpus/language/case_606.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-a781m71l/case_606.py:4:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-dikdc5r8/case_606.py:4:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_607.py",
       "path": "verify/corpus/language/case_607.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-xg9ppuj_/case_607.py:5:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-4br__e7p/case_607.py:5:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_613.py",
       "path": "verify/corpus/language/case_613.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9qpsd6cj/case_613.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-1g5_mnlu/case_613.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_614.py",
       "path": "verify/corpus/language/case_614.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-jnw7ck2p/case_614.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-8xlebq2d/case_614.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_615.py",
       "path": "verify/corpus/language/case_615.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9y1b9zv2/case_615.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-eryr6joh/case_615.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_616.py",
       "path": "verify/corpus/language/case_616.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-sxpx792g/case_616.py:4:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-umjcfnjk/case_616.py:4:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_617.py",
       "path": "verify/corpus/language/case_617.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-t99n16n7/case_617.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-ox0itgn1/case_617.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_618.py",
       "path": "verify/corpus/language/case_618.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-dreb_vgk/case_618.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-p_rwya52/case_618.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_619.py",
       "path": "verify/corpus/language/case_619.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-02qrdm6g/case_619.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-dp27ukx6/case_619.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_620.py",
       "path": "verify/corpus/language/case_620.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1u3ctk1b/case_620.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-0m_mrpuu/case_620.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_621.py",
       "path": "verify/corpus/language/case_621.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-55_f09lk/case_621.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-39qmxz7c/case_621.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_622.py",
       "path": "verify/corpus/language/case_622.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-k8g2sr59/case_622.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-77lrpbdz/case_622.py:3:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_623.py",
       "path": "verify/corpus/language/case_623.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0bl0siso/case_623.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-79vv8hvo/case_623.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_624.py",
       "path": "verify/corpus/language/case_624.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-z6whfn96/case_624.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-mc5_x6ez/case_624.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_625.py",
       "path": "verify/corpus/language/case_625.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-haoxk113/case_625.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
+      "detail": "/tmp/pyc-verify-_lwtwxrm/case_625.py:2:6: error: cannot compile list comprehensions yet [list comprehensions]"
     },
     {
       "case": "case_626.py",
       "path": "verify/corpus/language/case_626.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9hf62k6e/case_626.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-olxffkbc/case_626.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_627.py",
       "path": "verify/corpus/language/case_627.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-obpf7of9/case_627.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-ts8dr9im/case_627.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_628.py",
       "path": "verify/corpus/language/case_628.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cvvn1qxp/case_628.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-64r850p2/case_628.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_629.py",
       "path": "verify/corpus/language/case_629.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vum18guf/case_629.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-div7a7hv/case_629.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_630.py",
       "path": "verify/corpus/language/case_630.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7xl2qn5h/case_630.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-tp8vx51t/case_630.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_631.py",
       "path": "verify/corpus/language/case_631.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gqi2our7/case_631.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-6txgqpac/case_631.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_632.py",
       "path": "verify/corpus/language/case_632.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-fsidefrm/case_632.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-7kvuqbpa/case_632.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_633.py",
       "path": "verify/corpus/language/case_633.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-07vaft9z/case_633.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-uq3heycf/case_633.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_634.py",
       "path": "verify/corpus/language/case_634.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ovj_9h_a/case_634.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-x5o1j3ax/case_634.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_635.py",
       "path": "verify/corpus/language/case_635.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-aznex9ii/case_635.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-0z4l88qh/case_635.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_636.py",
       "path": "verify/corpus/language/case_636.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mzi1f_0p/case_636.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-ajyb29pg/case_636.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_637.py",
       "path": "verify/corpus/language/case_637.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-e4tpj5xc/case_637.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-d56pu2bm/case_637.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_639.py",
       "path": "verify/corpus/language/case_639.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-6nguuedh/case_639.py:2:26: error: cannot compile complex literals yet [complex literals]"
+      "detail": "/tmp/pyc-verify-74s3eyv1/case_639.py:2:26: error: cannot compile complex literals yet [complex literals]"
     },
     {
       "case": "case_641.py",
       "path": "verify/corpus/language/case_641.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-pefsb79l/case_641.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-qmtove7i/case_641.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_642.py",
       "path": "verify/corpus/language/case_642.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0f2szgbv/case_642.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-6t5eufj8/case_642.py:2:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_644.py",
       "path": "verify/corpus/language/case_644.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-2tolxvi0/case_644.py:13:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-y7y87_yb/case_644.py:13:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_645.py",
       "path": "verify/corpus/language/case_645.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-eu_wbd74/case_645.py:4:26: error: internal: 'PySet_New' takes 1 argument(s), lowering passed 0 [PySet_New]"
+      "detail": "/tmp/pyc-verify-r0s4sjtf/case_645.py:15:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_646.py",
       "path": "verify/corpus/language/case_646.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-dspu8_c5/case_646.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-h3cfsdbm/case_646.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_647.py",
       "path": "verify/corpus/language/case_647.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-n0s1uyhh/case_647.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-ty_gumd0/case_647.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_648.py",
       "path": "verify/corpus/language/case_648.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-_8tb9fer/case_648.py:6:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-6vaxs6fy/case_648.py:6:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_649.py",
       "path": "verify/corpus/language/case_649.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7q0fda9t/case_649.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-uk_s9t8v/case_649.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_650.py",
       "path": "verify/corpus/language/case_650.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7vbqnmy3/case_650.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-l7fcyn53/case_650.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_651.py",
       "path": "verify/corpus/language/case_651.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rzdeix9_/case_651.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-4qy3ow4x/case_651.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_652.py",
       "path": "verify/corpus/language/case_652.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rmbn13tc/case_652.py:4:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-u9jra21s/case_652.py:4:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_654.py",
       "path": "verify/corpus/language/case_654.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-zgv69p8p/case_654.py:4:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-r0f7wci7/case_654.py:4:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_655.py",
       "path": "verify/corpus/language/case_655.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-haczjl5n/case_655.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-mnvxacik/case_655.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_656.py",
       "path": "verify/corpus/language/case_656.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-25p7yws9/case_656.py:4:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-nba0fh1e/case_656.py:4:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_657.py",
       "path": "verify/corpus/language/case_657.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-xdixk9nr/case_657.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-6xur9rlz/case_657.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_658.py",
       "path": "verify/corpus/language/case_658.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3v9sacg6/case_658.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-8w49qrkv/case_658.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_659.py",
       "path": "verify/corpus/language/case_659.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vpn9d_50/case_659.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-6abjg3qp/case_659.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_660.py",
       "path": "verify/corpus/language/case_660.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-y3yumi3z/case_660.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-_5lmpvf3/case_660.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_661.py",
       "path": "verify/corpus/language/case_661.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-k2mki1g5/case_661.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-9rh427f6/case_661.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_662.py",
       "path": "verify/corpus/language/case_662.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-yijni4f9/case_662.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-0uc_h_kp/case_662.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_663.py",
       "path": "verify/corpus/language/case_663.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-bjyty_zl/case_663.py:4:0: error: cannot compile from-import yet [from-import]"
+      "detail": "/tmp/pyc-verify-zp3p464h/case_663.py:4:0: error: cannot compile from-import yet [from-import]"
     },
     {
       "case": "case_664.py",
       "path": "verify/corpus/language/case_664.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ob410tia/case_664.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-324xl0gz/case_664.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_665.py",
       "path": "verify/corpus/language/case_665.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-c4qsf8eq/case_665.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-ypv_hq6d/case_665.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_666.py",
       "path": "verify/corpus/language/case_666.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rfyl3xut/case_666.py:3:4: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-o368skot/case_666.py:3:4: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_667.py",
       "path": "verify/corpus/language/case_667.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-aftmzsvk/case_667.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-oaxxjm0w/case_667.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_668.py",
       "path": "verify/corpus/language/case_668.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-hy025rub/case_668.py:8:4: error: cannot compile lambda yet [lambda]"
+      "detail": "/tmp/pyc-verify-6guqfxbz/case_668.py:8:4: error: cannot compile lambda yet [lambda]"
     },
     {
       "case": "case_669.py",
       "path": "verify/corpus/language/case_669.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-_yol91mp/case_669.py:2:0: error: cannot compile from-import yet [from-import]"
+      "detail": "/tmp/pyc-verify-tv6pv0ri/case_669.py:2:0: error: cannot compile from-import yet [from-import]"
     },
     {
       "case": "case_670.py",
       "path": "verify/corpus/language/case_670.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ipuowxte/case_670.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-8qzp2g40/case_670.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_671.py",
       "path": "verify/corpus/language/case_671.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vwvqmc91/case_671.py:3:11: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-5djvbdrn/case_671.py:3:11: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_672.py",
       "path": "verify/corpus/language/case_672.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qrbgpcla/case_672.py:6:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-jhu5woj7/case_672.py:6:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_673.py",
       "path": "verify/corpus/language/case_673.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-4hz_lkvu/case_673.py:5:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-jy2gy962/case_673.py:5:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_674.py",
       "path": "verify/corpus/language/case_674.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mym5pmfd/case_674.py:5:4: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-rqc0lf9y/case_674.py:5:4: error: cannot compile try yet [try]"
     },
     {
       "case": "case_675.py",
       "path": "verify/corpus/language/case_675.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-x4i850jq/case_675.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-k_kqz7g4/case_675.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_678.py",
       "path": "verify/corpus/language/case_678.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-yh8cql_6/case_678.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-74gsar0i/case_678.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_679.py",
       "path": "verify/corpus/language/case_679.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-70j_cwfb/case_679.py:6:4: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-htjc7izw/case_679.py:6:4: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_680.py",
       "path": "verify/corpus/language/case_680.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-wpc6xjnc/case_680.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-ghq5jazf/case_680.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_681.py",
       "path": "verify/corpus/language/case_681.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-m90v1c2f/case_681.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-afp3xsb2/case_681.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_682.py",
       "path": "verify/corpus/language/case_682.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1725nktq/case_682.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-gx7ro8zu/case_682.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_683.py",
       "path": "verify/corpus/language/case_683.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-fcurv5_0/case_683.py:3:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-t8h8g9ga/case_683.py:3:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_684.py",
       "path": "verify/corpus/language/case_684.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-kyko_24a/case_684.py:5:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-hr6vmkmg/case_684.py:5:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_685.py",
       "path": "verify/corpus/language/case_685.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-wets2twr/case_685.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-ksb6aupl/case_685.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_686.py",
       "path": "verify/corpus/language/case_686.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-46uo58z3/case_686.py:9:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-kth36vs2/case_686.py:9:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_687.py",
       "path": "verify/corpus/language/case_687.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cdgx06cl/case_687.py:5:12: error: cannot compile star-unpacking yet [star-unpacking]"
+      "detail": "/tmp/pyc-verify-r604hjxz/case_687.py:5:12: error: cannot compile star-unpacking yet [star-unpacking]"
     },
     {
       "case": "case_688.py",
       "path": "verify/corpus/language/case_688.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-fm_ahdu5/case_688.py:5:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-8xo9thy5/case_688.py:5:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_689.py",
       "path": "verify/corpus/language/case_689.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1gtgoash/case_689.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-1prt9eim/case_689.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_690.py",
       "path": "verify/corpus/language/case_690.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ae65esnt/case_690.py:2:0: error: cannot compile import yet [import]"
+      "detail": "/tmp/pyc-verify-zq08cu63/case_690.py:2:0: error: cannot compile import yet [import]"
     },
     {
       "case": "case_691.py",
       "path": "verify/corpus/language/case_691.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-a65jnfa3/case_691.py:6:8: error: cannot compile star-unpacking yet [star-unpacking]"
+      "detail": "/tmp/pyc-verify-wopyomk6/case_691.py:6:8: error: cannot compile star-unpacking yet [star-unpacking]"
     },
     {
       "case": "case_692.py",
       "path": "verify/corpus/language/case_692.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-fh5m7wc9/case_692.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-7rcxhvop/case_692.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_693.py",
       "path": "verify/corpus/language/case_693.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cd0glpyq/case_693.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-vy8lgshw/case_693.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_694.py",
       "path": "verify/corpus/language/case_694.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-lfax5t2j/case_694.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-lvxdhcl3/case_694.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_695.py",
       "path": "verify/corpus/language/case_695.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-4ltpewde/case_695.py:4:10: error: cannot compile star-unpacking yet [star-unpacking]"
+      "detail": "/tmp/pyc-verify-7llfec50/case_695.py:4:10: error: cannot compile star-unpacking yet [star-unpacking]"
     },
     {
       "case": "case_696.py",
       "path": "verify/corpus/language/case_696.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0300v9q7/case_696.py:6:15: error: cannot compile star-unpacking yet [star-unpacking]"
+      "detail": "/tmp/pyc-verify-pe46_fld/case_696.py:6:15: error: cannot compile star-unpacking yet [star-unpacking]"
     },
     {
       "case": "case_697.py",
       "path": "verify/corpus/language/case_697.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1q0y6c3_/case_697.py:7:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-lox2pgvu/case_697.py:7:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_698.py",
       "path": "verify/corpus/language/case_698.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-pdaal4wm/case_698.py:6:11: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-5y9uvvpj/case_698.py:6:11: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_699.py",
       "path": "verify/corpus/language/case_699.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-jhogfky1/case_699.py:7:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-giu8zf37/case_699.py:7:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_701.py",
       "path": "verify/corpus/language/case_701.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-p2opo0y0/case_701.py:6:0: error: cannot compile from-import yet [from-import]"
+      "detail": "/tmp/pyc-verify-9o0noqvy/case_701.py:6:0: error: cannot compile from-import yet [from-import]"
     },
     {
       "case": "case_702.py",
       "path": "verify/corpus/language/case_702.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rvr2ujqo/case_702.py:2:0: error: cannot compile try yet [try]"
+      "detail": "/tmp/pyc-verify-akqspa8p/case_702.py:2:0: error: cannot compile try yet [try]"
     },
     {
       "case": "case_703.py",
       "path": "verify/corpus/language/case_703.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-91iq_9hk/case_703.py:10:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-thjczd5c/case_703.py:10:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_704.py",
       "path": "verify/corpus/language/case_704.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-bp2escck/case_704.py:3:6: error: cannot compile keyword arguments yet [keyword arguments]"
+      "detail": "/tmp/pyc-verify-fhztmt85/case_704.py:3:6: error: cannot compile keyword arguments yet [keyword arguments]"
     },
     {
       "case": "case_705.py",
       "path": "verify/corpus/language/case_705.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-soyxip98/case_705.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-fweuhtzu/case_705.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_706.py",
       "path": "verify/corpus/language/case_706.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-e6vepu8l/case_706.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-86iooy8u/case_706.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_707.py",
       "path": "verify/corpus/language/case_707.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7siys0zq/case_707.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-4cenk82y/case_707.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_708.py",
       "path": "verify/corpus/language/case_708.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-_4c6j0rp/case_708.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-k736tzjq/case_708.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_709.py",
       "path": "verify/corpus/language/case_709.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-6e0sm4ej/case_709.py:2:0: error: cannot compile class definitions yet [class definitions]"
+      "detail": "/tmp/pyc-verify-ph_cyccz/case_709.py:2:0: error: cannot compile class definitions yet [class definitions]"
     },
     {
       "case": "case_712.py",
       "path": "verify/corpus/language/case_712.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-2hbl46ff/case_712.py:4:0: error: cannot compile for loops yet [for loops]"
+      "detail": "/tmp/pyc-verify-laqli_ii/case_712.py:4:0: error: cannot compile for loops yet [for loops]"
     },
     {
       "case": "case_713.py",
       "path": "verify/corpus/language/case_713.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3at5eyk1/case_713.py:3:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
+      "detail": "/tmp/pyc-verify-21tt0tah/case_713.py:3:0: error: cannot compile tuple unpacking yet [tuple unpacking]"
     },
     {
       "case": "case_001.py",
@@ -3484,6 +3050,104 @@
       "detail": ""
     },
     {
+      "case": "case_070.py",
+      "path": "verify/corpus/language/case_070.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_071.py",
+      "path": "verify/corpus/language/case_071.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_072.py",
+      "path": "verify/corpus/language/case_072.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_073.py",
+      "path": "verify/corpus/language/case_073.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_074.py",
+      "path": "verify/corpus/language/case_074.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_075.py",
+      "path": "verify/corpus/language/case_075.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_078.py",
+      "path": "verify/corpus/language/case_078.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_079.py",
+      "path": "verify/corpus/language/case_079.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_080.py",
+      "path": "verify/corpus/language/case_080.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_081.py",
+      "path": "verify/corpus/language/case_081.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_082.py",
+      "path": "verify/corpus/language/case_082.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_083.py",
+      "path": "verify/corpus/language/case_083.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_084.py",
+      "path": "verify/corpus/language/case_084.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_085.py",
+      "path": "verify/corpus/language/case_085.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_086.py",
       "path": "verify/corpus/language/case_086.py",
       "verdict": "MATCH",
@@ -3771,6 +3435,27 @@
       "detail": ""
     },
     {
+      "case": "case_147.py",
+      "path": "verify/corpus/language/case_147.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_148.py",
+      "path": "verify/corpus/language/case_148.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_149.py",
+      "path": "verify/corpus/language/case_149.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_150.py",
       "path": "verify/corpus/language/case_150.py",
       "verdict": "MATCH",
@@ -3997,6 +3682,13 @@
     {
       "case": "case_198.py",
       "path": "verify/corpus/language/case_198.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_199.py",
+      "path": "verify/corpus/language/case_199.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4443,6 +4135,13 @@
       "detail": ""
     },
     {
+      "case": "case_310.py",
+      "path": "verify/corpus/language/case_310.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_311.py",
       "path": "verify/corpus/language/case_311.py",
       "verdict": "MATCH",
@@ -4688,6 +4387,13 @@
       "detail": ""
     },
     {
+      "case": "case_435.py",
+      "path": "verify/corpus/language/case_435.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_436.py",
       "path": "verify/corpus/language/case_436.py",
       "verdict": "MATCH",
@@ -4779,6 +4485,27 @@
       "detail": ""
     },
     {
+      "case": "case_516.py",
+      "path": "verify/corpus/language/case_516.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_518.py",
+      "path": "verify/corpus/language/case_518.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_520.py",
+      "path": "verify/corpus/language/case_520.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_527.py",
       "path": "verify/corpus/language/case_527.py",
       "verdict": "MATCH",
@@ -4793,8 +4520,36 @@
       "detail": ""
     },
     {
+      "case": "case_540.py",
+      "path": "verify/corpus/language/case_540.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_541.py",
+      "path": "verify/corpus/language/case_541.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_542.py",
+      "path": "verify/corpus/language/case_542.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_543.py",
       "path": "verify/corpus/language/case_543.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_544.py",
+      "path": "verify/corpus/language/case_544.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4814,8 +4569,253 @@
       "detail": ""
     },
     {
+      "case": "case_550.py",
+      "path": "verify/corpus/language/case_550.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_551.py",
+      "path": "verify/corpus/language/case_551.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_552.py",
+      "path": "verify/corpus/language/case_552.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_553.py",
+      "path": "verify/corpus/language/case_553.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_554.py",
+      "path": "verify/corpus/language/case_554.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_555.py",
+      "path": "verify/corpus/language/case_555.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_556.py",
       "path": "verify/corpus/language/case_556.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_557.py",
+      "path": "verify/corpus/language/case_557.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_558.py",
+      "path": "verify/corpus/language/case_558.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_559.py",
+      "path": "verify/corpus/language/case_559.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_560.py",
+      "path": "verify/corpus/language/case_560.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_561.py",
+      "path": "verify/corpus/language/case_561.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_562.py",
+      "path": "verify/corpus/language/case_562.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_563.py",
+      "path": "verify/corpus/language/case_563.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_564.py",
+      "path": "verify/corpus/language/case_564.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_565.py",
+      "path": "verify/corpus/language/case_565.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_566.py",
+      "path": "verify/corpus/language/case_566.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_567.py",
+      "path": "verify/corpus/language/case_567.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_568.py",
+      "path": "verify/corpus/language/case_568.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_569.py",
+      "path": "verify/corpus/language/case_569.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_570.py",
+      "path": "verify/corpus/language/case_570.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_571.py",
+      "path": "verify/corpus/language/case_571.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_572.py",
+      "path": "verify/corpus/language/case_572.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_573.py",
+      "path": "verify/corpus/language/case_573.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_574.py",
+      "path": "verify/corpus/language/case_574.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_575.py",
+      "path": "verify/corpus/language/case_575.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_576.py",
+      "path": "verify/corpus/language/case_576.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_577.py",
+      "path": "verify/corpus/language/case_577.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_578.py",
+      "path": "verify/corpus/language/case_578.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_579.py",
+      "path": "verify/corpus/language/case_579.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_580.py",
+      "path": "verify/corpus/language/case_580.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_581.py",
+      "path": "verify/corpus/language/case_581.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_582.py",
+      "path": "verify/corpus/language/case_582.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_583.py",
+      "path": "verify/corpus/language/case_583.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_584.py",
+      "path": "verify/corpus/language/case_584.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_585.py",
+      "path": "verify/corpus/language/case_585.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""

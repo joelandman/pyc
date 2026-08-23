@@ -180,6 +180,8 @@ private:
         set_block(pad);
         for (auto it = owned_.rbegin(); it != owned_.rend(); ++it)
             emit_decref(*it, loc);
+        for (auto it = frame_owned_.rbegin(); it != frame_owned_.rend(); ++it)
+            emit_decref(*it, loc);
         emit(ir::Instr{ir::Op::ReturnErr, {}, std::nullopt,
                        Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
         set_block(here);
@@ -213,7 +215,7 @@ private:
             [&](const Delete& n)           { ok = lower_delete(n); },
             [&](const AugAssign& n)        { ok = unsupported("augmented assignment", n.loc); },
             [&](const AnnAssign& n)        { ok = unsupported("annotated assignment", n.loc); },
-            [&](const For& n)              { ok = unsupported("for loops", n.loc); },
+            [&](const For& n)              { ok = lower_for(n); },
             [&](const AsyncFor& n)         { ok = unsupported("async for", n.loc); },
             [&](const While& n)            { ok = lower_while(n); },
             [&](const If& n)               { ok = lower_if(n); },
@@ -485,6 +487,55 @@ private:
         return true;
     }
 
+    // Values owned by an enclosing construct rather than by the current
+    // statement -- a loop's iterator, for instance. Landing pads must release
+    // these too, or every exception raised inside a loop body leaks the
+    // iterator. The per-statement reset alone cannot see them.
+    std::vector<ir::Value> frame_owned_;
+
+    bool lower_for(const For& n) {
+        if (!n.orelse.empty()) return unsupported("for/else", n.loc);
+        if (!std::holds_alternative<Name>(n.target->v))
+            return unsupported("unpacking in a for target", n.loc);
+        const Name& tgt = std::get<Name>(n.target->v);
+
+        bool ok = true;
+        ir::Value seq = lower_expr(*n.iter, &ok);
+        if (!ok) return false;
+        // The ITERATOR PROTOCOL, not a type test. This is the single place
+        // that decides how `for` traverses, so a user class defining
+        // __iter__ works exactly as a list does -- the divergence the old
+        // tree had between comprehensions and sum() is not expressible here.
+        ir::Value it = call_capi("PyObject_GetIter", {seq}, n.loc, &ok, {seq});
+        if (!ok) return false;
+        mark_owned(it);
+        frame_owned_.push_back(it);
+
+        std::uint32_t head = new_block("for.head");
+        std::uint32_t body = new_block("for.body");
+        std::uint32_t done = new_block("for.done");
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", head, 0, n.loc, std::nullopt});
+        set_block(head);
+        ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::IterNext, {it}, item, Ownership::Owned, "",
+                       body, done, n.loc, make_landing_pad(n.loc)});
+
+        set_block(body);
+        mark_owned(item);
+        store_name(tgt.id, item, n.loc);          // store_name releases item
+        loops_.push_back({head, done});
+        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
+        loops_.pop_back();
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", head, 0, n.loc, std::nullopt});
+
+        set_block(done);
+        frame_owned_.pop_back();
+        if (owns(it)) release(it, n.loc);
+        return true;
+    }
+
     bool lower_while(const While& n) {
         if (!n.orelse.empty()) return unsupported("while/else", n.loc);
         std::uint32_t head = new_block("while.head");
@@ -644,7 +695,7 @@ private:
             if (!*ok) return {};
             args.push_back(v);
         }
-        if (!c.keywords.empty()) { *ok = unsupported("keyword arguments", c.loc); return {}; }
+        if (!c.keywords.empty()) return lower_call_kw(c, fn, args, ok);
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         std::vector<ir::Value> saved = args;
         emit(ir::Instr{ir::Op::CallObject, std::move(args), out,
@@ -1028,6 +1079,41 @@ private:
                        0, 0, loc, std::nullopt});
         mark_owned(v);
         return v;
+    }
+
+    // A call with keywords goes through PyObject_Call(callable, args, kwargs)
+    // rather than the vectorcall fast path: building the tuple and dict is the
+    // straightforward form, and correctness comes first (CHARTER §1).
+    ir::Value lower_call_kw(const Call& c, const ir::Value& fn,
+                            const std::vector<ir::Value>& all, bool* ok) {
+        for (const keyword& k : c.keywords)
+            if (!k.arg) { *ok = unsupported("** unpacking in a call", c.loc); return {}; }
+
+        std::size_t npos = all.size() - 1;              // all[0] is the callable
+        ir::Value tup = call_capi_imm("PyTuple_New", {}, (std::int64_t)npos, 0, c.loc, ok);
+        if (!*ok) return {};
+        mark_owned(tup);
+        for (std::size_t i = 0; i < npos; ++i) {
+            // PyTuple_SetItem steals, so the positional value must NOT be
+            // released afterwards -- §4's table is what makes that automatic.
+            call_capi_imm("PyTuple_SetItem", {tup, all[i + 1]},
+                          (std::int64_t)i, 1, c.loc, ok);
+            if (!*ok) return {};
+        }
+        ir::Value kw = call_capi("PyDict_New", {}, c.loc, ok);
+        if (!*ok) return {};
+        mark_owned(kw);
+        for (const keyword& k : c.keywords) {
+            ir::Value key = const_str(*k.arg, c.loc);
+            ir::Value val = lower_expr(*k.value, ok);
+            if (!*ok) return {};
+            call_capi("PyDict_SetItem", {kw, key, val}, c.loc, ok, {key, val});
+            if (!*ok) return {};
+        }
+        ir::Value out = call_capi("PyObject_Call", {fn, tup, kw}, c.loc, ok,
+                                  {fn, tup, kw});
+        if (*ok) mark_owned(out);
+        return out;
     }
 
     ir::Value lower_binop(const BinOp& b, bool* ok) {

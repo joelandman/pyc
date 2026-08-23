@@ -103,7 +103,8 @@ private:
 
     static bool is_term(ir::Op op) {
         return op == ir::Op::Br || op == ir::Op::CondBr
-            || op == ir::Op::Return || op == ir::Op::ReturnErr;
+            || op == ir::Op::Return || op == ir::Op::ReturnErr
+            || op == ir::Op::IterNext;
     }
 
     // Emit the null-check that turns a may-raise call into an explicit edge.
@@ -209,6 +210,27 @@ private:
                 std::string c = fresh();
                 o_ << "  " << c << " = icmp eq i32 " << v(in.args[0]) << ", 0\n";
                 o_ << "  " << v(*in.result) << " = zext i1 " << c << " to i32\n";
+                break;
+            }
+            case Op::IterNext: {
+                need("declare ptr @PyIter_Next(ptr)");
+                need("declare ptr @PyErr_Occurred()");
+                o_ << "  " << v(*in.result) << " = call ptr @PyIter_Next(ptr "
+                   << v(in.args[0]) << ")\n";
+                std::string isnull = fresh(), maybe = "iterend" + std::to_string(tmp_++);
+                o_ << "  " << isnull << " = icmp eq ptr " << v(*in.result) << ", null\n";
+                o_ << "  br i1 " << isnull << ", label %" << maybe
+                   << ", label %bb" << in.target << "\n";
+                o_ << maybe << ":\n";
+                // NULL means exhausted OR failed; only PyErr_Occurred tells
+                // them apart, and conflating them would swallow an exception
+                // raised inside __next__.
+                std::string err = fresh(), haserr = fresh();
+                o_ << "  " << err << " = call ptr @PyErr_Occurred()\n";
+                o_ << "  " << haserr << " = icmp ne ptr " << err << ", null\n";
+                o_ << "  br i1 " << haserr << ", label %bb"
+                   << (in.on_error ? *in.on_error : in.target_else)
+                   << ", label %bb" << in.target_else << "\n";
                 break;
             }
             case Op::Phi: {

@@ -63,6 +63,11 @@ enum class Op {
     Is,
     // Logical negation of a machine int, for `not in` and `is not`.
     IntNot,
+    // Advance an iterator. THREE-way: PyIter_Next returns NULL both at
+    // exhaustion (no exception) and on error (exception set), so the two are
+    // distinguished by PyErr_Occurred. `target` is the body, `target_else`
+    // the exhausted path, `on_error` the landing pad.
+    IterNext,
     // SSA merge. `args` are the incoming values and `phi_blocks` the matching
     // predecessor block indices, positionally. Real phis rather than allocas
     // because §3 specifies typed SSA and lowering knows its predecessors
