@@ -71,6 +71,11 @@ enum class Op {
     DelGlobal,
     // A machine integer (not a PyObject), for C-API integer parameters.
     IntConst,
+    // A null PyObject*. Not a Python value: it is the "no pending exception"
+    // and "no pending return" marker that try/finally's dispatch tests, and
+    // the one thing a phi over those paths needs that no Python constant can
+    // express. Never incref'd or decref'd -- its ownership is AlwaysNull.
+    ConstNull,
     // A complex literal. `text` is "<real> <imag>"; both are raw doubles,
     // so this cannot go through the generic PyObject* call path.
     ConstComplex,
@@ -141,6 +146,12 @@ struct Instr {
     // struct so existing aggregate initialisers keep their meaning.
     // Phi only: predecessor block per incoming value, positional with args.
     std::vector<std::uint32_t> phi_blocks;
+
+    // Operand value ids this call STEALS. A stolen reference is released by
+    // the callee, so no decref appears for it -- which reads as a leak to
+    // anything auditing the IR. Recorded from §4's table so the dump is
+    // self-describing and the checker needs no second copy of the steal list.
+    std::vector<std::uint32_t> stolen;
 
     std::int64_t imm = 0;
     // Whether `imm` is meaningful. Without this, an immediate of 0 -- Py_LT,

@@ -35,6 +35,7 @@ const char* op_name(Op op) {
         case Op::Unpack:      return "unpack";
         case Op::ConstComplex: return "const.complex";
         case Op::IntConst:    return "int.const";
+        case Op::ConstNull:   return "const.null";
         case Op::DelGlobal:   return "del.global";
         case Op::CellNew:     return "cell.new";
         case Op::CellGet:     return "cell.get";
@@ -91,6 +92,7 @@ std::string to_string(const Module& m) {
                 } else {
                     for (const Value& a : in.args) o << " %" << a.id;
                 }
+                for (std::uint32_t sid : in.stolen) o << " steals:%" << sid;
                 if (in.has_imm) o << " #" << in.imm;
                 if (in.op == Op::Br) o << " -> bb" << in.target;
                 if (in.op == Op::CondBr)

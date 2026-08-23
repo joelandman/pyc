@@ -155,6 +155,12 @@ private:
                      0, 0, loc, std::nullopt};
         in.imm = imm;
         in.has_imm = (imm_pos >= 0);
+        // Record the steals on the instruction itself, from the same table
+        // that drives the forget() below, so the IR dump says so.
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            int cp = (imm_pos >= 0 && (int)i >= imm_pos) ? (int)i + 1 : (int)i;
+            if (sym->steals_param(cp)) in.stolen.push_back(args[i].id);
+        }
         if (sym->may_raise) in.on_error = make_landing_pad(loc);
         emit(std::move(in));
 
@@ -301,18 +307,8 @@ private:
                 // WRITES both go through the cell -- which is the whole point
                 // of nonlocal as opposed to a plain free variable.
             },
-            [&](const Break& n)            {
-                if (loops_.empty()) ok = err("break outside a loop", "break", n.loc);
-                else emit(ir::Instr{ir::Op::Br, {}, std::nullopt,
-                                    Ownership::NotAnObject, "",
-                                    loops_.back().done, 0, n.loc, std::nullopt});
-            },
-            [&](const Continue& n)         {
-                if (loops_.empty()) ok = err("continue outside a loop", "continue", n.loc);
-                else emit(ir::Instr{ir::Op::Br, {}, std::nullopt,
-                                    Ownership::NotAnObject, "",
-                                    loops_.back().head, 0, n.loc, std::nullopt});
-            },
+            [&](const Break& n)            { ok = finish_jump(true, n.loc); },
+            [&](const Continue& n)         { ok = finish_jump(false, n.loc); },
             [&](const TypeAlias& n)        { ok = unsupported("type aliases", n.loc); },
         }, s.v);
         return ok;
@@ -1024,14 +1020,7 @@ private:
                            0, 0, n.loc, std::nullopt});
             mark_owned(v);
         }
-        // The returned reference is handed to the caller, so it must NOT be
-        // released here -- but every OTHER live temporary must be, or an early
-        // return leaks exactly what a landing pad would have freed.
-        for (auto it = owned_.rbegin(); it != owned_.rend(); ++it)
-            if (it->id != v.id) emit_decref(*it, n.loc);
-        emit(ir::Instr{ir::Op::Return, {v}, std::nullopt, Ownership::NotAnObject,
-                       "", 0, 0, n.loc, std::nullopt});
-        return true;
+        return finish_return(v, n.loc);
     }
 
     // One store path for every assignable form. A target that is not a bare
@@ -1474,24 +1463,269 @@ private:
         return true;
     }
 
-    bool lower_try(const Try& n) {
-        if (!n.finalbody.empty()) {
-            // try/finally is REFUSED, after an attempt at duplication proved
-            // unsound. Emitting the cleanup twice -- once on the normal path,
-            // once on the unwind path -- works for a single try, but the
-            // landing-pad model snapshots the live set at pad-creation time,
-            // and under nesting the two copies' pads become cross-reachable:
-            // a pad in one copy then decrefs a value defined only in the
-            // other. LLVM caught it as "use of undefined value"; without that
-            // check it would have been a double free.
-            //
-            // Doing it properly needs what CPython's bytecode has and this IR
-            // does not: a way to run one copy of the cleanup and return to
-            // wherever control came from. That is a real addition, not a
-            // patch, so the refusal stands rather than shipping something
-            // subtly wrong.
-            return unsupported("try/finally", n.loc);
+    // One pending finally region. `preds` accumulates every edge into the
+    // finally body together with what it is carrying: a pending exception, a
+    // pending return value, or neither for normal completion.
+    struct FinallyCtx {
+        std::uint32_t entry;
+        std::vector<std::uint32_t> pred_blocks;
+        std::vector<ir::Value> pred_exc;   // pending exception, else null
+        std::vector<ir::Value> pred_ret;   // pending return value, else null
+        std::vector<ir::Value> pred_brk;   // non-null: a break is pending
+        std::vector<ir::Value> pred_cont;  // non-null: a continue is pending
+        bool any_jump = false;             // did any break/continue arrive here?
+        // Four parallel edges rather than one integer discriminant: a pointer
+        // phi already exists and needs no new IR, and "is this null" is the
+        // same test the other two paths use.
+        void edge(std::uint32_t b, ir::Value e, ir::Value r,
+                  ir::Value k, ir::Value c) {
+            pred_blocks.push_back(b); pred_exc.push_back(e);
+            pred_ret.push_back(r); pred_brk.push_back(k); pred_cont.push_back(c);
         }
+    };
+    std::vector<FinallyCtx*> fin_stack_;
+    // Loop depth when the innermost finally region was entered. A break inside
+    // a try/finally must run the cleanup on its way out, which the dispatch
+    // does not yet carry; a break in a loop STARTED inside the try is a plain
+    // branch and stays supported.
+    std::size_t fin_loop_depth_ = 0;
+
+    ir::Value const_null(const SourceLoc& loc) {
+        ir::Value v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::ConstNull, {}, v, Ownership::AlwaysNull, "",
+                       0, 0, loc, std::nullopt});
+        return v;
+    }
+
+    bool lower_try(const Try& n) {
+        if (n.finalbody.empty()) return lower_try_except(n);
+        return lower_try_finally(n);
+    }
+
+    // try/finally, with ONE copy of the cleanup.
+    //
+    // The earlier attempt duplicated the finally body at each exit. That is
+    // unsound: the landing-pad model snapshots the live set when a pad is
+    // created, so under nesting the two copies' pads become cross-reachable
+    // and a pad decrefs a value defined only in the other copy.
+    //
+    // Instead every exit converges on one block, carrying WHY it left as a
+    // pair of values -- pending exception, pending return -- merged by phis.
+    // The cleanup runs once, then dispatches on those. Both predecessors
+    // arrive with their statement temporaries already released (landing pads
+    // decref owned_ before branching, and the normal path has none live), so
+    // the live set at the join is the same on every edge, which is exactly
+    // what the duplicated form could not guarantee.
+    bool lower_try_finally(const Try& n) {
+        FinallyCtx fin;
+        fin.entry = new_block("finally.body");
+        std::uint32_t catch_b = new_block("finally.catch");
+        std::uint32_t after   = new_block("try.after");
+
+        // Uncaught exceptions from the guarded region land here, not in an
+        // enclosing handler: the cleanup has to run first.
+        try_stack_.push_back(catch_b);
+        fin_stack_.push_back(&fin);
+        std::size_t saved_fin_depth = fin_loop_depth_;
+        fin_loop_depth_ = loops_.size();
+        bool ok = true;
+        if (n.handlers.empty() && n.orelse.empty()) {
+            for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
+        } else {
+            // try/except/finally is try/except wrapped in a finally region.
+            Try inner{n.body, n.handlers, n.orelse, {}, n.loc};
+            ok = lower_try_except(inner);
+        }
+        fin_stack_.pop_back();
+        fin_loop_depth_ = saved_fin_depth;
+        try_stack_.pop_back();
+        if (!ok) return false;
+
+        // Normal completion: nothing pending. Only if control can actually
+        // fall out of the guarded region -- `try: return x finally: ...` ends
+        // it with a terminator, and recording an edge from an already
+        // terminated block produces a duplicate phi predecessor carrying a
+        // different value, which LLVM rejects.
+        if (!terminated()) {
+            fin.edge((std::uint32_t)blk_, const_null(n.loc), const_null(n.loc),
+                     const_null(n.loc), const_null(n.loc));
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", fin.entry, 0, n.loc, std::nullopt});
+        }
+
+        // The unwind edge: take the exception so the cleanup runs with no
+        // error set, exactly as CPython does, and carry it to the dispatch.
+        set_block(catch_b);
+        ir::Value exc = call_capi("PyErr_GetRaisedException", {}, n.loc, &ok);
+        if (!ok) return false;
+        mark_owned(exc);
+        fin.edge((std::uint32_t)blk_, exc, const_null(n.loc),
+                 const_null(n.loc), const_null(n.loc));
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", fin.entry, 0, n.loc, std::nullopt});
+        forget(exc);      // it lives on through the phi, not this name
+
+        set_block(fin.entry);
+        ir::Value p_exc  = emit_phi(fin.pred_exc,  fin.pred_blocks, n.loc);
+        ir::Value p_ret  = emit_phi(fin.pred_ret,  fin.pred_blocks, n.loc);
+        // Only when a break or continue actually reached this cleanup: the
+        // body has been lowered by now, so every edge is known, and emitting
+        // unused marker phis would create references nothing releases.
+        ir::Value p_brk, p_cont;
+        if (fin.any_jump) {
+            p_brk  = emit_phi(fin.pred_brk,  fin.pred_blocks, n.loc);
+            p_cont = emit_phi(fin.pred_cont, fin.pred_blocks, n.loc);
+            forget(p_brk); forget(p_cont);
+        }
+        // The pending values must survive the cleanup, which may run arbitrary
+        // code, so they are frame-owned across it rather than statement temps.
+        forget(p_exc); forget(p_ret);
+        frame_owned_.push_back(p_exc);
+        frame_owned_.push_back(p_ret);
+        for (const stmt& s2 : n.finalbody) if (!lower_stmt(s2)) return false;
+        frame_owned_.pop_back();
+        frame_owned_.pop_back();
+
+        // Dispatch. Exception first: CPython re-raises after the cleanup
+        // unless the cleanup itself left by another route.
+        std::uint32_t exc_b  = new_block("finally.reraise");
+        std::uint32_t noexc_b = new_block("finally.noexc");
+        std::uint32_t ret_b  = new_block("finally.return");
+        {
+            ir::Value nn = const_null(n.loc);
+            ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            emit(ir::Instr{ir::Op::Is, {p_exc, nn}, isnull, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+            emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
+                           Ownership::NotAnObject, "", noexc_b, exc_b,
+                           n.loc, std::nullopt});
+        }
+
+        set_block(exc_b);
+        // SetRaisedException STEALS, so p_exc must not be released after it.
+        mark_owned(p_exc);
+        call_capi("PyErr_SetRaisedException", {p_exc}, n.loc, &ok);
+        if (!ok) return false;
+        forget(p_exc);
+        {
+            // Propagate outward on whatever encloses THIS try.
+            std::uint32_t pad = make_landing_pad(n.loc);
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", pad, 0, n.loc, std::nullopt});
+        }
+
+        set_block(noexc_b);
+        {
+            ir::Value nn = const_null(n.loc);
+            ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            emit(ir::Instr{ir::Op::Is, {p_ret, nn}, isnull, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+            emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
+                           Ownership::NotAnObject, "", after, ret_b,
+                           n.loc, std::nullopt});
+        }
+
+        set_block(ret_b);
+        mark_owned(p_ret);
+        if (!finish_return(p_ret, n.loc)) return false;
+
+        // break and continue, in that order, after return. Emitted only when
+        // one actually reached this cleanup: otherwise the dispatch would
+        // branch to a loop that does not exist, and the shared exit path
+        // reported "break outside a loop" for a try/finally containing no
+        // break at all.
+        set_block(after);
+        if (!fin.any_jump) return true;
+
+        // Both tests are computed BEFORE the markers are released: the
+        // comparison only inspects the pointer, but reading a pointer whose
+        // reference has already been dropped is the kind of detail that is
+        // true until it isn't.
+        ir::Value nb = const_null(n.loc), nc = const_null(n.loc);
+        ir::Value is_brk = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        emit(ir::Instr{ir::Op::Is, {p_brk, nb}, is_brk, Ownership::NotAnObject,
+                       "", 0, 0, n.loc, std::nullopt});
+        ir::Value is_cont = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        emit(ir::Instr{ir::Op::Is, {p_cont, nc}, is_cont, Ownership::NotAnObject,
+                       "", 0, 0, n.loc, std::nullopt});
+        // At most one marker is non-null; Py_DecRef is Py_XDECREF, so
+        // releasing both unconditionally is correct on every path.
+        mark_owned(p_brk); mark_owned(p_cont);
+        release(p_brk, n.loc); release(p_cont, n.loc);
+
+        std::uint32_t brk_b = new_block("finally.break");
+        std::uint32_t nobrk_b = new_block("finally.nobreak");
+        emit(ir::Instr{ir::Op::CondBr, {is_brk}, std::nullopt,
+                       Ownership::NotAnObject, "", nobrk_b, brk_b,
+                       n.loc, std::nullopt});
+        set_block(brk_b);
+        if (!finish_jump(true, n.loc)) return false;
+
+        set_block(nobrk_b);
+        std::uint32_t cont_b = new_block("finally.continue");
+        std::uint32_t done_b = new_block("finally.done");
+        emit(ir::Instr{ir::Op::CondBr, {is_cont}, std::nullopt,
+                       Ownership::NotAnObject, "", done_b, cont_b,
+                       n.loc, std::nullopt});
+        set_block(cont_b);
+        if (!finish_jump(false, n.loc)) return false;
+
+        set_block(done_b);
+        return true;
+    }
+
+    // break/continue, honouring any enclosing finally the same way a return
+    // does: hand the pending jump to the nearest cleanup instead of branching
+    // straight out, so it still runs.
+    bool finish_jump(bool is_break, const SourceLoc& loc) {
+        if (!fin_stack_.empty() && loops_.size() <= fin_loop_depth_) {
+            FinallyCtx* f = fin_stack_.back();
+            f->any_jump = true;
+            ir::Value mark = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstNone, {}, mark, Ownership::Owned, "",
+                           0, 0, loc, std::nullopt});
+            forget(mark);
+            f->edge((std::uint32_t)blk_, const_null(loc), const_null(loc),
+                    is_break ? mark : const_null(loc),
+                    is_break ? const_null(loc) : mark);
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", f->entry, 0, loc, std::nullopt});
+            return true;
+        }
+        if (loops_.empty())
+            return err(is_break ? "break outside a loop" : "continue outside a loop",
+                       is_break ? "break" : "continue", loc);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject, "",
+                       is_break ? loops_.back().done : loops_.back().head,
+                       0, loc, std::nullopt});
+        return true;
+    }
+
+    // Complete a return, honouring any enclosing finally: the value is handed
+    // to the nearest pending cleanup rather than returned directly, so every
+    // cleanup between here and the function boundary still runs.
+    bool finish_return(const ir::Value& v, const SourceLoc& loc) {
+        // The returned reference is handed on, so it must NOT be released --
+        // but every other live temporary must be, or an early return leaks
+        // exactly what a landing pad would have freed.
+        for (auto it = owned_.rbegin(); it != owned_.rend(); ++it)
+            if (it->id != v.id) emit_decref(*it, loc);
+        if (!fin_stack_.empty()) {
+            FinallyCtx* f = fin_stack_.back();
+            f->edge((std::uint32_t)blk_, const_null(loc), v,
+                    const_null(loc), const_null(loc));
+            forget(v);
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", f->entry, 0, loc, std::nullopt});
+            return true;
+        }
+        emit(ir::Instr{ir::Op::Return, {v}, std::nullopt, Ownership::NotAnObject,
+                       "", 0, 0, loc, std::nullopt});
+        forget(v);
+        return true;
+    }
+
+    bool lower_try_except(const Try& n) {
         if (n.handlers.empty()) return unsupported("try without except", n.loc);
 
         std::uint32_t dispatch = new_block("except.dispatch");

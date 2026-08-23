@@ -47,6 +47,11 @@ RET_VAL = re.compile(r"^    ret %(\d+)$")
 PHI = re.compile(r"^    %\d+ = phi ")
 PHI_IN = re.compile(r"\[%(\d+),")
 OWNED = re.compile(r"; owned")
+# A STOLEN reference is released by the callee, so no decref will ever appear
+# for it. The IR records which operands a call steals (from §4's table), so the
+# checker reads it there rather than keeping a second copy of the steal list
+# that would drift the moment the table changed.
+STEAL_IN = re.compile(r"steals:%(\d+)")
 
 
 def check(ir: str) -> list[str]:
@@ -55,6 +60,7 @@ def check(ir: str) -> list[str]:
     defined: set[str] = set()
     owned: set[str] = set()
     released: dict[str, int] = {}
+    deferred: list[str] = []           # phi operands, checked once all defs are in
     for line in ir.splitlines():
         m = BLOCK.match(line)
         if m:
@@ -73,9 +79,21 @@ def check(ir: str) -> list[str]:
         r = DECREF.match(line) or RET_VAL.match(line)
         if r:
             released[r.group(1)] = released.get(r.group(1), 0) + 1
+        for st in STEAL_IN.findall(line):
+            released[st] = released.get(st, 0) + 1
         if PHI.match(line):
             for inc in PHI_IN.findall(line):
                 released[inc] = released.get(inc, 0) + 1
+            # A phi operand comes from its PREDECESSOR, which may be emitted
+            # later in the listing -- try/finally converges the normal, unwind
+            # and return paths on one block, so its phis necessarily reference
+            # values defined further down. Textual order is the wrong test for
+            # these; defer them and require only that they are defined SOMEWHERE
+            # in the function, which still catches a phi over a nonexistent
+            # value.
+            for inc in PHI_IN.findall(line):
+                deferred.append(inc)
+            continue
         for u in USE.findall(line.split("=")[-1] if d else line):
             # %0 is the null sentinel (a nullable C-API argument such as
             # PySet_New(NULL)), not a value, so it has no definition.
@@ -83,6 +101,9 @@ def check(ir: str) -> list[str]:
                 problems.append(f"value %{u} used before definition")
     if block is not None and terms != 1:
         problems.append(f"block '{block}' has {terms} terminators")
+    for u in deferred:
+        if u != "0" and u not in defined:
+            problems.append(f"phi operand %{u} is never defined")
     # Owned values must be released. Landing pads mean a value can legitimately
     # be released more than once ACROSS paths, so only never-released is an
     # unambiguous defect from this vantage point.

@@ -96,17 +96,37 @@ private:
     void emit_function(std::size_t idx) {
         const ir::Function& f = m_.functions[idx];
         bool is_main = (f.name == "__main__");
-        // The module body returns i32 (0/-1); a Python function returns a new
-        // reference or null. Both are the C-API convention from INTERFACES §3.
+
+        // Two passes. A phi's predecessor label is the LAST label its
+        // predecessor block emitted, and a block can be a phi predecessor
+        // while being emitted LATER -- try/finally converges the normal path,
+        // the unwind path and every return on one block, and those edges run
+        // in both directions. A single pass resolved forward references to
+        // "bb<index>", which LLVM rejected as "PHI node entries do not match
+        // predecessors". The first pass discovers the tail labels; the second
+        // emits with all of them known. Counters are restored in between so
+        // both passes generate identical names.
+        int saved_tmp = tmp_;
+        std::ostringstream discard;
+        o_.swap(discard);
+        emit_blocks(f, idx, is_main);
+        o_.swap(discard);
+        tmp_ = saved_tmp;
+
         o_ << (is_main ? "define i32 " : "define ptr ") << fname(idx)
            << "(ptr %locals) {\n";
+        emit_blocks(f, idx, is_main);
+        o_ << "}\n\n";
+    }
+
+    void emit_blocks(const ir::Function& f, std::size_t idx, bool is_main) {
+        (void)idx;
         for (std::size_t b = 0; b < f.blocks.size(); ++b) {
             o_ << "bb" << b << ":\n";
             cur_block_ = b;
             tail_label_[b] = "bb" + std::to_string(b);
             emit_block(f, f.blocks[b], b, is_main);
         }
-        o_ << "}\n\n";
     }
 
     void emit_block(const ir::Function& f, const ir::Block& b,
@@ -177,6 +197,11 @@ private:
                 o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_load_global(ptr "
                    << cstr(in.text) << ")\n";
                 check(in, v(*in.result), true);
+                break;
+            case Op::ConstNull:
+                // No call: materialise the null pointer into an SSA name so a
+                // phi can take it as an operand.
+                o_ << "  " << v(*in.result) << " = select i1 true, ptr null, ptr null\n";
                 break;
             case Op::LoadClassName:
                 need("declare ptr @pyc_rt_load_classname(ptr, ptr)");
