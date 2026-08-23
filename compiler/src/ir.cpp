@@ -63,6 +63,7 @@ std::string to_string(const Module& m) {
                 o << op_name(in.op);
                 if (!in.text.empty()) o << " \"" << in.text << "\"";
                 for (const Value& a : in.args) o << " %" << a.id;
+                if (in.imm) o << " #" << in.imm;
                 if (in.op == Op::Br) o << " -> bb" << in.target;
                 if (in.op == Op::CondBr)
                     o << " -> bb" << in.target << ", bb" << in.target_else;

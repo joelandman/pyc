@@ -75,6 +75,13 @@ private:
         return err(std::string("cannot compile ") + what + " yet", what, loc);
     }
 
+    ir::Value call_capi_imm(const char* symbol, std::vector<ir::Value> args,
+                            std::int64_t imm, int imm_pos, const SourceLoc& loc,
+                            bool* ok, std::vector<ir::Value> consume = {}) {
+        return call_capi(symbol, std::move(args), loc, ok, std::move(consume),
+                         imm, imm_pos);
+    }
+
     static bool is_terminator(ir::Op op) {
         return op == ir::Op::Br || op == ir::Op::CondBr
             || op == ir::Op::Return || op == ir::Op::ReturnErr;
@@ -95,35 +102,46 @@ private:
     }
 
     // Every call goes through §4's table, so ownership is never guessed.
+    // `consume` names the temporaries this expression created and is done
+    // with. Passing a value does NOT consume it -- a borrowed argument stays
+    // live, which is why a list survives across every SetItem.
+    //
+    // `imm_pos` is where a non-object immediate sits in the C signature.
+    // Without it, steal lookups use the wrong parameter index:
+    // PyList_SetItem(list, index, item) steals param 2, but the IR carries
+    // the index out-of-band, so item would be checked as param 1 and its
+    // stolen reference wrongly released -- a double free.
     ir::Value call_capi(const char* symbol, std::vector<ir::Value> args,
-                        const SourceLoc& loc, bool* ok) {
+                        const SourceLoc& loc, bool* ok,
+                        std::vector<ir::Value> consume = {},
+                        std::int64_t imm = 0, int imm_pos = -1) {
         const rt::CApiSymbol* sym = rt::lookup(symbol);
         if (!sym) {
             *ok = err(std::string("no C-API contract recorded for '") + symbol
-                      + "'; lowering may not emit it (INTERFACES §4)",
-                      symbol, loc);
+                      + "'; lowering may not emit it (INTERFACES §4)", symbol, loc);
             return {};
         }
         if (!sym->emittable()) {
-            *ok = err(std::string("C-API symbol '") + symbol + "' is not "
-                      "emittable: " + (sym->banned
-                          ? std::string(sym->ban_reason)
-                          : std::string("its ownership contract is unrecorded")),
+            *ok = err(std::string("C-API symbol '") + symbol + "' is not emittable: "
+                      + (sym->banned ? std::string(sym->ban_reason)
+                                     : std::string("its ownership contract is unrecorded")),
                       symbol, loc);
             return {};
         }
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        std::vector<ir::Value> saved = args;
-        ir::Instr in{ir::Op::CallCApi, std::move(args), out,
-                     sym->returns, symbol, 0, 0, loc, std::nullopt};
+        ir::Instr in{ir::Op::CallCApi, args, out, sym->returns, symbol,
+                     0, 0, loc, std::nullopt};
+        in.imm = imm;
         if (sym->may_raise) in.on_error = make_landing_pad(loc);
         emit(std::move(in));
-        // Release owned temporaries the call did not take. §4 records which
-        // parameters STEAL, and decref'ing a stolen reference is a double
-        // free -- which is why that table is consulted rather than assumed.
-        for (std::size_t i = 0; i < saved.size(); ++i)
-            if (owns(saved[i]) && !sym->steals_param(static_cast<int>(i)))
-                release(saved[i], loc);
+
+        // A stolen reference now belongs to the callee: drop it from the live
+        // set WITHOUT a decref.
+        for (std::size_t i = 0; i < args.size(); ++i) {
+            int cpos = (imm_pos >= 0 && (int)i >= imm_pos) ? (int)i + 1 : (int)i;
+            if (sym->steals_param(cpos)) forget(args[i]);
+        }
+        for (const ir::Value& c : consume) if (owns(c)) release(c, loc);
         *ok = true;
         return out;
     }
@@ -320,7 +338,7 @@ private:
                 ir::Value obj = lower_expr(*n.value, &ok);
                 if (!ok) return;
                 ir::Value name = const_str(n.attr, loc);
-                call_capi("PyObject_SetAttr", {obj, name, v}, loc, &ok);
+                call_capi("PyObject_SetAttr", {obj, name, v}, loc, &ok, {obj, name});
                 if (ok && owns(v)) release(v, loc);
             },
             [&](const Subscript& n) {
@@ -328,7 +346,7 @@ private:
                 if (!ok) return;
                 ir::Value key = lower_expr(*n.slice, &ok);
                 if (!ok) return;
-                call_capi("PyObject_SetItem", {obj, key, v}, loc, &ok);
+                call_capi("PyObject_SetItem", {obj, key, v}, loc, &ok, {obj, key});
                 if (ok && owns(v)) release(v, loc);
             },
             [&](const Tuple& n)   { ok = unsupported("tuple unpacking", n.loc); },
@@ -375,14 +393,14 @@ private:
                     ir::Value obj = lower_expr(*a2.value, &ok);
                     if (!ok) return;
                     ir::Value nm = const_str(a2.attr, n.loc);
-                    call_capi("PyObject_DelAttr", {obj, nm}, n.loc, &ok);
+                    call_capi("PyObject_DelAttr", {obj, nm}, n.loc, &ok, {obj, nm});
                 },
                 [&](const Subscript& s2) {
                     ir::Value obj = lower_expr(*s2.value, &ok);
                     if (!ok) return;
                     ir::Value key = lower_expr(*s2.slice, &ok);
                     if (!ok) return;
-                    call_capi("PyObject_DelItem", {obj, key}, n.loc, &ok);
+                    call_capi("PyObject_DelItem", {obj, key}, n.loc, &ok, {obj, key});
                 },
                 [&](const Name& n2)      { ok = unsupported("del of a name", n2.loc); },
                 [&](const Tuple& n2)     { ok = unsupported("del of a tuple target", n2.loc); },
@@ -514,6 +532,11 @@ private:
     }
     // Release and forget: a value released twice is a double free, so
     // ownership is dropped from the live set at the same moment.
+    // Ownership transferred elsewhere: leave the live set with no decref.
+    void forget(const ir::Value& v) {
+        for (std::size_t i = 0; i < owned_.size(); ++i)
+            if (owned_[i].id == v.id) { owned_.erase(owned_.begin() + (long)i); break; }
+    }
     void release(const ir::Value& v, const SourceLoc& loc) {
         emit_decref(v, loc);
         for (std::size_t i = 0; i < owned_.size(); ++i)
@@ -532,8 +555,8 @@ private:
             [&](const UnaryOp& n)       { *ok = unsupported("unary operators", n.loc); },
             [&](const Lambda& n)        { *ok = unsupported("lambda", n.loc); },
             [&](const IfExp& n)         { *ok = unsupported("conditional expressions", n.loc); },
-            [&](const Dict& n)          { *ok = unsupported("dict literals", n.loc); },
-            [&](const Set& n)           { *ok = unsupported("set literals", n.loc); },
+            [&](const Dict& n)          { out = lower_dict(n, ok); },
+            [&](const Set& n)           { out = lower_set(n, ok); },
             [&](const ListComp& n)      { *ok = unsupported("list comprehensions", n.loc); },
             [&](const SetComp& n)       { *ok = unsupported("set comprehensions", n.loc); },
             [&](const DictComp& n)      { *ok = unsupported("dict comprehensions", n.loc); },
@@ -549,8 +572,8 @@ private:
             [&](const Attribute& n)     { out = lower_attribute(n, ok); },
             [&](const Subscript& n)     { out = lower_subscript(n, ok); },
             [&](const Starred& n)       { *ok = unsupported("star-unpacking", n.loc); },
-            [&](const List& n)          { *ok = unsupported("list literals", n.loc); },
-            [&](const Tuple& n)         { *ok = unsupported("tuple literals", n.loc); },
+            [&](const List& n)          { out = lower_sequence(n.elts, "PyList", n.loc, ok); },
+            [&](const Tuple& n)         { out = lower_sequence(n.elts, "PyTuple", n.loc, ok); },
             [&](const Slice& n)         { out = lower_slice(n, ok); },
         }, e.v);
         return out;
@@ -626,7 +649,7 @@ private:
         ir::Value obj = lower_expr(*n.value, ok);
         if (!*ok) return {};
         ir::Value name = const_str(n.attr, n.loc);
-        ir::Value out = call_capi("PyObject_GetAttr", {obj, name}, n.loc, ok);
+        ir::Value out = call_capi("PyObject_GetAttr", {obj, name}, n.loc, ok, {obj, name});
         if (*ok) mark_owned(out);
         return out;
     }
@@ -636,7 +659,7 @@ private:
         if (!*ok) return {};
         ir::Value key = lower_expr(*n.slice, ok);
         if (!*ok) return {};
-        ir::Value out = call_capi("PyObject_GetItem", {obj, key}, n.loc, ok);
+        ir::Value out = call_capi("PyObject_GetItem", {obj, key}, n.loc, ok, {obj, key});
         if (*ok) mark_owned(out);
         return out;
     }
@@ -655,9 +678,80 @@ private:
         ir::Value lo = part(n.lower);   if (!*ok) return {};
         ir::Value hi = part(n.upper);   if (!*ok) return {};
         ir::Value st = part(n.step);    if (!*ok) return {};
-        ir::Value out = call_capi("PySlice_New", {lo, hi, st}, n.loc, ok);
+        ir::Value out = call_capi("PySlice_New", {lo, hi, st}, n.loc, ok, {lo, hi, st});
         if (*ok) mark_owned(out);
         return out;
+    }
+
+    // List and tuple share a shape: allocate, then SetItem each slot.
+    //
+    // PyList_SetItem and PyTuple_SetItem both STEAL the item reference, which
+    // §4's table records -- so call_capi does NOT emit a decref for the
+    // element afterwards. Emitting one would be a double free, and it is the
+    // exact entry my curated steal list got wrong the first time.
+    ir::Value lower_sequence(const std::vector<expr>& elts, const char* prefix,
+                             const SourceLoc& loc, bool* ok) {
+        for (const expr& e : elts)
+            if (std::holds_alternative<Starred>(e.v)) {
+                *ok = unsupported("star-unpacking in a literal", loc);
+                return {};
+            }
+        std::string mk = std::string(prefix) + "_New";
+        std::string set = std::string(prefix) + "_SetItem";
+        ir::Value seq = call_capi_imm(mk.c_str(), {}, (std::int64_t)elts.size(), -1, loc, ok);
+        if (!*ok) return {};
+        mark_owned(seq);
+        for (std::size_t i = 0; i < elts.size(); ++i) {
+            ir::Value v = lower_expr(elts[i], ok);
+            if (!*ok) return {};
+            // index is C parameter 1; item is parameter 2 and IS stolen.
+            call_capi_imm(set.c_str(), {seq, v}, (std::int64_t)i, 1, loc, ok);
+            if (!*ok) return {};
+        }
+        return seq;
+    }
+
+    ir::Value lower_set(const Set& n, bool* ok) {
+        for (const expr& e : n.elts)
+            if (std::holds_alternative<Starred>(e.v)) {
+                *ok = unsupported("star-unpacking in a set literal", n.loc);
+                return {};
+            }
+        ir::Value s2 = call_capi("PySet_New", {}, n.loc, ok);
+        if (!*ok) return {};
+        mark_owned(s2);
+        for (const expr& e : n.elts) {
+            ir::Value v = lower_expr(e, ok);
+            if (!*ok) return {};
+            // PySet_Add does NOT steal, so the element reference is ours to
+            // release -- which call_capi does, from the same table.
+            call_capi("PySet_Add", {s2, v}, n.loc, ok, {v});
+            if (!*ok) return {};
+        }
+        return s2;
+    }
+
+    ir::Value lower_dict(const Dict& n, bool* ok) {
+        // A null key marks `**mapping` unpacking (INTERFACES §2.3). It needs
+        // PyDict_Update, not SetItem, so it is refused rather than mis-lowered.
+        for (const auto& k : n.keys)
+            if (!k || !*k) { *ok = unsupported("** unpacking in a dict literal", n.loc); return {}; }
+        if (n.keys.size() != n.values.size()) {
+            *ok = err("dict literal has mismatched keys and values", "Dict", n.loc);
+            return {};
+        }
+        ir::Value d = call_capi("PyDict_New", {}, n.loc, ok);
+        if (!*ok) return {};
+        mark_owned(d);
+        for (std::size_t i = 0; i < n.keys.size(); ++i) {
+            ir::Value k = lower_expr(**n.keys[i], ok);
+            if (!*ok) return {};
+            ir::Value v = lower_expr(n.values[i], ok);
+            if (!*ok) return {};
+            call_capi("PyDict_SetItem", {d, k, v}, n.loc, ok, {k, v});
+            if (!*ok) return {};
+        }
+        return d;
     }
 
     ir::Value const_str(const std::string& text, const SourceLoc& loc) {
@@ -688,7 +782,7 @@ private:
             [&](const MatMult&)  { sym = "PyNumber_MatrixMultiply"; },
         }, b.op.v);
         if (!sym) { *ok = unsupported("this binary operator", b.loc); return {}; }
-        ir::Value out = call_capi(sym, {l, r}, b.loc, ok);
+        ir::Value out = call_capi(sym, {l, r}, b.loc, ok, {l, r});
         if (*ok) mark_owned(out);
         return out;
     }

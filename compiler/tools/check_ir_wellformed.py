@@ -17,6 +17,9 @@ from __future__ import annotations
 import argparse, re, subprocess, sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import selfcheck as sc
+
 GRN, RED, DIM, BOLD, RST = "\033[32m", "\033[31m", "\033[90m", "\033[1m", "\033[0m"
 TERM = re.compile(r"^    (br|condbr|ret|ret\.err)\b")
 BLOCK = re.compile(r"^  (\S+):$")
@@ -76,20 +79,39 @@ def main() -> int:
     ap.add_argument("files", nargs="+", type=Path)
     args = ap.parse_args()
 
+    # Assume the instrument is broken until it shows it can produce both
+    # answers. Each probe below is a defect this checker claims to catch.
+    sc.require_detects("two terminators", check,
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n"
+        "    decref %1\n    br -> bb1\n    br -> bb2\n",
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n"
+        "    decref %1\n    ret\n")
+    sc.require_detects("leaked owned value", check,
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n    ret\n",
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n    ret %1\n")
+    sc.require_detects("use before definition", check,
+        "; m\nfunc f()\n  entry:\n    %2 = call.capi \"PyNumber_Add\" %9 %9  ; owned\n"
+        "    decref %2\n    ret\n",
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n    ret %1\n")
+
     ok = bad = unsup = 0
+    outcomes = []
     for f in args.files:
         e = subprocess.run([args.python, "-m", "pyc_parse", str(f.resolve())],
                            cwd=args.parser_cwd, capture_output=True, text=True)
         if e.returncode:
-            print(f"  {f.name:10s} {DIM}parse failed{RST}"); bad += 1; continue
+            print(f"  {f.name:10s} {DIM}parse failed{RST}"); bad += 1
+            outcomes.append("parse"); continue
         r = subprocess.run([args.lower, "-"], input=e.stdout,
                            capture_output=True, text=True)
         if r.returncode:
             unsup += 1
+            outcomes.append("unsupported")
             print(f"  {f.name:10s} {DIM}unsupported: "
                   f"{r.stderr.strip().splitlines()[0][:56] if r.stderr.strip() else '?'}{RST}")
             continue
         probs = check(r.stdout)
+        outcomes.append("malformed" if probs else "ok")
         if probs:
             bad += 1
             print(f"  {f.name:10s} {RED}MALFORMED{RST}")
@@ -98,6 +120,7 @@ def main() -> int:
         else:
             ok += 1
             print(f"  {f.name:10s} {GRN}ok{RST}")
+    sc.reject_implausible_uniformity(outcomes, what="files")
     print(f"\n  well-formed {ok}   malformed {bad}   unsupported {unsup}")
     return 1 if bad else 0
 

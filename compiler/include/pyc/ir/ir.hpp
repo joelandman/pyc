@@ -79,6 +79,12 @@ struct Instr {
     // MUST have somewhere to go when it does, so codegen can always emit the
     // check. Absent here means "provably cannot fail".
     std::optional<std::uint32_t> on_error;
+
+    // An integer operand that is NOT a Python object: a container size, a
+    // slot index. Kept separate from args so codegen never has to guess which
+    // operands are PyObject* and which are machine integers. Last in the
+    // struct so existing aggregate initialisers keep their meaning.
+    std::int64_t imm = 0;
 };
 
 struct Block {
