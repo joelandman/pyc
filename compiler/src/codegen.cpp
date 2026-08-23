@@ -49,6 +49,13 @@ private:
     std::map<std::string, std::string> strs_;   // text -> global name
     std::set<std::string> decls_;
     int tmp_ = 0;
+    // An IR block does not map to one LLVM block: every may-raise call emits a
+    // null check, which ends the current LLVM block and starts a `cont` label.
+    // A phi's predecessor is therefore the LAST label an IR block emitted, not
+    // "bb<index>". LLVM's verifier caught this as "PHI node entries do not
+    // match predecessors" -- exactly the check that exists to catch it.
+    std::map<std::size_t, std::string> tail_label_;
+    std::size_t cur_block_ = 0;
 
     std::string cstr(const std::string& text) {
         auto it = strs_.find(text);
@@ -63,7 +70,11 @@ private:
     static std::string fname(const ir::Function& f) {
         return f.name == "__main__" ? "@__pyc_main" : "@pyf_" + f.name;
     }
-    static std::string v(const ir::Value& x) { return "%v" + std::to_string(x.id); }
+    // Value id 0 is the null value: it prints as an LLVM null pointer, which
+    // is how a nullable C-API argument such as PySet_New(NULL) is passed.
+    static std::string v(const ir::Value& x) {
+        return x.id ? ("%v" + std::to_string(x.id)) : std::string("null");
+    }
 
     void emit_function(const ir::Function& f) {
         bool is_main = (f.name == "__main__");
@@ -73,6 +84,8 @@ private:
            << "(ptr %locals) {\n";
         for (std::size_t b = 0; b < f.blocks.size(); ++b) {
             o_ << "bb" << b << ":\n";
+            cur_block_ = b;
+            tail_label_[b] = "bb" + std::to_string(b);
             emit_block(f, f.blocks[b], b, is_main);
         }
         o_ << "}\n\n";
@@ -103,6 +116,7 @@ private:
         o_ << "  br i1 " << c << ", label %bb" << *in.on_error
            << ", label %" << cont << "\n";
         o_ << cont << ":\n";
+        tail_label_[cur_block_] = cont;   // this is now the block's exit label
     }
 
     void emit_instr(const ir::Function& f, const ir::Instr& in, bool is_main) {
@@ -195,6 +209,17 @@ private:
                 std::string c = fresh();
                 o_ << "  " << c << " = icmp eq i32 " << v(in.args[0]) << ", 0\n";
                 o_ << "  " << v(*in.result) << " = zext i1 " << c << " to i32\n";
+                break;
+            }
+            case Op::Phi: {
+                o_ << "  " << v(*in.result) << " = phi ptr ";
+                for (std::size_t i = 0; i < in.args.size(); ++i) {
+                    auto it = tail_label_.find(in.phi_blocks[i]);
+                    std::string lbl = (it != tail_label_.end()) ? it->second
+                                    : ("bb" + std::to_string(in.phi_blocks[i]));
+                    o_ << (i ? ", " : "") << "[ " << v(in.args[i]) << ", %" << lbl << " ]";
+                }
+                o_ << "\n";
                 break;
             }
             case Op::MakeFunction: {

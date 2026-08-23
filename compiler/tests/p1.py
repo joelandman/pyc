@@ -1,0 +1,5 @@
+print(0 or "fallback")
+print(1 and 2)
+print(0 and 99)
+print("x" if 1 else "y")
+print("x" if 0 else "y")

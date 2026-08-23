@@ -63,6 +63,11 @@ enum class Op {
     Is,
     // Logical negation of a machine int, for `not in` and `is not`.
     IntNot,
+    // SSA merge. `args` are the incoming values and `phi_blocks` the matching
+    // predecessor block indices, positionally. Real phis rather than allocas
+    // because §3 specifies typed SSA and lowering knows its predecessors
+    // exactly -- it created them.
+    Phi,
     // Build a callable from a lowered function and bind it in the enclosing
     // scope. Codegen turns this into a PyCFunction over the emitted C entry.
     MakeFunction,
@@ -90,6 +95,9 @@ struct Instr {
     // slot index. Kept separate from args so codegen never has to guess which
     // operands are PyObject* and which are machine integers. Last in the
     // struct so existing aggregate initialisers keep their meaning.
+    // Phi only: predecessor block per incoming value, positional with args.
+    std::vector<std::uint32_t> phi_blocks;
+
     std::int64_t imm = 0;
     // Whether `imm` is meaningful. Without this, an immediate of 0 -- Py_LT,
     // or index 0 of a container -- prints as absent, so `a < b` and a call

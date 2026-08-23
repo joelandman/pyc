@@ -563,11 +563,11 @@ private:
             [&](const Name& n)     { out = lower_name(n, ok); },
             [&](const Call& c)     { out = lower_call(c, ok); },
             [&](const BinOp& b)    { out = lower_binop(b, ok); },
-            [&](const BoolOp& n)        { *ok = unsupported("boolean operators", n.loc); },
+            [&](const BoolOp& n)        { out = lower_boolop(n, ok); },
             [&](const NamedExpr& n)     { *ok = unsupported("walrus", n.loc); },
             [&](const UnaryOp& n)       { out = lower_unaryop(n, ok); },
             [&](const Lambda& n)        { *ok = unsupported("lambda", n.loc); },
-            [&](const IfExp& n)         { *ok = unsupported("conditional expressions", n.loc); },
+            [&](const IfExp& n)         { out = lower_ifexp(n, ok); },
             [&](const Dict& n)          { out = lower_dict(n, ok); },
             [&](const Set& n)           { out = lower_set(n, ok); },
             [&](const ListComp& n)      { *ok = unsupported("list comprehensions", n.loc); },
@@ -730,7 +730,9 @@ private:
                 *ok = unsupported("star-unpacking in a set literal", n.loc);
                 return {};
             }
-        ir::Value s2 = call_capi("PySet_New", {}, n.loc, ok);
+        // PySet_New takes a nullable iterable; NULL means empty. The arity
+        // check rejects the zero-argument form, which is how this was found.
+        ir::Value s2 = call_capi("PySet_New", {ir::Value{}}, n.loc, ok);
         if (!*ok) return {};
         mark_owned(s2);
         for (const expr& e : n.elts) {
@@ -781,16 +783,89 @@ private:
         return out;
     }
 
+    ir::Value emit_phi(const std::vector<ir::Value>& vals,
+                       const std::vector<std::uint32_t>& blocks,
+                       const SourceLoc& loc) {
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        ir::Instr in{ir::Op::Phi, vals, out, Ownership::Owned, "",
+                     0, 0, loc, std::nullopt};
+        in.phi_blocks = blocks;
+        // A phi must lead its block, so it is inserted rather than appended.
+        cur()->blocks[blk_].instrs.insert(cur()->blocks[blk_].instrs.begin(),
+                                          std::move(in));
+        mark_owned(out);
+        return out;
+    }
+
+    // `a and b` yields a if a is falsy, else b -- the VALUE, not a bool, and
+    // b is not evaluated when a decides the answer. Both are observable, so
+    // neither can be approximated with PyObject_IsTrue on the result.
+    ir::Value lower_boolop(const BoolOp& n, bool* ok) {
+        if (n.values.size() < 2) { *ok = err("degenerate boolean operator", "BoolOp", n.loc); return {}; }
+        bool is_and = std::holds_alternative<And>(n.op.v);
+
+        ir::Value acc = lower_expr(n.values[0], ok);
+        if (!*ok) return {};
+        for (std::size_t i = 1; i < n.values.size(); ++i) {
+            ir::Value t = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+            emit(ir::Instr{ir::Op::IsTrue, {acc}, t, Ownership::NotAnObject,
+                           "PyObject_IsTrue", 0, 0, n.loc, make_landing_pad(n.loc)});
+            std::uint32_t rhs_b = new_block(is_and ? "and.rhs" : "or.rhs");
+            std::uint32_t join  = new_block(is_and ? "and.join" : "or.join");
+            std::uint32_t pred  = (std::uint32_t)blk_;
+            // and: evaluate rhs when truthy. or: evaluate rhs when falsy.
+            emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
+                           "", is_and ? rhs_b : join, is_and ? join : rhs_b,
+                           n.loc, std::nullopt});
+            set_block(rhs_b);
+            // The short-circuit value is dead on this path; the rhs value
+            // becomes the result. Release exactly one of them per path.
+            if (owns(acc)) emit_decref(acc, n.loc);
+            ir::Value rhs = lower_expr(n.values[i], ok);
+            if (!*ok) return {};
+            std::uint32_t rhs_end = (std::uint32_t)blk_;
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", join, 0, n.loc, std::nullopt});
+            set_block(join);
+            forget(acc); forget(rhs);
+            acc = emit_phi({acc, rhs}, {pred, rhs_end}, n.loc);
+        }
+        return acc;
+    }
+
+    ir::Value lower_ifexp(const IfExp& n, bool* ok) {
+        ir::Value t = lower_predicate(*n.test, ok);
+        if (!*ok) return {};
+        std::uint32_t tb = new_block("ifexp.then");
+        std::uint32_t fb = new_block("ifexp.else");
+        std::uint32_t jb = new_block("ifexp.join");
+        emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
+                       "", tb, fb, n.loc, std::nullopt});
+        set_block(tb);
+        ir::Value a = lower_expr(*n.body, ok);   if (!*ok) return {};
+        std::uint32_t ae = (std::uint32_t)blk_;
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", jb, 0, n.loc, std::nullopt});
+        set_block(fb);
+        ir::Value b = lower_expr(*n.orelse, ok); if (!*ok) return {};
+        std::uint32_t be = (std::uint32_t)blk_;
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", jb, 0, n.loc, std::nullopt});
+        set_block(jb);
+        forget(a); forget(b);
+        return emit_phi({a, b}, {ae, be}, n.loc);
+    }
+
     ir::Value lower_compare(const Compare& n, bool* ok) {
-        // `a < b < c` means `a < b and b < c` with b evaluated once, so it
-        // needs short-circuit control flow and a value that outlives a branch
-        // -- i.e. phi nodes, which the IR does not have yet. Refused loudly
-        // rather than lowered as `(a < b) < c`, which is a different program.
-        // Measured on the corpus: 181 single comparisons, 4 chained.
-        if (n.ops.size() != 1 || n.comparators.size() != 1) {
-            *ok = unsupported("chained comparisons", n.loc);
+        if (n.ops.size() != n.comparators.size() || n.ops.empty()) {
+            *ok = err("malformed comparison", "Compare", n.loc);
             return {};
         }
+        // `a < b < c` is `a < b and b < c` with b evaluated ONCE and c not
+        // evaluated at all when the first test fails. Both are observable, so
+        // it gets the same short-circuit shape as `and` -- never
+        // `(a < b) < c`, which is a different program.
+        if (n.ops.size() > 1) return lower_chained_compare(n, ok);
         ir::Value l = lower_expr(*n.left, ok);        if (!*ok) return {};
         ir::Value r = lower_expr(n.comparators[0], ok); if (!*ok) return {};
 
@@ -809,6 +884,94 @@ private:
             [&](const In&)    { out = contains(r, l, false, n.loc, ok); },
             [&](const NotIn&) { out = contains(r, l, true,  n.loc, ok); },
         }, n.ops[0].v);
+        return out;
+    }
+
+    ir::Value compare_one(const ir::Value& l, const ir::Value& r,
+                          const cmpop& op, const SourceLoc& loc, bool* ok) {
+        ir::Value out;
+        std::visit(ov{
+            [&](const Lt&)    { out = rich(l, r, 0, loc, ok); },
+            [&](const LtE&)   { out = rich(l, r, 1, loc, ok); },
+            [&](const Eq&)    { out = rich(l, r, 2, loc, ok); },
+            [&](const NotEq&) { out = rich(l, r, 3, loc, ok); },
+            [&](const Gt&)    { out = rich(l, r, 4, loc, ok); },
+            [&](const GtE&)   { out = rich(l, r, 5, loc, ok); },
+            [&](const Is&)    { out = identity(l, r, false, loc, ok); },
+            [&](const IsNot&) { out = identity(l, r, true,  loc, ok); },
+            [&](const In&)    { out = contains(r, l, false, loc, ok); },
+            [&](const NotIn&) { out = contains(r, l, true,  loc, ok); },
+        }, op.v);
+        return out;
+    }
+
+    // Chained comparisons, built NESTED rather than as a loop.
+    //
+    // `a < b < c` is `a < b and b < c` with b evaluated once and c not
+    // evaluated when the first test fails. The obvious loop shape is wrong:
+    // the comparand is defined inside the branch that evaluates it, so
+    // releasing it after the join reaches a path where it was never defined.
+    // LLVM's verifier says so as "Instruction does not dominate all uses".
+    //
+    // Nesting fixes it structurally -- every release sits in a block dominated
+    // by the definition, and the short-circuit path gets its own block so it
+    // can release the comparand it is abandoning.
+    ir::Value lower_chained_compare(const Compare& n, bool* ok) {
+        ir::Value left = lower_expr(*n.left, ok);
+        if (!*ok) return {};
+        ir::Value r = chain_step(n, 0, left, ok);
+        if (*ok && owns(left)) release(left, n.loc);
+        return r;
+    }
+
+    ir::Value chain_step(const Compare& n, std::size_t i, const ir::Value& left,
+                         bool* ok) {
+        ir::Value rhs = lower_expr(n.comparators[i], ok);
+        if (!*ok) return {};
+        ir::Value r = compare_one_keep(left, rhs, n.ops[i], n.loc, ok);
+        if (!*ok) return {};
+        if (i + 1 == n.ops.size()) {
+            if (owns(rhs)) release(rhs, n.loc);
+            return r;
+        }
+        ir::Value t = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        emit(ir::Instr{ir::Op::IsTrue, {r}, t, Ownership::NotAnObject,
+                       "PyObject_IsTrue", 0, 0, n.loc, make_landing_pad(n.loc)});
+        std::uint32_t next_b  = new_block("cmp.next");
+        std::uint32_t short_b = new_block("cmp.short");
+        std::uint32_t join    = new_block("cmp.join");
+        emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
+                       "", next_b, short_b, n.loc, std::nullopt});
+
+        // Short-circuit: the result is r, and the comparand is abandoned here.
+        set_block(short_b);
+        if (owns(rhs)) emit_decref(rhs, n.loc);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", join, 0, n.loc, std::nullopt});
+
+        set_block(next_b);
+        if (owns(r)) emit_decref(r, n.loc);
+        ir::Value inner = chain_step(n, i + 1, rhs, ok);
+        if (!*ok) return {};
+        if (owns(rhs)) release(rhs, n.loc);
+        std::uint32_t inner_end = (std::uint32_t)blk_;
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", join, 0, n.loc, std::nullopt});
+
+        set_block(join);
+        forget(r); forget(inner);
+        return emit_phi({r, inner}, {short_b, inner_end}, n.loc);
+    }
+
+    // Like compare_one but does not consume its operands.
+    ir::Value compare_one_keep(const ir::Value& l, const ir::Value& r,
+                               const cmpop& op, const SourceLoc& loc, bool* ok) {
+        bool lo = owns(l), ro = owns(r);
+        if (lo) forget(l);
+        if (ro) forget(r);
+        ir::Value out = compare_one(l, r, op, loc, ok);
+        if (lo) mark_owned(l);
+        if (ro) mark_owned(r);
         return out;
     }
 
