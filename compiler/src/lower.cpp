@@ -214,6 +214,16 @@ private:
         for (auto it = owned_.rbegin(); it != owned_.rend(); ++it)
             emit_decref(*it, loc);
         if (try_stack_.empty()) {
+            // Nothing catches here, so the exception LEAVES this function:
+            // record where. Without this a compiled binary printed only the
+            // exception type and message, with no file, line or function at
+            // all -- the thing you most need from a crash in a deployed
+            // program. Only on paths that actually propagate, and the line is
+            // this pad's own, so it names the failing operation.
+            emit(ir::Instr{ir::Op::AddTraceback, {}, std::nullopt,
+                           Ownership::NotAnObject,
+                           fn_idx_ == 0 ? "<module>" : cur()->name,
+                           0, 0, loc, std::nullopt});
             // Nothing catches here: release everything the frame holds and
             // propagate on the C-API convention.
             for (auto it = frame_owned_.rbegin(); it != frame_owned_.rend(); ++it)
@@ -1511,6 +1521,23 @@ private:
         }
     };
     std::vector<FinallyCtx*> fin_stack_;
+    // Except blocks currently open, holding the previous handled exception.
+    // CPython pops its exc_info stack as a frame unwinds; pyc must do the same
+    // on EVERY way out of a handler. Leaving one on the stack made the handled
+    // exception the __context__ of the next unrelated one: `return` from an
+    // except block, then a later raise, printed "During handling of the above
+    // exception" for an exception that had been fully handled.
+    std::vector<ir::Value> handled_stack_;
+
+    // Pop every open handler, innermost first. Emitted before any exit that
+    // leaves the handler without falling off its end.
+    void pop_open_handlers(const SourceLoc& loc) {
+        for (auto it = handled_stack_.rbegin(); it != handled_stack_.rend(); ++it) {
+            bool ok = true;
+            call_capi("pyc_rt_pop_handled", {*it}, loc, &ok);
+            (void)ok;
+        }
+    }
     // Loop depth when the innermost finally region was entered. A break inside
     // a try/finally must run the cleanup on its way out, which the dispatch
     // does not yet carry; a break in a loop STARTED inside the try is a plain
@@ -1705,6 +1732,7 @@ private:
     // does: hand the pending jump to the nearest cleanup instead of branching
     // straight out, so it still runs.
     bool finish_jump(bool is_break, const SourceLoc& loc) {
+        pop_open_handlers(loc);
         if (!fin_stack_.empty() && loops_.size() <= fin_loop_depth_) {
             FinallyCtx* f = fin_stack_.back();
             f->any_jump = true;
@@ -1732,6 +1760,7 @@ private:
     // to the nearest pending cleanup rather than returned directly, so every
     // cleanup between here and the function boundary still runs.
     bool finish_return(const ir::Value& v, const SourceLoc& loc) {
+        pop_open_handlers(loc);
         // The returned reference is handed on, so it must NOT be released --
         // but every other live temporary must be, or an early return leaks
         // exactly what a landing pad would have freed.
@@ -1802,7 +1831,13 @@ private:
             }
             set_block(body_b);
             if (eh.name) store_name(*eh.name, exc, n.loc);   // INCREFs; exc stays ours
-            for (const stmt& s2 : eh.body) if (!lower_stmt(s2)) return false;
+            // Open for the duration of the handler body, so a return, break or
+            // continue out of it pops before leaving.
+            handled_stack_.push_back(prev_handled);
+            for (const stmt& s2 : eh.body)
+                if (!lower_stmt(s2)) { handled_stack_.pop_back(); return false; }
+            handled_stack_.pop_back();
+            if (terminated()) { set_block(next_b); continue; }
             call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
             if (!ok) return false;
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,

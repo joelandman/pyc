@@ -37,6 +37,7 @@ const char* op_name(Op op) {
         case Op::IntConst:    return "int.const";
         case Op::ConstNull:   return "const.null";
         case Op::DelGlobal:   return "del.global";
+        case Op::AddTraceback: return "add.traceback";
         case Op::MakeGenexp:  return "make.genexp";
         case Op::CellNew:     return "cell.new";
         case Op::CellGet:     return "cell.get";

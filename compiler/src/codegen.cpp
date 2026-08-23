@@ -175,6 +175,18 @@ private:
                    << cstr(in.text) << ", i64 " << in.text.size() << ")\n";
                 check(in, v(*in.result), true);
                 break;
+            case Op::AddTraceback: {
+                need("declare void @pyc_rt_add_traceback(ptr, ptr, ptr, i32)");
+                // One code object per site, built once and reused: a raise
+                // inside a loop must not rebuild it.
+                std::string cache = "@.tbcache" + std::to_string(tb_n_++);
+                genexp_caches_.push_back(cache + " = internal global ptr null");
+                o_ << "  call void @pyc_rt_add_traceback(ptr " << cache
+                   << ", ptr " << cstr(m_.source_file)
+                   << ", ptr " << cstr(in.text)
+                   << ", i32 " << in.loc.line << ")\n";
+                break;
+            }
             case Op::MakeGenexp: {
                 need("declare ptr @pyc_rt_make_genexp(ptr, i64, ptr, ptr, ptr)");
                 // One cache slot per call site: the code object is unmarshalled
@@ -531,6 +543,7 @@ private:
     std::vector<std::string> argname_defs_;
     std::vector<std::string> genexp_caches_;
     int genexp_n_ = 0;
+    int tb_n_ = 0;
 
     void emit_constants() {
         for (const std::string& d : genexp_caches_) o_ << d << "\n";

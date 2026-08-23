@@ -1,6 +1,7 @@
 #include "pyc/rt/support.hpp"
 
-#include <marshal.h>   // PyMarshal_ReadObjectFromString
+#include <marshal.h>      // PyMarshal_ReadObjectFromString
+#include <frameobject.h>   // PyFrame_New, for synthesised tracebacks
 
 #include <cstdlib>
 #include <cstddef>
@@ -586,6 +587,49 @@ extern "C" PyObject* pyc_rt_make_genexp(const char* blob, Py_ssize_t len,
     PyObject* gen = PyObject_CallOneArg(fn, iterator);
     Py_DECREF(fn);
     return gen;
+}
+
+// Append one traceback entry for a compiled function.
+//
+// pyc compiles Python functions to native functions, so there are no Python
+// frames and a propagating exception carried no location at all: an uncaught
+// error in a deployed binary printed its type and message and nothing else.
+// A synthetic code object plus a frame over it gives PyTraceBack_Here
+// something to record, which is the technique Cython uses for the same reason.
+//
+// Frames are appended INNERMOST FIRST, as the exception unwinds, which is the
+// order PyTraceBack_Here expects.
+//
+// The caret markers CPython draws under the failing expression are NOT
+// reproduced: they come from co_positions() indexed by an instruction offset,
+// and a frame with no bytecode has no meaningful offset. File, line, function
+// and the source text are exact; the carets are not attempted rather than
+// approximated.
+//
+// Cost is paid only on the error path. The code object is cached per call
+// site so a raise inside a loop does not rebuild it.
+extern "C" void pyc_rt_add_traceback(PyObject** cache, const char* file,
+                                     const char* func, int line) {
+    // Must not disturb the exception being propagated: everything here runs
+    // with an error already set, so any failure is swallowed and the original
+    // error left exactly as it was.
+    PyObject *t = nullptr, *v = nullptr, *tb = nullptr;
+    PyErr_Fetch(&t, &v, &tb);
+
+    if (!*cache) {
+        *cache = (PyObject*)PyCode_NewEmpty(file, func, line);
+        if (!*cache) { PyErr_Clear(); PyErr_Restore(t, v, tb); return; }
+    }
+    PyObject* globals = PyDict_New();
+    if (!globals) { PyErr_Clear(); PyErr_Restore(t, v, tb); return; }
+    PyFrameObject* frame = PyFrame_New(PyThreadState_Get(),
+                                       (PyCodeObject*)*cache, globals, nullptr);
+    Py_DECREF(globals);
+    if (!frame) { PyErr_Clear(); PyErr_Restore(t, v, tb); return; }
+
+    PyErr_Restore(t, v, tb);
+    PyTraceBack_Here(frame);
+    Py_DECREF(frame);
 }
 
 extern "C" int pyc_rt_super_fail(int has_args) {

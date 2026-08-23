@@ -116,6 +116,11 @@ PyObject* pyc_rt_load_classname(PyObject* ns, const char* name);
 // Unresolvable zero-argument super(); raises the RuntimeError CPython raises.
 int pyc_rt_super_fail(int has_args);
 
+// Append one traceback entry (file/function/line) to the exception being
+// propagated. Innermost frame first. See pyc_rt_add_traceback in support.cpp.
+void pyc_rt_add_traceback(PyObject** cache, const char* file,
+                          const char* func, int line);
+
 // A generator expression: marshalled code object + closure cells + the outer
 // iterator, run by the linked interpreter. See rebuild/GENERATORS.md.
 PyObject* pyc_rt_make_genexp(const char* blob, Py_ssize_t len, PyObject** cache,

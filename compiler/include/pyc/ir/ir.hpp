@@ -92,6 +92,10 @@ enum class Op {
     // of a dotted path), 1 imports it and yields the TOP-LEVEL package, which
     // is what plain `import a.b` binds.
     ImportModule,
+    // Append one traceback entry as an exception leaves this function.
+    // `text` is the function name, `loc` supplies the line, and the module
+    // supplies the file. Emitted only on paths that actually propagate.
+    AddTraceback,
     // Build a generator expression (rebuild/GENERATORS.md). `text` is the
     // marshalled code object CPython produced at build time; args are the
     // closure tuple of cells and the eagerly-evaluated outer ITERATOR.

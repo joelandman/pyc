@@ -126,6 +126,37 @@ class Result:
         return "\n".join(out)
 
 
+def _child_env() -> dict[str, str]:
+    """The environment BOTH sides run under.
+
+    The oracle used to get a pinned environment while the compiled binary
+    inherited whatever the shell had. That is wrong twice over:
+
+    * The binary embeds CPython, so PYTHONHASHSEED affects its set and dict
+      iteration order too. Pinning it for only one side leaves a real source of
+      divergence in the comparison itself.
+    * Traceback colouring is decided by the environment (FORCE_COLOR,
+      NO_COLOR, PYTHON_COLORS, whether stderr is a tty). With FORCE_COLOR set
+      in a developer's shell the oracle emitted ANSI escapes and the subject
+      did not, so a stderr verdict depended on the terminal the harness was
+      invoked from and did not reproduce in CI.
+
+    Pinning the environment is not normalising the output: nothing about the
+    programs' behaviour is rewritten. It fixes what they are run UNDER, so the
+    comparison measures the program rather than the terminal.
+    """
+    env = dict(os.environ)
+    # Hash randomization makes set/dict-of-str iteration order vary between
+    # runs. Pinning it does not paper over a divergence -- pyc is compared
+    # against whatever order CPython then produces.
+    env["PYTHONHASHSEED"] = "0"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHON_COLORS"] = "0"
+    env.pop("FORCE_COLOR", None)
+    env["NO_COLOR"] = "1"
+    return env
+
+
 def _run(cmd: list[str], *, cwd: Path, stdin: str, timeout: float,
          env: dict[str, str] | None = None) -> Execution:
     try:
@@ -176,15 +207,10 @@ class DifferentialRunner:
     # -- oracle -------------------------------------------------------------
 
     def _run_oracle(self, case: Case, cwd: Path) -> Execution:
-        env = dict(os.environ)
-        # Hash randomization makes set/dict-of-str iteration order vary between
-        # runs. Pinning it does not paper over a divergence -- pyc is compared
-        # against whatever order CPython then produces.
-        env["PYTHONHASHSEED"] = "0"
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
         return _run(
             [str(self.oracle), str(case.path), *case.argv],
-            cwd=cwd, stdin=case.stdin, timeout=self.run_timeout, env=env,
+            cwd=cwd, stdin=case.stdin, timeout=self.run_timeout,
+            env=_child_env(),
         )
 
     def _is_nondeterministic(self, case: Case, cwd: Path,
@@ -238,7 +264,8 @@ class DifferentialRunner:
                               _first_diagnostic(comp))
 
             subject = _run([str(binary), *case.argv], cwd=cwd,
-                           stdin=case.stdin, timeout=self.run_timeout)
+                           stdin=case.stdin, timeout=self.run_timeout,
+                           env=_child_env())
             return self._classify(case, oracle, subject)
 
     def _classify(self, case: Case, oracle: Execution,
