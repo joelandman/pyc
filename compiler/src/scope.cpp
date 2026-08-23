@@ -124,4 +124,128 @@ std::vector<std::string> function_locals(const std::vector<std::string>& params,
     return out;
 }
 
+// Names read anywhere inside NESTED functions/lambdas/comprehensions of this
+// body. Intersected with the enclosing function's locals, this is exactly the
+// set that must live in cells: a variable is only a cell variable because
+// something inner reads it.
+//
+// Deliberately over-approximate -- it collects every Name, ignoring whether an
+// inner scope rebinds it. An extra cell costs an indirection; a missing one
+// silently reads the wrong variable.
+namespace {
+struct NestedReads {
+    std::set<std::string>& out;
+
+    void expr_(const expr& e, bool inside) {
+        std::visit(ov{
+            [&](const Name& n){ if (inside) out.insert(n.id); },
+            [&](const Lambda& n){ expr_(*n.body, true); },
+            [&](const ListComp& n){ comp(n.generators, &*n.elt, nullptr); },
+            [&](const SetComp& n){ comp(n.generators, &*n.elt, nullptr); },
+            [&](const DictComp& n){ comp(n.generators, &*n.value, &*n.key); },
+            [&](const GeneratorExp& n){ comp(n.generators, &*n.elt, nullptr); },
+            [&](const BinOp& n){ expr_(*n.left, inside); expr_(*n.right, inside); },
+            [&](const BoolOp& n){ for (const expr& v : n.values) expr_(v, inside); },
+            [&](const UnaryOp& n){ expr_(*n.operand, inside); },
+            [&](const Compare& n){ expr_(*n.left, inside);
+                                   for (const expr& v : n.comparators) expr_(v, inside); },
+            [&](const Call& n){ expr_(*n.func, inside);
+                                for (const expr& v : n.args) expr_(v, inside);
+                                for (const keyword& k : n.keywords) expr_(*k.value, inside); },
+            [&](const Attribute& n){ expr_(*n.value, inside); },
+            [&](const Subscript& n){ expr_(*n.value, inside); expr_(*n.slice, inside); },
+            [&](const IfExp& n){ expr_(*n.test, inside); expr_(*n.body, inside);
+                                 expr_(*n.orelse, inside); },
+            [&](const Tuple& n){ for (const expr& v : n.elts) expr_(v, inside); },
+            [&](const List& n){ for (const expr& v : n.elts) expr_(v, inside); },
+            [&](const Set& n){ for (const expr& v : n.elts) expr_(v, inside); },
+            [&](const Dict& n){ for (const auto& k : n.keys) if (k && *k) expr_(**k, inside);
+                                for (const expr& v : n.values) expr_(v, inside); },
+            [&](const Starred& n){ expr_(*n.value, inside); },
+            [&](const Slice& n){ if (n.lower && *n.lower) expr_(**n.lower, inside);
+                                 if (n.upper && *n.upper) expr_(**n.upper, inside);
+                                 if (n.step && *n.step) expr_(**n.step, inside); },
+            [&](const NamedExpr& n){ expr_(*n.value, inside); },
+            [&](const Await& n){ expr_(*n.value, inside); },
+            [&](const Yield& n){ if (n.value) expr_(**n.value, inside); },
+            [&](const YieldFrom& n){ expr_(*n.value, inside); },
+            [&](const FormattedValue& n){ expr_(*n.value, inside); },
+            [&](const JoinedStr& n){ for (const expr& v : n.values) expr_(v, inside); },
+            [&](const TemplateStr& n){ for (const expr& v : n.values) expr_(v, inside); },
+            [&](const Interpolation& n){ expr_(*n.value, inside); },
+            [&](const Constant&){},
+        }, e.v);
+    }
+
+    void comp(const std::vector<comprehension>& gens, const expr* elt, const expr* key) {
+        if (elt) expr_(*elt, true);
+        if (key) expr_(*key, true);
+        for (const comprehension& g : gens) {
+            expr_(*g.iter, true);
+            for (const expr& c : g.ifs) expr_(c, true);
+        }
+    }
+
+    void stmt_(const stmt& s, bool inside) {
+        std::visit(ov{
+            // Entering a nested function: everything below is "inside".
+            [&](const FunctionDef& n){ for (const stmt& y : n.body) stmt_(y, true);
+                                       for (const expr& d : n.decorator_list) expr_(d, inside); },
+            [&](const AsyncFunctionDef& n){ for (const stmt& y : n.body) stmt_(y, true); },
+            [&](const ClassDef& n){ for (const stmt& y : n.body) stmt_(y, true); },
+            [&](const Expr& n){ expr_(*n.value, inside); },
+            [&](const Return& n){ if (n.value) expr_(**n.value, inside); },
+            [&](const Assign& n){ expr_(*n.value, inside);
+                                  for (const expr& t : n.targets) expr_(t, inside); },
+            [&](const AugAssign& n){ expr_(*n.value, inside); expr_(*n.target, inside); },
+            [&](const AnnAssign& n){ if (n.value) expr_(**n.value, inside); },
+            [&](const If& n){ expr_(*n.test, inside);
+                              for (const stmt& y : n.body) stmt_(y, inside);
+                              for (const stmt& y : n.orelse) stmt_(y, inside); },
+            [&](const While& n){ expr_(*n.test, inside);
+                                 for (const stmt& y : n.body) stmt_(y, inside);
+                                 for (const stmt& y : n.orelse) stmt_(y, inside); },
+            [&](const For& n){ expr_(*n.iter, inside); expr_(*n.target, inside);
+                               for (const stmt& y : n.body) stmt_(y, inside);
+                               for (const stmt& y : n.orelse) stmt_(y, inside); },
+            [&](const AsyncFor& n){ for (const stmt& y : n.body) stmt_(y, inside); },
+            [&](const With& n){ for (const withitem& w : n.items) expr_(*w.context_expr, inside);
+                                for (const stmt& y : n.body) stmt_(y, inside); },
+            [&](const AsyncWith& n){ for (const stmt& y : n.body) stmt_(y, inside); },
+            [&](const Try& n){ for (const stmt& y : n.body) stmt_(y, inside);
+                               for (const stmt& y : n.orelse) stmt_(y, inside);
+                               for (const stmt& y : n.finalbody) stmt_(y, inside);
+                               for (const excepthandler& h : n.handlers)
+                                   for (const stmt& y : std::get<ExceptHandler>(h.v).body)
+                                       stmt_(y, inside); },
+            [&](const TryStar& n){ for (const stmt& y : n.body) stmt_(y, inside); },
+            [&](const Match& n){ expr_(*n.subject, inside);
+                                 for (const match_case& c : n.cases)
+                                     for (const stmt& y : c.body) stmt_(y, inside); },
+            [&](const Raise& n){ if (n.exc) expr_(**n.exc, inside); },
+            [&](const Assert& n){ expr_(*n.test, inside); },
+            [&](const Delete& n){ for (const expr& t : n.targets) expr_(t, inside); },
+            [&](const Import&){}, [&](const ImportFrom&){}, [&](const Global&){},
+            [&](const Nonlocal&){}, [&](const Pass&){}, [&](const Break&){},
+            [&](const Continue&){}, [&](const TypeAlias&){},
+        }, s.v);
+    }
+};
+}  // namespace
+
+std::set<std::string> nested_reads(const std::vector<stmt>& body) {
+    std::set<std::string> out;
+    NestedReads nr{out};
+    for (const stmt& s : body) nr.stmt_(s, false);
+    return out;
+}
+
+// Names a lambda/comprehension body reads, for the same purpose.
+std::set<std::string> nested_reads_expr(const expr& e) {
+    std::set<std::string> out;
+    NestedReads nr{out};
+    nr.expr_(e, true);
+    return out;
+}
+
 }  // namespace pyc

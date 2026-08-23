@@ -36,6 +36,9 @@ const char* op_name(Op op) {
         case Op::ConstComplex: return "const.complex";
         case Op::IntConst:    return "int.const";
         case Op::DelGlobal:   return "del.global";
+        case Op::CellNew:     return "cell.new";
+        case Op::CellGet:     return "cell.get";
+        case Op::CellSet:     return "cell.set";
         case Op::MakeFunction: return "makefunc";
     }
     return "?";
@@ -63,6 +66,14 @@ std::string to_string(const Module& m) {
         if (!f.locals.empty()) {
             o << "  ; locals:";
             for (const std::string& l : f.locals) o << " " << l;
+        }
+        if (!f.cellvars.empty()) {
+            o << "  ; cells:";
+            for (const std::string& l : f.cellvars) o << " " << l;
+        }
+        if (!f.freevars.empty()) {
+            o << "  ; free:";
+            for (const std::string& l : f.freevars) o << " " << l;
         }
         o << "\n";
         for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {

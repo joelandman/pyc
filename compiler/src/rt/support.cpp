@@ -66,11 +66,13 @@ namespace {
 // that surfaced later as an unrelated SystemError.
 struct Bound { PycImpl impl; int nargs; int nlocals; PyMethodDef def;
                char* name; const char* const* argnames;
-               PyObject* defaults; int vararg; int kwarg; };
+               PyObject* defaults; int vararg; int kwarg;
+               PyObject* closure; int nfree; };
 
 void bound_free(PyObject* cap) {
     Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(cap, "pyc.bound"));
-    if (b) { Py_XDECREF(b->defaults); std::free(b->name); delete b; }
+    if (b) { Py_XDECREF(b->defaults); Py_XDECREF(b->closure);
+             std::free(b->name); delete b; }
 }
 
 PyObject* trampoline(PyObject* self, PyObject* args, PyObject* kwargs) {
@@ -101,6 +103,13 @@ PyObject* trampoline(PyObject* self, PyObject* args, PyObject* kwargs) {
     if (b->kwarg >= 0) {
         locals[b->kwarg] = PyDict_New();
         if (!locals[b->kwarg]) goto fail;
+    }
+    // Free variables occupy the LAST nfree slots, holding the cells
+    // themselves so writes through them are visible to the enclosing scope.
+    for (int i = 0; i < b->nfree; ++i) {
+        PyObject* cell = PyTuple_GET_ITEM(b->closure, i);
+        Py_INCREF(cell);
+        locals[b->nlocals - b->nfree + i] = cell;
     }
     // Bind keywords by parameter name, rejecting duplicates and unknowns the
     // way CPython does rather than silently ignoring them.
@@ -172,13 +181,25 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                int nargs, int nlocals,
                                const char* const* argnames,
                                PyObject* defaults,
-                               int vararg_slot, int kwarg_slot) {
+                               int vararg_slot, int kwarg_slot,
+                               PyObject** closure, int nfree) {
     char* owned = strdup(name);
     if (!owned) return PyErr_NoMemory();
     Py_XINCREF(defaults);
+    // The closure is captured as a tuple of CELLS, not values: the whole point
+    // is that the inner function sees later assignments to the outer variable.
+    PyObject* clo = nullptr;
+    if (nfree > 0) {
+        clo = PyTuple_New(nfree);
+        if (!clo) { Py_XDECREF(defaults); std::free(owned); return nullptr; }
+        for (int i = 0; i < nfree; ++i) {
+            Py_INCREF(closure[i]);
+            PyTuple_SET_ITEM(clo, i, closure[i]);
+        }
+    }
     Bound* b = new (std::nothrow) Bound{impl, nargs, nlocals, {}, owned,
                                         argnames, defaults,
-                                        vararg_slot, kwarg_slot};
+                                        vararg_slot, kwarg_slot, clo, nfree};
     if (!b) { Py_XDECREF(defaults); std::free(owned); return PyErr_NoMemory(); }
     b->def = PyMethodDef{b->name,
                      reinterpret_cast<PyCFunction>(
@@ -403,4 +424,12 @@ extern "C" int pyc_rt_del_global(const char* name) {
         return -1;
     }
     return 0;
+}
+
+extern "C" PyObject* pyc_rt_cell_get(PyObject* cell) {
+    PyObject* v = PyCell_Get(cell);
+    if (!v && !PyErr_Occurred())
+        PyErr_SetString(PyExc_NameError,
+                        "free variable referenced before assignment in enclosing scope");
+    return v;
 }

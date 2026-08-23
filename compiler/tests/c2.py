@@ -1,9 +1,8 @@
-class Base:
-    def who(self):
-        return "base"
-class Derived(Base):
-    def who(self):
-        return "derived"
-print(Base().who())
-print(Derived().who())
-print(isinstance(Derived(), Base))
+def shout(f):
+    def inner(name):
+        return f(name).upper()
+    return inner
+@shout
+def greet(n):
+    return "hi " + n
+print(greet("bob"))

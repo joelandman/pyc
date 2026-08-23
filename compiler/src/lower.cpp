@@ -24,6 +24,8 @@
 namespace pyc {
 std::vector<std::string> function_locals(const std::vector<std::string>&,
                                         const std::vector<pyc::ast::stmt>&);
+std::set<std::string> nested_reads(const std::vector<pyc::ast::stmt>&);
+std::set<std::string> nested_reads_expr(const pyc::ast::expr&);
 }
 
 namespace pyc {
@@ -65,6 +67,13 @@ private:
     // name -> slot, for the function currently being lowered. Empty at module
     // level, where every name is a global.
     std::map<std::string, std::uint32_t> locals_;
+    // Names in THIS function whose slot holds a cell: either a local something
+    // nested reads (a cellvar) or a name inherited from an enclosing function
+    // (a freevar). Both are read with cell.get rather than load.local.
+    std::map<std::string, std::uint32_t> cells_;
+    // Enclosing functions' cell maps, outermost first. A free name resolves by
+    // searching outward, which is what makes capture work at any depth.
+    std::vector<std::map<std::string, std::uint32_t>> enclosing_cells_;
 
     bool err(std::string msg, std::string construct, SourceLoc loc) {
         diags_.report(Diagnostic{Diagnostic::Severity::Error, std::move(msg),
@@ -275,7 +284,12 @@ private:
                 // path by construction. `nonlocal` is different -- it needs
                 // closure cells -- and stays unsupported.
             },
-            [&](const Nonlocal& n)         { ok = unsupported("nonlocal", n.loc); },
+            [&](const Nonlocal&)           {
+                // No code: function_locals() already excludes these names, and
+                // the closure analysis gives them a cell slot, so reads and
+                // WRITES both go through the cell -- which is the whole point
+                // of nonlocal as opposed to a plain free variable.
+            },
             [&](const Break& n)            {
                 if (loops_.empty()) ok = err("break outside a loop", "break", n.loc);
                 else emit(ir::Instr{ir::Op::Br, {}, std::nullopt,
@@ -316,13 +330,15 @@ private:
         std::vector<ir::Value> owned, frame, class_ns;
         std::vector<Loop> loops;
         std::vector<std::uint32_t> tries;
+        std::map<std::string, std::uint32_t> cells;
+        std::vector<std::map<std::string, std::uint32_t>> enclosing;
     };
 
     FnScope begin_function(const std::string& name,
                            const std::vector<std::string>& params,
                            const std::vector<std::string>& locals) {
         FnScope sc{fn_idx_, blk_, locals_, owned_, frame_owned_, class_ns_,
-                   loops_, try_stack_};
+                   loops_, try_stack_, cells_, enclosing_cells_};
         mod_.functions.push_back(ir::Function{name, params, {}, {}, 1});
         fn_idx_ = mod_.functions.size() - 1;
         cur()->locals = locals;
@@ -330,6 +346,8 @@ private:
         for (std::uint32_t i = 0; i < locals.size(); ++i) locals_[locals[i]] = i;
         owned_.clear(); frame_owned_.clear(); class_ns_.clear();
         loops_.clear(); try_stack_.clear();
+        enclosing_cells_.push_back(sc.cells);
+        cells_.clear();
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
         return sc;
@@ -340,13 +358,18 @@ private:
         fn_idx_ = sc.fn; blk_ = sc.blk; locals_ = sc.locals;
         owned_ = sc.owned; frame_owned_ = sc.frame; class_ns_ = sc.class_ns;
         loops_ = sc.loops; try_stack_ = sc.tries;
+        cells_ = sc.cells; enclosing_cells_ = sc.enclosing;
         return made;
     }
 
     ir::Value make_function_value(std::size_t idx, const std::string& name,
-                                  const SourceLoc& loc) {
+                                  const SourceLoc& loc,
+                                  const std::vector<ir::Value>& closure = {},
+                                  ir::Value defaults = {}) {
         ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        ir::Instr mk{ir::Op::MakeFunction, {}, fv, Ownership::Owned, name,
+        std::vector<ir::Value> mkargs{defaults};
+        for (const ir::Value& c : closure) mkargs.push_back(c);
+        ir::Instr mk{ir::Op::MakeFunction, mkargs, fv, Ownership::Owned, name,
                      0, 0, loc, make_landing_pad(loc)};
         mk.imm = (std::int64_t)idx;
         mk.has_imm = true;
@@ -420,28 +443,56 @@ private:
 
     ir::Value lower_lambda(const Lambda& n, bool* ok) {
         const arguments& a = *n.args;
-        if (!a.posonlyargs.empty() || !a.kwonlyargs.empty() || !a.defaults.empty()
+        if (!a.posonlyargs.empty() || !a.kwonlyargs.empty()
             || a.vararg || a.kwarg) {
             *ok = unsupported("this lambda parameter form", n.loc);
             return {};
         }
+        // Lambda defaults are ordinary defaults: evaluated once, here, in the
+        // enclosing scope. `lambda x, k=k: ...` inside a loop is the standard
+        // way to capture the current value rather than the cell.
+        ir::Value lam_defaults;
+        if (!a.defaults.empty()) {
+            lam_defaults = call_capi_imm("PyTuple_New", {},
+                                         (std::int64_t)a.defaults.size(), 0, n.loc, ok);
+            if (!*ok) return {};
+            mark_owned(lam_defaults);
+            for (std::size_t i = 0; i < a.defaults.size(); ++i) {
+                ir::Value d = lower_expr(a.defaults[i], ok);
+                if (!*ok) return {};
+                call_capi_imm("PyTuple_SetItem", {lam_defaults, d},
+                              (std::int64_t)i, 1, n.loc, ok);   // steals d
+                if (!*ok) return {};
+            }
+        }
         std::vector<std::string> params;
         for (const arg& p : a.args) params.push_back(p.arg);
 
-        // A lambda is called by the USER, so a captured enclosing local cannot
-        // be smuggled in as a hidden argument the way a comprehension's can.
-        // That needs real closure cells. Measured: 3 such lambdas in the
-        // corpus against 40 total, so this is refused rather than approximated.
-        std::set<std::string> bound(params.begin(), params.end());
-        std::set<std::string> captured;
-        free_locals(*n.body, bound, captured);
-        if (!captured.empty()) {
-            *ok = err("lambda captures the enclosing local '" + *captured.begin()
-                      + "'; closures are not implemented", "lambda-closure", n.loc);
-            return {};
+        // A lambda captures through the same cells a nested def does. It used
+        // to be refused here because a lambda is called by the USER, so a
+        // captured local cannot be passed as a hidden argument the way a
+        // comprehension's can -- cells remove that asymmetry.
+        std::set<std::string> reads = nested_reads_expr(*n.body);
+        std::set<std::string> own(params.begin(), params.end());
+        std::vector<std::string> freevars;
+        std::vector<ir::Value> closure_cells;
+        for (const std::string& r : reads) {
+            if (own.count(r)) continue;
+            auto cit = cells_.find(r);
+            if (cit == cells_.end()) continue;
+            freevars.push_back(r);
+            ir::Value c = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, c, Ownership::Owned, r,
+                           cit->second, 0, n.loc, make_landing_pad(n.loc)});
+            mark_owned(c);
+            closure_cells.push_back(c);
         }
+        std::vector<std::string> lam_locals = params;
+        for (const std::string& f2 : freevars) lam_locals.push_back(f2);
 
-        FnScope sc = begin_function("<lambda>", params, params);
+        FnScope sc = begin_function("<lambda>", params, lam_locals);
+        cur()->freevars = freevars;
+        for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
         bool bok = true;
         ir::Value r = lower_expr(*n.body, &bok);
         if (bok)
@@ -450,7 +501,11 @@ private:
         std::size_t idx = end_function(sc);
         if (!bok) { *ok = false; return {}; }
         *ok = true;
-        return make_function_value(idx, "<lambda>", n.loc);
+        ir::Value out = make_function_value(idx, "<lambda>", n.loc, closure_cells,
+                                            lam_defaults);
+        for (const ir::Value& c : closure_cells) if (owns(c)) release(c, n.loc);
+        if (lam_defaults.valid() && owns(lam_defaults)) release(lam_defaults, n.loc);
+        return out;
     }
 
     // A comprehension is a separate SCOPE in Python 3: its loop variable does
@@ -700,23 +755,6 @@ private:
             }
         }
 
-        // A nested def reading an enclosing function's local needs a closure
-        // cell. Without one it silently resolves to a global and raises
-        // NameError at run time -- a crash far from the cause. Refuse at
-        // compile time instead, naming the variable (I1).
-        {
-            std::set<std::string> bound(params.begin(), params.end());
-            for (const std::string& l : function_locals(params, n.body))
-                bound.insert(l);
-            std::set<std::string> captured;
-            stmt_names(n.body, bound, captured);
-            if (!captured.empty())
-                return err("nested function '" + n.name + "' captures the "
-                           "enclosing local '" + *captured.begin()
-                           + "'; closures are not implemented",
-                           "closure", n.loc);
-        }
-
         // Save the enclosing function's state: a nested def is lowered into a
         // separate ir::Function, and must not inherit the outer local map.
         std::size_t outer_fn = fn_idx_;
@@ -730,6 +768,8 @@ private:
         // function -- which LLVM rejects as "does not dominate all uses".
         auto outer_frame = frame_owned_;
         auto outer_class_ns = class_ns_;
+        auto outer_cells = cells_;
+        auto outer_enclosing = enclosing_cells_;
 
         // *args and **kwargs get their own local slots, after the named
         // parameters and before everything else the body binds.
@@ -738,19 +778,94 @@ private:
         if (a.vararg) { vararg_slot = (int)slotnames.size(); slotnames.push_back((*a.vararg)->arg); }
         if (a.kwarg)  { kwarg_slot  = (int)slotnames.size(); slotnames.push_back((*a.kwarg)->arg); }
 
+        // --- closure analysis -------------------------------------------
+        std::vector<std::string> own_locals = function_locals(slotnames, n.body);
+        // A local is a CELL variable exactly when something nested reads it.
+        std::set<std::string> inner = nested_reads(n.body);
+        std::vector<std::string> cellvars;
+        for (const std::string& l : own_locals)
+            if (inner.count(l)) cellvars.push_back(l);
+        // A name is FREE when this function (or something nested in it) reads
+        // it, it is not local here, and an enclosing function holds it in a
+        // cell. Searching outward is what makes depth-3 nesting work.
+        std::vector<std::string> freevars;
+        {
+            std::set<std::string> reads = inner;
+            std::set<std::string> none;
+            stmt_names(n.body, none, reads);        // names read directly too
+            std::set<std::string> own(own_locals.begin(), own_locals.end());
+            for (const std::string& r : reads) {
+                if (own.count(r)) continue;
+                bool in_enclosing = cells_.count(r) > 0;
+                for (auto it = enclosing_cells_.rbegin();
+                     !in_enclosing && it != enclosing_cells_.rend(); ++it)
+                    in_enclosing = it->count(r) > 0;
+                if (in_enclosing) freevars.push_back(r);
+            }
+        }
+        // Closure cells for the nested function come from THIS function's
+        // slots, so they must be read before the scope switches.
+        std::vector<ir::Value> closure_cells;
+        for (const std::string& fv2 : freevars) {
+            auto cit = cells_.find(fv2);
+            if (cit == cells_.end()) continue;
+            ir::Value c = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, c, Ownership::Owned, fv2,
+                           cit->second, 0, n.loc, make_landing_pad(n.loc)});
+            mark_owned(c);
+            closure_cells.push_back(c);
+        }
+
+        std::vector<std::string> all_locals = own_locals;
+        for (const std::string& fv2 : freevars) all_locals.push_back(fv2);
+
         mod_.functions.push_back(ir::Function{n.name, params, {}, {}, 1});
         fn_idx_ = mod_.functions.size() - 1;
         const std::size_t fn_index = fn_idx_;
-        cur()->locals = function_locals(slotnames, n.body);
+        cur()->locals = all_locals;
+        cur()->cellvars = cellvars;
+        cur()->freevars = freevars;
         locals_.clear();
-        for (std::uint32_t i = 0; i < cur()->locals.size(); ++i)
-            locals_[cur()->locals[i]] = i;
+        for (std::uint32_t i = 0; i < all_locals.size(); ++i)
+            locals_[all_locals[i]] = i;
+        enclosing_cells_.push_back(cells_);
+        cells_.clear();
+        for (const std::string& c : cellvars) cells_[c] = locals_[c];
+        for (const std::string& fv2 : freevars) cells_[fv2] = locals_[fv2];
         owned_.clear();
         loops_.clear();
         frame_owned_.clear();
         class_ns_.clear();          // a method body is not a class body
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
+
+        // Prologue: give each cell variable a cell. A parameter arrives as a
+        // plain value, so its cell must be seeded with it and the slot
+        // overwritten -- otherwise the nested function sees an empty cell.
+        for (const std::string& c : cellvars) {
+            std::uint32_t slot = locals_[c];
+            bool is_param = slot < params.size()
+                         || (vararg_slot >= 0 && (int)slot == vararg_slot)
+                         || (kwarg_slot >= 0 && (int)slot == kwarg_slot);
+            ir::Value seed;
+            if (is_param) {
+                seed = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::LoadLocal, {}, seed, Ownership::Owned, c,
+                               slot, 0, n.loc, std::nullopt});
+                mark_owned(seed);
+            }
+            ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::CellNew,
+                           seed.valid() ? std::vector<ir::Value>{seed}
+                                        : std::vector<ir::Value>{},
+                           cell, Ownership::Owned, c, 0, 0, n.loc,
+                           make_landing_pad(n.loc)});
+            mark_owned(cell);
+            if (seed.valid()) release(seed, n.loc);
+            emit(ir::Instr{ir::Op::StoreLocal, {cell}, std::nullopt,
+                           Ownership::NotAnObject, c, slot, 0, n.loc, std::nullopt});
+            release(cell, n.loc);
+        }
 
         bool ok = true;
         for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
@@ -766,6 +881,7 @@ private:
         fn_idx_ = outer_fn; blk_ = outer_blk; locals_ = outer_locals;
         owned_ = outer_owned; loops_ = outer_loops;
         frame_owned_ = outer_frame; class_ns_ = outer_class_ns;
+        cells_ = outer_cells; enclosing_cells_ = outer_enclosing;
         if (!ok) return false;
 
         // Bind the callable in the enclosing scope, by the same store path any
@@ -776,9 +892,10 @@ private:
         // and emitted a duplicate LLVM symbol.
         // target/target_else carry the *args and **kwargs slot indices,
         // biased by one so 0 can mean "absent".
-        ir::Instr mk{ir::Op::MakeFunction,
-                     defaults.valid() ? std::vector<ir::Value>{defaults}
-                                      : std::vector<ir::Value>{},
+        // args[0] is defaults (or the null value), args[1..] the closure cells.
+        std::vector<ir::Value> mkargs{defaults.valid() ? defaults : ir::Value{}};
+        for (const ir::Value& c : closure_cells) mkargs.push_back(c);
+        ir::Instr mk{ir::Op::MakeFunction, mkargs,
                      fv, Ownership::Owned, n.name,
                      (std::uint32_t)(vararg_slot + 1),
                      (std::uint32_t)(kwarg_slot + 1),
@@ -1052,6 +1169,20 @@ private:
     }
 
     void store_name(const std::string& name, const ir::Value& v, const SourceLoc& loc) {
+        auto cit = cells_.find(name);
+        if (cit != cells_.end() && class_ns_.empty()) {
+            ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            bool ok = true;
+            emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, name,
+                           cit->second, 0, loc, make_landing_pad(loc)});
+            mark_owned(cell);
+            emit(ir::Instr{ir::Op::CellSet, {cell, v}, std::nullopt,
+                           Ownership::NotAnObject, name, 0, 0, loc, std::nullopt});
+            release(cell, loc);
+            if (owns(v)) release(v, loc);
+            (void)ok;
+            return;
+        }
         if (!class_ns_.empty()) {
             bool ok = true;
             ir::Value key = const_str(name, loc);
@@ -1576,6 +1707,19 @@ private:
         // No builtin is special here. `print` is a global load like any other,
         // which is precisely why print/len/sum cannot diverge (I3).
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        auto cit = cells_.find(n.id);
+        if (cit != cells_.end()) {
+            ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, n.id,
+                           cit->second, 0, n.loc, make_landing_pad(n.loc)});
+            mark_owned(cell);
+            emit(ir::Instr{ir::Op::CellGet, {cell}, out, Ownership::Owned, n.id,
+                           0, 0, n.loc, make_landing_pad(n.loc)});
+            release(cell, n.loc);
+            mark_owned(out);
+            *ok = true;
+            return out;
+        }
         auto it = locals_.find(n.id);
         if (it != locals_.end()) {
             // May raise UnboundLocalError: a local read before assignment is

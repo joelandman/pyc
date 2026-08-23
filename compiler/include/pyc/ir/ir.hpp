@@ -83,6 +83,9 @@ enum class Op {
     // of a dotted path), 1 imports it and yields the TOP-LEVEL package, which
     // is what plain `import a.b` binds.
     ImportModule,
+    // Cell access. A cell variable's slot holds a PyCell, so reading it is
+    // two steps, not one.
+    CellNew, CellGet, CellSet,
     // Advance an iterator. THREE-way: PyIter_Next returns NULL both at
     // exhaustion (no exception) and on error (exception set), so the two are
     // distinguished by PyErr_Occurred. `target` is the body, `target_else`
@@ -155,6 +158,13 @@ struct Function {
     std::vector<std::string> locals;
     std::vector<Block> blocks;
     std::uint32_t next_value = 1;    // 0 reserved for "no value"
+
+    // Locals held in CELLS because a nested function reads them, and names
+    // read FROM an enclosing function's cells. Both occupy ordinary local
+    // slots; the difference is that the slot holds a cell rather than a value.
+    // Placed last so existing aggregate initialisers keep their meaning.
+    std::vector<std::string> cellvars;
+    std::vector<std::string> freevars;
 
     Value fresh(Type t = {}) { return Value{next_value++, std::move(t)}; }
 };

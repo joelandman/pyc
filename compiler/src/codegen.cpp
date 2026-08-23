@@ -233,6 +233,27 @@ private:
                 check(in, v(*in.result), false);
                 break;
             }
+            case Op::CellNew: {
+                need("declare ptr @PyCell_New(ptr)");
+                o_ << "  " << v(*in.result) << " = call ptr @PyCell_New(ptr "
+                   << (in.args.empty() ? "null" : v(in.args[0])) << ")\n";
+                check(in, v(*in.result), true);
+                break;
+            }
+            case Op::CellGet: {
+                need("declare ptr @pyc_rt_cell_get(ptr)");
+                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_cell_get(ptr "
+                   << v(in.args[0]) << ")\n";
+                check(in, v(*in.result), true);
+                break;
+            }
+            case Op::CellSet: {
+                need("declare i32 @PyCell_Set(ptr, ptr)");
+                std::string r = fresh();
+                o_ << "  " << r << " = call i32 @PyCell_Set(ptr " << v(in.args[0])
+                   << ", ptr " << v(in.args[1]) << ")\n";
+                break;
+            }
             case Op::IntConst: {
                 // A machine int materialised as an i32 the call site widens.
                 o_ << "  " << v(*in.result) << " = add i32 0, " << in.text << "\n";
@@ -322,20 +343,25 @@ private:
                 break;
             }
             case Op::MakeFunction: {
-                need("declare ptr @pyc_rt_make_function(ptr, ptr, i32, i32, ptr, ptr, i32, i32)");
+                need("declare ptr @pyc_rt_make_function(ptr, ptr, i32, i32, ptr, ptr, i32, i32, ptr, i32)");
                 std::size_t ti = (std::size_t)in.imm;
                 bool valid = in.has_imm && ti < m_.functions.size();
                 const ir::Function* t = valid ? &m_.functions[ti] : nullptr;
                 // The parameter-name table lets the callee bind keywords.
                 std::string names = t ? argnames_global(ti) : "null";
+                std::string clo = closure_arg(in);      // fills pre_
+                o_ << pre_.str(); pre_.str("");
                 o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_make_function(ptr "
                    << cstr(in.text) << ", ptr " << (t ? fname(ti) : "null")
                    << ", i32 " << (t ? t->params.size() : 0)
                    << ", i32 " << (t ? t->locals.size() : 0)
                    << ", ptr " << names
-                   << ", ptr " << (in.args.empty() ? "null" : v(in.args[0]))
+                   << ", ptr " << (in.args.empty() || !in.args[0].valid()
+                                    ? "null" : v(in.args[0]))
                    << ", i32 " << ((int)in.target - 1)
-                   << ", i32 " << ((int)in.target_else - 1) << ")\n";
+                   << ", i32 " << ((int)in.target_else - 1)
+                   << ", ptr " << clo
+                   << ", i32 " << (t ? (int)t->freevars.size() : 0) << ")\n";
                 check(in, v(*in.result), true);
                 break;
             }
@@ -424,6 +450,22 @@ private:
         o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_call(ptr "
            << v(in.args[0]) << ", ptr " << arr << ", i64 " << n << ")\n";
         check(in, v(*in.result), true);
+    }
+
+    // Build the closure tuple inline: a small alloca holding the cells this
+    // nested function captures, in freevar order.
+    std::string closure_arg(const ir::Instr& in) {
+        std::size_t n = in.args.size() > 1 ? in.args.size() - 1 : 0;
+        if (!n) return "null";
+        std::string arr = fresh();
+        pre_ << "  " << arr << " = alloca [" << n << " x ptr]\n";
+        for (std::size_t i = 0; i < n; ++i) {
+            std::string p = fresh();
+            pre_ << "  " << p << " = getelementptr [" << n << " x ptr], ptr "
+                 << arr << ", i64 0, i64 " << i << "\n";
+            pre_ << "  store ptr " << v(in.args[i + 1]) << ", ptr " << p << "\n";
+        }
+        return arr;
     }
 
     std::map<std::string, std::string> argnames_;

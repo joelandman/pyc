@@ -40,7 +40,8 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                int nargs, int nlocals,
                                const char* const* argnames,
                                PyObject* defaults,
-                               int vararg_slot, int kwarg_slot);
+                               int vararg_slot, int kwarg_slot,
+                               PyObject** closure, int nfree);
 
 // Vectorcall over an argument array.
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs);
@@ -103,6 +104,11 @@ int pyc_rt_extend(PyObject* list, PyObject* iterable);
 int pyc_rt_assert_fail(PyObject* msg);
 // `del name` at module scope.
 int pyc_rt_del_global(const char* name);
+
+// Read a cell. An empty cell means the variable was read before assignment,
+// which CPython reports as NameError for a free variable -- PyCell_Get would
+// simply return NULL with no exception set, which would look like a crash.
+PyObject* pyc_rt_cell_get(PyObject* cell);
 
 // Extended unpacking: `a, *rest, b = value`. Returns a tuple of
 // nbefore + 1 + nafter items whose middle element is a list holding whatever
