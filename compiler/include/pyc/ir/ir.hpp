@@ -44,6 +44,10 @@ enum class Op {
     ConstInt, ConstFloat, ConstStr, ConstBytes, ConstBool, ConstNone,
     // names
     LoadGlobal, StoreGlobal, LoadLocal, StoreLocal,
+    // Name lookup in a CLASS BODY: the namespace under construction, then
+    // globals, then builtins (CPython's LOAD_NAME). args[0] is the namespace
+    // dict, text is the name.
+    LoadClassName,
     // calls
     CallCApi,        // symbol from §4's table, with its ownership contract
     CallObject,      // PyObject_Vectorcall on a runtime callable

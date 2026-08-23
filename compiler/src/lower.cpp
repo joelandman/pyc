@@ -26,6 +26,7 @@ std::vector<std::string> function_locals(const std::vector<std::string>&,
                                         const std::vector<pyc::ast::stmt>&);
 std::set<std::string> nested_reads(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> declared_nonlocals(const std::vector<pyc::ast::stmt>&);
+std::set<std::string> all_reads(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> nested_reads_expr(const pyc::ast::expr&);
 }
 
@@ -513,6 +514,9 @@ private:
         *ok = true;
         ir::Value out = make_function_value(idx, qualname("<lambda>"), n.loc, closure_cells,
                                             lam_defaults);
+        // Guarded, NOT unconditional: the lambda path restores the owned set
+        // differently from the def path, and re-marking here double-freed the
+        // captured cell -- `return lambda x: x + n` crashed with no output.
         for (const ir::Value& c : closure_cells) if (owns(c)) release(c, n.loc);
         if (lam_defaults.valid() && owns(lam_defaults)) release(lam_defaults, n.loc);
         return out;
@@ -810,9 +814,20 @@ private:
             // A `nonlocal` name is free even if it is only ever written.
             std::set<std::string> nl = declared_nonlocals(n.body);
             reads.insert(nl.begin(), nl.end());
+            // Mentioning super or __class__ inside a class body captures the
+            // implicit __class__ cell, exactly as CPython's symtable does.
+            if (!class_cells_.empty()) {
+                std::set<std::string> all = all_reads(n.body);
+                if (all.count("super") || all.count("__class__"))
+                    reads.insert("__class__");
+            }
             std::set<std::string> own(own_locals.begin(), own_locals.end());
             for (const std::string& r : reads) {
                 if (own.count(r)) continue;
+                if (r == "__class__" && !class_cells_.empty()) {
+                    freevars.push_back(r);          // sourced from class_cells_
+                    continue;
+                }
                 bool in_enclosing = cells_.count(r) > 0;
                 for (auto it = enclosing_cells_.rbegin();
                      !in_enclosing && it != enclosing_cells_.rend(); ++it)
@@ -835,6 +850,14 @@ private:
         // slots, so they must be read before the scope switches.
         std::vector<ir::Value> closure_cells;
         for (const std::string& fv2 : freevars) {
+            if (fv2 == "__class__" && !class_cells_.empty()) {
+                // Already a cell value in hand; it has no enclosing slot.
+                ir::Value c = class_cells_.back();
+                emit(ir::Instr{ir::Op::IncRef, {c}, std::nullopt,
+                               Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+                closure_cells.push_back(c);
+                continue;
+            }
             auto cit = cells_.find(fv2);
             if (cit == cells_.end()) continue;
             ir::Value c = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
@@ -939,11 +962,17 @@ private:
         emit(std::move(mk));
         mark_owned(fv);
         if (defaults.valid() && owns(defaults)) release(defaults, n.loc);
-        // Inside a class body, a plain callable is not enough: a
-        // PyCFunction in a class dict does NOT bind self, because it is not a
-        // descriptor. `C().m()` then fails with "missing required argument
-        // 'self'". PyInstanceMethod wraps any callable and binds the instance
-        // on attribute access, which is what a Python function does natively.
+        // MakeFunction does not consume the cells -- it INCREFs them into the
+        // closure tuple -- so the references loaded above are still ours. The
+        // lambda path already released them; this one leaked one cell per
+        // free variable, on every nested def that captures anything.
+        // They were marked owned AFTER outer_owned was saved, so the restore
+        // above dropped them from the owned set: re-mark before releasing.
+        for (const ir::Value& c : closure_cells) { mark_owned(c); release(c, n.loc); }
+        if (!set_docstring(fv, n.body, n.loc)) return false;
+        // A pyc function is a descriptor now, so a method in a class dict
+        // binds self by itself; pyc_rt_bind_method is a pass-through kept so
+        // the class path has one place to change if that stops being true.
         if (!class_ns_.empty()) {
             bool okm = true;
             fv = apply_decorators(n.decorator_list, fv, n.loc, &okm);
@@ -1193,6 +1222,11 @@ private:
     // __qualname__ prefix components. CPython puts the qualname, not the bare
     // name, in argument-binding TypeErrors: "C.foo()", "outer.<locals>.inner()".
     std::vector<std::string> qual_;
+    // Zero-argument super() is compiler magic in CPython: the class object is
+    // handed to the method through an implicit __class__ closure cell, which
+    // is filled only AFTER the class exists. Methods are built before that, so
+    // the cell -- not the class -- is what they capture.
+    std::vector<ir::Value> class_cells_;
     std::string qualname(const std::string& name) const {
         std::string q;
         for (const std::string& c : qual_) { q += c; q += "."; }
@@ -1548,6 +1582,23 @@ private:
         return e;
     }
 
+    // A leading string literal in a body is its docstring. CPython exposes it
+    // as __doc__; without this the attribute reads as None on every function.
+    bool set_docstring(const ir::Value& fv, const std::vector<stmt>& body,
+                       const SourceLoc& loc) {
+        if (body.empty()) return true;
+        const Expr* e = std::get_if<Expr>(&body.front().v);
+        if (!e) return true;
+        const Constant* c = std::get_if<Constant>(&e->value->v);
+        if (!c || !std::holds_alternative<ConstStr>(c->value.v)) return true;
+        bool ok = true;
+        ir::Value doc = lower_expr(*e->value, &ok);
+        if (!ok) return false;
+        ir::Value key = const_str("__doc__", loc);
+        call_capi("PyObject_SetAttr", {fv, key, doc}, loc, &ok, {key, doc});
+        return ok;
+    }
+
     bool lower_classdef(const ClassDef& n) {
         if (!n.keywords.empty()) return unsupported("metaclass= and class keywords", n.loc);
 
@@ -1573,6 +1624,13 @@ private:
         // The body is lowered INLINE in the enclosing function, with stores
         // redirected into ns. A class body is not a closure: it executes once,
         // immediately, which is why it needs no separate ir::Function.
+        ir::Value ccell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::CellNew, {}, ccell, Ownership::Owned, "__class__",
+                       0, 0, n.loc, make_landing_pad(n.loc)});
+        mark_owned(ccell);
+        frame_owned_.push_back(ccell);
+        class_cells_.push_back(ccell);
+
         class_ns_.push_back(ns);
         qual_.push_back(n.name);
         frame_owned_.push_back(ns);
@@ -1580,10 +1638,12 @@ private:
         auto saved_locals = locals_;
         locals_.clear();                  // names in a class body are not fast locals
         for (const stmt& s2 : n.body)
-            if (!lower_stmt(s2)) { class_ns_.pop_back(); qual_.pop_back(); return false; }
+            if (!lower_stmt(s2)) { class_ns_.pop_back(); qual_.pop_back();
+                                   class_cells_.pop_back(); return false; }
         locals_ = saved_locals;
         class_ns_.pop_back();
         qual_.pop_back();
+        class_cells_.pop_back();
         frame_owned_.pop_back();
         frame_owned_.pop_back();
 
@@ -1593,6 +1653,12 @@ private:
         mark_owned(cls);
         if (owns(bases)) release(bases, n.loc);
         if (owns(ns)) release(ns, n.loc);
+        // Fill __class__ BEFORE decorators run: CPython binds the cell to the
+        // undecorated class, which is what super() in a method resolves to.
+        emit(ir::Instr{ir::Op::CellSet, {ccell, cls}, std::nullopt,
+                       Ownership::NotAnObject, "__class__", 0, 0, n.loc, std::nullopt});
+        frame_owned_.pop_back();
+        release(ccell, n.loc);
         cls = apply_decorators(n.decorator_list, cls, n.loc, &ok);
         if (!ok) return false;
         store_name(n.name, cls, n.loc);
@@ -1861,6 +1927,15 @@ private:
             // an error, not a fallback to the global of the same name.
             emit(ir::Instr{ir::Op::LoadLocal, {}, out, Ownership::Owned,
                            n.id, it->second, 0, n.loc, make_landing_pad(n.loc)});
+        } else if (!class_ns_.empty()) {
+            // A class body is LOAD_NAME territory: the namespace under
+            // construction, then globals, then builtins.
+            emit(ir::Instr{ir::Op::LoadClassName, {class_ns_.back()}, out,
+                           Ownership::Owned, n.id, 0, 0, n.loc,
+                           make_landing_pad(n.loc)});
+            mark_owned(out);
+            *ok = true;
+            return out;
         } else {
             emit(ir::Instr{ir::Op::LoadGlobal, {}, out, Ownership::Owned,
                            n.id, 0, 0, n.loc, make_landing_pad(n.loc)});
@@ -1870,7 +1945,61 @@ private:
         return out;
     }
 
+    // super(__class__, self): __class__ from the implicit closure cell, self
+    // from local slot 0 -- the first parameter of the enclosing method.
+    ir::Value lower_super_zero(const Call& c, bool* ok) {
+        ir::Value fn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::LoadGlobal, {}, fn, Ownership::Owned, "super",
+                       0, 0, c.loc, make_landing_pad(c.loc)});
+        mark_owned(fn);
+        std::uint32_t cslot = cells_["__class__"];
+        ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, "__class__",
+                       cslot, 0, c.loc, make_landing_pad(c.loc)});
+        mark_owned(cell);
+        ir::Value klass = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::CellGet, {cell}, klass, Ownership::Owned, "__class__",
+                       0, 0, c.loc, make_landing_pad(c.loc)});
+        mark_owned(klass);
+        release(cell, c.loc);
+        ir::Value self = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::LoadLocal, {}, self, Ownership::Owned, "self",
+                       0, 0, c.loc, make_landing_pad(c.loc)});
+        mark_owned(self);
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::CallObject, {fn, klass, self}, out, Ownership::Owned,
+                       "", 0, 0, c.loc, make_landing_pad(c.loc)});
+        mark_owned(out);
+        release(fn, c.loc); release(klass, c.loc); release(self, c.loc);
+        *ok = true;
+        return out;
+    }
+
     ir::Value lower_call(const Call& c, bool* ok) {
+        // Zero-argument super() is not a plain call: CPython's super() reads
+        // the calling FRAME for the class cell and the first argument. pyc has
+        // no Python frames, so it raises "super(): no current frame". Supply
+        // both operands explicitly -- super(__class__, self) -- which is what
+        // the zero-argument form means.
+        if (std::holds_alternative<Name>(c.func->v)
+            && std::get<Name>(c.func->v).id == "super"
+            && c.args.empty() && c.keywords.empty()) {
+            auto cit = cells_.find("__class__");
+            if (cit != cells_.end() && !locals_.empty() && class_ns_.empty()) {
+                ir::Value out = lower_super_zero(c, ok);
+                if (out.valid() || !*ok) return out;
+            }
+            // Not resolvable: CPython raises at run time, and which message it
+            // uses depends on whether the frame has arguments at all.
+            if (class_ns_.empty() && fn_idx_ != 0) {
+                bool sok = true;
+                call_capi_imm("pyc_rt_super_fail", {},
+                              (std::int64_t)(cur()->params.empty() ? 0 : 1), 0,
+                              c.loc, &sok);
+                *ok = sok;
+                return {};
+            }
+        }
         ir::Value fn = lower_expr(*c.func, ok);
         if (!*ok) return {};
         bool starred = false;

@@ -9,188 +9,18 @@
       "-O0"
     ]
   },
-  "pass_rate": 93.39887640449439,
+  "pass_rate": 96.76966292134831,
   "scored": 712,
-  "matched": 665,
+  "matched": 689,
   "quarantined": 1,
-  "elapsed_seconds": 183.05440878868103,
+  "elapsed_seconds": 168.70815181732178,
   "counts": {
-    "SILENT_WRONG_ANSWER": 3,
-    "CRASH": 21,
     "COMPILE_ERROR": 17,
     "STDERR_DIFF": 6,
-    "MATCH": 665,
+    "MATCH": 689,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
-    {
-      "case": "case_473.py",
-      "path": "verify/corpus/language/case_473.py",
-      "verdict": "SILENT_WRONG_ANSWER",
-      "priority": "P0",
-      "detail": "pyc exited 0 with wrong stdout"
-    },
-    {
-      "case": "case_481.py",
-      "path": "verify/corpus/language/case_481.py",
-      "verdict": "SILENT_WRONG_ANSWER",
-      "priority": "P0",
-      "detail": "pyc exited 0 with wrong stdout"
-    },
-    {
-      "case": "case_668.py",
-      "path": "verify/corpus/language/case_668.py",
-      "verdict": "SILENT_WRONG_ANSWER",
-      "priority": "P0",
-      "detail": "pyc exited 0 with wrong stdout"
-    },
-    {
-      "case": "case_375.py",
-      "path": "verify/corpus/language/case_375.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_466.py",
-      "path": "verify/corpus/language/case_466.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_467.py",
-      "path": "verify/corpus/language/case_467.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_468.py",
-      "path": "verify/corpus/language/case_468.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_479.py",
-      "path": "verify/corpus/language/case_479.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_529.py",
-      "path": "verify/corpus/language/case_529.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_538.py",
-      "path": "verify/corpus/language/case_538.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_631.py",
-      "path": "verify/corpus/language/case_631.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_632.py",
-      "path": "verify/corpus/language/case_632.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_633.py",
-      "path": "verify/corpus/language/case_633.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_634.py",
-      "path": "verify/corpus/language/case_634.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_635.py",
-      "path": "verify/corpus/language/case_635.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_636.py",
-      "path": "verify/corpus/language/case_636.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_649.py",
-      "path": "verify/corpus/language/case_649.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_655.py",
-      "path": "verify/corpus/language/case_655.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_660.py",
-      "path": "verify/corpus/language/case_660.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_666.py",
-      "path": "verify/corpus/language/case_666.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_670.py",
-      "path": "verify/corpus/language/case_670.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_680.py",
-      "path": "verify/corpus/language/case_680.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_681.py",
-      "path": "verify/corpus/language/case_681.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
-    {
-      "case": "case_682.py",
-      "path": "verify/corpus/language/case_682.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "pyc failed, but stdout/exit differ from CPython"
-    },
     {
       "case": "case_005.py",
       "path": "verify/corpus/language/case_005.py",
@@ -217,28 +47,28 @@
       "path": "verify/corpus/language/case_265.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ydoxy4yl/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-8gaquyz8/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_266.py",
       "path": "verify/corpus/language/case_266.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-zllghevh/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-3y5xy39s/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_267.py",
       "path": "verify/corpus/language/case_267.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-dwgst_95/case_267.py:2:9: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-gx_xu0t_/case_267.py:2:9: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_449.py",
       "path": "verify/corpus/language/case_449.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5635ky65/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
+      "detail": "/tmp/pyc-verify-hn3_fpla/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
     },
     {
       "case": "case_453.py",
@@ -266,42 +96,42 @@
       "path": "verify/corpus/language/case_470.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-j_xumg0h/case_470.py:6:0: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-3190z4xr/case_470.py:6:0: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_472.py",
       "path": "verify/corpus/language/case_472.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1uukb4zb/case_472.py:15:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-s4qhruj0/case_472.py:15:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_474.py",
       "path": "verify/corpus/language/case_474.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cwiekuhg/case_474.py:3:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-u6aa201t/case_474.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_475.py",
       "path": "verify/corpus/language/case_475.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-yzpeua7p/case_475.py:3:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-bzjso7wo/case_475.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_476.py",
       "path": "verify/corpus/language/case_476.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-78yllkxu/case_476.py:3:4: error: cannot compile try/finally yet [try/finally]"
+      "detail": "/tmp/pyc-verify-vuq_tw4u/case_476.py:3:4: error: cannot compile try/finally yet [try/finally]"
     },
     {
       "case": "case_645.py",
       "path": "verify/corpus/language/case_645.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.xxGHbekZeK/mod.ll:797:12: error: use of undefined value '%bb28'"
+      "detail": "/tmp/tmp.roiUuZGed2/mod.ll:797:12: error: use of undefined value '%bb28'"
     },
     {
       "case": "case_685.py",
@@ -2894,6 +2724,13 @@
       "detail": ""
     },
     {
+      "case": "case_375.py",
+      "path": "verify/corpus/language/case_375.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_376.py",
       "path": "verify/corpus/language/case_376.py",
       "verdict": "MATCH",
@@ -3496,6 +3333,27 @@
       "detail": ""
     },
     {
+      "case": "case_466.py",
+      "path": "verify/corpus/language/case_466.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_467.py",
+      "path": "verify/corpus/language/case_467.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_468.py",
+      "path": "verify/corpus/language/case_468.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_469.py",
       "path": "verify/corpus/language/case_469.py",
       "verdict": "MATCH",
@@ -3505,6 +3363,13 @@
     {
       "case": "case_471.py",
       "path": "verify/corpus/language/case_471.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_473.py",
+      "path": "verify/corpus/language/case_473.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3524,8 +3389,22 @@
       "detail": ""
     },
     {
+      "case": "case_479.py",
+      "path": "verify/corpus/language/case_479.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_480.py",
       "path": "verify/corpus/language/case_480.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_481.py",
+      "path": "verify/corpus/language/case_481.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -3846,6 +3725,13 @@
       "detail": ""
     },
     {
+      "case": "case_529.py",
+      "path": "verify/corpus/language/case_529.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_530.py",
       "path": "verify/corpus/language/case_530.py",
       "verdict": "MATCH",
@@ -3897,6 +3783,13 @@
     {
       "case": "case_537.py",
       "path": "verify/corpus/language/case_537.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_538.py",
+      "path": "verify/corpus/language/case_538.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4546,6 +4439,48 @@
       "detail": ""
     },
     {
+      "case": "case_631.py",
+      "path": "verify/corpus/language/case_631.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_632.py",
+      "path": "verify/corpus/language/case_632.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_633.py",
+      "path": "verify/corpus/language/case_633.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_634.py",
+      "path": "verify/corpus/language/case_634.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_635.py",
+      "path": "verify/corpus/language/case_635.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_636.py",
+      "path": "verify/corpus/language/case_636.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_637.py",
       "path": "verify/corpus/language/case_637.py",
       "verdict": "MATCH",
@@ -4623,6 +4558,13 @@
       "detail": ""
     },
     {
+      "case": "case_649.py",
+      "path": "verify/corpus/language/case_649.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_650.py",
       "path": "verify/corpus/language/case_650.py",
       "verdict": "MATCH",
@@ -4658,6 +4600,13 @@
       "detail": ""
     },
     {
+      "case": "case_655.py",
+      "path": "verify/corpus/language/case_655.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_656.py",
       "path": "verify/corpus/language/case_656.py",
       "verdict": "MATCH",
@@ -4681,6 +4630,13 @@
     {
       "case": "case_659.py",
       "path": "verify/corpus/language/case_659.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_660.py",
+      "path": "verify/corpus/language/case_660.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4721,6 +4677,13 @@
       "detail": ""
     },
     {
+      "case": "case_666.py",
+      "path": "verify/corpus/language/case_666.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_667.py",
       "path": "verify/corpus/language/case_667.py",
       "verdict": "MATCH",
@@ -4728,8 +4691,22 @@
       "detail": ""
     },
     {
+      "case": "case_668.py",
+      "path": "verify/corpus/language/case_668.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "case_669.py",
       "path": "verify/corpus/language/case_669.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_670.py",
+      "path": "verify/corpus/language/case_670.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -4793,6 +4770,27 @@
     {
       "case": "case_679.py",
       "path": "verify/corpus/language/case_679.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_680.py",
+      "path": "verify/corpus/language/case_680.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_681.py",
+      "path": "verify/corpus/language/case_681.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_682.py",
+      "path": "verify/corpus/language/case_682.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""

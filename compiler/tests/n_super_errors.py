@@ -1,0 +1,10 @@
+class C:
+    def f(self): return (lambda: super().greet())()
+try: C().f()
+except RuntimeError as e: print("lambda-in-method:", e)
+def g(): return super()
+try: g()
+except RuntimeError as e: print("plain function  :", e)
+def h(a): return super()
+try: h(1)
+except RuntimeError as e: print("func with arg   :", e)

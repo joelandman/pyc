@@ -1,6 +1,7 @@
 #include "pyc/rt/support.hpp"
 
 #include <cstdlib>
+#include <cstddef>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -11,6 +12,22 @@ extern "C" {
 static PyObject* globals_dict() {
     PyObject* m = PyImport_AddModule("__main__");   // borrowed
     return m ? PyModule_GetDict(m) : nullptr;       // borrowed
+}
+
+// Name lookup inside a CLASS BODY. CPython compiles these to LOAD_NAME:
+// the class namespace first, then globals, then builtins. Going straight to
+// the global path makes a class-level name invisible to anything else in the
+// body -- `x = 7` then `def get(self, k, default=x)` raised NameError, because
+// the default is evaluated in the class body, where x is a namespace entry and
+// not a global.
+PyObject* pyc_rt_load_classname(PyObject* ns, const char* name) {
+    PyObject* key = PyUnicode_FromString(name);
+    if (!key) return nullptr;
+    PyObject* v = nullptr;
+    if (PyDict_GetItemRef(ns, key, &v) < 0) { Py_DECREF(key); return nullptr; }
+    Py_DECREF(key);
+    if (v) return v;
+    return pyc_rt_load_global(name);
 }
 
 PyObject* pyc_rt_load_global(const char* name) {
@@ -66,19 +83,12 @@ namespace {
 // Setting __name__ afterwards does not work: it is read-only on a
 // builtin_function_or_method, and the failed SetAttr left an exception set
 // that surfaced later as an unrelated SystemError.
-struct Bound { PycImpl impl; int nargs; int nlocals; PyMethodDef def;
+struct Bound { PycImpl impl; int nargs; int nlocals;
                char* name; const char* const* argnames;
                PyObject* defaults; int vararg; int kwarg;
                PyObject* closure; int nfree; };
 
-void bound_free(PyObject* cap) {
-    Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(cap, "pyc.bound"));
-    if (b) { Py_XDECREF(b->defaults); Py_XDECREF(b->closure);
-             std::free(b->name); delete b; }
-}
-
-PyObject* trampoline(PyObject* self, PyObject* args, PyObject* kwargs) {
-    Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(self, "pyc.bound"));
+PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
     if (!b) return nullptr;
     Py_ssize_t npos = PyTuple_GET_SIZE(args);
     if (npos > b->nargs && b->vararg < 0) {
@@ -204,6 +214,116 @@ fail:
 
 }  // namespace
 
+namespace {
+// A real function object.
+//
+// pyc functions used to be PyCFunction. A PyCFunction is not a descriptor, so
+// it does not bind self on attribute access: methods needed an explicit
+// PyInstanceMethod wrapper at class-definition time, and a function assigned
+// to a class LATER (`cls.__repr__ = f`, the decorator idiom) was never wrapped
+// and lost self entirely. It also reprs as "<built-in method f>" where CPython
+// says "<function f at 0x...>".
+//
+// Both are the same root cause, so both are fixed in the same place: give the
+// object a type of its own that implements tp_descr_get and tp_repr the way a
+// Python function does.
+// name and dict are writable: functools.wraps assigns __name__, __qualname__,
+// __doc__, __module__ and __wrapped__ onto the wrapper, so a read-only
+// function object makes every @functools.wraps decorator fail.
+struct PycFunc { PyObject_HEAD Bound* b; PyObject* name; PyObject* doc; PyObject* dict; };
+
+PyObject* func_call(PyObject* self, PyObject* args, PyObject* kwargs) {
+    return trampoline(reinterpret_cast<PycFunc*>(self)->b, args, kwargs);
+}
+
+PyObject* func_descr_get(PyObject* self, PyObject* obj, PyObject* /*type*/) {
+    // Accessed on the class itself, not an instance: stay unbound.
+    if (!obj || obj == Py_None) { Py_INCREF(self); return self; }
+    return PyMethod_New(self, obj);
+}
+
+PyObject* func_repr(PyObject* self) {
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    return PyUnicode_FromFormat("<function %U at %p>", f->name, self);
+}
+
+PyObject* func_get_name(PyObject* self, void*) {
+    PyObject* n = reinterpret_cast<PycFunc*>(self)->name;
+    Py_INCREF(n);
+    return n;
+}
+
+PyObject* func_get_doc(PyObject* self, void*) {
+    PyObject* d = reinterpret_cast<PycFunc*>(self)->doc;
+    if (!d) d = Py_None;                // absent docstring reads as None
+    Py_INCREF(d);
+    return d;
+}
+
+int func_set_doc(PyObject* self, PyObject* v, void*) {
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    Py_XINCREF(v);
+    Py_XSETREF(f->doc, v);
+    return 0;
+}
+
+int func_set_name(PyObject* self, PyObject* v, void*) {
+    if (!v || !PyUnicode_Check(v)) {
+        PyErr_SetString(PyExc_TypeError,
+                        "__name__ must be set to a string object");
+        return -1;
+    }
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    Py_INCREF(v);
+    Py_XSETREF(f->name, v);
+    return 0;
+}
+
+void func_dealloc(PyObject* self) {
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    if (f->b) { Py_XDECREF(f->b->defaults); Py_XDECREF(f->b->closure);
+                std::free(f->b->name); delete f->b; }
+    Py_XDECREF(f->name);
+    Py_XDECREF(f->doc);
+    Py_XDECREF(f->dict);
+    Py_TYPE(self)->tp_free(self);
+}
+
+PyGetSetDef func_getset[] = {
+    {"__name__", func_get_name, func_set_name, nullptr, nullptr},
+    {"__qualname__", func_get_name, func_set_name, nullptr, nullptr},
+    // tp_dictoffset alone gives the object storage but no way to REACH it;
+    // functools.wraps reads wrapper.__dict__ directly.
+    {"__dict__", PyObject_GenericGetDict, PyObject_GenericSetDict, nullptr, nullptr},
+    {"__doc__", func_get_doc, func_set_doc, nullptr, nullptr},
+    {nullptr, nullptr, nullptr, nullptr, nullptr},
+};
+
+PyTypeObject PycFuncType = {
+    PyVarObject_HEAD_INIT(nullptr, 0)
+    "function",                     // tp_name -- what type(f).__name__ reports
+    sizeof(PycFunc),
+};
+
+bool init_func_type() {
+    static bool done = false, okv = false;
+    if (done) return okv;
+    done = true;
+    PycFuncType.tp_flags = Py_TPFLAGS_DEFAULT;
+    PycFuncType.tp_call = func_call;
+    PycFuncType.tp_repr = func_repr;
+    PycFuncType.tp_descr_get = func_descr_get;
+    PycFuncType.tp_dealloc = func_dealloc;
+    PycFuncType.tp_getset = func_getset;
+    PycFuncType.tp_getattro = PyObject_GenericGetAttr;
+    PycFuncType.tp_setattro = PyObject_GenericSetAttr;
+    PycFuncType.tp_dictoffset = offsetof(PycFunc, dict);
+    PycFuncType.tp_new = nullptr;
+    okv = PyType_Ready(&PycFuncType) == 0;
+    return okv;
+}
+}  // namespace
+
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                int nargs, int nlocals,
                                const char* const* argnames,
@@ -224,19 +344,19 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
             PyTuple_SET_ITEM(clo, i, closure[i]);
         }
     }
-    Bound* b = new (std::nothrow) Bound{impl, nargs, nlocals, {}, owned,
+    Bound* b = new (std::nothrow) Bound{impl, nargs, nlocals, owned,
                                         argnames, defaults,
                                         vararg_slot, kwarg_slot, clo, nfree};
     if (!b) { Py_XDECREF(defaults); std::free(owned); return PyErr_NoMemory(); }
-    b->def = PyMethodDef{b->name,
-                     reinterpret_cast<PyCFunction>(
-                         reinterpret_cast<void(*)()>(trampoline)),
-                     METH_VARARGS | METH_KEYWORDS, nullptr};
-    PyObject* cap = PyCapsule_New(b, "pyc.bound", bound_free);
-    if (!cap) { std::free(owned); delete b; return nullptr; }
-    PyObject* fn = PyCFunction_New(&b->def, cap);
-    Py_DECREF(cap);                                  // PyCFunction_New holds it
-    return fn;
+    if (!init_func_type()) { Py_XDECREF(defaults); std::free(owned); delete b; return nullptr; }
+    PycFunc* fn = PyObject_New(PycFunc, &PycFuncType);
+    if (!fn) { Py_XDECREF(defaults); std::free(owned); delete b; return nullptr; }
+    fn->b = b;
+    fn->dict = nullptr;                 // created lazily by generic setattr
+    fn->doc = nullptr;                  // reads as None until a docstring is set
+    fn->name = PyUnicode_FromString(name);
+    if (!fn->name) { Py_DECREF(fn); return nullptr; }
+    return reinterpret_cast<PyObject*>(fn);
 }
 
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {
@@ -324,8 +444,10 @@ extern "C" PyObject* pyc_rt_unpack(PyObject* value, Py_ssize_t n) {
 }
 
 extern "C" PyObject* pyc_rt_bind_method(PyObject* v) {
-    if (v && PyCFunction_Check(v)) return PyInstanceMethod_New(v);
-    Py_XINCREF(v);              // already a descriptor, or not ours: pass through
+    // A pyc function is now a descriptor in its own right, so there is nothing
+    // to wrap: binding happens on attribute access, for methods defined in the
+    // class body and for functions assigned to the class afterwards alike.
+    Py_XINCREF(v);
     return v;
 }
 
@@ -433,6 +555,17 @@ extern "C" PyObject* pyc_rt_unpack_ex(PyObject* value, Py_ssize_t nbefore,
     }
     Py_DECREF(all);
     return out;
+}
+
+// Zero-argument super() that could not be resolved at compile time. CPython
+// raises at RUN time here, with a message that depends on why: a frame with no
+// arguments at all has nothing to bind, while one with arguments but no class
+// cell was simply not compiled inside a class body.
+extern "C" int pyc_rt_super_fail(int has_args) {
+    PyErr_SetString(PyExc_RuntimeError,
+                    has_args ? "super(): __class__ cell not found"
+                             : "super(): no arguments");
+    return -1;
 }
 
 extern "C" int pyc_rt_assert_fail(PyObject* msg) {

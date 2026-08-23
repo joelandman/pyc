@@ -110,6 +110,12 @@ int pyc_rt_del_global(const char* name);
 // simply return NULL with no exception set, which would look like a crash.
 PyObject* pyc_rt_cell_get(PyObject* cell);
 
+// Class-body name lookup: namespace, then globals, then builtins (LOAD_NAME).
+PyObject* pyc_rt_load_classname(PyObject* ns, const char* name);
+
+// Unresolvable zero-argument super(); raises the RuntimeError CPython raises.
+int pyc_rt_super_fail(int has_args);
+
 // Bare `raise`: re-raise whatever exception is currently being handled.
 int pyc_rt_reraise(void);
 // Entering/leaving an except block. CPython keeps a separate "currently

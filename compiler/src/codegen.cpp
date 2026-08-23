@@ -178,6 +178,12 @@ private:
                    << cstr(in.text) << ")\n";
                 check(in, v(*in.result), true);
                 break;
+            case Op::LoadClassName:
+                need("declare ptr @pyc_rt_load_classname(ptr, ptr)");
+                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_load_classname(ptr "
+                   << v(in.args[0]) << ", ptr " << cstr(in.text) << ")\n";
+                check(in, v(*in.result), true);
+                break;
             case Op::StoreGlobal: {
                 need("declare i32 @pyc_rt_store_global(ptr, ptr)");
                 std::string r = fresh();

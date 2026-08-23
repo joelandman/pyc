@@ -245,6 +245,17 @@ struct NestedReads {
 };
 }  // namespace
 
+// Every name mentioned anywhere in the body, nested scopes included and
+// nothing filtered out. nested_reads() skips this scope's own statements and
+// free_locals() keeps only names the enclosing function already has as locals,
+// so neither can answer "is `super` mentioned here?" -- super is a builtin.
+std::set<std::string> all_reads(const std::vector<stmt>& body) {
+    std::set<std::string> out;
+    NestedReads nr{out};
+    for (const stmt& s : body) nr.stmt_(s, true);
+    return out;
+}
+
 std::set<std::string> nested_reads(const std::vector<stmt>& body) {
     std::set<std::string> out;
     NestedReads nr{out};
