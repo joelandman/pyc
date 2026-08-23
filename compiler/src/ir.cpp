@@ -1,0 +1,78 @@
+#include "pyc/ir/ir.hpp"
+
+#include <sstream>
+
+namespace pyc::ir {
+
+const char* op_name(Op op) {
+    switch (op) {
+        case Op::ConstInt:    return "const.int";
+        case Op::ConstFloat:  return "const.float";
+        case Op::ConstStr:    return "const.str";
+        case Op::ConstBytes:  return "const.bytes";
+        case Op::ConstBool:   return "const.bool";
+        case Op::ConstNone:   return "const.none";
+        case Op::LoadGlobal:  return "load.global";
+        case Op::StoreGlobal: return "store.global";
+        case Op::LoadLocal:   return "load.local";
+        case Op::StoreLocal:  return "store.local";
+        case Op::CallCApi:    return "call.capi";
+        case Op::CallObject:  return "call.object";
+        case Op::IncRef:      return "incref";
+        case Op::DecRef:      return "decref";
+        case Op::Br:          return "br";
+        case Op::CondBr:      return "condbr";
+        case Op::Return:      return "ret";
+        case Op::Raise:       return "raise";
+    }
+    return "?";
+}
+
+static const char* own_name(Ownership o) {
+    switch (o) {
+        case Ownership::Owned:       return "owned";
+        case Ownership::Borrowed:    return "borrowed";
+        case Ownership::AlwaysNull:  return "null";
+        case Ownership::NotAnObject: return "-";
+        case Ownership::Unknown:     return "unknown";
+    }
+    return "?";
+}
+
+std::string to_string(const Module& m) {
+    std::ostringstream o;
+    o << "; module " << m.source_file << "\n";
+    for (const Function& f : m.functions) {
+        o << "\nfunc " << f.name << "(";
+        for (std::size_t i = 0; i < f.params.size(); ++i)
+            o << (i ? ", " : "") << f.params[i];
+        o << "):\n";
+        for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {
+            const Block& b = f.blocks[bi];
+            o << "  " << (b.label.empty() ? "bb" + std::to_string(bi) : b.label) << ":\n";
+            for (const Instr& in : b.instrs) {
+                o << "    ";
+                if (in.result) o << "%" << in.result->id << " = ";
+                o << op_name(in.op);
+                if (!in.text.empty()) o << " \"" << in.text << "\"";
+                for (const Value& a : in.args) o << " %" << a.id;
+                if (in.op == Op::Br) o << " -> bb" << in.target;
+                if (in.op == Op::CondBr)
+                    o << " -> bb" << in.target << ", bb" << in.target_else;
+                if (in.result && in.result_ownership != Ownership::NotAnObject)
+                    o << "  ; " << own_name(in.result_ownership);
+                if (in.on_error) {
+                    // 0xFFFFFFFF marks "needs an error edge, not yet built".
+                    // Printing it as a block number would imply a target that
+                    // does not exist.
+                    if (*in.on_error == 0xFFFFFFFFu) o << "  ; may raise (error edge TODO)";
+                    else o << "  ; on_error -> bb" << *in.on_error;
+                }
+                o << "\n";
+            }
+        }
+    }
+    return o.str();
+}
+
+}  // namespace pyc::ir
