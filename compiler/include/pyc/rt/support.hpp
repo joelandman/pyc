@@ -26,8 +26,13 @@ PyObject* pyc_rt_load_local(PyObject** locals, int slot, const char* name);
 void      pyc_rt_store_local(PyObject** locals, int slot, PyObject* v);
 
 // Wrap a lowered function as a Python callable.
+// `argnames` is the parameter list, needed so the callee can bind keyword
+// arguments by name. Without it a compiled function is METH_VARARGS and
+// rejects every keyword call -- which turned an honest compile error into a
+// runtime TypeError when keyword CALLS started lowering.
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
-                               int nargs, int nlocals);
+                               int nargs, int nlocals,
+                               const char* const* argnames);
 
 // Vectorcall over an argument array.
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs);

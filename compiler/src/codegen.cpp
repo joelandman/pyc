@@ -212,6 +212,23 @@ private:
                 o_ << "  " << v(*in.result) << " = zext i1 " << c << " to i32\n";
                 break;
             }
+            case Op::ImportModule: {
+                if (in.imm) {
+                    // __import__(name, NULL, NULL, NULL, 0) returns the
+                    // top-level package, which is what `import a.b` binds.
+                    need("declare ptr @PyImport_ImportModuleLevel(ptr, ptr, ptr, ptr, i32)");
+                    o_ << "  " << v(*in.result)
+                       << " = call ptr @PyImport_ImportModuleLevel(ptr " << cstr(in.text)
+                       << ", ptr null, ptr null, ptr null, i32 0)\n";
+                } else {
+                    // Dotted names yield the named module itself here.
+                    need("declare ptr @PyImport_ImportModule(ptr)");
+                    o_ << "  " << v(*in.result) << " = call ptr @PyImport_ImportModule(ptr "
+                       << cstr(in.text) << ")\n";
+                }
+                check(in, v(*in.result), true);
+                break;
+            }
             case Op::IterNext: {
                 need("declare ptr @PyIter_Next(ptr)");
                 need("declare ptr @PyErr_Occurred()");
@@ -245,12 +262,15 @@ private:
                 break;
             }
             case Op::MakeFunction: {
-                need("declare ptr @pyc_rt_make_function(ptr, ptr, i32, i32)");
+                need("declare ptr @pyc_rt_make_function(ptr, ptr, i32, i32, ptr)");
                 const ir::Function* t = find(in.text);
+                // The parameter-name table lets the callee bind keywords.
+                std::string names = t ? argnames_global(*t) : "null";
                 o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_make_function(ptr "
                    << cstr(in.text) << ", ptr " << (t ? fname(*t) : "null")
                    << ", i32 " << (t ? t->params.size() : 0)
-                   << ", i32 " << (t ? t->locals.size() : 0) << ")\n";
+                   << ", i32 " << (t ? t->locals.size() : 0)
+                   << ", ptr " << names << ")\n";
                 check(in, v(*in.result), true);
                 break;
             }
@@ -335,7 +355,24 @@ private:
         check(in, v(*in.result), true);
     }
 
+    std::map<std::string, std::string> argnames_;
+    std::string argnames_global(const ir::Function& f) {
+        if (f.params.empty()) return "null";
+        auto it = argnames_.find(f.name);
+        if (it != argnames_.end()) return it->second;
+        std::string g = "@.args." + f.name;
+        std::string body = "[" + std::to_string(f.params.size()) + " x ptr] [";
+        for (std::size_t i = 0; i < f.params.size(); ++i)
+            body += (i ? ", ptr " : "ptr ") + cstr(f.params[i]);
+        body += "]";
+        argnames_[f.name] = g;
+        argname_defs_.push_back(g + " = private unnamed_addr constant " + body);
+        return g;
+    }
+    std::vector<std::string> argname_defs_;
+
     void emit_constants() {
+        for (const std::string& d : argname_defs_) o_ << d << "\n";
         o_ << "\n";
         for (const auto& [text, name] : strs_)
             o_ << name << " = private unnamed_addr constant ["

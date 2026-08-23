@@ -54,7 +54,12 @@ def main() -> int:
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         good = Path(td) / "good.py"; good.write_text("x = 1 + 2\n")
-        bad = Path(td) / "bad.py";  bad.write_text("import os\n")   # unsupported
+        # Must be something the compiler genuinely cannot lower. This probe
+        # goes stale by design as coverage grows -- `import os` was the
+        # previous choice and the self-check correctly refused once imports
+        # started working, rather than reporting a number from a blind
+        # instrument. Update it when the refusal fires.
+        bad = Path(td) / "bad.py";  bad.write_text("class C:\n    pass\n")
         sc.require_detects(
             "coverage probe",
             lambda p: [] if run.outcome(str(p)) == "ok" else [run.outcome(str(p))],

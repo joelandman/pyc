@@ -64,47 +64,93 @@ namespace {
 // Setting __name__ afterwards does not work: it is read-only on a
 // builtin_function_or_method, and the failed SetAttr left an exception set
 // that surfaced later as an unrelated SystemError.
-struct Bound { PycImpl impl; int nargs; int nlocals; PyMethodDef def; char* name; };
+struct Bound { PycImpl impl; int nargs; int nlocals; PyMethodDef def;
+               char* name; const char* const* argnames; };
 
 void bound_free(PyObject* cap) {
     Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(cap, "pyc.bound"));
     if (b) { std::free(b->name); delete b; }
 }
 
-PyObject* trampoline(PyObject* self, PyObject* args) {
+PyObject* trampoline(PyObject* self, PyObject* args, PyObject* kwargs) {
     Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(self, "pyc.bound"));
     if (!b) return nullptr;
-    Py_ssize_t n = PyTuple_GET_SIZE(args);
-    if (n != b->nargs) {
+    Py_ssize_t npos = PyTuple_GET_SIZE(args);
+    if (npos > b->nargs) {
         PyErr_Format(PyExc_TypeError,
-                     "function takes %d positional argument%s but %zd %s given",
-                     b->nargs, b->nargs == 1 ? "" : "s", n,
-                     n == 1 ? "was" : "were");
+                     "%s() takes %d positional argument%s but %zd %s given",
+                     b->name, b->nargs, b->nargs == 1 ? "" : "s", npos,
+                     npos == 1 ? "was" : "were");
         return nullptr;
     }
     PyObject** locals = new (std::nothrow) PyObject*[b->nlocals ? b->nlocals : 1];
     if (!locals) return PyErr_NoMemory();
     for (int i = 0; i < b->nlocals; ++i) locals[i] = nullptr;
-    for (int i = 0; i < b->nargs; ++i) {
+    for (Py_ssize_t i = 0; i < npos; ++i) {
         PyObject* a = PyTuple_GET_ITEM(args, i);    // borrowed
         Py_INCREF(a);
         locals[i] = a;
     }
-    PyObject* r = b->impl(locals);
+    // Bind keywords by parameter name, rejecting duplicates and unknowns the
+    // way CPython does rather than silently ignoring them.
+    if (kwargs) {
+        PyObject *k, *val;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(kwargs, &pos, &k, &val)) {
+            const char* ks = PyUnicode_AsUTF8(k);
+            if (!ks) goto fail;
+            int slot = -1;
+            for (int i = 0; i < b->nargs; ++i)
+                if (std::strcmp(ks, b->argnames[i]) == 0) { slot = i; break; }
+            if (slot < 0) {
+                PyErr_Format(PyExc_TypeError,
+                             "%s() got an unexpected keyword argument '%s'",
+                             b->name, ks);
+                goto fail;
+            }
+            if (locals[slot]) {
+                PyErr_Format(PyExc_TypeError,
+                             "%s() got multiple values for argument '%s'",
+                             b->name, ks);
+                goto fail;
+            }
+            Py_INCREF(val);
+            locals[slot] = val;
+        }
+    }
+    for (int i = 0; i < b->nargs; ++i) {
+        if (!locals[i]) {
+            PyErr_Format(PyExc_TypeError,
+                         "%s() missing required argument '%s'",
+                         b->name, b->argnames[i]);
+            goto fail;
+        }
+    }
+    {
+        PyObject* r = b->impl(locals);
+        for (int i = 0; i < b->nlocals; ++i) Py_XDECREF(locals[i]);
+        delete[] locals;
+        return r;
+    }
+fail:
     for (int i = 0; i < b->nlocals; ++i) Py_XDECREF(locals[i]);
     delete[] locals;
-    return r;
+    return nullptr;
 }
 
 }  // namespace
 
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
-                               int nargs, int nlocals) {
+                               int nargs, int nlocals,
+                               const char* const* argnames) {
     char* owned = strdup(name);
     if (!owned) return PyErr_NoMemory();
-    Bound* b = new (std::nothrow) Bound{impl, nargs, nlocals, {}, owned};
+    Bound* b = new (std::nothrow) Bound{impl, nargs, nlocals, {}, owned, argnames};
     if (!b) { std::free(owned); return PyErr_NoMemory(); }
-    b->def = PyMethodDef{b->name, trampoline, METH_VARARGS, nullptr};
+    b->def = PyMethodDef{b->name,
+                     reinterpret_cast<PyCFunction>(
+                         reinterpret_cast<void(*)()>(trampoline)),
+                     METH_VARARGS | METH_KEYWORDS, nullptr};
     PyObject* cap = PyCapsule_New(b, "pyc.bound", bound_free);
     if (!cap) { std::free(owned); delete b; return nullptr; }
     PyObject* fn = PyCFunction_New(&b->def, cap);

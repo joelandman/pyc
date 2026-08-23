@@ -226,8 +226,8 @@ private:
             [&](const Try& n)              { ok = unsupported("try", n.loc); },
             [&](const TryStar& n)          { ok = unsupported("try/except*", n.loc); },
             [&](const Assert& n)           { ok = unsupported("assert", n.loc); },
-            [&](const Import& n)           { ok = unsupported("import", n.loc); },
-            [&](const ImportFrom& n)       { ok = unsupported("from-import", n.loc); },
+            [&](const Import& n)           { ok = lower_import(n); },
+            [&](const ImportFrom& n)       { ok = lower_import_from(n); },
             [&](const Global&)             {
                 // No code to emit: function_locals() has already excluded
                 // these names, so every reference resolves to the global
@@ -492,6 +492,56 @@ private:
     // these too, or every exception raised inside a loop body leaks the
     // iterator. The per-statement reset alone cannot see them.
     std::vector<ir::Value> frame_owned_;
+
+    ir::Value emit_import(const std::string& name, bool top_level,
+                          const SourceLoc& loc) {
+        ir::Value m = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        ir::Instr in{ir::Op::ImportModule, {}, m, Ownership::Owned, name,
+                     0, 0, loc, make_landing_pad(loc)};
+        in.imm = top_level ? 1 : 0;
+        in.has_imm = true;
+        emit(std::move(in));
+        mark_owned(m);
+        return m;
+    }
+
+    bool lower_import(const Import& n) {
+        for (const alias& a : n.names) {
+            if (a.asname) {
+                // `import a.b as c` binds the LEAF module.
+                ir::Value m = emit_import(a.name, false, n.loc);
+                store_name(*a.asname, m, n.loc);
+            } else {
+                // `import a.b` binds the TOP-LEVEL package `a`, not `a.b` --
+                // getting this backwards silently binds the wrong object.
+                ir::Value m = emit_import(a.name, true, n.loc);
+                std::string bind = a.name.substr(0, a.name.find('.'));
+                store_name(bind, m, n.loc);
+            }
+        }
+        return true;
+    }
+
+    bool lower_import_from(const ImportFrom& n) {
+        if (n.level && *n.level > 0)
+            return unsupported("relative imports", n.loc);
+        for (const alias& a : n.names)
+            if (a.name == "*") return unsupported("wildcard imports", n.loc);
+        std::string mod = n.module ? *n.module : std::string();
+        if (mod.empty()) return unsupported("import from an unnamed module", n.loc);
+
+        bool ok = true;
+        ir::Value m = emit_import(mod, false, n.loc);
+        for (const alias& a : n.names) {
+            ir::Value key = const_str(a.name, n.loc);
+            ir::Value v = call_capi("PyObject_GetAttr", {m, key}, n.loc, &ok, {key});
+            if (!ok) return false;
+            mark_owned(v);
+            store_name(a.asname ? *a.asname : a.name, v, n.loc);
+        }
+        if (owns(m)) release(m, n.loc);
+        return true;
+    }
 
     bool lower_for(const For& n) {
         if (!n.orelse.empty()) return unsupported("for/else", n.loc);

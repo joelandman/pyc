@@ -29,6 +29,7 @@ const char* op_name(Op op) {
         case Op::IntNot:      return "int.not";
         case Op::Phi:         return "phi";
         case Op::IterNext:    return "iter.next";
+        case Op::ImportModule: return "import";
         case Op::MakeFunction: return "makefunc";
     }
     return "?";

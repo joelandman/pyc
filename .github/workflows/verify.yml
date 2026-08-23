@@ -126,6 +126,27 @@ jobs:
           ! ldd "$RUNNER_TEMP/smoke" | grep -qi libpython \
             || { echo "smoke binary has a libpython dependency"; exit 1; }
 
+      - name: Wheel milestone (CHARTER I7)
+        run: |
+          set -euxo pipefail
+          # The bet the whole architecture rests on: a compiled binary with no
+          # libpython dependency still loads a precompiled C-extension wheel.
+          # Proven by hand on 2026-08-22; gated here so it cannot silently
+          # regress. numpy rather than torch: same mechanism, far smaller.
+          "$SYSROOT/bin/python3.14" -m pip install --quiet --no-input numpy
+          cat > "$RUNNER_TEMP/wheel.py" <<'EOP'
+          import numpy
+          print(numpy.arange(10).sum())
+          EOP
+          sed -i 's/^          //' "$RUNNER_TEMP/wheel.py"
+          PYC_LOWER="$RUNNER_TEMP/pyc_lower" ./compiler/tools/pycc \
+            "$RUNNER_TEMP/wheel.py" -o "$RUNNER_TEMP/wheel"
+          got="$("$RUNNER_TEMP/wheel")"
+          want="$("$SYSROOT/bin/python3.14" "$RUNNER_TEMP/wheel.py")"
+          [ "$got" = "$want" ] || { echo "wheel mismatch: $got != $want"; exit 1; }
+          ! ldd "$RUNNER_TEMP/wheel" | grep -qi libpython \
+            || { echo "wheel binary has a libpython dependency"; exit 1; }
+
       - name: Differential run
         run: |
           PYC_LOWER="$RUNNER_TEMP/pyc_lower" ./verify/run.py \

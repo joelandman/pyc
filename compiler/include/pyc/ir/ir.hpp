@@ -63,6 +63,12 @@ enum class Op {
     Is,
     // Logical negation of a machine int, for `not in` and `is not`.
     IntNot,
+    // Import a module by name. A dedicated op because the C-API entry points
+    // take a C STRING, not a PyObject*, so they do not fit the generic call
+    // path. `imm` selects which: 0 imports the named module itself (the leaf
+    // of a dotted path), 1 imports it and yields the TOP-LEVEL package, which
+    // is what plain `import a.b` binds.
+    ImportModule,
     // Advance an iterator. THREE-way: PyIter_Next returns NULL both at
     // exhaustion (no exception) and on error (exception set), so the two are
     // distinguished by PyErr_Occurred. `target` is the body, `target_else`
