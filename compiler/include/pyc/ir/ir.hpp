@@ -92,6 +92,11 @@ enum class Op {
     // of a dotted path), 1 imports it and yields the TOP-LEVEL package, which
     // is what plain `import a.b` binds.
     ImportModule,
+    // Build a generator expression (rebuild/GENERATORS.md). `text` is the
+    // marshalled code object CPython produced at build time; args are the
+    // closure tuple of cells and the eagerly-evaluated outer ITERATOR.
+    // pyc does not implement suspension: the linked interpreter runs the body.
+    MakeGenexp,
     // Cell access. A cell variable's slot holds a PyCell, so reading it is
     // two steps, not one.
     CellNew, CellGet, CellSet,

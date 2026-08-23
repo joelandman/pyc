@@ -9,52 +9,31 @@
       "-O0"
     ]
   },
-  "pass_rate": 85.8695652173913,
+  "pass_rate": 89.1304347826087,
   "scored": 92,
-  "matched": 79,
+  "matched": 82,
   "quarantined": 1,
-  "elapsed_seconds": 44.60814046859741,
+  "elapsed_seconds": 44.17180252075195,
   "counts": {
-    "COMPILE_ERROR": 5,
+    "COMPILE_ERROR": 2,
     "STDERR_DIFF": 8,
-    "MATCH": 79,
+    "MATCH": 82,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
-    {
-      "case": "builtins2.py",
-      "path": "verify/corpus/programs/builtins2.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-u3wv_lg9/builtins2.py:52:14: error: cannot compile generator expressions yet [generator expressions]"
-    },
-    {
-      "case": "features.py",
-      "path": "verify/corpus/programs/features.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-yl_zrmjy/features.py:38:14: error: cannot compile generator expressions yet [generator expressions]"
-    },
     {
       "case": "generators.py",
       "path": "verify/corpus/programs/generators.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-p5ixp7b8/generators.py:3:4: error: cannot compile yield yet [yield]"
-    },
-    {
-      "case": "range.py",
-      "path": "verify/corpus/programs/range.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-_9641e2_/range.py:20:15: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-cwd6lysz/generators.py:3:4: error: cannot compile yield yet [yield]"
     },
     {
       "case": "w124_gen.py",
       "path": "verify/corpus/programs/w124_gen.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-4zm7sg_y/w124_gen.py:4:8: error: cannot compile yield yet [yield]"
+      "detail": "/tmp/pyc-verify-5_i4e83w/w124_gen.py:4:8: error: cannot compile yield yet [yield]"
     },
     {
       "case": "fibn.py",
@@ -141,8 +120,22 @@
       "detail": ""
     },
     {
+      "case": "builtins2.py",
+      "path": "verify/corpus/programs/builtins2.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "closures.py",
       "path": "verify/corpus/programs/closures.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "features.py",
+      "path": "verify/corpus/programs/features.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -227,6 +220,13 @@
     {
       "case": "opt_range_loop.py",
       "path": "verify/corpus/programs/opt_range_loop.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "range.py",
+      "path": "verify/corpus/programs/range.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""

@@ -37,6 +37,7 @@ const char* op_name(Op op) {
         case Op::IntConst:    return "int.const";
         case Op::ConstNull:   return "const.null";
         case Op::DelGlobal:   return "del.global";
+        case Op::MakeGenexp:  return "make.genexp";
         case Op::CellNew:     return "cell.new";
         case Op::CellGet:     return "cell.get";
         case Op::CellSet:     return "cell.set";
@@ -84,7 +85,15 @@ std::string to_string(const Module& m) {
                 o << "    ";
                 if (in.result) o << "%" << in.result->id << " = ";
                 o << op_name(in.op);
-                if (!in.text.empty()) o << " \"" << in.text << "\"";
+                if (in.op == Op::MakeGenexp) {
+                    // The marshalled code object is arbitrary BYTES. The IR
+                    // dump is a text artifact that tools read and diff, so it
+                    // carries the blob's size, never its contents -- printing
+                    // it raw made the listing invalid UTF-8.
+                    o << " <code " << in.text.size() << " bytes>";
+                } else if (!in.text.empty()) {
+                    o << " \"" << in.text << "\"";
+                }
                 if (in.op == Op::Phi) {
                     for (std::size_t i = 0; i < in.args.size(); ++i)
                         o << (i ? ", " : " ") << "[%" << in.args[i].id << ", bb"

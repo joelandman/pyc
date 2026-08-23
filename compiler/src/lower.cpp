@@ -12,6 +12,7 @@
 //     PyObject* obtained from a §4 symbol. I2 requires the boxed path to stay
 //     correct beneath any future unboxing, so it is built first.
 #include "pyc/ast/generated.hpp"
+#include "pyc/genexp.hpp"
 #include "pyc/ir/ir.hpp"
 #include "pyc/rt/capi.hpp"
 
@@ -38,7 +39,18 @@ using pyc::rt::Ownership;
 
 class Lowerer {
 public:
-    Lowerer(ir::Module& m, DiagnosticSink& d) : mod_(m), diags_(d) {}
+    Lowerer(ir::Module& m, DiagnosticSink& d,
+            const std::vector<GenexpEntry>& gx)
+        : mod_(m), diags_(d), genexps_(gx) {}
+
+    // Generator expressions carry a code object CPython compiled at build
+    // time, keyed by source position (rebuild/GENERATORS.md).
+    const std::vector<GenexpEntry>& genexps_;
+    const GenexpEntry* find_genexp(const SourceLoc& loc) const {
+        for (const GenexpEntry& g : genexps_)
+            if (g.line == loc.line && g.col == loc.col) return &g;
+        return nullptr;
+    }
 
     bool lower_module(const ast::mod& node) {
         const Module* mm = std::get_if<Module>(&node.v);
@@ -2121,7 +2133,7 @@ private:
             [&](const ListComp& n)      { out = lower_comp(n.generators, &*n.elt, nullptr, "list", n.loc, ok); },
             [&](const SetComp& n)       { out = lower_comp(n.generators, &*n.elt, nullptr, "set", n.loc, ok); },
             [&](const DictComp& n)      { out = lower_comp(n.generators, &*n.value, &*n.key, "dict", n.loc, ok); },
-            [&](const GeneratorExp& n)  { *ok = unsupported("generator expressions", n.loc); },
+            [&](const GeneratorExp& n)  { out = lower_genexp(n, ok); },
             [&](const Await& n)         { *ok = unsupported("await", n.loc); },
             [&](const Yield& n)         { *ok = unsupported("yield", n.loc); },
             [&](const YieldFrom& n)     { *ok = unsupported("yield from", n.loc); },
@@ -2515,6 +2527,73 @@ private:
         return acc;
     }
 
+    // A generator expression. pyc evaluates the outer iterable eagerly -- as
+    // CPython does, so an exception in it surfaces at CREATION -- collects a
+    // cell per free variable, and hands both to the interpreter along with the
+    // code object built at compile time.
+    ir::Value lower_genexp(const GeneratorExp& n, bool* ok) {
+        const GenexpEntry* gx = find_genexp(n.loc);
+        if (!gx) {
+            *ok = err("no compiled code object for this generator expression",
+                      "generator expressions", n.loc);
+            return {};
+        }
+        if (n.generators.empty()) {
+            *ok = err("generator expression with no for-clause", "generator expressions", n.loc);
+            return {};
+        }
+        for (const comprehension& c : n.generators)
+            if (c.is_async) { *ok = unsupported("async comprehensions", n.loc); return {}; }
+
+        // 1. The OUTERMOST iterable, eagerly.
+        ir::Value seq = lower_expr(*n.generators[0].iter, ok);
+        if (!*ok) return {};
+        ir::Value it = call_capi("PyObject_GetIter", {seq}, n.loc, ok, {seq});
+        if (!*ok) return {};
+        mark_owned(it);
+
+        // 2. A cell per free variable, in co_freevars order. pyc's closure
+        //    analysis already forces a local read by a nested scope into a
+        //    cell, and it counts generator expressions as nested reads. A
+        //    freevar with no cell is a compile error, never a guess.
+        ir::Value closure;
+        if (!gx->freevars.empty()) {
+            closure = call_capi_imm("PyTuple_New", {},
+                                    (std::int64_t)gx->freevars.size(), 0, n.loc, ok);
+            if (!*ok) return {};
+            mark_owned(closure);
+            for (std::size_t i = 0; i < gx->freevars.size(); ++i) {
+                const std::string& name = gx->freevars[i];
+                auto cit = cells_.find(name);
+                if (cit == cells_.end()) {
+                    *ok = err("generator expression captures '" + name +
+                              "', which has no closure cell here",
+                              "generator expressions", n.loc);
+                    return {};
+                }
+                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, name,
+                               cit->second, 0, n.loc, make_landing_pad(n.loc)});
+                mark_owned(cell);
+                call_capi_imm("PyTuple_SetItem", {closure, cell},
+                              (std::int64_t)i, 1, n.loc, ok);   // steals cell
+                if (!*ok) return {};
+            }
+        }
+
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        ir::Instr mk{ir::Op::MakeGenexp,
+                     {closure.valid() ? closure : ir::Value{}, it},
+                     out, Ownership::Owned, gx->code, 0, 0, n.loc,
+                     make_landing_pad(n.loc)};
+        emit(std::move(mk));
+        mark_owned(out);
+        if (closure.valid() && owns(closure)) release(closure, n.loc);
+        if (owns(it)) release(it, n.loc);
+        *ok = true;
+        return out;
+    }
+
     ir::Value lower_ifexp(const IfExp& n, bool* ok) {
         ir::Value t = lower_predicate(*n.test, ok);
         if (!*ok) return {};
@@ -2878,9 +2957,10 @@ private:
 }  // namespace
 
 bool lower_to_ir(const ast::mod& tree, const std::string& file,
-                 ir::Module& out, DiagnosticSink& diags) {
+                 ir::Module& out, DiagnosticSink& diags,
+                 const std::vector<GenexpEntry>& genexps) {
     out.source_file = file;
-    Lowerer l(out, diags);
+    Lowerer l(out, diags, genexps);
     return l.lower_module(tree);
 }
 

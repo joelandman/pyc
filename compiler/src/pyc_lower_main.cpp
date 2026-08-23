@@ -1,5 +1,6 @@
 // Reads a pyc_parse envelope, lowers it, prints IR or diagnostics.
 #include "pyc/ast/generated_from_json.hpp"
+#include "pyc/genexp.hpp"
 #include "pyc/ir/ir.hpp"
 
 #include <cstdio>
@@ -7,7 +8,8 @@
 #include <sstream>
 
 namespace pyc {
-bool lower_to_ir(const ast::mod&, const std::string&, ir::Module&, DiagnosticSink&);
+bool lower_to_ir(const ast::mod&, const std::string&, ir::Module&, DiagnosticSink&,
+                 const std::vector<GenexpEntry>&);
 std::string codegen_llvm(const ir::Module&);
 }
 using namespace pyc;
@@ -61,8 +63,25 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Generator expressions: marshalled code objects from the parse stage,
+    // keyed by source position (rebuild/GENERATORS.md).
+    std::vector<GenexpEntry> genexps;
+    if (const json::Value* gv = doc.find(doc.root(), "genexps")) {
+        for (std::uint32_t i = 0; i < gv->count; ++i) {
+            const json::Value& e = doc.elem(*gv, i);
+            GenexpEntry g;
+            if (const json::Value* x = doc.find(e, "line")) g.line = (int)x->number;
+            if (const json::Value* x = doc.find(e, "col"))  g.col  = (int)x->number;
+            if (const json::Value* x = doc.find(e, "code")) g.code = b64_decode(doc.str_of(*x));
+            if (const json::Value* x = doc.find(e, "freevars"))
+                for (std::uint32_t k = 0; k < x->count; ++k)
+                    g.freevars.push_back(std::string(doc.str_of(doc.elem(*x, k))));
+            genexps.push_back(std::move(g));
+        }
+    }
+
     ir::Module m;
-    if (!lower_to_ir(tree, file, m, sink)) {
+    if (!lower_to_ir(tree, file, m, sink, genexps)) {
         for (const auto& d : sink.items) {
             if (d.severity != Diagnostic::Severity::Error) continue;
             std::fprintf(stderr, "%s:%d:%d: error: %s [%s]\n",

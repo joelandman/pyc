@@ -1,5 +1,7 @@
 #include "pyc/rt/support.hpp"
 
+#include <marshal.h>   // PyMarshal_ReadObjectFromString
+
 #include <cstdlib>
 #include <cstddef>
 #include <cstring>
@@ -561,6 +563,31 @@ extern "C" PyObject* pyc_rt_unpack_ex(PyObject* value, Py_ssize_t nbefore,
 // raises at RUN time here, with a message that depends on why: a frame with no
 // arguments at all has nothing to bind, while one with arguments but no class
 // cell was simply not compiled inside a class body.
+// A generator expression (rebuild/GENERATORS.md). The code object was
+// compiled by CPython at BUILD time and marshalled into the binary; pyc
+// supplies the closure cells and the outer iterator, and the linked
+// interpreter runs the body. The result is a real generator -- same type,
+// same laziness, same send/throw/close -- because it IS one.
+extern "C" PyObject* pyc_rt_make_genexp(const char* blob, Py_ssize_t len,
+                                        PyObject** cache, PyObject* closure,
+                                        PyObject* iterator) {
+    if (!*cache) {
+        // Unmarshalled once per call site, not once per evaluation: a genexp
+        // inside a loop would otherwise re-read the code object every time.
+        *cache = PyMarshal_ReadObjectFromString(const_cast<char*>(blob), len);
+        if (!*cache) return nullptr;
+    }
+    PyObject* g = globals_dict();
+    if (!g) return nullptr;
+    PyObject* fn = PyFunction_New(*cache, g);
+    if (!fn) return nullptr;
+    if (closure && closure != Py_None
+        && PyFunction_SetClosure(fn, closure) < 0) { Py_DECREF(fn); return nullptr; }
+    PyObject* gen = PyObject_CallOneArg(fn, iterator);
+    Py_DECREF(fn);
+    return gen;
+}
+
 extern "C" int pyc_rt_super_fail(int has_args) {
     PyErr_SetString(PyExc_RuntimeError,
                     has_args ? "super(): __class__ cell not found"

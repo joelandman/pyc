@@ -9,45 +9,24 @@
       "-O0"
     ]
   },
-  "pass_rate": 98.59550561797752,
+  "pass_rate": 99.01685393258427,
   "scored": 712,
-  "matched": 702,
+  "matched": 705,
   "quarantined": 1,
-  "elapsed_seconds": 195.66082191467285,
+  "elapsed_seconds": 184.58012509346008,
   "counts": {
-    "COMPILE_ERROR": 4,
+    "COMPILE_ERROR": 1,
     "STDERR_DIFF": 6,
-    "MATCH": 702,
+    "MATCH": 705,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
-    {
-      "case": "case_265.py",
-      "path": "verify/corpus/language/case_265.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-tu0_amd6/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
-    },
-    {
-      "case": "case_266.py",
-      "path": "verify/corpus/language/case_266.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-wxdm29y8/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
-    },
-    {
-      "case": "case_267.py",
-      "path": "verify/corpus/language/case_267.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-cgfoi0bl/case_267.py:2:9: error: cannot compile generator expressions yet [generator expressions]"
-    },
     {
       "case": "case_449.py",
       "path": "verify/corpus/language/case_449.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-tbq3fhd5/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
+      "detail": "/tmp/pyc-verify-b_1lpqv1/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
     },
     {
       "case": "case_208.py",
@@ -1921,6 +1900,27 @@
     {
       "case": "case_264.py",
       "path": "verify/corpus/language/case_264.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_265.py",
+      "path": "verify/corpus/language/case_265.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_266.py",
+      "path": "verify/corpus/language/case_266.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "case_267.py",
+      "path": "verify/corpus/language/case_267.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""

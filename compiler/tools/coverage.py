@@ -67,15 +67,18 @@ def main() -> int:
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         good = Path(td) / "good.py"; good.write_text("x = 1 + 2\n")
-        # Must be something the compiler genuinely cannot lower. A generator
-        # expression needs real generators, so it should outlast the others. This probe
-        # goes stale by design as coverage grows. `import os`, `class C: pass`, a try statement
-        # a lambda and a list
-        # comprehension were the first five choices; the self-check refused each
-        # time the feature landed, rather than reporting a number from a blind
+        # Must be something the compiler genuinely cannot lower. This probe goes
+        # stale BY DESIGN as coverage grows: `import os`, `class C: pass`, a try
+        # statement, a lambda, a list comprehension and a generator expression
+        # were the first six choices, and the self-check refused each time the
+        # feature landed rather than reporting a number from a blind
         # instrument. Update it when the refusal fires -- that is the guard
         # working, not a nuisance.
-        bad = Path(td) / "bad.py";  bad.write_text("g = (x for x in y)\n")
+        #
+        # `yield` is the current choice: generator expressions now compile
+        # (their bodies are handed to CPython, see rebuild/GENERATORS.md), but
+        # a generator FUNCTION still needs suspension pyc does not implement.
+        bad = Path(td) / "bad.py";  bad.write_text("def g():\n    yield 1\n")
         sc.require_detects(
             "coverage probe",
             lambda p: [] if run.outcome(str(p)) == "ok" else [run.outcome(str(p))],

@@ -15,6 +15,7 @@ import json
 import sys
 
 from . import SCHEMA_VERSION, encode_node
+from .genexp import collect as collect_genexps, GenexpError
 
 # Real code nests deeper than CPython's default 1000 frames allows once each
 # AST level costs several: sympy's resolvent_lookup.py reaches depth 568.
@@ -79,11 +80,27 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write("\n")
         return 1
 
+    # Generator expressions are compiled here, by the TARGET interpreter, and
+    # carried as marshalled code objects (rebuild/GENERATORS.md). They travel
+    # in a side table keyed by source position rather than as extra AST
+    # fields: the typed AST is generated from CPython's own ASDL and stays
+    # faithful to it, so synthetic fields have no place in it.
+    try:
+        genexps = collect_genexps(tree, src, args.file)
+    except GenexpError as e:
+        json.dump({"schema_version": SCHEMA_VERSION, "error": {
+            "kind": "GeneratorExpressionError", "message": str(e),
+            "file": args.file, "line": 0, "col": 0,
+        }}, sys.stdout)
+        sys.stdout.write("\n")
+        return 1
+
     json.dump({
         "schema_version": SCHEMA_VERSION,
         "python_version": "%d.%d.%d" % sys.version_info[:3],
         "feature_version": list(fv) if fv else None,
         "file": args.file,
+        "genexps": genexps,
         "ast": encode_node(tree),
     }, sys.stdout, indent=args.indent)
     sys.stdout.write("\n")

@@ -116,6 +116,11 @@ PyObject* pyc_rt_load_classname(PyObject* ns, const char* name);
 // Unresolvable zero-argument super(); raises the RuntimeError CPython raises.
 int pyc_rt_super_fail(int has_args);
 
+// A generator expression: marshalled code object + closure cells + the outer
+// iterator, run by the linked interpreter. See rebuild/GENERATORS.md.
+PyObject* pyc_rt_make_genexp(const char* blob, Py_ssize_t len, PyObject** cache,
+                             PyObject* closure, PyObject* iterator);
+
 // Bare `raise`: re-raise whatever exception is currently being handled.
 int pyc_rt_reraise(void);
 // Entering/leaving an except block. CPython keeps a separate "currently

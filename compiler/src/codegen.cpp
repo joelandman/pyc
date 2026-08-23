@@ -175,6 +175,20 @@ private:
                    << cstr(in.text) << ", i64 " << in.text.size() << ")\n";
                 check(in, v(*in.result), true);
                 break;
+            case Op::MakeGenexp: {
+                need("declare ptr @pyc_rt_make_genexp(ptr, i64, ptr, ptr, ptr)");
+                // One cache slot per call site: the code object is unmarshalled
+                // once, not on every evaluation of the expression.
+                std::string cache = "@.gxcache" + std::to_string(genexp_n_++);
+                genexp_caches_.push_back(cache + " = internal global ptr null");
+                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_make_genexp(ptr "
+                   << cstr(in.text) << ", i64 " << in.text.size()
+                   << ", ptr " << cache
+                   << ", ptr " << v(in.args[0])
+                   << ", ptr " << v(in.args[1]) << ")\n";
+                check(in, v(*in.result), true);
+                break;
+            }
             case Op::ConstFloat:
                 need("declare ptr @PyFloat_FromDouble(double)");
                 o_ << "  " << v(*in.result) << " = call ptr @PyFloat_FromDouble(double "
@@ -515,8 +529,11 @@ private:
         return g;
     }
     std::vector<std::string> argname_defs_;
+    std::vector<std::string> genexp_caches_;
+    int genexp_n_ = 0;
 
     void emit_constants() {
+        for (const std::string& d : genexp_caches_) o_ << d << "\n";
         for (const std::string& d : argname_defs_) o_ << d << "\n";
         o_ << "\n";
         for (const auto& [text, name] : strs_)
