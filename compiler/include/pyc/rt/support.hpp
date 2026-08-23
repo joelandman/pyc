@@ -45,6 +45,20 @@ PyObject* pyc_rt_str(const char* utf8, Py_ssize_t len);
 PyObject* pyc_rt_bytes(const char* data, Py_ssize_t len);
 PyObject* pyc_rt_none(void);
 
+// Build a class from an already-populated namespace.
+//
+// CPython's __build_class__ runs the body with the frame's f_locals bound to
+// the namespace mapping, which a compiled callable cannot do. Instead the body
+// is lowered inline with its stores directed into `ns`, and this performs the
+// rest of what __build_class__ does: resolve the most-derived metaclass and
+// call it. type.__new__ still runs __set_name__ and __init_subclass__, so
+// those hooks are not lost.
+PyObject* pyc_rt_build_class(const char* name, PyObject* bases, PyObject* ns);
+
+// Raise. Accepts a class or an instance, as `raise` does, and always returns
+// -1 so the caller's error edge is taken.
+int pyc_rt_raise(PyObject* exc);
+
 #ifdef __cplusplus
 }
 #endif

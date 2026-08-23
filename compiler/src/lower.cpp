@@ -82,13 +82,9 @@ private:
                          imm, imm_pos);
     }
 
-    static bool is_terminator(ir::Op op) {
-        return op == ir::Op::Br || op == ir::Op::CondBr
-            || op == ir::Op::Return || op == ir::Op::ReturnErr;
-    }
     bool terminated() const {
         const auto& is = cur()->blocks[blk_].instrs;
-        return !is.empty() && is_terminator(is.back().op);
+        return !is.empty() && ir::is_terminator(is.back().op);
     }
     // Anything after a terminator is unreachable, and a block with two
     // terminators is malformed IR that LLVM's verifier rejects outright --
@@ -210,7 +206,7 @@ private:
             // a node kind added upstream must break this build (I4).
             [&](const FunctionDef& n)      { ok = lower_functiondef(n); },
             [&](const AsyncFunctionDef& n) { ok = unsupported("async function definitions", n.loc); },
-            [&](const ClassDef& n)         { ok = unsupported("class definitions", n.loc); },
+            [&](const ClassDef& n)         { ok = lower_classdef(n); },
             [&](const Return& n)           { ok = lower_return(n); },
             [&](const Delete& n)           { ok = lower_delete(n); },
             [&](const AugAssign& n)        { ok = unsupported("augmented assignment", n.loc); },
@@ -222,7 +218,15 @@ private:
             [&](const With& n)             { ok = unsupported("with", n.loc); },
             [&](const AsyncWith& n)        { ok = unsupported("async with", n.loc); },
             [&](const Match& n)            { ok = unsupported("match", n.loc); },
-            [&](const Raise& n)            { ok = unsupported("raise", n.loc); },
+            [&](const Raise& n)            {
+                if (!n.exc) { ok = unsupported("bare raise", n.loc); return; }
+                if (n.cause) { ok = unsupported("raise ... from", n.loc); return; }
+                ir::Value e = lower_expr(**n.exc, &ok);
+                if (!ok) return;
+                emit(ir::Instr{ir::Op::Raise, {e}, std::nullopt,
+                               Ownership::NotAnObject, "", 0, 0, n.loc,
+                               make_landing_pad(n.loc)});
+            },
             [&](const Try& n)              { ok = unsupported("try", n.loc); },
             [&](const TryStar& n)          { ok = unsupported("try/except*", n.loc); },
             [&](const Assert& n)           { ok = unsupported("assert", n.loc); },
@@ -285,15 +289,24 @@ private:
         auto outer_locals = locals_;
         auto outer_owned = owned_;
         auto outer_loops = loops_;
+        // frame_owned_ must be saved too. A method lowered inside a class body
+        // would otherwise inherit the class's namespace dict, and its landing
+        // pads would emit a decref for a value defined in a DIFFERENT
+        // function -- which LLVM rejects as "does not dominate all uses".
+        auto outer_frame = frame_owned_;
+        auto outer_class_ns = class_ns_;
 
         mod_.functions.push_back(ir::Function{n.name, params, {}, {}, 1});
         fn_idx_ = mod_.functions.size() - 1;
+        const std::size_t fn_index = fn_idx_;
         cur()->locals = function_locals(params, n.body);
         locals_.clear();
         for (std::uint32_t i = 0; i < cur()->locals.size(); ++i)
             locals_[cur()->locals[i]] = i;
         owned_.clear();
         loops_.clear();
+        frame_owned_.clear();
+        class_ns_.clear();          // a method body is not a class body
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
 
@@ -310,14 +323,34 @@ private:
 
         fn_idx_ = outer_fn; blk_ = outer_blk; locals_ = outer_locals;
         owned_ = outer_owned; loops_ = outer_loops;
+        frame_owned_ = outer_frame; class_ns_ = outer_class_ns;
         if (!ok) return false;
 
         // Bind the callable in the enclosing scope, by the same store path any
         // other assignment uses -- a def is not special.
         ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        emit(ir::Instr{ir::Op::MakeFunction, {}, fv, Ownership::Owned,
-                       n.name, 0, 0, n.loc, make_landing_pad(n.loc)});
+        // Reference the function by INDEX, not name. Two classes can each
+        // define `who`, and looking it up by name both picked the wrong one
+        // and emitted a duplicate LLVM symbol.
+        ir::Instr mk{ir::Op::MakeFunction, {}, fv, Ownership::Owned,
+                     n.name, 0, 0, n.loc, make_landing_pad(n.loc)};
+        mk.imm = (std::int64_t)fn_index;
+        mk.has_imm = true;
+        emit(std::move(mk));
         mark_owned(fv);
+        // Inside a class body, a plain callable is not enough: a
+        // PyCFunction in a class dict does NOT bind self, because it is not a
+        // descriptor. `C().m()` then fails with "missing required argument
+        // 'self'". PyInstanceMethod wraps any callable and binds the instance
+        // on attribute access, which is what a Python function does natively.
+        if (!class_ns_.empty()) {
+            bool okm = true;
+            ir::Value m = call_capi("PyInstanceMethod_New", {fv}, n.loc, &okm, {fv});
+            if (!okm) return false;
+            mark_owned(m);
+            store_name(n.name, m, n.loc);
+            return true;
+        }
         store_name(n.name, fv, n.loc);
         return true;
     }
@@ -455,7 +488,19 @@ private:
     }
 
     // One store path for every binding form: def, assignment, everything.
+    // While lowering a class body, every binding goes into the namespace dict
+    // rather than a local or global slot. That is what makes `def m(self)`
+    // inside a class become a method instead of a module-level function.
+    std::vector<ir::Value> class_ns_;
+
     void store_name(const std::string& name, const ir::Value& v, const SourceLoc& loc) {
+        if (!class_ns_.empty()) {
+            bool ok = true;
+            ir::Value key = const_str(name, loc);
+            call_capi("PyObject_SetItem", {class_ns_.back(), key, v}, loc, &ok, {key});
+            if (owns(v)) release(v, loc);
+            return;
+        }
         auto it = locals_.find(name);
         if (it != locals_.end())
             emit(ir::Instr{ir::Op::StoreLocal, {v}, std::nullopt,
@@ -503,6 +548,54 @@ private:
         emit(std::move(in));
         mark_owned(m);
         return m;
+    }
+
+    bool lower_classdef(const ClassDef& n) {
+        if (!n.decorator_list.empty()) return unsupported("class decorators", n.loc);
+        if (!n.keywords.empty()) return unsupported("metaclass= and class keywords", n.loc);
+
+        bool ok = true;
+        // Bases first: they are ordinary expressions evaluated in the
+        // ENCLOSING scope, before the body runs.
+        ir::Value bases = call_capi_imm("PyTuple_New", {},
+                                        (std::int64_t)n.bases.size(), 0, n.loc, &ok);
+        if (!ok) return false;
+        mark_owned(bases);
+        for (std::size_t i = 0; i < n.bases.size(); ++i) {
+            ir::Value b = lower_expr(n.bases[i], &ok);
+            if (!ok) return false;
+            // PyTuple_SetItem steals, so `b` must not be released after.
+            call_capi_imm("PyTuple_SetItem", {bases, b}, (std::int64_t)i, 1, n.loc, &ok);
+            if (!ok) return false;
+        }
+
+        ir::Value ns = call_capi("PyDict_New", {}, n.loc, &ok);
+        if (!ok) return false;
+        mark_owned(ns);
+
+        // The body is lowered INLINE in the enclosing function, with stores
+        // redirected into ns. A class body is not a closure: it executes once,
+        // immediately, which is why it needs no separate ir::Function.
+        class_ns_.push_back(ns);
+        frame_owned_.push_back(ns);
+        frame_owned_.push_back(bases);
+        auto saved_locals = locals_;
+        locals_.clear();                  // names in a class body are not fast locals
+        for (const stmt& s2 : n.body)
+            if (!lower_stmt(s2)) { class_ns_.pop_back(); return false; }
+        locals_ = saved_locals;
+        class_ns_.pop_back();
+        frame_owned_.pop_back();
+        frame_owned_.pop_back();
+
+        ir::Value cls = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::BuildClass, {bases, ns}, cls, Ownership::Owned,
+                       n.name, 0, 0, n.loc, make_landing_pad(n.loc)});
+        mark_owned(cls);
+        if (owns(bases)) release(bases, n.loc);
+        if (owns(ns)) release(ns, n.loc);
+        store_name(n.name, cls, n.loc);
+        return true;
     }
 
     bool lower_import(const Import& n) {

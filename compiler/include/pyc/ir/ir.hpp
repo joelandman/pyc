@@ -63,6 +63,11 @@ enum class Op {
     Is,
     // Logical negation of a machine int, for `not in` and `is not`.
     IntNot,
+    // Raise an exception; always transfers to the error edge.
+    Raise,
+    // Build a class from a populated namespace dict. `text` is the class
+    // name; args are (bases_tuple, namespace).
+    BuildClass,
     // Import a module by name. A dedicated op because the C-API entry points
     // take a C STRING, not a PyObject*, so they do not fit the generic call
     // path. `imm` selects which: 0 imports the named module itself (the leaf
@@ -85,6 +90,18 @@ enum class Op {
 };
 
 const char* op_name(Op op);
+
+// THE definition of a terminator. Lowering uses it to drop unreachable
+// instructions, codegen to decide whether a block needs an `unreachable`.
+// Keeping two copies has now cost four false results (ret, phi, iter.next,
+// raise), so there is exactly one.
+//
+// check_ir_wellformed.py still carries its own regex, because it reads printed
+// text rather than linking this header. That copy is documented there.
+inline bool is_terminator(Op op) {
+    return op == Op::Br || op == Op::CondBr || op == Op::Return
+        || op == Op::ReturnErr || op == Op::IterNext || op == Op::Raise;
+}
 
 struct Instr {
     Op op = Op::ConstNone;

@@ -55,11 +55,12 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         good = Path(td) / "good.py"; good.write_text("x = 1 + 2\n")
         # Must be something the compiler genuinely cannot lower. This probe
-        # goes stale by design as coverage grows -- `import os` was the
-        # previous choice and the self-check correctly refused once imports
-        # started working, rather than reporting a number from a blind
-        # instrument. Update it when the refusal fires.
-        bad = Path(td) / "bad.py";  bad.write_text("class C:\n    pass\n")
+        # goes stale by design as coverage grows. `import os` was the first
+        # choice and `class C: pass` the second; the self-check refused each
+        # time the feature landed, rather than reporting a number from a blind
+        # instrument. Update it when the refusal fires -- that is the guard
+        # working, not a nuisance.
+        bad = Path(td) / "bad.py";  bad.write_text("try:\n    pass\nexcept Exception:\n    pass\n")
         sc.require_detects(
             "coverage probe",
             lambda p: [] if run.outcome(str(p)) == "ok" else [run.outcome(str(p))],

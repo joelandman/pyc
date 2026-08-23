@@ -30,6 +30,8 @@ const char* op_name(Op op) {
         case Op::Phi:         return "phi";
         case Op::IterNext:    return "iter.next";
         case Op::ImportModule: return "import";
+        case Op::BuildClass:  return "buildclass";
+        case Op::Raise:       return "raise";
         case Op::MakeFunction: return "makefunc";
     }
     return "?";

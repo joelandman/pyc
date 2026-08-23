@@ -32,7 +32,7 @@ GRN, RED, DIM, BOLD, RST = "\033[32m", "\033[31m", "\033[90m", "\033[1m", "\033[
 # This list must track ir::Op. Codegen has its own is_term() and the two are
 # coupled by nothing but attention, which has now cost three false failures
 # (ret, phi, iter.next). Worth deriving from one source if it happens again.
-TERM = re.compile(r"^    (?:%\d+ = )?(br|condbr|ret|ret\.err|iter\.next)\b")
+TERM = re.compile(r"^    (?:%\d+ = )?(br|condbr|ret|ret\.err|iter\.next|raise)\b")
 BLOCK = re.compile(r"^  (\S+):$")
 DEF = re.compile(r"^    %(\d+) = ")
 USE = re.compile(r"%(\d+)")

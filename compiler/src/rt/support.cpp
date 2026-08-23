@@ -175,3 +175,40 @@ PyObject* pyc_rt_bytes(const char* data, Py_ssize_t len) {
 }  // extern "C"
 
 extern "C" PyObject* pyc_rt_none(void) { Py_RETURN_NONE; }
+
+extern "C" PyObject* pyc_rt_build_class(const char* name, PyObject* bases,
+                                        PyObject* ns) {
+    // Most-derived metaclass, as type.__call__ requires: using `type`
+    // unconditionally breaks any class whose base has a custom metaclass
+    // (ABCMeta, enum.EnumMeta), and does so with a confusing error far from
+    // the cause.
+    PyObject* meta = reinterpret_cast<PyObject*>(&PyType_Type);
+    Py_ssize_t n = PyTuple_GET_SIZE(bases);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* b = PyTuple_GET_ITEM(bases, i);        // borrowed
+        PyObject* bt = reinterpret_cast<PyObject*>(Py_TYPE(b));
+        int sub = PyObject_IsSubclass(bt, meta);
+        if (sub < 0) return nullptr;
+        if (sub) meta = bt;
+    }
+    PyObject* nm = PyUnicode_FromString(name);
+    if (!nm) return nullptr;
+    PyObject* cls = PyObject_CallFunctionObjArgs(meta, nm, bases, ns, nullptr);
+    Py_DECREF(nm);
+    return cls;
+}
+
+extern "C" int pyc_rt_raise(PyObject* exc) {
+    // `raise E` and `raise E(...)` are both legal: a class is instantiated by
+    // PyErr_SetObject, an instance is raised as-is. Anything else is the
+    // TypeError CPython gives, rather than a confusing failure later.
+    if (PyExceptionClass_Check(exc)) {
+        PyErr_SetObject(exc, nullptr);
+    } else if (PyExceptionInstance_Check(exc)) {
+        PyErr_SetObject(PyExceptionInstance_Class(exc), exc);
+    } else {
+        PyErr_SetString(PyExc_TypeError,
+                        "exceptions must derive from BaseException");
+    }
+    return -1;
+}
