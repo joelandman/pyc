@@ -19,6 +19,7 @@
 #   ./tools/build-python-sysroot.sh --version 3.13.7
 #   ./tools/build-python-sysroot.sh --tier 2               # deferred; needs --force-tier2
 #   ./tools/build-python-sysroot.sh --freethreaded         # cp314t ABI
+#   ./tools/build-python-sysroot.sh --debug                # cp314d, Py_REF_DEBUG
 #   ./tools/build-python-sysroot.sh --verify-only --prefix DIR
 #   ./tools/build-python-sysroot.sh --require-wheel        # fail unless a wheel loads
 #   ./tools/build-python-sysroot.sh --no-wheel-check       # skip (offline / fast)
@@ -43,6 +44,7 @@ SRC_ROOT="${PYC_SRC_ROOT:-$HOME/build/cpython-sysroot}"
 VERSION="$DEFAULT_VERSION"
 TIER=1
 FREETHREADED=0
+DEBUG=0
 PGO=1
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 PREFIX=""
@@ -75,6 +77,7 @@ while [[ $# -gt 0 ]]; do
     --src-root)      SRC_ROOT="${2:?}"; shift 2;;
     --jobs|-j)       JOBS="${2:?}"; shift 2;;
     --freethreaded)  FREETHREADED=1; shift;;
+    --debug)         DEBUG=1; shift;;
     --no-pgo)        PGO=0; shift;;
     --dry-run)       DRY_RUN=1; shift;;
     --verify-only)   VERIFY_ONLY=1; shift;;
@@ -95,6 +98,12 @@ XY="${VERSION%.*}"                 # 3.14
 MINOR="${BASH_REMATCH[1]}"         # 14
 [[ "$TIER" == 1 || "$TIER" == 2 ]] || die "--tier must be 1 or 2"
 
+if (( DEBUG )) && (( PGO )); then
+  # A debug build exists to catch refcount and assertion bugs, not to be fast.
+  # Profiling it costs 20-40 min and optimises code the assertions dominate.
+  PGO=0
+fi
+
 if (( MINOR < 13 )) && (( FREETHREADED )); then
   die "--freethreaded requires CPython 3.13+; $VERSION does not support --disable-gil"
 fi
@@ -103,6 +112,7 @@ fi
 # wheel tags — not a flag that can be added to an existing sysroot later).
 ABI="cp${XY//./}"
 (( FREETHREADED )) && ABI="${ABI}t"
+(( DEBUG ))        && ABI="${ABI}d"     # CPython orders abiflags t then d
 SYSROOT_NAME="${ABI}-${VERSION}-tier${TIER}"
 [[ -n "$PREFIX" ]] || PREFIX="${SYSROOT_ROOT}/${SYSROOT_NAME}"
 
@@ -259,6 +269,11 @@ configure_build() {
   if (( FREETHREADED )); then
     args+=("--disable-gil")
   fi
+  if (( DEBUG )); then
+    # Py_DEBUG implies Py_REF_DEBUG, which is what makes sys.gettotalrefcount()
+    # exist -- the refcount oracle A2's done-condition depends on.
+    args+=("--with-pydebug")
+  fi
 
   run "mkdir -p '$BUILD_DIR'"
   info "prefix:  $PREFIX"
@@ -290,6 +305,10 @@ write_manifest() {
   "$py" - "$manifest" "$ABI" "$TIER" "$VERSION" "$WHEEL_VERIFIED" <<'PYEOF'
 import json, sys, sysconfig, os
 manifest, abi, tier, version = sys.argv[1:5]
+# Recompute from the interpreter so the manifest cannot disagree with reality.
+abi = "cp%d%d" % sys.version_info[:2]
+if sysconfig.get_config_var("Py_GIL_DISABLED"): abi += "t"
+if hasattr(sys, "gettotalrefcount"): abi += "d"
 wheel_verified = sys.argv[5] if len(sys.argv) > 5 else ''
 libpl = sysconfig.get_config_var('LIBPL')
 libdir = sysconfig.get_config_var('LIBDIR')
@@ -301,13 +320,17 @@ ptd = {
     "abi":            abi,
     "tier":           int(tier),
     "free_threaded":  bool(sysconfig.get_config_var('Py_GIL_DISABLED')),
+    "debug":          hasattr(sys, "gettotalrefcount"),
+    "abiflags":       getattr(sys, "abiflags", ""),
     "sysroot":        sys.prefix,
     "interpreter":    sys.executable,
     "include":        sysconfig.get_paths()['include'],
     "libpython_static": static if os.path.exists(static) else None,
     "libpython_shared": shared if os.path.exists(shared) else None,
     "link_flags":     ["-rdynamic"] if int(tier) == 1 else ["-static"],
-    "wheels_supported": int(tier) == 1,
+    # A debug build is a distinct ABI: release cp3XX wheels do not match it,
+    # so claiming support here would mislead every consumer of the manifest.
+    "wheels_supported": int(tier) == 1 and not hasattr(sys, "gettotalrefcount"),
     "wheel_verified": wheel_verified or None,
     "builtin_modules":  len(sys.builtin_module_names),
 }
@@ -330,6 +353,19 @@ verify() {
   if (( DRY_RUN )); then info "(dry run — skipping verification)"; return 0; fi
   [[ -x "$py" ]] || die "no interpreter at $py"
 
+  # Let the sysroot describe ITSELF rather than trusting the flags of this
+  # invocation. `--verify-only` on an existing tree may be run without the
+  # --debug/--freethreaded flags it was built with, and inferring the ABI from
+  # the command line then mislabels it (cp314 for a cp314d tree) and skips the
+  # debug-specific checks. Targets are data; read the data.
+  if "$py" -c 'import sys; sys.gettotalrefcount()' >/dev/null 2>&1; then DEBUG=1; fi
+  if "$py" -c 'import sysconfig,sys; sys.exit(0 if sysconfig.get_config_var("Py_GIL_DISABLED") else 1)' >/dev/null 2>&1; then
+    FREETHREADED=1
+  fi
+  ABI="cp${XY//./}"
+  (( FREETHREADED )) && ABI="${ABI}t"
+  (( DEBUG ))        && ABI="${ABI}d"
+
   # Verify with LD_LIBRARY_PATH scrubbed. Otherwise a developer machine that
   # already exports $PREFIX/lib will report a sysroot healthy that is broken
   # everywhere else.
@@ -343,6 +379,17 @@ verify() {
   got="$("${py_clean[@]}" -c 'import math;print(math.factorial(25))')"
   [[ "$got" == "$want" ]] || die "interpreter sanity failed: factorial(25) = $got"
   info "interpreter OK — $("$py" -V 2>&1)"
+
+  # A debug sysroot that is not actually a debug build is worse than none: A2
+  # would report zero leaks because nothing was counting. gettotalrefcount()
+  # exists only under Py_REF_DEBUG, so its presence is the real proof.
+  if (( DEBUG )); then
+    "${py_clean[@]}" -c 'import sys; sys.gettotalrefcount()' 2>/dev/null \
+      || die "sysroot built with --debug but sys.gettotalrefcount() is missing:
+  Py_REF_DEBUG is not active, so refcount checking would silently pass"
+    local flags; flags="$("${py_clean[@]}" -c 'import sys;print(sys.abiflags)')"
+    info "Py_REF_DEBUG active (abiflags='${flags}', gettotalrefcount present)"
+  fi
 
   # 2. the static library exists where we expect (LIBPL, not lib/)
   local libpl static_lib
@@ -400,6 +447,20 @@ verify_wheel() {
     return 0
   fi
   (( WHEEL_CHECK )) || { info "wheel check skipped (--no-wheel-check)"; return 0; }
+  if (( DEBUG )); then
+    # sys.abiflags becomes "d" and SOABI gains it too, so PyPI's release
+    # cp3XX wheels do not match. pip would fall back to building from source,
+    # which for numpy means a long compile and for torch is not viable at all.
+    # This is the same class of constraint as cp314t, not a defect.
+    info "wheel check skipped: a debug build is a distinct ABI (${ABI});"
+    info "  release wheels do not match it and pip would build from source"
+    if (( WHEEL_REQUIRED )); then
+      die "--require-wheel cannot be satisfied by a --debug sysroot: no
+  release wheel matches the ${ABI} ABI. Use a non-debug sysroot to prove
+  wheel support (CHARTER I7), and this one to prove refcount discipline."
+    fi
+    return 0
+  fi
 
   step "Verifying C-extension wheel support (${WHEEL_PKG})"
   local py="$PREFIX/bin/python${XY}"
@@ -480,7 +541,10 @@ main() {
   printf '\033[1mpyc CPython sysroot build\033[0m\n'
   printf '  version   %s\n  abi       %s\n  tier      %s (%s)\n  prefix    %s\n  jobs      %s\n  pgo       %s\n' \
     "$VERSION" "$ABI" "$TIER" \
-    "$( ((TIER==1)) && echo 'static libpython + dynamic libc; wheels OK' || echo 'fully static; NO wheels')" \
+    "$( ((TIER==1)) \
+          && { (( DEBUG )) && echo 'static libpython; NO wheels (debug ABI)' \
+                           || echo 'static libpython + dynamic libc; wheels OK'; } \
+          || echo 'fully static; NO wheels')" \
     "$PREFIX" "$JOBS" "$( ((PGO)) && echo 'on (PGO+LTO)' || echo 'off')"
 
   check_deps
