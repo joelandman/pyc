@@ -179,7 +179,7 @@ private:
             [&](const AsyncFunctionDef& n) { ok = unsupported("async function definitions", n.loc); },
             [&](const ClassDef& n)         { ok = unsupported("class definitions", n.loc); },
             [&](const Return& n)           { ok = lower_return(n); },
-            [&](const Delete& n)           { ok = unsupported("del", n.loc); },
+            [&](const Delete& n)           { ok = lower_delete(n); },
             [&](const AugAssign& n)        { ok = unsupported("augmented assignment", n.loc); },
             [&](const AnnAssign& n)        { ok = unsupported("annotated assignment", n.loc); },
             [&](const For& n)              { ok = unsupported("for loops", n.loc); },
@@ -309,6 +309,118 @@ private:
         return true;
     }
 
+    // One store path for every assignable form. A target that is not a bare
+    // name does not bind a variable at all -- it mutates an object through the
+    // protocol -- which is why scope.cpp does not treat it as a binding.
+    bool store_target(const expr& target, const ir::Value& v, const SourceLoc& loc) {
+        bool ok = true;
+        std::visit(ov{
+            [&](const Name& n) { store_name(n.id, v, loc); },
+            [&](const Attribute& n) {
+                ir::Value obj = lower_expr(*n.value, &ok);
+                if (!ok) return;
+                ir::Value name = const_str(n.attr, loc);
+                call_capi("PyObject_SetAttr", {obj, name, v}, loc, &ok);
+                if (ok && owns(v)) release(v, loc);
+            },
+            [&](const Subscript& n) {
+                ir::Value obj = lower_expr(*n.value, &ok);
+                if (!ok) return;
+                ir::Value key = lower_expr(*n.slice, &ok);
+                if (!ok) return;
+                call_capi("PyObject_SetItem", {obj, key, v}, loc, &ok);
+                if (ok && owns(v)) release(v, loc);
+            },
+            [&](const Tuple& n)   { ok = unsupported("tuple unpacking", n.loc); },
+            [&](const List& n)    { ok = unsupported("list unpacking", n.loc); },
+            [&](const Starred& n) { ok = unsupported("starred assignment", n.loc); },
+            // Not assignable; CPython rejects these at compile time, and so
+            // must we -- with a diagnostic, never silently.
+            [&](const BinOp& n){ ok = bad_target("an expression", n.loc); },
+            [&](const BoolOp& n){ ok = bad_target("an expression", n.loc); },
+            [&](const NamedExpr& n){ ok = bad_target("a walrus expression", n.loc); },
+            [&](const UnaryOp& n){ ok = bad_target("an expression", n.loc); },
+            [&](const Lambda& n){ ok = bad_target("a lambda", n.loc); },
+            [&](const IfExp& n){ ok = bad_target("a conditional expression", n.loc); },
+            [&](const Dict& n){ ok = bad_target("a dict literal", n.loc); },
+            [&](const Set& n){ ok = bad_target("a set literal", n.loc); },
+            [&](const ListComp& n){ ok = bad_target("a comprehension", n.loc); },
+            [&](const SetComp& n){ ok = bad_target("a comprehension", n.loc); },
+            [&](const DictComp& n){ ok = bad_target("a comprehension", n.loc); },
+            [&](const GeneratorExp& n){ ok = bad_target("a generator", n.loc); },
+            [&](const Await& n){ ok = bad_target("an await", n.loc); },
+            [&](const Yield& n){ ok = bad_target("a yield", n.loc); },
+            [&](const YieldFrom& n){ ok = bad_target("a yield", n.loc); },
+            [&](const Compare& n){ ok = bad_target("a comparison", n.loc); },
+            [&](const Call& n){ ok = bad_target("a call", n.loc); },
+            [&](const FormattedValue& n){ ok = bad_target("an f-string", n.loc); },
+            [&](const JoinedStr& n){ ok = bad_target("an f-string", n.loc); },
+            [&](const TemplateStr& n){ ok = bad_target("a t-string", n.loc); },
+            [&](const Interpolation& n){ ok = bad_target("a t-string", n.loc); },
+            [&](const Constant& n){ ok = bad_target("a literal", n.loc); },
+            [&](const Slice& n){ ok = bad_target("a slice", n.loc); },
+        }, target.v);
+        return ok;
+    }
+
+    // Enumerated, not `auto`. CPython does reject `del 1` in its own
+    // compiler, but "upstream checks it" is exactly the assumption that has
+    // been wrong three times in this project already, and a generic arm would
+    // silently accept any node kind added later.
+    bool lower_delete(const Delete& n) {
+        bool ok = true;
+        for (const expr& t : n.targets) {
+            std::visit(ov{
+                [&](const Attribute& a2) {
+                    ir::Value obj = lower_expr(*a2.value, &ok);
+                    if (!ok) return;
+                    ir::Value nm = const_str(a2.attr, n.loc);
+                    call_capi("PyObject_DelAttr", {obj, nm}, n.loc, &ok);
+                },
+                [&](const Subscript& s2) {
+                    ir::Value obj = lower_expr(*s2.value, &ok);
+                    if (!ok) return;
+                    ir::Value key = lower_expr(*s2.slice, &ok);
+                    if (!ok) return;
+                    call_capi("PyObject_DelItem", {obj, key}, n.loc, &ok);
+                },
+                [&](const Name& n2)      { ok = unsupported("del of a name", n2.loc); },
+                [&](const Tuple& n2)     { ok = unsupported("del of a tuple target", n2.loc); },
+                [&](const List& n2)      { ok = unsupported("del of a list target", n2.loc); },
+                [&](const Starred& n2)   { ok = bad_target("a starred target", n2.loc); },
+                [&](const BinOp& x){ ok = bad_target("an expression", x.loc); },
+                [&](const BoolOp& x){ ok = bad_target("an expression", x.loc); },
+                [&](const NamedExpr& x){ ok = bad_target("a walrus expression", x.loc); },
+                [&](const UnaryOp& x){ ok = bad_target("an expression", x.loc); },
+                [&](const Lambda& x){ ok = bad_target("a lambda", x.loc); },
+                [&](const IfExp& x){ ok = bad_target("a conditional expression", x.loc); },
+                [&](const Dict& x){ ok = bad_target("a dict literal", x.loc); },
+                [&](const Set& x){ ok = bad_target("a set literal", x.loc); },
+                [&](const ListComp& x){ ok = bad_target("a comprehension", x.loc); },
+                [&](const SetComp& x){ ok = bad_target("a comprehension", x.loc); },
+                [&](const DictComp& x){ ok = bad_target("a comprehension", x.loc); },
+                [&](const GeneratorExp& x){ ok = bad_target("a generator", x.loc); },
+                [&](const Await& x){ ok = bad_target("an await", x.loc); },
+                [&](const Yield& x){ ok = bad_target("a yield", x.loc); },
+                [&](const YieldFrom& x){ ok = bad_target("a yield", x.loc); },
+                [&](const Compare& x){ ok = bad_target("a comparison", x.loc); },
+                [&](const Call& x){ ok = bad_target("a call", x.loc); },
+                [&](const FormattedValue& x){ ok = bad_target("an f-string", x.loc); },
+                [&](const JoinedStr& x){ ok = bad_target("an f-string", x.loc); },
+                [&](const TemplateStr& x){ ok = bad_target("a t-string", x.loc); },
+                [&](const Interpolation& x){ ok = bad_target("a t-string", x.loc); },
+                [&](const Constant& x){ ok = bad_target("a literal", x.loc); },
+                [&](const Slice& x){ ok = bad_target("a slice", x.loc); },
+            }, t.v);
+            if (!ok) break;
+        }
+        return ok;
+    }
+
+    bool bad_target(const char* what, const SourceLoc& loc) {
+        return err(std::string("cannot assign to ") + what, "assignment-target", loc);
+    }
+
     // One store path for every binding form: def, assignment, everything.
     void store_name(const std::string& name, const ir::Value& v, const SourceLoc& loc) {
         auto it = locals_.find(name);
@@ -385,10 +497,7 @@ private:
         if (!ok) return false;
         if (a.targets.size() != 1)
             return unsupported("multiple assignment targets", a.loc);
-        const Name* n = std::get_if<Name>(&a.targets[0].v);
-        if (!n) return unsupported("assignment to anything but a bare name", a.loc);
-        store_name(n->id, v, a.loc);
-        return true;
+        return store_target(a.targets[0], v, a.loc);
     }
 
     // --- expressions -------------------------------------------------------
@@ -437,12 +546,12 @@ private:
             [&](const JoinedStr& n)     { *ok = unsupported("f-strings", n.loc); },
             [&](const TemplateStr& n)   { *ok = unsupported("t-strings", n.loc); },
             [&](const Interpolation& n) { *ok = unsupported("t-string interpolation", n.loc); },
-            [&](const Attribute& n)     { *ok = unsupported("attribute access", n.loc); },
-            [&](const Subscript& n)     { *ok = unsupported("subscripting", n.loc); },
+            [&](const Attribute& n)     { out = lower_attribute(n, ok); },
+            [&](const Subscript& n)     { out = lower_subscript(n, ok); },
             [&](const Starred& n)       { *ok = unsupported("star-unpacking", n.loc); },
             [&](const List& n)          { *ok = unsupported("list literals", n.loc); },
             [&](const Tuple& n)         { *ok = unsupported("tuple literals", n.loc); },
-            [&](const Slice& n)         { *ok = unsupported("slices", n.loc); },
+            [&](const Slice& n)         { out = lower_slice(n, ok); },
         }, e.v);
         return out;
     }
@@ -508,6 +617,55 @@ private:
         for (const ir::Value& a : saved) if (owns(a)) release(a, c.loc);
         mark_owned(out);
         return out;
+    }
+
+    // Attribute and subscript go through the object PROTOCOL -- GetAttr and
+    // GetItem -- never a type test. That is what makes them work identically
+    // on a dict, a list, a numpy array and a user class with __getitem__ (I3).
+    ir::Value lower_attribute(const Attribute& n, bool* ok) {
+        ir::Value obj = lower_expr(*n.value, ok);
+        if (!*ok) return {};
+        ir::Value name = const_str(n.attr, n.loc);
+        ir::Value out = call_capi("PyObject_GetAttr", {obj, name}, n.loc, ok);
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
+    ir::Value lower_subscript(const Subscript& n, bool* ok) {
+        ir::Value obj = lower_expr(*n.value, ok);
+        if (!*ok) return {};
+        ir::Value key = lower_expr(*n.slice, ok);
+        if (!*ok) return {};
+        ir::Value out = call_capi("PyObject_GetItem", {obj, key}, n.loc, ok);
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
+    // A slice is an ordinary object built by PySlice_New; omitted bounds are
+    // None, exactly as CPython represents them.
+    ir::Value lower_slice(const Slice& n, bool* ok) {
+        auto part = [&](const std::optional<Box<expr>>& e) -> ir::Value {
+            if (e && *e) return lower_expr(**e, ok);
+            ir::Value v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstNone, {}, v, Ownership::Owned, "",
+                           0, 0, n.loc, std::nullopt});
+            mark_owned(v);
+            return v;
+        };
+        ir::Value lo = part(n.lower);   if (!*ok) return {};
+        ir::Value hi = part(n.upper);   if (!*ok) return {};
+        ir::Value st = part(n.step);    if (!*ok) return {};
+        ir::Value out = call_capi("PySlice_New", {lo, hi, st}, n.loc, ok);
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
+    ir::Value const_str(const std::string& text, const SourceLoc& loc) {
+        ir::Value v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::ConstStr, {}, v, Ownership::Owned, text,
+                       0, 0, loc, std::nullopt});
+        mark_owned(v);
+        return v;
     }
 
     ir::Value lower_binop(const BinOp& b, bool* ok) {
