@@ -264,3 +264,33 @@ proves it can fail before its zeros mean anything.
 `pyc_rt_total_refcount()` returns **-1**, not 0, on a release build, and the
 probe exits 2 rather than reporting success. A release build silently reporting
 "no leaks" would be worse than having no check.
+
+## First differential measurement of the new tree (2026-08-23)
+
+`verify/corpus/language`, 713 programs, oracle CPython 3.14.7:
+
+| verdict | count |
+|---|---|
+| `MATCH` | **270** |
+| `COMPILE_ERROR` (P2) | 442 |
+| quarantined (nondeterministic) | 1 |
+| **P0 silent wrong answers** | **0** |
+| **P1 crashes / hangs** | **0** |
+
+Pass rate 37.9% of scored programs. The shape matters more than the number:
+**everything the compiler accepts, it gets right; everything it cannot do, it
+refuses loudly with a named construct and a line.**
+
+Contrast the old tree on its own rescued corpus: 97.76% passing, but with five
+P0 silent wrong answers and hardcoded expectations that had recorded the
+compiler's bugs as correct. A high number over a curated subset was worth less
+than a low number over real programs with no P0s.
+
+Two of the matches are the exact silent wrong answers the review opened with:
+
+| | new tree | CPython | old tree |
+|---|---|---|---|
+| `2 ** 200` | `1606938…301376` | `1606938…301376` | `0` |
+| `len("héllo wörld")` | `11` | `11` | `13` |
+
+Both correct for free, because the object model is CPython's.
