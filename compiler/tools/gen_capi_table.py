@@ -49,6 +49,11 @@ _STEALS = {
     "PyErr_Restore":             ["type", "value", "traceback"],
     "PyException_SetCause":      ["cause"],
     "PyException_SetContext":    ["ctx"],
+    # Documented as stealing: "This call steals a reference to exc." Added
+    # when try/except lowering needed it -- the list grows as symbols are
+    # used, and an unlisted stealer means a decref on a reference we no
+    # longer own.
+    "PyErr_SetRaisedException":  ["exc"],
 }
 
 # Ownership for symbols no source records. stable_abi.toml lists them but

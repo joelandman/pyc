@@ -170,16 +170,30 @@ private:
     // This is the whole reason error edges exist: without it every raised
     // exception leaks whatever the statement was holding, which is the old
     // tree's frame-leak class reintroduced.
+    // Blocks that handle an exception rather than propagating it. A landing
+    // pad inside a try must reach the handler dispatch, not leave the
+    // function -- that is the whole difference between `try` and no `try`.
+    std::vector<std::uint32_t> try_stack_;
+
     std::uint32_t make_landing_pad(const SourceLoc& loc) {
         std::uint32_t here = blk_;
         std::uint32_t pad = new_block("unwind." + std::to_string(pad_n_++));
         set_block(pad);
         for (auto it = owned_.rbegin(); it != owned_.rend(); ++it)
             emit_decref(*it, loc);
-        for (auto it = frame_owned_.rbegin(); it != frame_owned_.rend(); ++it)
-            emit_decref(*it, loc);
-        emit(ir::Instr{ir::Op::ReturnErr, {}, std::nullopt,
-                       Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+        if (try_stack_.empty()) {
+            // Nothing catches here: release everything the frame holds and
+            // propagate on the C-API convention.
+            for (auto it = frame_owned_.rbegin(); it != frame_owned_.rend(); ++it)
+                emit_decref(*it, loc);
+            emit(ir::Instr{ir::Op::ReturnErr, {}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+        } else {
+            // frame_owned_ is NOT released: the handler runs inside the same
+            // frame and those values are still live for it.
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", try_stack_.back(), 0, loc, std::nullopt});
+        }
         set_block(here);
         return pad;
     }
@@ -227,7 +241,7 @@ private:
                                Ownership::NotAnObject, "", 0, 0, n.loc,
                                make_landing_pad(n.loc)});
             },
-            [&](const Try& n)              { ok = unsupported("try", n.loc); },
+            [&](const Try& n)              { ok = lower_try(n); },
             [&](const TryStar& n)          { ok = unsupported("try/except*", n.loc); },
             [&](const Assert& n)           { ok = unsupported("assert", n.loc); },
             [&](const Import& n)           { ok = lower_import(n); },
@@ -548,6 +562,77 @@ private:
         emit(std::move(in));
         mark_owned(m);
         return m;
+    }
+
+    bool lower_try(const Try& n) {
+        // Measured on the corpus before choosing scope: 207 try/except, 8
+        // involving finally, no bare `except:` and no except*. finally must
+        // run on every exit path -- normal, exceptional, break, continue,
+        // return -- which is a different problem, so it is refused rather
+        // than approximated.
+        if (!n.finalbody.empty()) return unsupported("try/finally", n.loc);
+        if (n.handlers.empty()) return unsupported("try without except", n.loc);
+
+        std::uint32_t dispatch = new_block("except.dispatch");
+        std::uint32_t after    = new_block("try.after");
+
+        try_stack_.push_back(dispatch);
+        bool ok = true;
+        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
+        try_stack_.pop_back();
+        if (!ok) return false;
+
+        // `else` runs only when the body completed without raising.
+        for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", after, 0, n.loc, std::nullopt});
+
+        set_block(dispatch);
+        // Takes the exception and CLEARS the error indicator, so the handler
+        // runs with no exception set -- as CPython does.
+        ir::Value exc = call_capi("PyErr_GetRaisedException", {}, n.loc, &ok);
+        if (!ok) return false;
+        mark_owned(exc);
+        frame_owned_.push_back(exc);
+
+        for (const excepthandler& h : n.handlers) {
+            const ExceptHandler& eh = std::get<ExceptHandler>(h.v);
+            std::uint32_t body_b = new_block("except.body");
+            std::uint32_t next_b = new_block("except.next");
+            if (eh.type) {
+                ir::Value ty = lower_expr(**eh.type, &ok);
+                if (!ok) return false;
+                ir::Value m = call_capi("PyErr_GivenExceptionMatches", {exc, ty},
+                                        n.loc, &ok, {ty});
+                if (!ok) return false;
+                emit(ir::Instr{ir::Op::CondBr, {m}, std::nullopt,
+                               Ownership::NotAnObject, "", body_b, next_b,
+                               n.loc, std::nullopt});
+            } else {
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", body_b, 0, n.loc, std::nullopt});
+            }
+            set_block(body_b);
+            if (eh.name) store_name(*eh.name, exc, n.loc);   // INCREFs; exc stays ours
+            for (const stmt& s2 : eh.body) if (!lower_stmt(s2)) return false;
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", after, 0, n.loc, std::nullopt});
+            set_block(next_b);
+        }
+
+        // No handler matched: put the exception back and propagate. The
+        // reference is STOLEN by SetRaisedException, so it must not be
+        // released afterwards -- §4's table makes that automatic.
+        frame_owned_.pop_back();
+        call_capi("PyErr_SetRaisedException", {exc}, n.loc, &ok);
+        if (!ok) return false;
+        forget(exc);
+        std::uint32_t pad = make_landing_pad(n.loc);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", pad, 0, n.loc, std::nullopt});
+
+        set_block(after);
+        return true;
     }
 
     bool lower_classdef(const ClassDef& n) {

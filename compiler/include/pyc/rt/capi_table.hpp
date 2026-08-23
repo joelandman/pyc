@@ -163,7 +163,7 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"PyErr_FormatV", Ownership::AlwaysNull, true, 3, {}, false, "", true, "3.5"},
     {"PyErr_GetExcInfo", Ownership::NotAnObject, false, 3, {}, false, "", true, "3.7"},
     {"PyErr_GetRaisedException", Ownership::Owned, true, 0, {}, false, "", true, "3.12"},
-    {"PyErr_SetRaisedException", Ownership::NotAnObject, false, 1, {}, false, "", true, "3.12"},
+    {"PyErr_SetRaisedException", Ownership::NotAnObject, false, 1, {0}, false, "", true, "3.12"},
     {"PyErr_GivenExceptionMatches", Ownership::NotAnObject, true, 2, {}, false, "", true, "3.2"},
     {"PyErr_NewException", Ownership::Owned, true, 3, {}, false, "", true, "3.2"},
     {"PyErr_NewExceptionWithDoc", Ownership::Owned, true, 4, {}, false, "", true, "3.2"},
