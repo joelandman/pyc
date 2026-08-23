@@ -59,6 +59,12 @@ PyObject* pyc_rt_build_class(const char* name, PyObject* bases, PyObject* ns);
 // -1 so the caller's error edge is taken.
 int pyc_rt_raise(PyObject* exc);
 
+// Unpack `value` into exactly `n` items, returning them as a tuple. The
+// arity check and its message live here rather than in emitted IR, because
+// CPython's wording ("not enough values to unpack (expected 3, got 2)")
+// is part of observable behaviour and belongs where it can be read.
+PyObject* pyc_rt_unpack(PyObject* value, Py_ssize_t n);
+
 #ifdef __cplusplus
 }
 #endif

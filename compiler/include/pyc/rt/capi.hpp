@@ -28,6 +28,11 @@ struct CApiSymbol {
     // recorded). Emitting a symbol newer than the target is a version error,
     // which is the C-API half of I8.
     std::string_view added;
+    // One character per parameter: 'o' PyObject*, 'p' raw pointer, 'i'
+    // integer, 'd' double, '?' unrecognised. Codegen must emit the matching
+    // LLVM type; assuming ptr everywhere is an assembly error at best and a
+    // garbage read at worst.
+    std::string_view param_kinds;
 
     bool steals_param(int i) const {
         for (int s : steals) if (s == i) return true;

@@ -225,7 +225,7 @@ private:
             [&](const ClassDef& n)         { ok = lower_classdef(n); },
             [&](const Return& n)           { ok = lower_return(n); },
             [&](const Delete& n)           { ok = lower_delete(n); },
-            [&](const AugAssign& n)        { ok = unsupported("augmented assignment", n.loc); },
+            [&](const AugAssign& n)        { ok = lower_augassign(n); },
             [&](const AnnAssign& n)        { ok = unsupported("annotated assignment", n.loc); },
             [&](const For& n)              { ok = lower_for(n); },
             [&](const AsyncFor& n)         { ok = unsupported("async for", n.loc); },
@@ -695,8 +695,8 @@ private:
                 call_capi("PyObject_SetItem", {obj, key, v}, loc, &ok, {obj, key});
                 if (ok && owns(v)) release(v, loc);
             },
-            [&](const Tuple& n)   { ok = unsupported("tuple unpacking", n.loc); },
-            [&](const List& n)    { ok = unsupported("list unpacking", n.loc); },
+            [&](const Tuple& n)   { ok = unpack_into(n.elts, v, loc); },
+            [&](const List& n)    { ok = unpack_into(n.elts, v, loc); },
             [&](const Starred& n) { ok = unsupported("starred assignment", n.loc); },
             // Not assignable; CPython rejects these at compile time, and so
             // must we -- with a diagnostic, never silently.
@@ -781,6 +781,38 @@ private:
         return ok;
     }
 
+    // `a, b = value` and its nested forms. The arity check and CPython's
+    // exact wording live in the runtime helper; here we only distribute.
+    bool unpack_into(const std::vector<expr>& targets, const ir::Value& v,
+                     const SourceLoc& loc) {
+        for (const expr& t : targets)
+            if (std::holds_alternative<Starred>(t.v))
+                return unsupported("starred target in unpacking", loc);
+        bool ok = true;
+        ir::Value tup = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        ir::Instr in{ir::Op::Unpack, {v}, tup, Ownership::Owned, "",
+                     0, 0, loc, make_landing_pad(loc)};
+        in.imm = (std::int64_t)targets.size();
+        in.has_imm = true;
+        emit(std::move(in));
+        mark_owned(tup);
+        if (owns(v)) release(v, loc);
+        for (std::size_t i = 0; i < targets.size(); ++i) {
+            ir::Value idx = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            ir::Instr gi{ir::Op::ConstInt, {}, idx, Ownership::Owned,
+                         std::to_string(i), 0, 0, loc, std::nullopt};
+            emit(std::move(gi));
+            mark_owned(idx);
+            ir::Value item = call_capi("PyObject_GetItem", {tup, idx}, loc, &ok, {idx});
+            if (!ok) return false;
+            mark_owned(item);
+            // Recurses, so `(a, (b, c)) = ...` works by construction.
+            if (!store_target(targets[i], item, loc)) return false;
+        }
+        if (owns(tup)) release(tup, loc);
+        return true;
+    }
+
     bool bad_target(const char* what, const SourceLoc& loc) {
         return err(std::string("cannot assign to ") + what, "assignment-target", loc);
     }
@@ -846,6 +878,49 @@ private:
         emit(std::move(in));
         mark_owned(m);
         return m;
+    }
+
+    // `x += y` is NOT `x = x + y`: it calls the in-place slot, so a list
+    // extends in place and a tuple does not. Using the binary operator would
+    // change observable behaviour for every mutable type.
+    bool lower_augassign(const AugAssign& n) {
+        static const struct { const char* sym; } kUnused{nullptr}; (void)kUnused;
+        const char* sym = nullptr;
+        std::visit(ov{
+            [&](const Add&)      { sym = "PyNumber_InPlaceAdd"; },
+            [&](const Sub&)      { sym = "PyNumber_InPlaceSubtract"; },
+            [&](const Mult&)     { sym = "PyNumber_InPlaceMultiply"; },
+            [&](const Div&)      { sym = "PyNumber_InPlaceTrueDivide"; },
+            [&](const FloorDiv&) { sym = "PyNumber_InPlaceFloorDivide"; },
+            [&](const Mod&)      { sym = "PyNumber_InPlaceRemainder"; },
+            [&](const Pow&)      { sym = "PyNumber_InPlacePower"; },
+            [&](const LShift&)   { sym = "PyNumber_InPlaceLshift"; },
+            [&](const RShift&)   { sym = "PyNumber_InPlaceRshift"; },
+            [&](const BitOr&)    { sym = "PyNumber_InPlaceOr"; },
+            [&](const BitXor&)   { sym = "PyNumber_InPlaceXor"; },
+            [&](const BitAnd&)   { sym = "PyNumber_InPlaceAnd"; },
+            [&](const MatMult&)  { sym = "PyNumber_InPlaceMatrixMultiply"; },
+        }, n.op.v);
+        if (!sym) return unsupported("this augmented operator", n.loc);
+
+        bool ok = true;
+        ir::Value cur_v = lower_expr(*n.target, &ok);      // read the target
+        if (!ok) return false;
+        ir::Value rhs = lower_expr(*n.value, &ok);
+        if (!ok) return false;
+        ir::Value out;
+        if (std::string(sym) == "PyNumber_InPlacePower") {
+            ir::Value none = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstNone, {}, none, Ownership::Owned, "",
+                           0, 0, n.loc, std::nullopt});
+            mark_owned(none);
+            out = call_capi(sym, {cur_v, rhs, none}, n.loc, &ok, {cur_v, rhs, none});
+        } else {
+            out = call_capi(sym, {cur_v, rhs}, n.loc, &ok, {cur_v, rhs});
+        }
+        if (!ok) return false;
+        mark_owned(out);
+        return store_target(*n.target, out, n.loc);
     }
 
     bool lower_try(const Try& n) {

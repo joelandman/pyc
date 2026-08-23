@@ -1,0 +1,3 @@
+# Refusal log: a diagnostic record of when an instrument went blind. Local to
+# each working tree, so it is not committed.
+selfcheck-refusals.log

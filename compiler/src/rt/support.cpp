@@ -212,3 +212,32 @@ extern "C" int pyc_rt_raise(PyObject* exc) {
     }
     return -1;
 }
+
+extern "C" PyObject* pyc_rt_unpack(PyObject* value, Py_ssize_t n) {
+    PyObject* t = PySequence_Tuple(value);      // works for any iterable
+    if (!t) {
+        if (PyErr_ExceptionMatches(PyExc_TypeError)) {
+            PyErr_Clear();
+            PyErr_Format(PyExc_TypeError, "cannot unpack non-iterable %s object",
+                         Py_TYPE(value)->tp_name);
+        }
+        return nullptr;
+    }
+    Py_ssize_t got = PyTuple_GET_SIZE(t);
+    if (got < n) {
+        PyErr_Format(PyExc_ValueError,
+                     "not enough values to unpack (expected %zd, got %zd)", n, got);
+        Py_DECREF(t);
+        return nullptr;
+    }
+    if (got > n) {
+        // CPython 3.14 includes the actual count here; older versions did not.
+        // The wording is observable, and the differential harness flagged the
+        // omission as a P0 -- nothing else would have caught it.
+        PyErr_Format(PyExc_ValueError,
+                     "too many values to unpack (expected %zd, got %zd)", n, got);
+        Py_DECREF(t);
+        return nullptr;
+    }
+    return t;
+}

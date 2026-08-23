@@ -9,6 +9,7 @@
 // Text rather than the LLVM C++ API for now: it keeps pyc free of libLLVM
 // linkage, and the output is readable, which matters while the backend is new.
 #include "pyc/ir/ir.hpp"
+#include "pyc/rt/capi.hpp"
 
 #include <map>
 #include <set>
@@ -55,6 +56,7 @@ private:
     // A phi's predecessor is therefore the LAST label an IR block emitted, not
     // "bb<index>". LLVM's verifier caught this as "PHI node entries do not
     // match predecessors" -- exactly the check that exists to catch it.
+    std::ostringstream pre_;      // instructions that must precede a call
     std::map<std::size_t, std::string> tail_label_;
     std::size_t cur_block_ = 0;
 
@@ -217,6 +219,13 @@ private:
                 o_ << "  " << v(*in.result) << " = zext i1 " << c << " to i32\n";
                 break;
             }
+            case Op::Unpack: {
+                need("declare ptr @pyc_rt_unpack(ptr, i64)");
+                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_unpack(ptr "
+                   << v(in.args[0]) << ", i64 " << in.imm << ")\n";
+                check(in, v(*in.result), true);
+                break;
+            }
             case Op::Raise: {
                 need("declare i32 @pyc_rt_raise(ptr)");
                 std::string r = fresh();
@@ -327,6 +336,8 @@ private:
         bool ptr_ret = (in.result_ownership == Ownership::Owned
                      || in.result_ownership == Ownership::Borrowed
                      || in.result_ownership == Ownership::AlwaysNull);
+        const rt::CApiSymbol* sym = rt::lookup(in.text);
+        std::string kinds = sym ? std::string(sym->param_kinds) : std::string();
         std::ostringstream sig, call;
         sig << "declare " << (ptr_ret ? "ptr" : "i32") << " @" << in.text << "(";
         call << "  " << v(*in.result) << " = call " << (ptr_ret ? "ptr" : "i32")
@@ -337,14 +348,23 @@ private:
         std::size_t total = in.args.size() + (in.has_imm ? 1 : 0);
         for (std::size_t p = 0; p < total; ++p) {
             if (p) { sig << ", "; call << ", "; }
+            char k = (p < kinds.size()) ? kinds[p] : 'o';
             if (in.has_imm && (int)p == imm_pos(in, total)) {
                 sig << "i64"; call << "i64 " << in.imm;
+            } else if (k == 'i') {
+                // The IR value is a machine int (i32); widen it to the
+                // parameter's width rather than passing a pointer.
+                std::string w = fresh();
+                pre_ << "  " << w << " = zext i32 " << v(in.args[ai++]) << " to i64\n";
+                sig << "i64"; call << "i64 " << w;
             } else {
                 sig << "ptr"; call << "ptr " << v(in.args[ai++]);
             }
         }
         sig << ")"; call << ")\n";
         need(sig.str());
+        o_ << pre_.str();
+        pre_.str("");
         o_ << call.str();
         check(in, v(*in.result), ptr_ret);
     }

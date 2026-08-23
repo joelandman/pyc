@@ -57,8 +57,11 @@ def main() -> int:
     # a stale file must not survive to be pasted into a commit message as if
     # it were this run's result -- which is the same stale-number failure the
     # record exists to prevent.
-    if args.record and args.record.exists():
-        args.record.unlink()
+    if args.record:
+        # A refused run leaves an explicit REFUSED marker rather than nothing.
+        # An absent file is ambiguous -- it could mean "not run" -- and a stale
+        # one is worse. Neither may be mistaken for a measurement.
+        args.record.write_text("REFUSED: self-check did not pass\n")
 
     # Prove the instrument works before trusting any number it produces.
     import tempfile

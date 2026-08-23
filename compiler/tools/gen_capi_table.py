@@ -129,6 +129,37 @@ def parse(path: str) -> dict:
     return funcs
 
 
+def param_kind(typ: str) -> str:
+    """One char per parameter: how codegen must pass it.
+
+    Assuming every argument is a PyObject* is wrong and fails loudly at
+    assembly time -- PyBool_FromLong takes a long, and emitting `ptr` for it
+    is an LLVM type error. Recording the kind makes the calling convention
+    come from CPython's data rather than from an assumption.
+
+      o  PyObject*-like        (ptr)
+      p  raw pointer / string  (ptr)
+      i  integer               (i64)
+      d  double
+      ?  unrecognised -- codegen refuses rather than guessing
+    """
+    t = typ.strip().rstrip("*").strip()
+    stars = typ.count("*")
+    if typ.strip() in ("PyObject*", "PyTypeObject*", "PyVarObject*",
+                       "PyCodeObject*", "PyFrameObject*", "PyFunctionObject*"):
+        return "o"
+    if stars:
+        return "p"
+    if t in ("int", "long", "unsigned int", "unsigned long", "Py_ssize_t",
+             "size_t", "Py_UCS4", "Py_hash_t", "char", "unsigned char",
+             "long long", "unsigned long long", "Py_uintptr_t", "uint64_t",
+             "int64_t", "Py_off_t"):
+        return "i"
+    if t in ("double", "float"):
+        return "d"
+    return "?"
+
+
 def ownership(typ: str, rc: str) -> str:
     if rc == "unknown":
         return "Unknown"
@@ -247,13 +278,14 @@ def main() -> int:
         banned = _BANNED.get(name)
         n_banned += bool(banned)
         steal_init = "{" + ",".join(str(i) for i in idx) + "}" if idx else "{}"
+        kinds = "".join(param_kind(pp["type"]) for pp in f["params"])
         w(f'    {{"{name}", Ownership::{own}, '
           f'{"true" if may_raise(typ, rc) else "false"}, '
           f'{len(f["params"])}, {steal_init}, '
           f'{"true" if banned else "false"}, '
           f'"{banned if banned else ""}", '
           f'{"true" if name in stable else "false"}, '
-          f'"{added}"}},')
+          f'"{added}", "{kinds}"}},')
     w("};")
     w("")
     w(f"inline constexpr int kCApiSymbolCount = "

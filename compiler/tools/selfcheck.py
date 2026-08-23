@@ -22,18 +22,42 @@ allowed to report, and refuses outright on results too uniform to be real.
 
 from __future__ import annotations
 
+import datetime
+import os
 import sys
+from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
 RED, GRN, YEL, DIM, BOLD, RST = (
     "\033[31m", "\033[32m", "\033[33m", "\033[90m", "\033[1m", "\033[0m")
 
 
+# Refusals are DIAGNOSTICS, not metrics. A refused run says something true and
+# useful -- "this instrument went blind" -- and that fact should be countable
+# over time, not merely printed once and lost. It must never be folded into a
+# metric, and absence of a number must never read as zero.
+REFUSAL_LOG = Path(os.environ.get(
+    "PYC_SELFCHECK_LOG",
+    Path(__file__).resolve().parent.parent / "selfcheck-refusals.log"))
+
+
+def record_refusal(label: str, reason: str) -> None:
+    stamp = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    tool = Path(sys.argv[0]).name
+    try:
+        with open(REFUSAL_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{stamp}\t{tool}\t{label}\t{reason}\n")
+    except OSError:
+        pass          # never let bookkeeping break the refusal itself
+
+
 class SelfCheckFailure(SystemExit):
-    def __init__(self, msg: str):
+    def __init__(self, msg: str, label: str = "self-check", reason: str = ""):
+        record_refusal(label, reason or msg.strip().splitlines()[0].strip())
         super().__init__(f"{RED}{BOLD}self-check failed{RST}\n{msg}\n\n"
                          f"Refusing to report: an instrument that cannot be "
-                         f"shown to work\nproduces numbers that mean nothing.")
+                         f"shown to work\nproduces numbers that mean nothing.\n"
+                         f"Recorded to {REFUSAL_LOG.name} as a diagnostic.")
 
 
 def require_detects(label: str, probe: Callable[[object], object],
@@ -44,12 +68,14 @@ def require_detects(label: str, probe: Callable[[object], object],
     if not bad_result:
         raise SelfCheckFailure(
             f"  '{label}' found NO problem in an input known to be broken.\n"
-            f"  It would therefore pass everything, including real defects.")
+            f"  It would therefore pass everything, including real defects.",
+            label, "probe stale: known-bad input now passes")
     if good_result:
         raise SelfCheckFailure(
             f"  '{label}' reported a problem in an input known to be good:\n"
             f"    {good_result}\n"
-            f"  A check that cries wolf gets ignored as surely as a silent one.")
+            f"  A check that cries wolf gets ignored as surely as a silent one.",
+            label, "false positive on a known-good input")
     if verbose:
         print(f"  {DIM}self-check: {label} detects a known defect and "
               f"passes a known-good input{RST}")
@@ -84,5 +110,6 @@ def reject_implausible_uniformity(outcomes: Sequence[str], *,
 def require_nonempty(items: Iterable, what: str) -> list:
     out = list(items)
     if not out:
-        raise SelfCheckFailure(f"  the {what} is empty, so nothing was measured.")
+        raise SelfCheckFailure(f"  the {what} is empty, so nothing was measured.",
+                               "empty-corpus", f"{what} was empty")
     return out

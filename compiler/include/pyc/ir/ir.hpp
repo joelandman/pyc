@@ -63,6 +63,8 @@ enum class Op {
     Is,
     // Logical negation of a machine int, for `not in` and `is not`.
     IntNot,
+    // Unpack a value into exactly `imm` items, yielding a tuple.
+    Unpack,
     // Raise an exception; always transfers to the error edge.
     Raise,
     // Build a class from a populated namespace dict. `text` is the class
