@@ -19,8 +19,31 @@ import sys
 import types
 import typing
 
-# Deprecated aliases that shadow real nodes; not part of the grammar.
-_ALIASES = {"Num", "Str", "Bytes", "NameConstant", "Ellipsis", "Index", "ExtSlice"}
+# Names CPython keeps for backwards compatibility that are NOT part of the
+# current grammar. There is no programmatic marker for these, so the list is
+# curated and MUST be reviewed each time the target version moves.
+#
+# `slice` is the vestigial abstract base of the slice sum that Python 3.9
+# removed; its only subclasses are Index/ExtSlice, themselves removed. The
+# Num/Str/Bytes/NameConstant/Ellipsis aliases persist through 3.13 as
+# subclasses of Constant and are gone in 3.14 -- which is exactly why they
+# must be filtered *consistently*, including when asking whether a class has
+# subclasses at all. Counting them made Constant look abstract on 3.13 and
+# silently dropped it from the schema entirely.
+_ALIASES = {"Num", "Str", "Bytes", "NameConstant", "Ellipsis",
+            "Index", "ExtSlice", "slice"}
+
+
+def _subclasses(c: type) -> list[type]:
+    """Real subclasses only.
+
+    CPython keeps deprecated aliases (Num, Str, Bytes, ...) as subclasses of
+    Constant through 3.13 and removes them in 3.14. Counting them makes
+    Constant look ABSTRACT on 3.13, which silently dropped it from the schema
+    entirely -- a header with no Constant node. Filter consistently everywhere
+    that asks "does this have subclasses".
+    """
+    return [x for x in c.__subclasses__() if x.__name__ not in _ALIASES]
 
 
 def _all_nodes() -> list[type]:
@@ -62,10 +85,9 @@ def main() -> int:
 
     nodes = [c for c in _all_nodes() if c.__name__ not in _ALIASES]
     by_name = {c.__name__: c for c in nodes}
-    concrete = [c for c in nodes if not c.__subclasses__()]
-    sums = {c.__name__: sorted(s.__name__ for s in c.__subclasses__()
-                               if s.__name__ not in _ALIASES)
-            for c in nodes if c.__subclasses__()}
+    concrete = [c for c in nodes if not _subclasses(c)]
+    sums = {c.__name__: sorted(x.__name__ for x in _subclasses(c))
+            for c in nodes if _subclasses(c)}
 
     degraded = not hasattr(ast.FunctionDef, "_field_types")
     out_nodes = {}
