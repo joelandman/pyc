@@ -1950,8 +1950,6 @@ private:
     }
 
     bool lower_for(const For& n) {
-        if (!n.orelse.empty()) return unsupported("for/else", n.loc);
-
 
         bool ok = true;
         ir::Value seq = lower_expr(*n.iter, &ok);
@@ -1967,7 +1965,12 @@ private:
 
         std::uint32_t head = new_block("for.head");
         std::uint32_t body = new_block("for.body");
-        std::uint32_t done = new_block("for.done");
+        std::uint32_t done = new_block("for.done");     // iterator exhausted
+        // `else` runs only when the loop was NOT broken out of, so exhaustion
+        // and break cannot share an exit. They did, which is why for/else was
+        // refused. Both must still release the iterator exactly once.
+        std::uint32_t brk   = new_block("for.break");
+        std::uint32_t after = new_block("for.after");
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", head, 0, n.loc, std::nullopt});
         set_block(head);
@@ -1980,23 +1983,37 @@ private:
         // Any assignable target works, so `for k, v in pairs` unpacks through
         // the same path a plain assignment does.
         if (!store_target(*n.target, item, n.loc)) return false;
-        loops_.push_back({head, done});
+        loops_.push_back({head, brk});
         for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
         loops_.pop_back();
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", head, 0, n.loc, std::nullopt});
 
+        // Broken out of: release the iterator and skip the else.
+        set_block(brk);
+        emit_decref(it, n.loc);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", after, 0, n.loc, std::nullopt});
+
+        // Ran to exhaustion: release the iterator, then the else body.
         set_block(done);
         frame_owned_.pop_back();
         if (owns(it)) release(it, n.loc);
+        for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
+        if (!terminated())
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", after, 0, n.loc, std::nullopt});
+
+        set_block(after);
         return true;
     }
 
     bool lower_while(const While& n) {
-        if (!n.orelse.empty()) return unsupported("while/else", n.loc);
         std::uint32_t head = new_block("while.head");
         std::uint32_t body = new_block("while.body");
-        std::uint32_t done = new_block("while.done");
+        std::uint32_t done = new_block("while.done");   // test went false
+        std::uint32_t brk   = new_block("while.break");
+        std::uint32_t after = new_block("while.after");
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", head, 0, n.loc, std::nullopt});
         set_block(head);
@@ -2006,12 +2023,23 @@ private:
         emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
                        "", body, done, n.loc, std::nullopt});
         set_block(body);
-        loops_.push_back({head, done});
+        loops_.push_back({head, brk});
         for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
         loops_.pop_back();
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", head, 0, n.loc, std::nullopt});
+
+        set_block(brk);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", after, 0, n.loc, std::nullopt});
+
         set_block(done);
+        for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
+        if (!terminated())
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", after, 0, n.loc, std::nullopt});
+
+        set_block(after);
         return true;
     }
 

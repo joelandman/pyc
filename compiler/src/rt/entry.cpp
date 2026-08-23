@@ -4,7 +4,10 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <vector>
+
+#include <unistd.h>
 
 extern "C" {
 
@@ -14,6 +17,39 @@ long long pyc_rt_total_refcount(void) {
 #else
     return -1;   // NOT zero: a release build must not look leak-free
 #endif
+}
+
+// `python script.py` puts the SCRIPT's directory on sys.path, which is how
+// `import utils` finds a module sitting next to it. A compiled binary has no
+// script at run time, so nothing was prepended and every sibling import failed
+// with ModuleNotFoundError -- the compiler accepted the program and the binary
+// then could not run it.
+//
+// The executable's own directory is the honest analogue: it is where modules
+// that sat beside the source get deployed, and it keeps `./app` working from
+// any working directory. Deliberately NOT the cwd -- CPython does not put the
+// cwd on the path for a script, and doing so would let a stray file shadow a
+// stdlib module, which is a divergence in the other direction.
+static int add_program_dir_to_path(void) {
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+    std::string dir;
+    if (n > 0) {
+        buf[n] = '\0';
+        std::string exe(buf);
+        std::size_t slash = exe.find_last_of('/');
+        if (slash != std::string::npos) dir = exe.substr(0, slash);
+    }
+    if (dir.empty()) return 0;      // cannot tell where we are: change nothing
+
+    PyObject* path = PySys_GetObject("path");          // borrowed
+    if (!path || !PyList_Check(path)) return 0;
+    PyObject* d = PyUnicode_FromString(dir.c_str());
+    if (!d) { PyErr_Clear(); return 0; }
+    int rc = PyList_Insert(path, 0, d);
+    Py_DECREF(d);
+    if (rc < 0) { PyErr_Clear(); return 0; }
+    return 0;
 }
 
 static int configure(int argc, char** argv) {
@@ -37,7 +73,7 @@ static int configure(int argc, char** argv) {
     if (PyStatus_Exception(status)) goto fail;
 
     PyConfig_Clear(&config);
-    return 0;
+    return add_program_dir_to_path();
 
 fail:
     PyConfig_Clear(&config);

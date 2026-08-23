@@ -13,7 +13,7 @@
   "scored": 712,
   "matched": 702,
   "quarantined": 1,
-  "elapsed_seconds": 168.85450649261475,
+  "elapsed_seconds": 195.66082191467285,
   "counts": {
     "COMPILE_ERROR": 4,
     "STDERR_DIFF": 6,
@@ -26,28 +26,28 @@
       "path": "verify/corpus/language/case_265.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-agu6pvp4/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-tu0_amd6/case_265.py:2:4: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_266.py",
       "path": "verify/corpus/language/case_266.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ermt44__/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-wxdm29y8/case_266.py:2:10: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_267.py",
       "path": "verify/corpus/language/case_267.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-00caq6to/case_267.py:2:9: error: cannot compile generator expressions yet [generator expressions]"
+      "detail": "/tmp/pyc-verify-cgfoi0bl/case_267.py:2:9: error: cannot compile generator expressions yet [generator expressions]"
     },
     {
       "case": "case_449.py",
       "path": "verify/corpus/language/case_449.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ykf832pz/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
+      "detail": "/tmp/pyc-verify-tbq3fhd5/case_449.py:4:10: error: cannot compile this lambda parameter form yet [this lambda parameter form]"
     },
     {
       "case": "case_208.py",

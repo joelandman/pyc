@@ -1,0 +1,676 @@
+{
+  "oracle": {
+    "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14",
+    "version": "3.14.7",
+    "machine": "x86_64"
+  },
+  "subject": {
+    "pyc_flags": [
+      "-O0"
+    ]
+  },
+  "pass_rate": 85.8695652173913,
+  "scored": 92,
+  "matched": 79,
+  "quarantined": 1,
+  "elapsed_seconds": 44.60814046859741,
+  "counts": {
+    "COMPILE_ERROR": 5,
+    "STDERR_DIFF": 8,
+    "MATCH": 79,
+    "QUARANTINE_NONDETERMINISTIC": 1
+  },
+  "results": [
+    {
+      "case": "builtins2.py",
+      "path": "verify/corpus/programs/builtins2.py",
+      "verdict": "COMPILE_ERROR",
+      "priority": "P2",
+      "detail": "/tmp/pyc-verify-u3wv_lg9/builtins2.py:52:14: error: cannot compile generator expressions yet [generator expressions]"
+    },
+    {
+      "case": "features.py",
+      "path": "verify/corpus/programs/features.py",
+      "verdict": "COMPILE_ERROR",
+      "priority": "P2",
+      "detail": "/tmp/pyc-verify-yl_zrmjy/features.py:38:14: error: cannot compile generator expressions yet [generator expressions]"
+    },
+    {
+      "case": "generators.py",
+      "path": "verify/corpus/programs/generators.py",
+      "verdict": "COMPILE_ERROR",
+      "priority": "P2",
+      "detail": "/tmp/pyc-verify-p5ixp7b8/generators.py:3:4: error: cannot compile yield yet [yield]"
+    },
+    {
+      "case": "range.py",
+      "path": "verify/corpus/programs/range.py",
+      "verdict": "COMPILE_ERROR",
+      "priority": "P2",
+      "detail": "/tmp/pyc-verify-_9641e2_/range.py:20:15: error: cannot compile generator expressions yet [generator expressions]"
+    },
+    {
+      "case": "w124_gen.py",
+      "path": "verify/corpus/programs/w124_gen.py",
+      "verdict": "COMPILE_ERROR",
+      "priority": "P2",
+      "detail": "/tmp/pyc-verify-4zm7sg_y/w124_gen.py:4:8: error: cannot compile yield yet [yield]"
+    },
+    {
+      "case": "fibn.py",
+      "path": "verify/corpus/programs/fibn.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "mandelbrot.py",
+      "path": "verify/corpus/programs/mandelbrot.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "nbody.py",
+      "path": "verify/corpus/programs/nbody.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "nbody8.py",
+      "path": "verify/corpus/programs/nbody8.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "nbody_soa.py",
+      "path": "verify/corpus/programs/nbody_soa.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "nbody_unroll.py",
+      "path": "verify/corpus/programs/nbody_unroll.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "opt_args_defaults.py",
+      "path": "verify/corpus/programs/opt_args_defaults.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "w11_argparse.py",
+      "path": "verify/corpus/programs/w11_argparse.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "b7_import.py",
+      "path": "verify/corpus/programs/b7_import.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "b7_importfrom.py",
+      "path": "verify/corpus/programs/b7_importfrom.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "b7_importstar.py",
+      "path": "verify/corpus/programs/b7_importstar.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "builtins.py",
+      "path": "verify/corpus/programs/builtins.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "closures.py",
+      "path": "verify/corpus/programs/closures.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "fib.py",
+      "path": "verify/corpus/programs/fib.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "hash.py",
+      "path": "verify/corpus/programs/hash.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "hello.py",
+      "path": "verify/corpus/programs/hello.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "modifiers.py",
+      "path": "verify/corpus/programs/modifiers.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_function_call.py",
+      "path": "verify/corpus/programs/opt_function_call.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_homogeneous_list.py",
+      "path": "verify/corpus/programs/opt_homogeneous_list.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_mixed_code.py",
+      "path": "verify/corpus/programs/opt_mixed_code.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_nested_destructuring.py",
+      "path": "verify/corpus/programs/opt_nested_destructuring.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_numeric_lists.py",
+      "path": "verify/corpus/programs/opt_numeric_lists.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_numeric_locals.py",
+      "path": "verify/corpus/programs/opt_numeric_locals.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_numeric_loop.py",
+      "path": "verify/corpus/programs/opt_numeric_loop.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "opt_range_loop.py",
+      "path": "verify/corpus/programs/opt_range_loop.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "regex.py",
+      "path": "verify/corpus/programs/regex.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "regex_g.py",
+      "path": "verify/corpus/programs/regex_g.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "sets.py",
+      "path": "verify/corpus/programs/sets.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "sprintf.py",
+      "path": "verify/corpus/programs/sprintf.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "unpack_comp.py",
+      "path": "verify/corpus/programs/unpack_comp.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "utils.py",
+      "path": "verify/corpus/programs/utils.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w011_type.py",
+      "path": "verify/corpus/programs/w011_type.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w016_arena.py",
+      "path": "verify/corpus/programs/w016_arena.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w016_cplx.py",
+      "path": "verify/corpus/programs/w016_cplx.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w016_mutual.py",
+      "path": "verify/corpus/programs/w016_mutual.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w111_io.py",
+      "path": "verify/corpus/programs/w111_io.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w112_io.py",
+      "path": "verify/corpus/programs/w112_io.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w112_join.py",
+      "path": "verify/corpus/programs/w112_join.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w113_hash.py",
+      "path": "verify/corpus/programs/w113_hash.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w114_dec.py",
+      "path": "verify/corpus/programs/w114_dec.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w116_dt.py",
+      "path": "verify/corpus/programs/w116_dt.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w117_path.py",
+      "path": "verify/corpus/programs/w117_path.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w118_io.py",
+      "path": "verify/corpus/programs/w118_io.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w11_rest.py",
+      "path": "verify/corpus/programs/w11_rest.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w121_wa.py",
+      "path": "verify/corpus/programs/w121_wa.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w122_enc.py",
+      "path": "verify/corpus/programs/w122_enc.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w123_bound.py",
+      "path": "verify/corpus/programs/w123_bound.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w58_unbox.py",
+      "path": "verify/corpus/programs/w58_unbox.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w61_runtime.py",
+      "path": "verify/corpus/programs/w61_runtime.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w61b_runtime.py",
+      "path": "verify/corpus/programs/w61b_runtime.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w61c_runtime.py",
+      "path": "verify/corpus/programs/w61c_runtime.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w62_str_range.py",
+      "path": "verify/corpus/programs/w62_str_range.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w62b_index.py",
+      "path": "verify/corpus/programs/w62b_index.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w63_call.py",
+      "path": "verify/corpus/programs/w63_call.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w64_mod_super.py",
+      "path": "verify/corpus/programs/w64_mod_super.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w71_call.py",
+      "path": "verify/corpus/programs/w71_call.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w71b_kw.py",
+      "path": "verify/corpus/programs/w71b_kw.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w72_path.py",
+      "path": "verify/corpus/programs/w72_path.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w73_getattr.py",
+      "path": "verify/corpus/programs/w73_getattr.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w81_star.py",
+      "path": "verify/corpus/programs/w81_star.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w82_runtime.py",
+      "path": "verify/corpus/programs/w82_runtime.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w83_method.py",
+      "path": "verify/corpus/programs/w83_method.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w84_runtime.py",
+      "path": "verify/corpus/programs/w84_runtime.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w85_star.py",
+      "path": "verify/corpus/programs/w85_star.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w910_class.py",
+      "path": "verify/corpus/programs/w910_class.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w911_class.py",
+      "path": "verify/corpus/programs/w911_class.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w912_class.py",
+      "path": "verify/corpus/programs/w912_class.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w913_inst.py",
+      "path": "verify/corpus/programs/w913_inst.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w914_map.py",
+      "path": "verify/corpus/programs/w914_map.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w915_wa.py",
+      "path": "verify/corpus/programs/w915_wa.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w916_slice.py",
+      "path": "verify/corpus/programs/w916_slice.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w917_tail.py",
+      "path": "verify/corpus/programs/w917_tail.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w918_tail.py",
+      "path": "verify/corpus/programs/w918_tail.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w919_tail.py",
+      "path": "verify/corpus/programs/w919_tail.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w91_zip.py",
+      "path": "verify/corpus/programs/w91_zip.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w920_set.py",
+      "path": "verify/corpus/programs/w920_set.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w921_tail.py",
+      "path": "verify/corpus/programs/w921_tail.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w92_zip.py",
+      "path": "verify/corpus/programs/w92_zip.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w93_enum.py",
+      "path": "verify/corpus/programs/w93_enum.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w94_rev.py",
+      "path": "verify/corpus/programs/w94_rev.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w95_seq.py",
+      "path": "verify/corpus/programs/w95_seq.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w96_seq.py",
+      "path": "verify/corpus/programs/w96_seq.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w97_sum_minmax.py",
+      "path": "verify/corpus/programs/w97_sum_minmax.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w98_adapt.py",
+      "path": "verify/corpus/programs/w98_adapt.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w99_adapt.py",
+      "path": "verify/corpus/programs/w99_adapt.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w_apply.py",
+      "path": "verify/corpus/programs/w_apply.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w_nbody_tuple.py",
+      "path": "verify/corpus/programs/w_nbody_tuple.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "mbs.py",
+      "path": "verify/corpus/programs/mbs.py",
+      "verdict": "QUARANTINE_NONDETERMINISTIC",
+      "priority": "-",
+      "detail": "CPython output not reproducible across runs"
+    }
+  ]
+}
