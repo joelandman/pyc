@@ -210,3 +210,57 @@ leaks or double-frees.
 So far exactly one is curated: `PyModule_AddObjectRef`, because `_BANNED`
 points at it as the safe replacement for `PyModule_AddObject` and a
 recommendation that cannot be emitted is useless.
+
+### Entry point and refcount discipline
+
+```
+include/pyc/rt/entry.hpp     pyc_rt_main, pyc_rt_total_refcount
+src/rt/entry.cpp             Py_Initialize -> body -> finalize, exit codes
+src/rt/refcount_probe.cpp    the leak harness
+```
+
+A4 emits a `main()` that calls `pyc_rt_main` with the body A3 lowered. The
+sequencing lives here so the initialise/finalise/error protocol is written and
+verified once. PEP 587 `PyConfig` is used because the pre-587
+`Py_SetProgramName` family is removed in 3.13+, so a compiled binary has no
+choice. `parse_argv = 0`: the binary is a program, not an interpreter, and must
+never be steered into running something else by its own argv.
+
+Exit-code semantics match CPython exactly, verified case by case:
+
+| body raises | pyc | CPython |
+|---|---|---|
+| `SystemExit(3)` | 3 | 3 |
+| `SystemExit()` | 0 | 0 |
+| `SystemExit('bye')` | 1, message to stderr | 1, message to stderr |
+| `ValueError('boom')` | 1, traceback | 1, traceback |
+
+Testing that required care worth recording: `PyRun_SimpleString` handles
+`SystemExit` *itself*, by calling `exit()` directly. A test built on it shows
+the right exit codes while never running `pyc_rt_main`'s handler at all. The
+test therefore uses `PyRun_String` and returns `-1` with the exception still
+set, which is exactly the shape A3-lowered code will have.
+
+### The leak harness
+
+```
+$ refcount_probe
+  clean        delta=    +0 over 2000 iters  (+0.000/iter)  OK
+  steal        delta=    +0 over 2000 iters  (+0.000/iter)  OK
+  borrow       delta=    +0 over 2000 iters  (+0.000/iter)  OK
+  overrelease  delta=    +0 over 2000 iters  (+0.000/iter)  OK
+  leak         delta= +2000 over 2000 iters  (+1.000/iter)  OK  [expected to leak]
+```
+
+The **slope** is the signal, not the absolute total: a leak grows linearly with
+iterations. Warm-up iterations are discarded because interned strings, cached
+small ints and lazy imports legitimately raise the total once and never again;
+counting that as a leak would make every correct program look broken.
+
+`leak` is a deliberately incorrect workload that must FAIL. A leak detector
+that has never detected a leak is not evidence of anything, so the harness
+proves it can fail before its zeros mean anything.
+
+`pyc_rt_total_refcount()` returns **-1**, not 0, on a release build, and the
+probe exits 2 rather than reporting success. A release build silently reporting
+"no leaks" would be worse than having no check.
