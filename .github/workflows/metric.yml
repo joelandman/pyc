@@ -64,7 +64,11 @@ jobs:
 
       - name: Build CPython sysroot
         if: steps.sysroot.outputs.cache-hit != 'true'
-        run: ./tools/build-python-sysroot.sh --version 3.14.7 --jobs "$(nproc)"
+        run: |
+          # --require-wheel makes CHARTER I7 a hard gate once a day: a sysroot
+          # that cannot load a real C-extension wheel is a broken sysroot.
+          ./tools/build-python-sysroot.sh --version 3.14.7 \
+            --require-wheel --jobs "$(nproc)"
 
       - name: Build pyc
         run: |

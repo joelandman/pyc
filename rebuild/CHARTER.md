@@ -40,6 +40,15 @@ Python-level code into native code, using unboxed native representations
 wherever types can be **proved**, and falling back to the C-API everywhere
 else. Speed comes from proving types, never from redefining them.
 
+**Validated 2026-08-22.** This is no longer an assumption. A Tier-1 binary
+(static libpython, `-rdynamic`, no libpython dynamic dependency) imports and
+runs real C-extension wheels: **NumPy 2.5.2** and **PyTorch
+2.11.0.dev+rocm7.0** (`matmul=[[5.0,14.0],[14.0,50.0]]`). PyTorch is close to
+the harshest case available — a ROCm build with one of the largest `.so`
+graphs in the ecosystem. `tools/build-python-sysroot.sh` now proves this on
+every sysroot build (`--require-wheel` makes it fatal; the nightly metric uses
+it), so the capability cannot silently regress.
+
 Rejected alternatives, for the record: an independent semantically-correct
 runtime (forecloses wheels forever), and a hybrid unboxed/CPython boundary
 (the cpyext problem — highest ceiling, but the boundary is where correctness

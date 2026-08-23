@@ -20,6 +20,8 @@
 #   ./tools/build-python-sysroot.sh --tier 2               # deferred; needs --force-tier2
 #   ./tools/build-python-sysroot.sh --freethreaded         # cp314t ABI
 #   ./tools/build-python-sysroot.sh --verify-only --prefix DIR
+#   ./tools/build-python-sysroot.sh --require-wheel        # fail unless a wheel loads
+#   ./tools/build-python-sysroot.sh --no-wheel-check       # skip (offline / fast)
 #   ./tools/build-python-sysroot.sh --check-deps
 #   ./tools/build-python-sysroot.sh --dry-run
 #
@@ -50,6 +52,10 @@ CHECK_DEPS_ONLY=0
 FORCE=0
 FORCE_TIER2=0
 KEEP_BUILD=0
+WHEEL_VERIFIED=""
+WHEEL_CHECK=1
+WHEEL_REQUIRED=0
+WHEEL_PKG="numpy"
 
 # ------------------------------------------------------------------- usage --
 
@@ -76,6 +82,9 @@ while [[ $# -gt 0 ]]; do
     --force)         FORCE=1; shift;;
     --force-tier2)   FORCE_TIER2=1; shift;;
     --keep-build)    KEEP_BUILD=1; shift;;
+    --no-wheel-check) WHEEL_CHECK=0; shift;;
+    --require-wheel) WHEEL_REQUIRED=1; shift;;
+    --wheel-package) WHEEL_PKG="${2:?--wheel-package needs a name}"; shift 2;;
     -h|--help)       usage;;
     *)               die "unknown option: $1 (try --help)";;
   esac
@@ -278,9 +287,10 @@ write_manifest() {
   info "writing $manifest"
   (( DRY_RUN )) && return 0
 
-  "$py" - "$manifest" "$ABI" "$TIER" "$VERSION" <<'PYEOF'
+  "$py" - "$manifest" "$ABI" "$TIER" "$VERSION" "$WHEEL_VERIFIED" <<'PYEOF'
 import json, sys, sysconfig, os
 manifest, abi, tier, version = sys.argv[1:5]
+wheel_verified = sys.argv[5] if len(sys.argv) > 5 else ''
 libpl = sysconfig.get_config_var('LIBPL')
 libdir = sysconfig.get_config_var('LIBDIR')
 static = os.path.join(libpl, sysconfig.get_config_var('LIBRARY'))
@@ -298,6 +308,7 @@ ptd = {
     "libpython_shared": shared if os.path.exists(shared) else None,
     "link_flags":     ["-rdynamic"] if int(tier) == 1 else ["-static"],
     "wheels_supported": int(tier) == 1,
+    "wheel_verified": wheel_verified or None,
     "builtin_modules":  len(sys.builtin_module_names),
 }
 try:
@@ -374,7 +385,74 @@ CEOF
     warn "Tier-2 binaries can NEVER load C-extension wheels (CHARTER I7)"
   fi
 
+  verify_wheel
   write_manifest
+}
+
+
+# CHARTER I7: "a binary that imports a real precompiled wheel". This is the
+# capability the entire libpython decision was made to buy, so every sysroot
+# build proves it rather than assuming it.
+verify_wheel() {
+  if (( TIER != 1 )); then
+    info "wheel check skipped: a Tier-2 binary cannot load C-extension wheels"
+    info "  by construction — no dynamic symbol table (CHARTER I7)"
+    return 0
+  fi
+  (( WHEEL_CHECK )) || { info "wheel check skipped (--no-wheel-check)"; return 0; }
+
+  step "Verifying C-extension wheel support (${WHEEL_PKG})"
+  local py="$PREFIX/bin/python${XY}"
+
+  # No network is an environment problem, not a sysroot defect, so this warns
+  # by default. --require-wheel makes it fatal; that is what CI should use.
+  if ! "$py" -m pip install --quiet --no-input --disable-pip-version-check \
+        "$WHEEL_PKG" >/dev/null 2>&1; then
+    (( WHEEL_REQUIRED )) && die "cannot install '$WHEEL_PKG' into the sysroot"
+    warn "cannot install '$WHEEL_PKG' (offline?) — wheel support UNVERIFIED"
+    warn "  re-run with --require-wheel where it must be proven"
+    return 0
+  fi
+
+  local wheel_ver
+  wheel_ver="$("$py" -c "import ${WHEEL_PKG} as m;print(m.__version__)" 2>/dev/null || echo '?')"
+  info "installed ${WHEEL_PKG} ${wheel_ver} into the sysroot"
+
+  local probe="$SCRATCH/wheel"; mkdir -p "$probe"
+  cat > "$probe/w.c" <<CEOF
+#define PY_SSIZE_T_CLEAN
+#include <Python.h>
+int main(void){
+    Py_Initialize();
+    if (PyRun_SimpleString(
+        "import ${WHEEL_PKG} as m\n"
+        "print('wheel-ok', m.__name__, m.__version__)\n")) return 1;
+    return Py_FinalizeEx() < 0;
+}
+CEOF
+  local inc libpl static_lib
+  inc="$("$PREFIX/bin/python${XY}-config" --includes)"
+  libpl="$("$py" -c 'import sysconfig;print(sysconfig.get_config_var("LIBPL"))')"
+  static_lib="$libpl/$("$py" -c 'import sysconfig;print(sysconfig.get_config_var("LIBRARY"))')"
+
+  # The product's own link mode: static libpython plus -rdynamic, so the
+  # wheel's .so can resolve libpython symbols out of the executable.
+  if ! gcc -rdynamic $inc "$probe/w.c" "$static_lib" \
+        -lm -lpthread -ldl -lutil -lz -o "$probe/w" 2>/dev/null; then
+    (( WHEEL_REQUIRED )) && die "wheel probe failed to link"
+    warn "wheel probe failed to link — UNVERIFIED"; return 0
+  fi
+
+  if env -u LD_LIBRARY_PATH "$probe/w" 2>/dev/null | grep -q 'wheel-ok'; then
+    if ldd "$probe/w" | grep -qi libpython; then
+      die "wheel probe has a libpython dynamic dependency — that is not Tier 1"
+    fi
+    info "Tier-1 binary imported ${WHEEL_PKG} ${wheel_ver} with NO libpython dep"
+    WHEEL_VERIFIED="${WHEEL_PKG} ${wheel_ver}"
+  else
+    (( WHEEL_REQUIRED )) && die "Tier-1 binary could not import '$WHEEL_PKG'"
+    warn "Tier-1 binary could not import '$WHEEL_PKG' — UNVERIFIED"
+  fi
 }
 
 # -------------------------------------------------------------------- main --

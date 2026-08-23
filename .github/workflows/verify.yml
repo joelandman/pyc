@@ -95,7 +95,12 @@ jobs:
 
       - name: Build CPython sysroot
         if: steps.sysroot.outputs.cache-hit != 'true'
-        run: ./tools/build-python-sysroot.sh --version 3.14.7 --no-pgo --jobs "$(nproc)"
+        run: |
+          # --no-wheel-check keeps the PR gate hermetic: a PyPI outage must not
+          # fail unrelated PRs. The nightly metric proves wheels with
+          # --require-wheel instead.
+          ./tools/build-python-sysroot.sh --version 3.14.7 --no-pgo \
+            --no-wheel-check --jobs "$(nproc)"
 
       - name: Record oracle
         run: |
