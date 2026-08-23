@@ -23,7 +23,8 @@ const char* op_name(Op op) {
         case Op::Br:          return "br";
         case Op::CondBr:      return "condbr";
         case Op::Return:      return "ret";
-        case Op::Raise:       return "raise";
+        case Op::ReturnErr:   return "ret.err";
+        case Op::IsTrue:      return "istrue";
     }
     return "?";
 }

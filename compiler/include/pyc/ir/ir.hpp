@@ -51,8 +51,12 @@ enum class Op {
     IncRef, DecRef,
     // control flow
     Br, CondBr, Return,
-    // an error edge: propagate the currently-set Python exception
-    Raise,
+    // Return failure with a Python exception already set. The C-API
+    // convention (INTERFACES §3), not setjmp/longjmp: the old tree's
+    // jump-based frames are a documented frame-leak source.
+    ReturnErr,
+    // truthiness for a branch predicate: PyObject_IsTrue, -1 on error
+    IsTrue,
 };
 
 const char* op_name(Op op);

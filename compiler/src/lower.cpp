@@ -59,7 +59,24 @@ private:
         return err(std::string("cannot compile ") + what + " yet", what, loc);
     }
 
-    void emit(ir::Instr i) { fn_->blocks[blk_].instrs.push_back(std::move(i)); }
+    static bool is_terminator(ir::Op op) {
+        return op == ir::Op::Br || op == ir::Op::CondBr
+            || op == ir::Op::Return || op == ir::Op::ReturnErr;
+    }
+    bool terminated() const {
+        const auto& is = fn_->blocks[blk_].instrs;
+        return !is.empty() && is_terminator(is.back().op);
+    }
+    // Anything after a terminator is unreachable, and a block with two
+    // terminators is malformed IR that LLVM's verifier rejects outright --
+    // the same "Module verification failed" class the old tree hit. Dropping
+    // it here is not an optimisation; it is what keeps the IR well-formed
+    // when `break` or `continue` ends a block that the enclosing construct
+    // then tries to branch out of.
+    void emit(ir::Instr i) {
+        if (terminated()) return;
+        fn_->blocks[blk_].instrs.push_back(std::move(i));
+    }
 
     // Every call goes through §4's table, so ownership is never guessed.
     ir::Value call_capi(const char* symbol, std::vector<ir::Value> args,
@@ -83,7 +100,7 @@ private:
         std::vector<ir::Value> saved = args;
         ir::Instr in{ir::Op::CallCApi, std::move(args), out,
                      sym->returns, symbol, 0, 0, loc, std::nullopt};
-        if (sym->may_raise) in.on_error = kErrorBlock;
+        if (sym->may_raise) in.on_error = make_landing_pad(loc);
         emit(std::move(in));
         // Release owned temporaries the call did not take. §4 records which
         // parameters STEAL, and decref'ing a stolen reference is a double
@@ -95,11 +112,46 @@ private:
         return out;
     }
 
-    static constexpr std::uint32_t kErrorBlock = 0xFFFFFFFFu;  // placeholder
+    // --- blocks ------------------------------------------------------------
+
+    std::uint32_t new_block(std::string label) {
+        fn_->blocks.push_back(ir::Block{std::move(label), {}});
+        return static_cast<std::uint32_t>(fn_->blocks.size() - 1);
+    }
+    void set_block(std::uint32_t b) { blk_ = b; }
+
+    // A landing pad releases exactly the temporaries this statement has taken
+    // ownership of so far, then returns failure. Building it per call site
+    // keeps the released set exact; identical pads are a later merge pass.
+    //
+    // This is the whole reason error edges exist: without it every raised
+    // exception leaks whatever the statement was holding, which is the old
+    // tree's frame-leak class reintroduced.
+    std::uint32_t make_landing_pad(const SourceLoc& loc) {
+        std::uint32_t here = blk_;
+        std::uint32_t pad = new_block("unwind." + std::to_string(pad_n_++));
+        set_block(pad);
+        for (auto it = owned_.rbegin(); it != owned_.rend(); ++it)
+            emit_decref(*it, loc);
+        emit(ir::Instr{ir::Op::ReturnErr, {}, std::nullopt,
+                       Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+        set_block(here);
+        return pad;
+    }
 
     // --- statements --------------------------------------------------------
 
     bool lower_stmt(const stmt& s) {
+        // Temporaries do not outlive their statement, so the set an error
+        // path must release is exactly what this statement has taken.
+        auto saved = owned_;
+        owned_.clear();
+        bool ok = lower_stmt_inner(s);
+        owned_ = saved;
+        return ok;
+    }
+
+    bool lower_stmt_inner(const stmt& s) {
         bool ok = true;
         std::visit(ov{
             [&](const Expr& e)   { ok = lower_expr_stmt(e); },
@@ -116,8 +168,8 @@ private:
             [&](const AnnAssign& n)        { ok = unsupported("annotated assignment", n.loc); },
             [&](const For& n)              { ok = unsupported("for loops", n.loc); },
             [&](const AsyncFor& n)         { ok = unsupported("async for", n.loc); },
-            [&](const While& n)            { ok = unsupported("while loops", n.loc); },
-            [&](const If& n)               { ok = unsupported("if statements", n.loc); },
+            [&](const While& n)            { ok = lower_while(n); },
+            [&](const If& n)               { ok = lower_if(n); },
             [&](const With& n)             { ok = unsupported("with", n.loc); },
             [&](const AsyncWith& n)        { ok = unsupported("async with", n.loc); },
             [&](const Match& n)            { ok = unsupported("match", n.loc); },
@@ -129,12 +181,84 @@ private:
             [&](const ImportFrom& n)       { ok = unsupported("from-import", n.loc); },
             [&](const Global& n)           { ok = unsupported("global", n.loc); },
             [&](const Nonlocal& n)         { ok = unsupported("nonlocal", n.loc); },
-            [&](const Break& n)            { ok = unsupported("break", n.loc); },
-            [&](const Continue& n)         { ok = unsupported("continue", n.loc); },
+            [&](const Break& n)            {
+                if (loops_.empty()) ok = err("break outside a loop", "break", n.loc);
+                else emit(ir::Instr{ir::Op::Br, {}, std::nullopt,
+                                    Ownership::NotAnObject, "",
+                                    loops_.back().done, 0, n.loc, std::nullopt});
+            },
+            [&](const Continue& n)         {
+                if (loops_.empty()) ok = err("continue outside a loop", "continue", n.loc);
+                else emit(ir::Instr{ir::Op::Br, {}, std::nullopt,
+                                    Ownership::NotAnObject, "",
+                                    loops_.back().head, 0, n.loc, std::nullopt});
+            },
             [&](const TypeAlias& n)        { ok = unsupported("type aliases", n.loc); },
         }, s.v);
         return ok;
     }
+
+    // Truthiness goes through PyObject_IsTrue like everything else -- there is
+    // no fast path for "obviously a bool", because that would be a proof we
+    // have not made (I2).
+    ir::Value lower_predicate(const expr& e, bool* ok) {
+        ir::Value v = lower_expr(e, ok);
+        if (!*ok) return {};
+        ir::Value t = fn_->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        SourceLoc loc{};
+        emit(ir::Instr{ir::Op::IsTrue, {v}, t, Ownership::NotAnObject,
+                       "PyObject_IsTrue", 0, 0, loc, make_landing_pad(loc)});
+        if (owns(v)) release(v, loc);
+        return t;
+    }
+
+    bool lower_if(const If& n) {
+        bool ok = true;
+        ir::Value t = lower_predicate(*n.test, &ok);
+        if (!ok) return false;
+        std::uint32_t then_b = new_block("then");
+        std::uint32_t else_b = new_block("else");
+        std::uint32_t join_b = new_block("endif");
+        emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
+                       "", then_b, else_b, n.loc, std::nullopt});
+        set_block(then_b);
+        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", join_b, 0, n.loc, std::nullopt});
+        set_block(else_b);
+        for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", join_b, 0, n.loc, std::nullopt});
+        set_block(join_b);
+        return true;
+    }
+
+    bool lower_while(const While& n) {
+        if (!n.orelse.empty()) return unsupported("while/else", n.loc);
+        std::uint32_t head = new_block("while.head");
+        std::uint32_t body = new_block("while.body");
+        std::uint32_t done = new_block("while.done");
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", head, 0, n.loc, std::nullopt});
+        set_block(head);
+        bool ok = true;
+        ir::Value t = lower_predicate(*n.test, &ok);
+        if (!ok) return false;
+        emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
+                       "", body, done, n.loc, std::nullopt});
+        set_block(body);
+        loops_.push_back({head, done});
+        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
+        loops_.pop_back();
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", head, 0, n.loc, std::nullopt});
+        set_block(done);
+        return true;
+    }
+
+    std::uint32_t pad_n_ = 0;
+    struct Loop { std::uint32_t head, done; };
+    std::vector<Loop> loops_;
 
     bool lower_expr_stmt(const Expr& e) {
         bool ok = true;
@@ -247,7 +371,7 @@ private:
         // which is precisely why print/len/sum cannot diverge (I3).
         ir::Value out = fn_->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::LoadGlobal, {}, out, Ownership::Owned,
-                       n.id, 0, 0, n.loc, kErrorBlock});
+                       n.id, 0, 0, n.loc, make_landing_pad(n.loc)});
         mark_owned(out);
         *ok = true;
         return out;
@@ -266,7 +390,7 @@ private:
         ir::Value out = fn_->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         std::vector<ir::Value> saved = args;
         emit(ir::Instr{ir::Op::CallObject, std::move(args), out,
-                       Ownership::Owned, "", 0, 0, c.loc, kErrorBlock});
+                       Ownership::Owned, "", 0, 0, c.loc, make_landing_pad(c.loc)});
         // A Python-level call borrows its callable and arguments.
         for (const ir::Value& a : saved) if (owns(a)) release(a, c.loc);
         mark_owned(out);
