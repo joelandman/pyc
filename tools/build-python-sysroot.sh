@@ -523,6 +523,21 @@ main() {
 
   if (( VERIFY_ONLY )); then
     [[ -d "$PREFIX" ]] || die "no sysroot at $PREFIX"
+    # Derive the version from the TREE, not from this invocation's --version
+    # default. Verifying a 3.13 sysroot without repeating --version otherwise
+    # looks for bin/python3.14 inside it. Same lesson as the ABI: targets are
+    # data, so read the data rather than the command line.
+    local found
+    found="$(ls "$PREFIX"/bin/python3.* 2>/dev/null | grep -E 'python3\.[0-9]+$' | head -1)"
+    if [[ -n "$found" ]]; then
+      XY="$(basename "$found" | sed 's/^python//')"
+      if [[ -f "$PREFIX/pyc-sysroot.json" ]]; then
+        VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' \
+                   "$PREFIX/pyc-sysroot.json" | head -1)"
+        [[ -n "$VERSION" ]] || VERSION="${XY}.x"
+      fi
+      SYSROOT_NAME="$(basename "$PREFIX")"
+    fi
     verify; exit 0
   fi
 
