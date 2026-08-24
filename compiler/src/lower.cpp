@@ -261,7 +261,7 @@ private:
             // Everything else is a diagnostic, one arm each. No generic arm:
             // a node kind added upstream must break this build (I4).
             [&](const FunctionDef& n)      { ok = lower_functiondef(n); },
-            [&](const AsyncFunctionDef& n) { ok = unsupported("async function definitions", n.loc); },
+            [&](const AsyncFunctionDef& n) { ok = lower_async_functiondef(n); },
             [&](const ClassDef& n)         { ok = lower_classdef(n); },
             [&](const Return& n)           { ok = lower_return(n); },
             [&](const Delete& n)           { ok = lower_delete(n); },
@@ -775,6 +775,91 @@ private:
         for (const stmt& s2 : body) go(s2);
     }
 
+    // Bind a function whose BODY was compiled by CPython -- a generator
+    // function, a coroutine, or an async generator. pyc still owns everything
+    // the enclosing scope is responsible for: the defaults evaluated at def
+    // time, the closure cells, the decorators, and the binding.
+    //
+    // Shared by def and async def rather than written twice. Two lowerings of
+    // one construct is the drift that produced a leak in the def path while
+    // the lambda path was correct, and an unsound second copy of try/finally.
+    // async def. await, async for and async with are all SyntaxErrors outside
+    // an async function, so compiling the body covers every one of them --
+    // there is nothing left for pyc to lower inside it.
+    bool lower_async_functiondef(const AsyncFunctionDef& n) {
+        const arguments& a = *n.args;
+        if (!a.posonlyargs.empty()) return unsupported("positional-only parameters", n.loc);
+        if (!a.kwonlyargs.empty())  return unsupported("keyword-only parameters", n.loc);
+        // Defaults are evaluated ONCE, here, in the enclosing scope.
+        bool dok = true;
+        ir::Value defaults;
+        if (!a.defaults.empty()) {
+            defaults = call_capi_imm("PyTuple_New", {},
+                                     (std::int64_t)a.defaults.size(), 0, n.loc, &dok);
+            if (!dok) return false;
+            mark_owned(defaults);
+            for (std::size_t i = 0; i < a.defaults.size(); ++i) {
+                ir::Value d = lower_expr(a.defaults[i], &dok);
+                if (!dok) return false;
+                call_capi_imm("PyTuple_SetItem", {defaults, d},
+                              (std::int64_t)i, 1, n.loc, &dok);    // steals d
+                if (!dok) return false;
+            }
+        }
+        return lower_cpython_function(n.name, n.decorator_list, defaults, n.loc);
+    }
+
+    bool lower_cpython_function(const std::string& name,
+                                const std::vector<expr>& decorators,
+                                ir::Value defaults, const SourceLoc& loc) {
+        const GenexpEntry* gf = find_genexp(loc);
+        if (!gf) return err("no compiled code object for this function",
+                            "async function definitions", loc);
+        ir::Value closure;
+        if (!gf->freevars.empty()) {
+            bool cok = true;
+            closure = call_capi_imm("PyTuple_New", {},
+                                    (std::int64_t)gf->freevars.size(), 0, loc, &cok);
+            if (!cok) return false;
+            mark_owned(closure);
+            for (std::size_t i = 0; i < gf->freevars.size(); ++i) {
+                const std::string& fv2 = gf->freevars[i];
+                auto cit = cells_.find(fv2);
+                if (cit == cells_.end())
+                    return err("function captures '" + fv2 +
+                               "', which has no closure cell here", "yield", loc);
+                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned,
+                               fv2, cit->second, 0, loc, make_landing_pad(loc)});
+                mark_owned(cell);
+                call_capi_imm("PyTuple_SetItem", {closure, cell},
+                              (std::int64_t)i, 1, loc, &cok);      // steals
+                if (!cok) return false;
+            }
+        }
+        ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::MakeGenFunc,
+                       {closure.valid() ? closure : ir::Value{},
+                        defaults.valid() ? defaults : ir::Value{}},
+                       fv, Ownership::Owned, gf->code, 0, 0, loc,
+                       make_landing_pad(loc)});
+        mark_owned(fv);
+        if (closure.valid() && owns(closure)) release(closure, loc);
+        if (defaults.valid() && owns(defaults)) release(defaults, loc);
+        bool okd = true;
+        fv = apply_decorators(decorators, fv, loc, &okd);
+        if (!okd) return false;
+        if (!class_ns_.empty()) {
+            ir::Value m = call_capi("pyc_rt_bind_method", {fv}, loc, &okd, {fv});
+            if (!okd) return false;
+            mark_owned(m);
+            store_name(name, m, loc);
+            return true;
+        }
+        store_name(name, fv, loc);
+        return true;
+    }
+
     bool lower_functiondef(const FunctionDef& n) {
         const arguments& a = *n.args;
         if (!a.posonlyargs.empty()) return unsupported("positional-only parameters", n.loc);
@@ -806,59 +891,10 @@ private:
         // the body pushes this function's own scope onto qual_.
         const std::string fn_qualname = qualname(n.name);
 
-        // A def containing yield is a generator function: its body was
-        // compiled by CPython at build time and runs on the interpreter
-        // (rebuild/GENERATORS.md). pyc still owns everything the ENCLOSING
-        // scope is responsible for -- the defaults evaluated just above, the
-        // closure cells, the decorators, and the binding.
-        if (const GenexpEntry* gf = find_genexp(n.loc)) {
-            ir::Value closure;
-            if (!gf->freevars.empty()) {
-                bool cok = true;
-                closure = call_capi_imm("PyTuple_New", {},
-                                        (std::int64_t)gf->freevars.size(), 0,
-                                        n.loc, &cok);
-                if (!cok) return false;
-                mark_owned(closure);
-                for (std::size_t i = 0; i < gf->freevars.size(); ++i) {
-                    const std::string& fv2 = gf->freevars[i];
-                    auto cit = cells_.find(fv2);
-                    if (cit == cells_.end())
-                        return err("generator function captures '" + fv2 +
-                                   "', which has no closure cell here",
-                                   "yield", n.loc);
-                    ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-                    emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned,
-                                   fv2, cit->second, 0, n.loc,
-                                   make_landing_pad(n.loc)});
-                    mark_owned(cell);
-                    call_capi_imm("PyTuple_SetItem", {closure, cell},
-                                  (std::int64_t)i, 1, n.loc, &cok);  // steals
-                    if (!cok) return false;
-                }
-            }
-            ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-            emit(ir::Instr{ir::Op::MakeGenFunc,
-                           {closure.valid() ? closure : ir::Value{},
-                            defaults.valid() ? defaults : ir::Value{}},
-                           fv, Ownership::Owned, gf->code, 0, 0, n.loc,
-                           make_landing_pad(n.loc)});
-            mark_owned(fv);
-            if (closure.valid() && owns(closure)) release(closure, n.loc);
-            if (defaults.valid() && owns(defaults)) release(defaults, n.loc);
-            bool okd = true;
-            fv = apply_decorators(n.decorator_list, fv, n.loc, &okd);
-            if (!okd) return false;
-            if (!class_ns_.empty()) {
-                ir::Value m = call_capi("pyc_rt_bind_method", {fv}, n.loc, &okd, {fv});
-                if (!okd) return false;
-                mark_owned(m);
-                store_name(n.name, m, n.loc);
-                return true;
-            }
-            store_name(n.name, fv, n.loc);
-            return true;
-        }
+        // A def containing yield, and every async def, has its body compiled
+        // by CPython and run by the interpreter (rebuild/GENERATORS.md).
+        if (find_genexp(n.loc))
+            return lower_cpython_function(n.name, n.decorator_list, defaults, n.loc);
 
         // Save the enclosing function's state: a nested def is lowered into a
         // separate ir::Function, and must not inherit the outer local map.
@@ -2646,13 +2682,16 @@ private:
             *ok = err("generator expression with no for-clause", "generator expressions", n.loc);
             return {};
         }
-        for (const comprehension& c : n.generators)
-            if (c.is_async) { *ok = unsupported("async comprehensions", n.loc); return {}; }
-
-        // 1. The OUTERMOST iterable, eagerly.
+        // 1. The OUTERMOST iterable, eagerly. An ASYNC generator expression
+        //    takes __aiter__ rather than __iter__ -- CPython emits GET_AITER
+        //    where it emits GET_ITER for the sync form -- and its `.0` is the
+        //    async iterator. Only the first clause is evaluated here; the rest
+        //    are inside the compiled body.
+        const bool is_async = n.generators[0].is_async;
         ir::Value seq = lower_expr(*n.generators[0].iter, ok);
         if (!*ok) return {};
-        ir::Value it = call_capi("PyObject_GetIter", {seq}, n.loc, ok, {seq});
+        ir::Value it = call_capi(is_async ? "PyObject_GetAIter" : "PyObject_GetIter",
+                                 {seq}, n.loc, ok, {seq});
         if (!*ok) return {};
         mark_owned(it);
 

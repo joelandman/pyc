@@ -173,7 +173,25 @@ def collect_genfuncs(tree: ast.Module, source: bytes, filename: str) -> list[dic
         for ch in ast.iter_child_nodes(node):
             if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 sub = scope_for(children, ch.name, ch.lineno)
-                if isinstance(ch, ast.FunctionDef) and _is_generator_body(ch):
+                # An `async def` ALWAYS goes to CPython, whether it is a
+                # coroutine or an async generator. await, async for and async
+                # with are all SyntaxErrors outside an async function, so
+                # compiling the body covers every one of them at once.
+                if isinstance(ch, ast.AsyncFunctionDef):
+                    if sub is None:
+                        raise GenexpError(
+                            f"no symtable scope for async function "
+                            f"'{ch.name}' at line {ch.lineno}")
+                    frees = list(sub.get_frees())
+                    out.append({
+                        "line": ch.lineno, "col": ch.col_offset,
+                        "freevars": frees,
+                        "code": base64.b64encode(
+                            _compile_genfunc(ch, frees,
+                                             _qualname_of(stack, ch.name),
+                                             filename, is_async=True)).decode("ascii"),
+                    })
+                elif isinstance(ch, ast.FunctionDef) and _is_generator_body(ch):
                     if sub is None:
                         raise GenexpError(
                             f"no symtable scope for generator function "
@@ -198,7 +216,16 @@ def collect_genfuncs(tree: ast.Module, source: bytes, filename: str) -> list[dic
     return out
 
 
-def _compile_genfunc(node, frees: list[str], qualname: str, filename: str) -> bytes:
+# CPython code-object flags. A body compiled here must come back as the kind
+# of function it was written as; asserting that catches a detection bug at
+# BUILD time rather than shipping a binary that quietly does the wrong thing.
+CO_GENERATOR = 0x20
+CO_COROUTINE = 0x80
+CO_ASYNC_GENERATOR = 0x200
+
+
+def _compile_genfunc(node, frees: list[str], qualname: str, filename: str,
+                     is_async: bool = False) -> bytes:
     shim = copy.deepcopy(node)
     # Decorators, defaults and annotations are all evaluated by the ENCLOSING
     # scope at def time. Compiling them into the wrapper would evaluate them in
@@ -230,7 +257,14 @@ def _compile_genfunc(node, frees: list[str], qualname: str, filename: str) -> by
     mod = compile(wrapper, filename, "exec")
     wrap_code = _only_code(mod.co_consts, "wrapper")
     inner = _only_code(wrap_code.co_consts, "generator function")
-    if not (inner.co_flags & 0x20):          # CO_GENERATOR
+    if is_async:
+        # Either a coroutine or an async generator, depending on whether the
+        # body yields. Both are handed to the interpreter the same way.
+        if not (inner.co_flags & (CO_COROUTINE | CO_ASYNC_GENERATOR)):
+            raise GenexpError(
+                f"'{node.name}' was not compiled as a coroutine or async "
+                f"generator")
+    elif not (inner.co_flags & CO_GENERATOR):
         raise GenexpError(f"'{node.name}' was not compiled as a generator")
     if list(inner.co_freevars) != frees:
         raise GenexpError(
