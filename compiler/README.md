@@ -294,3 +294,100 @@ Two of the matches are the exact silent wrong answers the review opened with:
 | `len("héllo wörld")` | `11` | `11` | `13` |
 
 Both correct for free, because the object model is CPython's.
+
+## Where the number went (2026-08-23)
+
+Same corpus, same oracle, after A3 was carried from "refuses most of the
+language" to "refuses three constructs". The 2026-08-23 run below adds a second
+corpus (`verify/corpus/programs`, whole programs rather than single features)
+and 15 `match` cases.
+
+| | language | programs | total |
+|---|---|---|---|
+| scored | 727 | 92 | 819 |
+| `MATCH` | **721** | **84** | **805** |
+| `STDERR_DIFF` (P3) | 6 | 8 | 14 |
+| `COMPILE_ERROR` | 0 | 0 | 0 |
+| **P0 silent wrong answers** | **0** | **0** | **0** |
+| **P1 crashes / hangs** | **0** | **0** | **0** |
+| pass rate | 99.2% | 91.3% | **98.3%** |
+
+37.9% → 98.3%, and the shape held the whole way: no verdict worse than P3
+survives. All 14 remaining differences are the same one thing — CPython's
+caret/tilde annotation line (`~~~~~^^^`) inside a traceback. pyc emits the
+frame, the file, the line number and the source text; it does not emit the
+column ranges, which are reconstructed from bytecode positions that a compiled
+binary does not have.
+
+Constructs still **refused** (loudly, with a line and a construct name — a
+diagnostic, not a metric):
+
+- positional-only / keyword-only parameters (`def f(a, /, b, *, c)`)
+- `raise ... from`
+- `type` alias statements (PEP 695)
+
+Everything else in the two corpora lowers: `./compiler/tools/coverage.py`
+reports **728/728 (100.0%)** on the language corpus.
+
+### Suspendable bodies are compiled by CPython
+
+Generator expressions, `yield` functions, `async def`, `await`, `async for` and
+`async with` are all handled by the same mechanism: the body is compiled to a
+code object *at build time* by the target interpreter, marshalled into the
+binary, and rebuilt at runtime with `PyFunction_New`. The object really is a
+`generator` / `coroutine` / `async_generator`, so `type()`, `isinstance`,
+`inspect.*`, `send`/`throw`/`close` and laziness are exact by construction
+rather than re-derived. See `../rebuild/GENERATORS.md`, which also records the
+chunked-materialization plan that was **retired** for violating I1 and I2.
+
+### `match` (PEP 634)
+
+All nine pattern kinds lower natively: value, singleton, capture, wildcard,
+sequence (with star), mapping (with `**rest`), class (positional and keyword),
+or, and as. Sequence and mapping tests read `Py_TPFLAGS_SEQUENCE` /
+`Py_TPFLAGS_MAPPING`; class patterns read `_Py_TPFLAGS_MATCH_SELF` and
+`__match_args__` rather than keeping a list of type names that would drift.
+
+The binding model was **measured from CPython before it was implemented**, and
+it is not the obvious one: captures go to SSA temporaries and are stored to
+their names only after the *whole* pattern matches, and the guard runs after
+those stores. So a failed pattern leaves nothing bound, but a failed guard
+leaves its captures bound. A stress corpus of 12 adversarial cases found
+exactly one divergence, in an error message: CPython pluralises on the
+*accepted* count, not the given one — `One() accepts 1 positional sub-pattern
+(2 given)`.
+
+### Two open refcount defects (found 2026-08-23, not yet fixed)
+
+Both were found by `tools/check_ir_wellformed.py`, and neither is visible in
+the differential run — which is exactly why the static checker exists
+alongside it.
+
+**1. A propagating landing pad can decref the same value twice.** `owned_`
+(statement temporaries) and `frame_owned_` (values that outlive the statement)
+are not disjoint: a `for` iterator, a `with` exit callable, a `match` subject
+and a class body's namespace are all marked owned by the expression that
+produced them *and* pushed onto `frame_owned_`. `make_landing_pad` releases
+both lists, so those values get two decrefs on any path that propagates an
+exception out of the function. It is a double free, latent only because the
+corpora do not raise out of those constructs.
+
+The tempting fix — dedupe by SSA id inside the pad — is **wrong**: a value can
+legitimately hold two references (an `IncRef` plus a second `mark_owned`, which
+is how `case x:` captures the subject), and deduping would under-release those.
+The correct fix is to make the two sets disjoint by construction: promotion to
+`frame_owned_` must *move* the reference (`forget` then push), and the matching
+scope-end release must become unconditional instead of `owns()`-guarded. That
+touches every promotion site and its release, so it is its own change.
+
+**2. The `match` helpers' result is never released.**
+`pyc_rt_match_sequence` / `_mapping` / `_class` each return a new reference —
+a tuple of extracted values, or a new reference to `None` for "did not match".
+Sub-patterns borrow items out of that tuple, and the captures borrowed from it
+must stay alive until the whole pattern has matched, so it cannot simply be
+released at the end of the arm. Fixing it properly needs a cleanup chain: every
+owned temporary registers a block that releases it and branches to the previous
+failure target, so each failure path unwinds exactly what it created. Or-patterns
+make this mandatory rather than optional — alternative *i*'s temporaries exist
+only on alternative *i*'s path, so a single shared release list would decref a
+value that was never created on the taken path.

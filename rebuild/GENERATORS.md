@@ -94,3 +94,43 @@ Lowering emits, per generator expression:
 - Nested for-clauses and globals resolve correctly.
 - Laziness preserved: creating a genexp over a printing source prints nothing.
 - 191 bytes of marshalled code for a one-clause genexp.
+
+## What the mechanism actually covers (measured 2026-08-23)
+
+The design was written for generator expressions, but the same three steps
+(build-time compile → marshal → `PyFunction_New` at runtime) turned out to
+carry every suspendable body, which is why it was chosen over a genexp-only
+scheme. All of the following are implemented and differentially verified:
+
+| construct | resulting object | code-object flag |
+|---|---|---|
+| generator expression | `generator` | `CO_GENERATOR` (0x20) |
+| `def` containing `yield` / `yield from` | `generator` | `CO_GENERATOR` |
+| `async def` | `coroutine` | `CO_COROUTINE` (0x80) |
+| `async def` containing `yield` | `async_generator` | `CO_ASYNC_GENERATOR` (0x200) |
+
+`await`, `async for` and `async with` need no separate machinery: they occur
+only inside a body that is already handed to CPython.
+
+Two things the build side must get right, both learned by getting them wrong:
+
+- **Generator detection is scope-sensitive.** A `yield` belongs to the nearest
+  enclosing function, so the walk must stop descending at every new scope. An
+  early version did apply the scope skip inside nested functions but not to
+  top-level statements, and marked plain functions as generators. It was caught
+  at build time only because the compiled code object is asserted to carry
+  `CO_GENERATOR` — the assertion was worth more than the review that missed it.
+- **Qualnames must be repaired.** Compiling the body inside a wrapper gives it
+  the wrapper's qualname; `code.replace(co_qualname=...)` puts back the name the
+  source implies, which is what tracebacks and `repr()` show.
+
+Scope analysis is `symtable.get_frees()` rather than a hand-rolled walk,
+because it is the only thing that reliably distinguishes an enclosing
+function's local from a module global.
+
+## Cost, stated plainly
+
+These bodies run at CPython speed. That is the accepted trade: the alternative
+was not "a faster generator" but "the program does not compile". Replacing this
+with a native state machine is an optimisation for later, and per I2 it may
+only land behind differential tests proving the two agree observably.

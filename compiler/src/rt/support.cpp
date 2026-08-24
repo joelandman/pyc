@@ -654,6 +654,187 @@ extern "C" PyObject* pyc_rt_make_genfunc(const char* blob, Py_ssize_t len,
     return fn;
 }
 
+// --- structural pattern matching -------------------------------------------
+//
+// Three-way results, because "did not match" is not an error: these return
+// Py_None for no-match, a tuple of the extracted values for a match, and NULL
+// with an exception set for a real failure.
+
+// A sequence pattern matches what CPython's MATCH_SEQUENCE matches: the type
+// carries Py_TPFLAGS_SEQUENCE. That deliberately EXCLUDES str, bytes and
+// bytearray -- `case [a, b]` must not match "ab" -- which a PySequence_Check
+// test would get wrong, since that is true for str.
+extern "C" PyObject* pyc_rt_match_sequence(PyObject* subj, Py_ssize_t nbefore,
+                                           Py_ssize_t nafter, int has_star) {
+    if (!PyType_HasFeature(Py_TYPE(subj), Py_TPFLAGS_SEQUENCE)) Py_RETURN_NONE;
+    Py_ssize_t size = PySequence_Size(subj);
+    if (size < 0) return nullptr;
+    if (has_star) { if (size < nbefore + nafter) Py_RETURN_NONE; }
+    else          { if (size != nbefore)         Py_RETURN_NONE; }
+
+    Py_ssize_t out_n = nbefore + nafter + (has_star ? 1 : 0);
+    PyObject* out = PyTuple_New(out_n);
+    if (!out) return nullptr;
+    Py_ssize_t k = 0;
+    for (Py_ssize_t i = 0; i < nbefore; ++i) {
+        PyObject* it = PySequence_GetItem(subj, i);
+        if (!it) { Py_DECREF(out); return nullptr; }
+        PyTuple_SET_ITEM(out, k++, it);                 // steals
+    }
+    if (has_star) {
+        PyObject* mid = PySequence_GetSlice(subj, nbefore, size - nafter);
+        if (!mid) { Py_DECREF(out); return nullptr; }
+        // The star name binds a LIST, whatever the subject's own type is.
+        PyObject* lst = PySequence_List(mid);
+        Py_DECREF(mid);
+        if (!lst) { Py_DECREF(out); return nullptr; }
+        PyTuple_SET_ITEM(out, k++, lst);
+    }
+    for (Py_ssize_t i = 0; i < nafter; ++i) {
+        PyObject* it = PySequence_GetItem(subj, size - nafter + i);
+        if (!it) { Py_DECREF(out); return nullptr; }
+        PyTuple_SET_ITEM(out, k++, it);
+    }
+    return out;
+}
+
+// A mapping pattern matches what MATCH_MAPPING matches: Py_TPFLAGS_MAPPING.
+// A missing key is NOT an error -- it simply does not match -- so KeyError is
+// caught here rather than propagated.
+extern "C" PyObject* pyc_rt_match_mapping(PyObject* subj, PyObject* keys,
+                                          int want_rest) {
+    if (!PyType_HasFeature(Py_TYPE(subj), Py_TPFLAGS_MAPPING)) Py_RETURN_NONE;
+    Py_ssize_t nk = PyTuple_Size(keys);
+    if (nk < 0) return nullptr;
+    PyObject* out = PyTuple_New(nk + (want_rest ? 1 : 0));
+    if (!out) return nullptr;
+    for (Py_ssize_t i = 0; i < nk; ++i) {
+        PyObject* key = PyTuple_GET_ITEM(keys, i);          // borrowed
+        PyObject* val = PyObject_GetItem(subj, key);
+        if (!val) {
+            if (PyErr_ExceptionMatches(PyExc_KeyError)) {
+                PyErr_Clear();
+                Py_DECREF(out);
+                Py_RETURN_NONE;
+            }
+            Py_DECREF(out);
+            return nullptr;
+        }
+        PyTuple_SET_ITEM(out, i, val);                      // steals
+    }
+    if (want_rest) {
+        // **rest binds a dict of everything the pattern did not name.
+        PyObject* rest = PyDict_New();
+        if (!rest) { Py_DECREF(out); return nullptr; }
+        PyObject* items = PyMapping_Items(subj);
+        if (!items) { Py_DECREF(rest); Py_DECREF(out); return nullptr; }
+        Py_ssize_t n = PyList_Size(items);
+        for (Py_ssize_t i = 0; i < n; ++i) {
+            PyObject* kv = PyList_GET_ITEM(items, i);        // borrowed
+            PyObject* k = PyTuple_GET_ITEM(kv, 0);
+            PyObject* v = PyTuple_GET_ITEM(kv, 1);
+            int seen = 0;
+            for (Py_ssize_t j = 0; j < nk && !seen; ++j) {
+                int eq = PyObject_RichCompareBool(k, PyTuple_GET_ITEM(keys, j), Py_EQ);
+                if (eq < 0) { Py_DECREF(items); Py_DECREF(rest); Py_DECREF(out); return nullptr; }
+                seen = eq;
+            }
+            if (!seen && PyDict_SetItem(rest, k, v) < 0) {
+                Py_DECREF(items); Py_DECREF(rest); Py_DECREF(out); return nullptr;
+            }
+        }
+        Py_DECREF(items);
+        PyTuple_SET_ITEM(out, nk, rest);                    // steals
+    }
+    return out;
+}
+
+// A class pattern: isinstance, then positional attributes named by
+// __match_args__ and keyword attributes by name. A missing attribute does not
+// match rather than raising, which is why AttributeError is caught here.
+extern "C" PyObject* pyc_rt_match_class(PyObject* subj, PyObject* cls,
+                                        int npos, PyObject* kwnames) {
+    int ins = PyObject_IsInstance(subj, cls);
+    if (ins < 0) return nullptr;
+    if (!ins) Py_RETURN_NONE;
+
+    Py_ssize_t nkw = kwnames ? PyTuple_Size(kwnames) : 0;
+    if (nkw < 0) return nullptr;
+    PyObject* out = PyTuple_New(npos + nkw);
+    if (!out) return nullptr;
+
+    if (npos > 0) {
+        // int(x), str(x) and friends bind the SUBJECT itself rather than an
+        // attribute. CPython marks those types with _Py_TPFLAGS_MATCH_SELF;
+        // reading its flag is better than keeping a list of type names here
+        // that would drift from the language.
+        if (PyType_Check(cls)
+            && PyType_HasFeature((PyTypeObject*)cls, _Py_TPFLAGS_MATCH_SELF)) {
+            if (npos != 1) {
+                PyErr_Format(PyExc_TypeError,
+                             "%s() accepts 1 positional sub-pattern (%d given)",
+                             ((PyTypeObject*)cls)->tp_name, npos);
+                Py_DECREF(out);
+                return nullptr;
+            }
+            Py_INCREF(subj);
+            PyTuple_SET_ITEM(out, 0, subj);
+        } else {
+            PyObject* margs = PyObject_GetAttrString(cls, "__match_args__");
+            if (!margs) {
+                if (!PyErr_ExceptionMatches(PyExc_AttributeError)) { Py_DECREF(out); return nullptr; }
+                PyErr_Clear();
+                PyErr_Format(PyExc_TypeError,
+                             "%s() accepts 0 positional sub-patterns (%d given)",
+                             PyType_Check(cls) ? ((PyTypeObject*)cls)->tp_name : "?", npos);
+                Py_DECREF(out);
+                return nullptr;
+            }
+            if (!PyTuple_Check(margs)) {
+                Py_DECREF(margs); Py_DECREF(out);
+                PyErr_SetString(PyExc_TypeError, "__match_args__ must be a tuple");
+                return nullptr;
+            }
+            if (PyTuple_Size(margs) < npos) {
+                // CPython pluralises on the ACCEPTED count, not the given one:
+                // "accepts 1 positional sub-pattern (2 given)". Measured, not
+                // guessed -- the plural form here was the single difference the
+                // match stress test found.
+                PyErr_Format(PyExc_TypeError,
+                             "%s() accepts %zd positional sub-pattern%s (%d given)",
+                             PyType_Check(cls) ? ((PyTypeObject*)cls)->tp_name : "?",
+                             PyTuple_Size(margs),
+                             PyTuple_Size(margs) == 1 ? "" : "s", npos);
+                Py_DECREF(margs); Py_DECREF(out);
+                return nullptr;
+            }
+            for (int i = 0; i < npos; ++i) {
+                PyObject* nm = PyTuple_GET_ITEM(margs, i);
+                PyObject* v = PyObject_GetAttr(subj, nm);
+                if (!v) {
+                    if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+                        PyErr_Clear(); Py_DECREF(margs); Py_DECREF(out); Py_RETURN_NONE;
+                    }
+                    Py_DECREF(margs); Py_DECREF(out); return nullptr;
+                }
+                PyTuple_SET_ITEM(out, i, v);
+            }
+            Py_DECREF(margs);
+        }
+    }
+    for (Py_ssize_t i = 0; i < nkw; ++i) {
+        PyObject* v = PyObject_GetAttr(subj, PyTuple_GET_ITEM(kwnames, i));
+        if (!v) {
+            if (PyErr_ExceptionMatches(PyExc_AttributeError)) {
+                PyErr_Clear(); Py_DECREF(out); Py_RETURN_NONE;
+            }
+            Py_DECREF(out); return nullptr;
+        }
+        PyTuple_SET_ITEM(out, npos + i, v);
+    }
+    return out;
+}
+
 extern "C" int pyc_rt_super_fail(int has_args) {
     PyErr_SetString(PyExc_RuntimeError,
                     has_args ? "super(): __class__ cell not found"

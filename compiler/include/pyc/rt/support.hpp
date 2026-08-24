@@ -116,6 +116,14 @@ PyObject* pyc_rt_load_classname(PyObject* ns, const char* name);
 // Unresolvable zero-argument super(); raises the RuntimeError CPython raises.
 int pyc_rt_super_fail(int has_args);
 
+// Pattern matching. Py_None means "did not match"; a tuple holds the extracted
+// values; NULL with an exception set is a real error.
+PyObject* pyc_rt_match_sequence(PyObject* subj, Py_ssize_t nbefore,
+                                Py_ssize_t nafter, int has_star);
+PyObject* pyc_rt_match_mapping(PyObject* subj, PyObject* keys, int want_rest);
+PyObject* pyc_rt_match_class(PyObject* subj, PyObject* cls, int npos,
+                             PyObject* kwnames);
+
 // Append one traceback entry (file/function/line) to the exception being
 // propagated. Innermost frame first. See pyc_rt_add_traceback in support.cpp.
 void pyc_rt_add_traceback(PyObject** cache, const char* file,

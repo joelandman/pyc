@@ -211,8 +211,21 @@ private:
         std::uint32_t here = blk_;
         std::uint32_t pad = new_block("unwind." + std::to_string(pad_n_++));
         set_block(pad);
+        // One reference per SSA id -- `owns`/`forget` stop at the first match,
+        // so the live set is a set, not a bag. A value can appear in BOTH
+        // owned_ and frame_owned_ (a for-loop iterator and a match subject both
+        // do: the expression that produced it marked it owned, and then it was
+        // promoted to the frame). Releasing it from each list emitted two
+        // decrefs into one pad -- a double free on every propagating error path
+        // out of a loop or a match. Release each id exactly once.
+        std::vector<std::uint32_t> freed;
+        auto release_once = [&](const ir::Value& v) {
+            for (std::uint32_t id : freed) if (id == v.id) return;
+            freed.push_back(v.id);
+            emit_decref(v, loc);
+        };
         for (auto it = owned_.rbegin(); it != owned_.rend(); ++it)
-            emit_decref(*it, loc);
+            release_once(*it);
         if (try_stack_.empty()) {
             // Nothing catches here, so the exception LEAVES this function:
             // record where. Without this a compiled binary printed only the
@@ -227,7 +240,7 @@ private:
             // Nothing catches here: release everything the frame holds and
             // propagate on the C-API convention.
             for (auto it = frame_owned_.rbegin(); it != frame_owned_.rend(); ++it)
-                emit_decref(*it, loc);
+                release_once(*it);
             emit(ir::Instr{ir::Op::ReturnErr, {}, std::nullopt,
                            Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
         } else {
@@ -273,7 +286,7 @@ private:
             [&](const If& n)               { ok = lower_if(n); },
             [&](const With& n)             { ok = lower_with(n); },
             [&](const AsyncWith& n)        { ok = unsupported("async with", n.loc); },
-            [&](const Match& n)            { ok = unsupported("match", n.loc); },
+            [&](const Match& n)            { ok = lower_match(n); },
             [&](const Raise& n)            {
                 if (!n.exc) {
                     // Re-raise whatever is currently being handled.
@@ -1634,6 +1647,15 @@ private:
     // branch and stays supported.
     std::size_t fin_loop_depth_ = 0;
 
+    // A machine integer operand. §4's param_kinds marks these 'i', so codegen
+    // widens them to the C parameter's width instead of passing a pointer.
+    ir::Value int_const(std::int64_t v, const SourceLoc& loc) {
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        emit(ir::Instr{ir::Op::IntConst, {}, out, Ownership::NotAnObject,
+                       std::to_string(v), 0, 0, loc, std::nullopt});
+        return out;
+    }
+
     ir::Value const_null(const SourceLoc& loc) {
         ir::Value v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::ConstNull, {}, v, Ownership::AlwaysNull, "",
@@ -1987,6 +2009,321 @@ private:
         if (!ok) return false;
         ir::Value key = const_str("__doc__", loc);
         call_capi("PyObject_SetAttr", {fv, key, doc}, loc, &ok, {key, doc});
+        return ok;
+    }
+
+
+    // --- structural pattern matching (PEP 634) -----------------------------
+    //
+    // The binding model is the part that is easy to get wrong, so it is
+    // stated here and tested directly. Captures are collected into SSA
+    // TEMPORARIES while the pattern is tested, and only stored to their names
+    // once the WHOLE pattern has matched. The guard runs after those stores.
+    // Measured against CPython, that produces the observable asymmetry:
+    //
+    //   pattern fails            -> captures are NOT visible afterwards
+    //   pattern matches, guard fails -> captures ARE visible afterwards
+    //
+    // Binding as each sub-pattern succeeds would get the first of those wrong.
+    struct Capture { std::string name; ir::Value value; };
+
+    bool lower_match(const Match& n) {
+        bool ok = true;
+        ir::Value subject = lower_expr(*n.subject, &ok);
+        if (!ok) return false;
+        // The subject outlives every case test, so it is frame-owned rather
+        // than a statement temporary.
+        frame_owned_.push_back(subject);
+
+        std::uint32_t after = new_block("match.after");
+        for (const match_case& c : n.cases) {
+            std::uint32_t fail = new_block("match.next");
+            std::vector<Capture> caps;
+            if (!lower_pattern(*c.pattern, subject, fail, caps)) {
+                frame_owned_.pop_back();
+                return false;
+            }
+            // Pattern matched: NOW the names are bound.
+            for (const Capture& cap : caps) {
+                ir::Value v = cap.value;
+                emit(ir::Instr{ir::Op::IncRef, {v}, std::nullopt,
+                               Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+                mark_owned(v);
+                store_name(cap.name, v, n.loc);
+            }
+            std::uint32_t body_b = new_block("match.body");
+            if (c.guard) {
+                ir::Value g = lower_predicate(**c.guard, &ok);
+                if (!ok) { frame_owned_.pop_back(); return false; }
+                emit(ir::Instr{ir::Op::CondBr, {g}, std::nullopt,
+                               Ownership::NotAnObject, "", body_b, fail,
+                               n.loc, std::nullopt});
+            } else {
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", body_b, 0, n.loc, std::nullopt});
+            }
+            set_block(body_b);
+            for (const stmt& s2 : c.body)
+                if (!lower_stmt(s2)) { frame_owned_.pop_back(); return false; }
+            if (!terminated())
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", after, 0, n.loc, std::nullopt});
+            set_block(fail);
+        }
+        // No case matched: match is not exhaustive, and that is not an error.
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", after, 0, n.loc, std::nullopt});
+        set_block(after);
+        frame_owned_.pop_back();
+        if (owns(subject)) release(subject, n.loc);
+        return true;
+    }
+
+    // The helpers return Py_None for "did not match", which is distinct from
+    // an error: an error arrives as a null and goes to the landing pad. Shared
+    // by the sequence, mapping and class patterns.
+    void branch_if_no_match(const ir::Value& parts, std::uint32_t fail,
+                            const char* label, const SourceLoc& loc) {
+        ir::Value none = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::ConstNone, {}, none, Ownership::Owned, "",
+                       0, 0, loc, std::nullopt});
+        mark_owned(none);
+        ir::Value isnone = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        emit(ir::Instr{ir::Op::Is, {parts, none}, isnone, Ownership::NotAnObject,
+                       "", 0, 0, loc, std::nullopt});
+        release(none, loc);
+        std::uint32_t cont = new_block(label);
+        emit(ir::Instr{ir::Op::CondBr, {isnone}, std::nullopt,
+                       Ownership::NotAnObject, "", fail, cont, loc, std::nullopt});
+        set_block(cont);
+    }
+
+    // Emit a test of `pat` against `subj`, branching to `fail` when it does
+    // not match. Captures are appended, not stored.
+    bool lower_pattern(const pattern& pat, const ir::Value& subj,
+                       std::uint32_t fail, std::vector<Capture>& caps) {
+        bool ok = true;
+        std::visit(ov{
+            [&](const MatchValue& p) {
+                // Compared with ==, unlike a singleton pattern.
+                ir::Value want = lower_expr(*p.value, &ok);
+                if (!ok) return;
+                ir::Value cmp = call_capi_imm("PyObject_RichCompare", {subj, want},
+                                              2 /*Py_EQ*/, 2, p.loc, &ok, {want});
+                if (!ok) return;
+                mark_owned(cmp);
+                ir::Value t = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+                emit(ir::Instr{ir::Op::IsTrue, {cmp}, t, Ownership::NotAnObject,
+                               "PyObject_IsTrue", 0, 0, p.loc, make_landing_pad(p.loc)});
+                release(cmp, p.loc);
+                std::uint32_t cont = new_block("pat.cont");
+                emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt,
+                               Ownership::NotAnObject, "", cont, fail, p.loc, std::nullopt});
+                set_block(cont);
+            },
+            [&](const MatchSingleton& p) {
+                // None/True/False are compared by IDENTITY, not ==.
+                // Only None, True and False can appear here.
+                ir::Value want = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                ir::Instr mk{ir::Op::ConstNone, {}, want, Ownership::Owned, "",
+                             0, 0, p.loc, std::nullopt};
+                std::visit(ov{
+                    [&](const ConstNone&)     { mk.op = ir::Op::ConstNone; },
+                    [&](const ConstBool& v)   { mk.op = ir::Op::ConstBool;
+                                                mk.text = v.value ? "True" : "False"; },
+                    [&](const ConstBigInt&)   { ok = unsupported("this singleton pattern", p.loc); },
+                    [&](const ConstFloat&)    { ok = unsupported("this singleton pattern", p.loc); },
+                    [&](const ConstStr&)      { ok = unsupported("this singleton pattern", p.loc); },
+                    [&](const ConstBytes&)    { ok = unsupported("this singleton pattern", p.loc); },
+                    [&](const ConstComplex&)  { ok = unsupported("this singleton pattern", p.loc); },
+                    [&](const ConstEllipsis&) { ok = unsupported("this singleton pattern", p.loc); },
+                    [&](const ConstTuple&)    { ok = unsupported("this singleton pattern", p.loc); },
+                    [&](const ConstFrozenSet&){ ok = unsupported("this singleton pattern", p.loc); },
+                }, p.value.v);
+                if (!ok) return;
+                emit(std::move(mk));
+                mark_owned(want);
+                ir::Value t = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+                emit(ir::Instr{ir::Op::Is, {subj, want}, t, Ownership::NotAnObject,
+                               "", 0, 0, p.loc, std::nullopt});
+                if (owns(want)) release(want, p.loc);
+                std::uint32_t cont = new_block("pat.cont");
+                emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt,
+                               Ownership::NotAnObject, "", cont, fail, p.loc, std::nullopt});
+                set_block(cont);
+            },
+            [&](const MatchAs& p) {
+                // `_` (no name, no pattern) matches anything and binds nothing.
+                if (p.pattern && !lower_pattern(**p.pattern, subj, fail, caps)) {
+                    ok = false;
+                    return;
+                }
+                if (p.name) caps.push_back(Capture{*p.name, subj});
+            },
+            [&](const MatchOr& p) {
+                // Alternatives must bind the same names -- CPython rejects
+                // anything else at compile time, and pyc inherits that check
+                // through the compile() validation in pyc_parse.
+                std::uint32_t done = new_block("pat.or.done");
+                std::vector<std::uint32_t> pred_blocks;
+                std::vector<std::vector<Capture>> alt_caps;
+                for (std::size_t i = 0; i < p.patterns.size(); ++i) {
+                    bool last = (i + 1 == p.patterns.size());
+                    std::uint32_t next = last ? fail : new_block("pat.or.next");
+                    std::vector<Capture> mine;
+                    if (!lower_pattern(p.patterns[i], subj, next, mine)) { ok = false; return; }
+                    pred_blocks.push_back((std::uint32_t)blk_);
+                    alt_caps.push_back(std::move(mine));
+                    emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                                   "", done, 0, p.loc, std::nullopt});
+                    if (!last) set_block(next);
+                }
+                set_block(done);
+                // Each alternative binds the same names but with a different
+                // value, so they meet in a phi -- one per captured name.
+                if (!alt_caps.empty() && !alt_caps[0].empty()) {
+                    for (std::size_t k = 0; k < alt_caps[0].size(); ++k) {
+                        std::vector<ir::Value> vals;
+                        for (const auto& ac : alt_caps) {
+                            if (k >= ac.size()) { ok = false; return; }
+                            vals.push_back(ac[k].value);
+                        }
+                        ir::Value merged = emit_phi(vals, pred_blocks, p.loc);
+                        forget(merged);
+                        caps.push_back(Capture{alt_caps[0][k].name, merged});
+                    }
+                }
+            },
+            [&](const MatchSequence& p) {
+                // At most one star, and it splits the pattern into a fixed
+                // prefix and a fixed suffix.
+                std::size_t star = p.patterns.size();
+                for (std::size_t i = 0; i < p.patterns.size(); ++i)
+                    if (std::holds_alternative<MatchStar>(p.patterns[i].v)) {
+                        if (star != p.patterns.size()) {
+                            ok = err("more than one starred name in a sequence pattern",
+                                     "sequence patterns", p.loc);
+                            return;
+                        }
+                        star = i;
+                    }
+                const bool has_star = star != p.patterns.size();
+                std::int64_t nbefore = (std::int64_t)(has_star ? star : p.patterns.size());
+                std::int64_t nafter  = (std::int64_t)(has_star ? p.patterns.size() - star - 1 : 0);
+
+                ir::Value parts = call_capi("pyc_rt_match_sequence",
+                                            {subj, int_const(nbefore, p.loc),
+                                             int_const(nafter, p.loc),
+                                             int_const(has_star ? 1 : 0, p.loc)},
+                                            p.loc, &ok);
+                if (!ok) return;
+                mark_owned(parts);
+                branch_if_no_match(parts, fail, "pat.seq", p.loc);
+                // The extracted values outlive the sub-pattern tests.
+                forget(parts);
+                frame_owned_.push_back(parts);
+                std::int64_t k = 0;
+                for (std::size_t i = 0; i < p.patterns.size(); ++i) {
+                    ir::Value item = call_capi_imm("PyTuple_GetItem", {parts},
+                                                   k++, 1, p.loc, &ok);
+                    if (!ok) return;               // borrowed: not owned here
+                    const pattern* sub = &p.patterns[i];
+                    if (i == star) {
+                        // The star binds the collected list itself.
+                        const MatchStar& st = std::get<MatchStar>(sub->v);
+                        if (st.name) caps.push_back(Capture{*st.name, item});
+                        continue;
+                    }
+                    if (!lower_pattern(*sub, item, fail, caps)) { ok = false; return; }
+                }
+                frame_owned_.pop_back();
+            },
+            [&](const MatchMapping& p)  {
+                ir::Value keys = call_capi_imm("PyTuple_New", {},
+                                               (std::int64_t)p.keys.size(), 0, p.loc, &ok);
+                if (!ok) return;
+                mark_owned(keys);
+                for (std::size_t i = 0; i < p.keys.size(); ++i) {
+                    ir::Value k = lower_expr(p.keys[i], &ok);
+                    if (!ok) return;
+                    call_capi_imm("PyTuple_SetItem", {keys, k},
+                                  (std::int64_t)i, 1, p.loc, &ok);   // steals
+                    if (!ok) return;
+                }
+                const bool want_rest = p.rest.has_value();
+                ir::Value parts = call_capi("pyc_rt_match_mapping",
+                                            {subj, keys, int_const(want_rest ? 1 : 0, p.loc)},
+                                            p.loc, &ok, {keys});
+                if (!ok) return;
+                mark_owned(parts);
+                branch_if_no_match(parts, fail, "pat.map", p.loc);
+                forget(parts);
+                frame_owned_.push_back(parts);
+                for (std::size_t i = 0; i < p.patterns.size(); ++i) {
+                    ir::Value item = call_capi_imm("PyTuple_GetItem", {parts},
+                                                   (std::int64_t)i, 1, p.loc, &ok);
+                    if (!ok) return;
+                    if (!lower_pattern(p.patterns[i], item, fail, caps)) { ok = false; return; }
+                }
+                if (want_rest) {
+                    ir::Value rest = call_capi_imm("PyTuple_GetItem", {parts},
+                                                   (std::int64_t)p.patterns.size(), 1,
+                                                   p.loc, &ok);
+                    if (!ok) return;
+                    caps.push_back(Capture{*p.rest, rest});
+                }
+                frame_owned_.pop_back();
+            },
+            [&](const MatchClass& p)    {
+                ir::Value cls = lower_expr(*p.cls, &ok);
+                if (!ok) return;
+                ir::Value kwnames;
+                if (!p.kwd_attrs.empty()) {
+                    kwnames = call_capi_imm("PyTuple_New", {},
+                                            (std::int64_t)p.kwd_attrs.size(), 0, p.loc, &ok);
+                    if (!ok) return;
+                    mark_owned(kwnames);
+                    for (std::size_t i = 0; i < p.kwd_attrs.size(); ++i) {
+                        ir::Value nm = const_str(p.kwd_attrs[i], p.loc);
+                        call_capi_imm("PyTuple_SetItem", {kwnames, nm},
+                                      (std::int64_t)i, 1, p.loc, &ok);   // steals
+                        if (!ok) return;
+                    }
+                }
+                ir::Value parts = call_capi("pyc_rt_match_class",
+                                            {subj, cls,
+                                             int_const((std::int64_t)p.patterns.size(), p.loc),
+                                             kwnames.valid() ? kwnames : ir::Value{}},
+                                            p.loc, &ok,
+                                            kwnames.valid()
+                                                ? std::vector<ir::Value>{cls, kwnames}
+                                                : std::vector<ir::Value>{cls});
+                if (!ok) return;
+                mark_owned(parts);
+                branch_if_no_match(parts, fail, "pat.cls", p.loc);
+                forget(parts);
+                frame_owned_.push_back(parts);
+                for (std::size_t i = 0; i < p.patterns.size(); ++i) {
+                    ir::Value item = call_capi_imm("PyTuple_GetItem", {parts},
+                                                   (std::int64_t)i, 1, p.loc, &ok);
+                    if (!ok) return;
+                    if (!lower_pattern(p.patterns[i], item, fail, caps)) { ok = false; return; }
+                }
+                for (std::size_t i = 0; i < p.kwd_patterns.size(); ++i) {
+                    ir::Value item = call_capi_imm("PyTuple_GetItem", {parts},
+                                                   (std::int64_t)(p.patterns.size() + i), 1,
+                                                   p.loc, &ok);
+                    if (!ok) return;
+                    if (!lower_pattern(p.kwd_patterns[i], item, fail, caps)) { ok = false; return; }
+                }
+                frame_owned_.pop_back();
+            },
+            [&](const MatchStar& p)     {
+                // Only reachable inside a sequence pattern, which handles it.
+                ok = err("starred pattern outside a sequence pattern",
+                         "star patterns", p.loc);
+            },
+        }, pat.v);
         return ok;
     }
 

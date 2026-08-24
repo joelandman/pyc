@@ -44,6 +44,7 @@ const char* op_name(Op op) {
         case Op::CellGet:     return "cell.get";
         case Op::CellSet:     return "cell.set";
         case Op::MakeFunction: return "makefunc";
+        case Op::LoadClassName: return "load.classname";
     }
     return "?";
 }

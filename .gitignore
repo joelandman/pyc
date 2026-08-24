@@ -22,3 +22,7 @@ __pycache__/
 # the companion .o and _b7_modules.c are covered by the patterns above
 *.exe
 *.exe.bc
+
+# verification run output (the BASELINE is committed; runs are not)
+verify/current.json
+verify/libtest.json

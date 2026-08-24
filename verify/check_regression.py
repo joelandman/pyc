@@ -44,7 +44,12 @@ def load(p: Path) -> tuple[dict, dict[str, str]]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--baseline", type=Path, default=Path("verify/baseline.json"))
+    # Anchored to THIS file, not the cwd: `make -C verify accept` runs from
+    # verify/, where a cwd-relative "verify/baseline.json" is verify/verify/...
+    # and the write fails with a bare FileNotFoundError. Same class of bug as
+    # the one pycc's PYTHONPATH comment records.
+    ap.add_argument("--baseline", type=Path,
+                    default=Path(__file__).resolve().parent / "baseline.json")
     ap.add_argument("--current", type=Path, default=None)
     ap.add_argument("--update", action="store_true",
                     help="accept --current as the new baseline")
