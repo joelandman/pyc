@@ -13,7 +13,7 @@
   "scored": 712,
   "matched": 706,
   "quarantined": 1,
-  "elapsed_seconds": 183.97657179832458,
+  "elapsed_seconds": 189.6397705078125,
   "counts": {
     "STDERR_DIFF": 6,
     "MATCH": 706,

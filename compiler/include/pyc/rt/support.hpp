@@ -126,6 +126,10 @@ void pyc_rt_add_traceback(PyObject** cache, const char* file,
 PyObject* pyc_rt_make_genexp(const char* blob, Py_ssize_t len, PyObject** cache,
                              PyObject* closure, PyObject* iterator);
 
+// A generator function: marshalled code object + closure cells + defaults.
+PyObject* pyc_rt_make_genfunc(const char* blob, Py_ssize_t len, PyObject** cache,
+                              PyObject* closure, PyObject* defaults);
+
 // Bare `raise`: re-raise whatever exception is currently being handled.
 int pyc_rt_reraise(void);
 // Entering/leaving an except block. CPython keeps a separate "currently

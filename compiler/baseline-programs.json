@@ -9,32 +9,17 @@
       "-O0"
     ]
   },
-  "pass_rate": 89.1304347826087,
+  "pass_rate": 91.30434782608695,
   "scored": 92,
-  "matched": 82,
+  "matched": 84,
   "quarantined": 1,
-  "elapsed_seconds": 43.16455841064453,
+  "elapsed_seconds": 44.104036808013916,
   "counts": {
-    "COMPILE_ERROR": 2,
     "STDERR_DIFF": 8,
-    "MATCH": 82,
+    "MATCH": 84,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
-    {
-      "case": "generators.py",
-      "path": "verify/corpus/programs/generators.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-0032211h/generators.py:3:4: error: cannot compile yield yet [yield]"
-    },
-    {
-      "case": "w124_gen.py",
-      "path": "verify/corpus/programs/w124_gen.py",
-      "verdict": "COMPILE_ERROR",
-      "priority": "P2",
-      "detail": "/tmp/pyc-verify-40h962tx/w124_gen.py:4:8: error: cannot compile yield yet [yield]"
-    },
     {
       "case": "fibn.py",
       "path": "verify/corpus/programs/fibn.py",
@@ -143,6 +128,13 @@
     {
       "case": "fib.py",
       "path": "verify/corpus/programs/fib.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "generators.py",
+      "path": "verify/corpus/programs/generators.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -381,6 +373,13 @@
     {
       "case": "w123_bound.py",
       "path": "verify/corpus/programs/w123_bound.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "w124_gen.py",
+      "path": "verify/corpus/programs/w124_gen.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""

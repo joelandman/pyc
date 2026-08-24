@@ -806,6 +806,60 @@ private:
         // the body pushes this function's own scope onto qual_.
         const std::string fn_qualname = qualname(n.name);
 
+        // A def containing yield is a generator function: its body was
+        // compiled by CPython at build time and runs on the interpreter
+        // (rebuild/GENERATORS.md). pyc still owns everything the ENCLOSING
+        // scope is responsible for -- the defaults evaluated just above, the
+        // closure cells, the decorators, and the binding.
+        if (const GenexpEntry* gf = find_genexp(n.loc)) {
+            ir::Value closure;
+            if (!gf->freevars.empty()) {
+                bool cok = true;
+                closure = call_capi_imm("PyTuple_New", {},
+                                        (std::int64_t)gf->freevars.size(), 0,
+                                        n.loc, &cok);
+                if (!cok) return false;
+                mark_owned(closure);
+                for (std::size_t i = 0; i < gf->freevars.size(); ++i) {
+                    const std::string& fv2 = gf->freevars[i];
+                    auto cit = cells_.find(fv2);
+                    if (cit == cells_.end())
+                        return err("generator function captures '" + fv2 +
+                                   "', which has no closure cell here",
+                                   "yield", n.loc);
+                    ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                    emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned,
+                                   fv2, cit->second, 0, n.loc,
+                                   make_landing_pad(n.loc)});
+                    mark_owned(cell);
+                    call_capi_imm("PyTuple_SetItem", {closure, cell},
+                                  (std::int64_t)i, 1, n.loc, &cok);  // steals
+                    if (!cok) return false;
+                }
+            }
+            ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::MakeGenFunc,
+                           {closure.valid() ? closure : ir::Value{},
+                            defaults.valid() ? defaults : ir::Value{}},
+                           fv, Ownership::Owned, gf->code, 0, 0, n.loc,
+                           make_landing_pad(n.loc)});
+            mark_owned(fv);
+            if (closure.valid() && owns(closure)) release(closure, n.loc);
+            if (defaults.valid() && owns(defaults)) release(defaults, n.loc);
+            bool okd = true;
+            fv = apply_decorators(n.decorator_list, fv, n.loc, &okd);
+            if (!okd) return false;
+            if (!class_ns_.empty()) {
+                ir::Value m = call_capi("pyc_rt_bind_method", {fv}, n.loc, &okd, {fv});
+                if (!okd) return false;
+                mark_owned(m);
+                store_name(n.name, m, n.loc);
+                return true;
+            }
+            store_name(n.name, fv, n.loc);
+            return true;
+        }
+
         // Save the enclosing function's state: a nested def is lowered into a
         // separate ir::Function, and must not inherit the outer local map.
         std::size_t outer_fn = fn_idx_;

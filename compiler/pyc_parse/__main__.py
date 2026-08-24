@@ -15,7 +15,8 @@ import json
 import sys
 
 from . import SCHEMA_VERSION, encode_node
-from .genexp import collect as collect_genexps, GenexpError
+from .genexp import (collect as collect_genexps, collect_genfuncs,
+                     GenexpError)
 
 # Real code nests deeper than CPython's default 1000 frames allows once each
 # AST level costs several: sympy's resolvent_lookup.py reaches depth 568.
@@ -86,7 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     # fields: the typed AST is generated from CPython's own ASDL and stays
     # faithful to it, so synthetic fields have no place in it.
     try:
-        genexps = collect_genexps(tree, src, args.file)
+        genexps = collect_genexps(tree, src, args.file) \
+                + collect_genfuncs(tree, src, args.file)
     except GenexpError as e:
         json.dump({"schema_version": SCHEMA_VERSION, "error": {
             "kind": "GeneratorExpressionError", "message": str(e),

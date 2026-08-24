@@ -67,18 +67,42 @@ def main() -> int:
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         good = Path(td) / "good.py"; good.write_text("x = 1 + 2\n")
-        # Must be something the compiler genuinely cannot lower. This probe goes
-        # stale BY DESIGN as coverage grows: `import os`, `class C: pass`, a try
-        # statement, a lambda, a list comprehension and a generator expression
-        # were the first six choices, and the self-check refused each time the
-        # feature landed rather than reporting a number from a blind
-        # instrument. Update it when the refusal fires -- that is the guard
-        # working, not a nuisance.
+        # The probe must be something the compiler genuinely cannot lower.
+        # Hardcoding one construct went stale SEVEN times -- `import os`,
+        # `class C: pass`, try, lambda, a list comprehension, a generator
+        # expression, `yield` -- because the whole point of the project is to
+        # implement them. Each time the self-check refused to report, which is
+        # the guard working; but a guard that needs hand-editing every few
+        # features is a guard that will eventually be edited carelessly.
         #
-        # `yield` is the current choice: generator expressions now compile
-        # (their bodies are handed to CPython, see rebuild/GENERATORS.md), but
-        # a generator FUNCTION still needs suspension pyc does not implement.
-        bad = Path(td) / "bad.py";  bad.write_text("def g():\n    yield 1\n")
+        # So ask the compiler what it still refuses, rather than asserting it.
+        # If it refuses NONE of these, the probe cannot be built and this must
+        # fail loudly rather than quietly measure nothing.
+        candidates = [
+            ("async def",      "async def f():\n    pass\n"),
+            ("await",          "async def f():\n    await g()\n"),
+            ("match",          "match x:\n    case 1:\n        pass\n"),
+            ("raise from",     "try:\n    pass\nexcept E as e:\n    raise V() from e\n"),
+            ("posonly params", "def f(a, /, b):\n    pass\n"),
+            ("type alias",     "type X = int\n"),
+            ("async for",      "async def f():\n    async for i in a:\n        pass\n"),
+        ]
+        bad = Path(td) / "bad.py"
+        chosen = None
+        for label, text in candidates:
+            bad.write_text(text)
+            if run.outcome(str(bad)) != "ok":
+                chosen = label
+                break
+        if chosen is None:
+            print("\033[31m\033[1mself-check failed\033[0m")
+            print("  No candidate construct is still refused, so no probe can be")
+            print("  built and this instrument cannot be shown to detect anything.")
+            print("  Add a construct pyc genuinely cannot lower, or retire the check.")
+            if args.record:
+                args.record.write_text("REFUSED: no probe construct available\n")
+            return 1
+        print(f"  \033[90mprobe: {chosen} (still refused)\033[0m")
         sc.require_detects(
             "coverage probe",
             lambda p: [] if run.outcome(str(p)) == "ok" else [run.outcome(str(p))],

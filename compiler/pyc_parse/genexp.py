@@ -112,3 +112,130 @@ def _only_code(consts, what: str) -> types.CodeType:
     if len(codes) != 1:
         raise GenexpError(f"expected exactly one {what} code object, found {len(codes)}")
     return codes[0]
+
+
+# --- generator functions ---------------------------------------------------
+#
+# A def containing yield is a generator function, and needs the same treatment
+# for the same reason: pyc has no suspension, so the body is compiled here and
+# run by the linked interpreter. Unlike a genexp it has real parameters, so
+# what pyc supplies is the closure cells and the DEFAULTS -- those are
+# evaluated in the enclosing scope at def time, which is pyc's job, not the
+# wrapper's.
+
+
+def _is_generator_body(node) -> bool:
+    """Does this def's own body yield? Nested scopes do not count."""
+    SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+    found = False
+
+    def walk(n):
+        nonlocal found
+        if found:
+            return
+        for ch in ast.iter_child_nodes(n):
+            # A nested scope has its own yields; `def outer` containing
+            # `def inner` that yields is NOT itself a generator. The skip has
+            # to apply to the statement itself, not only to its children.
+            if isinstance(ch, SCOPES):
+                continue
+            if isinstance(ch, (ast.Yield, ast.YieldFrom)):
+                found = True
+                return
+            walk(ch)
+
+    for st in node.body:
+        if isinstance(st, SCOPES):
+            continue
+        if isinstance(st, (ast.Yield, ast.YieldFrom)):
+            return True
+        walk(st)
+    return found
+
+
+def _qualname_of(stack: list[str], name: str) -> str:
+    return ".".join(stack + [name]) if stack else name
+
+
+def collect_genfuncs(tree: ast.Module, source: bytes, filename: str) -> list[dict]:
+    """One entry per generator FUNCTION, keyed by source position."""
+    out: list[dict] = []
+    st = symtable.symtable(source, filename, "exec")
+
+    def scope_for(scopes, name, lineno):
+        for sc in scopes:
+            if sc.get_name() == name and sc.get_lineno() == lineno:
+                return sc
+        return None
+
+    def visit(node, scope, stack):
+        children = scope.get_children() if scope else []
+        for ch in ast.iter_child_nodes(node):
+            if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                sub = scope_for(children, ch.name, ch.lineno)
+                if isinstance(ch, ast.FunctionDef) and _is_generator_body(ch):
+                    if sub is None:
+                        raise GenexpError(
+                            f"no symtable scope for generator function "
+                            f"'{ch.name}' at line {ch.lineno}")
+                    frees = list(sub.get_frees())
+                    out.append({
+                        "line": ch.lineno, "col": ch.col_offset,
+                        "freevars": frees,
+                        "code": base64.b64encode(
+                            _compile_genfunc(ch, frees,
+                                             _qualname_of(stack, ch.name),
+                                             filename)).decode("ascii"),
+                    })
+                visit(ch, sub, stack + [ch.name, "<locals>"])
+            elif isinstance(ch, ast.ClassDef):
+                sub = scope_for(children, ch.name, ch.lineno)
+                visit(ch, sub, stack + [ch.name])
+            else:
+                visit(ch, scope, stack)
+
+    visit(tree, st, [])
+    return out
+
+
+def _compile_genfunc(node, frees: list[str], qualname: str, filename: str) -> bytes:
+    shim = copy.deepcopy(node)
+    # Decorators, defaults and annotations are all evaluated by the ENCLOSING
+    # scope at def time. Compiling them into the wrapper would evaluate them in
+    # the wrong scope, at the wrong moment, or both. pyc supplies the defaults
+    # through the function object and applies the decorators itself.
+    shim.decorator_list = []
+    shim.returns = None
+    shim.args.defaults = []
+    shim.args.kw_defaults = [None] * len(shim.args.kw_defaults)
+    for a in (list(shim.args.args) + list(shim.args.posonlyargs)
+              + list(shim.args.kwonlyargs)):
+        a.annotation = None
+    if shim.args.vararg: shim.args.vararg.annotation = None
+    if shim.args.kwarg: shim.args.kwarg.annotation = None
+    ast.fix_missing_locations(shim)
+
+    params = [ast.arg(arg=f) for f in frees]
+    wrapper = ast.Module(
+        body=[ast.FunctionDef(
+            name="_pyc_wrap",
+            args=ast.arguments(posonlyargs=[], args=params, vararg=None,
+                               kwonlyargs=[], kw_defaults=[], kwarg=None,
+                               defaults=[]),
+            body=[shim],
+            decorator_list=[], returns=None, type_params=[])],
+        type_ignores=[])
+    ast.fix_missing_locations(wrapper)
+
+    mod = compile(wrapper, filename, "exec")
+    wrap_code = _only_code(mod.co_consts, "wrapper")
+    inner = _only_code(wrap_code.co_consts, "generator function")
+    if not (inner.co_flags & 0x20):          # CO_GENERATOR
+        raise GenexpError(f"'{node.name}' was not compiled as a generator")
+    if list(inner.co_freevars) != frees:
+        raise GenexpError(
+            f"'{node.name}' freevars {inner.co_freevars} do not match "
+            f"symtable {tuple(frees)}")
+    # co_qualname would read "_pyc_wrap.<locals>.name"; correct it at build
+    # time so tracebacks and repr name the real function.
+    return marshal.dumps(inner.replace(co_qualname=qualname))

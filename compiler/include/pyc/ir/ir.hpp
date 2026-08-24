@@ -96,6 +96,10 @@ enum class Op {
     // `text` is the function name, `loc` supplies the line, and the module
     // supplies the file. Emitted only on paths that actually propagate.
     AddTraceback,
+    // Build a generator FUNCTION. `text` is the marshalled code object; args
+    // are the closure tuple of cells and the defaults tuple, either of which
+    // may be the null value.
+    MakeGenFunc,
     // Build a generator expression (rebuild/GENERATORS.md). `text` is the
     // marshalled code object CPython produced at build time; args are the
     // closure tuple of cells and the eagerly-evaluated outer ITERATOR.

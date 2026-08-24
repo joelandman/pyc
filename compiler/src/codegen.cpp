@@ -187,6 +187,18 @@ private:
                    << ", i32 " << in.loc.line << ")\n";
                 break;
             }
+            case Op::MakeGenFunc: {
+                need("declare ptr @pyc_rt_make_genfunc(ptr, i64, ptr, ptr, ptr)");
+                std::string cache = "@.gfcache" + std::to_string(genexp_n_++);
+                genexp_caches_.push_back(cache + " = internal global ptr null");
+                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_make_genfunc(ptr "
+                   << cstr(in.text) << ", i64 " << in.text.size()
+                   << ", ptr " << cache
+                   << ", ptr " << v(in.args[0])
+                   << ", ptr " << v(in.args[1]) << ")\n";
+                check(in, v(*in.result), true);
+                break;
+            }
             case Op::MakeGenexp: {
                 need("declare ptr @pyc_rt_make_genexp(ptr, i64, ptr, ptr, ptr)");
                 // One cache slot per call site: the code object is unmarshalled

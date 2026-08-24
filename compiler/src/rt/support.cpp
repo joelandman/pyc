@@ -632,6 +632,28 @@ extern "C" void pyc_rt_add_traceback(PyObject** cache, const char* file,
     Py_DECREF(frame);
 }
 
+// A generator FUNCTION. Same mechanism as a generator expression: the body was
+// compiled by CPython at build time and is run by the linked interpreter.
+// pyc supplies the closure cells and the DEFAULTS -- both are evaluated in the
+// enclosing scope at def time, which is pyc's job and not the wrapper's.
+extern "C" PyObject* pyc_rt_make_genfunc(const char* blob, Py_ssize_t len,
+                                         PyObject** cache, PyObject* closure,
+                                         PyObject* defaults) {
+    if (!*cache) {
+        *cache = PyMarshal_ReadObjectFromString(const_cast<char*>(blob), len);
+        if (!*cache) return nullptr;
+    }
+    PyObject* g = globals_dict();
+    if (!g) return nullptr;
+    PyObject* fn = PyFunction_New(*cache, g);
+    if (!fn) return nullptr;
+    if (closure && closure != Py_None
+        && PyFunction_SetClosure(fn, closure) < 0) { Py_DECREF(fn); return nullptr; }
+    if (defaults && defaults != Py_None
+        && PyFunction_SetDefaults(fn, defaults) < 0) { Py_DECREF(fn); return nullptr; }
+    return fn;
+}
+
 extern "C" int pyc_rt_super_fail(int has_args) {
     PyErr_SetString(PyExc_RuntimeError,
                     has_args ? "super(): __class__ cell not found"
