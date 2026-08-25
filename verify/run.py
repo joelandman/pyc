@@ -110,8 +110,8 @@ def main() -> int:
         cases.append(Case(path=f))
     if args.libtest:
         stdlib = args.stdlib or Path(sysconfig.get_paths()["stdlib"])
-        cases += list(corpus_mod.from_cpython_libtest(stdlib,
-                                                      limit=args.libtest_limit))
+        cases += list(corpus_mod.from_cpython_libtest(
+            stdlib, oracle, limit=args.libtest_limit))
     if not cases:
         print("error: empty corpus (pass --corpus, --file, or --libtest)",
               file=sys.stderr)

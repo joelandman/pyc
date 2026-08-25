@@ -9,8 +9,8 @@ component of this harness is permitted to know one.
 
 from __future__ import annotations
 
-import ast
 import os
+import subprocess
 from pathlib import Path
 from typing import Iterator
 
@@ -43,12 +43,50 @@ _LIBTEST_SKIP_PREFIXES = (
 )
 
 
-def _is_parseable(path: Path) -> bool:
+_PARSE_PROBE = """
+import ast, sys
+for p in sys.argv[1:]:
     try:
-        ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-        return True
-    except (SyntaxError, ValueError, OSError):
-        return False
+        with open(p, encoding="utf-8", errors="replace") as f:
+            ast.parse(f.read())
+    except Exception:
+        continue
+    print(p)
+"""
+
+
+def _parseable(oracle: Path, paths: list[Path]) -> set[Path]:
+    """Which of `paths` the TARGET interpreter can parse.
+
+    This must use the target, never the interpreter running the harness. It
+    used to call ast.parse in-process, which made the corpus depend on whoever
+    launched run.py: on a 3.14 dev machine all files were included, while CI
+    (system python3 = 3.12) silently dropped test_tstring, test_type_params,
+    test_fstring, test_grammar and test_annotationlib -- 3.12 cannot parse PEP
+    750 t-strings or PEP 695 type params. The corpus therefore shrank in CI,
+    losing exactly the newest-syntax files that matter most, and the gate
+    reported it as a truncated corpus.
+
+    VERSION_TARGETING.md says the parse oracle must be the target; this is that
+    rule applied to corpus selection.
+    """
+    ok: set[Path] = set()
+    if not paths:
+        return ok
+    # Chunked to stay clear of ARG_MAX on a large stdlib.
+    for i in range(0, len(paths), 150):
+        chunk = paths[i:i + 150]
+        try:
+            r = subprocess.run([str(oracle), "-c", _PARSE_PROBE,
+                                *(str(x) for x in chunk)],
+                               capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired):
+            # Refuse to guess: if the target cannot be consulted, keep the
+            # files rather than silently shrinking the corpus.
+            ok.update(chunk)
+            continue
+        ok.update(Path(line) for line in r.stdout.splitlines() if line)
+    return ok
 
 
 def from_directory(root: Path, *, pattern: str = "*.py",
@@ -61,7 +99,8 @@ def from_directory(root: Path, *, pattern: str = "*.py",
         yield Case(path=p)
 
 
-def from_cpython_libtest(stdlib_root: Path, *, limit: int | None = None,
+def from_cpython_libtest(stdlib_root: Path, oracle: Path, *,
+                         limit: int | None = None,
                          include_skipped: bool = False) -> Iterator[Case]:
     """CPython's own `Lib/test/` — the north-star metric (CHARTER I6).
 
@@ -76,11 +115,12 @@ def from_cpython_libtest(stdlib_root: Path, *, limit: int | None = None,
     testdir = stdlib_root / "test"
     if not testdir.is_dir():
         return
+    candidates = [p for p in sorted(testdir.glob("test_*.py"))
+                  if include_skipped or not p.name.startswith(_LIBTEST_SKIP_PREFIXES)]
+    parseable = _parseable(oracle, candidates)
     n = 0
-    for p in sorted(testdir.glob("test_*.py")):
-        if not include_skipped and p.name.startswith(_LIBTEST_SKIP_PREFIXES):
-            continue
-        if not _is_parseable(p):
+    for p in candidates:
+        if p not in parseable:
             continue
         yield Case(path=p, name=f"Lib/test/{p.name}")
         n += 1
