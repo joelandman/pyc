@@ -357,7 +357,43 @@ exactly one divergence, in an error message: CPython pluralises on the
 *accepted* count, not the given one — `One() accepts 1 positional sub-pattern
 (2 given)`.
 
-### Two open refcount defects (found 2026-08-23, not yet fixed)
+### Two open refcount defects (found 2026-08-23; status re-checked 2026-08-25)
+
+**Status correction.** Defect 1 was partially mitigated in `600fa8e` by a
+`release_once` lambda in `make_landing_pad` that de-duplicates SSA ids, and
+neither this section nor the notes were updated. Read the two entries below
+with that in mind: the double free is masked, the root cause is not fixed.
+
+Verified 2026-08-25 against emitted IR for `match x: case [a, b]: raise ...`:
+
+* **Defect 1 is masked, not fixed.** Promotion is still a COPY -- `mark_owned(v)`
+  followed by `frame_owned_.push_back(v)`, one reference in two lists -- and
+  `release_once` hides the resulting double decref. The de-dup is only correct
+  while no value holds two GENUINE references. `owned_` is a bag, not a set
+  (`mark_owned` is an unconditional `push_back`; `forget` erases the first
+  match and breaks), so nothing structurally prevents that. The capture path
+  at `lower.cpp:2049` emits `IncRef` + `mark_owned` on the same value and is
+  the candidate; in the IR inspected it balanced immediately
+  (`incref %8 / store.global / decref %8`), so an under-release was NOT
+  reproduced. The prescribed fix stands: make promotion a MOVE (`forget` then
+  push) at the ~10 promotion sites, then release each entry unconditionally
+  and drop the de-dup.
+
+* **Defect 2 is live and reproducible.** `%5 = call.capi "pyc_rt_match_sequence"`
+  is marked `owned` and is decref'd ONLY in the failure pads (`unwind.2`,
+  `unwind.3`). On the normal path -- `match.after`, and `match.body` through
+  `raise` into `unwind.4` -- it is never released. It leaks on every successful
+  match.
+
+* **`check_ir_wellformed.py` does not catch defect 2.** It reports `leak.py ok`
+  even though its own self-check proves it can detect a leaked owned value. Its
+  stated invariant is "every owned result is released on the normal path exactly
+  once", and `%5` violates that, so the checker has a specific blind spot worth
+  finding -- it is the tool both defects were originally found with.
+
+Reproducer kept at the end of this section.
+
+#### Original write-up
 
 Both were found by `tools/check_ir_wellformed.py`, and neither is visible in
 the differential run — which is exactly why the static checker exists
