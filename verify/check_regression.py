@@ -206,8 +206,29 @@ def main() -> int:
         failures.append(f"{len(unscored)} case(s) left the scored set "
                         "(quarantining is not a way to raise the rate)")
 
-    # 3. corpus must not shrink
+    # 3. corpus must not shrink.
+    #
+    # A strict subset is NOT a regression -- it is an incomparable run, and
+    # reporting it as a regression is actively misleading: a truncated corpus
+    # can score HIGHER than the full one (an early alphabetical slice of
+    # Lib/test does), so the pass rate moves for reasons that have nothing to
+    # do with the compiler. metric.yml offers libtest_limit as an input, so
+    # this is a lever a user can pull by accident.
     missing = set(bmap) - set(cmap)
+    if missing and not (set(cmap) - set(bmap)):
+        limit = curr.get("corpus", {}).get("libtest_limit")
+        why = (f"the run was capped at {limit} file(s) (--libtest-limit)"
+               if limit else
+               "the current run covered a strict subset of the baseline")
+        return did_not_run("corpus truncated", (
+            f"  baseline covers {len(bmap)} case(s)\n"
+            f"  current run covers {len(cmap)}\n"
+            f"  {len(missing)} case(s) absent -- {why}\n"
+            "\n  A subset cannot be compared against a full baseline: a\n"
+            "  truncated corpus can score higher for reasons unrelated to the\n"
+            "  compiler. Re-run over the full corpus, or record a separate\n"
+            "  baseline for this selection.\n"
+            f"\n  absent, first few: {', '.join(sorted(missing)[:5])}"))
     if missing:
         failures.append(f"{len(missing)} case(s) disappeared from the corpus: "
                         + ", ".join(sorted(missing)[:5]))

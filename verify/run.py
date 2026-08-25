@@ -238,6 +238,8 @@ def report(results: list[Result], args, elapsed: float) -> int:
         args.json.write_text(json.dumps({
             "oracle": _oracle_identity(args),
             "subject": {"pyc_flags": list(args.pyc_flag)},
+            "corpus": {"libtest": bool(args.libtest),
+                       "libtest_limit": args.libtest_limit},
             "pass_rate": rate,
             "scored": len(scored),
             "matched": matched,
