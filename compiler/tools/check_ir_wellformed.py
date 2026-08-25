@@ -54,12 +54,28 @@ OWNED = re.compile(r"; owned")
 STEAL_IN = re.compile(r"steals:%(\d+)")
 
 
+def is_pad(block: str) -> bool:
+    """Landing pads are named unwind.N by make_landing_pad. Coupled to the
+    lowerer by that convention alone -- if the naming changes, this check
+    silently stops finding anything, so the self-check below must keep proving
+    it can still fail."""
+    return block.startswith("unwind.")
+
+
 def check(ir: str) -> list[str]:
     problems: list[str] = []
     block, terms, nblocks = None, 0, 0
     defined: set[str] = set()
     owned: set[str] = set()
     released: dict[str, int] = {}
+    # Which block each owned value is defined in, and which blocks release it.
+    # Without this, a value released ONLY inside unwind pads looks released.
+    def_block: dict[str, str] = {}
+    release_blocks: dict[str, set[str]] = {}
+    # A block ending in `raise` or `ret.err` has NO normal exit -- codegen:
+    # "Always fails, so control always leaves by the error edge." Values born
+    # there and released on that edge are correct, not leaks.
+    no_normal_exit: set[str] = set()
     deferred: list[str] = []           # phi operands, checked once all defs are in
     for line in ir.splitlines():
         m = BLOCK.match(line)
@@ -71,16 +87,21 @@ def check(ir: str) -> list[str]:
             continue
         if TERM.match(line):
             terms += 1
+            if re.match(r"\s*(raise|ret\.err)\b", line) and block:
+                no_normal_exit.add(block)
         d = DEF.match(line)
         if d:
             defined.add(d.group(1))
             if OWNED.search(line):
                 owned.add(d.group(1))
+                def_block[d.group(1)] = block or "?"
         r = DECREF.match(line) or RET_VAL.match(line)
         if r:
             released[r.group(1)] = released.get(r.group(1), 0) + 1
+            release_blocks.setdefault(r.group(1), set()).add(block or "?")
         for st in STEAL_IN.findall(line):
             released[st] = released.get(st, 0) + 1
+            release_blocks.setdefault(st, set()).add(block or "?")
         if PHI.match(line):
             for inc in PHI_IN.findall(line):
                 released[inc] = released.get(inc, 0) + 1
@@ -110,6 +131,26 @@ def check(ir: str) -> list[str]:
     for v in sorted(owned, key=int):
         if v not in released:
             problems.append(f"owned %{v} is never released or returned (leak)")
+            continue
+        # Released, but ONLY on unwind paths. A value produced on the normal
+        # path and decref-ed only inside landing pads leaks on every run that
+        # does not raise -- which is most of them. This is how the match-helper
+        # leak (pyc_rt_match_sequence, an owned result released only in its
+        # failure pads) passed as "ok": the check above sees it in `released`
+        # and stops there.
+        #
+        # Only flag values DEFINED outside a pad: one created inside a pad and
+        # released there is correct.
+        if is_pad(def_block.get(v, "")):
+            continue
+        if def_block.get(v, "") in no_normal_exit:
+            continue
+        blocks = release_blocks.get(v, set())
+        if blocks and all(is_pad(b) for b in blocks):
+            where = ", ".join(sorted(blocks)[:3])
+            problems.append(
+                f"owned %{v} (defined in '{def_block.get(v, '?')}') is released "
+                f"only on unwind paths [{where}] -- leaks on the normal path")
     return problems
 
 
@@ -131,6 +172,16 @@ def main() -> int:
     sc.require_detects("leaked owned value", check,
         "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n    ret\n",
         "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n    ret %1\n")
+    # The blind spot this check was added to close: an owned value released
+    # ONLY inside landing pads. The bad input mirrors the real shape -- a value
+    # produced in `entry`, decref-ed in an `unwind.` pad, and never on the path
+    # that returns. The good input releases it on the normal path too.
+    sc.require_detects("owned value released only on unwind paths", check,
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n    ret\n"
+        "  unwind.0:\n    decref %1\n    ret.err\n",
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n"
+        "    decref %1\n    ret\n"
+        "  unwind.0:\n    decref %1\n    ret.err\n")
     sc.require_detects("use before definition", check,
         "; m\nfunc f()\n  entry:\n    %2 = call.capi \"PyNumber_Add\" %9 %9  ; owned\n"
         "    decref %2\n    ret\n",
