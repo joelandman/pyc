@@ -357,7 +357,34 @@ exactly one divergence, in an error message: CPython pluralises on the
 *accepted* count, not the given one — `One() accepts 1 positional sub-pattern
 (2 given)`.
 
-### Two open refcount defects (found 2026-08-23; status re-checked 2026-08-25)
+### Refcount defects (found 2026-08-23; BOTH FIXED 2026-08-25)
+
+Defect 2 fixed in 778024b, defect 1 in the commit that added this line. The
+write-up below is kept because the reasoning — particularly why the obvious fix
+for each is unsound — is the part worth not relearning.
+
+**Defect 1 (double free on propagating paths): fixed.** Promotion to the frame
+is now a MOVE at all nine sites (`forget` then push), so a value sits in exactly
+one ownership list per reference it holds, and `make_landing_pad` gives each
+entry its own decref. The `release_once` de-dup that had masked the double free
+is removed: with moves in place it would UNDER-release a value legitimately
+holding two references. The comment that justified it claimed "the live set is a
+set, not a bag", which was simply false — `mark_owned` is an unconditional
+`push_back` and `forget` erases the first match and breaks.
+
+Also corrected on the way: `lower_match` pushed its subject onto `frame_owned_`
+unconditionally but released it under `if (owns(subject))`, so an unowned
+subject would be decref-ed by a landing pad and not on the normal path. Push and
+release now agree, and the three early-return `pop_back()` sites are guarded to
+match.
+
+Verified: `compiler/tests` 77 clean, corpus 8 malformed (all issue #7's
+pre-existing "never released"), differential 99.04% (721/727) with ZERO crashes —
+the decisive check, since with the de-dup gone any missed promotion site would
+be a real double free rather than a masked one. A targeted probe raising out of
+`for`, `with` and `match` matches CPython exactly.
+
+#### Original write-up (kept for the reasoning)
 
 **Status correction.** Defect 1 was partially mitigated in `600fa8e` by a
 `release_once` lambda in `make_landing_pad` that de-duplicates SSA ids, and

@@ -211,21 +211,23 @@ private:
         std::uint32_t here = blk_;
         std::uint32_t pad = new_block("unwind." + std::to_string(pad_n_++));
         set_block(pad);
-        // One reference per SSA id -- `owns`/`forget` stop at the first match,
-        // so the live set is a set, not a bag. A value can appear in BOTH
-        // owned_ and frame_owned_ (a for-loop iterator and a match subject both
-        // do: the expression that produced it marked it owned, and then it was
-        // promoted to the frame). Releasing it from each list emitted two
-        // decrefs into one pad -- a double free on every propagating error path
-        // out of a loop or a match. Release each id exactly once.
-        std::vector<std::uint32_t> freed;
-        auto release_once = [&](const ir::Value& v) {
-            for (std::uint32_t id : freed) if (id == v.id) return;
-            freed.push_back(v.id);
-            emit_decref(v, loc);
-        };
+        // One decref per ENTRY, not per id. owned_ is a bag, not a set:
+        // mark_owned is an unconditional push_back and forget erases the first
+        // match and breaks, so two entries mean two references.
+        //
+        // This used to de-duplicate by SSA id, because promotion to the frame
+        // was a COPY -- mark_owned(v) followed by frame_owned_.push_back(v),
+        // one reference in two lists -- and releasing from each emitted two
+        // decrefs into one pad. The de-dup masked that double free, but it can
+        // only ever be right while nothing holds two GENUINE references, which
+        // nothing structurally guaranteed.
+        //
+        // Promotion is now a MOVE at every site (forget then push), so a value
+        // is in exactly one list per reference it holds, and each entry gets
+        // its own decref. Do not reintroduce the de-dup: with moves in place it
+        // would UNDER-release a value that legitimately holds two references.
         for (auto it = owned_.rbegin(); it != owned_.rend(); ++it)
-            release_once(*it);
+            emit_decref(*it, loc);
         if (try_stack_.empty()) {
             // Nothing catches here, so the exception LEAVES this function:
             // record where. Without this a compiled binary printed only the
@@ -240,7 +242,7 @@ private:
             // Nothing catches here: release everything the frame holds and
             // propagate on the C-API convention.
             for (auto it = frame_owned_.rbegin(); it != frame_owned_.rend(); ++it)
-                release_once(*it);
+                emit_decref(*it, loc);
             emit(ir::Instr{ir::Op::ReturnErr, {}, std::nullopt,
                            Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
         } else {
@@ -642,7 +644,10 @@ private:
             ir::Value it0 = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             emit(ir::Instr{ir::Op::LoadLocal, {}, it0, Ownership::Owned, ".0",
                            0, 0, loc, make_landing_pad(loc)});
-            mark_owned(it0);
+            // MOVE, not copy: the frame takes the only reference, so the
+            // value is in exactly one ownership list and a landing pad decrefs
+            // it exactly once (issue #9).
+            mark_owned(it0); forget(it0);
             frame_owned_.push_back(it0);
 
             // Nest the generators: each one is a loop whose body is the
@@ -682,11 +687,11 @@ private:
                         ir::Value subit = call_capi("PyObject_GetIter", {sub}, loc,
                                                     &bk, {sub});
                         if (!bk) return false;
-                        mark_owned(subit);
+                        mark_owned(subit); forget(subit);
                         frame_owned_.push_back(subit);
                         if (!nest(gi + 1, subit)) return false;
                         frame_owned_.pop_back();
-                        if (owns(subit)) release(subit, loc);
+                        emit_decref(subit, loc);
                     } else {
                         ir::Value accv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
                         emit(ir::Instr{ir::Op::LoadLocal, {}, accv, Ownership::Owned,
@@ -717,7 +722,7 @@ private:
             bok = nest(0, it0);
             if (bok) {
                 frame_owned_.pop_back();
-                if (owns(it0)) release(it0, loc);
+                emit_decref(it0, loc);   // frame held the only reference
                 ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
                 emit(ir::Instr{ir::Op::LoadLocal, {}, out, Ownership::Owned,
                                ".acc", (std::uint32_t)(locals.size() - 1), 0, loc,
@@ -1564,7 +1569,7 @@ private:
         // manager missing __exit__ must fail before any setup happens.
         ir::Value exitf = call_capi("pyc_rt_cm_exit", {mgr}, n.loc, &ok);
         if (!ok) return false;
-        mark_owned(exitf);
+        mark_owned(exitf); forget(exitf);
         frame_owned_.push_back(exitf);
         ir::Value entered = call_capi("pyc_rt_cm_enter", {mgr}, n.loc, &ok, {mgr});
         if (!ok) return false;
@@ -1599,7 +1604,7 @@ private:
 
         set_block(after);
         frame_owned_.pop_back();
-        if (owns(exitf)) release(exitf, n.loc);
+        emit_decref(exitf, n.loc);
         return true;
     }
 
@@ -1915,13 +1920,13 @@ private:
         // runs with no exception set -- as CPython does.
         ir::Value exc = call_capi("PyErr_GetRaisedException", {}, n.loc, &ok);
         if (!ok) return false;
-        mark_owned(exc);
+        mark_owned(exc); forget(exc);
         frame_owned_.push_back(exc);
         // Record what is being handled, so a bare `raise` inside the handler
         // has something to re-raise.
         ir::Value prev_handled = call_capi("pyc_rt_push_handled", {exc}, n.loc, &ok);
         if (!ok) return false;
-        mark_owned(prev_handled);
+        mark_owned(prev_handled); forget(prev_handled);
         frame_owned_.push_back(prev_handled);
 
         for (const excepthandler& h : n.handlers) {
@@ -1963,7 +1968,7 @@ private:
         call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
         if (!ok) return false;
         frame_owned_.pop_back();          // prev_handled
-        if (owns(prev_handled)) release(prev_handled, n.loc);
+        emit_decref(prev_handled, n.loc);
         frame_owned_.pop_back();          // exc
         call_capi("PyErr_SetRaisedException", {exc}, n.loc, &ok);
         if (!ok) return false;
@@ -2045,15 +2050,19 @@ private:
         ir::Value subject = lower_expr(*n.subject, &ok);
         if (!ok) return false;
         // The subject outlives every case test, so it is frame-owned rather
-        // than a statement temporary.
-        frame_owned_.push_back(subject);
+        // than a statement temporary. Promoted as a MOVE, and only when it is
+        // actually owned: pushing an unowned value would have a landing pad
+        // decref something this frame never owned, while the normal path (which
+        // tested owns()) did not -- the two disagreed.
+        const bool subj_owned = owns(subject);
+        if (subj_owned) { forget(subject); frame_owned_.push_back(subject); }
 
         std::uint32_t after = new_block("match.after");
         for (const match_case& c : n.cases) {
             std::uint32_t fail = new_block("match.next");
             std::vector<Capture> caps;
             if (!lower_pattern(*c.pattern, subject, fail, caps)) {
-                frame_owned_.pop_back();
+                if (subj_owned) frame_owned_.pop_back();
                 return false;
             }
             // Pattern matched: NOW the names are bound.
@@ -2065,7 +2074,7 @@ private:
             std::uint32_t body_b = new_block("match.body");
             if (c.guard) {
                 ir::Value g = lower_predicate(**c.guard, &ok);
-                if (!ok) { frame_owned_.pop_back(); return false; }
+                if (!ok) { if (subj_owned) frame_owned_.pop_back(); return false; }
                 emit(ir::Instr{ir::Op::CondBr, {g}, std::nullopt,
                                Ownership::NotAnObject, "", body_b, fail,
                                n.loc, std::nullopt});
@@ -2075,7 +2084,7 @@ private:
             }
             set_block(body_b);
             for (const stmt& s2 : c.body)
-                if (!lower_stmt(s2)) { frame_owned_.pop_back(); return false; }
+                if (!lower_stmt(s2)) { if (subj_owned) frame_owned_.pop_back(); return false; }
             if (!terminated())
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                "", after, 0, n.loc, std::nullopt});
@@ -2085,8 +2094,7 @@ private:
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", after, 0, n.loc, std::nullopt});
         set_block(after);
-        frame_owned_.pop_back();
-        if (owns(subject)) release(subject, n.loc);
+        if (subj_owned) { frame_owned_.pop_back(); emit_decref(subject, n.loc); }
         return true;
     }
 
@@ -2409,12 +2417,13 @@ private:
         ir::Value ccell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::CellNew, {}, ccell, Ownership::Owned, "__class__",
                        0, 0, n.loc, make_landing_pad(n.loc)});
-        mark_owned(ccell);
+        mark_owned(ccell); forget(ccell);
         frame_owned_.push_back(ccell);
         class_cells_.push_back(ccell);
 
         class_ns_.push_back(ns);
         qual_.push_back(n.name);
+        forget(ns); forget(bases);
         frame_owned_.push_back(ns);
         frame_owned_.push_back(bases);
         auto saved_locals = locals_;
@@ -2433,14 +2442,14 @@ private:
         emit(ir::Instr{ir::Op::BuildClass, {bases, ns}, cls, Ownership::Owned,
                        n.name, 0, 0, n.loc, make_landing_pad(n.loc)});
         mark_owned(cls);
-        if (owns(bases)) release(bases, n.loc);
-        if (owns(ns)) release(ns, n.loc);
+        emit_decref(bases, n.loc);
+        emit_decref(ns, n.loc);
         // Fill __class__ BEFORE decorators run: CPython binds the cell to the
         // undecorated class, which is what super() in a method resolves to.
         emit(ir::Instr{ir::Op::CellSet, {ccell, cls}, std::nullopt,
                        Ownership::NotAnObject, "__class__", 0, 0, n.loc, std::nullopt});
         frame_owned_.pop_back();
-        release(ccell, n.loc);
+        emit_decref(ccell, n.loc);
         cls = apply_decorators(n.decorator_list, cls, n.loc, &ok);
         if (!ok) return false;
         store_name(n.name, cls, n.loc);
@@ -2503,7 +2512,7 @@ private:
         // tree had between comprehensions and sum() is not expressible here.
         ir::Value it = call_capi("PyObject_GetIter", {seq}, n.loc, &ok, {seq});
         if (!ok) return false;
-        mark_owned(it);
+        mark_owned(it); forget(it);
         frame_owned_.push_back(it);
 
         std::uint32_t head = new_block("for.head");
@@ -2541,7 +2550,7 @@ private:
         // Ran to exhaustion: release the iterator, then the else body.
         set_block(done);
         frame_owned_.pop_back();
-        if (owns(it)) release(it, n.loc);
+        emit_decref(it, n.loc);
         for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
         if (!terminated())
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
