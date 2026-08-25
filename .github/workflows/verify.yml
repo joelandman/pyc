@@ -152,6 +152,7 @@ jobs:
           PYC_LOWER="$RUNNER_TEMP/pyc_lower" ./verify/run.py \
             --corpus verify/corpus/language \
             --pyc "$PWD/compiler/tools/pycc" \
+            --pyc-flag -O0 \
             --sysroot "$SYSROOT" \
             --jobs "$(nproc)" \
             --run-timeout 15 --compile-timeout 90 \
