@@ -36,11 +36,30 @@ jobs:
 
       # LLVM 22 is newer than what ubuntu-24.04 ships, so it comes from
       # apt.llvm.org. This is the slowest install step; cache it.
+      # Two bugs made this a no-op that also failed on save:
+      #   * /var/cache/apt/archives is root-owned, so the post-run tar could
+      #     not read it ("tar failed with exit code 2") and nothing was saved;
+      #   * apt deletes .deb files after installing them, so there would have
+      #     been nothing to save even with permissions fixed.
+      # Cache a runner-owned directory instead, tell apt to keep its downloads,
+      # and hand the .debs back and forth around the install.
       - name: Cache apt archives
         uses: actions/cache@v4
         with:
-          path: /var/cache/apt/archives
-          key: apt-llvm22-${{ runner.os }}-v1
+          path: ~/apt-cache
+          key: apt-llvm22-${{ runner.os }}-v2
+          restore-keys: apt-llvm22-${{ runner.os }}-
+
+      - name: Seed apt from cache
+        run: |
+          set -euo pipefail
+          # Applies globally, so llvm.sh's own apt-get calls inherit it.
+          echo 'APT::Keep-Downloaded-Packages "true";' \
+            | sudo tee /etc/apt/apt.conf.d/99keep-debs >/dev/null
+          mkdir -p ~/apt-cache
+          sudo mkdir -p /var/cache/apt/archives
+          # `|| true`: an empty cache on a cold run is normal, not an error.
+          sudo cp -n ~/apt-cache/*.deb /var/cache/apt/archives/ 2>/dev/null || true
 
       - name: Install toolchain
         run: |
@@ -56,6 +75,15 @@ jobs:
             zlib1g-dev libssl-dev libffi-dev libbz2-dev liblzma-dev \
             libsqlite3-dev libreadline-dev libncurses-dev uuid-dev
           echo "PYC_CXX=clang++-22" >> "$GITHUB_ENV"
+
+      - name: Collect apt archives for caching
+        run: |
+          set -euo pipefail
+          mkdir -p ~/apt-cache
+          sudo cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
+          # The cache post-step runs as the runner, so it must own these.
+          sudo chown -R "$(id -u):$(id -g)" ~/apt-cache
+          echo "cached $(ls ~/apt-cache/*.deb 2>/dev/null | wc -l) .deb files"
 
       # The runner's system python3 is 3.12, and pyc's frontend calls
       # PyObject_GetOptionalAttrString, which CPython added in 3.13 -- so the
