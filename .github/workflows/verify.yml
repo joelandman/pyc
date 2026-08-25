@@ -101,19 +101,61 @@ jobs:
             --show 12 \
             --json current.json
 
+      # The gate's exit code is the whole point and GitHub throws it away:
+      # every nonzero renders as the same red X. Capture it, state in words
+      # which of the four outcomes happened, then re-raise it at the end so the
+      # job status still reflects reality.
       - name: Monotonicity gate (I6)
+        id: gate
         run: |
-          # Gate against the NEW tree's baseline. The old tree's
-          # verify/baseline.json records 97.8% with FIVE P0 silent wrong
-          # answers, and gating on it would enforce exactly the property the
-          # review argued is worthless.
+          set +e
           ./verify/check_regression.py \
             --baseline compiler/baseline-language.json \
             --require-baseline \
             --current current.json
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Verdict
+        if: always()
+        env:
+          GATE_CODE: ${{ steps.gate.outputs.code }}
+          TRIGGER: ${{ github.event_name }}
+        run: |
+          python3 - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import os
+          code = os.environ.get("GATE_CODE", "")
+          trigger = os.environ.get("TRIGGER", "?")
+          verdicts = {
+            "0": (":white_check_mark:", "GATE RAN — no regression",
+                  "The comparison happened and nothing got worse."),
+            "1": (":x:", "REGRESSION — the gate ran and FAILED",
+                  "A real finding: something the compiler does got worse."),
+            "2": (":no_entry:", "GATE DID NOT RUN — results not comparable",
+                  "NOTHING WAS VERIFIED. This is not a regression: the "
+                  "comparison never happened, so the metric is unguarded. "
+                  "Causes: oracle mismatch, compiler-flag mismatch, truncated "
+                  "corpus, or a missing baseline."),
+            "3": (":warning:", "HARNESS USAGE ERROR",
+                  "check_regression.py was invoked wrongly. Neither a "
+                  "regression nor a verified pass."),
+          }
+          icon, title, detail = verdicts.get(
+              code, (":grey_question:", f"UNKNOWN GATE STATE (exit {code!r})",
+                     "The gate step did not report an exit code at all."))
+          print(f"# {icon} {title}\n")
+          print(f"{detail}\n")
+          print(f"<sub>trigger: `{trigger}` · gate exit `{code}`</sub>\n")
+          EOF
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: differential-results
           path: current.json
+
+      - name: Reflect the gate in the job status
+        if: always()
+        run: exit ${{ steps.gate.outputs.code || 1 }}
