@@ -167,6 +167,7 @@ jobs:
           # review argued is worthless.
           ./verify/check_regression.py \
             --baseline compiler/baseline-language.json \
+            --require-baseline \
             --current current.json
 
       - uses: actions/upload-artifact@v4

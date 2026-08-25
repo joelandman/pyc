@@ -22,10 +22,62 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 RED, GRN, YEL, BOLD, RST = "\033[31m", "\033[32m", "\033[33m", "\033[1m", "\033[0m"
+
+# Exit codes are load-bearing and must stay distinguishable:
+#   0  gate ran, nothing regressed
+#   1  gate ran, something regressed        <- a verdict
+#   2  gate DID NOT RUN (not comparable)    <- not a verdict
+#
+# GitHub renders every nonzero exit as an identical red X. Five consecutive
+# verify runs exited 2 -- the gate never once evaluated -- and read exactly
+# like five failing gates. So a "did not run" outcome now shouts, in the run
+# log, as a workflow annotation, and in the step summary.
+EXIT_OK, EXIT_REGRESSED, EXIT_DID_NOT_RUN = 0, 1, 2
+
+
+def _in_actions() -> bool:
+    return os.environ.get("GITHUB_ACTIONS") == "true"
+
+
+def _annotate(level: str, title: str, message: str) -> None:
+    """Workflow annotation: shows on the run page, not just in the log."""
+    if _in_actions():
+        one_line = message.replace("\n", "%0A")
+        print(f"::{level} title={title}::{one_line}")
+
+
+def _summary(markdown: str) -> None:
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(markdown.rstrip() + "\n\n")
+    except OSError:
+        pass
+
+
+def did_not_run(reason: str, detail: str) -> int:
+    """The gate could not evaluate. This is NOT a regression verdict, and must
+    never be mistaken for one."""
+    print(f"\n{RED}{BOLD}{'='*62}{RST}")
+    print(f"{RED}{BOLD}  GATE DID NOT RUN — {reason}{RST}")
+    print(f"{RED}{BOLD}{'='*62}{RST}")
+    print(detail)
+    print(f"\n{YEL}Nothing was verified. This is not a regression report:{RST}")
+    print(f"{YEL}the comparison never happened, so the metric is unguarded.{RST}")
+    _annotate("error", f"GATE DID NOT RUN — {reason}",
+              f"{detail}\nNothing was verified; the metric is unguarded.")
+    _summary(f"## :no_entry: Gate did not run — {reason}\n\n"
+             f"```\n{detail}\n```\n\n"
+             "**Nothing was verified.** This is not a regression report — the "
+             "comparison never happened, so the metric is currently unguarded.")
+    return EXIT_DID_NOT_RUN
 
 # Lower is better; mirrors Verdict ordering in differential.py.
 RANK = {
@@ -53,6 +105,9 @@ def main() -> int:
     ap.add_argument("--current", type=Path, default=None)
     ap.add_argument("--update", action="store_true",
                     help="accept --current as the new baseline")
+    ap.add_argument("--require-baseline", action="store_true",
+                    help="fail (exit 2) if the baseline is missing, instead of "
+                         "passing as a first run. CI should always set this.")
     ap.add_argument("--allow-rate-drop", action="store_true",
                     help="permit a pass-rate drop (use ONLY when the corpus grew "
                          "or got harder, and say so in the commit message)")
@@ -61,17 +116,33 @@ def main() -> int:
     if args.update:
         if not args.current:
             print("error: --update needs --current", file=sys.stderr)
-            return 2
+            return 3
         args.baseline.write_text(args.current.read_text())
         print(f"baseline updated from {args.current}")
         return 0
 
     if not args.current:
         print("error: --current required", file=sys.stderr)
-        return 2
+        return 3
     if not args.baseline.exists():
-        print(f"{YEL}no baseline at {args.baseline} — treating as first run{RST}")
-        return 0
+        # This used to print a note and return 0 -- a GREEN run in which the
+        # gate protected nothing. metric.yml gated a baseline path that did not
+        # exist and passed every night on that basis. Green is more dangerous
+        # than red here, because nobody investigates green.
+        detail = (f"no baseline at {args.baseline}\n"
+                  f"nothing to compare the current run against")
+        if args.require_baseline:
+            return did_not_run("no baseline", detail)
+        print(f"\n{YEL}{BOLD}GATE DID NOT RUN — no baseline{RST}")
+        print(f"{YEL}{detail}{RST}")
+        print(f"{YEL}Passing anyway (first run). Use --require-baseline in CI "
+              f"so this can never pass silently.{RST}")
+        _annotate("warning", "GATE DID NOT RUN — no baseline",
+                  f"{detail}\nPassing as a first run; nothing was verified.")
+        _summary(f"## :warning: Gate did not run — no baseline\n\n"
+                 f"```\n{detail}\n```\n\nPassed as a first run. "
+                 "**Nothing was verified.**")
+        return EXIT_OK
 
     base, bmap = load(args.baseline)
     curr, cmap = load(args.current)
@@ -84,13 +155,11 @@ def main() -> int:
     base_oracle = base.get("oracle", {}).get("version", "")
     curr_oracle = curr.get("oracle", {}).get("version", "")
     if base_oracle and curr_oracle and base_oracle != curr_oracle:
-        print(f"{RED}{BOLD}ORACLE MISMATCH{RST}")
-        print(f"  baseline recorded against CPython {base_oracle}")
-        print(f"  current run used CPython          {curr_oracle}")
-        print("\n  These are not comparable. Re-record the baseline against "
-              "the same\n  oracle, or point CI at the matching sysroot "
-              "(--sysroot).")
-        return 2
+        return did_not_run("oracle mismatch", (
+            f"  baseline recorded against CPython {base_oracle}\n"
+            f"  current run used CPython          {curr_oracle}\n"
+            "\n  Re-record the baseline against the same oracle, or point CI "
+            "at\n  the matching sysroot (--sysroot)."))
     if not base_oracle or not curr_oracle:
         print(f"{YEL}note{RST}: oracle version missing from "
               f"{'baseline' if not base_oracle else 'current'} — comparison "
@@ -102,13 +171,11 @@ def main() -> int:
     curr_flags = curr.get("subject", {}).get("pyc_flags")
     if base_flags is not None and curr_flags is not None \
             and base_flags != curr_flags:
-        print(f"{RED}{BOLD}COMPILER FLAG MISMATCH{RST}")
-        print(f"  baseline recorded with pyc flags {base_flags or '[]  (defaults)'}")
-        print(f"  current run used                 {curr_flags or '[]  (defaults)'}")
-        print("\n  Not comparable. Use the same flags, or keep a separate "
-              "baseline\n  per configuration (the PR gate and the nightly "
-              "metric each have one).")
-        return 2
+        return did_not_run("compiler flag mismatch", (
+            f"  baseline recorded with pyc flags {base_flags or '[]  (defaults)'}\n"
+            f"  current run used                 {curr_flags or '[]  (defaults)'}\n"
+            "\n  Use the same flags, or keep a separate baseline per\n"
+            "  configuration (the PR gate and the nightly metric each have one)."))
 
     # 1. pass rate
     drop = base["pass_rate"] - curr["pass_rate"]
@@ -158,16 +225,26 @@ def main() -> int:
         print(f"  {YEL}unscored{RST}  {line}")
 
     if failures:
-        print(f"\n{RED}{BOLD}REGRESSION{RST}")
+        print(f"\n{RED}{BOLD}REGRESSION — the gate ran and FAILED{RST}")
         for f in failures:
             print(f"  - {f}")
+        _annotate("error", "Monotonicity regression (gate ran)",
+                  "; ".join(failures))
+        _summary("## :x: Regression — the gate ran and failed\n\n"
+                 + "\n".join(f"- {f}" for f in failures)
+                 + f"\n\nbaseline `{base['pass_rate']:.2f}%` → current "
+                   f"`{curr['pass_rate']:.2f}%`")
         print(f"\n{BOLD}I6: the metric may never regress.{RST} If this drop is "
               "intentional\n  (corpus grew or got harder), re-run with "
               "--allow-rate-drop and\n  explain it in the commit message.")
-        return 1
+        return EXIT_REGRESSED
 
-    print(f"\n{GRN}{BOLD}OK{RST} — no regression")
-    return 0
+    print(f"\n{GRN}{BOLD}OK{RST} — the gate ran, nothing regressed")
+    _summary(f"## :white_check_mark: Gate ran — no regression\n\n"
+             f"baseline `{base['pass_rate']:.2f}%` → current "
+             f"`{curr['pass_rate']:.2f}%` "
+             f"({curr['matched']}/{curr['scored']} scored)")
+    return EXIT_OK
 
 
 if __name__ == "__main__":

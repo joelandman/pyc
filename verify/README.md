@@ -54,6 +54,32 @@ unsupported construct (I1: fail loudly, never silently). Coverage gaps should
 present as P2 and get resolved by implementing the feature — never by
 downgrading the check.
 
+## Gate outcomes (`check_regression.py`)
+
+| Exit | Meaning | |
+|---|---|---|
+| 0 | gate ran, nothing regressed | a verdict |
+| 1 | gate ran, something regressed | a verdict |
+| 2 | **gate did not run** — not comparable | *not* a verdict |
+| 3 | usage error | |
+
+Exit 2 is not a failing gate; it means no comparison happened and the metric is
+**unguarded**. The distinction is easy to lose because GitHub renders every
+nonzero exit as the same red X — five consecutive `verify` runs exited 2 (the
+`-O0` flag was missing from the workflow, so an `-O0` baseline was being
+compared against a default-flags run) and read exactly like five failing gates.
+Nobody looked, because a red X on a gate looks like a known-failing gate.
+
+So a "did not run" outcome now announces itself three ways: a banner in the log,
+a GitHub workflow annotation on the run page, and a block in the step summary.
+
+`--require-baseline` closes the more dangerous version of the same hole. A
+missing baseline used to print a note and return **0** — a green run in which
+the gate protected nothing. `metric.yml` gated a baseline path that did not
+exist and passed every night on that basis. CI always passes
+`--require-baseline` so this fails loudly instead; green is worse than red here,
+because nobody investigates green.
+
 ## How nondeterminism is handled
 
 Not with normalization rules. Hand-written normalizers — strip hex addresses,

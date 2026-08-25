@@ -92,6 +92,7 @@ jobs:
         run: |
           ./verify/check_regression.py \
             --baseline compiler/baseline-libtest.json \
+            --require-baseline \
             --current libtest.json
 
       - name: Publish the number
