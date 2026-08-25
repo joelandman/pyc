@@ -177,15 +177,36 @@ def main() -> int:
             "\n  Use the same flags, or keep a separate baseline per\n"
             "  configuration (the PR gate and the nightly metric each have one)."))
 
-    # 1. pass rate
+    # 1. The numerator is the signal; the denominator is noise.
+    #
+    # pass_rate is matched/scored, and `scored` moves run to run because
+    # quarantine membership is nondeterministic -- a case whose oracle timed out
+    # last night may be scored tonight. That makes the RATE unstable even when
+    # nothing about the compiler changed, and it moves in the wrong direction:
+    # a night with less flakiness scores MORE cases, so the rate falls. The
+    # first scheduled run failed exactly this way -- 7/360 (1.94%) against a
+    # 7/357 (1.96%) baseline, with the same 7 matches.
+    #
+    # Gating on that would make the nightly metric permanently red for reasons
+    # unrelated to the compiler, which is how a gate stops being read at all.
+    #
+    # So: gate on `matched` (stable) and on per-case transitions below. A rate
+    # drop with matched holding is denominator movement -- reported, not failed.
     drop = base["pass_rate"] - curr["pass_rate"]
-    if drop > 1e-9 and not args.allow_rate_drop:
+    matched_drop = base["matched"] - curr["matched"]
+    if matched_drop > 0:
         failures.append(
-            f"pass rate regressed: {base['pass_rate']:.2f}% -> "
-            f"{curr['pass_rate']:.2f}% (-{drop:.2f})")
+            f"matched count fell: {base['matched']} -> {curr['matched']} "
+            f"(-{matched_drop})")
+    elif drop > 1e-9:
+        print(f"  {YEL}note{RST}: pass rate {base['pass_rate']:.2f}% -> "
+              f"{curr['pass_rate']:.2f}% with matched unchanged at "
+              f"{curr['matched']} — the scored set grew "
+              f"({base['scored']} -> {curr['scored']}), i.e. fewer cases were "
+              f"quarantined. Not a regression.")
 
     # 2. per-case regressions
-    worse, new_p0, unscored = [], [], []
+    worse, new_p0, unscored, noise = [], [], [], []
     for case, bv in bmap.items():
         cv = cmap.get(case)
         if cv is None:
@@ -195,7 +216,13 @@ def main() -> int:
             if cv == "SILENT_WRONG_ANSWER" and bv != "SILENT_WRONG_ANSWER":
                 new_p0.append(case)
         if bv in SCORED and cv not in SCORED:
-            unscored.append(f"{case}: {bv} -> {cv} (dropped out of scoring)")
+            # Only a case that was PASSING can hide a regression by leaving the
+            # scored set. A failing case going quarantined is the same
+            # nondeterminism as above and flaps run to run.
+            if bv == "MATCH":
+                unscored.append(f"{case}: {bv} -> {cv} (a PASSING case left scoring)")
+            else:
+                noise.append(f"{case}: {bv} -> {cv}")
 
     if new_p0:
         failures.append(f"{len(new_p0)} NEW P0 silent wrong answer(s): "
@@ -244,6 +271,11 @@ def main() -> int:
         print(f"  {RED}worse{RST}  {line}")
     for line in unscored[:20]:
         print(f"  {YEL}unscored{RST}  {line}")
+    if noise:
+        print(f"  {YEL}note{RST}: {len(noise)} failing case(s) crossed the "
+              f"quarantine boundary (nondeterminism, not a scope reduction)")
+        for line in noise[:5]:
+            print(f"    {line}")
 
     if failures:
         print(f"\n{RED}{BOLD}REGRESSION — the gate ran and FAILED{RST}")
