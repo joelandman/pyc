@@ -7,7 +7,36 @@ LLVM IR, optimizes it, and produces standalone native executables via a minimal
 
 Written in C++ with Clang++ and LLVM (`find_package(LLVM)`; 18 historically,
 22 on the current development machine). No C/C++ intermediate language for
-the normal compiler path. **662/662 tests passing** (632 inline cases + 29 file cases + 1 dispatch-chain check, file_case_failures=0; every case compared against CPython output; see `tests/runner.py`).
+the normal compiler path.
+
+## Status
+
+The project is being rebuilt on CPython's object model. See
+[rebuild/CHARTER.md](rebuild/CHARTER.md) for the binding invariants and
+[rebuild/ARCHITECTURE_REVIEW.md](rebuild/ARCHITECTURE_REVIEW.md) for why.
+
+| Corpus | Pass rate | |
+|---|---|---|
+| CPython `Lib/test/` | **1.80%** | 7/389 files |
+| language corpus | **99.02%** | 706/713 cases |
+
+`Lib/test` is the north-star metric (CHARTER I6): the pass rate over CPython's
+own test suite, published low and honest, and never allowed to regress. Both
+numbers are `matched / corpus size` — the denominator is the corpus, so they
+move only when the compiler does. Every case is compared against a real CPython
+at run time; no expected output is stored anywhere ([CHARTER I5](rebuild/CHARTER.md)).
+
+**Zero P0 silent wrong answers** in either corpus. Against CPython's own test
+suite the compiler fails loudly — a crash or a compile error — never with a
+wrong answer. That is the property the rebuild exists to protect, and it is
+worth more than the pass rate.
+
+Measured by `./verify/run.py`; gated per-commit in CI
+(`.github/workflows/verify.yml`) and nightly (`metric.yml`).
+
+> The rest of this file still describes the **previous** tree (`src/`,
+> `tests/runner.py`, the boxed `PyObject*` runtime). It has not been rewritten
+> for the new tree under `compiler/`.
 
 ## Build
 
