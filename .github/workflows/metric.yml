@@ -37,24 +37,13 @@ jobs:
           wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh 22
+          # Same set as verify.yml: the new tree needs clang++ plus CPython's
+          # build deps. cmake/ninja/pcre2/libmpdec were OLD-tree dependencies.
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libpcre2-dev zlib1g-dev python3-dev \
-            libssl-dev libffi-dev libbz2-dev liblzma-dev libsqlite3-dev \
-            libreadline-dev libncurses-dev uuid-dev
-          echo "LLVM_DIR=$(llvm-config-22 --cmakedir)" >> "$GITHUB_ENV"
+            zlib1g-dev libssl-dev libffi-dev libbz2-dev liblzma-dev \
+            libsqlite3-dev libreadline-dev libncurses-dev uuid-dev
+          echo "PYC_CXX=clang++-22" >> "$GITHUB_ENV"
 
-      # See verify.yml: ubuntu-24.04 has no mpdecimal package.
-      - name: Build libmpdec from source
-        run: |
-          set -euxo pipefail
-          cd /tmp
-          curl -fsSLO https://www.bytereef.org/software/mpdecimal/releases/mpdecimal-4.0.1.tar.gz
-          tar xf mpdecimal-4.0.1.tar.gz && cd mpdecimal-4.0.1
-          ./configure --prefix=/usr/local && make -j"$(nproc)"
-          sudo make install && sudo ldconfig
-
-      # A PGO CPython sysroot takes 20-40 min to build, so it must never be
-      # rebuilt per run. Key on the build script; bump when it changes.
       - name: Cache CPython sysroot
         id: sysroot
         uses: actions/cache@v4
@@ -70,11 +59,17 @@ jobs:
           ./tools/build-python-sysroot.sh --version 3.14.7 \
             --require-wheel --jobs "$(nproc)"
 
-      - name: Build pyc
+      - name: Build the compiler
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_COMPILER=clang++-22 -DLLVM_DIR="$LLVM_DIR"
-          cmake --build build -j"$(nproc)"
+          set -euxo pipefail
+          # Mirrors verify.yml. Replace when a build system lands for the new
+          # tree rather than letting the two workflows drift apart.
+          clang++-22 -std=c++20 -O2 -I compiler/include \
+            compiler/src/pyc_lower_main.cpp compiler/src/lower.cpp \
+            compiler/src/scope.cpp compiler/src/ir.cpp compiler/src/codegen.cpp \
+            compiler/src/capi.cpp compiler/src/ast_support.cpp \
+            compiler/src/json.cpp -o "$RUNNER_TEMP/pyc_lower"
+          echo "PYC_LOWER=$RUNNER_TEMP/pyc_lower" >> "$GITHUB_ENV"
 
       - name: Lib/test metric
         run: |
@@ -84,6 +79,8 @@ jobs:
             LIMIT="--libtest-limit ${{ inputs.libtest_limit }}"
           fi
           ./verify/run.py --libtest $LIMIT \
+            --pyc "$PWD/compiler/tools/pycc" \
+            --pyc-flag -O0 \
             --sysroot "$SYSROOT" \
             --stdlib "$SYSROOT/lib/python3.14" \
             --jobs "$(nproc)" \
@@ -94,7 +91,7 @@ jobs:
       - name: Monotonicity gate (I6)
         run: |
           ./verify/check_regression.py \
-            --baseline verify/baseline-libtest.json \
+            --baseline compiler/baseline-libtest.json \
             --current libtest.json
 
       - name: Publish the number
