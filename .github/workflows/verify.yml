@@ -69,9 +69,21 @@ jobs:
       # the same CPython the baseline was recorded against, which a system
       # python3 could never be. --no-pgo because PGO costs 20-40 min and only
       # affects speed, never observable behaviour, so the oracle is identical.
-      - name: Cache CPython sysroot
+      # Split restore/save on purpose. actions/cache@v4 saves in a POST
+      # step at job end, and GitHub skips post steps when the job fails --
+      # so every metric run built the PGO sysroot, failed later at the
+      # gate, and discarded it. The next run then rebuilt from cold, a
+      # trap that persists until one run happens to go green end to end.
+      # Saving immediately after the build decouples it from what the
+      # gate later decides.
+      #
+      # No restore-keys: a prefix hit would restore a sysroot built by a
+      # DIFFERENT version of the build script while leaving cache-hit
+      # false, so the build step would rerun and the script would abort on
+      # the already-populated prefix.
+      - name: Restore CPython sysroot
         id: sysroot
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/opt/py-sysroots
           key: sysroot-cp314-3.14.7-tier1-nopgo-${{ hashFiles('tools/build-python-sysroot.sh') }}
@@ -84,6 +96,13 @@ jobs:
           # --require-wheel instead.
           ./tools/build-python-sysroot.sh --version 3.14.7 --no-pgo \
             --no-wheel-check --jobs "$(nproc)"
+
+      - name: Save CPython sysroot
+        if: steps.sysroot.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/opt/py-sysroots
+          key: sysroot-cp314-3.14.7-tier1-nopgo-${{ hashFiles('tools/build-python-sysroot.sh') }}
 
       - name: Record oracle
         run: |
