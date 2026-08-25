@@ -121,7 +121,12 @@ jobs:
           import json
           d = json.load(open("libtest.json"))
           print("## CPython `Lib/test/` pass rate\n")
-          print(f"### **{d['pass_rate']:.2f}%**  ({d['matched']}/{d['scored']} scored)\n")
+          total = d.get("total_cases", len(d["results"]))
+          print(f"### **{d['pass_rate']:.2f}%**  ({d['matched']}/{total} files)\n")
+          # Deliberately secondary: its denominator is the scored set, which
+          # varies run to run with quarantine flakiness.
+          print(f"<sub>{d.get('scored_rate', 0):.2f}% of the "
+                f"{d['scored']} scored ({d['quarantined']} quarantined)</sub>\n")
           print("| verdict | count |\n|---|---|")
           for k, v in sorted(d["counts"].items()):
               print(f"| `{k}` | {v} |")

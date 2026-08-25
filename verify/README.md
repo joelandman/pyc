@@ -98,6 +98,19 @@ against whatever order CPython actually produces.
 
 ## The metric (CHARTER I6)
 
+**The published number is `matched / len(corpus)`** — of the 389 `Lib/test`
+files, how many behave exactly as CPython does. The denominator is the corpus,
+which is fixed, so the number moves only when the compiler does.
+
+`matched / scored` is reported too, and is the more flattering figure, but it is
+*not* the headline and does not gate. Its denominator is the scored set, which
+excludes quarantined cases, and quarantine membership is nondeterministic. That
+makes it move for reasons unrelated to the compiler — and backwards: a run with
+less flakiness scores more cases and therefore reports a *lower* rate. The first
+scheduled metric run failed on exactly this, reporting a regression from 1.96%
+to 1.94% while matching the identical 7 cases.
+
+
 `--libtest` scores against CPython's own `Lib/test/`. It is the only number
 that cannot be gamed by adding more snippets, and it is published low and
 honest from day one.
@@ -132,7 +145,7 @@ measurable from the first commit rather than asserted.
 
 | Corpus | Pass rate |
 |---|---|
-| CPython `Lib/test/`, 60-file sample | **0.0%** (0/52 scored, 8 quarantined) |
+| CPython `Lib/test/`, 60-file sample | **0.0%** (0/60 files) |
 
 Breakdown: 30 `COMPILE_ERROR`, 11 `CRASH`, 8 `STDERR_DIFF`, **3 P0
 `SILENT_WRONG_ANSWER`**.

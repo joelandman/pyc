@@ -203,7 +203,14 @@ def report(results: list[Result], args, elapsed: float) -> int:
     counts = Counter(r.verdict for r in results)
     scored = [r for r in results if r.verdict.is_scored]
     matched = counts[Verdict.MATCH]
-    rate = (100.0 * matched / len(scored)) if scored else 0.0
+    total = len(results)
+    # THE published number: matched over the whole corpus. The denominator is
+    # the corpus, which is fixed, so the number only moves when the compiler
+    # does. matched/scored looks more flattering but its denominator flaps with
+    # quarantine nondeterminism -- a night with less flakiness scores MORE
+    # cases and therefore reports a LOWER rate, which is backwards.
+    rate = (100.0 * matched / total) if total else 0.0
+    scored_rate = (100.0 * matched / len(scored)) if scored else 0.0
 
     print(f"\n{BOLD}Summary{RST}  ({elapsed:.1f}s)")
     for v in Verdict:
@@ -213,9 +220,12 @@ def report(results: list[Result], args, elapsed: float) -> int:
             print(f"  {tag} {c}{v.name:<28}{RST} {counts[v]:>5}")
 
     quarantined = len(results) - len(scored)
-    print(f"\n  {BOLD}pass rate  {rate:5.1f}%{RST}  "
-          f"({matched}/{len(scored)} scored"
-          + (f", {quarantined} quarantined)" if quarantined else ")"))
+    print(f"\n  {BOLD}pass rate  {rate:5.2f}%{RST}  "
+          f"({matched}/{total} cases)")
+    if quarantined:
+        print(f"  {DIM}          {scored_rate:5.2f}%  ({matched}/{len(scored)} "
+              f"scored, {quarantined} quarantined — denominator varies, "
+              f"not the published number){RST}")
 
     p0 = counts[Verdict.SILENT_WRONG_ANSWER]
     if p0:
@@ -240,7 +250,9 @@ def report(results: list[Result], args, elapsed: float) -> int:
             "subject": {"pyc_flags": list(args.pyc_flag)},
             "corpus": {"libtest": bool(args.libtest),
                        "libtest_limit": args.libtest_limit},
-            "pass_rate": rate,
+            "pass_rate": rate,            # matched / total corpus -- published
+            "scored_rate": scored_rate,   # matched / scored -- informational
+            "total_cases": total,
             "scored": len(scored),
             "matched": matched,
             "quarantined": quarantined,
