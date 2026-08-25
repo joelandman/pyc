@@ -277,6 +277,50 @@ def main() -> int:
         for line in noise[:5]:
             print(f"    {line}")
 
+    # -- staleness ----------------------------------------------------------
+    #
+    # The gate is deliberately one-directional: it blocks regressions and never
+    # adopts improvements, because auto-adopting would let a bad run quietly
+    # become the new reference. The cost is that a baseline drifts stale in the
+    # GOOD direction, silently, while every run keeps passing. The language
+    # baseline sat 15 cases behind before anyone noticed, and only because
+    # someone happened to compare by hand.
+    #
+    # So: report it loudly, never fail on it. Blocking a change for being
+    # better would be absurd.
+    improved = [f"{k}: {bmap[k]} -> {cmap[k]}"
+                for k in bmap
+                if k in cmap and RANK[cmap[k]] > RANK[bmap[k]]
+                and bmap[k] in SCORED and cmap[k] in SCORED]
+    gained = sorted(set(cmap) - set(bmap))
+    matched_gain = curr["matched"] - base["matched"]
+    stale_bits = []
+    if matched_gain > 0:
+        stale_bits.append(f"{matched_gain} more case(s) match "
+                          f"({base['matched']} -> {curr['matched']})")
+    if gained:
+        stale_bits.append(f"{len(gained)} case(s) added to the corpus")
+    if improved:
+        stale_bits.append(f"{len(improved)} case(s) improved verdict")
+
+    if stale_bits and not failures:
+        cmd = (f"./verify/check_regression.py --update "
+               f"--baseline {args.baseline} --current {args.current}")
+        print(f"\n{YEL}{BOLD}BASELINE IS STALE{RST} — this run is BETTER than "
+              f"the baseline:")
+        for bit in stale_bits:
+            print(f"  {GRN}+{RST} {bit}")
+        for line in improved[:10]:
+            print(f"    {GRN}improved{RST}  {line}")
+        print(f"\n  The gate passes -- nothing regressed -- but the published "
+              f"number\n  understates the compiler. Refresh with:\n\n    {cmd}\n")
+        _annotate("warning", "Baseline is stale (run is better than baseline)",
+                  "; ".join(stale_bits) + f". Refresh: {cmd}")
+        _summary("## :arrow_up: Baseline is stale\n\n"
+                 + "\n".join(f"- {b}" for b in stale_bits)
+                 + f"\n\nThe gate passes — nothing regressed — but the published "
+                   f"number understates the compiler.\n\n```\n{cmd}\n```")
+
     if failures:
         print(f"\n{RED}{BOLD}REGRESSION — the gate ran and FAILED{RST}")
         for f in failures:

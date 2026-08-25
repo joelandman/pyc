@@ -80,6 +80,27 @@ exist and passed every night on that basis. CI always passes
 `--require-baseline` so this fails loudly instead; green is worse than red here,
 because nobody investigates green.
 
+## Baseline staleness
+
+The gate is one-directional by design: it blocks regressions and never adopts
+improvements, because auto-adopting would let a bad run quietly become the new
+reference. The cost is that a baseline drifts stale in the *good* direction,
+silently, while every run keeps passing — the language baseline sat 15 cases
+behind before anyone noticed, and only because someone compared by hand.
+
+So a run that is better than its baseline prints **BASELINE IS STALE**, with a
+`::warning` annotation and a step-summary block naming the refresh command. It
+never fails: blocking a change for being better would be absurd.
+
+Staleness is suppressed when the run also regressed. A real failure must not be
+softened by good news sitting next to it.
+
+Refresh deliberately, after checking what moved:
+
+```bash
+./verify/check_regression.py --update --baseline <baseline> --current <run>
+```
+
 ## How nondeterminism is handled
 
 Not with normalization rules. Hand-written normalizers — strip hex addresses,
