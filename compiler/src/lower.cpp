@@ -2027,6 +2027,19 @@ private:
     // Binding as each sub-pattern succeeds would get the first of those wrong.
     struct Capture { std::string name; ir::Value value; };
 
+    // A capture takes its OWN reference the moment it is made, rather than
+    // borrowing out of the helper tuple until lower_match binds it. That is
+    // what lets a pattern release its `parts` as soon as the items are
+    // extracted -- and it is the only formulation that works for or-patterns,
+    // where an alternative's temporaries exist solely on its own path, so no
+    // shared release list at the join could name them safely.
+    void capture(std::vector<Capture>& caps, const std::string& name,
+                 const ir::Value& v, const SourceLoc& loc) {
+        emit(ir::Instr{ir::Op::IncRef, {v}, std::nullopt,
+                       Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+        caps.push_back(Capture{name, v});
+    }
+
     bool lower_match(const Match& n) {
         bool ok = true;
         ir::Value subject = lower_expr(*n.subject, &ok);
@@ -2045,11 +2058,9 @@ private:
             }
             // Pattern matched: NOW the names are bound.
             for (const Capture& cap : caps) {
-                ir::Value v = cap.value;
-                emit(ir::Instr{ir::Op::IncRef, {v}, std::nullopt,
-                               Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
-                mark_owned(v);
-                store_name(cap.name, v, n.loc);
+                // The reference was taken in capture(); store_name consumes it.
+                mark_owned(cap.value);
+                store_name(cap.name, cap.value, n.loc);
             }
             std::uint32_t body_b = new_block("match.body");
             if (c.guard) {
@@ -2158,7 +2169,7 @@ private:
                     ok = false;
                     return;
                 }
-                if (p.name) caps.push_back(Capture{*p.name, subj});
+                if (p.name) capture(caps, *p.name, subj, p.loc);
             },
             [&](const MatchOr& p) {
                 // Alternatives must bind the same names -- CPython rejects
@@ -2218,7 +2229,12 @@ private:
                                             p.loc, &ok);
                 if (!ok) return;
                 mark_owned(parts);
-                branch_if_no_match(parts, fail, "pat.seq", p.loc);
+                // `parts` is a NEW reference. Every exit from here -- no match,
+                // a sub-pattern failing, or success -- has to drop it, or it
+                // leaks on the path taken (issue #5). Failures go through a
+                // cleanup block rather than straight to `fail`.
+                std::uint32_t drop = new_block("pat.seq.drop");
+                branch_if_no_match(parts, drop, "pat.seq", p.loc);
                 // The extracted values outlive the sub-pattern tests.
                 forget(parts);
                 frame_owned_.push_back(parts);
@@ -2231,12 +2247,23 @@ private:
                     if (i == star) {
                         // The star binds the collected list itself.
                         const MatchStar& st = std::get<MatchStar>(sub->v);
-                        if (st.name) caps.push_back(Capture{*st.name, item});
+                        if (st.name) capture(caps, *st.name, item, p.loc);
                         continue;
                     }
-                    if (!lower_pattern(*sub, item, fail, caps)) { ok = false; return; }
+                    if (!lower_pattern(*sub, item, drop, caps)) { ok = false; return; }
                 }
                 frame_owned_.pop_back();
+                // Success: the captures took their own references in
+                // capture(), so nothing borrows out of `parts` any more.
+                std::uint32_t seq_ok = new_block("pat.seq.ok");
+                emit_decref(parts, p.loc);
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", seq_ok, 0, p.loc, std::nullopt});
+                set_block(drop);
+                emit_decref(parts, p.loc);
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", fail, 0, p.loc, std::nullopt});
+                set_block(seq_ok);
             },
             [&](const MatchMapping& p)  {
                 ir::Value keys = call_capi_imm("PyTuple_New", {},
@@ -2256,23 +2283,36 @@ private:
                                             p.loc, &ok, {keys});
                 if (!ok) return;
                 mark_owned(parts);
-                branch_if_no_match(parts, fail, "pat.map", p.loc);
+                std::uint32_t drop = new_block("pat.map.drop");
+                branch_if_no_match(parts, drop, "pat.map", p.loc);
                 forget(parts);
                 frame_owned_.push_back(parts);
                 for (std::size_t i = 0; i < p.patterns.size(); ++i) {
                     ir::Value item = call_capi_imm("PyTuple_GetItem", {parts},
                                                    (std::int64_t)i, 1, p.loc, &ok);
                     if (!ok) return;
-                    if (!lower_pattern(p.patterns[i], item, fail, caps)) { ok = false; return; }
+                    if (!lower_pattern(p.patterns[i], item, drop, caps)) { ok = false; return; }
                 }
                 if (want_rest) {
                     ir::Value rest = call_capi_imm("PyTuple_GetItem", {parts},
                                                    (std::int64_t)p.patterns.size(), 1,
                                                    p.loc, &ok);
                     if (!ok) return;
-                    caps.push_back(Capture{*p.rest, rest});
+                    capture(caps, *p.rest, rest, p.loc);
                 }
                 frame_owned_.pop_back();
+                // Same contract as the sequence pattern: captures hold their
+                // own references, so `parts` is released on success, and every
+                // failure exit goes through `drop` (issue #5).
+                std::uint32_t map_ok = new_block("pat.map.ok");
+                emit_decref(parts, p.loc);
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", map_ok, 0, p.loc, std::nullopt});
+                set_block(drop);
+                emit_decref(parts, p.loc);
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", fail, 0, p.loc, std::nullopt});
+                set_block(map_ok);
             },
             [&](const MatchClass& p)    {
                 ir::Value cls = lower_expr(*p.cls, &ok);
@@ -2300,23 +2340,37 @@ private:
                                                 : std::vector<ir::Value>{cls});
                 if (!ok) return;
                 mark_owned(parts);
-                branch_if_no_match(parts, fail, "pat.cls", p.loc);
+                std::uint32_t drop = new_block("pat.cls.drop");
+                branch_if_no_match(parts, drop, "pat.cls", p.loc);
                 forget(parts);
                 frame_owned_.push_back(parts);
                 for (std::size_t i = 0; i < p.patterns.size(); ++i) {
                     ir::Value item = call_capi_imm("PyTuple_GetItem", {parts},
                                                    (std::int64_t)i, 1, p.loc, &ok);
                     if (!ok) return;
-                    if (!lower_pattern(p.patterns[i], item, fail, caps)) { ok = false; return; }
+                    if (!lower_pattern(p.patterns[i], item, drop, caps)) { ok = false; return; }
                 }
                 for (std::size_t i = 0; i < p.kwd_patterns.size(); ++i) {
                     ir::Value item = call_capi_imm("PyTuple_GetItem", {parts},
                                                    (std::int64_t)(p.patterns.size() + i), 1,
                                                    p.loc, &ok);
                     if (!ok) return;
-                    if (!lower_pattern(p.kwd_patterns[i], item, fail, caps)) { ok = false; return; }
+                    if (!lower_pattern(p.kwd_patterns[i], item, drop, caps)) { ok = false; return; }
                 }
                 frame_owned_.pop_back();
+                // Same contract as the sequence pattern: captures hold their
+                // own references, so `parts` is released on success, and every
+                // failure exit goes through `drop` instead of straight to
+                // `fail` (issue #5).
+                std::uint32_t cls_ok = new_block("pat.cls.ok");
+                emit_decref(parts, p.loc);
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", cls_ok, 0, p.loc, std::nullopt});
+                set_block(drop);
+                emit_decref(parts, p.loc);
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", fail, 0, p.loc, std::nullopt});
+                set_block(cls_ok);
             },
             [&](const MatchStar& p)     {
                 // Only reachable inside a sequence pattern, which handles it.
