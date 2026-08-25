@@ -71,6 +71,20 @@ echo "verdict    ${verdict:-<none found — the Verdict step may not have run>}"
 
 rate="$(grep -oE '### \*\*[0-9.]+%\*\*  \([0-9]+/[0-9]+ files\)' <<<"$log" | head -1 \
         | sed 's/### \*\*//; s/\*\*//')"
+if [ -z "$rate" ]; then
+  # Runs before the Publish step teed to stdout have the number only in their
+  # step summary, which the log does not carry. The artifact is authoritative.
+  tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+  if gh run download "$id" -R "$REPO" -n libtest-metric -D "$tmp" >/dev/null 2>&1; then
+    rate="$(python3 -c "
+import json,glob,sys
+f=glob.glob('$tmp/*.json')
+if not f: sys.exit(1)
+d=json.load(open(f[0]))
+t=d.get('total_cases', len(d.get('results', [])))
+print(f\"{d['pass_rate']:.2f}%  ({d['matched']}/{t} files)  [from artifact]\")" 2>/dev/null)"
+  fi
+fi
 [ -n "$rate" ] && echo "published  $rate"
 
 grep -q 'BASELINE IS STALE' <<<"$log" && \

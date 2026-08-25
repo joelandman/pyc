@@ -105,7 +105,9 @@ jobs:
       - name: Publish the number
         if: always()
         run: |
-          python3 - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          # tee, not >>: output must reach the run LOG as well as the step
+          # summary, or tools/check-nightly.sh cannot read the number back.
+          python3 - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
           import json
           d = json.load(open("libtest.json"))
           print("## CPython `Lib/test/` pass rate\n")
