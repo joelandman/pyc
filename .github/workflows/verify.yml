@@ -36,91 +36,11 @@ jobs:
 
       # LLVM 22 is newer than what ubuntu-24.04 ships, so it comes from
       # apt.llvm.org. This is the slowest install step; cache it.
-      # No apt cache here on purpose. One was tried and removed: caching
-      # /var/cache/apt/archives failed to save (root-owned) and would have been
-      # empty anyway (apt deletes .debs after install). Both were fixed, the
-      # cache then restored 22 .debs correctly -- and bought nothing, because
-      # llvm.sh runs its own apt-get update and re-resolves from apt.llvm.org
-      # regardless of what is in the archive directory. Timings across the
-      # three runs (9m29s before, 7m39s populating, 9m44s restoring) are runner
-      # noise, not a trend. If this is ever worth revisiting, cache the
-      # INSTALLED toolchain (/usr/lib/llvm-22), not the packages.
-      - name: Install toolchain
-        run: |
-          set -euxo pipefail
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
-          chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh 22
-          # The new tree needs clang++ (to compile it, and to assemble the
-          # LLVM IR it emits) plus CPython's build deps for the sysroot.
-          # libmpdec and the LLVM CMake package were old-tree dependencies:
-          # its runtime reimplemented decimal, which now comes from CPython.
-          sudo apt-get install -y --no-install-recommends \
-            zlib1g-dev libssl-dev libffi-dev libbz2-dev liblzma-dev \
-            libsqlite3-dev libreadline-dev libncurses-dev uuid-dev
-          echo "PYC_CXX=clang++-22" >> "$GITHUB_ENV"
-
-      # The runner's system python3 is 3.12, and pyc's frontend calls
-      # PyObject_GetOptionalAttrString, which CPython added in 3.13 -- so the
-      # tree has an undeclared minimum of CPython >= 3.13 just to BUILD. It
-      # compiles on the dev machine only because CMake finds a local 3.14.
-      #
-      # Building our own sysroot fixes that AND makes CI's differential oracle
-      # the same CPython the baseline was recorded against, which a system
-      # python3 could never be. --no-pgo because PGO costs 20-40 min and only
-      # affects speed, never observable behaviour, so the oracle is identical.
-      # Split restore/save on purpose. actions/cache@v4 saves in a POST
-      # step at job end, and GitHub skips post steps when the job fails --
-      # so every metric run built the PGO sysroot, failed later at the
-      # gate, and discarded it. The next run then rebuilt from cold, a
-      # trap that persists until one run happens to go green end to end.
-      # Saving immediately after the build decouples it from what the
-      # gate later decides.
-      #
-      # No restore-keys: a prefix hit would restore a sysroot built by a
-      # DIFFERENT version of the build script while leaving cache-hit
-      # false, so the build step would rerun and the script would abort on
-      # the already-populated prefix.
-      - name: Restore CPython sysroot
-        id: sysroot
-        uses: actions/cache/restore@v4
+      - name: Set up pyc
+        uses: ./.github/actions/setup-pyc
         with:
-          path: ~/opt/py-sysroots
-          key: sysroot-cp314-3.14.7-tier1-nopgo-${{ hashFiles('tools/build-python-sysroot.sh') }}
-
-      - name: Build CPython sysroot
-        if: steps.sysroot.outputs.cache-hit != 'true'
-        run: |
-          # --no-wheel-check keeps the PR gate hermetic: a PyPI outage must not
-          # fail unrelated PRs. The nightly metric proves wheels with
-          # --require-wheel instead.
-          ./tools/build-python-sysroot.sh --version 3.14.7 --no-pgo \
-            --no-wheel-check --jobs "$(nproc)"
-
-      - name: Save CPython sysroot
-        if: steps.sysroot.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/opt/py-sysroots
-          key: sysroot-cp314-3.14.7-tier1-nopgo-${{ hashFiles('tools/build-python-sysroot.sh') }}
-
-      - name: Record oracle
-        run: |
-          echo "SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1" >> "$GITHUB_ENV"
-          "$HOME/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14" -VV
-
-      - name: Build the compiler
-        run: |
-          set -euxo pipefail
-          # The new tree has no CMake yet: it is a handful of translation
-          # units, so it is built directly. Replace this when a build system
-          # lands rather than growing the command.
-          clang++-22 -std=c++20 -O2 -I compiler/include \
-            compiler/src/pyc_lower_main.cpp compiler/src/lower.cpp \
-            compiler/src/scope.cpp compiler/src/ir.cpp compiler/src/codegen.cpp \
-            compiler/src/capi.cpp compiler/src/ast_support.cpp \
-            compiler/src/json.cpp -o "$RUNNER_TEMP/pyc_lower"
-          echo "PYC_LOWER=$RUNNER_TEMP/pyc_lower" >> "$GITHUB_ENV"
+          pgo: "false"          # only affects speed; the oracle is identical
+          wheel-check: "none"   # keep the PR gate hermetic; metric.yml proves wheels
 
       - name: Static checks
         run: |

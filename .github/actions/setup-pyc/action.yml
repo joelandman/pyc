@@ -1,0 +1,138 @@
+name: Set up pyc
+description: >
+  Install the toolchain, provide a CPython sysroot, and build the compiler.
+  Shared by verify.yml and metric.yml so the two cannot drift apart -- they
+  already did once: metric.yml missed the switch to the new tree and spent
+  weeks measuring the OLD compiler while reporting it as the project's metric.
+
+inputs:
+  cpython-version:
+    description: CPython version for the sysroot.
+    required: false
+    default: "3.14.7"
+  pgo:
+    description: >
+      Build the sysroot with PGO+LTO. Costs 20-40 min and affects only speed,
+      never observable behaviour -- so the differential oracle is identical
+      either way. The PR gate turns it off; the nightly metric leaves it on.
+    required: false
+    default: "false"
+  wheel-check:
+    description: >
+      "require" makes a real C-extension wheel load a hard gate (CHARTER I7).
+      "none" skips it, keeping the PR gate hermetic: a PyPI outage must not
+      fail unrelated PRs. The nightly metric proves wheels instead.
+    required: false
+    default: "none"
+
+outputs:
+  sysroot:
+    description: Absolute path to the CPython sysroot.
+    value: ${{ steps.paths.outputs.sysroot }}
+  lower:
+    description: Absolute path to the built pyc_lower binary.
+    value: ${{ steps.compiler.outputs.lower }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install toolchain
+      shell: bash
+      run: |
+        set -euxo pipefail
+        # LLVM 22 is newer than ubuntu-24.04 ships, so it comes from
+        # apt.llvm.org. The new tree needs clang++ both to compile itself and
+        # to assemble the LLVM IR it emits, plus CPython's build deps for the
+        # sysroot. cmake/ninja/pcre2/libmpdec were OLD-tree dependencies: that
+        # runtime reimplemented decimal, which now comes from CPython.
+        wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+        chmod +x /tmp/llvm.sh
+        sudo /tmp/llvm.sh 22
+        sudo apt-get install -y --no-install-recommends \
+          zlib1g-dev libssl-dev libffi-dev libbz2-dev liblzma-dev \
+          libsqlite3-dev libreadline-dev libncurses-dev uuid-dev
+        echo "PYC_CXX=clang++-22" >> "$GITHUB_ENV"
+
+    - name: Resolve sysroot paths
+      id: paths
+      shell: bash
+      run: |
+        set -euo pipefail
+        xy="$(echo '${{ inputs.cpython-version }}' | cut -d. -f1,2)"
+        name="cp${xy//./}-${{ inputs.cpython-version }}-tier1"
+        suffix=""
+        [ '${{ inputs.pgo }}' = 'true' ] || suffix="-nopgo"
+        {
+          echo "sysroot=$HOME/opt/py-sysroots/$name"
+          echo "xy=$xy"
+          echo "cache-key=sysroot-${name}${suffix}"
+        } >> "$GITHUB_OUTPUT"
+
+    # Split restore/save on purpose. actions/cache@v4 saves in a POST step at
+    # job end, and GitHub skips post steps when the job fails -- so every
+    # metric run built the PGO sysroot, failed later at the gate, and discarded
+    # it, rebuilding from cold next time. That trap persists until a run
+    # happens to go green end to end. Saving immediately after the build
+    # decouples it from whatever the gate later decides.
+    #
+    # No restore-keys: a prefix hit would restore a sysroot built by a
+    # DIFFERENT version of the build script while leaving cache-hit false, so
+    # the build step would rerun and the script would abort on the
+    # already-populated prefix.
+    - name: Restore CPython sysroot
+      id: sysroot-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/opt/py-sysroots
+        key: ${{ steps.paths.outputs.cache-key }}-${{ hashFiles('tools/build-python-sysroot.sh') }}
+
+    - name: Build CPython sysroot
+      if: steps.sysroot-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euxo pipefail
+        args=(--version '${{ inputs.cpython-version }}' --jobs "$(nproc)")
+        [ '${{ inputs.pgo }}' = 'true' ] || args+=(--no-pgo)
+        case '${{ inputs.wheel-check }}' in
+          require) args+=(--require-wheel) ;;
+          *)       args+=(--no-wheel-check) ;;
+        esac
+        ./tools/build-python-sysroot.sh "${args[@]}"
+
+    - name: Save CPython sysroot
+      if: steps.sysroot-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/opt/py-sysroots
+        key: ${{ steps.paths.outputs.cache-key }}-${{ hashFiles('tools/build-python-sysroot.sh') }}
+
+    # The runner's system python3 is 3.12, and the frontend calls
+    # PyObject_GetOptionalAttrString, added in CPython 3.13 -- so the tree has
+    # an undeclared minimum of >= 3.13 just to BUILD. Using our own sysroot
+    # fixes that AND makes CI's differential oracle the same CPython the
+    # baseline was recorded against, which a system python3 could never be.
+    - name: Record oracle
+      shell: bash
+      run: |
+        set -euo pipefail
+        sysroot='${{ steps.paths.outputs.sysroot }}'
+        test -x "$sysroot/bin/python${{ steps.paths.outputs.xy }}" \
+          || { echo "no interpreter in $sysroot" >&2; exit 1; }
+        echo "SYSROOT=$sysroot" >> "$GITHUB_ENV"
+        "$sysroot/bin/python${{ steps.paths.outputs.xy }}" -VV
+
+    - name: Build the compiler
+      id: compiler
+      shell: bash
+      run: |
+        set -euxo pipefail
+        # The new tree has no build system yet: it is a handful of translation
+        # units, so it is built directly. Replace this when one lands, rather
+        # than growing the command.
+        clang++-22 -std=c++20 -O2 -I compiler/include \
+          compiler/src/pyc_lower_main.cpp compiler/src/lower.cpp \
+          compiler/src/scope.cpp compiler/src/ir.cpp compiler/src/codegen.cpp \
+          compiler/src/capi.cpp compiler/src/ast_support.cpp \
+          compiler/src/json.cpp -o "$RUNNER_TEMP/pyc_lower"
+        echo "PYC_LOWER=$RUNNER_TEMP/pyc_lower" >> "$GITHUB_ENV"
+        echo "lower=$RUNNER_TEMP/pyc_lower" >> "$GITHUB_OUTPUT"
