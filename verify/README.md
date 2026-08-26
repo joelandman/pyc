@@ -7,7 +7,8 @@ its results may not be overridden by them (`rebuild/AGENT_DIRECTIVES.md`, A5).
 
 **No test in this tree stores an expected output.** The oracle is a real
 CPython binary, executed at run time, every run. There is deliberately nowhere
-in `measure.py` to put an expected value.
+in `measure.py` to put an expected value. The volatile-text rules below are not
+an exception: they name shapes that cannot be equal twice, never values.
 
 This is CHARTER I5, and it exists because of how the old tree drifted: 662
 inline `(source, expected)` pairs, with the expected string documented as the
@@ -158,14 +159,65 @@ Refresh deliberately, after checking what moved:
 
 ## How nondeterminism is handled
 
-Not with normalization rules. Hand-written normalizers — strip hex addresses,
-strip timings, sort set output — are a standing invitation to mask a real
-divergence, and you find out years later that the masking rule was hiding a
-bug.
+### Values that cannot be equal twice are collapsed first
 
-Instead the harness **runs the oracle twice — before and after the subject,
+A program run at two different times, under two different loads, at two
+different heap layouts, **must** print a different elapsed time, a different
+clock reading and a different address. Comparing those bytes measures the clock
+and the allocator, not the compiler. Six patterns are collapsed before any
+comparison — including the oracle-against-oracle one:
+
+| rule | shape | becomes |
+|---|---|---|
+| `elapsed` | `in 0.001s` (unittest's trailer) | `in <ELAPSED>s` |
+| `heap_address` | `0x7f3c605a4c20` **only after `" at "`** | `0xADDR` |
+| `asctime` | `Wed Aug 26 13:14:57 2026` | `<ASCTIME>` |
+| `iso_datetime` | `2026-08-26T13:14:57.123` | `<ISOTIME>` |
+| `clock_time` | `13:14:57` | `<TIME>` |
+| `iso_date` | `2026-08-26` | `<DATE>` |
+
+The guard rails matter more than the list:
+
+- **Both sides get identical treatment.** Nothing is applied to pyc that is not
+  applied to CPython.
+- **Each rule matches one shape.** A value of that shape collapses; anything
+  else is untouched. `Ran 6 tests` still differs from `Ran 7 tests`, and
+  `0xDEADBEEF` in a program's own output is not an address and is left alone.
+- **Raw output is what gets stored and shown.** Normalization decides only
+  whether a difference is *reported*.
+- **Every rule that fires is named in the record** (`normalizers` per case, and
+  a summary in the run), so a masked difference can be traced to its mask.
+
+**The cost, stated plainly:** a pyc bug producing a *well-formed* wrong
+timestamp is invisible here. That is the price of not letting the clock fail
+the build, and it is why nothing joins this list without a measured case that
+needs it.
+
+What is deliberately **not** normalized, though it also varies: pids, ephemeral
+ports, temp directory names, and anything from an unseeded `random`. Those are
+the program choosing to print a coin flip, not an artefact of when the
+measurement ran, and they stay visible as `ORACLE_UNSTABLE`.
+
+This replaced a blanket "no normalization" rule. The reasoning for that rule —
+hand-written normalizers mask real divergences — is sound and is why the list
+is six anchored patterns rather than a free hand to rewrite output. But the
+rule as written made the instrument compare the clock against itself and
+report the result as a compiler property, which is worse.
+
+### Timeouts get a second attempt at double the limit
+
+A timeout is as much a statement about the machine as about the program: a
+loaded runner, a cold cache, a slow first import. So any run that times out is
+retried once at **2×** the limit. Only if that also expires is the case a
+`TIMEOUT` — and it is reported as one on whichever side it happened, oracle
+included. There is no such thing as an "oracle failure" here; CPython taking
+too long is a fact about the timeout, not a broken measurement.
+
+### An unstable oracle is reported, never dropped
+
+The harness **runs the oracle twice — before and after the subject,
 spanning compilation** — and flags any case whose own output is not
-reproducible as `ORACLE_UNSTABLE`. It is reported, not excluded: dropping a
+reproducible *after normalization* as `ORACLE_UNSTABLE`. It is reported, not excluded: dropping a
 case from the denominator is a decision the instrument should not be making on
 its own, and the old quarantine silently discarded 82 of 389 `Lib/test`
 measurements it had already taken.
@@ -215,14 +267,27 @@ labelled "the compiled program does not reproduce across runs". Compiling
 variation is `Ran 6 tests in 0.000s` → `0.001s` on stderr. Nothing in pyc's
 output was nondeterministic in any of them.
 
-The stdout cases cannot ever match, for the same reason `case_507.py` cannot:
-the program's answer contains an address, a pid, a port or a coin flip. They
-are `ORACLE_UNSTABLE`, counted against the rate, and honest about why.
+Collapsing volatile text settles most of this table. Measured on the six worst
+offenders, the change is not marginal:
+
+| case | before | after |
+|---|---|---|
+| `test_strftime` | quarantined | **passes** |
+| `test_codecmaps_kr` | quarantined | **passes** |
+| `test_ucn` | quarantined | `EXIT_DIFFERS` — a real failure it was hiding |
+| `test_unicodedata` | quarantined | `EXIT_DIFFERS` — a real failure it was hiding |
+| `test_socketserver` | quarantined | `ORACLE_UNSTABLE`, evidence names the port |
+| `test_audit` | quarantined | `DID_NOT_COMPILE`, with the line and construct |
+
+Two clean passes recovered, and two genuine compiler failures that quarantine
+had been swallowing. Only the cases whose answer really does contain a coin
+flip — a pid, a port, a temp path, an unseeded `random` — remain
+`ORACLE_UNSTABLE`, counted against the rate and honest about why.
 
 `PYTHONHASHSEED=0`, `PYTHON_COLORS=0` and `NO_COLOR=1` are pinned for **both
-sides**. That is not normalization — nothing either program prints is
-rewritten. It fixes what they are run *under*, so a difference is a difference
-in the programs rather than in the invoking shell.
+sides**. This is separate from the collapsing above: it fixes what the programs
+are run *under*, so a difference is a difference in the programs rather than in
+the invoking shell.
 
 ## Reading a result
 

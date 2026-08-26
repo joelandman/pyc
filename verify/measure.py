@@ -27,12 +27,80 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
-SCHEMA = 3
+SCHEMA = 4
+
+
+# --------------------------------------------------------------------------
+# Volatile text
+#
+# A value that CANNOT be the same twice is not evidence. Two runs of the same
+# program at different times, under different load, at different heap layouts,
+# must print a different elapsed time, a different clock reading and a
+# different address -- so comparing those bytes measures the clock and the
+# allocator, not the compiler.
+#
+# This is the one place where output is rewritten before comparison, and it is
+# deliberately the narrowest thing that works:
+#
+#   * Both sides get the identical treatment. Nothing is applied to pyc that is
+#     not applied to CPython.
+#   * Each pattern matches one SHAPE. A value of that shape collapses to a
+#     placeholder; anything else is untouched. pyc printing a malformed
+#     timestamp, or an address where CPython prints a number, still differs.
+#   * Raw output is what gets stored and shown. Normalisation decides only
+#     whether a difference is reported.
+#   * Every pattern that fires is named in the record, so a masked difference
+#     can always be traced back to the rule that masked it.
+#
+# The cost is real and must be stated: a pyc bug that produces a WELL-FORMED
+# wrong timestamp is invisible here. That is the price of not having the clock
+# fail the build, and it is why nothing gets added to this list without a
+# measured case that needs it.
+#
+# What is NOT normalised, though it also varies: pids, ephemeral ports, temp
+# directory names, and anything from an unseeded `random`. Those stay visible
+# as ORACLE_UNSTABLE -- they are the program choosing to print a coin flip, not
+# an artefact of when the measurement happened to run.
+# --------------------------------------------------------------------------
+
+_MONTH = "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
+_DAY = "Mon|Tue|Wed|Thu|Fri|Sat|Sun"
+
+VOLATILE: tuple[tuple[str, re.Pattern[str], str], ...] = (
+    # unittest's trailer: "Ran 6 tests in 0.001s". The count is meaningful and
+    # is left alone; only the duration goes.
+    ("elapsed", re.compile(r"\bin \d+\.\d+s\b"), "in <ELAPSED>s"),
+    # "<foo object at 0x7f3c605a4c20>", "<memory at 0x...>". Anchored on " at "
+    # so a bare hex number in a program's output is not touched.
+    ("heap_address", re.compile(r"(?<= at )0x[0-9a-fA-F]+"), "0xADDR"),
+    # time.asctime / ctime: "Wed Aug 26 13:14:57 2026"
+    ("asctime", re.compile(
+        rf"\b(?:{_DAY}) (?:{_MONTH}) [ \d]\d \d{{2}}:\d{{2}}:\d{{2}} \d{{4}}\b"),
+     "<ASCTIME>"),
+    # ISO 8601, with or without fractional seconds.
+    ("iso_datetime", re.compile(
+        r"\b\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?\b"), "<ISOTIME>"),
+    # Whatever clock text the first two did not claim.
+    ("clock_time", re.compile(r"\b\d{2}:\d{2}:\d{2}\b"), "<TIME>"),
+    ("iso_date", re.compile(r"\b\d{4}-\d{2}-\d{2}\b"), "<DATE>"),
+)
+
+
+def normalize(text: str) -> tuple[str, list[str]]:
+    """Collapse values that cannot be equal twice. Returns the text and the
+    names of the rules that actually fired, so the masking is auditable."""
+    applied: list[str] = []
+    for name, pattern, replacement in VOLATILE:
+        text, n = pattern.subn(replacement, text)
+        if n:
+            applied.append(name)
+    return text, applied
 
 
 class Flag:
@@ -64,9 +132,26 @@ class Run:
     stderr: str = ""
     exit: int = 0
     timed_out: bool = False
+    attempts: int = 1          # 2 when the first attempt timed out and it was retried
+    timeout_used: float = 0.0  # the limit the FINAL attempt ran under
+
+    @property
+    def norm_stdout(self) -> str:
+        return normalize(self.stdout)[0]
+
+    @property
+    def norm_stderr(self) -> str:
+        return normalize(self.stderr)[0]
+
+    @property
+    def normalizers(self) -> list[str]:
+        return sorted(set(normalize(self.stdout)[1]) | set(normalize(self.stderr)[1]))
 
     def same_as(self, other: "Run") -> bool:
-        return (self.stdout == other.stdout and self.stderr == other.stderr
+        """Compared after normalisation, so two runs that differ only in when
+        they happened are the same run."""
+        return (self.norm_stdout == other.norm_stdout
+                and self.norm_stderr == other.norm_stderr
                 and self.exit == other.exit)
 
 
@@ -96,6 +181,16 @@ class Measurement:
     flags: list[str] = dataclasses.field(default_factory=list)
 
     @property
+    def normalizers(self) -> list[str]:
+        """Which volatile-text rules fired on this case, either side. Recorded
+        so a masked difference can be traced to the rule that masked it."""
+        out: set[str] = set()
+        for r in (self.oracle, self.subject):
+            if r is not None:
+                out.update(r.normalizers)
+        return sorted(out)
+
+    @property
     def impactful(self) -> bool:
         return any(f in Flag.IMPACTFUL for f in self.flags)
 
@@ -107,7 +202,8 @@ class Measurement:
         """The first differing stdout line, as evidence rather than a summary."""
         if not (self.oracle and self.subject):
             return ""
-        a, b = self.oracle.stdout.splitlines(), self.subject.stdout.splitlines()
+        a = self.oracle.norm_stdout.splitlines()
+        b = self.subject.norm_stdout.splitlines()
         for i in range(max(len(a), len(b))):
             x = a[i] if i < len(a) else "<no line>"
             y = b[i] if i < len(b) else "<no line>"
@@ -117,15 +213,32 @@ class Measurement:
 
 
 def _exec(cmd: list[str], *, cwd: Path, stdin: str, timeout: float,
-          env: dict[str, str] | None = None) -> Run:
-    try:
-        p = subprocess.run(cmd, cwd=cwd, input=stdin, capture_output=True,
-                           text=True, timeout=timeout, env=env, errors="replace")
-    except subprocess.TimeoutExpired:
-        return Run(timed_out=True, exit=-1)
-    except OSError as e:
-        return Run(stderr=f"exec failed: {e}", exit=127)
-    return Run(p.stdout, p.stderr, p.returncode)
+          env: dict[str, str] | None = None, retries: int = 1) -> Run:
+    """Run once; on a timeout, run again with DOUBLE the limit.
+
+    A timeout is a statement about the machine as much as the program -- a
+    loaded runner, a cold cache, a slow first import. Retrying at 2x separates
+    "too slow for this limit right now" from "does not terminate", and only the
+    second is worth reporting. The retry is the whole mechanism: if the doubled
+    limit also expires, the run is a TIMEOUT and is reported as one, on
+    whichever side it happened. It is never an oracle failure.
+    """
+    limit = timeout
+    for attempt in range(1, retries + 2):
+        try:
+            p = subprocess.run(cmd, cwd=cwd, input=stdin, capture_output=True,
+                               text=True, timeout=limit, env=env, errors="replace")
+        except subprocess.TimeoutExpired:
+            if attempt <= retries:
+                limit *= 2
+                continue
+            return Run(timed_out=True, exit=-1, attempts=attempt, timeout_used=limit)
+        except OSError as e:
+            return Run(stderr=f"exec failed: {e}", exit=127, attempts=attempt,
+                       timeout_used=limit)
+        return Run(p.stdout, p.stderr, p.returncode, attempts=attempt,
+                   timeout_used=limit)
+    raise AssertionError("unreachable")
 
 
 def child_env() -> dict[str, str]:
@@ -206,22 +319,33 @@ class Measurer:
             # itself; two adjacent runs would agree and hide it.
             m.oracle_again = self._run_oracle(local_case, cwd)
 
-        if not m.oracle.same_as(m.oracle_again):
-            # CPython disagreeing with CPython. The case cannot serve as a
-            # measurement until that is understood, and saying so is more
-            # useful than dropping it.
+        if (not m.oracle.timed_out and not m.oracle_again.timed_out
+                and not m.oracle.same_as(m.oracle_again)):
+            # CPython disagreeing with CPython, AFTER normalisation -- so this
+            # is no longer the clock or the allocator. What is left is the
+            # program printing a pid, a port, a temp path or a coin flip. The
+            # case cannot serve as a measurement until that is understood, and
+            # saying so is more useful than dropping it.
             m.flags.append(Flag.ORACLE_UNSTABLE)
 
-        if m.subject is not None:
-            if m.subject.timed_out:
-                m.flags.append(Flag.TIMEOUT)
-            else:
-                if m.subject.stdout != m.oracle.stdout:
-                    m.flags.append(Flag.STDOUT_DIFFERS)
-                if m.subject.exit != m.oracle.exit:
-                    m.flags.append(Flag.EXIT_DIFFERS)
-                if m.subject.stderr != m.oracle.stderr:
-                    m.flags.append(Flag.STDERR_DIFFERS)
+        # A timeout on EITHER side is a timeout, reported as one. Both sides
+        # already got a second attempt at double the limit, so reaching here
+        # means the program did not finish in 3x its budget.
+        if m.oracle.timed_out or (m.subject is not None and m.subject.timed_out):
+            m.flags.append(Flag.TIMEOUT)
+            m.diagnostic = m.diagnostic or (
+                "CPython did not finish within "
+                f"{m.oracle.timeout_used:g}s" if m.oracle.timed_out else
+                f"the binary did not finish within {m.subject.timeout_used:g}s")
+        elif m.subject is not None:
+            # Normalised on both sides: a value that cannot be equal twice is
+            # not evidence of anything the compiler did.
+            if m.subject.norm_stdout != m.oracle.norm_stdout:
+                m.flags.append(Flag.STDOUT_DIFFERS)
+            if m.subject.exit != m.oracle.exit:
+                m.flags.append(Flag.EXIT_DIFFERS)
+            if m.subject.norm_stderr != m.oracle.norm_stderr:
+                m.flags.append(Flag.STDERR_DIFFERS)
         return m
 
 

@@ -162,6 +162,20 @@ def report(out: list[Measurement], args, elapsed: float,
     print(f"\n  {BOLD}pass rate  {rate:6.2f}%{RST}  ({passing}/{total} with no "
           f"impactful difference; {clean} byte-identical throughout)")
 
+    norm = Counter(n for r in out for n in r.normalizers)
+    if norm:
+        print(f"\n  {DIM}volatile text collapsed before comparing "
+              f"(both sides, identically):{RST}")
+        for n, k in norm.most_common():
+            print(f"    {DIM}{n:<16} {k:>5} case(s){RST}")
+
+    retried = [r for r in out
+               for run in (r.oracle, r.oracle_again, r.subject)
+               if run is not None and run.attempts > 1]
+    if retried:
+        print(f"\n  {DIM}{len(retried)} run(s) timed out once and were retried "
+              f"at double the limit{RST}")
+
     if counts[Flag.ORACLE_UNSTABLE]:
         print(f"\n  {YEL}{counts[Flag.ORACLE_UNSTABLE]} case(s) where CPython "
               f"disagreed with CPython.{RST}")
@@ -196,6 +210,7 @@ def report(out: list[Measurement], args, elapsed: float,
                 "path": str(r.case.path),
                 "flags": r.flags,
                 "diagnostic": r.diagnostic,
+                "normalizers": r.normalizers,
                 "exit": ({"oracle": r.oracle.exit, "subject": r.subject.exit}
                          if r.oracle and r.subject else None),
             } for r in sorted(out, key=lambda x: x.case.name)],
