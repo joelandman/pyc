@@ -14,13 +14,13 @@
     ]
   },
   "total": 759,
-  "passing": 740,
-  "clean": 733,
-  "pass_rate": 97.49670619235836,
+  "passing": 748,
+  "clean": 741,
+  "pass_rate": 98.55072463768116,
   "counts": {
-    "STDOUT_DIFFERS": 19,
-    "EXIT_DIFFERS": 12,
-    "STDERR_DIFFERS": 19
+    "STDOUT_DIFFERS": 11,
+    "EXIT_DIFFERS": 8,
+    "STDERR_DIFFERS": 15
   },
   "results": [
     {
@@ -8778,25 +8778,19 @@
     {
       "case": "comp_cell_arith.py",
       "path": "verify/corpus/known-gaps/comp_cell_arith.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "comp_cell_bool_p0.py",
       "path": "verify/corpus/known-gaps/comp_cell_bool_p0.py",
-      "flags": [
-        "STDOUT_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -8808,33 +8802,25 @@
     {
       "case": "comp_cell_condition.py",
       "path": "verify/corpus/known-gaps/comp_cell_condition.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "comp_cell_dict_set.py",
       "path": "verify/corpus/known-gaps/comp_cell_dict_set.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -8852,13 +8838,9 @@
     {
       "case": "comp_cell_nested.py",
       "path": "verify/corpus/known-gaps/comp_cell_nested.py",
-      "flags": [
-        "STDOUT_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
-      "normalizers": [
-        "heap_address"
-      ],
+      "normalizers": [],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
@@ -8868,29 +8850,21 @@
     {
       "case": "comp_cell_param.py",
       "path": "verify/corpus/known-gaps/comp_cell_param.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "comp_cell_str_p0.py",
       "path": "verify/corpus/known-gaps/comp_cell_str_p0.py",
-      "flags": [
-        "STDOUT_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
-      "normalizers": [
-        "heap_address"
-      ],
+      "normalizers": [],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
@@ -8900,13 +8874,9 @@
     {
       "case": "comp_cell_value_p0.py",
       "path": "verify/corpus/known-gaps/comp_cell_value_p0.py",
-      "flags": [
-        "STDOUT_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
-      "normalizers": [
-        "heap_address"
-      ],
+      "normalizers": [],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,

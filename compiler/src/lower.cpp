@@ -615,7 +615,22 @@ private:
         if (!*ok) return {};
         mark_owned(iter);
 
+        // A name this comprehension reads is, by that fact alone, a CELL in
+        // the enclosing function: nested_reads() treats a comprehension body
+        // as nested, so `n` in `[n * i for i in ...]` gets a cell slot purely
+        // because the comprehension mentions it. LoadLocal on that slot yields
+        // the CELL, not the value -- so the hidden argument has to be marked
+        // as a cell inside the synthetic function too, or the body reads the
+        // box instead of its contents. It did, and the result was a P0: a cell
+        // has no __bool__ and no __len__, so `[bool(flag) for ...]` answered
+        // True for a False flag, at exit 0, with no diagnostic.
+        //
+        // The cell is passed THROUGH rather than dereferenced here, so a read
+        // in the body goes through the same cell the enclosing scope holds.
+        // Dereferencing at capture time would snapshot the value and diverge
+        // if anything rebinds it while the comprehension runs (I2).
         std::vector<ir::Value> capvals;
+        std::vector<std::string> cell_caps;
         for (const std::string& c : caps) {
             ir::Value v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             auto it = locals_.find(c);
@@ -623,6 +638,7 @@ private:
                            it->second, 0, loc, make_landing_pad(loc)});
             mark_owned(v);
             capvals.push_back(v);
+            if (cells_.count(c)) cell_caps.push_back(c);
         }
 
         std::vector<std::string> params{".0"};
@@ -633,6 +649,9 @@ private:
 
         std::string fname = std::string("<") + kind + "comp>";
         FnScope sc = begin_function(fname, params, locals);
+        // begin_function clears cells_; re-declare the captured cells so
+        // lower_name emits cell.get for them rather than a raw load.
+        for (const std::string& c : cell_caps) cells_[c] = locals_[c];
         bool bok = true;
         ir::Value acc;
         if (std::string(kind) == "list")
