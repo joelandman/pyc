@@ -164,10 +164,13 @@ def report(out: list[Measurement], args, elapsed: float,
 
     norm = Counter(n for r in out for n in r.normalizers)
     if norm:
+        varied = sum(1 for r in out if r.oracle_varied)
         print(f"\n  {DIM}volatile text collapsed before comparing "
               f"(both sides, identically):{RST}")
         for n, k in norm.most_common():
             print(f"    {DIM}{n:<16} {k:>5} case(s){RST}")
+        print(f"    {DIM}{'':16} {varied:>5} case(s) had an oracle that varied, "
+              f"so clock rules applied there{RST}")
 
     retried = [r for r in out
                for run in (r.oracle, r.oracle_again, r.subject)
@@ -211,6 +214,7 @@ def report(out: list[Measurement], args, elapsed: float,
                 "flags": r.flags,
                 "diagnostic": r.diagnostic,
                 "normalizers": r.normalizers,
+                "oracle_varied": r.oracle_varied,
                 "exit": ({"oracle": r.oracle.exit, "subject": r.subject.exit}
                          if r.oracle and r.subject else None),
             } for r in sorted(out, key=lambda x: x.case.name)],

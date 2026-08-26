@@ -72,6 +72,25 @@ SCHEMA = 4
 _MONTH = "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
 _DAY = "Mon|Tue|Wed|Thu|Fri|Sat|Sun"
 
+# Rules split by whether a value of that shape could ever be a STABLE
+# correctness property:
+#
+#   UNCONDITIONAL — an elapsed duration and a heap address are never something
+#   a program deterministically computes and a test deterministically checks.
+#   Collapsing them can hide nothing, so they are always applied.
+#
+#   ON_DEMAND — a date or a clock reading CAN be deterministic. datetime
+#   arithmetic on fixed inputs prints a fixed date, and that is exactly the
+#   kind of answer this harness exists to check. So these apply only to a case
+#   whose oracle has DEMONSTRATED, by disagreeing with itself across the two
+#   runs, that its output really does depend on when it ran.
+#
+# verify/corpus/language/case_509.py is why the split exists: it computes
+# date(2024, 3, 15) + timedelta(days=10) and prints the result. Under a blanket
+# date rule, pyc answering 2024-03-24 instead of 2024-03-25 would have compared
+# equal. Its oracle is perfectly reproducible, so it now gets a strict
+# byte-for-byte comparison and the date arithmetic stays checked.
+
 VOLATILE: tuple[tuple[str, re.Pattern[str], str], ...] = (
     # unittest's trailer: "Ran 6 tests in 0.001s". The count is meaningful and
     # is left alone; only the duration goes.
@@ -92,11 +111,22 @@ VOLATILE: tuple[tuple[str, re.Pattern[str], str], ...] = (
 )
 
 
-def normalize(text: str) -> tuple[str, list[str]]:
-    """Collapse values that cannot be equal twice. Returns the text and the
-    names of the rules that actually fired, so the masking is auditable."""
+UNCONDITIONAL = frozenset({"elapsed", "heap_address"})
+ON_DEMAND = frozenset({"asctime", "iso_datetime", "clock_time", "iso_date"})
+
+
+def normalize(text: str, rules: frozenset[str] = UNCONDITIONAL
+              ) -> tuple[str, list[str]]:
+    """Collapse values that cannot be equal twice.
+
+    Returns the text and the names of the rules that actually fired, so the
+    masking is auditable. `rules` selects which are eligible; the default is
+    the set that can never hide a correctness property.
+    """
     applied: list[str] = []
     for name, pattern, replacement in VOLATILE:
+        if name not in rules:
+            continue
         text, n = pattern.subn(replacement, text)
         if n:
             applied.append(name)
@@ -135,24 +165,17 @@ class Run:
     attempts: int = 1          # 2 when the first attempt timed out and it was retried
     timeout_used: float = 0.0  # the limit the FINAL attempt ran under
 
-    @property
-    def norm_stdout(self) -> str:
-        return normalize(self.stdout)[0]
+    def norm(self, rules: frozenset[str]) -> tuple[str, str]:
+        return normalize(self.stdout, rules)[0], normalize(self.stderr, rules)[0]
 
-    @property
-    def norm_stderr(self) -> str:
-        return normalize(self.stderr)[0]
+    def rules_fired(self, rules: frozenset[str]) -> set[str]:
+        return set(normalize(self.stdout, rules)[1]) | set(
+            normalize(self.stderr, rules)[1])
 
-    @property
-    def normalizers(self) -> list[str]:
-        return sorted(set(normalize(self.stdout)[1]) | set(normalize(self.stderr)[1]))
-
-    def same_as(self, other: "Run") -> bool:
-        """Compared after normalisation, so two runs that differ only in when
-        they happened are the same run."""
-        return (self.norm_stdout == other.norm_stdout
-                and self.norm_stderr == other.norm_stderr
-                and self.exit == other.exit)
+    def same_as(self, other: "Run", rules: frozenset[str] = UNCONDITIONAL) -> bool:
+        """Two runs that differ only in values of a volatile shape are the same
+        run. Which shapes count is the caller's decision."""
+        return (self.norm(rules) == other.norm(rules) and self.exit == other.exit)
 
 
 @dataclasses.dataclass
@@ -179,6 +202,7 @@ class Measurement:
     oracle_again: Run | None = None
     subject: Run | None = None
     flags: list[str] = dataclasses.field(default_factory=list)
+    rules: frozenset[str] = UNCONDITIONAL
 
     @property
     def normalizers(self) -> list[str]:
@@ -187,8 +211,14 @@ class Measurement:
         out: set[str] = set()
         for r in (self.oracle, self.subject):
             if r is not None:
-                out.update(r.normalizers)
+                out.update(r.rules_fired(self.rules))
         return sorted(out)
+
+    @property
+    def oracle_varied(self) -> bool:
+        """Whether the on-demand rules were enabled -- i.e. whether this case's
+        oracle demonstrated that its output depends on when it ran."""
+        return bool(self.rules & ON_DEMAND)
 
     @property
     def impactful(self) -> bool:
@@ -202,8 +232,8 @@ class Measurement:
         """The first differing stdout line, as evidence rather than a summary."""
         if not (self.oracle and self.subject):
             return ""
-        a = self.oracle.norm_stdout.splitlines()
-        b = self.subject.norm_stdout.splitlines()
+        a = self.oracle.norm(self.rules)[0].splitlines()
+        b = self.subject.norm(self.rules)[0].splitlines()
         for i in range(max(len(a), len(b))):
             x = a[i] if i < len(a) else "<no line>"
             y = b[i] if i < len(b) else "<no line>"
@@ -319,8 +349,18 @@ class Measurer:
             # itself; two adjacent runs would agree and hide it.
             m.oracle_again = self._run_oracle(local_case, cwd)
 
+        # Which rules apply is itself a measurement. If the two oracle runs
+        # disagree once durations and addresses are out of the way, this
+        # program's output genuinely depends on when it ran, and the clock
+        # rules are turned on FOR THIS CASE. A program whose oracle reproduces
+        # exactly keeps a strict comparison, so a deterministic date it
+        # computes is still checked.
         if (not m.oracle.timed_out and not m.oracle_again.timed_out
-                and not m.oracle.same_as(m.oracle_again)):
+                and not m.oracle.same_as(m.oracle_again, UNCONDITIONAL)):
+            m.rules = UNCONDITIONAL | ON_DEMAND
+
+        if (not m.oracle.timed_out and not m.oracle_again.timed_out
+                and not m.oracle.same_as(m.oracle_again, m.rules)):
             # CPython disagreeing with CPython, AFTER normalisation -- so this
             # is no longer the clock or the allocator. What is left is the
             # program printing a pid, a port, a temp path or a coin flip. The
@@ -340,11 +380,13 @@ class Measurer:
         elif m.subject is not None:
             # Normalised on both sides: a value that cannot be equal twice is
             # not evidence of anything the compiler did.
-            if m.subject.norm_stdout != m.oracle.norm_stdout:
+            s_out, s_err = m.subject.norm(m.rules)
+            o_out, o_err = m.oracle.norm(m.rules)
+            if s_out != o_out:
                 m.flags.append(Flag.STDOUT_DIFFERS)
             if m.subject.exit != m.oracle.exit:
                 m.flags.append(Flag.EXIT_DIFFERS)
-            if m.subject.norm_stderr != m.oracle.norm_stderr:
+            if s_err != o_err:
                 m.flags.append(Flag.STDERR_DIFFERS)
         return m
 

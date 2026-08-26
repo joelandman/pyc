@@ -164,17 +164,38 @@ Refresh deliberately, after checking what moved:
 A program run at two different times, under two different loads, at two
 different heap layouts, **must** print a different elapsed time, a different
 clock reading and a different address. Comparing those bytes measures the clock
-and the allocator, not the compiler. Six patterns are collapsed before any
-comparison — including the oracle-against-oracle one:
+and the allocator, not the compiler. Six patterns are collapsed before
+comparison — including the oracle-against-oracle one — but they are **not all
+applied to every case**:
 
-| rule | shape | becomes |
-|---|---|---|
-| `elapsed` | `in 0.001s` (unittest's trailer) | `in <ELAPSED>s` |
-| `heap_address` | `0x7f3c605a4c20` **only after `" at "`** | `0xADDR` |
-| `asctime` | `Wed Aug 26 13:14:57 2026` | `<ASCTIME>` |
-| `iso_datetime` | `2026-08-26T13:14:57.123` | `<ISOTIME>` |
-| `clock_time` | `13:14:57` | `<TIME>` |
-| `iso_date` | `2026-08-26` | `<DATE>` |
+| rule | shape | becomes | applied |
+|---|---|---|---|
+| `elapsed` | `in 0.001s` (unittest's trailer) | `in <ELAPSED>s` | always |
+| `heap_address` | `0x7f3c605a4c20` **only after `" at "`** | `0xADDR` | always |
+| `asctime` | `Wed Aug 26 13:14:57 2026` | `<ASCTIME>` | on demand |
+| `iso_datetime` | `2026-08-26T13:14:57.123` | `<ISOTIME>` | on demand |
+| `clock_time` | `13:14:57` | `<TIME>` | on demand |
+| `iso_date` | `2026-08-26` | `<DATE>` | on demand |
+
+The split is the important part. An elapsed duration and a heap address are
+never something a program deterministically computes and a test
+deterministically checks, so collapsing them can hide nothing. **A date can
+be.** `datetime` arithmetic on fixed inputs prints a fixed date, and that is
+exactly the kind of answer this harness exists to check.
+
+So the clock rules apply only to a case whose oracle has **demonstrated** that
+its output depends on when it ran — by disagreeing with itself across the two
+runs, once durations and addresses are out of the way. Which rules apply is
+itself a measurement, not a guess.
+
+`verify/corpus/language/case_509.py` is why this exists. It computes
+`date(2024, 3, 15) + timedelta(days=10)` and prints the result. Under a blanket
+date rule, pyc answering `2024-03-24` instead of `2024-03-25` compared **equal**
+— the instrument would have certified a wrong answer, the exact failure CHARTER
+I1 is about. Its oracle reproduces exactly, so it now gets a strict
+byte-for-byte comparison and its date arithmetic stays checked. Meanwhile
+`test_strftime`, whose oracle really does disagree with itself, gets the clock
+rules and passes.
 
 The guard rails matter more than the list:
 
@@ -185,13 +206,15 @@ The guard rails matter more than the list:
   `0xDEADBEEF` in a program's own output is not an address and is left alone.
 - **Raw output is what gets stored and shown.** Normalization decides only
   whether a difference is *reported*.
-- **Every rule that fires is named in the record** (`normalizers` per case, and
-  a summary in the run), so a masked difference can be traced to its mask.
+- **Every rule that fires is named in the record** (`normalizers` per case,
+  plus `oracle_varied`, and a summary in the run), so a masked difference can
+  be traced to its mask.
 
-**The cost, stated plainly:** a pyc bug producing a *well-formed* wrong
-timestamp is invisible here. That is the price of not letting the clock fail
-the build, and it is why nothing joins this list without a measured case that
-needs it.
+**The cost, stated plainly:** in a case whose oracle *did* vary, a pyc bug
+producing a well-formed wrong timestamp is invisible. That case had no stable
+ground truth for that value to begin with, so nothing was traded away — but the
+list stays short and anchored regardless, and nothing joins it without a
+measured case that needs it.
 
 What is deliberately **not** normalized, though it also varies: pids, ephemeral
 ports, temp directory names, and anything from an unseeded `random`. Those are
