@@ -1,6 +1,6 @@
 {
   "oracle": {
-    "path": "/home/runner/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14",
+    "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14",
     "version": "3.14.7",
     "machine": "x86_64"
   },
@@ -9,20 +9,21 @@
       "-O0"
     ]
   },
+  "jobs": 4,
   "corpus": {
     "libtest": false,
     "libtest_limit": null
   },
-  "pass_rate": 99.03846153846153,
-  "scored_rate": 99.17469050894086,
-  "total_cases": 728,
-  "scored": 727,
-  "matched": 721,
+  "pass_rate": 99.05149051490515,
+  "scored_rate": 99.18588873812755,
+  "total_cases": 738,
+  "scored": 737,
+  "matched": 731,
   "quarantined": 1,
-  "elapsed_seconds": 621.1790339946747,
+  "elapsed_seconds": 264.28607535362244,
   "counts": {
     "STDERR_DIFF": 6,
-    "MATCH": 721,
+    "MATCH": 731,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
@@ -5111,6 +5112,76 @@
     {
       "case": "case_728.py",
       "path": "verify/corpus/language/case_728.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "const_fold.py",
+      "path": "verify/corpus/language/const_fold.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "embedded_nul.py",
+      "path": "verify/corpus/language/embedded_nul.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "fstring_edge.py",
+      "path": "verify/corpus/language/fstring_edge.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "lit_numeric_forms.py",
+      "path": "verify/corpus/language/lit_numeric_forms.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "lit_string_escapes.py",
+      "path": "verify/corpus/language/lit_string_escapes.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "src_bom.py",
+      "path": "verify/corpus/language/src_bom.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "src_crlf.py",
+      "path": "verify/corpus/language/src_crlf.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "src_latin1.py",
+      "path": "verify/corpus/language/src_latin1.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "str_repr_escapes.py",
+      "path": "verify/corpus/language/str_repr_escapes.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "unicode_identifiers.py",
+      "path": "verify/corpus/language/unicode_identifiers.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""

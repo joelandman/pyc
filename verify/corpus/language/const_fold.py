@@ -1,0 +1,13 @@
+print(repr(2 ** 1000 % 1000000007))
+print(repr(0.1 + 0.2), repr(1 / 3 * 3), repr(1e308 * 10 if False else 2.0 ** 1024 if False else 'skip'))
+print(repr(-1 ** 2), repr((1, 2) * 3), repr('ab' * 3))
+print(repr(7 // -2), repr(-7 // 2), repr(7 % -2))
+print(repr(1 < 2 < 3), repr(1 < 2 > 0.5))
+print(repr(True and 0 or 'x'), repr(not 0.0))
+print(repr(2 ** 62 + 2 ** 62), repr(2 ** 63 - 1 + 1), repr(-(2 ** 63)))
+print(repr((2 ** 63 - 1) * 2), repr(9223372036854775807 + 1))
+print(repr(int(2 ** 31 - 1) * int(2 ** 31)))
+a = 9223372036854775807
+print(repr(a + a), repr(a * a), repr(-a - 2))
+print(repr(0x7FFFFFFFFFFFFFFF << 1), repr(1 << 63), repr(1 << 64))
+print(repr(abs(-9223372036854775808)), repr(-(-9223372036854775808)))

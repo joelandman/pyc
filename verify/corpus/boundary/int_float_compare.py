@@ -1,0 +1,12 @@
+big = 2**53 + 1
+print(repr(big == float(big)), repr(big < float(big)), repr(big > float(big)))
+print(repr(2**63 == float(2**63)), repr(2**63 + 1 > float(2**63)))
+print(repr(10**400 > float('inf')), repr(10**400 < float('inf')))
+print(repr(float('inf') > 10**400), repr(-float('inf') < -(10**400)))
+print(repr(float('nan') < 1), repr(float('nan') > 1), repr(float('nan') == 1))
+print(repr(sorted([2**53 + 1, float(2**53), 2**53])))
+print(repr(0.1 + 0.2 > 0.3), repr(int(0.1 * 3 * 10)))
+print(repr(2**1000 > 1e308), repr(1e308 > 2**1000))
+print(repr(hash(1) == hash(1.0)), repr(hash(2**61 - 1)), repr(hash(0.5)), repr(hash(-1)))
+print(repr(hash(float('inf')), ), repr(hash(2**64)))
+print(repr(True == 1.0), repr({1: 'a', 1.0: 'b', True: 'c'}))

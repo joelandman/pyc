@@ -1,0 +1,12 @@
+s = 'aé你\U0001F600z'
+print(repr(s[::2]), repr(s[::-2]), repr(s[1:-1]), repr(s[10:20]), repr(s[-100:100]))
+print(repr(s.center(11, '*')), repr(s.ljust(9, 'é')), repr(s.zfill(9)))
+print(repr(s.index('你')), repr(s.find('\U0001F600')), repr(s.rfind('z')))
+print(repr('  \t\né '.strip()), repr('xxéxx'.strip('x')), repr(' a '.strip()))
+print(repr('a,b,,c'.split(',')), repr('a b\tc\nd'.split()), repr(''.split(',')))
+print(repr('éa'.partition('a')), repr('abc'.rsplit('b', 1)))
+print(repr('{}{}'.format('é', '\U0001F600')), repr('é' * 3))
+print(repr('ABC'.translate({65: 'é', 66: None})))
+print(repr('é\n你\r\nz'.splitlines()), repr('a\x0bb\x1cc'.splitlines()))
+print(repr('%-6s|' % 'é'), repr(f'{"é":*^7}'), repr(f'{"\U0001F600":>4}'))
+print(repr('abc'.encode('utf-8').ljust(5, b'\xff')))
