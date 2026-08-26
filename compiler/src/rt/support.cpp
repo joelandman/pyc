@@ -395,6 +395,30 @@ extern "C" PyObject* pyc_rt_build_class(const char* name, PyObject* bases,
         if (sub < 0) return nullptr;
         if (sub) meta = bt;
     }
+    // CPython's compiler emits `__module__ = __name__` into every class body,
+    // so the namespace reaches the metaclass already carrying it. pyc did not,
+    // so no compiled class had __module__ at all -- and unittest reads
+    // cls.__module__ during discovery, which is why 55 Lib/test files died with
+    // `AttributeError: __module__` before running a single test.
+    //
+    // Set it here rather than in the lowerer: it belongs to every class
+    // regardless of how the body was lowered, and one site cannot drift from
+    // another. Only when absent, so an explicit `__module__ = ...` in the body
+    // still wins, as it does in CPython.
+    PyObject* modkey = PyUnicode_InternFromString("__module__");
+    if (!modkey) return nullptr;
+    int has_mod = PyDict_Contains(ns, modkey);
+    if (has_mod < 0) { Py_DECREF(modkey); return nullptr; }
+    if (has_mod == 0) {
+        PyObject* g = globals_dict();                       // borrowed
+        PyObject* modname = g ? PyDict_GetItemString(g, "__name__") : nullptr;
+        if (modname && PyDict_SetItem(ns, modkey, modname) < 0) {
+            Py_DECREF(modkey);
+            return nullptr;
+        }
+    }
+    Py_DECREF(modkey);
+
     PyObject* nm = PyUnicode_FromString(name);
     if (!nm) return nullptr;
     PyObject* cls = PyObject_CallFunctionObjArgs(meta, nm, bases, ns, nullptr);

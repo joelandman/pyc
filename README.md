@@ -17,7 +17,7 @@ The project is being rebuilt on CPython's object model. See
 
 | Corpus | Pass rate | |
 |---|---|---|
-| CPython `Lib/test/` | **1.80%** | 7/389 files |
+| CPython `Lib/test/` | **5.66%** | 22/389 files |
 | language corpus | **99.04%** | 721/728 cases |
 
 `Lib/test` is the north-star metric (CHARTER I6): the pass rate over CPython's
@@ -26,10 +26,11 @@ numbers are `matched / corpus size` — the denominator is the corpus, so they
 move only when the compiler does. Every case is compared against a real CPython
 at run time; no expected output is stored anywhere ([CHARTER I5](rebuild/CHARTER.md)).
 
-**Zero P0 silent wrong answers** in either corpus. Against CPython's own test
-suite the compiler fails loudly — a crash or a compile error — never with a
-wrong answer. That is the property the rebuild exists to protect, and it is
-worth more than the pass rate.
+**Zero P0 silent wrong answers in the language corpus.** `Lib/test` currently has
+**one** — `test_unpack.py`, where a compiled binary runs 1 test instead of 2 and
+reports OK because `__main__` has no `__file__`, so `doctest.DocTestSuite()`
+fails and the failing doctest never runs. It is tracked as issue #9 and outranks
+the pass rate: failing loudly is the property the rebuild exists to protect.
 
 Measured by `./verify/run.py`; gated per-commit in CI
 (`.github/workflows/verify.yml`) and nightly (`metric.yml`).
