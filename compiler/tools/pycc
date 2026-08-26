@@ -63,10 +63,11 @@ cat > "$TMP/main.cpp" <<'EOC'
 #include "pyc/rt/entry.hpp"
 extern "C" int __pyc_main(void*);
 static int body(void) { return __pyc_main(nullptr); }
-int main(int argc, char** argv) { return pyc_rt_main(argc, argv, body); }
+int main(int argc, char** argv) { return pyc_rt_main(argc, argv, body, PYC_SOURCE); }
 EOC
 
 "${PYC_CXX:-clang++}" -std=c++20 "$OPT" -rdynamic $INC -I "$REPO/compiler/include" \
+  -DPYC_SOURCE="\"$(realpath "$SRC")\"" \
   "$TMP/mod.ll" "$TMP/main.cpp" \
   "$REPO/compiler/src/rt/entry.cpp" "$REPO/compiler/src/rt/support.cpp" \
   "$LIB" -lm -lpthread -ldl -lutil -lz -o "$OUT"

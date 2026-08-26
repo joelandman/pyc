@@ -115,13 +115,104 @@ static void set_main_file(char** argv) {
     Py_DECREF(v);
 }
 
-int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
+// The compiled module body, reached from the trampoline below. File-static
+// because startup is single-threaded and there is exactly one module body.
+static PycModuleBody g_body = nullptr;
+
+static PyObject* pyc_module_body_thunk(PyObject*, PyObject*) {
+    if (g_body && g_body() != 0) return nullptr;   // exception already set
+    Py_RETURN_NONE;
+}
+static PyMethodDef g_body_def = {
+    "__pyc_module_body__", pyc_module_body_thunk, METH_NOARGS, nullptr};
+
+// The trampoline's own code object, kept so its traceback entry can be
+// recognised and dropped. See drop_trampoline_frame.
+static PyObject* g_tramp_code = nullptr;
+
+// The trampoline frame is real, so CPython puts it in the traceback -- an extra
+// outermost entry reading `line 1, in <module>`, pointing at whatever the
+// source happens to have on line 1. That is noise the program never executed,
+// and it appeared ABOVE the genuine module line.
+//
+// It is always the outermost entry, so drop the head when it is ours. Compare
+// the CODE OBJECT, not the filename: the filename is deliberately the real
+// source, so matching on it would strip genuine module frames too.
+static void trim_trampoline_frame(void) {
+    if (!g_tramp_code) return;
+    PyObject *t = nullptr, *v = nullptr, *tb = nullptr;
+    PyErr_Fetch(&t, &v, &tb);
+    PyErr_NormalizeException(&t, &v, &tb);
+    if (tb) {
+        PyObject* frame = PyObject_GetAttrString(tb, "tb_frame");
+        PyObject* code  = frame ? PyObject_GetAttrString(frame, "f_code") : nullptr;
+        if (code == g_tramp_code) {
+            PyObject* next = PyObject_GetAttrString(tb, "tb_next");
+            if (next && next != Py_None) Py_XSETREF(tb, Py_NewRef(next));
+            Py_XDECREF(next);
+        }
+        Py_XDECREF(code);
+        Py_XDECREF(frame);
+        PyErr_Clear();          // attribute lookups only; never disturb the error
+    }
+    if (v && tb) PyException_SetTraceback(v, tb);
+    PyErr_Restore(t, v, tb);    // steals all three
+}
+
+// Run the module body from inside a REAL Python frame.
+//
+// Compiled code otherwise executes with no frame at all, so sys._getframe(0)
+// raised where CPython returns __main__. That is I1-clean on its own -- it
+// raises rather than lying -- but callers degrade silently around it:
+// doctest._normalize_module resolves the calling module through _getframe, so
+// DocTestSuite() raised, unittest's load_tests contributed nothing, and
+// Lib/test/test_unpack.py ran 1 test instead of 2 and reported OK (issue #9).
+//
+// PyFrame_New is NOT the answer and was measured: it builds a detached
+// PyFrameObject that is never linked into tstate->current_frame, which is what
+// sys._getframe walks, so it changes nothing. A frame only exists if the
+// interpreter creates one, which means actually evaluating code. So the body is
+// installed as a builtin and called from a one-line module compiled with the
+// source path as co_filename.
+//
+// Cost is one compile and one eval at startup, and one frame for the whole
+// program -- nothing on any hot path. It gives module-level fidelity only:
+// pyc functions are native and push no frames, so _getframe(N) does not track
+// Python call depth and logging.findCaller still cannot name the calling
+// function. That is a separate and far more expensive decision.
+static int run_body_in_frame(PycModuleBody body, const char* source) {
+    g_body = body;
+    PyObject* m = PyImport_AddModule("__main__");            // borrowed
+    if (!m) return -1;
+    PyObject* g = PyModule_GetDict(m);                       // borrowed
+    PyObject* fn = PyCFunction_New(&g_body_def, nullptr);
+    if (!fn) return -1;
+    int rc = PyDict_SetItemString(g, "__pyc_module_body__", fn);
+    Py_DECREF(fn);
+    if (rc < 0) return -1;
+
+    PyObject* code = Py_CompileString("__pyc_module_body__()\n",
+                                      source ? source : "<pyc>", Py_file_input);
+    if (!code) return -1;
+    Py_XSETREF(g_tramp_code, Py_NewRef(code));
+    PyObject* res = PyEval_EvalCode(code, g, g);
+    Py_DECREF(code);
+    // Leaving the helper bound would make it visible to dir() and to anything
+    // walking module globals, which the source never declared.
+    if (PyDict_DelItemString(g, "__pyc_module_body__") < 0) PyErr_Clear();
+    if (!res) return -1;
+    Py_DECREF(res);
+    return 0;
+}
+
+int pyc_rt_main(int argc, char** argv, PycModuleBody body, const char* source) {
     int rc = configure(argc, argv);
     if (rc != 0) return rc < 0 ? 1 : rc;
     set_main_file(argv);
 
     int status = 0;
-    if (body && body() != 0) {
+    if (run_body_in_frame(body, source) != 0) {
+        trim_trampoline_frame();
         // SystemExit is control flow, not an error: honour its code and do not
         // print a traceback, which is what CPython itself does.
         if (PyErr_ExceptionMatches(PyExc_SystemExit)) {
