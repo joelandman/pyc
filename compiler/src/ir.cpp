@@ -1,3 +1,4 @@
+#include <cstdio>
 #include "pyc/ir/ir.hpp"
 
 #include <sstream>
@@ -95,7 +96,37 @@ std::string to_string(const Module& m) {
                     // it raw made the listing invalid UTF-8.
                     o << " <code " << in.text.size() << " bytes>";
                 } else if (!in.text.empty()) {
-                    o << " \"" << in.text << "\"";
+                    // Escape control bytes. Printing raw made the listing
+                    // unparseable, not merely ugly: a string constant holding
+                    // a NUL ('a\\x00b') truncated the line, so every static
+                    // tool reading this dump saw a block with no terminator
+                    // and misattributed everything after it. That produced 12
+                    // phantom "0 terminators" and a pile of phantom leaks.
+                    // Same class as the <code N bytes> case just above.
+                    o << " \"";
+                    for (unsigned char c : in.text) {
+                        switch (c) {
+                            case '"':  o << "\\\""; break;
+                            case '\\': o << "\\\\"; break;
+                            case '\n': o << "\\n";  break;
+                            case '\r': o << "\\r";  break;
+                            case '\t': o << "\\t";  break;
+                            default:
+                                // ASCII-only, deliberately. A bytes literal
+                                // can hold 0xff, which is not valid UTF-8, and
+                                // a reader decoding this dump as text dies on
+                                // it. Non-ASCII text is less readable as \xNN
+                                // but the listing always parses.
+                                if (c < 0x20 || c >= 0x7f) {
+                                    char b[8];
+                                    std::snprintf(b, sizeof b, "\\x%02x", c);
+                                    o << b;
+                                } else {
+                                    o << (char)c;
+                                }
+                        }
+                    }
+                    o << "\"";
                 }
                 if (in.op == Op::Phi) {
                     for (std::size_t i = 0; i < in.args.size(); ++i)

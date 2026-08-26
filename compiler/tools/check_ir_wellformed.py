@@ -34,6 +34,7 @@ GRN, RED, DIM, BOLD, RST = "\033[32m", "\033[31m", "\033[90m", "\033[1m", "\033[
 # (ret, phi, iter.next). Worth deriving from one source if it happens again.
 TERM = re.compile(r"^    (?:%\d+ = )?(br|condbr|ret|ret\.err|iter\.next|raise)\b")
 BLOCK = re.compile(r"^  (\S+):$")
+QUOTED = re.compile(r'"(?:[^"\\\\]|\\\\.)*"')
 DEF = re.compile(r"^    %(\d+) = ")
 USE = re.compile(r"%(\d+)")
 DECREF = re.compile(r"^    decref %(\d+)$")
@@ -115,7 +116,12 @@ def check(ir: str) -> list[str]:
             for inc in PHI_IN.findall(line):
                 deferred.append(inc)
             continue
-        for u in USE.findall(line.split("=")[-1] if d else line):
+        # Strip quoted text before looking for %N value references: a format
+        # string like "[%10s]" is not a use of %10, and sprintf.py's "%05"/"%02"
+        # read the same way. This is only reliable because ir.cpp now escapes
+        # string contents, so a quote inside a constant cannot end the region.
+        scan = QUOTED.sub('""', line.split("=")[-1] if d else line)
+        for u in USE.findall(scan):
             # %0 is the null sentinel (a nullable C-API argument such as
             # PySet_New(NULL)), not a value, so it has no definition.
             if u != "0" and u not in defined:
@@ -208,13 +214,14 @@ def main() -> int:
         if probs:
             bad += 1
             print(f"  {f.name:10s} {RED}MALFORMED{RST}")
-            for p in probs[:6]:
-                print(f"      {p}")
+            for pr in probs[:6]:
+                print(f"      {pr}")
         else:
             ok += 1
             print(f"  {f.name:10s} {GRN}ok{RST}")
     sc.reject_implausible_uniformity(outcomes, what="files")
     print(f"\n  well-formed {ok}   malformed {bad}   unsupported {unsup}")
+
     return 1 if bad else 0
 
 

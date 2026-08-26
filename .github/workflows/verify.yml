@@ -50,10 +50,18 @@ jobs:
           ./compiler/tools/lint_visitors.py compiler/
           # IR well-formedness. Both tools prove they can FAIL before
           # reporting (selfcheck.py), so a green result means something.
+          # Widened from compiler/tests to the whole corpus (898 files). It
+          # was scoped narrowly because the corpus looked dirty -- 54 findings.
+          # Every one was instrument error: ir.cpp printed string constants
+          # unescaped, so a NUL or a non-ASCII byte truncated a line and the
+          # reader misattributed everything after it, and the checker's %N
+          # regex matched inside format strings like "[%10s]". Both fixed, and
+          # the corpus is genuinely clean, so this gates at zero findings with
+          # no known-failures list.
           ./compiler/tools/check_ir_wellformed.py \
             --lower "$RUNNER_TEMP/pyc_lower" \
             --python "$SYSROOT/bin/python3.14" \
-            compiler/tests/*.py
+            compiler/tests/*.py verify/corpus/language/*.py verify/corpus/programs/*.py
 
       - name: Smoke — the compiler produces a running binary
         run: |
