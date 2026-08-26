@@ -27,6 +27,7 @@ std::vector<std::string> function_locals(const std::vector<std::string>&,
                                         const std::vector<pyc::ast::stmt>&);
 std::set<std::string> nested_reads(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> declared_nonlocals(const std::vector<pyc::ast::stmt>&);
+std::set<std::string> declared_globals(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> all_reads(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> nested_reads_expr(const pyc::ast::expr&);
 }
@@ -1002,9 +1003,29 @@ private:
         // cell. Searching outward is what makes depth-3 nesting work.
         std::vector<std::string> freevars;
         {
-            std::set<std::string> reads = inner;
-            std::set<std::string> none;
-            stmt_names(n.body, none, reads);        // names read directly too
+            // Every name mentioned in this body, nested scopes included.
+            //
+            // This used to be `inner` plus stmt_names(), and stmt_names()
+            // funnels through free_locals(), which reports only names present
+            // in the ENCLOSING scope's locals_. That is right for a
+            // comprehension's hidden arguments and wrong here, because
+            // lower_classdef legitimately clears locals_ before lowering a
+            // class body -- names in a class body are not fast locals. So a
+            // method of a class defined inside a function saw an EMPTY set of
+            // directly-read names, found no free variables, and fell through
+            // to load.global. `output.append(...)` inside such a method raised
+            // NameError while the class BODY reading the same local worked.
+            //
+            // all_reads() is over-approximate on purpose. The filters below
+            // are what make it exact: a name that this function binds is its
+            // own local, and a name with no cell in any enclosing scope is not
+            // free. Over-reporting costs an unused closure cell; under-
+            // reporting reads the wrong variable.
+            std::set<std::string> reads = all_reads(n.body);
+            reads.insert(inner.begin(), inner.end());
+            // `global x` means module scope even if an enclosing function has
+            // a cell named x. Capturing it would read a different variable.
+            for (const std::string& g : declared_globals(n.body)) reads.erase(g);
             // A `nonlocal` name is free even if it is only ever written.
             std::set<std::string> nl = declared_nonlocals(n.body);
             reads.insert(nl.begin(), nl.end());

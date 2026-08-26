@@ -136,6 +136,16 @@ std::set<std::string> declared_nonlocals(const std::vector<stmt>& body) {
     return c.declared_nonlocal;
 }
 
+// Names this body explicitly declares `global`. Such a name must never be
+// captured from an enclosing cell even when one exists under that name: the
+// declaration says module scope, and reading the cell instead would silently
+// read a different variable.
+std::set<std::string> declared_globals(const std::vector<stmt>& body) {
+    Collector c;
+    c.block(body);
+    return c.declared_global;
+}
+
 // Names read anywhere inside NESTED functions/lambdas/comprehensions of this
 // body. Intersected with the enclosing function's locals, this is exactly the
 // set that must live in cells: a variable is only a cell variable because

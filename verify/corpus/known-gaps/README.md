@@ -12,13 +12,15 @@ S=~/opt/py-sysroots/cp314-3.14.7-tier1
   --pyc "$PWD/compiler/tools/pycc" --pyc-flag=-O0 --sysroot "$S" --jobs 4
 ```
 
-These probes cover **three** defects, of which **one is now fixed**: nine for
-missing Python frames (issue #9), nine `comp_cell_` for a raw cell leaking out
-of a comprehension (**FIXED**, `fb54be2` — kept here as regression cover), and
-three `nested_class_` for a broken closure chain through a class body. The last
-two were found on 2026-08-26 by decomposing the 128 `EXIT_DIFFERS` cases in the
-`Lib/test` baseline, and together they accounted for the two largest clusters
-in it.
+These probes cover **three** defects, of which **two are now fixed**: nine for
+missing Python frames (issue #9, open), nine `comp_cell_` for a raw cell
+leaking out of a comprehension (**FIXED**), and three `nested_class_` for a
+broken closure chain through a class body (**FIXED**). The last two were found
+on 2026-08-26 by decomposing the 128 `EXIT_DIFFERS` cases in the `Lib/test`
+baseline, and together they accounted for the two largest clusters in it. The
+fixed probes stay here as regression cover — a 747-case corpus could see
+neither defect, so these probes are the only thing standing between them and a
+silent return.
 
 ## A: no Python frame (issue #9)
 
@@ -107,9 +109,9 @@ When frames land, these should move into `language/` and the gate will hold
 them.
 
 
-## C: the closure chain breaks through a class body (found 2026-08-26)
+## C: the closure chain breaks through a class body — FIXED 2026-08-26
 
-A method of a class defined **inside a function** cannot see that function's
+A method of a class defined **inside a function** could not see that function's
 locals.
 
 ```python
@@ -140,7 +142,22 @@ class is doing a skip-level free-variable read. That is an ordinary idiom, and
 it is the exact shape behind `test_abstract_numbers`' `MyComplex` and
 `test_bool`'s `SymbolicBool`.
 
-This defect is **loud** — always a `NameError`, never a wrong answer — so it is
-I1-clean. It is simply very common: 23 of the 128 `EXIT_DIFFERS` files in
-`Lib/test` fail this way, because defining a helper class inside a test method
-and closing over the test's locals is how unittest suites are written.
+This defect was **loud** — always a `NameError`, never a wrong answer — so it
+was I1-clean. It was simply very common: 23 of the 128 `EXIT_DIFFERS` files in
+`Lib/test` failed this way, because defining a helper class inside a test
+method and closing over the test's locals is how unittest suites are written.
+
+**Cause:** the free-variable set was built from `stmt_names()`, which funnels
+through `free_locals()` and so reports only names present in the *enclosing*
+scope's `locals_`. `lower_classdef` clears `locals_` before lowering a class
+body — correctly, since names there are not fast locals — so a method saw an
+empty set of directly-read names, found no free variables, and emitted
+`load.global`. The class **body** was unaffected because it is lowered inline
+and `lower_name` consults `cells_`, which is never cleared. That is exactly
+what `nested_class_body_ok.py` was measuring.
+
+The fix builds the candidate set from `all_reads()`, which is scope-independent,
+and keeps the existing filters (own locals are not free; a name with no cell in
+any enclosing scope is not free). One guard had to be added explicitly: a
+`global x` declaration must win over an enclosing cell named `x`, or the method
+would silently read a different variable.

@@ -14,13 +14,13 @@
     ]
   },
   "total": 759,
-  "passing": 748,
-  "clean": 741,
-  "pass_rate": 98.55072463768116,
+  "passing": 750,
+  "clean": 743,
+  "pass_rate": 98.81422924901186,
   "counts": {
-    "STDOUT_DIFFERS": 11,
-    "EXIT_DIFFERS": 8,
-    "STDERR_DIFFERS": 15
+    "STDOUT_DIFFERS": 9,
+    "EXIT_DIFFERS": 6,
+    "STDERR_DIFFERS": 13
   },
   "results": [
     {
@@ -9080,33 +9080,25 @@
     {
       "case": "nested_class_closure.py",
       "path": "verify/corpus/known-gaps/nested_class_closure.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "nested_class_selfref.py",
       "path": "verify/corpus/known-gaps/nested_class_selfref.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
