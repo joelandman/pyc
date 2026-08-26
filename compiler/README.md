@@ -219,30 +219,7 @@ src/rt/entry.cpp             Py_Initialize -> body -> finalize, exit codes
 src/rt/refcount_probe.cpp    the leak harness
 ```
 
-A4 emits a `main()` that calls `pyc_rt_main` with the body A3 lowered and the
-absolute source path. The body is not called directly: it is installed as a
-builtin and invoked from a one-line module compiled with that source path as
-`co_filename`, so it runs inside a REAL Python frame.
-
-Without one, compiled code executed with no frame at all and `sys._getframe(0)`
-raised where CPython returns `__main__`. That is I1-clean in itself, but callers
-degrade silently around it: `doctest._normalize_module` resolves its module
-through `_getframe`, so `DocTestSuite()` raised, `load_tests` contributed
-nothing, and `Lib/test/test_unpack.py` ran 1 test instead of 2 and reported OK
-(issue #9). `PyFrame_New` is not an alternative and was measured: it builds a
-detached frame never linked into `tstate->current_frame`, which is what
-`sys._getframe` walks.
-
-The trampoline frame is real, so CPython puts it in tracebacks as a spurious
-outermost `line 1, in <module>` entry; it is stripped by matching the code
-object, never the filename, since the filename is deliberately the real source.
-
-This gives module-level fidelity only. pyc functions are native and push no
-frames, so `_getframe(N)` does not track Python call depth and
-`logging.findCaller` still cannot name the calling function. Per-function frames
-are a separate and far more expensive decision.
-
-The
+A4 emits a `main()` that calls `pyc_rt_main` with the body A3 lowered. The
 sequencing lives here so the initialise/finalise/error protocol is written and
 verified once. PEP 587 `PyConfig` is used because the pre-587
 `Py_SetProgramName` family is removed in 3.13+, so a compiled binary has no

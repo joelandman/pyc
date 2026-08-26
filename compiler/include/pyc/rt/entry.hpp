@@ -16,12 +16,7 @@ extern "C" {
 typedef int (*PycModuleBody)(void);
 
 // Full program lifecycle. Returns the process exit status.
-//
-// `source` is the absolute path of the .py the body was compiled from. It is
-// the frame's co_filename, so it matches what pyc_rt_add_traceback already
-// reports -- code locations name the SOURCE. It is distinct from __file__,
-// which names the executing binary. May be null.
-int pyc_rt_main(int argc, char** argv, PycModuleBody body, const char* source);
+int pyc_rt_main(int argc, char** argv, PycModuleBody body);
 
 // Total reference count, or -1 when the interpreter is not a Py_REF_DEBUG
 // build. The leak check depends on this, and a release build silently

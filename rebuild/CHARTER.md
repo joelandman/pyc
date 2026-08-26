@@ -188,6 +188,46 @@ introduced it, and the target — never a silent fallthrough.
 See `VERSION_TARGETING.md` for the full design, the flag surface, and the
 measured facts it rests on.
 
+### Deferred: per-function Python frames (decided 2026-08-25)
+
+Compiled functions push no Python frame, so `sys._getframe(N)` does not track
+Python call depth. `sys._getframe` itself raises rather than lying, so this is
+I1-clean at the boundary — but stdlib CALLERS degrade quietly around it, and one
+is already a measured P0 (issue #9): `doctest._normalize_module` walks up one
+frame too few, resolves the wrong module, and returns an empty test suite, so a
+compiled `Lib/test/test_unpack.py` reports OK while running half its tests.
+`logging.findCaller`, `warnings` `stacklevel`, and `dataclasses`/`namedtuple`
+module resolution are affected by the same gap.
+
+**Deferred deliberately, not overlooked.** The cost is understood and the fix is
+affordable whenever it is taken on:
+
+| approach | per call | vs CPython |
+|---|---|---|
+| today, no frame | 3.42 ns | 7.2x faster |
+| eager `PyFrameObject` | 59.88 ns | **2.43x slower** — non-starter |
+| `_PyInterpreterFrame`, lazy object | ~8-12 ns (est.) | ~2-3x faster |
+| pyc-owned shadow stack | +0.21 ns | free, but invisible to `sys._getframe` |
+
+Eagerly materialising `PyFrameObject` per call would make compiled code slower
+than the interpreter it replaces. CPython avoids exactly this: its own 24.68 ns
+call already includes a frame, because `_PyInterpreterFrame` is cheap and the
+expensive `PyFrameObject` is materialised lazily. So frames do NOT force
+anything non-optimizable — they trade some margin, not the win.
+
+The real cost is coupling: `_PyInterpreterFrame` is internal API
+(`Py_BUILD_CORE`) whose layout varies with `Py_GIL_DISABLED`, i.e. differs
+between the `cp314` and `cp314t` targets I8 treats as separate. Taking it on
+requires a layout-conformance check that fails loudly when it shifts.
+
+Frames may NOT be made opt-in: under I2 a default build that diverges
+semantically from a `--frames` build is exactly the trade this charter forbids.
+
+A module-level-only trampoline was implemented and reverted (ce52560, reverted):
+it fixed `_getframe(0)` but not the depth shift, and it made the doctest failure
+*quieter* — turning a raised `ValueError` into a silently empty suite, which
+under I1 is the wrong direction.
+
 ## 4. Definition of done for v1
 
 - `--static` produces a single self-contained executable, verified by `ldd`.
