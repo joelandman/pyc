@@ -13,14 +13,14 @@
       "-O0"
     ]
   },
-  "total": 747,
-  "passing": 738,
-  "clean": 731,
-  "pass_rate": 98.79518072289157,
+  "total": 759,
+  "passing": 740,
+  "clean": 733,
+  "pass_rate": 97.49670619235836,
   "counts": {
-    "STDOUT_DIFFERS": 9,
-    "EXIT_DIFFERS": 6,
-    "STDERR_DIFFERS": 13
+    "STDOUT_DIFFERS": 19,
+    "EXIT_DIFFERS": 12,
+    "STDERR_DIFFERS": 19
   },
   "results": [
     {
@@ -8776,6 +8776,144 @@
       }
     },
     {
+      "case": "comp_cell_arith.py",
+      "path": "verify/corpus/known-gaps/comp_cell_arith.py",
+      "flags": [
+        "STDOUT_DIFFERS",
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
+    },
+    {
+      "case": "comp_cell_bool_p0.py",
+      "path": "verify/corpus/known-gaps/comp_cell_bool_p0.py",
+      "flags": [
+        "STDOUT_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "comp_cell_condition.py",
+      "path": "verify/corpus/known-gaps/comp_cell_condition.py",
+      "flags": [
+        "STDOUT_DIFFERS",
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
+    },
+    {
+      "case": "comp_cell_dict_set.py",
+      "path": "verify/corpus/known-gaps/comp_cell_dict_set.py",
+      "flags": [
+        "STDOUT_DIFFERS",
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
+    },
+    {
+      "case": "comp_cell_genexp_ok.py",
+      "path": "verify/corpus/known-gaps/comp_cell_genexp_ok.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "comp_cell_nested.py",
+      "path": "verify/corpus/known-gaps/comp_cell_nested.py",
+      "flags": [
+        "STDOUT_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [
+        "heap_address"
+      ],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "comp_cell_param.py",
+      "path": "verify/corpus/known-gaps/comp_cell_param.py",
+      "flags": [
+        "STDOUT_DIFFERS",
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
+    },
+    {
+      "case": "comp_cell_str_p0.py",
+      "path": "verify/corpus/known-gaps/comp_cell_str_p0.py",
+      "flags": [
+        "STDOUT_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [
+        "heap_address"
+      ],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "comp_cell_value_p0.py",
+      "path": "verify/corpus/known-gaps/comp_cell_value_p0.py",
+      "flags": [
+        "STDOUT_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [
+        "heap_address"
+      ],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
       "case": "const_fold.py",
       "path": "verify/corpus/language/const_fold.py",
       "flags": [],
@@ -8955,6 +9093,50 @@
       "exit": {
         "oracle": 0,
         "subject": 0
+      }
+    },
+    {
+      "case": "nested_class_body_ok.py",
+      "path": "verify/corpus/known-gaps/nested_class_body_ok.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "nested_class_closure.py",
+      "path": "verify/corpus/known-gaps/nested_class_closure.py",
+      "flags": [
+        "STDOUT_DIFFERS",
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
+    },
+    {
+      "case": "nested_class_selfref.py",
+      "path": "verify/corpus/known-gaps/nested_class_selfref.py",
+      "flags": [
+        "STDOUT_DIFFERS",
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 1
       }
     },
     {
