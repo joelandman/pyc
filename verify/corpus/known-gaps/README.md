@@ -8,8 +8,8 @@ Run them deliberately:
 
 ```bash
 S=~/opt/py-sysroots/cp314-3.14.7-tier1
-./verify/run.py --corpus verify/corpus/known-gaps \
-  --pyc "$PWD/compiler/tools/pycc" --pyc-flag -O0 --sysroot "$S" --jobs 4
+./verify/measure_run.py --corpus verify/corpus/known-gaps \
+  --pyc "$PWD/compiler/tools/pycc" --pyc-flag=-O0 --sysroot "$S" --jobs 4
 ```
 
 All nine trace to **one** cause — compiled code runs with no Python frame
@@ -27,6 +27,10 @@ All nine trace to **one** cause — compiled code runs with no Python frame
 
 The first three are **silent**: exit status 0 with a wrong value. The rest fail
 loudly. Same missing frame either way — only some paths raise.
+
+`measure_run.py --fail-on-silent-wrong` picks out exactly those three from this
+directory and nothing else, with no baseline involved: it reads `exit == 0` and
+`STDOUT_DIFFERS` off the record (CHARTER I1).
 
 **pyc is not converting NULL to None.** Calling these builtins directly from a
 frameless embedded interpreter returns `Py_None` from CPython's own C code, so

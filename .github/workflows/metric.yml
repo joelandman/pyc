@@ -43,9 +43,9 @@ jobs:
           if [ -n "${{ inputs.libtest_limit }}" ]; then
             LIMIT="--libtest-limit ${{ inputs.libtest_limit }}"
           fi
-          ./verify/run.py --libtest $LIMIT \
+          ./verify/measure_run.py --libtest $LIMIT \
             --pyc "$PWD/compiler/tools/pycc" \
-            --pyc-flag -O0 \
+            --pyc-flag=-O0 \
             --sysroot "$SYSROOT" \
             --stdlib "$SYSROOT/lib/python3.14" \
             --jobs 4 \
@@ -61,7 +61,7 @@ jobs:
         id: gate
         run: |
           set +e
-          ./verify/check_regression.py \
+          ./verify/measure_compare.py \
             --baseline compiler/baseline-libtest.json \
             --require-baseline \
             --current libtest.json
@@ -91,7 +91,7 @@ jobs:
                   "Causes: oracle mismatch, compiler-flag mismatch, truncated "
                   "corpus, or a missing baseline."),
             "3": (":warning:", "HARNESS USAGE ERROR",
-                  "check_regression.py was invoked wrongly. Neither a "
+                  "measure_compare.py was invoked wrongly. Neither a "
                   "regression nor a verified pass."),
           }
           icon, title, detail = verdicts.get(
@@ -111,18 +111,24 @@ jobs:
           import json
           d = json.load(open("libtest.json"))
           print("## CPython `Lib/test/` pass rate\n")
-          total = d.get("total_cases", len(d["results"]))
-          print(f"### **{d['pass_rate']:.2f}%**  ({d['matched']}/{total} files)\n")
-          # Deliberately secondary: its denominator is the scored set, which
-          # varies run to run with quarantine flakiness.
-          print(f"<sub>{d.get('scored_rate', 0):.2f}% of the "
-                f"{d['scored']} scored ({d['quarantined']} quarantined)</sub>\n")
-          print("| verdict | count |\n|---|---|")
+          print(f"### **{d['pass_rate']:.2f}%**  ({d['passing']}/{d['total']} files)\n")
+          # The denominator is every file measured. Nothing is excluded, so
+          # this number cannot move because the scored set changed under it --
+          # which the old quarantined denominator could, and did.
+          print(f"<sub>{d['clean']} byte-identical on stdout, stderr and exit "
+                f"status</sub>\n")
+          print("| flag | count | |\n|---|---|---|")
+          impactful = {"DID_NOT_COMPILE", "ORACLE_UNSTABLE", "TIMEOUT",
+                       "STDOUT_DIFFERS", "EXIT_DIFFERS"}
           for k, v in sorted(d["counts"].items()):
-              print(f"| `{k}` | {v} |")
-          p0 = d["counts"].get("SILENT_WRONG_ANSWER", 0)
-          if p0:
-              print(f"\n**{p0} P0 silent wrong answer(s)** — ranked above every crash (CHARTER I1).")
+              print(f"| `{k}` | {v} | {'counts against the rate' if k in impactful else ''} |")
+          # I1, read straight off the record: exit 0 and the wrong answer.
+          silent = [r["case"] for r in d["results"]
+                    if "STDOUT_DIFFERS" in r["flags"]
+                    and (r["exit"] or {}).get("subject") == 0]
+          if silent:
+              print(f"\n**{len(silent)} silent wrong answer(s)** — exited 0 and "
+                    f"printed something other than Python's answer (CHARTER I1).")
           EOF
 
       - uses: actions/upload-artifact@v4

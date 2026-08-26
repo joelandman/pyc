@@ -1,4 +1,4 @@
-# verify — differential harness (agent A5)
+# verify — differential measurement (agent A5)
 
 Owns the correctness bar. Reports to the user, not to the feature agents;
 its results may not be overridden by them (`rebuild/AGENT_DIRECTIVES.md`, A5).
@@ -7,7 +7,7 @@ its results may not be overridden by them (`rebuild/AGENT_DIRECTIVES.md`, A5).
 
 **No test in this tree stores an expected output.** The oracle is a real
 CPython binary, executed at run time, every run. There is deliberately nowhere
-in `differential.py` to put an expected value.
+in `measure.py` to put an expected value.
 
 This is CHARTER I5, and it exists because of how the old tree drifted: 662
 inline `(source, expected)` pairs, with the expected string documented as the
@@ -17,12 +17,19 @@ stays green forever while the gap to real Python never narrows.
 ## Usage
 
 ```bash
-./verify/run.py --corpus tests/                 # a directory of programs
-./verify/run.py --libtest                       # CPython Lib/test — the metric
-./verify/run.py --file prog.py --show 4         # one program, with diffs
-./verify/run.py --corpus tests/ --fail-on P0    # CI gate
-./verify/run.py --corpus tests/ --json out.json # machine-readable
+./verify/measure_run.py --corpus tests/                  # a directory of programs
+./verify/measure_run.py --libtest                        # CPython Lib/test — the metric
+./verify/measure_run.py --file prog.py --show 4          # one program, with evidence
+./verify/measure_run.py --corpus tests/ --fail-on-silent-wrong
+./verify/measure_run.py --corpus tests/ --json out.json  # machine-readable
+
+./verify/measure_compare.py --baseline b.json --current out.json
 ```
+
+Two programs, and the split is the point. `measure_run.py` **measures** and
+writes down what it saw. `measure_compare.py` **compares** two of those
+records. Nothing in the measuring half forms an opinion about what a
+difference means, and nothing in the comparing half re-runs anything.
 
 The subject binary comes from `--pyc`, `$PYC_BINARY`, or `./build/pyc`. The
 oracle comes from `--oracle`, or `--sysroot DIR` (read from that sysroot's
@@ -31,30 +38,72 @@ divergence must be measured against the runtime actually being targeted, and
 that makes the parse oracle and the differential oracle the same binary
 (`rebuild/VERSION_TARGETING.md`).
 
-## Verdicts, worst first
+## Flags — measurements, not a severity scale
 
-| | Verdict | Meaning |
+Each case runs the oracle, compiles, runs the binary, then runs the oracle
+again. Six facts come out, and the flags follow from them mechanically. A case
+carries any number of them, or none.
+
+| Flag | What was measured | Counts against the rate |
 |---|---|---|
-| **P0** | `SILENT_WRONG_ANSWER` | pyc exited 0 and produced something other than Python's answer |
-| P1 | `CRASH` | pyc failed loudly — bad, but honest |
-| P1 | `HANG` | pyc exceeded the timeout; CPython did not |
-| P2 | `COMPILE_ERROR` | pyc refused to compile |
-| P3 | `STDERR_DIFF` | right answer, wrong diagnostics |
-| — | `MATCH` | |
-| — | `QUARANTINE_*` | no reproducible ground truth; excluded from scoring |
+| `DID_NOT_COMPILE` | pyc exited nonzero, or produced no binary | yes |
+| `TIMEOUT` | the binary exceeded the run timeout | yes |
+| `STDOUT_DIFFERS` | the binary's stdout ≠ CPython's | yes |
+| `EXIT_DIFFERS` | the binary's exit status ≠ CPython's | yes |
+| `ORACLE_UNSTABLE` | CPython disagreed with **CPython** across the two runs | yes |
+| `STDERR_DIFFERS` | right answer, different diagnostics | no |
 
-**P0 outranks every crash.** That ordering is CHARTER I1 and is not a
-severity heuristic: a compiler that crashes is a compiler you can trust to
-tell you when it failed. One that returns 5 as `None`, or `math.factorial(25)`
-as a wrapped int64, silently corrupts every result downstream. Nothing in the
-reporting path may reorder this.
+There is no ranking here, and that is deliberate. The previous design ranked
+verdicts by severity and detected regressions by comparing ranks; because
+`COMPILE_ERROR` ranked "better" than `CRASH`, a batch of **fixed** compile
+errors — files that finally began running — was reported as **48 regressions**.
+The ranking was the defect. Nothing replaced it, because a rank is an opinion
+and this layer holds none.
 
-**P2 is not a bug.** A compile error is the *correct* response to an
-unsupported construct (I1: fail loudly, never silently). Coverage gaps should
-present as P2 and get resolved by implementing the feature — never by
-downgrading the check.
+**stderr does not count against the rate** because it does not change what the
+program computed. It is still recorded and still shown; a traceback whose
+wording drifts is worth seeing and is not worth failing a build over.
 
-## Gate outcomes (`check_regression.py`)
+`ORACLE_UNSTABLE` **does** count. A program whose own output changes between
+two runs of the same interpreter has no ground truth, and that is a fact about
+the program or the environment worth reporting — not a reason to quietly drop
+it from the denominator.
+
+### Silent wrong answers are measured, not inferred
+
+CHARTER I1's top offence — the binary exits 0 and prints the wrong thing — is
+two recorded numbers, not a judgement: `exit == 0` **and** `STDOUT_DIFFERS`.
+Both the runner (`--fail-on-silent-wrong`, needs no baseline) and the
+comparator (a *new* one fails the gate) read it straight off the record.
+
+Running `verify/corpus/known-gaps` re-derives, from measurement alone, exactly
+the three P0s from issue #9 and nothing else:
+
+```
+globals_none_p0.py  line 1: cpython 'False'      pyc 'True'
+locals_bool_p0.py   line 1: cpython 'True'       pyc 'False'
+locals_none_p0.py   line 1: cpython "{'a': 1}"   pyc 'None'
+```
+
+**A compile error is not a bug.** Refusing an unsupported construct is the
+*correct* behaviour (I1: fail loudly, never silently). Coverage gaps should
+present as `DID_NOT_COMPILE` and get resolved by implementing the feature —
+never by downgrading the check.
+
+## Gate outcomes (`measure_compare.py`)
+
+Exactly two things fail the gate:
+
+1. **A case that passed now fails** — it had no rate-counting flag, and now
+   has one.
+2. **A new silent wrong answer** — a case that now exits 0 while its stdout
+   differs (CHARTER I1).
+
+Everything else is printed as `changed` and fails nothing. A case that used to
+be refused by the compiler and now runs and crashes swapped one loud failure
+for another: it did not pass before and does not pass now, and the pass rate
+already says so. Failing the build for that is how the 48 phantom regressions
+happened.
 
 | Exit | Meaning | |
 |---|---|---|
@@ -74,7 +123,7 @@ So a "did not run" outcome now announces itself three ways: a banner in the log,
 a GitHub workflow annotation on the run page, and a block in the step summary.
 
 `--require-baseline` closes the more dangerous version of the same hole. A
-missing baseline used to print a note and return **0** — a green run in which
+missing baseline prints a note and returns **0** without it — a green run in which
 the gate protected nothing. `metric.yml` gated a baseline path that did not
 exist and passed every night on that basis. CI always passes
 `--require-baseline` so this fails loudly instead; green is worse than red here,
@@ -88,7 +137,7 @@ reference. The cost is that a baseline drifts stale in the *good* direction,
 silently, while every run keeps passing — the language baseline sat 15 cases
 behind before anyone noticed, and only because someone compared by hand.
 
-So a run that is better than its baseline prints **BASELINE IS STALE**, with a
+So a run that is better than its baseline prints **BASELINE IS BEHIND**, with a
 `::warning` annotation and a step-summary block naming the refresh command. It
 never fails: blocking a change for being better would be absurd.
 
@@ -98,7 +147,7 @@ softened by good news sitting next to it.
 Refresh deliberately, after checking what moved:
 
 ```bash
-./verify/check_regression.py --update --baseline <baseline> --current <run>
+./verify/measure_compare.py --update --baseline <baseline> --current <run>
 ```
 
 ## How nondeterminism is handled
@@ -108,14 +157,26 @@ strip timings, sort set output — are a standing invitation to mask a real
 divergence, and you find out years later that the masking rule was hiding a
 bug.
 
-Instead the harness **runs the oracle twice** and quarantines any case whose
-own output is not reproducible. A case either has a stable ground truth or it
-is excluded from scoring. This cannot hide a divergence, because it never
-edits output before comparing it.
+Instead the harness **runs the oracle twice — before and after the subject,
+spanning compilation** — and flags any case whose own output is not
+reproducible as `ORACLE_UNSTABLE`. It is reported, not excluded: dropping a
+case from the denominator is a decision the instrument should not be making on
+its own, and the old quarantine silently discarded 82 of 389 `Lib/test`
+measurements it had already taken.
 
-`PYTHONHASHSEED=0` is pinned for the oracle so str-keyed set/dict iteration
-order is stable between runs. That is not normalization: pyc is still compared
-against whatever order CPython actually produces.
+The gap matters. Two back-to-back oracle runs agree on a program that prints
+the wall-clock time; the run *after* compilation does not. `test_strftime` was
+briefly reported as a P0 for exactly this reason.
+
+`verify/corpus/language/case_507.py` is the standing example: it prints
+`<itertools.chain object at 0x…>`, so its own address makes it unmatchable by
+construction. That is a corpus defect, and it now shows up as one instead of
+vanishing into a quarantine bucket.
+
+`PYTHONHASHSEED=0`, `PYTHON_COLORS=0` and `NO_COLOR=1` are pinned for **both
+sides**. That is not normalization — nothing either program prints is
+rewritten. It fixes what they are run *under*, so a difference is a difference
+in the programs rather than in the invoking shell.
 
 ## Reading a result
 
@@ -134,11 +195,12 @@ So, before reporting any delta as real:
    timing difference. If the observed failure shape does not match what the
    change could physically cause, suspect the measurement first.
 3. **Prefer the corpus for correctness claims.** `verify/corpus/language` has no
-   unittest timing text and has been stable at 99.04% across dozens of runs; it
-   is the reliable signal for "did this break something".
+   unittest timing text and is the reliable signal for "did this break
+   something".
 
-`run.py` records `jobs` in its output and `check_regression.py` says so when
-comparing across values, so a number cannot silently be compared against one
+`measure_run.py` records `jobs` and the oracle's `-VV` banner in its output,
+and `measure_compare.py` refuses outright to compare across a different oracle
+or different compiler flags, so a number cannot silently be compared against one
 taken under different conditions.
 
 This is written down because it was learned the expensive way: a 13.11% ->
@@ -148,17 +210,17 @@ measurement noise.
 
 ## The metric (CHARTER I6)
 
-**The published number is `matched / len(corpus)`** — of the 389 `Lib/test`
-files, how many behave exactly as CPython does. The denominator is the corpus,
-which is fixed, so the number moves only when the compiler does.
+**The published number is `passing / len(corpus)`** — of the 389 `Lib/test`
+files, how many showed no rate-counting difference from CPython. The
+denominator is every file measured. Nothing is excluded, so the number can move
+only when the compiler does.
 
-`matched / scored` is reported too, and is the more flattering figure, but it is
-*not* the headline and does not gate. Its denominator is the scored set, which
-excludes quarantined cases, and quarantine membership is nondeterministic. That
-makes it move for reasons unrelated to the compiler — and backwards: a run with
-less flakiness scores more cases and therefore reports a *lower* rate. The first
-scheduled metric run failed on exactly this, reporting a regression from 1.96%
-to 1.94% while matching the identical 7 cases.
+There is no second, more flattering figure any more. The old one divided by the
+*scored* set, which excluded quarantined cases, and quarantine membership was
+nondeterministic — so it moved for reasons unrelated to the compiler, and moved
+**backwards**: a run with less flakiness scored more cases and therefore
+reported a *lower* rate. The first scheduled metric run failed on exactly that,
+reporting a regression from 1.96% to 1.94% while matching the identical 7 cases.
 
 
 `--libtest` scores against CPython's own `Lib/test/`. It is the only number
@@ -182,8 +244,11 @@ expected; do not treat the drop as a regression.
 
 - New corpus source → a generator of `Case` in `corpus.py`. It must not know
   an expected output; if it needs one, the design is wrong.
-- New compiler CLI → `CompilerAdapter` in `differential.py` is the only place
-  that knows how pyc is invoked, so the harness survives the rebuild.
+- New compiler CLI → `Compiler` in `measure.py` is the only place that knows
+  how pyc is invoked, so the harness survives the rebuild.
+- New kind of difference → a flag in `measure.Flag`, set from a recorded fact.
+  If setting it requires guessing *why* the difference happened, it does not
+  belong in `measure.py`.
 - Property-based / generated programs are welcome. They fit the model exactly:
   the oracle supplies the ground truth, so generated input costs nothing extra.
 
@@ -241,5 +306,8 @@ certified the compiler's deviations as correct and locked them in. This is not
 a hypothetical failure mode of hardcoded expectations — it is what happened
 here, and it is the concrete reason CHARTER I5 forbids them.
 
-The harness flags all five as **P0**: pyc accepts programs Python rejects and
-silently produces answers Python never would.
+The harness flagged all five as P0 when this was written. They have since been
+fixed: as of the schema-3 measurement, `case_273`, `case_274` and `case_525`
+carry only `STDERR_DIFFERS` — pyc now raises what CPython raises, and only the
+traceback wording differs. The section stays because the *reason* CHARTER I5
+forbids stored expectations does not expire.

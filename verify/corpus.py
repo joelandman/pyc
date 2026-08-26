@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 from typing import Iterator
 
-from verify.differential import Case
+from verify.measure import Case
 
 # CPython's own suite includes files that are not standalone programs, or that
 # exist to exercise the interpreter's own internals rather than the language.
@@ -60,7 +60,7 @@ def _parseable(oracle: Path, paths: list[Path]) -> set[Path]:
 
     This must use the target, never the interpreter running the harness. It
     used to call ast.parse in-process, which made the corpus depend on whoever
-    launched run.py: on a 3.14 dev machine all files were included, while CI
+    launched the harness: on a 3.14 dev machine all files were included, while CI
     (system python3 = 3.12) silently dropped test_tstring, test_type_params,
     test_fstring, test_grammar and test_annotationlib -- 3.12 cannot parse PEP
     750 t-strings or PEP 695 type params. The corpus therefore shrank in CI,

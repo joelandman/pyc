@@ -104,15 +104,15 @@ jobs:
           # runs with no Python frame). They are in the gate so the published
           # number reflects the gap instead of hiding it.
           #
-          # This does NOT make red normal: check_regression compares per case,
-          # so a baselined P0 does not fail the gate but a NEW one does, and a
-          # baselined P0 that gets FIXED trips the staleness detector. The count
-          # can only go down.
-          PYC_LOWER="$RUNNER_TEMP/pyc_lower" ./verify/run.py \
+          # This does NOT make red normal: measure_compare compares per case,
+          # so a baselined silent wrong answer does not fail the gate but a NEW
+          # one does, and one that gets FIXED trips the staleness detector. The
+          # count can only go down.
+          PYC_LOWER="$RUNNER_TEMP/pyc_lower" ./verify/measure_run.py \
             --corpus verify/corpus/language \
             --corpus verify/corpus/known-gaps \
             --pyc "$PWD/compiler/tools/pycc" \
-            --pyc-flag -O0 \
+            --pyc-flag=-O0 \
             --sysroot "$SYSROOT" \
             --jobs "$(nproc)" \
             --run-timeout 15 --compile-timeout 90 \
@@ -127,7 +127,7 @@ jobs:
         id: gate
         run: |
           set +e
-          ./verify/check_regression.py \
+          ./verify/measure_compare.py \
             --baseline compiler/baseline-language.json \
             --require-baseline \
             --current current.json
@@ -157,7 +157,7 @@ jobs:
                   "Causes: oracle mismatch, compiler-flag mismatch, truncated "
                   "corpus, or a missing baseline."),
             "3": (":warning:", "HARNESS USAGE ERROR",
-                  "check_regression.py was invoked wrongly. Neither a "
+                  "measure_compare.py was invoked wrongly. Neither a "
                   "regression nor a verified pass."),
           }
           icon, title, detail = verdicts.get(

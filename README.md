@@ -37,7 +37,7 @@ That does not make red normal. The gate compares per case: a baselined P0 does
 not fail it, a **new** one does, and a baselined P0 that gets **fixed** trips
 the staleness detector and demands a refresh. The count can only go down.
 
-Measured by `./verify/run.py`; gated per-commit in CI
+Measured by `./verify/measure_run.py`; gated per-commit in CI
 (`.github/workflows/verify.yml`) and nightly (`metric.yml`).
 
 > The rest of this file still describes the **previous** tree (`src/`,

@@ -81,14 +81,14 @@ import json,glob,sys
 f=glob.glob('$tmp/*.json')
 if not f: sys.exit(1)
 d=json.load(open(f[0]))
-t=d.get('total_cases', len(d.get('results', [])))
-print(f\"{d['pass_rate']:.2f}%  ({d['matched']}/{t} files)  [from artifact]\")" 2>/dev/null)"
+t=d.get('total', len(d.get('results', [])))
+print(f\"{d['pass_rate']:.2f}%  ({d['passing']}/{t} files)  [from artifact]\")" 2>/dev/null)"
   fi
 fi
 [ -n "$rate" ] && echo "published  $rate"
 
-grep -q 'BASELINE IS STALE' <<<"$log" && \
-  echo "note       BASELINE IS STALE — this run beat its baseline; refresh it"
+grep -q 'BASELINE IS BEHIND' <<<"$log" && \
+  echo "note       BASELINE IS BEHIND — this run beat its baseline; refresh it"
 
 if grep -q 'Cache restored from key: sysroot' <<<"$log"; then
   echo "sysroot    cache hit"

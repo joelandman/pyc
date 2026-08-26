@@ -15,8 +15,8 @@ embedded NUL — were promoted into `language/` and *are* gated.
 
 ```bash
 S=~/opt/py-sysroots/cp314-3.14.7-tier1
-./verify/run.py --corpus verify/corpus/boundary \
-  --pyc "$PWD/compiler/tools/pycc" --pyc-flag -O0 --sysroot "$S" --jobs 4
+./verify/measure_run.py --corpus verify/corpus/boundary \
+  --pyc "$PWD/compiler/tools/pycc" --pyc-flag=-O0 --sysroot "$S" --jobs 4
 ```
 
 Coverage: float precision and 17-digit repr, DBL_MIN/DBL_MAX, 5e-324, inf/nan/
