@@ -104,9 +104,15 @@ namespace {
 // Setting __name__ afterwards does not work: it is read-only on a
 // builtin_function_or_method, and the failed SetAttr left an exception set
 // that surfaced later as an unrelated SystemError.
-struct Bound { PycImpl impl; int nargs; int nlocals;
+// nargs counts POSITIONALLY-BINDABLE parameters. Keyword-only parameters
+// occupy the next nkwonly slots: ordinary slots that positional binding may not
+// reach, which is exactly what makes them keyword-only. kwdefaults is a dict
+// keyed by name rather than a tuple, because a REQUIRED keyword-only parameter
+// is a hole and a tuple cannot hold one.
+struct Bound { PycImpl impl; int nargs; int nkwonly; int nlocals;
                char* name; const char* const* argnames;
-               PyObject* defaults; int vararg; int kwarg;
+               PyObject* defaults; PyObject* kwdefaults;
+               int vararg; int kwarg;
                PyObject* closure; int nfree; };
 
 PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
@@ -131,6 +137,7 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
         return nullptr;
     }
     std::vector<const char*> missing;
+    std::vector<const char*> missing_kwonly;
     PyObject** locals = new (std::nothrow) PyObject*[b->nlocals ? b->nlocals : 1];
     if (!locals) return PyErr_NoMemory();
     for (int i = 0; i < b->nlocals; ++i) locals[i] = nullptr;
@@ -165,7 +172,9 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
             const char* ks = PyUnicode_AsUTF8(k);
             if (!ks) goto fail;
             int slot = -1;
-            for (int i = 0; i < b->nargs; ++i)
+            // nargs + nkwonly: a keyword-only parameter is bindable BY KEYWORD,
+            // which is the whole point, so the search must cover it.
+            for (int i = 0; i < b->nargs + b->nkwonly; ++i)
                 if (std::strcmp(ks, b->argnames[i]) == 0) { slot = i; break; }
             if (slot < 0) {
                 // Unmatched keywords go to **kwargs when the function has one;
@@ -204,20 +213,44 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
             }
             missing.push_back(b->argnames[i]);
         }
-        if (!missing.empty()) {
-            // CPython reports ALL missing parameters in one message, counted
-            // and joined: "missing 2 required positional arguments: 'a' and
-            // 'b'"; three or more use an Oxford comma.
+        // Keyword-only parameters are reported SEPARATELY by CPython:
+        // "missing 1 required keyword-only argument: 'b'". Collected apart so
+        // the message says which kind, rather than lumping them in with
+        // positional and being wrong about it.
+        for (int i = b->nargs; i < b->nargs + b->nkwonly; ++i) {
+            if (locals[i]) continue;
+            PyObject* d = b->kwdefaults
+                ? PyDict_GetItemString(b->kwdefaults, b->argnames[i]) : nullptr;
+            if (d) { Py_INCREF(d); locals[i] = d; continue; }
+            missing_kwonly.push_back(b->argnames[i]);
+        }
+        // CPython reports ALL missing parameters in one message, counted and
+        // joined: "missing 2 required positional arguments: 'a' and 'b'"; three
+        // or more use an Oxford comma. Positional and keyword-only get separate
+        // messages, and positional is reported first when both are missing.
+        auto join = [](const std::vector<const char*>& v) {
             std::string names;
-            for (std::size_t k2 = 0; k2 < missing.size(); ++k2) {
-                if (k2) names += (missing.size() == 2) ? " and "
-                               : (k2 + 1 == missing.size() ? ", and " : ", ");
-                names += "'"; names += missing[k2]; names += "'";
+            for (std::size_t k2 = 0; k2 < v.size(); ++k2) {
+                if (k2) names += (v.size() == 2) ? " and "
+                               : (k2 + 1 == v.size() ? ", and " : ", ");
+                names += "'"; names += v[k2]; names += "'";
             }
+            return names;
+        };
+        if (!missing.empty()) {
+            std::string names = join(missing);
             PyErr_Format(PyExc_TypeError,
                          "%s() missing %zd required positional argument%s: %s",
                          b->name, (Py_ssize_t)missing.size(),
                          missing.size() == 1 ? "" : "s", names.c_str());
+            goto fail;
+        }
+        if (!missing_kwonly.empty()) {
+            std::string names = join(missing_kwonly);
+            PyErr_Format(PyExc_TypeError,
+                         "%s() missing %zd required keyword-only argument%s: %s",
+                         b->name, (Py_ssize_t)missing_kwonly.size(),
+                         missing_kwonly.size() == 1 ? "" : "s", names.c_str());
             goto fail;
         }
     }
@@ -302,7 +335,8 @@ int func_set_name(PyObject* self, PyObject* v, void*) {
 
 void func_dealloc(PyObject* self) {
     PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    if (f->b) { Py_XDECREF(f->b->defaults); Py_XDECREF(f->b->closure);
+    if (f->b) { Py_XDECREF(f->b->defaults); Py_XDECREF(f->b->kwdefaults);
+                Py_XDECREF(f->b->closure);
                 std::free(f->b->name); delete f->b; }
     Py_XDECREF(f->name);
     Py_XDECREF(f->doc);
@@ -346,14 +380,15 @@ bool init_func_type() {
 }  // namespace
 
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
-                               int nargs, int nlocals,
+                               int nargs, int nkwonly, int nlocals,
                                const char* const* argnames,
-                               PyObject* defaults,
+                               PyObject* defaults, PyObject* kwdefaults,
                                int vararg_slot, int kwarg_slot,
                                PyObject** closure, int nfree) {
     char* owned = strdup(name);
     if (!owned) return PyErr_NoMemory();
     Py_XINCREF(defaults);
+    Py_XINCREF(kwdefaults);
     // The closure is captured as a tuple of CELLS, not values: the whole point
     // is that the inner function sees later assignments to the outer variable.
     PyObject* clo = nullptr;
@@ -365,8 +400,8 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
             PyTuple_SET_ITEM(clo, i, closure[i]);
         }
     }
-    Bound* b = new (std::nothrow) Bound{impl, nargs, nlocals, owned,
-                                        argnames, defaults,
+    Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nlocals, owned,
+                                        argnames, defaults, kwdefaults,
                                         vararg_slot, kwarg_slot, clo, nfree};
     if (!b) { Py_XDECREF(defaults); std::free(owned); return PyErr_NoMemory(); }
     if (!init_func_type()) { Py_XDECREF(defaults); std::free(owned); delete b; return nullptr; }

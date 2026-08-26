@@ -55,7 +55,7 @@ public:
     bool lower_module(const ast::mod& node) {
         const Module* mm = std::get_if<Module>(&node.v);
         if (!mm) return err("only a module can be compiled", "mod", {});
-        mod_.functions.push_back(ir::Function{"__main__", {}, {}, {}, 1});
+        mod_.functions.push_back(ir::Function{.name="__main__", .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
@@ -383,7 +383,8 @@ private:
                            const std::vector<std::string>& locals) {
         FnScope sc{fn_idx_, blk_, locals_, owned_, frame_owned_, class_ns_,
                    loops_, try_stack_, cells_, enclosing_cells_};
-        mod_.functions.push_back(ir::Function{name, params, {}, {}, 1});
+        mod_.functions.push_back(
+            ir::Function{.name=name, .params=params, .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
         cur()->locals = locals;
         locals_.clear();
@@ -410,9 +411,11 @@ private:
                                   const SourceLoc& loc,
                                   const std::vector<ir::Value>& closure = {},
                                   ir::Value defaults = {},
-                                  int vararg_slot = -1, int kwarg_slot = -1) {
+                                  int vararg_slot = -1, int kwarg_slot = -1,
+                                  ir::Value kwdefaults = {}) {
         ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        std::vector<ir::Value> mkargs{defaults};
+        // args[0] = defaults, args[1] = kwdefaults, args[2..] = closure cells.
+        std::vector<ir::Value> mkargs{defaults, kwdefaults};
         for (const ir::Value& c : closure) mkargs.push_back(c);
         // Slots are biased by one so 0 can mean "absent", matching the def
         // path -- MakeFunction reads target/target_else that way.
@@ -881,10 +884,14 @@ private:
     bool lower_functiondef(const FunctionDef& n) {
         const arguments& a = *n.args;
         if (!a.posonlyargs.empty()) return unsupported("positional-only parameters", n.loc);
-        if (!a.kwonlyargs.empty())  return unsupported("keyword-only parameters", n.loc);
 
+        // Positional params first, then keyword-only. They are ordinary slots;
+        // what makes them keyword-only is that the trampoline's positional
+        // binding stops at nargs.
         std::vector<std::string> params;
         for (const arg& p : a.args) params.push_back(p.arg);
+        for (const arg& p : a.kwonlyargs) params.push_back(p.arg);
+        const int nkwonly = (int)a.kwonlyargs.size();
 
         // Defaults are evaluated ONCE, here, in the enclosing scope -- not per
         // call. That is the behaviour behind the mutable-default surprise, and
@@ -902,6 +909,29 @@ private:
                 call_capi_imm("PyTuple_SetItem", {defaults, d},
                               (std::int64_t)i, 1, n.loc, &dok);   // steals d
                 if (!dok) return false;
+            }
+        }
+
+        // Keyword-only defaults are a DICT keyed by name, not a tuple:
+        // kw_defaults is parallel to kwonlyargs with a hole where a parameter
+        // is required, and a tuple cannot carry a hole. Evaluated here, once,
+        // in the enclosing scope, exactly like the positional defaults.
+        ir::Value kwdefaults;
+        if (nkwonly > 0) {
+            bool any = false;
+            for (const auto& kd : a.kw_defaults) if (kd.has_value()) any = true;
+            if (any) {
+                kwdefaults = call_capi("PyDict_New", {}, n.loc, &dok);
+                if (!dok) return false;
+                mark_owned(kwdefaults);
+                for (std::size_t i = 0; i < a.kw_defaults.size() && i < a.kwonlyargs.size(); ++i) {
+                    if (!a.kw_defaults[i].has_value()) continue;   // required
+                    ir::Value d = lower_expr(*a.kw_defaults[i].value(), &dok);
+                    if (!dok) return false;
+                    ir::Value k = const_str(a.kwonlyargs[i].arg, n.loc);
+                    call_capi("PyDict_SetItem", {kwdefaults, k, d}, n.loc, &dok, {k, d});
+                    if (!dok) return false;
+                }
             }
         }
 
@@ -1015,7 +1045,8 @@ private:
         std::vector<std::string> all_locals = own_locals;
         for (const std::string& fv2 : freevars) all_locals.push_back(fv2);
 
-        mod_.functions.push_back(ir::Function{n.name, params, {}, {}, 1});
+        mod_.functions.push_back(ir::Function{
+            .name=n.name, .params=params, .nkwonly=nkwonly, .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
         const std::size_t fn_index = fn_idx_;
         cur()->locals = all_locals;
@@ -1095,8 +1126,9 @@ private:
         // and emitted a duplicate LLVM symbol.
         // target/target_else carry the *args and **kwargs slot indices,
         // biased by one so 0 can mean "absent".
-        // args[0] is defaults (or the null value), args[1..] the closure cells.
-        std::vector<ir::Value> mkargs{defaults.valid() ? defaults : ir::Value{}};
+        // args[0] defaults, args[1] kwdefaults, args[2..] the closure cells.
+        std::vector<ir::Value> mkargs{defaults.valid() ? defaults : ir::Value{},
+                                      kwdefaults.valid() ? kwdefaults : ir::Value{}};
         for (const ir::Value& c : closure_cells) mkargs.push_back(c);
         ir::Instr mk{ir::Op::MakeFunction, mkargs,
                      fv, Ownership::Owned, fn_qualname,
@@ -1108,6 +1140,7 @@ private:
         emit(std::move(mk));
         mark_owned(fv);
         if (defaults.valid() && owns(defaults)) release(defaults, n.loc);
+        if (kwdefaults.valid() && owns(kwdefaults)) release(kwdefaults, n.loc);
         // MakeFunction does not consume the cells -- it INCREFs them into the
         // closure tuple -- so the references loaded above are still ours. The
         // lambda path already released them; this one leaked one cell per

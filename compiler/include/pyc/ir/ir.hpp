@@ -181,7 +181,12 @@ struct Block {
 
 struct Function {
     std::string name;
+    // Positional params first, then keyword-only. nkwonly is the length of that
+    // trailing run: a keyword-only parameter occupies an ordinary slot, it just
+    // may not be filled positionally, so the split is a COUNT rather than a
+    // separate list.
     std::vector<std::string> params;
+    int nkwonly = 0;
     // Fast locals, CPython-style: a name assigned anywhere in the body is
     // local throughout, so the slot set is fixed before lowering begins.
     std::vector<std::string> locals;
