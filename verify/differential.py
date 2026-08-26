@@ -290,10 +290,43 @@ class DifferentialRunner:
         if subject.crashed_by_signal:
             return r(Verdict.CRASH, f"killed by signal {-subject.returncode}")
         if not stdout_match or not exit_match:
-            return r(Verdict.CRASH, "pyc failed, but stdout/exit differ from CPython")
+            return r(Verdict.CRASH, _failure_reason(subject, oracle))
         if subject.stderr != oracle.stderr:
             return r(Verdict.STDERR_DIFF, "stdout and exit match; stderr differs")
         return r(Verdict.MATCH)
+
+
+def _last_line(text: str) -> str:
+    for line in reversed(text.splitlines()):
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def _failure_reason(subject: Execution, oracle: Execution,
+                    limit: int = 200) -> str:
+    """Why pyc failed, in a form that GROUPS across cases.
+
+    This used to be the fixed string "pyc failed, but stdout/exit differ from
+    CPython", which made CRASH -- the largest failure category against
+    Lib/test, 165 of 389 files -- completely unrankable. COMPILE_ERROR records
+    its first diagnostic and ranks cleanly; this did not, so half the failures
+    were invisible while the other half were a to-do list.
+
+    The last stderr line is the useful one: for a Python-level failure that is
+    `ExceptionType: message`, which is exactly the grouping key. It is only
+    reported when it DIFFERS from CPython's -- if both ended the same way the
+    divergence is in stdout or exit status, and quoting a shared traceback
+    would be actively misleading.
+    """
+    sub = _last_line(subject.stderr)
+    ora = _last_line(oracle.stderr)
+    if sub and sub != ora:
+        return sub[:limit]
+    if subject.returncode != oracle.returncode:
+        return (f"exit {subject.returncode} vs CPython {oracle.returncode}"
+                + (f"; {sub[:limit]}" if sub else ""))
+    return "stdout differs; stderr and exit match CPython"
 
 
 def _first_diagnostic(e: Execution, limit: int = 300) -> str:
