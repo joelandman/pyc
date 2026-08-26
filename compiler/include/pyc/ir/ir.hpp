@@ -42,8 +42,9 @@ enum class Op {
     // constants -- ConstInt carries DECIMAL TEXT, never an int64: materialising
     // a literal into a machine word is how the old tree wrapped factorial(25).
     ConstInt, ConstFloat, ConstStr, ConstBytes, ConstBool, ConstNone,
+    ConstEllipsis,
     // names
-    LoadGlobal, StoreGlobal, LoadLocal, StoreLocal,
+    LoadGlobal, StoreGlobal, LoadLocal, StoreLocal, DelLocal,
     // Name lookup in a CLASS BODY: the namespace under construction, then
     // globals, then builtins (CPython's LOAD_NAME). args[0] is the namespace
     // dict, text is the name.

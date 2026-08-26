@@ -72,6 +72,24 @@ PyObject* pyc_rt_load_local(PyObject** locals, int slot, const char* name) {
     return v;
 }
 
+// `del x` on a local. CPython's DELETE_FAST raises UnboundLocalError when the
+// slot is already empty rather than silently succeeding, and a later read of
+// the slot must raise too -- which pyc_rt_load_local already does, since it
+// treats NULL as unbound. So deleting is clearing the slot, not storing None:
+// storing None would make the name still bound, to the wrong value.
+int pyc_rt_del_local(PyObject** locals, int slot, const char* name) {
+    PyObject* old = locals[slot];
+    if (!old) {
+        PyErr_Format(PyExc_UnboundLocalError,
+                     "cannot access local variable '%s' where it is not "
+                     "associated with a value", name);
+        return -1;
+    }
+    locals[slot] = nullptr;       // clear BEFORE the decref: __del__ may run
+    Py_DECREF(old);               // and must not observe a dangling slot
+    return 0;
+}
+
 void pyc_rt_store_local(PyObject** locals, int slot, PyObject* v) {
     PyObject* old = locals[slot];
     Py_XINCREF(v);
@@ -379,6 +397,10 @@ PyObject* pyc_rt_bytes(const char* data, Py_ssize_t len) {
 }  // extern "C"
 
 extern "C" PyObject* pyc_rt_none(void) { Py_RETURN_NONE; }
+// `...` is a singleton like None, not a value to materialise.
+// No Py_RETURN_ELLIPSIS macro exists -- that family covers None/True/False
+// and stops there, so the reference is taken explicitly.
+extern "C" PyObject* pyc_rt_ellipsis(void) { return Py_NewRef(Py_Ellipsis); }
 
 extern "C" PyObject* pyc_rt_build_class(const char* name, PyObject* bases,
                                         PyObject* ns) {

@@ -13,6 +13,8 @@ const char* op_name(Op op) {
         case Op::ConstBytes:  return "const.bytes";
         case Op::ConstBool:   return "const.bool";
         case Op::ConstNone:   return "const.none";
+        case Op::ConstEllipsis: return "const.ellipsis";
+        case Op::DelLocal:    return "del.local";
         case Op::LoadGlobal:  return "load.global";
         case Op::StoreGlobal: return "store.global";
         case Op::LoadLocal:   return "load.local";

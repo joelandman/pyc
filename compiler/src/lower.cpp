@@ -1244,7 +1244,13 @@ private:
                     call_capi("PyObject_DelItem", {obj, key}, n.loc, &ok, {obj, key});
                 },
                 [&](const Name& n2)      {
-                    if (locals_.count(n2.id)) { ok = unsupported("del of a local", n2.loc); return; }
+                    auto lit = locals_.find(n2.id);
+                    if (lit != locals_.end()) {
+                        emit(ir::Instr{ir::Op::DelLocal, {}, std::nullopt,
+                                       Ownership::NotAnObject, n2.id, lit->second,
+                                       0, n.loc, make_landing_pad(n.loc)});
+                        return;
+                    }
                     ir::Value r = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
                     emit(ir::Instr{ir::Op::DelGlobal, {}, r, Ownership::NotAnObject,
                                    n2.id, 0, 0, n.loc, make_landing_pad(n.loc)});
@@ -2720,7 +2726,7 @@ private:
             [&](const ConstBytes& v)  { in.op = ir::Op::ConstBytes; in.text = v.value; },
             [&](const ConstBool& v)   { in.op = ir::Op::ConstBool;  in.text = v.value ? "True" : "False"; },
             [&](const ConstNone&)     { in.op = ir::Op::ConstNone; },
-            [&](const ConstEllipsis&) { *ok = unsupported("Ellipsis literals", c.loc); },
+            [&](const ConstEllipsis&) { in.op = ir::Op::ConstEllipsis; },
             [&](const ConstComplex& v) {
                 in.op = ir::Op::ConstComplex;
                 // LLVM needs a literal it can parse as a double; %.17g is

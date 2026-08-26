@@ -230,6 +230,10 @@ private:
                 need("declare ptr @pyc_rt_none()");
                 o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_none()\n";
                 break;
+            case Op::ConstEllipsis:
+                need("declare ptr @pyc_rt_ellipsis()");
+                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_ellipsis()\n";
+                break;
             case Op::LoadGlobal:
                 need("declare ptr @pyc_rt_load_global(ptr)");
                 o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_load_global(ptr "
@@ -260,6 +264,14 @@ private:
                    << in.target << ", ptr " << cstr(in.text) << ")\n";
                 check(in, v(*in.result), true);
                 break;
+            case Op::DelLocal: {
+                need("declare i32 @pyc_rt_del_local(ptr, i32, ptr)");
+                std::string r = fresh();
+                o_ << "  " << r << " = call i32 @pyc_rt_del_local(ptr %locals, i32 "
+                   << in.target << ", ptr " << cstr(in.text) << ")\n";
+                check(in, r, false);   // int: negative is failure
+                break;
+            }
             case Op::StoreLocal:
                 need("declare void @pyc_rt_store_local(ptr, i32, ptr)");
                 o_ << "  call void @pyc_rt_store_local(ptr %locals, i32 " << in.target
