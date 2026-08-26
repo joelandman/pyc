@@ -65,16 +65,18 @@ def collect(tree: ast.Module, source: bytes, filename: str) -> list[dict]:
                 f"generator expression at line {node.lineno} does not match "
                 f"symtable scope at line {scope.get_lineno()}")
         frees = list(scope.get_frees())
+        code, frees = _compile_one(node, frees, filename)   # co_freevars order
         out.append({
             "line": node.lineno,
             "col": node.col_offset,
             "freevars": frees,
-            "code": base64.b64encode(_compile_one(node, frees, filename)).decode("ascii"),
+            "code": base64.b64encode(code).decode("ascii"),
         })
     return out
 
 
-def _compile_one(node: ast.GeneratorExp, frees: list[str], filename: str) -> bytes:
+def _compile_one(node: ast.GeneratorExp, frees: list[str],
+                 filename: str) -> tuple[bytes, list[str]]:
     # The outermost iterable is evaluated EAGERLY by the enclosing scope and
     # handed in, so inside the wrapper it is just a parameter.
     shim = copy.deepcopy(node)
@@ -101,10 +103,23 @@ def _compile_one(node: ast.GeneratorExp, frees: list[str], filename: str) -> byt
     # one argument (the iterator) and exactly the free variables symtable named.
     if inner.co_argcount != 1:
         raise GenexpError(f"genexp code takes {inner.co_argcount} args, expected 1")
-    if list(inner.co_freevars) != frees:
+    # co_freevars is AUTHORITATIVE and its order matters: the run side builds
+    # the closure tuple positionally, so position i must be the cell for
+    # co_freevars[i]. symtable.get_frees() returns FIRST-APPEARANCE order while
+    # co_freevars is always sorted, so the two disagree whenever the free
+    # variables are not referenced alphabetically -- `strides[i] * shape[i]`
+    # gives ('strides','shape') from symtable and ('shape','strides') here.
+    #
+    # This used to be an equality assertion, which refused 19 Lib/test files.
+    # The assertion was right to exist: without it the closure tuple would have
+    # been built in symtable order and indexed in sorted order, silently binding
+    # one variable's cell where another was expected. But the fix is to take the
+    # authoritative order, not to demand symtable produce it.
+    if set(inner.co_freevars) != set(frees):
         raise GenexpError(
-            f"genexp freevars {inner.co_freevars} do not match symtable {tuple(frees)}")
-    return marshal.dumps(inner)
+            f"genexp freevars {inner.co_freevars} are not the same SET as "
+            f"symtable {tuple(frees)}")
+    return marshal.dumps(inner), list(inner.co_freevars)
 
 
 def _only_code(consts, what: str) -> types.CodeType:
@@ -183,13 +198,13 @@ def collect_genfuncs(tree: ast.Module, source: bytes, filename: str) -> list[dic
                             f"no symtable scope for async function "
                             f"'{ch.name}' at line {ch.lineno}")
                     frees = list(sub.get_frees())
+                    code, frees = _compile_genfunc(
+                        ch, frees, _qualname_of(stack, ch.name),
+                        filename, is_async=True)                       # co_freevars order
                     out.append({
                         "line": ch.lineno, "col": ch.col_offset,
                         "freevars": frees,
-                        "code": base64.b64encode(
-                            _compile_genfunc(ch, frees,
-                                             _qualname_of(stack, ch.name),
-                                             filename, is_async=True)).decode("ascii"),
+                        "code": base64.b64encode(code).decode("ascii"),
                     })
                 elif isinstance(ch, ast.FunctionDef) and _is_generator_body(ch):
                     if sub is None:
@@ -197,13 +212,13 @@ def collect_genfuncs(tree: ast.Module, source: bytes, filename: str) -> list[dic
                             f"no symtable scope for generator function "
                             f"'{ch.name}' at line {ch.lineno}")
                     frees = list(sub.get_frees())
+                    code, frees = _compile_genfunc(
+                        ch, frees, _qualname_of(stack, ch.name),
+                        filename)                       # co_freevars order
                     out.append({
                         "line": ch.lineno, "col": ch.col_offset,
                         "freevars": frees,
-                        "code": base64.b64encode(
-                            _compile_genfunc(ch, frees,
-                                             _qualname_of(stack, ch.name),
-                                             filename)).decode("ascii"),
+                        "code": base64.b64encode(code).decode("ascii"),
                     })
                 visit(ch, sub, stack + [ch.name, "<locals>"])
             elif isinstance(ch, ast.ClassDef):
@@ -225,7 +240,7 @@ CO_ASYNC_GENERATOR = 0x200
 
 
 def _compile_genfunc(node, frees: list[str], qualname: str, filename: str,
-                     is_async: bool = False) -> bytes:
+                     is_async: bool = False) -> tuple[bytes, list[str]]:
     shim = copy.deepcopy(node)
     # Decorators, defaults and annotations are all evaluated by the ENCLOSING
     # scope at def time. Compiling them into the wrapper would evaluate them in
@@ -266,10 +281,12 @@ def _compile_genfunc(node, frees: list[str], qualname: str, filename: str,
                 f"generator")
     elif not (inner.co_flags & CO_GENERATOR):
         raise GenexpError(f"'{node.name}' was not compiled as a generator")
-    if list(inner.co_freevars) != frees:
+    # Same as the genexp path: co_freevars order is authoritative because the
+    # closure tuple is built positionally against it.
+    if set(inner.co_freevars) != set(frees):
         raise GenexpError(
-            f"'{node.name}' freevars {inner.co_freevars} do not match "
-            f"symtable {tuple(frees)}")
+            f"'{node.name}' freevars {inner.co_freevars} are not the same SET "
+            f"as symtable {tuple(frees)}")
     # co_qualname would read "_pyc_wrap.<locals>.name"; correct it at build
     # time so tracebacks and repr name the real function.
-    return marshal.dumps(inner.replace(co_qualname=qualname))
+    return marshal.dumps(inner.replace(co_qualname=qualname)), list(inner.co_freevars)
