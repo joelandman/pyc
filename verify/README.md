@@ -31,7 +31,7 @@ writes down what it saw. `measure_compare.py` **compares** two of those
 records. Nothing in the measuring half forms an opinion about what a
 difference means, and nothing in the comparing half re-runs anything.
 
-The subject binary comes from `--pyc`, `$PYC_BINARY`, or `./build/pyc`. The
+The subject comes from `--pyc`, `$PYC_BINARY`, or `./compiler/tools/pycc`. The
 oracle comes from `--oracle`, or `--sysroot DIR` (read from that sysroot's
 `pyc-sysroot.json`), or the running interpreter. Prefer `--sysroot`: a
 divergence must be measured against the runtime actually being targeted, and
@@ -41,8 +41,8 @@ that makes the parse oracle and the differential oracle the same binary
 ## Flags — measurements, not a severity scale
 
 Each case runs the oracle, compiles, runs the binary, then runs the oracle
-again. Six facts come out, and the flags follow from them mechanically. A case
-carries any number of them, or none.
+again. The flags follow from what those four steps produced, mechanically. A
+case carries any number of them, or none.
 
 | Flag | What was measured | Counts against the rate |
 |---|---|---|
