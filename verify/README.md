@@ -103,9 +103,7 @@ A case that newly became `ORACLE_UNSTABLE` **and nothing else** is printed and
 does not fail. pyc is not involved in that measurement — it comes from two
 CPython runs — so calling it a compiler regression would be false. It still
 counts against the pass rate, because the case genuinely has no ground truth
-any more. This is not hypothetical: in one nightly `Lib/test` run, 9 of the 14
-files that stopped matching had simply become nondeterministic, 4 had only
-drifted on stderr, and exactly **1** was a real new failure.
+any more.
 
 Everything else is printed as `changed` and fails nothing. A case that used to
 be refused by the compiler and now runs and crashes swapped one loud failure
@@ -180,6 +178,46 @@ briefly reported as a P0 for exactly this reason.
 `<itertools.chain object at 0x…>`, so its own address makes it unmatchable by
 construction. That is a corpus defect, and it now shows up as one instead of
 vanishing into a quarantine bucket.
+
+### What is actually nondeterministic in `Lib/test`, measured
+
+The 2026-08-26 nightly quarantined 86 files. That number invited the reading
+"CPython is nondeterministic", which is not what it said. Re-running the
+oracle four times per file, with `PYTHONHASHSEED=0` pinned, isolates six state
+sources — every one of them inside the test, none of them CPython being
+unreliable and none of them pyc:
+
+| state source | files | stream |
+|---|---|---|
+| elapsed wall time — unittest's `Ran N tests in 0.004s` | all 18 | stderr |
+| ASLR heap address in a repr | `test_audit`, `test_format` | stdout |
+| unseeded `random` | `test_sort`, `test_imaplib`, `test_thread`, `test_threading` | stdout |
+| thread scheduling order | `test_thread`, `test_threading` | stdout |
+| process id | `test_pty` | stdout |
+| ephemeral TCP port | `test_socketserver` | stdout |
+| temp directory name | `test_zipimport_support` | stdout |
+| wall-clock date | `test_strftime` | stdout, intermittent |
+
+Nine of the eighteen vary **only** on stderr, and all nine of those are pure
+elapsed-time text: `test_codecmaps_{cn,hk,jp,kr,tw}`, `test_ucn`,
+`test_unicodedata`, `test___all__`, `test_strftime`. Under this instrument they
+are `STDERR_DIFFERS` — recorded, shown, and not counted. The old harness
+quarantined them, which cost their whole measurement.
+
+**Whether a probe SEES the instability is chance, and that produced a false
+signal.** `test_strftime` printed identical stdout across four back-to-back
+runs here, yet the nightly caught it: its two oracle samples straddled
+compilation and crossed a second boundary. The same asymmetry made the compiled
+binary look *less* deterministic than CPython when both were doing the same
+thing — the subject got three samples and the oracle two, so 68 files were
+labelled "the compiled program does not reproduce across runs". Compiling
+`test_copyreg` and `test_codeop` and running each five times shows the only
+variation is `Ran 6 tests in 0.000s` → `0.001s` on stderr. Nothing in pyc's
+output was nondeterministic in any of them.
+
+The stdout cases cannot ever match, for the same reason `case_507.py` cannot:
+the program's answer contains an address, a pid, a port or a coin flip. They
+are `ORACLE_UNSTABLE`, counted against the rate, and honest about why.
 
 `PYTHONHASHSEED=0`, `PYTHON_COLORS=0` and `NO_COLOR=1` are pinned for **both
 sides**. That is not normalization — nothing either program prints is
