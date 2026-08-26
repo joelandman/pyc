@@ -79,6 +79,25 @@ def did_not_run(reason: str, detail: str) -> int:
              "comparison never happened, so the metric is currently unguarded.")
     return EXIT_DID_NOT_RUN
 
+# PROGRESS order, which is not the same as severity order.
+#
+# differential.py ranks CRASH (P1) as worse than COMPILE_ERROR (P2), and for
+# triage that is right: a crash is a defect, a refusal is honest. But for
+# tracking PROGRESS they are the same state -- the program does not work -- and
+# moving between them is not a regression. Fixing a compile error so the file
+# finally runs and then crashes is forward motion, and ranking it as a
+# regression made the gate report 48 of them after a session that deliberately
+# cleared five compile-error categories.
+#
+# So loud failures share a rank here. Only these transitions are regressions:
+# anything -> SILENT_WRONG_ANSWER, and MATCH or STDERR_DIFF -> a failure.
+PROGRESS = {
+    "SILENT_WRONG_ANSWER": 0,          # worst: wrong answer, no error
+    "CRASH": 1, "HANG": 1, "COMPILE_ERROR": 1,   # loud failure, all equivalent
+    "STDERR_DIFF": 2,                  # right answer, wrong diagnostics
+    "MATCH": 3,
+}
+
 # Lower is better; mirrors Verdict ordering in differential.py.
 RANK = {
     "SILENT_WRONG_ANSWER": 0, "CRASH": 1, "HANG": 2, "COMPILE_ERROR": 3,
@@ -182,6 +201,20 @@ def main() -> int:
     # moves Lib/test (51 matches at --jobs 4 vs 37 at --jobs 12) but leaves the
     # language corpus untouched, which has no unittest timing text in it. So
     # refusing outright would block a stable gate for a hazard it does not have.
+    # The harness itself is a measurement condition. Adding the subject-side
+    # stability probe moved cases that were FLAPPING MATCH into quarantine --
+    # correct behaviour, but it makes verdicts from before and after the change
+    # incomparable, and the gate read three of them as a compiler regression.
+    # Same class as the oracle and compiler-flag guards above.
+    base_h = base.get("harness")
+    curr_h = curr.get("harness")
+    if base_h is not None and curr_h is not None and base_h != curr_h:
+        return did_not_run("harness version mismatch", (
+            f"  baseline recorded by harness {base_h}\n"
+            f"  current run used harness      {curr_h}\n"
+            "\n  Verdicts are not comparable across harness changes. Re-record\n"
+            "  the baseline with the current harness."))
+
     base_jobs = base.get("jobs")
     curr_jobs = curr.get("jobs")
     if base_jobs is not None and curr_jobs is not None and base_jobs != curr_jobs:
@@ -224,7 +257,8 @@ def main() -> int:
         cv = cmap.get(case)
         if cv is None:
             continue  # case removed; covered by the corpus-shrink check below
-        if RANK[cv] < RANK[bv] and cv in SCORED and bv in SCORED:
+        if (bv in PROGRESS and cv in PROGRESS
+                and PROGRESS[cv] < PROGRESS[bv]):
             worse.append(f"{case}: {bv} -> {cv}")
             if cv == "SILENT_WRONG_ANSWER" and bv != "SILENT_WRONG_ANSWER":
                 new_p0.append(case)

@@ -254,6 +254,9 @@ def report(results: list[Result], args, elapsed: float) -> int:
             # drifts under load. A pass rate quoted without its parallelism is
             # not reproducible.
             "jobs": (args.jobs or 0),
+            # Bump when a change alters what verdict a given program receives.
+            # Verdicts from different harness versions are not comparable.
+            "harness": 2,
             "corpus": {"libtest": bool(args.libtest),
                        "libtest_limit": args.libtest_limit},
             "pass_rate": rate,            # matched / total corpus -- published
