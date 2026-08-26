@@ -7,8 +7,14 @@ its results may not be overridden by them (`rebuild/AGENT_DIRECTIVES.md`, A5).
 
 **No test in this tree stores an expected output.** The oracle is a real
 CPython binary, executed at run time, every run. There is deliberately nowhere
-in `measure.py` to put an expected value. The volatile-text rules below are not
-an exception: they name shapes that cannot be equal twice, never values.
+in `measure.py` to put an expected value.
+
+The volatile-text rules below are not an exception, and CHARTER **I5a** is the
+authority for them: they name *shapes* that cannot be equal twice, never
+values. I5 originally demanded that **any** divergence fail. Measured, that
+reading failed 94 of 389 `Lib/test` files which were byte-identical to CPython
+apart from `Ran 70 tests in 0.098s`. A contract that requires an instrument to
+report 24% of a corpus as broken when it is not is a defect in the contract.
 
 This is CHARTER I5, and it exists because of how the old tree drifted: 662
 inline `(source, expected)` pairs, with the expected string documented as the

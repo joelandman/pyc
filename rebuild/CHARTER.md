@@ -124,12 +124,72 @@ represented. Adding a node kind upstream must break the build, loudly.
 ### I5 — Every test is differential against real CPython.
 
 No test may hardcode expected output. Each runs under both pyc and the pinned
-CPython binary; **any** divergence in stdout, stderr, or exit status fails.
+CPython binary, and the two are compared on stdout, stderr, and exit status.
 
 > Previously: 662 inline `(source, expected)` pairs with expected hardcoded as
 > "the source of truth". Such a suite stays green forever on a subset. This is
 > the mechanism by which the general-purpose intent was lost: every ticket was
 > "make this snippet pass", and 662 green cases feel exactly like progress.
+
+#### I5a — A value that cannot be equal twice is not evidence.
+
+**Amended 2026-08-26.** I5 originally read "**any** divergence in stdout,
+stderr, or exit status fails". That was wrong, and it was wrong in the
+direction that matters: it required the instrument to report failures that
+were not failures.
+
+A program's output can depend on state that necessarily differs between two
+runs — elapsed time, a heap address, a pid, an ephemeral port, a temp path, an
+unseeded `random`, thread interleaving. Two runs at different moments under
+different load **must** produce different bytes for those. Comparing them
+measures the clock, the allocator and the scheduler; it says nothing about the
+compiler, and demanding equality guarantees a false report.
+
+This is not theoretical. Measured on `Lib/test/` at 389 files, the strict
+reading discarded or failed **94 files — 24% of the corpus — that were
+byte-identical to CPython apart from unittest's `Ran 70 tests in 0.098s`
+trailer.** Spot-checked by hand, four of them had identical stdout, identical
+exit 0, and a stderr differing only in that duration. The contract, read
+strictly, was the defect.
+
+So I5 compares **after collapsing values whose shape cannot be stable**, under
+four constraints that keep it from becoming the hardcoding I5 exists to forbid:
+
+1. **Shapes, never values.** A rule names a form — a duration, an address
+   after `" at "`, an ISO timestamp. It never names an expected result. `Ran 6
+   tests` still differs from `Ran 7 tests`.
+2. **Symmetric.** Nothing is applied to pyc that is not applied to CPython.
+3. **Earned, not assumed.** A rule whose shape could ever be a *stable*
+   correctness property — a date, a clock reading — applies only to a case
+   whose oracle has demonstrated, by disagreeing with itself across two runs,
+   that its output depends on when it ran. Durations and addresses are never
+   stable answers, so those always apply.
+4. **Auditable.** Raw output is what gets stored and shown; every rule that
+   fires is recorded per case. A masked difference can always be traced to the
+   rule that masked it.
+
+Constraint 3 is load-bearing and was learned the hard way:
+`verify/corpus/language/case_509.py` computes `date(2024, 3, 15) +
+timedelta(days=10)`. A blanket date rule made pyc answering `2024-03-24`
+compare **equal** — the instrument certifying a wrong answer, an I1 violation
+introduced by fixing this one. Its oracle reproduces exactly, so it is compared
+byte-for-byte and its arithmetic stays checked.
+
+What is **not** collapsed, though it also varies: pids, ports, temp paths and
+unseeded `random`. Those are the program choosing to print a coin flip rather
+than an artefact of when the measurement ran. They are reported as
+`ORACLE_UNSTABLE` — counted against the rate, never silently dropped.
+
+**Timeouts are a limit, not a verdict.** A run that exceeds its budget is
+retried once at double it. Only if that also expires is the case a timeout, on
+whichever side it occurred. "The oracle failed" is not an outcome: CPython
+taking too long is a statement about the limit.
+
+**The standing obligation.** Any corpus whose output depends on changeable
+state needs this handling, and new corpora must be checked for it rather than
+assumed clean. When a case is flagged, the first question is *which state
+changed* — the answer is a property of the test, and belongs in the record
+before any of it is read as a compiler property.
 
 ### I6 — Completeness is measured, published, and monotonic.
 

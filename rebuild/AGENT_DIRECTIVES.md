@@ -218,20 +218,36 @@ over it in codegen.
 agent **reports to the user, not to the feature agents**, and its results may
 not be overridden by them.
 
-**INVARIANTS.** I5, I6.
+**INVARIANTS.** I5 (including **I5a**), I6.
 
 **Deliverables.**
 1. **Differential harness.** Runs a program under pyc and under the pinned
    CPython; compares stdout, stderr, and exit status. No expected values are
-   ever written down. Any divergence fails.
+   ever written down.
+
+   Per **I5a**, the comparison first collapses values whose *shape* cannot be
+   stable between two runs — durations, heap addresses, and, for a case whose
+   oracle has demonstrated time-dependence, clock readings. Shapes only, never
+   values; symmetric; recorded per case. "Any divergence fails" was the
+   original wording and it was wrong: measured on `Lib/test/`, it failed 94 of
+   389 files that were byte-identical apart from `Ran 70 tests in 0.098s`.
+
+   **The instrument measures; it does not infer.** Flags follow mechanically
+   from what was observed. No severity ranking may be reintroduced: ranking
+   verdicts and comparing ranks is what reported 48 fixed compile errors as 48
+   regressions. Nothing may be dropped from the denominator either — an
+   unreproducible case is reported, not quarantined.
 2. **Corpus, not snippets.** Seed from real Python: CPython's `Lib/test/`,
    then real packages. Generated/property-based inputs welcome. Inline snippet
    pairs are banned outright — that format is what let a subset stay green.
 3. **The metric.** CPython `Lib/test/` pass rate, in CI, in the README,
    monotonic. Publish it low and honest from day one.
 4. **A silent-wrong-answer detector.** Any case where pyc exits 0 and prints
-   something different from CPython is a **P0**, ranked above crashes. The old
-   tree had at least five such cases reachable in three lines of Python.
+   something different from CPython is the top defect class (CHARTER I1). Note
+   that this is a *measurement*, not a ranking: `exit == 0` and stdout differs
+   are both recorded numbers, so it survives the ban on severity scales above.
+   The old tree had at least five such cases reachable in three lines of
+   Python.
 
 **DONE WHEN.** The metric exists, runs per commit, and blocks regressions.
 This agent's harness should exist **before** A1–A4 write substantial code.
