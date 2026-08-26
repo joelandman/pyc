@@ -2768,7 +2768,16 @@ private:
             // The literal stays DECIMAL TEXT all the way to codegen, which
             // hands it to PyLong_FromString. Nothing here can wrap.
             [&](const ConstBigInt& v) { in.op = ir::Op::ConstInt;   in.text = v.digits; },
-            [&](const ConstFloat& v)  { in.op = ir::Op::ConstFloat; in.text = std::to_string(v.value); },
+            [&](const ConstFloat& v)  {
+                in.op = ir::Op::ConstFloat;
+                // NOT std::to_string: it formats with %f at six decimals, so
+                // 1e-300 became "0.000000" -- the literal silently compiled to
+                // ZERO -- and 3.14159265358979 became "3.141593". %.17g
+                // round-trips every IEEE-754 double exactly.
+                char buf[64];
+                std::snprintf(buf, sizeof buf, "%.17g", v.value);
+                in.text = buf;
+            },
             [&](const ConstStr& v)    { in.op = ir::Op::ConstStr;   in.text = v.value; },
             [&](const ConstBytes& v)  { in.op = ir::Op::ConstBytes; in.text = v.value; },
             [&](const ConstBool& v)   { in.op = ir::Op::ConstBool;  in.text = v.value ? "True" : "False"; },

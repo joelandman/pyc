@@ -8,6 +8,9 @@
 //
 // Text rather than the LLVM C++ API for now: it keeps pyc free of libLLVM
 // linkage, and the output is readable, which matters while the backend is new.
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include "pyc/ir/ir.hpp"
 #include "pyc/rt/capi.hpp"
 
@@ -21,11 +24,25 @@ using ir::Ownership;
 
 namespace {
 
-// LLVM rejects `double 0` -- a floating literal must look floating. %.17g
-// yields a bare integer for whole values, so give it a fractional part.
+// Emit the IEEE-754 bits, which LLVM always accepts and which cannot round.
+//
+// Appending ".0" when the text had no '.' was not enough: "1e-300" contains an
+// 'e' and so was passed through unchanged, and LLVM rejects a floating literal
+// with an exponent but no decimal point ("integer constant must have integer
+// type"). inf and nan have no valid decimal spelling at all. The hex form has
+// none of those cases, and is exact by construction rather than by trusting a
+// decimal round-trip.
+//
+// The IR listing keeps the readable decimal -- this is only the LLVM operand.
 std::string fp(const std::string& text) {
-    if (text.find_first_of(".eEnN") == std::string::npos) return text + ".0";
-    return text;
+    double d = std::strtod(text.c_str(), nullptr);
+    std::uint64_t bits;
+    static_assert(sizeof d == sizeof bits, "double is not 64-bit");
+    std::memcpy(&bits, &d, sizeof bits);
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "0x%016llX",
+                  static_cast<unsigned long long>(bits));
+    return buf;
 }
 
 std::string escape(const std::string& s) {
