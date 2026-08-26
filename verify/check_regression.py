@@ -177,6 +177,19 @@ def main() -> int:
             "\n  Use the same flags, or keep a separate baseline per\n"
             "  configuration (the PR gate and the nightly metric each have one)."))
 
+    # Parallelism is part of the measurement conditions, like the oracle and
+    # the compiler flags. It is a NOTE rather than a refusal: it demonstrably
+    # moves Lib/test (51 matches at --jobs 4 vs 37 at --jobs 12) but leaves the
+    # language corpus untouched, which has no unittest timing text in it. So
+    # refusing outright would block a stable gate for a hazard it does not have.
+    base_jobs = base.get("jobs")
+    curr_jobs = curr.get("jobs")
+    if base_jobs is not None and curr_jobs is not None and base_jobs != curr_jobs:
+        print(f"  {YEL}note{RST}: measured at --jobs {curr_jobs}, baseline at "
+              f"--jobs {base_jobs}. On unittest-based corpora that difference "
+              f"alone moves the result; treat a small delta as noise until a "
+              f"control run at matching parallelism says otherwise.")
+
     # 1. The numerator is the signal; the denominator is noise.
     #
     # pass_rate is matched/scored, and `scored` moves run to run because

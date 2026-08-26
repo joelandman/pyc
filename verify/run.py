@@ -248,6 +248,12 @@ def report(results: list[Result], args, elapsed: float) -> int:
         args.json.write_text(json.dumps({
             "oracle": _oracle_identity(args),
             "subject": {"pyc_flags": list(args.pyc_flag)},
+            # Recorded because it CHANGES THE RESULT. Measured on Lib/test:
+            # the same binary scored 51 matches at --jobs 4 and 37 at --jobs 12,
+            # because unittest prints "Ran N tests in 0.001s" and that line
+            # drifts under load. A pass rate quoted without its parallelism is
+            # not reproducible.
+            "jobs": (args.jobs or 0),
             "corpus": {"libtest": bool(args.libtest),
                        "libtest_limit": args.libtest_limit},
             "pass_rate": rate,            # matched / total corpus -- published

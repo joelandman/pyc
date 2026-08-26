@@ -117,6 +117,35 @@ edits output before comparing it.
 order is stable between runs. That is not normalization: pyc is still compared
 against whatever order CPython actually produces.
 
+## Reading a result
+
+**A pass rate is not reproducible without its measurement conditions.** Measured
+on `Lib/test`, the *same binary* scored 51 matches at `--jobs 4` and 37 at
+`--jobs 12` — 31 verdict changes from parallelism alone, because unittest prints
+`Ran N tests in 0.001s` and that line drifts under load. The noise floor at
+`--jobs 12` is roughly ±14 files, about 3.6 percentage points.
+
+So, before reporting any delta as real:
+
+1. **Control for it.** Re-run the *previous* binary, or the same binary under
+   the changed condition. A delta inside the noise floor is not evidence.
+2. **Check the mechanism is plausible.** A change to closure-cell ordering
+   produces wrong values — a stdout difference. It cannot produce a stderr-only
+   timing difference. If the observed failure shape does not match what the
+   change could physically cause, suspect the measurement first.
+3. **Prefer the corpus for correctness claims.** `verify/corpus/language` has no
+   unittest timing text and has been stable at 99.04% across dozens of runs; it
+   is the reliable signal for "did this break something".
+
+`run.py` records `jobs` in its output and `check_regression.py` says so when
+comparing across values, so a number cannot silently be compared against one
+taken under different conditions.
+
+This is written down because it was learned the expensive way: a 13.11% ->
+9.51% "regression" was reported here as real, and a control run at `--jobs 4`
+reproduced 13.11% exactly from the same binary. The reported drop was entirely
+measurement noise.
+
 ## The metric (CHARTER I6)
 
 **The published number is `matched / len(corpus)`** — of the 389 `Lib/test`

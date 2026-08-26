@@ -48,7 +48,7 @@ jobs:
             --pyc-flag -O0 \
             --sysroot "$SYSROOT" \
             --stdlib "$SYSROOT/lib/python3.14" \
-            --jobs "$(nproc)" \
+            --jobs 4 \
             --run-timeout 30 --compile-timeout 120 \
             --show 20 \
             --json libtest.json

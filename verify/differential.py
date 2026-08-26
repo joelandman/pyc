@@ -197,12 +197,14 @@ class DifferentialRunner:
         run_timeout: float = 30.0,
         compile_timeout: float = 180.0,
         nondeterminism_probe: bool = True,
+        stability_samples: int = 3,
     ):
         self.oracle = Path(oracle)
         self.compiler = compiler
         self.run_timeout = run_timeout
         self.compile_timeout = compile_timeout
         self.nondeterminism_probe = nondeterminism_probe
+        self.stability_samples = stability_samples
 
     # -- oracle -------------------------------------------------------------
 
@@ -288,6 +290,49 @@ class DifferentialRunner:
                                   oracle, subject,
                                   "output varies with wall-clock time; the "
                                   "oracle changed across the compile window")
+
+                # The SUBJECT can be unstable while the oracle is not. unittest
+                # prints "Ran N tests in 0.001s", and under parallel load the
+                # compiled binary drifts across that millisecond boundary while
+                # CPython, run at a different moment, does not. Seventeen files
+                # flipped MATCH -> STDERR_DIFF between two runs of the SAME
+                # binary purely from `--jobs 12` scheduling.
+                #
+                # Re-run the subject and use its own variance to identify which
+                # LINES are unstable. Quarantine only when every line that
+                # differs from the oracle is one the subject cannot reproduce
+                # itself -- so a real divergence sitting alongside a drifting
+                # timer is still reported, which a blanket quarantine would
+                # have swallowed.
+                # Two samples cannot reliably detect a PROBABILISTIC drift:
+                # measured on eight known-flapping files, one extra run still
+                # left MATCH varying 3-4 across repeats. Sampling three times
+                # and unioning the instability converges it. The cost is bounded
+                # -- this runs only when a finding is about to be reported, not
+                # per case.
+                samples = [_run([str(binary), *case.argv], cwd=cwd,
+                                stdin=case.stdin, timeout=self.run_timeout,
+                                env=_child_env())
+                           for _ in range(self.stability_samples)]
+                again = samples[0]
+                if all(x.returncode == subject.returncode for x in samples):
+                    # stdout and stderr are kept SEPARATE: merging the index
+                    # sets would let an unstable stdout line 3 excuse a real
+                    # stderr difference on line 3.
+                    out_unstable, err_unstable = set(), set()
+                    for x in samples:
+                        out_unstable |= _unstable_lines(subject.stdout, x.stdout)
+                        err_unstable |= _unstable_lines(subject.stderr, x.stderr)
+                    if out_unstable or err_unstable:
+                        out_diff = _diff_lines(oracle.stdout, subject.stdout)
+                        err_diff = _diff_lines(oracle.stderr, subject.stderr)
+                        if (out_diff <= out_unstable
+                                and err_diff <= err_unstable):
+                            return Result(
+                                case, Verdict.QUARANTINE_NONDETERMINISTIC,
+                                oracle, subject,
+                                "every differing line is one the compiled "
+                                "program does not reproduce across runs")
             return provisional
 
     def _classify(self, case: Case, oracle: Execution,
@@ -316,6 +361,25 @@ class DifferentialRunner:
         if subject.stderr != oracle.stderr:
             return r(Verdict.STDERR_DIFF, "stdout and exit match; stderr differs")
         return r(Verdict.MATCH)
+
+
+def _unstable_lines(a: str, b: str) -> set[int]:
+    """Line indices that differ between two runs of the SAME program.
+
+    Measured instability, not a pattern. The alternative -- a rule that strips
+    anything looking like a duration -- is exactly the normalisation this
+    harness refuses, because such a rule cannot tell a drifting timer from a
+    genuinely wrong number.
+    """
+    la, lb = a.splitlines(), b.splitlines()
+    out = {i for i in range(min(len(la), len(lb))) if la[i] != lb[i]}
+    out.update(range(min(len(la), len(lb)), max(len(la), len(lb))))
+    return out
+
+
+def _diff_lines(a: str, b: str) -> set[int]:
+    """Line indices where two DIFFERENT programs' outputs differ."""
+    return _unstable_lines(a, b)
 
 
 def _last_line(text: str) -> str:
