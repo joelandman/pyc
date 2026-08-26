@@ -18,7 +18,7 @@ The project is being rebuilt on CPython's object model. See
 | Corpus | Pass rate | |
 |---|---|---|
 | CPython `Lib/test/` | **11.31%** | 44/389 files |
-| language corpus | **99.05%** | 731/738 cases |
+| language corpus | **97.86%** | 731/747 cases |
 
 `Lib/test` is the north-star metric (CHARTER I6): the pass rate over CPython's
 own test suite, published low and honest, and never allowed to regress. Both
@@ -26,11 +26,16 @@ numbers are `matched / corpus size` — the denominator is the corpus, so they
 move only when the compiler does. Every case is compared against a real CPython
 at run time; no expected output is stored anywhere ([CHARTER I5](rebuild/CHARTER.md)).
 
-**Zero P0 silent wrong answers in the language corpus.** `Lib/test` currently has
-**one** — `test_unpack.py`, where a compiled binary runs 1 test instead of 2 and
-reports OK because `__main__` has no `__file__`, so `doctest.DocTestSuite()`
-fails and the failing doctest never runs. It is tracked as issue #9 and outranks
-the pass rate: failing loudly is the property the rebuild exists to protect.
+**Three P0 silent wrong answers**, all one cause: compiled code runs with no
+Python frame, so `locals()` and `globals()` return `None` and `bool(locals())`
+is `False` — exit status 0 with a wrong value (issue #9). Six further probes for
+the same gap fail loudly (`vars`, `eval`, `exec`). They are deliberately **in**
+the gate, in `verify/corpus/known-gaps/`, so the published number carries the
+gap rather than hiding it.
+
+That does not make red normal. The gate compares per case: a baselined P0 does
+not fail it, a **new** one does, and a baselined P0 that gets **fixed** trips
+the staleness detector and demands a refresh. The count can only go down.
 
 Measured by `./verify/run.py`; gated per-commit in CI
 (`.github/workflows/verify.yml`) and nightly (`metric.yml`).

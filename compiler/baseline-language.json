@@ -14,19 +14,84 @@
     "libtest": false,
     "libtest_limit": null
   },
-  "pass_rate": 99.05149051490515,
-  "scored_rate": 99.18588873812755,
-  "total_cases": 738,
-  "scored": 737,
+  "pass_rate": 97.85809906291834,
+  "scored_rate": 97.9892761394102,
+  "total_cases": 747,
+  "scored": 746,
   "matched": 731,
   "quarantined": 1,
-  "elapsed_seconds": 264.28607535362244,
+  "elapsed_seconds": 281.0833954811096,
   "counts": {
+    "SILENT_WRONG_ANSWER": 3,
+    "CRASH": 6,
     "STDERR_DIFF": 6,
     "MATCH": 731,
     "QUARANTINE_NONDETERMINISTIC": 1
   },
   "results": [
+    {
+      "case": "globals_none_p0.py",
+      "path": "verify/corpus/known-gaps/globals_none_p0.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "locals_bool_p0.py",
+      "path": "verify/corpus/known-gaps/locals_bool_p0.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "locals_none_p0.py",
+      "path": "verify/corpus/known-gaps/locals_none_p0.py",
+      "verdict": "SILENT_WRONG_ANSWER",
+      "priority": "P0",
+      "detail": "pyc exited 0 with wrong stdout"
+    },
+    {
+      "case": "eval_in_func.py",
+      "path": "verify/corpus/known-gaps/eval_in_func.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "TypeError: eval must be given globals and locals when called without a frame"
+    },
+    {
+      "case": "eval_min.py",
+      "path": "verify/corpus/known-gaps/eval_min.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "TypeError: eval must be given globals and locals when called without a frame"
+    },
+    {
+      "case": "exec_min.py",
+      "path": "verify/corpus/known-gaps/exec_min.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "SystemError: globals and locals cannot be NULL"
+    },
+    {
+      "case": "frame_builtins.py",
+      "path": "verify/corpus/known-gaps/frame_builtins.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "AttributeError: 'NoneType' object has no attribute 'items'"
+    },
+    {
+      "case": "globals_probe.py",
+      "path": "verify/corpus/known-gaps/globals_probe.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "TypeError: argument of type 'NoneType' is not a container or iterable"
+    },
+    {
+      "case": "vars_none_p0.py",
+      "path": "verify/corpus/known-gaps/vars_none_p0.py",
+      "verdict": "CRASH",
+      "priority": "P1",
+      "detail": "SystemError: frame does not exist"
+    },
     {
       "case": "case_208.py",
       "path": "verify/corpus/language/case_208.py",
