@@ -12,12 +12,13 @@ S=~/opt/py-sysroots/cp314-3.14.7-tier1
   --pyc "$PWD/compiler/tools/pycc" --pyc-flag=-O0 --sysroot "$S" --jobs 4
 ```
 
-These probes cover **three** distinct defects: nine for missing Python frames
-(issue #9), nine `comp_cell_` for a raw cell leaking out of a comprehension,
-and three `nested_class_` for a broken closure chain through a class body. The
-last two were found on 2026-08-26 by decomposing the 128 `EXIT_DIFFERS` cases
-in the `Lib/test` baseline, and together they account for the two largest
-clusters in it.
+These probes cover **three** defects, of which **one is now fixed**: nine for
+missing Python frames (issue #9), nine `comp_cell_` for a raw cell leaking out
+of a comprehension (**FIXED**, `fb54be2` — kept here as regression cover), and
+three `nested_class_` for a broken closure chain through a class body. The last
+two were found on 2026-08-26 by decomposing the 128 `EXIT_DIFFERS` cases in the
+`Lib/test` baseline, and together they accounted for the two largest clusters
+in it.
 
 ## A: no Python frame (issue #9)
 
@@ -40,9 +41,13 @@ loudly. Same missing frame either way — only some paths raise.
 `measure_run.py --fail-on-silent-wrong` reads `exit == 0` and `STDOUT_DIFFERS`
 straight off the record (CHARTER I1), with no baseline involved.
 
-## B: a raw cell leaks out of comprehensions (found 2026-08-26)
+## B: a raw cell leaks out of comprehensions — FIXED 2026-08-26 (`fb54be2`)
 
-A free variable read inside a **natively lowered comprehension** yields the
+All nine now pass. They stay in this directory as regression cover: the defect
+was invisible to a 747-case corpus, so the probes are the only thing standing
+between it and a silent return.
+
+A free variable read inside a **natively lowered comprehension** yielded the
 `PyCell` itself rather than its contents.
 
 ```python
@@ -54,8 +59,20 @@ def outer():
 # pyc     -> [True, True]      exit 0, no diagnostic
 ```
 
-A cell is always truthy, so `bool()` inverts. `str()` and plain storage print
-`<cell at 0x...: int object at 0x...>`. All at exit 0 — **P0**.
+A cell is always truthy, so `bool()` returned `True` **unconditionally** — not
+an inversion. The same compiled code was therefore right or wrong depending on
+the runtime value, and silently right whenever the captured value was truthy.
+`str()` and plain storage printed `<cell at 0x...: int object at 0x...>`. All
+at exit 0 — **P0**.
+
+**Cause:** `nested_reads()` treats a comprehension body as a nested scope, so
+mentioning `n` in `[n * i for i in ...]` is exactly what gives `n` a cell slot.
+`lower_comp` then passed captured locals as hidden arguments with a raw
+`LoadLocal` on that slot, and `begin_function` cleared `cells_`, so the body
+read the parameter as a plain local. The fix marks the hidden parameter as a
+cell inside the synthetic function, so `lower_name` emits `cell.get` for it as
+it does everywhere else. The cell is passed *through* rather than dereferenced,
+so a rebind during iteration is still seen (I2).
 
 | probe | shape | pyc |
 |---|---|---|
