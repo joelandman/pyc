@@ -1577,12 +1577,22 @@ private:
         return store_target(*n.target, out, n.loc);
     }
 
-    bool lower_with(const With& n) {
-        if (n.items.size() != 1) return unsupported("multiple with items", n.loc);
+    bool lower_with(const With& n) { return lower_with_item(n, 0); }
+
+    // `with a as x, b as y:` is exactly `with a as x:` wrapping
+    // `with b as y:`, which is how CPython compiles it. Recursing on the item
+    // index desugars it without synthesising AST nodes: item `idx` sets up its
+    // own __enter__/__exit__, and its body is either the next item or, at the
+    // last one, the real body. Each item therefore gets its own landing pad and
+    // its own __exit__, which is what makes the second manager's cleanup run
+    // when the first one's body raises.
+    bool lower_with_item(const With& n, std::size_t idx) {
         // __exit__ must run on EVERY exit path. break/continue/return would
         // leave the block without it, and silently skipping cleanup is worse
         // than refusing -- a file handle stays open, a lock stays held.
+        // Scanned once, at the outermost item: every level shares one body.
         for (const stmt& s2 : n.body) {
+            if (idx != 0) break;
             bool bad = false;
             std::visit(ov{
                 [&](const Return&){ bad = true; }, [&](const Break&){ bad = true; },
@@ -1601,7 +1611,7 @@ private:
         }
 
         bool ok = true;
-        const withitem& w = n.items[0];
+        const withitem& w = n.items[idx];
         ir::Value mgr = lower_expr(*w.context_expr, &ok);
         if (!ok) return false;
         // __exit__ is looked up BEFORE __enter__ runs, as CPython does: a
@@ -1619,7 +1629,11 @@ private:
         std::uint32_t dispatch = new_block("with.unwind");
         std::uint32_t after    = new_block("with.after");
         try_stack_.push_back(dispatch);
-        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
+        if (idx + 1 < n.items.size()) {
+            if (!lower_with_item(n, idx + 1)) ok = false;
+        } else {
+            for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
+        }
         try_stack_.pop_back();
         if (!ok) return false;
 
