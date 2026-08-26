@@ -1,3 +1,4 @@
+#include <limits.h>
 #include "pyc/rt/entry.hpp"
 
 #include <Python.h>
@@ -83,9 +84,41 @@ fail:
     return -1;
 }
 
+// __main__.__file__ is the absolute path of the code that is executing, which
+// for a compiled program is the binary itself. Absent, it was not merely
+// missing: doctest.DocTestSuite() raised ValueError, unittest's load_tests
+// contributed nothing, and Lib/test/test_unpack.py ran 1 test instead of 2 and
+// reported OK -- a silent wrong answer (issue #9).
+//
+// /proc/self/exe rather than argv[0]: it is already absolute, survives a
+// relative or PATH-resolved invocation, and cannot be spoofed by an exec that
+// passes an arbitrary argv[0]. Falls back to realpath(argv[0]) where
+// /proc is not mounted.
+static void set_main_file(char** argv) {
+    char buf[4096];
+    ssize_t n = ::readlink("/proc/self/exe", buf, sizeof buf - 1);
+    std::string path;
+    if (n > 0) {
+        buf[n] = '\0';
+        path = buf;
+    } else if (argv && argv[0]) {
+        char* rp = ::realpath(argv[0], nullptr);
+        if (rp) { path = rp; std::free(rp); }
+    }
+    if (path.empty()) return;      // better no __file__ than a wrong one
+
+    PyObject* m = PyImport_AddModule("__main__");            // borrowed
+    if (!m) { PyErr_Clear(); return; }
+    PyObject* v = PyUnicode_FromString(path.c_str());
+    if (!v) { PyErr_Clear(); return; }
+    if (PyObject_SetAttrString(m, "__file__", v) < 0) PyErr_Clear();
+    Py_DECREF(v);
+}
+
 int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
     int rc = configure(argc, argv);
     if (rc != 0) return rc < 0 ? 1 : rc;
+    set_main_file(argv);
 
     int status = 0;
     if (body && body() != 0) {
