@@ -11,6 +11,12 @@ Two things fail the gate, and both are measured rather than judged:
      a silent wrong answer (CHARTER I1), and it is a measurement, not a
      severity opinion: exit status and stdout are both recorded numbers.
 
+A case that newly became ORACLE_UNSTABLE, and nothing else, is reported but
+does not fail: pyc is not involved in that measurement at all -- it comes from
+two CPython runs -- so calling it a compiler regression would be false. It
+still counts against the pass rate, because the case genuinely has no ground
+truth any more.
+
 Everything else is reported as CHANGED and fails nothing. A case that used to
 be refused by the compiler and now runs and crashes has swapped one loud
 failure for another; it did not pass before and does not pass now, and the
@@ -40,6 +46,7 @@ RED, GRN, YEL, DIM, BOLD, RST = (
     "\033[31m", "\033[32m", "\033[33m", "\033[90m", "\033[1m", "\033[0m")
 
 STDOUT = "STDOUT_DIFFERS"
+UNSTABLE = "ORACLE_UNSTABLE"
 IMPACTFUL = frozenset({"DID_NOT_COMPILE", "ORACLE_UNSTABLE", "TIMEOUT",
                        STDOUT, "EXIT_DIFFERS"})
 
@@ -139,12 +146,23 @@ def main() -> int:
     bexit, cexit = exits_of(base), exits_of(curr)
     shared = set(bmap) & set(cmap)
 
-    regressed, silent, improved, changed = [], [], [], []
+    regressed, silent, improved, changed, unstable = [], [], [], [], []
     for case in sorted(shared):
         was = bool(bmap[case] & IMPACTFUL)
         now = bool(cmap[case] & IMPACTFUL)
         if now and not was:
-            regressed.append((case, sorted(cmap[case] & IMPACTFUL)))
+            gained = cmap[case] & IMPACTFUL
+            if gained == {UNSTABLE}:
+                # The compiler cannot cause this: ORACLE_UNSTABLE is computed
+                # from two CPython runs with pyc nowhere in the picture. It
+                # still counts against the pass rate -- the case has no ground
+                # truth, and the rate should say so -- but failing the gate on
+                # it would be reporting a property of the corpus as a compiler
+                # regression. Measured on Lib/test, 9 of 14 lost matches in one
+                # nightly were exactly this.
+                unstable.append(case)
+            else:
+                regressed.append((case, sorted(gained)))
         elif was and not now:
             improved.append((case, sorted(bmap[case] & IMPACTFUL)))
         elif was and now and bmap[case] != cmap[case]:
@@ -173,6 +191,9 @@ def main() -> int:
               f"exit 0, stdout differs")
     for case, fl in improved[:10]:
         print(f"  {GRN}now passes{RST} {case}: was {', '.join(fl)}")
+    for case in unstable[:10]:
+        print(f"  {YEL}oracle unstable{RST}  {case}: CPython disagreed with "
+              f"CPython  {DIM}(not a compiler regression){RST}")
     for case, was, now in changed[:10]:
         print(f"  {DIM}changed{RST}   {case}: {','.join(was)} -> {','.join(now)}"
               f"  {DIM}(failed before and after; not a regression){RST}")

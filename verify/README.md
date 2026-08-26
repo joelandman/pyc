@@ -99,6 +99,14 @@ Exactly two things fail the gate:
 2. **A new silent wrong answer** — a case that now exits 0 while its stdout
    differs (CHARTER I1).
 
+A case that newly became `ORACLE_UNSTABLE` **and nothing else** is printed and
+does not fail. pyc is not involved in that measurement — it comes from two
+CPython runs — so calling it a compiler regression would be false. It still
+counts against the pass rate, because the case genuinely has no ground truth
+any more. This is not hypothetical: in one nightly `Lib/test` run, 9 of the 14
+files that stopped matching had simply become nondeterministic, 4 had only
+drifted on stderr, and exactly **1** was a real new failure.
+
 Everything else is printed as `changed` and fails nothing. A case that used to
 be refused by the compiler and now runs and crashes swapped one loud failure
 for another: it did not pass before and does not pass now, and the pass rate
