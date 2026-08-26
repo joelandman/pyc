@@ -266,7 +266,29 @@ class DifferentialRunner:
             subject = _run([str(binary), *case.argv], cwd=cwd,
                            stdin=case.stdin, timeout=self.run_timeout,
                            env=_child_env())
-            return self._classify(case, oracle, subject)
+            provisional = self._classify(case, oracle, subject)
+            # Re-run the ORACLE after the subject, spanning the real window.
+            #
+            # The up-front probe runs the oracle twice back to back, which
+            # catches fast-varying output but not output that varies with the
+            # WALL CLOCK: compilation sits between the oracle and the subject,
+            # so a case printing the current time diverges across that gap while
+            # two adjacent runs agree. Lib/test/test_strftime.py prints
+            # `strftime test for <current time>` on line 1 and surfaced as a P0
+            # silent wrong answer for exactly this reason.
+            #
+            # Only when a finding is about to be reported: re-running every
+            # passing case would cost a full extra oracle pass for no signal.
+            if (self.nondeterminism_probe and provisional.verdict.is_finding
+                    and not subject.timed_out):
+                later = self._run_oracle(local_case, cwd)
+                if (later.stdout != oracle.stdout
+                        or later.returncode != oracle.returncode):
+                    return Result(case, Verdict.QUARANTINE_NONDETERMINISTIC,
+                                  oracle, subject,
+                                  "output varies with wall-clock time; the "
+                                  "oracle changed across the compile window")
+            return provisional
 
     def _classify(self, case: Case, oracle: Execution,
                   subject: Execution) -> Result:

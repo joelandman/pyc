@@ -13,20 +13,20 @@
     "libtest": true,
     "libtest_limit": null
   },
-  "pass_rate": 5.655526992287918,
-  "scored_rate": 6.0109289617486334,
+  "pass_rate": 11.311053984575835,
+  "scored_rate": 12.021857923497267,
   "total_cases": 389,
   "scored": 366,
-  "matched": 22,
+  "matched": 44,
   "quarantined": 23,
-  "elapsed_seconds": 224.27932357788086,
+  "elapsed_seconds": 241.76284432411194,
   "counts": {
     "SILENT_WRONG_ANSWER": 1,
-    "CRASH": 146,
-    "HANG": 1,
-    "COMPILE_ERROR": 169,
-    "STDERR_DIFF": 27,
-    "MATCH": 22,
+    "CRASH": 80,
+    "HANG": 3,
+    "COMPILE_ERROR": 170,
+    "STDERR_DIFF": 68,
+    "MATCH": 44,
     "QUARANTINE_NONDETERMINISTIC": 11,
     "QUARANTINE_ORACLE_FAILED": 12
   },
@@ -37,20 +37,6 @@
       "verdict": "SILENT_WRONG_ANSWER",
       "priority": "P0",
       "detail": "pyc exited 0; CPython exited 1"
-    },
-    {
-      "case": "Lib/test/test__locale.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__locale.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test__osx_support.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__osx_support.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
     },
     {
       "case": "Lib/test/test_abstract_numbers.py",
@@ -64,7 +50,7 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_atexit.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
+      "detail": "FAILED (failures=4, skipped=1)"
     },
     {
       "case": "Lib/test/test_augassign.py",
@@ -78,63 +64,35 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_base64.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
-    },
-    {
-      "case": "Lib/test/test_bigaddrspace.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bigaddrspace.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=6)"
     },
     {
       "case": "Lib/test/test_bisect.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bisect.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
-    },
-    {
-      "case": "Lib/test/test_bufio.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bufio.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
+      "detail": "FAILED (errors=8)"
     },
     {
       "case": "Lib/test/test_c_locale_coercion.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_c_locale_coercion.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=71, skipped=1)"
     },
     {
       "case": "Lib/test/test_calendar.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_calendar.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_charmapcodec.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_charmapcodec.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "FAILED (errors=4)"
+      "detail": "FAILED (failures=14, skipped=2)"
     },
     {
       "case": "Lib/test/test_cmd.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_cmd.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_code_module.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_code_module.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'unittest' has no attribute 'mock'"
+      "detail": "FAILED (failures=4)"
     },
     {
       "case": "Lib/test/test_codeccallbacks.py",
@@ -142,83 +100,6 @@
       "verdict": "CRASH",
       "priority": "P1",
       "detail": "FAILED (errors=2)"
-    },
-    {
-      "case": "Lib/test/test_codecencodings_cn.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_cn.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
-    },
-    {
-      "case": "Lib/test/test_codecencodings_hk.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_hk.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
-    },
-    {
-      "case": "Lib/test/test_codecencodings_iso2022.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_iso2022.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
-    },
-    {
-      "case": "Lib/test/test_codecencodings_jp.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_jp.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
-    },
-    {
-      "case": "Lib/test/test_codecencodings_kr.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_kr.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
-    },
-    {
-      "case": "Lib/test/test_codecencodings_tw.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_tw.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
-    },
-    {
-      "case": "Lib/test/test_codecmaps_cn.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecmaps_cn.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
-    },
-    {
-      "case": "Lib/test/test_codecmaps_hk.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecmaps_hk.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
-    },
-    {
-      "case": "Lib/test/test_codecmaps_jp.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecmaps_jp.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
-    },
-    {
-      "case": "Lib/test/test_codecmaps_kr.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecmaps_kr.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
-    },
-    {
-      "case": "Lib/test/test_codecmaps_tw.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecmaps_tw.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'multibytecodec_support'"
     },
     {
       "case": "Lib/test/test_colorsys.py",
@@ -246,35 +127,7 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
-    },
-    {
-      "case": "Lib/test/test_dbm_dumb.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_dumb.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_dbm_gnu.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_gnu.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_dbm_ndbm.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_ndbm.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
-    },
-    {
-      "case": "Lib/test/test_dbm_sqlite3.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_sqlite3.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
+      "detail": "TypeError: 'NoneType' object does not support item assignment"
     },
     {
       "case": "Lib/test/test_decorators.py",
@@ -323,7 +176,7 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_docxmlrpc.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (errors=7)"
     },
     {
       "case": "Lib/test/test_dynamic.py",
@@ -337,35 +190,14 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_eintr.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_ensurepip.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ensurepip.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
-    },
-    {
-      "case": "Lib/test/test_enumerate.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_enumerate.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=1)"
     },
     {
       "case": "Lib/test/test_eof.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_eof.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
-    },
-    {
-      "case": "Lib/test/test_epoll.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_epoll.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=2)"
     },
     {
       "case": "Lib/test/test_extcall.py",
@@ -382,60 +214,25 @@
       "detail": "test_fcntl.pycbin: error: unrecognized arguments: -B"
     },
     {
-      "case": "Lib/test/test_file.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_file.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'warnings_helper'"
-    },
-    {
       "case": "Lib/test/test_file_eintr.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_file_eintr.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_filecmp.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_filecmp.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_fileio.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fileio.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'strace_helper'"
+      "detail": "FAILED (failures=18)"
     },
     {
       "case": "Lib/test/test_fileutils.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fileutils.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
-    },
-    {
-      "case": "Lib/test/test_frozen.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_frozen.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
+      "detail": "unittest.case.SkipTest: /home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/lib-dynload/_testinternalcapi.cpython-314-x86_64-linux-gnu.so: undefined symbol: _PyInterpreterConfig_InitFromDict"
     },
     {
       "case": "Lib/test/test_fstring.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fstring.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_genericpath.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_genericpath.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=5, errors=3)"
     },
     {
       "case": "Lib/test/test_genexps.py",
@@ -449,7 +246,7 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_gettext.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=1, errors=26)"
     },
     {
       "case": "Lib/test/test_glob.py",
@@ -466,13 +263,6 @@
       "detail": "FAILED (failures=1, errors=3)"
     },
     {
-      "case": "Lib/test/test_grp.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_grp.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
-    },
-    {
       "case": "Lib/test/test_hash.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_hash.py",
       "verdict": "CRASH",
@@ -484,56 +274,35 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_heapq.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
-    },
-    {
-      "case": "Lib/test/test_http_cookiejar.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_http_cookiejar.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (errors=14)"
     },
     {
       "case": "Lib/test/test_http_cookies.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_http_cookies.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'http' has no attribute 'cookies'"
-    },
-    {
-      "case": "Lib/test/test_index.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_index.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_ioctl.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ioctl.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "killed by signal 11"
     },
     {
       "case": "Lib/test/test_isinstance.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_isinstance.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (errors=2)"
     },
     {
       "case": "Lib/test/test_linecache.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_linecache.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=1)"
     },
     {
       "case": "Lib/test/test_list.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_list.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'list_tests'"
+      "detail": "killed by signal 11"
     },
     {
       "case": "Lib/test/test_listcomps.py",
@@ -543,32 +312,18 @@
       "detail": "FAILED (errors=8)"
     },
     {
-      "case": "Lib/test/test_lltrace.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_lltrace.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
       "case": "Lib/test/test_locale.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_locale.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
-    },
-    {
-      "case": "Lib/test/test_lzma.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_lzma.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=1, skipped=2)"
     },
     {
       "case": "Lib/test/test_marshal.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_marshal.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=4, errors=6, skipped=7)"
     },
     {
       "case": "Lib/test/test_metaclass.py",
@@ -582,42 +337,14 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_mimetypes.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_minidom.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_minidom.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_modulefinder.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_modulefinder.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=10, skipped=2)"
     },
     {
       "case": "Lib/test/test_multibytecodec.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_multibytecodec.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_netrc.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_netrc.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_nturl2path.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_nturl2path.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'warnings_helper'"
+      "detail": "FAILED (errors=1)"
     },
     {
       "case": "Lib/test/test_numeric_tower.py",
@@ -631,7 +358,7 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_optimizer.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
+      "detail": "unittest.case.SkipTest: /home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/lib-dynload/_testinternalcapi.cpython-314-x86_64-linux-gnu.so: undefined symbol: _PyInterpreterConfig_InitFromDict"
     },
     {
       "case": "Lib/test/test_pep646_syntax.py",
@@ -648,81 +375,46 @@
       "detail": "unittest.case.SkipTest: requires _testinternalcapi"
     },
     {
-      "case": "Lib/test/test_pickletools.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pickletools.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
       "case": "Lib/test/test_pkg.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pkg.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "FAILED (errors=11)"
+      "detail": "FAILED (errors=10)"
     },
     {
       "case": "Lib/test/test_poll.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_poll.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'threading_helper'"
+      "detail": "FAILED (failures=1)"
     },
     {
       "case": "Lib/test/test_popen.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_popen.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_print.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_print.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (errors=1)"
     },
     {
       "case": "Lib/test/test_property.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_property.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=8, skipped=2)"
     },
     {
       "case": "Lib/test/test_pstats.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pstats.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_pulldom.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pulldom.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'xml.dom' has no attribute 'pulldom'"
-    },
-    {
-      "case": "Lib/test/test_pwd.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pwd.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
-    },
-    {
-      "case": "Lib/test/test_pyclbr.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pyclbr.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.test_importlib' has no attribute 'util'"
+      "detail": "FAILED (failures=2, errors=1)"
     },
     {
       "case": "Lib/test/test_quopri.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_quopri.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=2)"
     },
     {
       "case": "Lib/test/test_random.py",
@@ -743,21 +435,21 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_readline.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=6, skipped=1)"
     },
     {
       "case": "Lib/test/test_resource.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_resource.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (errors=1)"
     },
     {
       "case": "Lib/test/test_richcmp.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_richcmp.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (errors=2)"
     },
     {
       "case": "Lib/test/test_rlcompleter.py",
@@ -771,28 +463,21 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_robotparser.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "TypeError: BaseRobotTest.__init_subclass__() missing 1 required positional argument: 'cls'"
     },
     {
       "case": "Lib/test/test_script_helper.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_script_helper.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'script_helper'"
+      "detail": "FAILED (failures=2)"
     },
     {
       "case": "Lib/test/test_select.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_select.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_selectors.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_selectors.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (errors=1)"
     },
     {
       "case": "Lib/test/test_setcomps.py",
@@ -806,112 +491,56 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_shelve.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
+      "detail": "TypeError: 'NoneType' object does not support item assignment"
     },
     {
       "case": "Lib/test/test_shlex.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_shlex.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
+      "detail": "FAILED (failures=1)"
     },
     {
       "case": "Lib/test/test_slice.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_slice.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_smtpnet.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_smtpnet.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_stat.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_stat.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
-    },
-    {
-      "case": "Lib/test/test_strftime.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_strftime.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (errors=2)"
     },
     {
       "case": "Lib/test/test_structseq.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_structseq.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'script_helper'"
-    },
-    {
-      "case": "Lib/test/test_sundry.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sundry.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_symtable.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_symtable.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_syntax.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_syntax.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (failures=1, errors=1)"
     },
     {
       "case": "Lib/test/test_syslog.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_syslog.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
-    },
-    {
-      "case": "Lib/test/test_termios.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_termios.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "FAILED (errors=1)"
     },
     {
       "case": "Lib/test/test_thread_local_bytecode.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_thread_local_bytecode.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_threadedtempfile.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_threadedtempfile.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "unittest.case.SkipTest: /home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/lib-dynload/_testinternalcapi.cpython-314-x86_64-linux-gnu.so: undefined symbol: _PyInterpreterConfig_InitFromDict"
     },
     {
       "case": "Lib/test/test_threadsignals.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_threadsignals.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'threading_helper'"
+      "detail": "FAILED (errors=3)"
     },
     {
       "case": "Lib/test/test_time.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_time.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
+      "detail": "AttributeError: 'dict' object has no attribute '_member_names'"
     },
     {
       "case": "Lib/test/test_timeit.py",
@@ -925,56 +554,28 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_trace.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.tracedmodules' has no attribute 'testmod'"
-    },
-    {
-      "case": "Lib/test/test_tracemalloc.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tracemalloc.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'threading_helper'"
-    },
-    {
-      "case": "Lib/test/test_type_comments.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_type_comments.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
+      "detail": "FAILED (failures=12, errors=9)"
     },
     {
       "case": "Lib/test/test_ucn.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ucn.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_unicode_file_functions.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_unicode_file_functions.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
+      "detail": "FAILED (errors=1, skipped=1)"
     },
     {
       "case": "Lib/test/test_unicode_identifiers.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_unicode_identifiers.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "FAILED (failures=1, errors=1)"
+      "detail": "FAILED (failures=1)"
     },
     {
       "case": "Lib/test/test_unicodedata.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_unicodedata.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'script_helper'"
-    },
-    {
-      "case": "Lib/test/test_univnewlines.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_univnewlines.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
+      "detail": "FAILED (failures=2, errors=14)"
     },
     {
       "case": "Lib/test/test_unpack_ex.py",
@@ -984,81 +585,25 @@
       "detail": "NO TESTS RAN"
     },
     {
-      "case": "Lib/test/test_urllib2_localnet.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllib2_localnet.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_urllib_response.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllib_response.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_urllibnet.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllibnet.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_userdict.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_userdict.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'mapping_tests'"
-    },
-    {
-      "case": "Lib/test/test_wave.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_wave.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'audiotests'"
-    },
-    {
       "case": "Lib/test/test_wsgiref.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_wsgiref.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'unittest' has no attribute 'mock'"
-    },
-    {
-      "case": "Lib/test/test_xml_dom_xmlbuilder.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xml_dom_xmlbuilder.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'http' has no attribute 'client'"
-    },
-    {
-      "case": "Lib/test/test_xpickle.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xpickle.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test' has no attribute 'support'"
-    },
-    {
-      "case": "Lib/test/test_xxtestfuzz.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xxtestfuzz.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'import_helper'"
-    },
-    {
-      "case": "Lib/test/test_zipapp.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zipapp.py",
-      "verdict": "CRASH",
-      "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'os_helper'"
+      "detail": "FAILED (failures=5)"
     },
     {
       "case": "Lib/test/test_zstd.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zstd.py",
       "verdict": "CRASH",
       "priority": "P1",
-      "detail": "AttributeError: module 'test.support' has no attribute 'threading_helper'"
+      "detail": "FAILED (errors=1)"
+    },
+    {
+      "case": "Lib/test/test_fileio.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fileio.py",
+      "verdict": "HANG",
+      "priority": "P1",
+      "detail": "pyc exceeded 30.0s; CPython did not"
     },
     {
       "case": "Lib/test/test_fork1.py",
@@ -1068,963 +613,977 @@
       "detail": "pyc exceeded 30.0s; CPython did not"
     },
     {
+      "case": "Lib/test/test_tracemalloc.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tracemalloc.py",
+      "verdict": "HANG",
+      "priority": "P1",
+      "detail": "pyc exceeded 30.0s; CPython did not"
+    },
+    {
       "case": "Lib/test/test__colorize.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__colorize.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-sldq16lw/test__colorize.py:63:12: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-497itpi0/test__colorize.py:63:12: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test__interpchannels.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__interpchannels.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-757m33sl/test__interpchannels.py:42:0: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-hpapfv3g/test__interpchannels.py:42:0: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test__interpreters.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__interpreters.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cddl_j_l/test__interpreters.py:35:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-8hke09ll/test__interpreters.py:35:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_abc.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_abc.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-phkm81yk/test_abc.py:25:12: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-gohb4g15/test_abc.py:25:12: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_android.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_android.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5amfcy9e/test_android.py:64:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-jeitqzrf/test_android.py:64:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_annotationlib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_annotationlib.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-q1ah9vtt/test_annotationlib.py:221:12: error: cannot compile annotated assignment yet [annotated assignment]"
+      "detail": "/tmp/pyc-verify-38pi5ivn/test_annotationlib.py:221:12: error: cannot compile annotated assignment yet [annotated assignment]"
     },
     {
       "case": "Lib/test/test_argparse.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_argparse.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-6n6am9kw/test_argparse.py:59:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-p4ksxlt8/test_argparse.py:59:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_array.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_array.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-f1jhgam_/test_array.py:1592:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-_29r_clg/test_array.py:1592:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_asyncgen.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_asyncgen.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-lbd0qsyf/test_asyncgen.py:0:0: error: 'anext_impl' freevars ('__anext__', 'default', 'iterator') do not match symtable ('__anext__', 'iterator', 'default') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-ctlh0bbt/test_asyncgen.py:0:0: error: 'anext_impl' freevars ('__anext__', 'default', 'iterator') do not match symtable ('__anext__', 'iterator', 'default') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_bdb.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bdb.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rrh362ny/test_bdb.py:588:8: error: cannot compile raise ... from yet [raise ... from]"
+      "detail": "/tmp/pyc-verify-1skid03e/test_bdb.py:588:8: error: cannot compile raise ... from yet [raise ... from]"
     },
     {
       "case": "Lib/test/test_bigmem.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bigmem.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-v9rt02ai/test_bigmem.py:122:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-e__x7l4d/test_bigmem.py:122:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_binop.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_binop.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-khbs3_sb/test_binop.py:335:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-cscc1vhf/test_binop.py:335:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_bool.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bool.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qs24pduj/test_bool.py:354:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-vyzs_gjp/test_bool.py:354:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_buffer.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_buffer.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-hx991usg/test_buffer.py:0:0: error: genexp freevars ('shape', 'strides') do not match symtable ('strides', 'shape') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-pbmoeiq9/test_buffer.py:0:0: error: genexp freevars ('shape', 'strides') do not match symtable ('strides', 'shape') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_build_details.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_build_details.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-be4qks6v/test_build_details.py:137:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-ckrkissj/test_build_details.py:137:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_builtin.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_builtin.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-_0fkgpdy/test_builtin.py:1153:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-krmgp2ih/test_builtin.py:1153:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_bytes.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bytes.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-eqmes7dd/test_bytes.py:35:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-feq2rqgv/test_bytes.py:35:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_bz2.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bz2.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-c2dgpm0j/test_bz2.py:471:16: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-z95dmomj/test_bz2.py:471:16: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_call.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_call.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-sixhivf1/test_call.py:254:26: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-kqotmrbm/test_call.py:254:26: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_class.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_class.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7qa8x6a5/test_class.py:328:20: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-2etba1b3/test_class.py:328:20: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_clinic.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_clinic.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-dno997c3/test_clinic.py:46:0: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-3m69pl_h/test_clinic.py:46:0: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_cmath.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_cmath.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.bb1Y1hVIrQ/mod.ll:19068:61: error: integer constant must have integer type"
+      "detail": "/tmp/tmp.C1wK1GH074/mod.ll:19092:61: error: integer constant must have integer type"
     },
     {
       "case": "Lib/test/test_cmd_line_script.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_cmd_line_script.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-2xh1ae3r/test_cmd_line_script.py:125:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-v8y1eujg/test_cmd_line_script.py:125:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_code.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_code.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-b9aaqnzd/test_code.py:446:12: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-qyoylghv/test_code.py:446:12: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_codecs.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecs.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-f0oqr0tm/test_codecs.py:29:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-c6h9rj92/test_codecs.py:29:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_codeop.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codeop.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-n9qi5por/test_codeop.py:22:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-0sxb9mr_/test_codeop.py:22:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_collections.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_collections.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3d5ns2os/test_collections.py:1212:36: error: cannot compile yield yet [yield]"
+      "detail": "/tmp/pyc-verify-231hd4wx/test_collections.py:1212:36: error: cannot compile yield yet [yield]"
     },
     {
       "case": "Lib/test/test_compile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_compile.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-jfr03kt6/test_compile.py:428:10: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-4dtt5wwk/test_compile.py:428:10: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_complex.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_complex.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-tqy8sq56/test_complex.py:543:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-as1fc06p/test_complex.py:543:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_configparser.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_configparser.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-tx7zvt2s/test_configparser.py:2097:12: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-g2tr4zzh/test_configparser.py:2097:12: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_context.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_context.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-06t86dwy/test_context.py:596:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-yy6jdr7k/test_context.py:596:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_contextlib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_contextlib.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-6uqm4i9j/test_contextlib.py:0:0: error: 'woohoo' freevars ('self', 'state') do not match symtable ('state', 'self') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-d58eu_w1/test_contextlib.py:0:0: error: 'woohoo' freevars ('self', 'state') do not match symtable ('state', 'self') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_contextlib_async.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_contextlib_async.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-tvlm2hyc/test_contextlib_async.py:0:0: error: 'woohoo' freevars ('self', 'state') do not match symtable ('state', 'self') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-oeg6f5kz/test_contextlib_async.py:0:0: error: 'woohoo' freevars ('self', 'state') do not match symtable ('state', 'self') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_copy.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_copy.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-nyhdv7xj/test_copy.py:98:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-3jvnp9be/test_copy.py:98:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_coroutines.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_coroutines.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-i53425mx/test_coroutines.py:0:0: error: 'a' freevars ('coro_b', 'self') do not match symtable ('self', 'coro_b') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-x_e8epkx/test_coroutines.py:0:0: error: 'a' freevars ('coro_b', 'self') do not match symtable ('self', 'coro_b') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_crossinterp.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_crossinterp.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-bpgkxysi/test_crossinterp.py:0:0: error: genexp freevars ('ignored', 'okay') do not match symtable ('okay', 'ignored') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-z535m35q/test_crossinterp.py:0:0: error: genexp freevars ('ignored', 'okay') do not match symtable ('okay', 'ignored') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_csv.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_csv.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-v1qjo0p_/test_csv.py:1712:30: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-85wxxp84/test_csv.py:1712:30: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_curses.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_curses.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-n7v9tg7z/test_curses.py:188:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-5llgjwq7/test_curses.py:188:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_decimal.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_decimal.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gsbydmmz/test_decimal.py:0:0: error: genexp freevars ('d', 'expected') do not match symtable ('expected', 'd') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-eeb0ociw/test_decimal.py:0:0: error: genexp freevars ('d', 'expected') do not match symtable ('expected', 'd') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_deque.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_deque.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-k68_tnco/test_deque.py:757:16: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-791120bt/test_deque.py:757:16: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_descr.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_descr.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mcdpchud/test_descr.py:478:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-x5oulz57/test_descr.py:478:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_dict.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dict.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mddygxik/test_dict.py:966:16: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-1d1mjgew/test_dict.py:966:16: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_dis.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dis.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-20p4sj6p/test_dis.py:930:12: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-sfk8ol2f/test_dis.py:930:12: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_dynamicclassattribute.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dynamicclassattribute.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-zk0vysj7/test_dynamicclassattribute.py:85:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-4mig9u64/test_dynamicclassattribute.py:85:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_enum.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_enum.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-fx1v6opa/test_enum.py:246:4: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-arbudu2t/test_enum.py:246:4: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_except_star.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_except_star.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-xyv25pam/test_except_star.py:25:12: error: cannot compile try/except* yet [try/except*]"
+      "detail": "/tmp/pyc-verify-4kq_4afk/test_except_star.py:25:12: error: cannot compile try/except* yet [try/except*]"
     },
     {
       "case": "Lib/test/test_exception_group.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_exception_group.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-dndkc4ry/test_exception_group.py:0:0: error: 'leaf_generator' freevars ('leaf_generator',) do not match symtable () [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-pe0f0x0v/test_exception_group.py:0:0: error: 'leaf_generator' freevars ('leaf_generator',) do not match symtable () [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_exception_variations.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_exception_variations.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-hs9gltsv/test_exception_variations.py:303:8: error: cannot compile try/except* yet [try/except*]"
+      "detail": "/tmp/pyc-verify-v9zv7sa8/test_exception_variations.py:303:8: error: cannot compile try/except* yet [try/except*]"
     },
     {
       "case": "Lib/test/test_exceptions.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_exceptions.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-usu6ya6i/test_exceptions.py:777:16: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-jmtpzxey/test_exceptions.py:777:16: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_external_inspection.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_external_inspection.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-t9ajlgle/test_external_inspection.py:248:12: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-jj8vzldz/test_external_inspection.py:248:12: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_faulthandler.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_faulthandler.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-wcxd5e5_/test_faulthandler.py:113:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-pr8vocwp/test_faulthandler.py:113:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_fileinput.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fileinput.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-groxpchl/test_fileinput.py:42:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-os4geghc/test_fileinput.py:42:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_finalization.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_finalization.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-c3lmpkke/test_finalization.py:173:16: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-l9q5p7v0/test_finalization.py:173:16: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_fractions.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fractions.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-epundok8/test_fractions.py:389:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-jexfzrb3/test_fractions.py:389:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_frame.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_frame.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-od7rgtza/test_frame.py:50:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-dh0tdfyb/test_frame.py:50:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_funcattrs.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_funcattrs.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3xy1p6pe/test_funcattrs.py:225:26: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-qk6xpua0/test_funcattrs.py:225:26: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_functools.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_functools.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-me945rks/test_functools.py:797:8: error: cannot compile positional-only parameters yet [positional-only parameters]"
+      "detail": "/tmp/pyc-verify-2hgsq80r/test_functools.py:797:8: error: cannot compile positional-only parameters yet [positional-only parameters]"
     },
     {
       "case": "Lib/test/test_gc.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_gc.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-il5daqtx/test_gc.py:98:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-fgqnvjrr/test_gc.py:98:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_generators.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_generators.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-2jz_kjvx/test_generators.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-xrldzafy/test_generators.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_genericalias.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_genericalias.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-1a1huzoa/test_genericalias.py:75:17: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-w5zixfy2/test_genericalias.py:75:17: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_genericclass.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_genericclass.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-n9kg_am0/test_genericclass.py:9:17: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-abmjo1ik/test_genericclass.py:9:17: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_getpass.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_getpass.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qybj3ijh/test_getpass.py:42:12: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-yf88btvk/test_getpass.py:42:12: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_getpath.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_getpath.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rp8ybr1c/test_getpath.py:942:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-zo1m6wrs/test_getpath.py:942:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_global.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_global.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gprur_43/test_global.py:119:8: error: cannot compile type aliases yet [type aliases]"
+      "detail": "/tmp/pyc-verify-1dedpxyw/test_global.py:119:8: error: cannot compile type aliases yet [type aliases]"
     },
     {
       "case": "Lib/test/test_grammar.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_grammar.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-22voxtrg/test_grammar.py:0:0: error: 'foo' freevars ('Done', 'manager') do not match symtable ('manager', 'Done') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-wyztv0g3/test_grammar.py:0:0: error: 'foo' freevars ('Done', 'manager') do not match symtable ('manager', 'Done') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_gzip.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_gzip.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9mwl9s9n/test_gzip.py:705:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-kfw8p221/test_gzip.py:705:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_hashlib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_hashlib.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0u8lc80n/test_hashlib.py:144:12: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-u_oonhe6/test_hashlib.py:144:12: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_hmac.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_hmac.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-azy652lt/test_hmac.py:209:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-h8qwihkc/test_hmac.py:209:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_htmlparser.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_htmlparser.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-f89q6jqp/test_htmlparser.py:25:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-fid0dqd1/test_htmlparser.py:25:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_httplib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_httplib.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-hcj510q7/test_httplib.py:1542:12: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-pb5c9dz6/test_httplib.py:1542:12: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_int.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_int.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-bu6qbln6/test_int.py:591:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-y69rwf5d/test_int.py:591:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_iter.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_iter.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-93spabk5/test_iter.py:1004:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-s8357ifi/test_iter.py:1004:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_itertools.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_itertools.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-4zzmvdax/test_itertools.py:0:0: error: '_grouper' freevars ('curr_key', 'curr_value', 'exhausted', 'iterator', 'keyfunc') do not match symtable ('curr_value', 'curr_key', 'exhausted', 'iterator', 'keyfunc') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-k000r259/test_itertools.py:0:0: error: '_grouper' freevars ('curr_key', 'curr_value', 'exhausted', 'iterator', 'keyfunc') do not match symtable ('curr_value', 'curr_key', 'exhausted', 'iterator', 'keyfunc') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_keywordonlyarg.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_keywordonlyarg.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-bfjgn3kp/test_keywordonlyarg.py:10:0: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-ty8d0y73/test_keywordonlyarg.py:10:0: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_largefile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_largefile.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-em2lsehk/test_largefile.py:227:16: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-vab1jd0q/test_largefile.py:227:16: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_logging.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_logging.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-847zn03g/test_logging.py:764:12: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-pj6649u9/test_logging.py:764:12: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_long.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_long.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-nfy9jzv8/test_long.py:649:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-venk9yob/test_long.py:649:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_mailbox.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_mailbox.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7ki2zeqb/test_mailbox.py:120:38: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-61y6wo5c/test_mailbox.py:120:38: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_math.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_math.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/tmp.uieGXuuTmT/mod.ll:124405:46: error: expected value token"
+      "detail": "/tmp/tmp.0CnxUP6pbY/mod.ll:124501:46: error: expected value token"
     },
     {
       "case": "Lib/test/test_memoryio.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_memoryio.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mrl6oz17/test_memoryio.py:468:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-ulsajbnb/test_memoryio.py:468:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_memoryview.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_memoryview.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-wi2u29y0/test_memoryview.py:414:16: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-d151jqjm/test_memoryview.py:414:16: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_mmap.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_mmap.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ok020fvd/test_mmap.py:381:12: error: cannot compile raise ... from yet [raise ... from]"
+      "detail": "/tmp/pyc-verify-v50iyhpx/test_mmap.py:381:12: error: cannot compile raise ... from yet [raise ... from]"
     },
     {
       "case": "Lib/test/test_monitoring.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_monitoring.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ovtoeehs/test_monitoring.py:275:12: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-_vsxoj11/test_monitoring.py:275:12: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_named_expressions.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_named_expressions.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gwb5z7bl/test_named_expressions.py:0:0: error: genexp freevars ('a', 'c') do not match symtable ('c', 'a') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-ajv0v613/test_named_expressions.py:0:0: error: genexp freevars ('a', 'c') do not match symtable ('c', 'a') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_ntpath.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ntpath.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-txty8g0r/test_ntpath.py:1245:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-dex2n3om/test_ntpath.py:1245:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_opcache.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_opcache.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-6b5nlr0u/test_opcache.py:94:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-rfc3amaf/test_opcache.py:94:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_opcodes.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_opcodes.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-jqrcaw5k/test_opcodes.py:53:16: error: cannot compile annotated assignment yet [annotated assignment]"
+      "detail": "/tmp/pyc-verify-ip4sos8c/test_opcodes.py:53:16: error: cannot compile annotated assignment yet [annotated assignment]"
     },
     {
       "case": "Lib/test/test_operator.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_operator.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-g89u4cek/test_operator.py:677:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-2ruv4lhr/test_operator.py:677:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_optparse.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_optparse.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ai72_pdj/test_optparse.py:413:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-_fojfjle/test_optparse.py:413:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_ordered_dict.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ordered_dict.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-2rl0s41o/test_ordered_dict.py:501:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-h4gk4gdd/test_ordered_dict.py:501:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_os.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_os.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ybic6p0u/test_os.py:2706:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-elprc3d_/test_os.py:2706:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_patma.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_patma.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-b2fl_3nv/test_patma.py:14:4: error: cannot compile annotated assignment yet [annotated assignment]"
+      "detail": "/tmp/pyc-verify-a4g367mz/test_patma.py:14:4: error: cannot compile annotated assignment yet [annotated assignment]"
     },
     {
       "case": "Lib/test/test_pdb.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pdb.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-n4wsbphj/test_pdb.py:4032:12: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-bnjrbviy/test_pdb.py:4032:12: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_peepholer.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_peepholer.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-6i8r0pwb/test_peepholer.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-2mkm_hni/test_peepholer.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_pickle.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pickle.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-z8tblqym/test_pickle.py:163:16: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-eo0rib0i/test_pickle.py:163:16: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_picklebuffer.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_picklebuffer.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gdfu_rrg/test_picklebuffer.py:72:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-8qli3dpe/test_picklebuffer.py:72:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_pkgutil.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pkgutil.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-d03z30o3/test_pkgutil.py:329:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-wq06ara9/test_pkgutil.py:329:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_platform.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_platform.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9qmzs7on/test_platform.py:693:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-g8_j9qe5/test_platform.py:693:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_plistlib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_plistlib.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-h8e45uv_/test_plistlib.py:968:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-ecb2yern/test_plistlib.py:968:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_positional_only_arg.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_positional_only_arg.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-de7c8l9k/test_positional_only_arg.py:11:0: error: cannot compile positional-only parameters yet [positional-only parameters]"
+      "detail": "/tmp/pyc-verify-ai3f_51s/test_positional_only_arg.py:11:0: error: cannot compile positional-only parameters yet [positional-only parameters]"
     },
     {
       "case": "Lib/test/test_posix.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_posix.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gp1c159f/test_posix.py:1391:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-bb8k2a4x/test_posix.py:1391:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_posixpath.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_posixpath.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-s1_wqowk/test_posixpath.py:355:12: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-xnfzz1da/test_posixpath.py:355:12: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_pprint.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pprint.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-00r7n576/test_pprint.py:75:4: error: cannot compile annotated assignment yet [annotated assignment]"
+      "detail": "/tmp/pyc-verify-c_v1dic2/test_pprint.py:75:4: error: cannot compile annotated assignment yet [annotated assignment]"
     },
     {
       "case": "Lib/test/test_profile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_profile.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-capjvj25/test_profile.py:120:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-q_bo8zqm/test_profile.py:120:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_py_compile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_py_compile.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-d3exoqk8/test_py_compile.py:20:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-v5l2_bvw/test_py_compile.py:20:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_pyexpat.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pyexpat.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-n2ks2g8v/test_pyexpat.py:938:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-x88a3xvd/test_pyexpat.py:938:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_queue.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_queue.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-t56gmmf5/test_queue.py:1055:16: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-9fkqc_wo/test_queue.py:1055:16: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_raise.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_raise.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-u_x2gnwv/test_raise.py:85:16: error: cannot compile raise ... from yet [raise ... from]"
+      "detail": "/tmp/pyc-verify-hxas5b1l/test_raise.py:85:16: error: cannot compile raise ... from yet [raise ... from]"
     },
     {
       "case": "Lib/test/test_re.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_re.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-cab6w0u_/test_re.py:76:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-vf78_gbf/test_re.py:76:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_regrtest.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_regrtest.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-hm4970oo/test_regrtest.py:83:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-sxinp1mf/test_regrtest.py:83:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_remote_pdb.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_remote_pdb.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ltr_g34g/test_remote_pdb.py:82:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-ayz_71hk/test_remote_pdb.py:82:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_repl.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_repl.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-bnoxiudq/test_repl.py:31:0: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-i03nckdf/test_repl.py:31:0: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_reprlib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_reprlib.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-s_u1lc2r/test_reprlib.py:860:52: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-v18oa7qq/test_reprlib.py:860:52: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_sax.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sax.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mm5bedjc/test_sax.py:112:43: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-3mu1ohkn/test_sax.py:112:43: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_sched.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sched.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-9_hynzap/test_sched.py:20:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-o2q8s0ra/test_sched.py:20:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_scope.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_scope.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-mvjwmyq5/test_scope.py:172:8: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-8xxjrw1k/test_scope.py:172:8: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_set.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_set.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-_o7yfdli/test_set.py:0:0: error: 'powerset' freevars ('powerset',) do not match symtable () [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-xvqmnbja/test_set.py:0:0: error: 'powerset' freevars ('powerset',) do not match symtable () [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_shutil.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_shutil.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-4unxw783/test_shutil.py:113:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-76g1p8lh/test_shutil.py:113:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_smtplib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_smtplib.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-uxlj_y_5/test_smtplib.py:1210:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-8_56jffu/test_smtplib.py:1210:8: error: cannot compile multiple with items yet [multiple with items]"
+    },
+    {
+      "case": "Lib/test/test_source_encoding.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_source_encoding.py",
+      "verdict": "COMPILE_ERROR",
+      "priority": "P2",
+      "detail": "/tmp/pyc-verify-sww_bqgl/test_source_encoding.py:502:55: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_ssl.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ssl.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-164i_3ac/test_ssl.py:160:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-_okudbtt/test_ssl.py:160:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_statistics.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_statistics.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-osffmymy/test_statistics.py:0:0: error: genexp freevars ('dx', 'low') do not match symtable ('low', 'dx') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-nf5zb3rw/test_statistics.py:0:0: error: genexp freevars ('dx', 'low') do not match symtable ('low', 'dx') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_str.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_str.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-krb6j4kj/test_str.py:1036:16: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-neecog6b/test_str.py:1036:16: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_strptime.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_strptime.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-h3stydqp/test_strptime.py:224:12: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-a8cns5c6/test_strptime.py:224:12: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_strtod.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_strtod.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-3vs8quk_/test_strtod.py:257:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-4huq2bao/test_strtod.py:257:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_struct.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_struct.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-pfc6nu61/test_struct.py:759:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-319f3k0y/test_struct.py:759:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_subclassinit.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_subclassinit.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-p7s49v1w/test_subclassinit.py:39:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-0g3q6vqr/test_subclassinit.py:39:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_super.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_super.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-wqetxkdh/test_super.py:163:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-q1ymmnw4/test_super.py:163:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_support.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_support.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-se6zsarq/test_support.py:218:12: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-s1patkjr/test_support.py:218:12: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_sys.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sys.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-04tzoodu/test_sys.py:1417:16: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-ywudnkx4/test_sys.py:1417:16: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_sys_setprofile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sys_setprofile.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-dyzk9y5k/test_sys_setprofile.py:448:12: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-evh3kx30/test_sys_setprofile.py:448:12: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_sys_settrace.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sys_settrace.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-7xruljtu/test_sys_settrace.py:83:8: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-barj723m/test_sys_settrace.py:83:8: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_tabnanny.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tabnanny.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-u2yxifg0/test_tabnanny.py:161:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-e6x3zr5b/test_tabnanny.py:161:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_tarfile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tarfile.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-hw3m0rt2/test_tarfile.py:230:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-azb7pyza/test_tarfile.py:230:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_tcl.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tcl.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-gmq6y82y/test_tcl.py:576:8: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-pc76ux3p/test_tcl.py:576:8: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_tempfile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tempfile.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-fsfsocfg/test_tempfile.py:0:0: error: 'it' freevars ('f', 'self') do not match symtable ('self', 'f') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-4vmplwsc/test_tempfile.py:0:0: error: 'it' freevars ('f', 'self') do not match symtable ('self', 'f') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_threading_local.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_threading_local.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qhf4kjfv/test_threading_local.py:41:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-4zj9etmg/test_threading_local.py:41:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_timeout.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_timeout.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-lxem31lg/test_timeout.py:20:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-u8mecl_b/test_timeout.py:20:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_tokenize.py",
@@ -2038,221 +1597,221 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_traceback.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-xhdt_vku/test_traceback.py:2180:12: error: cannot compile raise ... from yet [raise ... from]"
+      "detail": "/tmp/pyc-verify-nl6ao3a6/test_traceback.py:2180:12: error: cannot compile raise ... from yet [raise ... from]"
     },
     {
       "case": "Lib/test/test_tstring.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tstring.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-dfldd4gg/test_tstring.py:9:12: error: cannot compile t-strings yet [t-strings]"
+      "detail": "/tmp/pyc-verify-poxejosv/test_tstring.py:9:12: error: cannot compile t-strings yet [t-strings]"
     },
     {
       "case": "Lib/test/test_tuple.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tuple.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-h6k2dgsr/test_tuple.py:148:16: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-z1d6jxak/test_tuple.py:148:16: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_type_aliases.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_type_aliases.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-5_ow7a_m/test_type_aliases.py:74:8: error: cannot compile type aliases yet [type aliases]"
+      "detail": "/tmp/pyc-verify-na5bg7k5/test_type_aliases.py:74:8: error: cannot compile type aliases yet [type aliases]"
     },
     {
       "case": "Lib/test/test_type_annotations.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_type_annotations.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-m_2imcpn/test_type_annotations.py:54:12: error: cannot compile annotated assignment yet [annotated assignment]"
+      "detail": "/tmp/pyc-verify-plgv6vqm/test_type_annotations.py:54:12: error: cannot compile annotated assignment yet [annotated assignment]"
     },
     {
       "case": "Lib/test/test_type_cache.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_type_cache.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-fsk83c66/test_type_cache.py:158:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-4qd6rma_/test_type_cache.py:158:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_type_params.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_type_params.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-tt821qfn/test_type_params.py:0:0: error: no symtable scope for generator function 'generator1' at line 1041 [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-4j0p8k1a/test_type_params.py:0:0: error: no symtable scope for generator function 'generator1' at line 1041 [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_typechecks.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_typechecks.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-tetes5zj/test_typechecks.py:19:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
+      "detail": "/tmp/pyc-verify-z1vvw1nz/test_typechecks.py:19:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]"
     },
     {
       "case": "Lib/test/test_types.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_types.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-y59ls4r4/test_types.py:33:15: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-jzixsdun/test_types.py:33:15: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_typing.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_typing.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-qa1yhe8m/test_typing.py:178:4: error: cannot compile annotated assignment yet [annotated assignment]"
+      "detail": "/tmp/pyc-verify-nn7q_k8o/test_typing.py:178:4: error: cannot compile annotated assignment yet [annotated assignment]"
     },
     {
       "case": "Lib/test/test_unparse.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_unparse.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-69d9sdfo/test_unparse.py:16:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
+      "detail": "/tmp/pyc-verify-33f100mb/test_unparse.py:16:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]"
     },
     {
       "case": "Lib/test/test_urllib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllib.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-vls1i_wl/test_urllib.py:900:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-zdr8f2x_/test_urllib.py:900:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_urllib2.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllib2.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-uxvp0jg4/test_urllib2.py:373:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-b7vqfrbu/test_urllib2.py:373:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_urllib2net.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllib2net.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-l4nd5z7q/test_urllib2net.py:310:28: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-73bup_1h/test_urllib2net.py:310:28: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_urlparse.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urlparse.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-599evxfq/test_urlparse.py:342:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-if7t8xxx/test_urlparse.py:342:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_userlist.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_userlist.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-iwu0x031/test_userlist.py:129:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-fyzzp3zu/test_userlist.py:129:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_userstring.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_userstring.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-76zph3sy/test_userstring.py:38:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-p0xv9bjo/test_userstring.py:38:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_utf8_mode.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_utf8_mode.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-rhyr_6sj/test_utf8_mode.py:29:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-81xkyps0/test_utf8_mode.py:29:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_uuid.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_uuid.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-evquy66u/test_uuid.py:635:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-ny35xhtl/test_uuid.py:635:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_wait3.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_wait3.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-tepicm7n/test_wait3.py:18:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-qufmzrr1/test_wait3.py:18:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_wait4.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_wait4.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-hrbjl81p/test_wait4.py:18:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-fkq8flrq/test_wait4.py:18:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_weakref.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_weakref.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-8w5dx922/test_weakref.py:119:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-6c6ylng8/test_weakref.py:119:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_weakset.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_weakset.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-heark9s1/test_weakset.py:0:0: error: 'testcontext' freevars ('items', 's') do not match symtable ('s', 'items') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-6l4x_t5i/test_weakset.py:0:0: error: 'testcontext' freevars ('items', 's') do not match symtable ('s', 'items') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_webbrowser.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_webbrowser.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-legc3upw/test_webbrowser.py:37:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-6osg6p18/test_webbrowser.py:37:4: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_with.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_with.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-0lbo_wbx/test_with.py:126:56: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
+      "detail": "/tmp/pyc-verify-__lx2kes/test_with.py:126:56: error: cannot compile Ellipsis literals yet [Ellipsis literals]"
     },
     {
       "case": "Lib/test/test_xml_etree.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xml_etree.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-d91z9y5s/test_xml_etree.py:141:0: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
+      "detail": "/tmp/pyc-verify-yzf7nj31/test_xml_etree.py:141:0: error: cannot compile keyword-only parameters yet [keyword-only parameters]"
     },
     {
       "case": "Lib/test/test_xml_etree_c.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xml_etree_c.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-s4ttepew/test_xml_etree_c.py:67:12: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-t3rbtwzm/test_xml_etree_c.py:67:12: error: cannot compile del of a local yet [del of a local]"
     },
     {
       "case": "Lib/test/test_xmlrpc.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xmlrpc.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-y9v7ktyb/test_xmlrpc.py:1484:8: error: cannot compile multiple with items yet [multiple with items]"
+      "detail": "/tmp/pyc-verify-rljthqcj/test_xmlrpc.py:1484:8: error: cannot compile multiple with items yet [multiple with items]"
     },
     {
       "case": "Lib/test/test_xxlimited.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xxlimited.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-36_65sop/test_xxlimited.py:10:4: error: cannot compile annotated assignment yet [annotated assignment]"
+      "detail": "/tmp/pyc-verify-8_djpyhw/test_xxlimited.py:10:4: error: cannot compile annotated assignment yet [annotated assignment]"
     },
     {
       "case": "Lib/test/test_yield_from.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_yield_from.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-ouwa_9eo/test_yield_from.py:0:0: error: 'g1' freevars ('g2', 'trace') do not match symtable ('trace', 'g2') [GeneratorExpressionError]"
+      "detail": "/tmp/pyc-verify-i7lyxkgg/test_yield_from.py:0:0: error: 'g1' freevars ('g2', 'trace') do not match symtable ('trace', 'g2') [GeneratorExpressionError]"
     },
     {
       "case": "Lib/test/test_zlib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zlib.py",
       "verdict": "COMPILE_ERROR",
       "priority": "P2",
-      "detail": "/tmp/pyc-verify-panww1f1/test_zlib.py:517:24: error: cannot compile del of a local yet [del of a local]"
+      "detail": "/tmp/pyc-verify-sx2dhhta/test_zlib.py:517:24: error: cannot compile del of a local yet [del of a local]"
     },
     {
-      "case": "Lib/test/test__opcode.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__opcode.py",
+      "case": "Lib/test/test__locale.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__locale.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
@@ -2272,8 +1831,113 @@
       "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "Lib/test/test_copyreg.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_copyreg.py",
+      "case": "Lib/test/test_bufio.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bufio.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_code_module.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_code_module.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecencodings_cn.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_cn.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecencodings_hk.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_hk.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecencodings_iso2022.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_iso2022.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecencodings_jp.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_jp.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecencodings_kr.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_kr.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecencodings_tw.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecencodings_tw.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecmaps_cn.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecmaps_cn.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecmaps_hk.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecmaps_hk.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecmaps_jp.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecmaps_jp.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecmaps_kr.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecmaps_kr.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_codecmaps_tw.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecmaps_tw.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_dbm_dumb.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_dumb.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_dbm_gnu.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_gnu.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_dbm_sqlite3.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_sqlite3.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
@@ -2286,8 +1950,36 @@
       "detail": "stdout and exit match; stderr differs"
     },
     {
+      "case": "Lib/test/test_ensurepip.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ensurepip.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_enumerate.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_enumerate.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
       "case": "Lib/test/test_errno.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_errno.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_file.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_file.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_filecmp.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_filecmp.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
@@ -2314,8 +2006,22 @@
       "detail": "stdout and exit match; stderr differs"
     },
     {
+      "case": "Lib/test/test_genericpath.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_genericpath.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
       "case": "Lib/test/test_getopt.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_getopt.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_grp.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_grp.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
@@ -2328,22 +2034,22 @@
       "detail": "stdout and exit match; stderr differs"
     },
     {
+      "case": "Lib/test/test_http_cookiejar.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_http_cookiejar.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_index.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_index.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
       "case": "Lib/test/test_ipaddress.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ipaddress.py",
-      "verdict": "STDERR_DIFF",
-      "priority": "P3",
-      "detail": "stdout and exit match; stderr differs"
-    },
-    {
-      "case": "Lib/test/test_kqueue.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_kqueue.py",
-      "verdict": "STDERR_DIFF",
-      "priority": "P3",
-      "detail": "stdout and exit match; stderr differs"
-    },
-    {
-      "case": "Lib/test/test_launcher.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_launcher.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
@@ -2356,8 +2062,43 @@
       "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "Lib/test/test_msvcrt.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_msvcrt.py",
+      "case": "Lib/test/test_lzma.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_lzma.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_minidom.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_minidom.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_modulefinder.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_modulefinder.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_netrc.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_netrc.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_nturl2path.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_nturl2path.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_pickletools.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pickletools.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
@@ -2377,8 +2118,50 @@
       "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "Lib/test/test_startfile.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_startfile.py",
+      "case": "Lib/test/test_print.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_print.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_pulldom.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pulldom.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_pwd.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pwd.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_pyclbr.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pyclbr.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_selectors.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_selectors.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_smtpnet.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_smtpnet.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_stat.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_stat.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
@@ -2391,8 +2174,29 @@
       "detail": "stdout and exit match; stderr differs"
     },
     {
+      "case": "Lib/test/test_symtable.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_symtable.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_syntax.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_syntax.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
       "case": "Lib/test/test_textwrap.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_textwrap.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_type_comments.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_type_comments.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
@@ -2405,15 +2209,50 @@
       "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "Lib/test/test_winapi.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_winapi.py",
+      "case": "Lib/test/test_unicode_file_functions.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_unicode_file_functions.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "Lib/test/test_winconsoleio.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_winconsoleio.py",
+      "case": "Lib/test/test_univnewlines.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_univnewlines.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_urllib2_localnet.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllib2_localnet.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_urllib_response.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllib_response.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_urllibnet.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllibnet.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_userdict.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_userdict.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_wave.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_wave.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
@@ -2426,18 +2265,39 @@
       "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "Lib/test/test_winsound.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_winsound.py",
+      "case": "Lib/test/test_xpickle.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xpickle.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
     },
     {
-      "case": "Lib/test/test_wmi.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_wmi.py",
+      "case": "Lib/test/test_xxtestfuzz.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xxtestfuzz.py",
       "verdict": "STDERR_DIFF",
       "priority": "P3",
       "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test_zipapp.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zipapp.py",
+      "verdict": "STDERR_DIFF",
+      "priority": "P3",
+      "detail": "stdout and exit match; stderr differs"
+    },
+    {
+      "case": "Lib/test/test__opcode.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__opcode.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test__osx_support.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__osx_support.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
     },
     {
       "case": "Lib/test/test_apple.py",
@@ -2449,6 +2309,20 @@
     {
       "case": "Lib/test/test_asdl_parser.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_asdl_parser.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_bigaddrspace.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bigaddrspace.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_charmapcodec.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_charmapcodec.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -2475,8 +2349,29 @@
       "detail": ""
     },
     {
+      "case": "Lib/test/test_copyreg.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_copyreg.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_dbm_ndbm.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_ndbm.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "Lib/test/test_devpoll.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_devpoll.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_epoll.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_epoll.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -2496,6 +2391,13 @@
       "detail": ""
     },
     {
+      "case": "Lib/test/test_frozen.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_frozen.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "Lib/test/test_generator_stop.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_generator_stop.py",
       "verdict": "MATCH",
@@ -2505,6 +2407,13 @@
     {
       "case": "Lib/test/test_int_literal.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_int_literal.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_ioctl.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ioctl.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -2524,8 +2433,36 @@
       "detail": ""
     },
     {
+      "case": "Lib/test/test_kqueue.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_kqueue.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_launcher.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_launcher.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_lltrace.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_lltrace.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "Lib/test/test_math_property.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_math_property.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_msvcrt.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_msvcrt.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -2559,8 +2496,36 @@
       "detail": ""
     },
     {
+      "case": "Lib/test/test_startfile.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_startfile.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "Lib/test/test_stringprep.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_stringprep.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_sundry.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sundry.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_termios.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_termios.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_threadedtempfile.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_threadedtempfile.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -2587,8 +2552,43 @@
       "detail": ""
     },
     {
+      "case": "Lib/test/test_winapi.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_winapi.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_winconsoleio.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_winconsoleio.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_winsound.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_winsound.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_wmi.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_wmi.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
       "case": "Lib/test/test_xml_dom_minicompat.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xml_dom_minicompat.py",
+      "verdict": "MATCH",
+      "priority": "-",
+      "detail": ""
+    },
+    {
+      "case": "Lib/test/test_xml_dom_xmlbuilder.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xml_dom_xmlbuilder.py",
       "verdict": "MATCH",
       "priority": "-",
       "detail": ""
@@ -2643,11 +2643,11 @@
       "detail": "CPython output not reproducible across runs"
     },
     {
-      "case": "Lib/test/test_source_encoding.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_source_encoding.py",
+      "case": "Lib/test/test_strftime.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_strftime.py",
       "verdict": "QUARANTINE_NONDETERMINISTIC",
       "priority": "-",
-      "detail": "CPython output not reproducible across runs"
+      "detail": "output varies with wall-clock time; the oracle changed across the compile window"
     },
     {
       "case": "Lib/test/test_thread.py",

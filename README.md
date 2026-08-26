@@ -17,7 +17,7 @@ The project is being rebuilt on CPython's object model. See
 
 | Corpus | Pass rate | |
 |---|---|---|
-| CPython `Lib/test/` | **5.66%** | 22/389 files |
+| CPython `Lib/test/` | **11.31%** | 44/389 files |
 | language corpus | **99.04%** | 721/728 cases |
 
 `Lib/test` is the north-star metric (CHARTER I6): the pass rate over CPython's

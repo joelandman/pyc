@@ -2489,10 +2489,25 @@ private:
         if (mod.empty()) return unsupported("import from an unnamed module", n.loc);
 
         bool ok = true;
-        ir::Value m = emit_import(mod, false, n.loc);
+        // Import WITH a fromlist. `import X` then getattr is not the same
+        // thing: the fromlist is what makes the import machinery load X.Y when
+        // Y is a submodule and bind it on X. Without it `from test import
+        // support` raised AttributeError, which is how 113 Lib/test files died.
+        std::string csv;
+        for (const alias& a : n.names) {
+            if (!csv.empty()) csv += ",";
+            csv += a.name;
+        }
+        ir::Value modname = const_str(mod, n.loc);
+        ir::Value names = const_str(csv, n.loc);
+        ir::Value m = call_capi("pyc_rt_import_from", {modname, names},
+                                n.loc, &ok, {modname, names});
+        if (!ok) return false;
+        mark_owned(m);
         for (const alias& a : n.names) {
             ir::Value key = const_str(a.name, n.loc);
-            ir::Value v = call_capi("PyObject_GetAttr", {m, key}, n.loc, &ok, {key});
+            // getattr with CPython's sys.modules fallback, not a bare getattr.
+            ir::Value v = call_capi("pyc_rt_import_attr", {m, key}, n.loc, &ok, {key});
             if (!ok) return false;
             mark_owned(v);
             store_name(a.asname ? *a.asname : a.name, v, n.loc);

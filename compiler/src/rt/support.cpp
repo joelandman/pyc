@@ -902,6 +902,73 @@ extern "C" int pyc_rt_reraise(void) {
     return -1;
 }
 
+// `from X import a, b` is NOT `import X` followed by getattr.
+//
+// CPython compiles it to __import__(X, ..., fromlist=("a","b"), 0), and the
+// FROMLIST is what makes the import machinery load X.a and X.b when they are
+// submodules and bind them on X. Importing X alone leaves them unbound, so
+// `from test import support` raised
+//   AttributeError: module 'test' has no attribute 'support'
+// -- 113 of 389 Lib/test files died on exactly this.
+//
+// names is a comma-separated list rather than a tuple so the lowering stays one
+// call with two string constants; building the tuple is this function's job.
+extern "C" PyObject* pyc_rt_import_from(PyObject* module, PyObject* names) {
+    const char* csv = PyUnicode_AsUTF8(names);
+    if (!csv) return nullptr;
+    PyObject* fromlist = PyList_New(0);
+    if (!fromlist) return nullptr;
+    const char* p = csv;
+    while (*p) {
+        const char* comma = std::strchr(p, ',');
+        Py_ssize_t len = comma ? (comma - p) : (Py_ssize_t)std::strlen(p);
+        PyObject* item = PyUnicode_FromStringAndSize(p, len);
+        if (!item || PyList_Append(fromlist, item) < 0) {
+            Py_XDECREF(item); Py_DECREF(fromlist); return nullptr;
+        }
+        Py_DECREF(item);
+        if (!comma) break;
+        p = comma + 1;
+    }
+    PyObject* globals = globals_dict();          // borrowed, may be null
+    PyObject* mod = PyImport_ImportModuleLevelObject(
+        module, globals, globals, fromlist, 0);
+    Py_DECREF(fromlist);
+    return mod;                                  // new reference
+}
+
+// The attribute half of `from X import Y`. CPython's IMPORT_FROM tries getattr
+// and, when that fails, falls back to sys.modules["X.Y"] -- which is what makes
+// a partially-initialised circular import work. Reproduced here rather than
+// left as a bare getattr.
+extern "C" PyObject* pyc_rt_import_attr(PyObject* mod, PyObject* name) {
+    PyObject* v = PyObject_GetAttr(mod, name);
+    if (v) return v;
+    if (!PyErr_ExceptionMatches(PyExc_AttributeError)) return nullptr;
+
+    PyObject *t = nullptr, *ev = nullptr, *tb = nullptr;
+    PyErr_Fetch(&t, &ev, &tb);                   // keep the original error
+    PyObject* pkg = PyObject_GetAttrString(mod, "__name__");
+    if (pkg && PyUnicode_Check(pkg)) {
+        PyObject* full = PyUnicode_FromFormat("%U.%U", pkg, name);
+        if (full) {
+            PyObject* sysmods = PyImport_GetModuleDict();      // borrowed
+            PyObject* sub = sysmods ? PyDict_GetItem(sysmods, full) : nullptr;
+            if (sub) {
+                Py_INCREF(sub);
+                Py_XDECREF(pkg); Py_DECREF(full);
+                Py_XDECREF(t); Py_XDECREF(ev); Py_XDECREF(tb);
+                return sub;
+            }
+            Py_DECREF(full);
+        }
+    }
+    Py_XDECREF(pkg);
+    PyErr_Clear();                               // from the fallback probing
+    PyErr_Restore(t, ev, tb);                    // restore the real AttributeError
+    return nullptr;
+}
+
 extern "C" int pyc_rt_import_star(PyObject* mod) {
     // Honour __all__ when present; otherwise copy public names, which is what
     // `import *` means. Copying everything would drag in imported modules and

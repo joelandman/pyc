@@ -212,6 +212,8 @@ _PYC_RUNTIME = {
     "pyc_rt_push_handled": ("PyObject*", "+1", ["PyObject*"]),
     "pyc_rt_pop_handled":  ("int", "", ["PyObject*"]),
     "pyc_rt_import_star":  ("int", "", ["PyObject*"]),
+    "pyc_rt_import_from":  ("PyObject*", "+1", ["PyObject*", "PyObject*"]),
+    "pyc_rt_import_attr":  ("PyObject*", "+1", ["PyObject*", "PyObject*"]),
     "pyc_rt_cell_get":     ("PyObject*", "+1", ["PyObject*"]),
     "pyc_rt_unpack_ex":    ("PyObject*", "+1", ["PyObject*", "Py_ssize_t", "Py_ssize_t"]),
 }
