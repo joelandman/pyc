@@ -318,6 +318,31 @@ sides**. This is separate from the collapsing above: it fixes what the programs
 are run *under*, so a difference is a difference in the programs rather than in
 the invoking shell.
 
+## Where the temporary files go
+
+Every case compiles into its own temp directory, and a compiled binary is
+~32 MB. A full run therefore churns gigabytes, and on a machine where `/tmp` is
+a tmpfs it will fill it.
+
+**That failure mode is dangerous, because it does not look like itself.** When
+the disk is full the linker fails, the harness records `DID_NOT_COMPILE`, and
+the rate collapses — which is indistinguishable from a catastrophic compiler
+regression unless someone reads the diagnostic:
+
+```
+error: unable to open output file '…/support-eafbd5.o': 'No space left on device'
+```
+
+Both `pycc` (`mktemp -d`) and the harness (Python's `tempfile`) honour
+`TMPDIR`, so point it at a real disk:
+
+```bash
+export TMPDIR=~/temp        # not /tmp, which is a tmpfs on this machine
+```
+
+Before believing any large drop in `DID_NOT_COMPILE` terms, check `df` and grep
+the diagnostics for `No space left`. This has bitten twice.
+
 ## Reading a result
 
 **A pass rate is not reproducible without its measurement conditions.** Measured
