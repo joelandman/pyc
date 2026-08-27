@@ -12,7 +12,7 @@ S=~/opt/py-sysroots/cp314-3.14.7-tier1
   --pyc "$PWD/compiler/tools/pycc" --pyc-flag=-O0 --sysroot "$S" --jobs 4
 ```
 
-These probes cover **three** defects, of which **two are now fixed**: nine for
+These probes cover **four** defects, of which **two are fixed**: nine for
 missing Python frames (issue #9, open), nine `comp_cell_` for a raw cell
 leaking out of a comprehension (**FIXED**), and three `nested_class_` for a
 broken closure chain through a class body (**FIXED**). The last two were found
@@ -161,3 +161,40 @@ and keeps the existing filters (own locals are not free; a name with no cell in
 any enclosing scope is not free). One guard had to be added explicitly: a
 `global x` declaration must win over an enclosing cell named `x`, or the method
 would silently read a different variable.
+
+
+## D: recursive deallocation exhausts the C stack (found 2026-08-26, OPEN)
+
+`Lib/test/test_builtin` segfaults in `test_filter_dealloc`, which builds a
+million nested `filter` objects specifically to stress recursive deallocation
+(gh-102356).
+
+Measured on an 8 MB stack (the default here):
+
+| | 400 000 | 600 000 | 1 000 000 | 4 000 000 |
+|---|---|---|---|---|
+| pyc | ok | **SIGSEGV** | SIGSEGV | — |
+| CPython | ok | ok | ok | ok |
+| pyc, `ulimit -s 65536` | ok | ok | ok | — |
+
+So it is C-stack exhaustion during the dealloc chain, and CPython's deferral is
+what avoids it. In 3.14 the deferral lives in `_Py_Dealloc` itself — the
+`Py_TRASHCAN_*` macros are empty compatibility shims now:
+
+```c
+intptr_t margin = _Py_RecursionLimit_GetMargin(tstate);
+if (margin < 2 && gc_flag) { _PyTrash_thread_deposit_object(tstate, op); return; }
+```
+
+`gc_flag` is `tp_flags & Py_TPFLAGS_HAVE_GC`, a type property, so it is
+identical under both. That leaves `margin`, i.e. `c_stack_soft_limit`.
+
+**Why that differs is not established, and is deliberately not guessed at here
+(CHARTER I9).** One hypothesis has been tested and *refuted*: that the
+recursion limits are simply never initialised in a compiled binary. Forcing a
+500-deep Python recursion first, which exercises that machinery, does not
+prevent the crash — and `pycore_interp_init` calls
+`_Py_InitializeRecursionLimits` during `Py_InitializeFromConfig`, which a
+compiled binary does run.
+
+The probe sits at 600 000: above the measured pyc ceiling, far below CPython's.

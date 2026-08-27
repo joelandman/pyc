@@ -1614,17 +1614,32 @@ private:
         }, n.target->v);
         if (!ok) return false;
 
+        // Ownership differs by target kind, and getting it wrong here is a
+        // DOUBLE FREE rather than a leak. call_capi does not register its
+        // result as owned -- callers do -- but lower_expr already has, via
+        // lower_name. Marking unconditionally therefore pushed the plain-name
+        // case onto owned_ twice, and mark_owned is an unconditional
+        // push_back, so the landing pad emitted `decref %27` twice.
+        //
+        // The effect: any augmented assignment on a BARE NAME whose operator
+        // raises dropped one reference too many, freeing the object while the
+        // binding still pointed at it. `m += 1` inside a plain try/except was
+        // enough; every later use of `m` was a dangling pointer. Attribute and
+        // subscript targets were never affected, which is what localises it.
         ir::Value cur_v;
         if (has_key) {
             cur_v = call_capi("PyObject_GetItem", {base, key}, n.loc, &ok);
+            if (!ok) return false;
+            mark_owned(cur_v);
         } else if (has_base) {
             ir::Value nm = const_str(std::get<Attribute>(n.target->v).attr, n.loc);
             cur_v = call_capi("PyObject_GetAttr", {base, nm}, n.loc, &ok, {nm});
+            if (!ok) return false;
+            mark_owned(cur_v);
         } else {
-            cur_v = lower_expr(*n.target, &ok);            // plain name
+            cur_v = lower_expr(*n.target, &ok);            // already owned
+            if (!ok) return false;
         }
-        if (!ok) return false;
-        mark_owned(cur_v);
         ir::Value rhs = lower_expr(*n.value, &ok);
         if (!ok) return false;
         ir::Value out;
