@@ -3253,6 +3253,17 @@ private:
             [&](const ConstFrozenSet&){ *ok = unsupported("frozenset constants", c.loc); },
         }, c.value.v);
         if (!*ok) return {};
+        // NOT given an error edge yet, deliberately. Int, float and bytes
+        // literals allocate too, so they carry the same latent failure as
+        // const_str -- but adding pads here made check_ir_wellformed report
+        // n_finally.py malformed ("owned value released only on unwind
+        // paths"), and shipping a verified fix beside an unverified one that
+        // breaks the checker is not a trade worth making. Bisected: const_str
+        // alone is clean, this switch alone reproduces it.
+        //
+        // The real answer for all of them is to hoist literals to module-level
+        // globals built once at startup, which removes the failure point
+        // rather than checking it, and is faster. Tracked as follow-up work.
         emit(std::move(in));
         mark_owned(out);
         return out;
@@ -3925,10 +3936,24 @@ private:
         return out;
     }
 
+    // Building a str ALLOCATES, so it can fail, and an unchecked failure is a
+    // null passed straight into the next C-API call.
+    //
+    // CPython never hits this: its name constants are interned into co_names
+    // at compile time, so an attribute access allocates nothing. pyc creates a
+    // fresh str per access at run time, which makes every one of them a
+    // failure point that CPython does not have.
+    //
+    // It is reachable. Lib/test/test_pyexpat's test_error_path_no_crash
+    // deliberately installs a no-memory hook, and the very next attribute name
+    // came back null and went into PyObject_GetAttr as the name -- SIGSEGV
+    // where CPython raises MemoryError. codegen's check() was already there and
+    // did nothing, because it returns early without an error edge and this site
+    // never attached one.
     ir::Value const_str(const std::string& text, const SourceLoc& loc) {
         ir::Value v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::ConstStr, {}, v, Ownership::Owned, text,
-                       0, 0, loc, std::nullopt});
+                       0, 0, loc, make_landing_pad(loc)});
         mark_owned(v);
         return v;
     }
