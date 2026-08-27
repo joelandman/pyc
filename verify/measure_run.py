@@ -222,8 +222,11 @@ def report(out: list[Measurement], args, elapsed: float,
         print(f"\n  wrote {args.json}")
 
     if args.fail_on_silent_wrong:
+        # An unstable oracle disqualifies the case: with no reproducible ground
+        # truth there is nothing for pyc to be wrong against.
         silent = [r for r in out
                   if Flag.STDOUT_DIFFERS in r.flags
+                  and Flag.ORACLE_UNSTABLE not in r.flags
                   and r.subject is not None and r.subject.exit == 0]
         if silent:
             print(f"\n{RED}{BOLD}SILENT WRONG ANSWER (CHARTER I1){RST} — "

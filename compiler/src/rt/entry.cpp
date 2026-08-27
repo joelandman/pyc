@@ -115,9 +115,58 @@ static void set_main_file(char** argv) {
     Py_DECREF(v);
 }
 
+// sys.executable must name a PYTHON INTERPRETER. CPython's own definition is
+// "the absolute path of the executable binary for the Python interpreter", and
+// library code relies on exactly that: `[sys.executable, "-I", "-c", code]` is
+// how the stdlib and its tests run a snippet in a fresh interpreter.
+//
+// PyConfig defaults it to this program, which is not an interpreter. The
+// re-invocation then ran the COMPILED PROGRAM with `-I -c <code>` -- a
+// different program entirely, handed flags it never defined. Lib/test's
+// test_select did this, got nothing back from the subprocess, and still
+// reported OK: twenty lines of expected output silently absent at exit 0,
+// which is the I1 shape.
+//
+// The interpreter beside the stdlib this binary already uses is the honest
+// answer, and it costs no new dependency: sys.prefix is that sysroot, and the
+// stdlib is being imported from it already. It is also the SAME CPython
+// version the binary embeds, so the snippet runs under the interpreter the
+// program was compiled against rather than whatever `python3` happens to be
+// on PATH.
+//
+// If it is not there -- a deployment carrying the binary alone -- nothing is
+// changed and sys.executable keeps pointing at the program. Code that spawns
+// it then fails loudly rather than silently running the wrong thing.
+//
+// Note this does NOT make the binary an interpreter: config.parse_argv stays
+// 0, so the program's own argv is still its own. Programs wanting their own
+// path should use sys.argv[0] or __main__.__file__, both of which still name
+// the binary.
+static void set_executable(void) {
+    PyObject* prefix = PySys_GetObject("prefix");            // borrowed
+    if (!prefix || !PyUnicode_Check(prefix)) return;
+    const char* p = PyUnicode_AsUTF8(prefix);
+    if (!p) { PyErr_Clear(); return; }
+
+    char cand[4096];
+    int n = std::snprintf(cand, sizeof cand, "%s/bin/python%d.%d", p,
+                          PY_MAJOR_VERSION, PY_MINOR_VERSION);
+    if (n <= 0 || (std::size_t)n >= sizeof cand) return;
+    if (::access(cand, X_OK) != 0) return;   // not there: leave it alone
+
+    PyObject* v = PyUnicode_FromString(cand);
+    if (!v) { PyErr_Clear(); return; }
+    if (PySys_SetObject("executable", v) < 0) PyErr_Clear();
+    // subprocess and venv consult _base_executable; leaving it pointing at the
+    // program would reintroduce the same divergence one layer down.
+    if (PySys_SetObject("_base_executable", v) < 0) PyErr_Clear();
+    Py_DECREF(v);
+}
+
 int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
     int rc = configure(argc, argv);
     if (rc != 0) return rc < 0 ? 1 : rc;
+    set_executable();
     set_main_file(argv);
 
     int status = 0;

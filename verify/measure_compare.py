@@ -171,7 +171,15 @@ def main() -> int:
         # I1, measured: the binary claims success and prints the wrong thing.
         # New only -- one already in the baseline is a recorded defect, not a
         # regression, and the count can only go down.
+        #
+        # An unstable oracle disqualifies the case: if CPython does not agree
+        # with CPython, there is no ground truth for pyc to be wrong AGAINST,
+        # and "wrong answer" is not a claim the measurement supports. test_sort
+        # seeds nothing and prints a different permutation every run; it was
+        # reported here as a new I1 violation purely because its exit status
+        # moved.
         if (STDOUT in cmap[case] and cexit.get(case) == 0
+                and UNSTABLE not in cmap[case]
                 and not (STDOUT in bmap[case] and bexit.get(case) == 0)):
             silent.append(case)
 
