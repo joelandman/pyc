@@ -37,7 +37,7 @@ void      pyc_rt_store_local(PyObject** locals, int slot, PyObject* v);
 // behaviour behind the mutable-default surprise -- so they are built by the
 // caller, not here.
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
-                               int nargs, int nkwonly, int nlocals,
+                               int nargs, int nkwonly, int nposonly, int nlocals,
                                const char* const* argnames,
                                PyObject* defaults, PyObject* kwdefaults,
                                int vararg_slot, int kwarg_slot,

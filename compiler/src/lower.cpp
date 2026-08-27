@@ -582,14 +582,13 @@ private:
     ir::Value lower_lambda(const Lambda& n, bool* ok) {
         const arguments& a = *n.args;
         // *args and **kwargs work exactly as they do for a def -- same
-        // trampoline, same slots. Positional-only and keyword-only markers
-        // stay refused: the trampoline binds keywords by NAME, so treating
-        // `lambda a, /: ...` as an ordinary parameter would accept f(a=1),
-        // which CPython rejects. Accepting what CPython rejects is the same
-        // defect as computing the wrong value.
-        if (!a.posonlyargs.empty() || !a.kwonlyargs.empty()) {
-            *ok = unsupported("positional-only or keyword-only lambda parameters",
-                              n.loc);
+        // trampoline, same slots -- including the `/` and `*` markers, which
+        // are carried by nposonly and nkwonly exactly as they are for a def.
+        // Keyword-only stays refused here only because a lambda cannot carry
+        // kw_defaults through this path yet; a REQUIRED keyword-only parameter
+        // is a hole that the defaults tuple cannot represent.
+        if (!a.kwonlyargs.empty()) {
+            *ok = unsupported("keyword-only lambda parameters", n.loc);
             return {};
         }
         // Lambda defaults are ordinary defaults: evaluated once, here, in the
@@ -610,6 +609,7 @@ private:
             }
         }
         std::vector<std::string> params;
+        for (const arg& p : a.posonlyargs) params.push_back(p.arg);
         for (const arg& p : a.args) params.push_back(p.arg);
         // *args and **kwargs get their own slots, after the named parameters.
         std::vector<std::string> slotnames = params;
@@ -640,6 +640,7 @@ private:
         for (const std::string& f2 : freevars) lam_locals.push_back(f2);
 
         FnScope sc = begin_function("<lambda>", params, lam_locals);
+        cur()->nposonly = (int)a.posonlyargs.size();
         cur()->freevars = freevars;
         for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
         bool bok = true;
@@ -915,7 +916,6 @@ private:
     // there is nothing left for pyc to lower inside it.
     bool lower_async_functiondef(const AsyncFunctionDef& n) {
         const arguments& a = *n.args;
-        if (!a.posonlyargs.empty()) return unsupported("positional-only parameters", n.loc);
         if (!a.kwonlyargs.empty())  return unsupported("keyword-only parameters", n.loc);
         // Defaults are evaluated ONCE, here, in the enclosing scope.
         bool dok = true;
@@ -989,15 +989,20 @@ private:
 
     bool lower_functiondef(const FunctionDef& n) {
         const arguments& a = *n.args;
-        if (!a.posonlyargs.empty()) return unsupported("positional-only parameters", n.loc);
 
         // Positional params first, then keyword-only. They are ordinary slots;
         // what makes them keyword-only is that the trampoline's positional
         // binding stops at nargs.
+        // Order is load-bearing: positional-only first, then ordinary, then
+        // keyword-only. The trampoline binds positionally from 0 and by
+        // keyword from nposonly, so the `/` and `*` markers are expressed
+        // entirely by where the counts fall in this one list.
         std::vector<std::string> params;
+        for (const arg& p : a.posonlyargs) params.push_back(p.arg);
         for (const arg& p : a.args) params.push_back(p.arg);
         for (const arg& p : a.kwonlyargs) params.push_back(p.arg);
         const int nkwonly = (int)a.kwonlyargs.size();
+        const int nposonly = (int)a.posonlyargs.size();
 
         // Defaults are evaluated ONCE, here, in the enclosing scope -- not per
         // call. That is the behaviour behind the mutable-default surprise, and
@@ -1182,7 +1187,8 @@ private:
         for (const std::string& fv2 : freevars) all_locals.push_back(fv2);
 
         mod_.functions.push_back(ir::Function{
-            .name=n.name, .params=params, .nkwonly=nkwonly, .next_value=1});
+            .name=n.name, .params=params, .nkwonly=nkwonly,
+            .nposonly=nposonly, .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
         const std::size_t fn_index = fn_idx_;
         cur()->locals = all_locals;

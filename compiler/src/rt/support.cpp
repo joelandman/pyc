@@ -109,7 +109,7 @@ namespace {
 // reach, which is exactly what makes them keyword-only. kwdefaults is a dict
 // keyed by name rather than a tuple, because a REQUIRED keyword-only parameter
 // is a hole and a tuple cannot hold one.
-struct Bound { PycImpl impl; int nargs; int nkwonly; int nlocals;
+struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
                PyObject* defaults; PyObject* kwdefaults;
                int vararg; int kwarg;
@@ -138,6 +138,10 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
     }
     std::vector<const char*> missing;
     std::vector<const char*> missing_kwonly;
+    // Positional-only names that arrived as keywords. Collected rather than
+    // reported on sight, because CPython names them all in one message:
+    // "got some positional-only arguments passed as keyword arguments: 'a, b'".
+    std::vector<const char*> posonly_kw;
     PyObject** locals = new (std::nothrow) PyObject*[b->nlocals ? b->nlocals : 1];
     if (!locals) return PyErr_NoMemory();
     for (int i = 0; i < b->nlocals; ++i) locals[i] = nullptr;
@@ -172,17 +176,26 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
             const char* ks = PyUnicode_AsUTF8(k);
             if (!ks) goto fail;
             int slot = -1;
-            // nargs + nkwonly: a keyword-only parameter is bindable BY KEYWORD,
-            // which is the whole point, so the search must cover it.
-            for (int i = 0; i < b->nargs + b->nkwonly; ++i)
+            // Starts at nposonly: a positional-only parameter is NOT bindable
+            // by keyword, which is the whole point of the `/` marker. Ends at
+            // nargs + nkwonly because a keyword-only parameter is bindable by
+            // keyword, which is the whole point of `*`.
+            for (int i = b->nposonly; i < b->nargs + b->nkwonly; ++i)
                 if (std::strcmp(ks, b->argnames[i]) == 0) { slot = i; break; }
             if (slot < 0) {
-                // Unmatched keywords go to **kwargs when the function has one;
-                // otherwise they are the error CPython gives.
+                // Unmatched keywords go to **kwargs when the function has one.
+                // This is checked BEFORE the positional-only diagnosis, and
+                // the order is observable: `def g(a, /, **kw)` called as
+                // `g(1, a=2)` binds a=1 positionally and puts {'a': 2} in kw,
+                // rather than complaining that `a` was passed by keyword.
                 if (b->kwarg >= 0) {
                     if (PyDict_SetItem(locals[b->kwarg], k, val) < 0) goto fail;
                     continue;
                 }
+                bool posonly_name = false;
+                for (int i = 0; i < b->nposonly; ++i)
+                    if (std::strcmp(ks, b->argnames[i]) == 0) { posonly_name = true; break; }
+                if (posonly_name) { posonly_kw.push_back(ks); continue; }
                 PyErr_Format(PyExc_TypeError,
                              "%s() got an unexpected keyword argument '%s'",
                              b->name, ks);
@@ -197,6 +210,20 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
             Py_INCREF(val);
             locals[slot] = val;
         }
+    }
+    if (!posonly_kw.empty()) {
+        // Reported before missing-argument analysis: CPython complains about
+        // the keyword misuse itself, not about the positional slot it left
+        // unfilled.
+        std::string names;
+        for (std::size_t i = 0; i < posonly_kw.size(); ++i) {
+            if (i) names += ", ";
+            names += posonly_kw[i];
+        }
+        PyErr_Format(PyExc_TypeError,
+                     "%s() got some positional-only arguments passed as "
+                     "keyword arguments: '%s'", b->name, names.c_str());
+        goto fail;
     }
     {
         // Defaults cover the LAST k parameters, so parameter i takes
@@ -380,7 +407,7 @@ bool init_func_type() {
 }  // namespace
 
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
-                               int nargs, int nkwonly, int nlocals,
+                               int nargs, int nkwonly, int nposonly, int nlocals,
                                const char* const* argnames,
                                PyObject* defaults, PyObject* kwdefaults,
                                int vararg_slot, int kwarg_slot,
@@ -400,7 +427,7 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
             PyTuple_SET_ITEM(clo, i, closure[i]);
         }
     }
-    Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nlocals, owned,
+    Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nposonly, nlocals, owned,
                                         argnames, defaults, kwdefaults,
                                         vararg_slot, kwarg_slot, clo, nfree};
     if (!b) { Py_XDECREF(defaults); std::free(owned); return PyErr_NoMemory(); }

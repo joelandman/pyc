@@ -187,6 +187,11 @@ struct Function {
     // separate list.
     std::vector<std::string> params;
     int nkwonly = 0;
+    // The first nposonly params are POSITIONAL-ONLY: bindable by position and
+    // never by keyword. A keyword of that name is not an error by itself -- if
+    // the function has **kwargs it lands there, which is the whole reason
+    // `def g(a, /, **kw)` can be called as `g(1, a=2)`.
+    int nposonly = 0;
     // Fast locals, CPython-style: a name assigned anywhere in the body is
     // local throughout, so the slot set is fixed before lowering begins.
     std::vector<std::string> locals;
