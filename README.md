@@ -17,14 +17,18 @@ The project is being rebuilt on CPython's object model. See
 
 | Corpus | Pass rate | |
 |---|---|---|
-| CPython `Lib/test/` | **13.88%** | 54/389 files |
-| language corpus | **97.86%** | 731/747 cases |
+| CPython `Lib/test/` | **53.21%** | 207/389 files |
+| language corpus | **98.81%** | 750/759 cases |
 
 `Lib/test` is the north-star metric (CHARTER I6): the pass rate over CPython's
 own test suite, published low and honest, and never allowed to regress. Both
-numbers are `matched / corpus size` — the denominator is the corpus, so they
-move only when the compiler does. Every case is compared against a real CPython
-at run time; no expected output is stored anywhere ([CHARTER I5](rebuild/CHARTER.md)).
+numbers are `passing / corpus size` — the denominator is every file measured,
+so they move only when the compiler does. Every case is compared against a real
+CPython at run time; no expected output is stored anywhere
+([CHARTER I5](rebuild/CHARTER.md)), and values whose *shape* cannot be equal
+twice — a duration, a heap address — are collapsed before comparing, on both
+sides, rather than compared and reported as failures
+([I5a](rebuild/CHARTER.md)).
 
 **Three P0 silent wrong answers**, all one cause: compiled code runs with no
 Python frame, so `locals()` and `globals()` return `None` and `bool(locals())`
@@ -32,6 +36,14 @@ is `False` — exit status 0 with a wrong value (issue #9). Six further probes f
 the same gap fail loudly (`vars`, `eval`, `exec`). They are deliberately **in**
 the gate, in `verify/corpus/known-gaps/`, so the published number carries the
 gap rather than hiding it.
+
+Two further P0-class defects were found on 2026-08-26 and are **fixed**: a raw
+cell leaking out of comprehensions, where `[bool(flag) for …]` answered `True`
+for a false flag at exit 0; and a method of a class defined inside a function
+being unable to see that function's locals. Neither was visible to a 747-case
+corpus — an AST walk found *zero* cases exercising the first — so both were
+found by decomposing `Lib/test` failures, and their probes are retained as
+regression cover.
 
 That does not make red normal. The gate compares per case: a baselined P0 does
 not fail it, a **new** one does, and a baselined P0 that gets **fixed** trips
