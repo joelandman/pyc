@@ -105,16 +105,33 @@ private:
     // once by __pyc_init_consts before the module body runs. A use is a load
     // and an incref, which keeps the Owned contract the rest of the compiler
     // relies on without allocating.
-    int pystr_slot(const std::string& text) {
-        auto it = pystr_.find(text);
-        if (it != pystr_.end()) return it->second;
-        int slot = (int)pystr_.size();
-        pystr_[text] = slot;
-        pystr_order_.push_back(text);
+    // Keyed by KIND as well as text: the int 1 and the str "1" are different
+    // objects with the same spelling, and a text-only key would hand one of
+    // them the other's slot.
+    int const_slot(char kind, const std::string& text) {
+        std::string key = std::string(1, kind) + '\0' + text;
+        auto it = pyconst_.find(key);
+        if (it != pyconst_.end()) return it->second;
+        int slot = (int)pyconst_.size();
+        pyconst_[key] = slot;
+        pyconst_order_.push_back({kind, text});
         return slot;
     }
-    std::map<std::string, int> pystr_;
-    std::vector<std::string> pystr_order_;
+    std::map<std::string, int> pyconst_;
+    std::vector<std::pair<char, std::string>> pyconst_order_;
+
+    // A literal use: load the prebuilt object and take a reference. Never
+    // fails, so no error edge is emitted even where the IR carries one -- the
+    // table was filled at startup or the program never began.
+    void emit_const_use(const ir::Instr& in, char kind) {
+        need("declare void @Py_IncRef(ptr)");
+        int slot = const_slot(kind, in.text);
+        std::string p = fresh();
+        o_ << "  " << p << " = getelementptr inbounds ptr, ptr "
+           << "@.pyconsts, i64 " << slot << "\n";
+        o_ << "  " << v(*in.result) << " = load ptr, ptr " << p << "\n";
+        o_ << "  call void @Py_IncRef(ptr " << v(*in.result) << ")\n";
+    }
     std::string fresh() { return "%t" + std::to_string(tmp_++); }
     void need(const std::string& decl) { decls_.insert(decl); }
 
@@ -149,13 +166,22 @@ private:
         // both passes generate identical names.
         int saved_tmp = tmp_;
         std::ostringstream discard;
+        allocas_.clear();
         o_.swap(discard);
         emit_blocks(f, idx, is_main);
         o_.swap(discard);
+        auto hoisted = allocas_;
+        allocas_.clear();
         tmp_ = saved_tmp;
 
         o_ << (is_main ? "define i32 " : "define ptr ") << fname(idx)
            << "(ptr %locals) {\n";
+        if (!hoisted.empty()) {
+            o_ << "entry:\n";
+            for (const auto& [name, n] : hoisted)
+                o_ << "  " << name << " = alloca [" << n << " x ptr]\n";
+            o_ << "  br label %bb0\n";
+        }
         emit_blocks(f, idx, is_main);
         o_ << "}\n\n";
     }
@@ -213,31 +239,9 @@ private:
     void emit_instr(const ir::Function& f, const ir::Instr& in, bool is_main) {
         using ir::Op;
         switch (in.op) {
-            case Op::ConstInt:
-                need("declare ptr @pyc_rt_int_from_text(ptr)");
-                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_int_from_text(ptr "
-                   << cstr(in.text) << ")\n";
-                check(in, v(*in.result), true);
-                break;
-            case Op::ConstStr: {
-                // Cannot fail, so no error edge is emitted even when the IR
-                // carries one: the table was filled at startup or the program
-                // never began.
-                need("declare void @Py_IncRef(ptr)");
-                int slot = pystr_slot(in.text);
-                std::string p = fresh();
-                o_ << "  " << p << " = getelementptr inbounds ptr, ptr "
-                   << "@.pyconsts, i64 " << slot << "\n";
-                o_ << "  " << v(*in.result) << " = load ptr, ptr " << p << "\n";
-                o_ << "  call void @Py_IncRef(ptr " << v(*in.result) << ")\n";
-                break;
-            }
-            case Op::ConstBytes:
-                need("declare ptr @pyc_rt_bytes(ptr, i64)");
-                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_bytes(ptr "
-                   << cstr(in.text) << ", i64 " << in.text.size() << ")\n";
-                check(in, v(*in.result), true);
-                break;
+            case Op::ConstInt:  emit_const_use(in, 'i'); break;
+            case Op::ConstStr:  emit_const_use(in, 's'); break;
+            case Op::ConstBytes: emit_const_use(in, 'b'); break;
             case Op::AddTraceback: {
                 need("declare void @pyc_rt_add_traceback(ptr, ptr, ptr, i32)");
                 // One code object per site, built once and reused: a raise
@@ -276,12 +280,7 @@ private:
                 check(in, v(*in.result), true);
                 break;
             }
-            case Op::ConstFloat:
-                need("declare ptr @PyFloat_FromDouble(double)");
-                o_ << "  " << v(*in.result) << " = call ptr @PyFloat_FromDouble(double "
-                   << fp(in.text) << ")\n";
-                check(in, v(*in.result), true);
-                break;
+            case Op::ConstFloat: emit_const_use(in, 'f'); break;
             case Op::ConstBool: {
                 need("declare ptr @PyBool_FromLong(i64)");
                 o_ << "  " << v(*in.result) << " = call ptr @PyBool_FromLong(i64 "
@@ -589,11 +588,34 @@ private:
         return 1;
     }
 
+    // Every alloca goes in the ENTRY block, never where it is used.
+    //
+    // An alloca inside a loop body is not reclaimed until the function
+    // returns, so each iteration took another slice of C stack. Measured: any
+    // call in a loop -- `len(b"abc")`, anything -- died with
+    //
+    //     RecursionError: Stack overflow (used 8148 kB) while calling a
+    //     Python object
+    //
+    // after roughly 500,000 iterations, about 16 bytes a call. A loop with no
+    // call in it (`c += 1`) ran forever, which is what localised it to the
+    // call's argument array rather than to loops in general. Any long-running
+    // compiled program that calls anything in a loop would eventually die.
+    //
+    // Collected during the discarded first emission pass and written out
+    // before bb0 in the second. The passes restore tmp_ between them, so the
+    // names they generate are identical and the recorded ones match.
+    std::string hoisted_alloca(std::size_t n) {
+        std::string name = fresh();
+        allocas_.push_back({name, n});
+        return name;
+    }
+    std::vector<std::pair<std::string, std::size_t>> allocas_;
+
     void emit_call(const ir::Instr& in) {
         need("declare ptr @pyc_rt_call(ptr, ptr, i64)");
         std::size_t n = in.args.size() - 1;
-        std::string arr = fresh();
-        o_ << "  " << arr << " = alloca [" << (n ? n : 1) << " x ptr]\n";
+        std::string arr = hoisted_alloca(n ? n : 1);
         for (std::size_t i = 0; i < n; ++i) {
             std::string p = fresh();
             o_ << "  " << p << " = getelementptr [" << (n ? n : 1)
@@ -611,8 +633,7 @@ private:
     std::string closure_arg(const ir::Instr& in) {
         std::size_t n = in.args.size() > 2 ? in.args.size() - 2 : 0;
         if (!n) return "null";
-        std::string arr = fresh();
-        pre_ << "  " << arr << " = alloca [" << n << " x ptr]\n";
+        std::string arr = hoisted_alloca(n);
         for (std::size_t i = 0; i < n; ++i) {
             std::string p = fresh();
             pre_ << "  " << p << " = getelementptr [" << n << " x ptr], ptr "
@@ -654,18 +675,38 @@ private:
     // the size is known; LLVM does not require a global to be defined before
     // its uses.
     void emit_pyconsts() {
-        std::size_t n = pystr_order_.size() ? pystr_order_.size() : 1;
+        std::size_t n = pyconst_order_.size() ? pyconst_order_.size() : 1;
         o_ << "\n@.pyconsts = internal global [" << n
            << " x ptr] zeroinitializer\n\n";
         o_ << "define internal i32 @__pyc_init_consts() {\nentry:\n";
-        need("declare ptr @pyc_rt_str(ptr, i64)");
-        for (std::size_t i = 0; i < pystr_order_.size(); ++i) {
-            const std::string& text = pystr_order_[i];
+        for (std::size_t i = 0; i < pyconst_order_.size(); ++i) {
+            const char kind = pyconst_order_[i].first;
+            const std::string& text = pyconst_order_[i].second;
             std::string val = "%c" + std::to_string(i);
             std::string ptr = "%p" + std::to_string(i);
             std::string ok = "ok" + std::to_string(i);
-            o_ << "  " << val << " = call ptr @pyc_rt_str(ptr " << cstr(text)
-               << ", i64 " << text.size() << ")\n";
+            switch (kind) {
+                case 's':
+                    need("declare ptr @pyc_rt_str(ptr, i64)");
+                    o_ << "  " << val << " = call ptr @pyc_rt_str(ptr " << cstr(text)
+                       << ", i64 " << text.size() << ")\n";
+                    break;
+                case 'b':
+                    need("declare ptr @pyc_rt_bytes(ptr, i64)");
+                    o_ << "  " << val << " = call ptr @pyc_rt_bytes(ptr " << cstr(text)
+                       << ", i64 " << text.size() << ")\n";
+                    break;
+                case 'i':
+                    need("declare ptr @pyc_rt_int_from_text(ptr)");
+                    o_ << "  " << val << " = call ptr @pyc_rt_int_from_text(ptr "
+                       << cstr(text) << ")\n";
+                    break;
+                default:
+                    need("declare ptr @PyFloat_FromDouble(double)");
+                    o_ << "  " << val << " = call ptr @PyFloat_FromDouble(double "
+                       << fp(text) << ")\n";
+                    break;
+            }
             std::string isnull = "%n" + std::to_string(i);
             o_ << "  " << isnull << " = icmp eq ptr " << val << ", null\n";
             o_ << "  br i1 " << isnull << ", label %fail, label %" << ok << "\n";
