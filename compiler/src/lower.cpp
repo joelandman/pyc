@@ -60,6 +60,14 @@ public:
         fn_idx_ = mod_.functions.size() - 1;
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
+        // Bound BEFORE the first statement runs. Measured: CPython answers
+        // True to `"__annotate__" in vars(module)` even on the line above the
+        // first annotation, and __annotations__ is CACHED on first access, so
+        // binding it late produced a permanently empty dict for any module
+        // that reads its own annotations.
+        AnnItems mann;
+        collect_annotations(mm->body, mann);
+        if (!emit_annotate(mann, {})) return false;
         for (const stmt& s : mm->body)
             if (!lower_stmt(s)) return false;
         emit(ir::Instr{ir::Op::Return, {}, std::nullopt,
@@ -259,6 +267,21 @@ private:
     // --- statements --------------------------------------------------------
 
     bool lower_stmt(const stmt& s) {
+        // Unreachable: this block already ended. emit() drops instructions in
+        // a terminated block, but make_landing_pad builds pads in OTHER blocks
+        // and those pads still referenced the dropped values -- so
+        //
+        //     def f():
+        //         return 3
+        //         raise RuntimeError("unreachable")
+        //
+        // emitted `call void @Py_DecRef(ptr %v2)` in a pad for a %v2 that was
+        // never defined, and the module failed to assemble. Four lines of
+        // Python, and it blocked Lib/test/test_compile and test_opcodes.
+        //
+        // Lowering nothing is also what CPython does with the statement: it is
+        // compiled for syntax and never executed.
+        if (terminated()) return true;
         // Temporaries do not outlive their statement, so the set an error
         // path must release is exactly what this statement has taken.
         auto saved = owned_;
@@ -282,7 +305,7 @@ private:
             [&](const Return& n)           { ok = lower_return(n); },
             [&](const Delete& n)           { ok = lower_delete(n); },
             [&](const AugAssign& n)        { ok = lower_augassign(n); },
-            [&](const AnnAssign& n)        { ok = unsupported("annotated assignment", n.loc); },
+            [&](const AnnAssign& n)        { ok = lower_annassign(n); },
             [&](const For& n)              { ok = lower_for(n); },
             [&](const AsyncFor& n)         { ok = unsupported("async for", n.loc); },
             [&](const While& n)            { ok = lower_while(n); },
@@ -1482,6 +1505,44 @@ private:
     // is filled only AFTER the class exists. Methods are built before that, so
     // the cell -- not the class -- is what they capture.
     std::vector<ir::Value> class_cells_;
+
+    using AnnItems = std::vector<std::pair<std::string, const expr*>>;
+
+    // Every simple-name annotation belonging to THIS scope, in source order.
+    // Descends into compound statements, which are the same scope, and stops
+    // at a nested def or class, which are not. Measured: `if c: x: int = 5` at
+    // module level does record x.
+    static void collect_annotations(const std::vector<stmt>& body, AnnItems& out) {
+        for (const stmt& s2 : body) {
+            std::visit(ov{
+                [&](const AnnAssign& a){
+                    if (a.simple && std::holds_alternative<Name>(a.target->v))
+                        out.emplace_back(std::get<Name>(a.target->v).id, &*a.annotation);
+                },
+                [&](const If& x){ collect_annotations(x.body, out);
+                                  collect_annotations(x.orelse, out); },
+                [&](const While& x){ collect_annotations(x.body, out);
+                                     collect_annotations(x.orelse, out); },
+                [&](const For& x){ collect_annotations(x.body, out);
+                                   collect_annotations(x.orelse, out); },
+                [&](const AsyncFor& x){ collect_annotations(x.body, out); },
+                [&](const With& x){ collect_annotations(x.body, out); },
+                [&](const AsyncWith& x){ collect_annotations(x.body, out); },
+                [&](const Try& x){ collect_annotations(x.body, out);
+                                   collect_annotations(x.orelse, out);
+                                   collect_annotations(x.finalbody, out);
+                                   for (const excepthandler& h : x.handlers)
+                                       collect_annotations(
+                                           std::get<ExceptHandler>(h.v).body, out); },
+                [&](const TryStar& x){ collect_annotations(x.body, out); },
+                [&](const Match& x){ for (const match_case& c : x.cases)
+                                         collect_annotations(c.body, out); },
+                // A nested scope keeps its own annotations, or discards them:
+                // a function body's are recorded nowhere at all.
+                [&](const auto&){},
+            }, s2.v);
+        }
+    }
     std::string qualname(const std::string& name) const {
         std::string q;
         for (const std::string& c : qual_) { q += c; q += "."; }
@@ -1667,6 +1728,119 @@ private:
             return ok;
         }
         return store_target(*n.target, out, n.loc);
+    }
+
+    // `x: int = 5`, `x: int`, `obj.a: int = 5`, `d[k]: int = 5`.
+    //
+    // Two independent halves, and conflating them is the trap. The ASSIGNMENT
+    // is ordinary and always happens when a value is present. The ANNOTATION
+    // is never evaluated here -- PEP 649 defers it to an __annotate__ function
+    // -- and is recorded only for a SIMPLE NAME target in a class or module
+    // body. Measured against CPython 3.14.7:
+    //
+    //   x: int = 5     module   binds x, records the annotation
+    //   y: str         module   records the annotation, binds NOTHING
+    //   a: int = 3     function binds a; annotations are not recorded at all
+    //   b: float       function does nothing whatsoever
+    //   o.attr: U = 7  assigns; `U` is NOT evaluated even if undefined
+    //   d["k"]: U = 9  assigns; same
+    //
+    // The "not evaluated" part is the whole point of the feature and the
+    // reason eager evaluation was rejected: the blocked Lib/test files are
+    // largely annotation-machinery tests, whose annotations are deliberately
+    // unresolvable (`pipe: str | undefined`, `attriberr: obj.missing`).
+    bool lower_annassign(const AnnAssign& n) {
+        bool ok = true;
+        if (n.value) {
+            ir::Value v = lower_expr(**n.value, &ok);
+            if (!ok) return false;
+            if (!store_target(*n.target, v, n.loc)) return false;
+        }
+        // A simple name in a class or module body is the only case CPython
+        // records. `simple` is the parser's own flag for "bare name, not
+        // parenthesised"; `(x): int` is deliberately not recorded, by CPython
+        // and here.
+        // Nothing else happens here. The annotation is collected by a
+        // pre-scan of the scope and evaluated only inside __annotate__.
+        (void)n;
+        return true;
+    }
+
+    // Build `__annotate__(format)` for the scope just lowered and bind it, so
+    // CPython's __annotations__ descriptor finds it. Verified against 3.14.7:
+    // a class made by type() with __annotate__ in its namespace, and a module
+    // global of that name, both yield working __annotations__.
+    //
+    // `format` is accepted and ignored. Measured: CPython's own generated
+    // annotate evaluates for format 1 (VALUE) and 2 (STRING) alike -- both
+    // raise NameError on an undefined annotation -- so matching that is what
+    // the evidence supports. If a test demands NotImplementedError for a
+    // format, the differential harness will say so.
+    bool emit_annotate(const AnnItems& items, const SourceLoc& loc) {
+        if (items.empty()) return true;
+
+        bool ok = true;
+        // A class body's annotations may read names bound in that body
+        // (`local = int` then `x: local`), so the namespace under construction
+        // has to be reachable from inside. It arrives as a DEFAULT ARGUMENT
+        // rather than a hidden parameter or a closure cell, because the caller
+        // is CPython's own descriptor and it calls __annotate__(format) with
+        // exactly one argument. The dict is fully populated by then.
+        const bool in_class = !class_ns_.empty();
+        ir::Value defaults;
+        if (in_class) {
+            ir::Value ns = class_ns_.back();
+            defaults = call_capi_imm("PyTuple_New", {}, 1, 0, loc, &ok);
+            if (!ok) return false;
+            mark_owned(defaults);
+            emit(ir::Instr{ir::Op::IncRef, {ns}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+            call_capi_imm("PyTuple_SetItem", {defaults, ns}, 0, 1, loc, &ok);
+            if (!ok) return false;
+        }
+
+        std::vector<std::string> params{"format"};
+        std::vector<std::string> locals = params;
+        if (in_class) { params.push_back(".ns"); locals.push_back(".ns"); }
+
+        FnScope sc = begin_function("__annotate__", params, locals);
+        auto saved_ns = class_ns_;
+        class_ns_.clear();
+        if (in_class) {
+            ir::Value ns = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, ns, Ownership::Owned, ".ns",
+                           1, 0, loc, make_landing_pad(loc)});
+            mark_owned(ns); forget(ns);
+            frame_owned_.push_back(ns);
+            class_ns_.push_back(ns);
+        }
+        ir::Value d = call_capi("PyDict_New", {}, loc, &ok);
+        if (ok) {
+            mark_owned(d); forget(d);
+            frame_owned_.push_back(d);
+            for (const auto& [name, ann] : items) {
+                ir::Value v = lower_expr(*ann, &ok);
+                if (!ok) break;
+                ir::Value k = const_str(name, loc);
+                call_capi("PyDict_SetItem", {d, k, v}, loc, &ok, {k, v});
+                if (!ok) break;
+            }
+        }
+        if (ok) {
+            frame_owned_.pop_back();          // d, handed to the return
+            emit(ir::Instr{ir::Op::Return, {d}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+        }
+        class_ns_ = saved_ns;
+        std::size_t idx = end_function(sc);
+        if (!ok) return false;
+
+        ir::Value fn = make_function_value(idx, qualname("__annotate__"), loc,
+                                           {}, defaults);
+        store_name("__annotate__", fn, loc);
+        if (owns(fn)) release(fn, loc);
+        if (in_class && owns(defaults)) release(defaults, loc);
+        return true;
     }
 
     bool lower_with(const With& n) { return lower_with_item(n, 0); }
@@ -2664,9 +2838,17 @@ private:
         frame_owned_.push_back(bases);
         auto saved_locals = locals_;
         locals_.clear();                  // names in a class body are not fast locals
+        // Emitted while class_ns_ names this body's namespace, which is what
+        // __annotate__ captures, and before the body so the timing matches the
+        // module case.
+        AnnItems cann;
+        collect_annotations(n.body, cann);
+        if (!emit_annotate(cann, n.loc)) { class_ns_.pop_back(); qual_.pop_back();
+                                           class_cells_.pop_back(); return false; }
         for (const stmt& s2 : n.body)
-            if (!lower_stmt(s2)) { class_ns_.pop_back(); qual_.pop_back();
-                                   class_cells_.pop_back(); return false; }
+            if (!lower_stmt(s2)) { class_ns_.pop_back();
+                                   qual_.pop_back(); class_cells_.pop_back();
+                                   return false; }
         locals_ = saved_locals;
         class_ns_.pop_back();
         qual_.pop_back();

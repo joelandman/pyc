@@ -13,16 +13,29 @@
       "-O0"
     ]
   },
-  "total": 764,
-  "passing": 755,
-  "clean": 748,
-  "pass_rate": 98.82198952879581,
+  "total": 767,
+  "passing": 757,
+  "clean": 750,
+  "pass_rate": 98.69621903520209,
   "counts": {
-    "STDOUT_DIFFERS": 9,
-    "EXIT_DIFFERS": 6,
+    "STDOUT_DIFFERS": 10,
+    "EXIT_DIFFERS": 7,
     "STDERR_DIFFERS": 13
   },
   "results": [
+    {
+      "case": "annassign.py",
+      "path": "verify/corpus/language/annassign.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
     {
       "case": "augassign_raises.py",
       "path": "verify/corpus/language/augassign_raises.py",
@@ -9894,6 +9907,22 @@
       }
     },
     {
+      "case": "recursive_dealloc_stack.py",
+      "path": "verify/corpus/known-gaps/recursive_dealloc_stack.py",
+      "flags": [
+        "STDOUT_DIFFERS",
+        "EXIT_DIFFERS"
+      ],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": -11
+      }
+    },
+    {
       "case": "src_bom.py",
       "path": "verify/corpus/language/src_bom.py",
       "flags": [],
@@ -9948,6 +9977,19 @@
     {
       "case": "unicode_identifiers.py",
       "path": "verify/corpus/language/unicode_identifiers.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "unreachable_after_terminator.py",
+      "path": "verify/corpus/language/unreachable_after_terminator.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],
