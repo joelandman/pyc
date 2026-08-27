@@ -248,6 +248,36 @@ introduced it, and the target — never a silent fallthrough.
 See `VERSION_TARGETING.md` for the full design, the flag surface, and the
 measured facts it rests on.
 
+### I1a — A refusal is a hypothesis, not a resting place.
+
+**Added 2026-08-27.** A compile-time refusal is the correct RESPONSE to an
+unsupported construct (I1). It is not evidence that anything around it is
+correct, and it is not a place to stop looking.
+
+Measured over five consecutive features implemented on 2026-08-26/27, **four
+refusals were concealing a live defect**:
+
+| refusal | what it was hiding |
+|---|---|
+| `return`/`break`/`continue` in `with` | the guard scanned only DIRECT children, so a `return` nested one level deep compiled and skipped `__exit__` — a P0, in the guard whose stated purpose was preventing exactly that |
+| annotated assignment | unreachable code after a terminator emitted landing pads referencing dropped values; the module would not assemble |
+| `metaclass=` | `type.__new__`'s implicit wrappers were skipped for every compiled class ever produced, because it tests `PyFunction_Check` and a pyc callable is not one. A four-line `__init_subclass__` program SEGFAULTED |
+| `raise … from` | an exception leaving an `except` handler never popped its `exc_info`, so every later raise in the program inherited a stale `__context__` |
+| positional-only parameters | nothing — the refusal was honest |
+
+So treat every refusal as fruitful ground, by two mechanisms that both paid:
+
+1. **Probe the guard's boundary.** A guard states what it rejects; test what it
+   does NOT. The `with` guard's boundary was "direct children only", and one
+   nested `return` walked straight past it.
+2. **Look at what becomes reachable.** Removing a refusal lets code run that
+   never ran before, and what it does there is new evidence. Annotated
+   assignment surfaced the unreachable-code bug this way; `metaclass=` turned a
+   segfault into a legible error that named its own cause.
+
+A refusal that turns out to conceal nothing is a fact worth recording too —
+say so, as positional-only does above.
+
 ### I9 — A claim about this compiler is measured, or it is not made.
 
 **Added 2026-08-26.** Never guess. Guessing is permitted as a *search

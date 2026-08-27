@@ -97,6 +97,12 @@ from an observation without a test that could have falsified it.
 > Never hardcode expected output in a test. Tests compare against the pinned
 > CPython binary at runtime.
 >
+> **A refusal is a hypothesis, not a resting place** (CHARTER I1a). Before and
+> while you implement one, probe the guard's boundary — what does it *not*
+> catch? — and watch what becomes reachable once it is gone. Four of the five
+> refusals implemented on 2026-08-26/27 were concealing a live defect, one of
+> them a P0 sitting inside the guard meant to prevent it.
+>
 > **Never guess. Hypothesise and test.** Every claim you make about this
 > compiler must be something you measured. When an observation needs
 > explaining: write down the raw artefact, synthesise at least two hypotheses
