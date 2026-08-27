@@ -14,16 +14,16 @@
     ]
   },
   "total": 389,
-  "passing": 240,
-  "clean": 209,
-  "pass_rate": 61.696658097686374,
+  "passing": 243,
+  "clean": 211,
+  "pass_rate": 62.46786632390746,
   "counts": {
-    "DID_NOT_COMPILE": 32,
+    "DID_NOT_COMPILE": 26,
     "ORACLE_UNSTABLE": 12,
-    "TIMEOUT": 6,
-    "STDOUT_DIFFERS": 12,
-    "EXIT_DIFFERS": 102,
-    "STDERR_DIFFERS": 138
+    "TIMEOUT": 7,
+    "STDOUT_DIFFERS": 13,
+    "EXIT_DIFFERS": 104,
+    "STDERR_DIFFERS": 141
   },
   "results": [
     {
@@ -139,10 +139,7 @@
     {
       "case": "Lib/test/test_abc.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_abc.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -151,7 +148,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -188,7 +185,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-bapls5sx/test_annotationlib.py:1862:35: error: cannot compile t-strings yet [t-strings]",
+      "diagnostic": "/home/joe/temp/pyc-measure-b44c6lyw/test_annotationlib.py:1862:35: error: cannot compile t-strings yet [t-strings]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -259,15 +256,19 @@
       "case": "Lib/test/test_asyncgen.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_asyncgen.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-j869cev9/test_asyncgen.py:45:4: error: function captures 'gen', which has no closure cell here [yield]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
     },
     {
       "case": "Lib/test/test_atexit.py",
@@ -627,7 +628,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-02bwhsy_/test_class.py:810:19: error: cannot compile star-unpacking yet [star-unpacking]",
+      "diagnostic": "/home/joe/temp/pyc-measure-dxchpm5x/test_class.py:810:19: error: cannot compile star-unpacking yet [star-unpacking]",
       "normalizers": [
         "elapsed"
       ],
@@ -718,7 +719,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-f2yhgre2/test_code.py:624:13: error: cannot compile keyword-only lambda parameters yet [keyword-only lambda parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-fzq5rqme/test_code.py:624:13: error: cannot compile keyword-only lambda parameters yet [keyword-only lambda parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -959,7 +960,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-w94v79p3/test_collections.py:1212:36: error: cannot compile yield yet [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-uakolgke/test_collections.py:1212:36: error: cannot compile yield yet [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -1195,7 +1196,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-muiqp5o0/test_coroutines.py:1223:8: error: function captures 'Manager', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-b2q5zu6b/test_coroutines.py:1450:8: error: function captures 'CNT', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -1748,7 +1749,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-zrjoioqi/test_except_star.py:25:12: error: cannot compile try/except* yet [try/except*]",
+      "diagnostic": "/home/joe/temp/pyc-measure-s__c8j6_/test_except_star.py:25:12: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
@@ -1762,7 +1763,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-d6kdpx58/test_exception_group.py:0:0: error: 'leaf_generator' freevars ('leaf_generator',) are not the same SET as symtable () [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-tquc3pgp/test_exception_group.py:0:0: error: 'leaf_generator' freevars ('leaf_generator',) are not the same SET as symtable () [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -1791,7 +1792,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-w6owoq91/test_exception_variations.py:303:8: error: cannot compile try/except* yet [try/except*]",
+      "diagnostic": "/home/joe/temp/pyc-measure-fp90wd2o/test_exception_variations.py:303:8: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
@@ -1803,15 +1804,18 @@
       "case": "Lib/test/test_exceptions.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_exceptions.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "TIMEOUT"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-tzdq08az/test_exceptions.py:1791:8: error: function captures 'SubError', which has no closure cell here [yield]",
+      "diagnostic": "the binary did not finish within 60s",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": -1
+      }
     },
     {
       "case": "Lib/test/test_extcall.py",
@@ -2252,7 +2256,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-1l6yui79/test_generators.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-y9rd6vhd/test_generators.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -2266,7 +2270,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-ib5jjspv/test_genericalias.py:555:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/home/joe/temp/pyc-measure-xzkx72xg/test_genericalias.py:555:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [
         "elapsed"
       ],
@@ -2412,7 +2416,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-67gz16y5/test_global.py:119:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/home/joe/temp/pyc-measure-ak2r_1fp/test_global.py:119:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [
         "elapsed"
       ],
@@ -2426,7 +2430,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-1_dhxirp/test_grammar.py:699:13: error: cannot compile keyword-only lambda parameters yet [keyword-only lambda parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-mclx0_1x/test_grammar.py:699:13: error: cannot compile keyword-only lambda parameters yet [keyword-only lambda parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -2835,7 +2839,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-cxrkwd17/test_keywordonlyarg.py:157:8: error: cannot compile keyword-only lambda parameters yet [keyword-only lambda parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-r6ixlryk/test_keywordonlyarg.py:157:8: error: cannot compile keyword-only lambda parameters yet [keyword-only lambda parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -3095,7 +3099,6 @@
       "case": "Lib/test/test_memoryio.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_memoryio.py",
       "flags": [
-        "EXIT_DIFFERS",
         "STDERR_DIFFERS"
       ],
       "diagnostic": "",
@@ -3106,7 +3109,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3211,7 +3214,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-jk9nybeo/test_monitoring.py:1008:12: error: function captures 'async_generator', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-fzg954cx/test_monitoring.py:1627:16: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -3252,15 +3255,19 @@
       "case": "Lib/test/test_named_expressions.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_named_expressions.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-0ei1csf1/test_named_expressions.py:521:25: error: generator expression captures 'lastNum', which has no closure cell here [generator expressions]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
     },
     {
       "case": "Lib/test/test_netrc.py",
@@ -3329,15 +3336,19 @@
       "case": "Lib/test/test_opcache.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_opcache.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-08l333hn/test_opcache.py:1530:8: error: function captures 'CM', which has no closure cell here [yield]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
     },
     {
       "case": "Lib/test/test_opcodes.py",
@@ -3508,7 +3519,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-5dzi7noa/test_peepholer.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-x2mcofs9/test_peepholer.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -3975,7 +3986,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": -11
+        "subject": 1
       }
     },
     {
@@ -4352,7 +4363,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-438oqebd/test_set.py:0:0: error: 'powerset' freevars ('powerset',) are not the same SET as symtable () [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-jo76rp83/test_set.py:0:0: error: 'powerset' freevars ('powerset',) are not the same SET as symtable () [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -4801,7 +4812,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/tmp.0FX9EKAtVs/mod.ll:12612:28: error: use of undefined value '%v134'",
+      "diagnostic": "/home/joe/temp/tmp.YMROlY4qet/mod.ll:14439:28: error: use of undefined value '%v134'",
       "normalizers": [
         "elapsed"
       ],
@@ -4901,7 +4912,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-_7_qscnv/test_sys_settrace.py:579:8: error: function captures 'AsyncIteratorWrapper', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-50_le6ga/test_sys_settrace.py:1378:12: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
@@ -5020,16 +5031,21 @@
       "case": "Lib/test/test_thread.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_thread.py",
       "flags": [
-        "DID_NOT_COMPILE",
-        "ORACLE_UNSTABLE"
+        "ORACLE_UNSTABLE",
+        "STDOUT_DIFFERS",
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-qrerazfc/test_thread.py:424:8: error: no binding for nonlocal 'pid' found [nonlocal]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": true,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
     },
     {
       "case": "Lib/test/test_thread_local_bytecode.py",
@@ -5203,7 +5219,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-_0oeoqmm/test_traceback.py:3026:12: error: cannot compile try/except* yet [try/except*]",
+      "diagnostic": "/home/joe/temp/pyc-measure-u6iv1lx4/test_traceback.py:3026:12: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
@@ -5235,7 +5251,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-hep68r9m/test_tstring.py:9:12: error: cannot compile t-strings yet [t-strings]",
+      "diagnostic": "/home/joe/temp/pyc-measure-yi_yrxy8/test_tstring.py:9:12: error: cannot compile t-strings yet [t-strings]",
       "normalizers": [
         "elapsed"
       ],
@@ -5282,7 +5298,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-l7woq8_j/test_type_aliases.py:74:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/home/joe/temp/pyc-measure-sg9kz24c/test_type_aliases.py:74:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -5294,7 +5310,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-dfdxs88z/test_type_annotations.py:369:8: error: cannot compile keyword-only parameters yet [keyword-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-6qa8qsdv/test_type_annotations.py:369:8: error: cannot compile keyword-only parameters yet [keyword-only parameters]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -5339,7 +5355,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-f7p6an26/test_type_params.py:0:0: error: no symtable scope for generator function 'generator1' at line 1041 [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-uvxtfoeo/test_type_params.py:0:0: error: no symtable scope for generator function 'generator1' at line 1041 [GeneratorExpressionError]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -5384,7 +5400,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-7y85y4qi/test_typing.py:1556:20: error: cannot compile star-unpacking yet [star-unpacking]",
+      "diagnostic": "/home/joe/temp/pyc-measure-zik6u6x0/test_typing.py:1556:20: error: cannot compile star-unpacking yet [star-unpacking]",
       "normalizers": [
         "elapsed"
       ],
@@ -6071,16 +6087,17 @@
     {
       "case": "Lib/test/test_yield_from.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_yield_from.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/home/joe/temp/pyc-measure-b8birw2x/test_yield_from.py:640:8: error: function captures 'LunchError', which has no closure cell here [yield]",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
     },
     {
       "case": "Lib/test/test_zipapp.py",
