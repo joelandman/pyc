@@ -14,16 +14,16 @@
     ]
   },
   "total": 389,
-  "passing": 234,
-  "clean": 206,
-  "pass_rate": 60.15424164524421,
+  "passing": 239,
+  "clean": 210,
+  "pass_rate": 61.43958868894602,
   "counts": {
-    "DID_NOT_COMPILE": 48,
+    "DID_NOT_COMPILE": 40,
     "ORACLE_UNSTABLE": 11,
-    "TIMEOUT": 7,
+    "TIMEOUT": 6,
     "STDOUT_DIFFERS": 12,
-    "EXIT_DIFFERS": 91,
-    "STDERR_DIFFERS": 123
+    "EXIT_DIFFERS": 96,
+    "STDERR_DIFFERS": 129
   },
   "results": [
     {
@@ -83,7 +83,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-s3a6w_1q/test__interpreters.py:1052:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-kujdvi6a/test__interpreters.py:1117:12: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -172,14 +172,15 @@
     {
       "case": "Lib/test/test_android.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_android.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/home/joe/temp/pyc-measure-0q82wj6y/test_android.py:70:16: error: cannot compile raise ... from yet [raise ... from]",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 1,
+        "subject": 1
+      }
     },
     {
       "case": "Lib/test/test_annotationlib.py",
@@ -187,7 +188,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-oerv2xl4/test_annotationlib.py:1405:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-kfliuwtr/test_annotationlib.py:1405:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -210,15 +211,19 @@
       "case": "Lib/test/test_argparse.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_argparse.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-8tx40ix7/test_argparse.py:201:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
     },
     {
       "case": "Lib/test/test_array.py",
@@ -256,7 +261,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-3calp091/test_asyncgen.py:45:4: error: function captures 'gen', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-mpito294/test_asyncgen.py:45:4: error: function captures 'gen', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -346,15 +351,19 @@
       "case": "Lib/test/test_bdb.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bdb.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-do_y91m4/test_bdb.py:588:8: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
     },
     {
       "case": "Lib/test/test_bigaddrspace.py",
@@ -584,7 +593,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-ggrygg58/test_call.py:910:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-62gx36h8/test_call.py:910:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -613,7 +622,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-dhtbttlj/test_class.py:810:19: error: cannot compile star-unpacking yet [star-unpacking]",
+      "diagnostic": "/home/joe/temp/pyc-measure-gldsrbg6/test_class.py:810:19: error: cannot compile star-unpacking yet [star-unpacking]",
       "normalizers": [
         "elapsed"
       ],
@@ -627,7 +636,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-qrc4n_vw/test_clinic.py:3292:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-n_ifdd9t/test_clinic.py:3292:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -701,7 +710,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-5d50jg74/test_code.py:624:13: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-v3ljquso/test_code.py:624:13: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -942,7 +951,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-_yrz5ukn/test_collections.py:1212:36: error: cannot compile yield yet [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-wipip0_q/test_collections.py:1212:36: error: cannot compile yield yet [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -1003,14 +1012,16 @@
       "case": "Lib/test/test_compileall.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_compileall.py",
       "flags": [
-        "TIMEOUT"
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "CPython did not finish within 60s",
-      "normalizers": [],
+      "diagnostic": "",
+      "normalizers": [
+        "elapsed"
+      ],
       "oracle_varied": false,
-      "oracle_timed_out": true,
+      "oracle_timed_out": false,
       "exit": {
-        "oracle": -1,
+        "oracle": 1,
         "subject": 1
       }
     },
@@ -1176,7 +1187,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-nb17dum8/test_coroutines.py:1223:8: error: function captures 'Manager', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-3v9ijv82/test_coroutines.py:1223:8: error: function captures 'Manager', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -1536,7 +1547,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-ggkt1fau/test_dis.py:1481:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-j8wbeh1s/test_dis.py:1481:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -1725,7 +1736,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-o0h2y1c1/test_except_star.py:25:12: error: cannot compile try/except* yet [try/except*]",
+      "diagnostic": "/home/joe/temp/pyc-measure-e6afes24/test_except_star.py:25:12: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
@@ -1739,7 +1750,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-vluiod95/test_exception_group.py:0:0: error: 'leaf_generator' freevars ('leaf_generator',) are not the same SET as symtable () [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-igej3ogz/test_exception_group.py:0:0: error: 'leaf_generator' freevars ('leaf_generator',) are not the same SET as symtable () [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -1768,7 +1779,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-ix4zsk2u/test_exception_variations.py:303:8: error: cannot compile try/except* yet [try/except*]",
+      "diagnostic": "/home/joe/temp/pyc-measure-w6g3sthc/test_exception_variations.py:303:8: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
@@ -1782,7 +1793,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-3g9sxlyd/test_exceptions.py:1791:8: error: function captures 'SubError', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-hzrq1g61/test_exceptions.py:1791:8: error: function captures 'SubError', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -2020,14 +2031,12 @@
     {
       "case": "Lib/test/test_fork1.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fork1.py",
-      "flags": [
-        "ORACLE_UNSTABLE"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": true,
+      "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
@@ -2161,7 +2170,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-dc709jr7/test_functools.py:797:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-8j_toabm/test_functools.py:797:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -2224,7 +2233,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-omr4epo7/test_generators.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-u2a9lmf3/test_generators.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -2238,7 +2247,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-89ybfq3s/test_genericalias.py:555:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/home/joe/temp/pyc-measure-014gg5wg/test_genericalias.py:555:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [
         "elapsed"
       ],
@@ -2333,13 +2342,17 @@
       "case": "Lib/test/test_getpath.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_getpath.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-hi_ompdj/test_getpath.py:979:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
     },
     {
       "case": "Lib/test/test_gettext.py",
@@ -2380,7 +2393,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-ugq82q_4/test_global.py:119:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/home/joe/temp/pyc-measure-klfimb7j/test_global.py:119:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [
         "elapsed"
       ],
@@ -2394,7 +2407,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-b5lxubr7/test_grammar.py:605:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-j6c0yy98/test_grammar.py:605:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -2803,7 +2816,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-yi7yguj_/test_keywordonlyarg.py:157:8: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-m3b6xuwt/test_keywordonlyarg.py:157:8: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -2937,7 +2950,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-4xixf6ai/test_logging.py:6064:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-z1e1plh7/test_logging.py:6064:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -2949,15 +2962,19 @@
       "case": "Lib/test/test_long.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_long.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-pb9bo9ij/test_long.py:1277:20: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
     },
     {
       "case": "Lib/test/test_longexp.py",
@@ -3139,16 +3156,17 @@
     {
       "case": "Lib/test/test_mmap.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_mmap.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/home/joe/temp/pyc-measure-v6rdex_b/test_mmap.py:381:12: error: cannot compile raise ... from yet [raise ... from]",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
     },
     {
       "case": "Lib/test/test_modulefinder.py",
@@ -3171,7 +3189,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-owzckc4t/test_monitoring.py:1008:12: error: function captures 'async_generator', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-b8uksqpv/test_monitoring.py:1008:12: error: function captures 'async_generator', which has no closure cell here [yield]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -3214,7 +3232,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-2hv0a77i/test_named_expressions.py:521:25: error: generator expression captures 'lastNum', which has no closure cell here [generator expressions]",
+      "diagnostic": "/home/joe/temp/pyc-measure-lgpmpiqn/test_named_expressions.py:521:25: error: generator expression captures 'lastNum', which has no closure cell here [generator expressions]",
       "normalizers": [
         "elapsed"
       ],
@@ -3291,7 +3309,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-sus_t8cs/test_opcache.py:1530:8: error: function captures 'CM', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-uibzygvc/test_opcache.py:1530:8: error: function captures 'CM', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -3468,7 +3486,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-_uax0qoz/test_peepholer.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-ybbwmyom/test_peepholer.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -3693,7 +3711,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-mwp36pmx/test_positional_only_arg.py:11:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-422wqjcr/test_positional_only_arg.py:11:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -3922,7 +3940,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-dttzmqg1/test_pyexpat.py:1106:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-tz3y18_5/test_pyexpat.py:1106:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -3967,15 +3985,19 @@
       "case": "Lib/test/test_raise.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_raise.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-2edo5nwk/test_raise.py:85:16: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      }
     },
     {
       "case": "Lib/test/test_random.py",
@@ -4300,7 +4322,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-q5fc9_0w/test_set.py:0:0: error: 'powerset' freevars ('powerset',) are not the same SET as symtable () [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-ry03aoc_/test_set.py:0:0: error: 'powerset' freevars ('powerset',) are not the same SET as symtable () [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -4382,6 +4404,7 @@
       "case": "Lib/test/test_signal.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_signal.py",
       "flags": [
+        "ORACLE_UNSTABLE",
         "STDOUT_DIFFERS",
         "EXIT_DIFFERS",
         "STDERR_DIFFERS"
@@ -4390,7 +4413,7 @@
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": false,
+      "oracle_varied": true,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
@@ -4748,7 +4771,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/tmp.ImjtdcGVwE/mod.ll:12612:28: error: use of undefined value '%v134'",
+      "diagnostic": "/home/joe/temp/tmp.mNKe9eG9nr/mod.ll:12612:28: error: use of undefined value '%v134'",
       "normalizers": [
         "elapsed"
       ],
@@ -4848,7 +4871,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-xxaxlw4w/test_sys_settrace.py:579:8: error: function captures 'AsyncIteratorWrapper', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-4yj71_14/test_sys_settrace.py:579:8: error: function captures 'AsyncIteratorWrapper', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -4970,7 +4993,7 @@
         "DID_NOT_COMPILE",
         "ORACLE_UNSTABLE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-eoalvu19/test_thread.py:424:8: error: no binding for nonlocal 'pid' found [nonlocal]",
+      "diagnostic": "/home/joe/temp/pyc-measure-lkagoh76/test_thread.py:424:8: error: no binding for nonlocal 'pid' found [nonlocal]",
       "normalizers": [
         "elapsed"
       ],
@@ -5150,7 +5173,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-mkzoac5s/test_traceback.py:2180:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-b2dtrz0o/test_traceback.py:3026:12: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
@@ -5182,7 +5205,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-jeal0uu0/test_tstring.py:9:12: error: cannot compile t-strings yet [t-strings]",
+      "diagnostic": "/home/joe/temp/pyc-measure-5gi13odn/test_tstring.py:9:12: error: cannot compile t-strings yet [t-strings]",
       "normalizers": [
         "elapsed"
       ],
@@ -5229,7 +5252,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-ypbccrxv/test_type_aliases.py:74:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/home/joe/temp/pyc-measure-ggefrud0/test_type_aliases.py:74:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -5241,7 +5264,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-pqu7v248/test_type_annotations.py:352:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-w_5_rylh/test_type_annotations.py:352:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -5286,7 +5309,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-kggc_e3h/test_type_params.py:0:0: error: no symtable scope for generator function 'generator1' at line 1041 [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-t_zz6jis/test_type_params.py:0:0: error: no symtable scope for generator function 'generator1' at line 1041 [GeneratorExpressionError]",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -5313,7 +5336,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-ebu3pdge/test_types.py:2084:16: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-mvyzfctq/test_types.py:2466:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -5327,7 +5350,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-rloqvl0l/test_typing.py:1556:20: error: cannot compile star-unpacking yet [star-unpacking]",
+      "diagnostic": "/home/joe/temp/pyc-measure-mmf792b5/test_typing.py:1556:20: error: cannot compile star-unpacking yet [star-unpacking]",
       "normalizers": [
         "elapsed"
       ],
@@ -5920,16 +5943,17 @@
     {
       "case": "Lib/test/test_xml_etree.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xml_etree.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/home/joe/temp/pyc-measure-fxu_o5s5/test_xml_etree.py:198:12: error: cannot compile raise ... from yet [raise ... from]",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
     },
     {
       "case": "Lib/test/test_xml_etree_c.py",
@@ -6016,7 +6040,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/home/joe/temp/pyc-measure-a05abzkf/test_yield_from.py:640:8: error: function captures 'LunchError', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-ft9jjk3f/test_yield_from.py:640:8: error: function captures 'LunchError', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
