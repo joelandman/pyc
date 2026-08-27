@@ -14,23 +14,24 @@
     ]
   },
   "total": 389,
-  "passing": 207,
-  "clean": 188,
-  "pass_rate": 53.2133676092545,
+  "passing": 220,
+  "clean": 197,
+  "pass_rate": 56.55526992287918,
   "counts": {
-    "DID_NOT_COMPILE": 94,
-    "ORACLE_UNSTABLE": 11,
-    "TIMEOUT": 5,
-    "STDOUT_DIFFERS": 8,
-    "EXIT_DIFFERS": 75,
-    "STDERR_DIFFERS": 98
+    "DID_NOT_COMPILE": 70,
+    "ORACLE_UNSTABLE": 10,
+    "TIMEOUT": 6,
+    "STDOUT_DIFFERS": 11,
+    "EXIT_DIFFERS": 86,
+    "STDERR_DIFFERS": 112
   },
   "results": [
     {
       "case": "Lib/test/test___all__.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test___all__.py",
       "flags": [
-        "ORACLE_UNSTABLE"
+        "ORACLE_UNSTABLE",
+        "STDOUT_DIFFERS"
       ],
       "diagnostic": "",
       "normalizers": [
@@ -40,7 +41,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test__colorize.py",
@@ -54,7 +56,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test__interpchannels.py",
@@ -62,12 +65,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/tmp.tycZnsIORv/mod.ll:27572:28: error: use of undefined value '%v141'",
+      "diagnostic": "/home/joe/temp/tmp.8DMYwLSN6y/mod.ll:27657:28: error: use of undefined value '%v148'",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test__interpreters.py",
@@ -75,12 +79,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-ze6a_zu2/test__interpreters.py:35:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/home/joe/temp/pyc-measure-spge35uc/test__interpreters.py:1052:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test__locale.py",
@@ -94,7 +99,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test__opcode.py",
@@ -108,7 +114,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test__osx_support.py",
@@ -122,7 +129,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_abc.py",
@@ -130,12 +138,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-onzafhgk/test_abc.py:25:12: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-f63r667u/test_abc.py:25:12: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_abstract_numbers.py",
@@ -149,7 +158,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_android.py",
@@ -157,10 +167,11 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-_7w0vszh/test_android.py:70:16: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-22hpny7p/test_android.py:70:16: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_annotationlib.py",
@@ -168,10 +179,11 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-2_9m08d7/test_annotationlib.py:221:12: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-qj0la8zb/test_annotationlib.py:221:12: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_apple.py",
@@ -183,7 +195,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_argparse.py",
@@ -191,12 +204,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-jywlt7cb/test_argparse.py:201:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-57y8nrsh/test_argparse.py:201:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_array.py",
@@ -212,7 +226,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_asdl_parser.py",
@@ -224,7 +239,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_asyncgen.py",
@@ -232,12 +248,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-viq11af4/test_asyncgen.py:45:4: error: function captures 'gen', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-xj0ofjia/test_asyncgen.py:45:4: error: function captures 'gen', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_atexit.py",
@@ -251,21 +268,24 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_audit.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_audit.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/tmp/pyc-measure-zgbub9z7/test_audit.py:23:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed",
         "heap_address"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_augassign.py",
@@ -279,7 +299,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_base64.py",
@@ -293,7 +314,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_baseexception.py",
@@ -309,7 +331,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_bdb.py",
@@ -317,12 +340,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-9263j6uz/test_bdb.py:588:8: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-gmza5wiv/test_bdb.py:588:8: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_bigaddrspace.py",
@@ -336,7 +360,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_bigmem.py",
@@ -350,7 +375,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_binascii.py",
@@ -364,7 +390,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_binop.py",
@@ -372,12 +399,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-qjka_hep/test_binop.py:335:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-pgvl87pj/test_binop.py:335:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_bisect.py",
@@ -391,7 +419,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_bool.py",
@@ -405,7 +434,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_buffer.py",
@@ -422,7 +452,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_bufio.py",
@@ -436,44 +467,59 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_build_details.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_build_details.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-l1_z05p5/test_build_details.py:137:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 1,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_builtin.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_builtin.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/tmp.b7NJwHSUDK/mod.ll:62470:42: error: use of undefined value '%v29'",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": -11
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_bytes.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bytes.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-yg4q6fw7/test_bytes.py:35:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": -11
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_bz2.py",
@@ -487,7 +533,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_c_locale_coercion.py",
@@ -501,7 +548,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_calendar.py",
@@ -515,7 +563,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_call.py",
@@ -523,12 +572,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-90hpu67d/test_call.py:910:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-u2_vhzno/test_call.py:910:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_charmapcodec.py",
@@ -542,7 +592,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_class.py",
@@ -550,12 +601,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-0602a109/test_class.py:806:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-fj9leawn/test_class.py:806:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_clinic.py",
@@ -563,10 +615,11 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-sxao7q75/test_clinic.py:3292:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-19ou57zd/test_clinic.py:3292:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_cmath.py",
@@ -580,7 +633,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_cmd.py",
@@ -596,7 +650,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_cmd_line.py",
@@ -610,7 +665,8 @@
       "exit": {
         "oracle": -1,
         "subject": -1
-      }
+      },
+      "oracle_timed_out": true
     },
     {
       "case": "Lib/test/test_cmd_line_script.py",
@@ -624,7 +680,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_code.py",
@@ -632,12 +689,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-qbxhuuqt/test_code.py:624:13: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-yecuo6_g/test_code.py:624:13: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_code_module.py",
@@ -651,7 +709,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codeccallbacks.py",
@@ -665,7 +724,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecencodings_cn.py",
@@ -679,7 +739,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecencodings_hk.py",
@@ -693,7 +754,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecencodings_iso2022.py",
@@ -707,7 +769,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecencodings_jp.py",
@@ -721,7 +784,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecencodings_kr.py",
@@ -735,7 +799,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecencodings_tw.py",
@@ -749,7 +814,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecmaps_cn.py",
@@ -763,7 +829,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecmaps_hk.py",
@@ -777,7 +844,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecmaps_jp.py",
@@ -791,7 +859,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecmaps_kr.py",
@@ -805,7 +874,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecmaps_tw.py",
@@ -819,20 +889,25 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codecs.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codecs.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-su_okn9c/test_codecs.py:29:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_codeop.py",
@@ -846,7 +921,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_collections.py",
@@ -854,12 +930,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-aqa2s1_j/test_collections.py:1212:36: error: cannot compile yield yet [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-39fqoec8/test_collections.py:1212:36: error: cannot compile yield yet [yield]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_colorsys.py",
@@ -873,7 +950,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_compare.py",
@@ -887,7 +965,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_compile.py",
@@ -895,12 +974,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-vv95ou8q/test_compile.py:1224:12: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-uxj3wok1/test_compile.py:1224:12: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_compileall.py",
@@ -908,12 +988,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-b89nthu7/test_compileall.py:480:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-9wgj0gnn/test_compileall.py:480:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_compiler_assemble.py",
@@ -925,7 +1006,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_compiler_codegen.py",
@@ -937,7 +1019,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_complex.py",
@@ -954,7 +1037,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_configparser.py",
@@ -968,7 +1052,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_contains.py",
@@ -982,7 +1067,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_context.py",
@@ -998,7 +1084,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_contextlib.py",
@@ -1014,7 +1101,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_contextlib_async.py",
@@ -1028,7 +1116,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_copy.py",
@@ -1036,12 +1125,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-fhr0qzx1/test_copy.py:98:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-jf1_wbfu/test_copy.py:98:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_copyreg.py",
@@ -1055,7 +1145,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_coroutines.py",
@@ -1063,12 +1154,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-cepy2tbd/test_coroutines.py:1223:8: error: function captures 'Manager', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-iolxld88/test_coroutines.py:1223:8: error: function captures 'Manager', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_cprofile.py",
@@ -1085,18 +1177,23 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_crossinterp.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_crossinterp.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-z_ft7tff/test_crossinterp.py:1504:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 1,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_csv.py",
@@ -1110,7 +1207,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_curses.py",
@@ -1124,7 +1222,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_datetime.py",
@@ -1141,7 +1240,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dbm.py",
@@ -1158,7 +1258,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dbm_dumb.py",
@@ -1172,7 +1273,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dbm_gnu.py",
@@ -1186,7 +1288,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dbm_ndbm.py",
@@ -1200,7 +1303,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dbm_sqlite3.py",
@@ -1214,7 +1318,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_decimal.py",
@@ -1230,7 +1335,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_decorators.py",
@@ -1247,7 +1353,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_defaultdict.py",
@@ -1264,7 +1371,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_deque.py",
@@ -1281,7 +1389,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_descr.py",
@@ -1289,12 +1398,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-ry78y90o/test_descr.py:478:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-7ayan3d1/test_descr.py:478:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_descrtut.py",
@@ -1311,7 +1421,8 @@
       "exit": {
         "oracle": 0,
         "subject": 5
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_devpoll.py",
@@ -1323,7 +1434,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dict.py",
@@ -1340,7 +1452,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dictcomps.py",
@@ -1358,7 +1471,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dictviews.py",
@@ -1372,7 +1486,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_difflib.py",
@@ -1386,7 +1501,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dis.py",
@@ -1394,12 +1510,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-w5bdqv99/test_dis.py:1481:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-se1utpx8/test_dis.py:1481:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_docxmlrpc.py",
@@ -1417,7 +1534,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dtrace.py",
@@ -1431,7 +1549,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dynamic.py",
@@ -1448,7 +1567,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_dynamicclassattribute.py",
@@ -1456,12 +1576,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-hnswqbkw/test_dynamicclassattribute.py:85:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-pm34zb8n/test_dynamicclassattribute.py:85:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_eintr.py",
@@ -1475,7 +1596,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_ensurepip.py",
@@ -1489,7 +1611,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_enum.py",
@@ -1497,12 +1620,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-2sl9vntc/test_enum.py:246:4: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-plbxevbt/test_enum.py:246:4: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_enumerate.py",
@@ -1516,7 +1640,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_eof.py",
@@ -1530,7 +1655,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_epoll.py",
@@ -1544,7 +1670,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_errno.py",
@@ -1558,7 +1685,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_except_star.py",
@@ -1566,12 +1694,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-v9bherak/test_except_star.py:25:12: error: cannot compile try/except* yet [try/except*]",
+      "diagnostic": "/home/joe/temp/pyc-measure-iue3h9i5/test_except_star.py:25:12: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_exception_group.py",
@@ -1579,12 +1708,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-hpwdde1s/test_exception_group.py:0:0: error: 'leaf_generator' freevars ('leaf_generator',) are not the same SET as symtable () [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-ik1zti9f/test_exception_group.py:0:0: error: 'leaf_generator' freevars ('leaf_generator',) are not the same SET as symtable () [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_exception_hierarchy.py",
@@ -1598,7 +1728,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_exception_variations.py",
@@ -1606,12 +1737,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-cf_k7a3v/test_exception_variations.py:303:8: error: cannot compile try/except* yet [try/except*]",
+      "diagnostic": "/home/joe/temp/pyc-measure-svkl_f19/test_exception_variations.py:303:8: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_exceptions.py",
@@ -1619,12 +1751,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-6418c3uw/test_exceptions.py:1411:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-teuismr3/test_exceptions.py:1411:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_extcall.py",
@@ -1641,7 +1774,8 @@
       "exit": {
         "oracle": 1,
         "subject": 5
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_external_inspection.py",
@@ -1658,7 +1792,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_faulthandler.py",
@@ -1672,7 +1807,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_fcntl.py",
@@ -1689,7 +1825,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_file.py",
@@ -1703,7 +1840,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_file_eintr.py",
@@ -1717,7 +1855,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_filecmp.py",
@@ -1731,7 +1870,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_fileinput.py",
@@ -1745,7 +1885,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_fileio.py",
@@ -1762,7 +1903,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_fileutils.py",
@@ -1779,20 +1921,23 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_finalization.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_finalization.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/tmp/tmp.rXyXIKoOiw/mod.ll:4279:3: error: instruction forward referenced with type 'ptr'",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_float.py",
@@ -1808,7 +1953,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_flufl.py",
@@ -1822,7 +1968,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_fnmatch.py",
@@ -1836,24 +1983,23 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_fork1.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fork1.py",
-      "flags": [
-        "ORACLE_UNSTABLE",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": true,
+      "oracle_varied": false,
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_format.py",
@@ -1872,7 +2018,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_fractions.py",
@@ -1880,12 +2027,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-tfpk3n4v/test_fractions.py:389:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-03mfuxlz/test_fractions.py:389:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_frame.py",
@@ -1902,7 +2050,8 @@
       "exit": {
         "oracle": 1,
         "subject": -11
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_frozen.py",
@@ -1916,7 +2065,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_fstring.py",
@@ -1933,7 +2083,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_ftplib.py",
@@ -1947,7 +2098,8 @@
       "exit": {
         "oracle": -1,
         "subject": -1
-      }
+      },
+      "oracle_timed_out": true
     },
     {
       "case": "Lib/test/test_funcattrs.py",
@@ -1964,7 +2116,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_functools.py",
@@ -1972,25 +2125,32 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-t4mufp9_/test_functools.py:797:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-fw3_eq55/test_functools.py:797:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_gc.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_gc.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/tmp.0E6ddEwlKU/mod.ll:5323:43: error: use of undefined value '%v70'",
+      "diagnostic": "",
       "normalizers": [
-        "elapsed"
+        "elapsed",
+        "heap_address"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_generated_cases.py",
@@ -2004,7 +2164,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_generator_stop.py",
@@ -2018,7 +2179,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_generators.py",
@@ -2026,12 +2188,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-5x4ljj6u/test_generators.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-soxyml55/test_generators.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_genericalias.py",
@@ -2039,12 +2202,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-eadc1ub2/test_genericalias.py:555:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/home/joe/temp/pyc-measure-a1ktvf7n/test_genericalias.py:555:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_genericclass.py",
@@ -2052,12 +2216,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-90ichu7s/test_genericclass.py:128:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-xsz0lhn3/test_genericclass.py:128:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_genericpath.py",
@@ -2071,7 +2236,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_genexps.py",
@@ -2088,7 +2254,8 @@
       "exit": {
         "oracle": 0,
         "subject": 5
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_getopt.py",
@@ -2104,7 +2271,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_getpass.py",
@@ -2118,7 +2286,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_getpath.py",
@@ -2126,10 +2295,11 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-66difng3/test_getpath.py:979:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-3k0znk2f/test_getpath.py:979:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_gettext.py",
@@ -2146,7 +2316,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_glob.py",
@@ -2160,7 +2331,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_global.py",
@@ -2168,12 +2340,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-if5ho2an/test_global.py:119:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/home/joe/temp/pyc-measure-pkx26ev2/test_global.py:119:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_grammar.py",
@@ -2181,12 +2354,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-tcnhqvjg/test_grammar.py:264:0: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-125f1xi4/test_grammar.py:264:0: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_graphlib.py",
@@ -2200,7 +2374,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_grp.py",
@@ -2214,7 +2389,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_gzip.py",
@@ -2228,7 +2404,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_hash.py",
@@ -2242,7 +2419,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_hashlib.py",
@@ -2259,7 +2437,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_heapq.py",
@@ -2273,7 +2452,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_hmac.py",
@@ -2281,12 +2461,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-7sxqfkst/test_hmac.py:1058:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-52jakwyg/test_hmac.py:1058:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_html.py",
@@ -2300,7 +2481,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_htmlparser.py",
@@ -2314,7 +2496,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_http_cookiejar.py",
@@ -2328,7 +2511,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_http_cookies.py",
@@ -2345,7 +2529,8 @@
       "exit": {
         "oracle": 0,
         "subject": -11
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_httplib.py",
@@ -2361,7 +2546,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_httpservers.py",
@@ -2375,7 +2561,8 @@
       "exit": {
         "oracle": -1,
         "subject": -1
-      }
+      },
+      "oracle_timed_out": true
     },
     {
       "case": "Lib/test/test_imaplib.py",
@@ -2394,7 +2581,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_index.py",
@@ -2408,7 +2596,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_int.py",
@@ -2422,7 +2611,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_int_literal.py",
@@ -2436,20 +2626,26 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_io.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_io.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-wa8jzsb1/test_io.py:70:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_ioctl.py",
@@ -2463,7 +2659,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_ipaddress.py",
@@ -2477,7 +2674,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_isinstance.py",
@@ -2491,20 +2689,27 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_iter.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_iter.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/tmp.TENyc5jhrW/mod.ll:42240:57: error: '%v9' defined with type 'i32' but expected 'ptr'",
+      "diagnostic": "",
       "normalizers": [
-        "elapsed"
+        "elapsed",
+        "heap_address"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_iterlen.py",
@@ -2518,7 +2723,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_itertools.py",
@@ -2535,7 +2741,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_keyword.py",
@@ -2549,7 +2756,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_keywordonlyarg.py",
@@ -2557,12 +2765,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-rwob0f43/test_keywordonlyarg.py:157:8: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-j09_zeb_/test_keywordonlyarg.py:157:8: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_kqueue.py",
@@ -2574,7 +2783,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_largefile.py",
@@ -2588,7 +2798,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_launcher.py",
@@ -2600,7 +2811,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_linecache.py",
@@ -2614,15 +2826,13 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_list.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_list.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2630,8 +2840,9 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": -11
-      }
+        "subject": 0
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_listcomps.py",
@@ -2649,7 +2860,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_lltrace.py",
@@ -2663,7 +2875,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_locale.py",
@@ -2677,7 +2890,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_logging.py",
@@ -2685,12 +2899,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-qkjt05fy/test_logging.py:3906:16: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-1_zqnxi5/test_logging.py:3906:16: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_long.py",
@@ -2698,12 +2913,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-z7bufwca/test_long.py:1277:20: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-to9cgr64/test_long.py:1277:20: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_longexp.py",
@@ -2717,7 +2933,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_lzma.py",
@@ -2731,7 +2948,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_mailbox.py",
@@ -2745,7 +2963,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_marshal.py",
@@ -2762,7 +2981,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_math.py",
@@ -2778,7 +2998,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_math_property.py",
@@ -2790,7 +3011,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_memoryio.py",
@@ -2807,7 +3029,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_memoryview.py",
@@ -2824,7 +3047,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_metaclass.py",
@@ -2841,7 +3065,8 @@
       "exit": {
         "oracle": 0,
         "subject": 5
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_mimetypes.py",
@@ -2855,7 +3080,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_minidom.py",
@@ -2869,7 +3095,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_mmap.py",
@@ -2877,12 +3104,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-wp8msza5/test_mmap.py:381:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-pxtt6pkb/test_mmap.py:381:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_modulefinder.py",
@@ -2896,7 +3124,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_monitoring.py",
@@ -2904,10 +3133,11 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-pv09xmn7/test_monitoring.py:1008:12: error: function captures 'async_generator', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-t9k3xx_4/test_monitoring.py:1008:12: error: function captures 'async_generator', which has no closure cell here [yield]",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_msvcrt.py",
@@ -2919,7 +3149,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_multibytecodec.py",
@@ -2936,7 +3167,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_named_expressions.py",
@@ -2944,12 +3176,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-u75mw540/test_named_expressions.py:521:25: error: generator expression captures 'lastNum', which has no closure cell here [generator expressions]",
+      "diagnostic": "/home/joe/temp/pyc-measure-h3vlqb1p/test_named_expressions.py:521:25: error: generator expression captures 'lastNum', which has no closure cell here [generator expressions]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_netrc.py",
@@ -2963,7 +3196,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_ntpath.py",
@@ -2980,7 +3214,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_nturl2path.py",
@@ -2994,7 +3229,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_numeric_tower.py",
@@ -3008,7 +3244,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_opcache.py",
@@ -3016,12 +3253,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-yncmgpf7/test_opcache.py:94:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-nlg3uhpo/test_opcache.py:94:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_opcodes.py",
@@ -3029,12 +3267,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-2ab9ttr8/test_opcodes.py:53:16: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-0exqtiff/test_opcodes.py:53:16: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_openpty.py",
@@ -3048,20 +3287,23 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_operator.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_operator.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/tmp/pyc-measure-oh2ooogc/test_operator.py:677:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_optimizer.py",
@@ -3078,20 +3320,26 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_optparse.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_optparse.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-64po2whf/test_optparse.py:1502:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_ordered_dict.py",
@@ -3108,20 +3356,27 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_os.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_os.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "STDOUT_DIFFERS",
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-2wnf7dfa/test_os.py:4197:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_osx_env.py",
@@ -3135,7 +3390,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_patma.py",
@@ -3143,10 +3399,11 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-sh3pa_i3/test_patma.py:14:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-9e29m2jr/test_patma.py:14:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pdb.py",
@@ -3162,7 +3419,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_peepholer.py",
@@ -3170,12 +3428,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-qcv04p_m/test_peepholer.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-jl7ijuk3/test_peepholer.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pep646_syntax.py",
@@ -3192,7 +3451,8 @@
       "exit": {
         "oracle": 0,
         "subject": 5
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_perf_profiler.py",
@@ -3206,7 +3466,8 @@
       "exit": {
         "oracle": -1,
         "subject": -1
-      }
+      },
+      "oracle_timed_out": true
     },
     {
       "case": "Lib/test/test_perfmaps.py",
@@ -3221,7 +3482,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pickle.py",
@@ -3239,7 +3501,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_picklebuffer.py",
@@ -3253,7 +3516,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pickletools.py",
@@ -3267,7 +3531,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pkg.py",
@@ -3284,7 +3549,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pkgutil.py",
@@ -3300,7 +3566,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_platform.py",
@@ -3314,7 +3581,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_plistlib.py",
@@ -3328,7 +3596,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_poll.py",
@@ -3342,7 +3611,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_popen.py",
@@ -3356,7 +3626,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_poplib.py",
@@ -3373,7 +3644,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_positional_only_arg.py",
@@ -3381,12 +3653,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-_mfsj_5c/test_positional_only_arg.py:11:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-ydptncc4/test_positional_only_arg.py:11:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_posix.py",
@@ -3394,12 +3667,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/tmp.F3QOsZmQMz/mod.ll:72875:3: error: instruction forward referenced with type 'ptr'",
+      "diagnostic": "/home/joe/temp/tmp.7hfqGW1lLp/mod.ll:73462:28: error: use of undefined value '%v37'",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_posixpath.py",
@@ -3413,7 +3687,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pow.py",
@@ -3427,7 +3702,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pprint.py",
@@ -3435,12 +3711,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-zns2_evk/test_pprint.py:75:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-x5u14b6p/test_pprint.py:75:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_print.py",
@@ -3454,7 +3731,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_profile.py",
@@ -3471,7 +3749,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_property.py",
@@ -3488,7 +3767,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pstats.py",
@@ -3505,7 +3785,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pty.py",
@@ -3522,7 +3803,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pulldom.py",
@@ -3536,7 +3818,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pwd.py",
@@ -3550,7 +3833,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_py_compile.py",
@@ -3558,12 +3842,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-rismjk6w/test_py_compile.py:20:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/home/joe/temp/pyc-measure-iltul3sl/test_py_compile.py:222:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pyclbr.py",
@@ -3577,7 +3862,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_pyexpat.py",
@@ -3585,12 +3871,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-hjlk_lu5/test_pyexpat.py:1106:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/home/joe/temp/pyc-measure-zavyejm0/test_pyexpat.py:1106:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_queue.py",
@@ -3607,7 +3894,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_quopri.py",
@@ -3621,7 +3909,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_raise.py",
@@ -3629,12 +3918,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-d0bqvpvw/test_raise.py:85:16: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-8ksd27nj/test_raise.py:85:16: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_random.py",
@@ -3651,7 +3941,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_range.py",
@@ -3665,7 +3956,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_re.py",
@@ -3682,7 +3974,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_readline.py",
@@ -3696,7 +3989,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_regrtest.py",
@@ -3704,12 +3998,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-hnmo15sg/test_regrtest.py:577:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-2gx304no/test_regrtest.py:577:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_remote_pdb.py",
@@ -3723,7 +4018,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_repl.py",
@@ -3737,7 +4033,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_reprlib.py",
@@ -3754,7 +4051,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_resource.py",
@@ -3768,7 +4066,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_richcmp.py",
@@ -3782,7 +4081,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_rlcompleter.py",
@@ -3799,7 +4099,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_robotparser.py",
@@ -3816,7 +4117,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_runpy.py",
@@ -3830,33 +4132,38 @@
       "exit": {
         "oracle": -1,
         "subject": -1
-      }
+      },
+      "oracle_timed_out": true
     },
     {
       "case": "Lib/test/test_sax.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sax.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/tmp/pyc-measure-2ruoy2q1/test_sax.py:844:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_sched.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sched.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/tmp/pyc-measure-q6o69zg_/test_sched.py:20:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_scope.py",
@@ -3873,7 +4180,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_script_helper.py",
@@ -3887,7 +4195,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_secrets.py",
@@ -3901,7 +4210,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_select.py",
@@ -3915,7 +4225,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_selectors.py",
@@ -3929,7 +4240,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_set.py",
@@ -3937,12 +4249,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-vu05a837/test_set.py:0:0: error: 'powerset' freevars ('powerset',) are not the same SET as symtable () [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-ptc8d7ef/test_set.py:0:0: error: 'powerset' freevars ('powerset',) are not the same SET as symtable () [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_setcomps.py",
@@ -3960,7 +4273,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_shelve.py",
@@ -3977,7 +4291,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_shlex.py",
@@ -3991,26 +4306,31 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_shutil.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_shutil.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-5oas7ftq/test_shutil.py:113:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_signal.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_signal.py",
       "flags": [
-        "ORACLE_UNSTABLE",
         "STDOUT_DIFFERS",
         "EXIT_DIFFERS",
         "STDERR_DIFFERS"
@@ -4019,11 +4339,12 @@
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": true,
+      "oracle_varied": false,
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_slice.py",
@@ -4037,7 +4358,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_smtplib.py",
@@ -4051,7 +4373,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_smtpnet.py",
@@ -4065,7 +4388,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_socket.py",
@@ -4079,7 +4403,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_socketserver.py",
@@ -4097,7 +4422,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_sort.py",
@@ -4114,7 +4440,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_source_encoding.py",
@@ -4130,18 +4457,23 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_ssl.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ssl.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-jft1zgpd/test_ssl.py:160:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 1,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_stable_abi_ctypes.py",
@@ -4153,7 +4485,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_startfile.py",
@@ -4165,7 +4498,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_stat.py",
@@ -4179,7 +4513,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_statistics.py",
@@ -4187,12 +4522,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-s5dm3886/test_statistics.py:2146:12: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-49ps58cj/test_statistics.py:2146:12: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_str.py",
@@ -4209,7 +4545,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_strftime.py",
@@ -4224,7 +4561,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_string_literals.py",
@@ -4238,7 +4576,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_stringprep.py",
@@ -4252,7 +4591,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_strptime.py",
@@ -4266,7 +4606,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_strtod.py",
@@ -4280,7 +4621,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_struct.py",
@@ -4297,7 +4639,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_structseq.py",
@@ -4311,7 +4654,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_subclassinit.py",
@@ -4319,12 +4663,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-44i4se5c/test_subclassinit.py:39:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-g2cw51gh/test_subclassinit.py:39:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_sundry.py",
@@ -4338,7 +4683,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_super.py",
@@ -4346,12 +4692,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-vboqht5x/test_super.py:163:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-hqcyisxg/test_super.py:163:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_support.py",
@@ -4368,7 +4715,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_symtable.py",
@@ -4382,7 +4730,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_syntax.py",
@@ -4398,7 +4747,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_sys.py",
@@ -4415,7 +4765,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_sys_setprofile.py",
@@ -4432,7 +4783,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_sys_settrace.py",
@@ -4440,12 +4792,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-6r1qrp9e/test_sys_settrace.py:579:8: error: function captures 'AsyncIteratorWrapper', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-mx8wzjmg/test_sys_settrace.py:579:8: error: function captures 'AsyncIteratorWrapper', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_syslog.py",
@@ -4461,7 +4814,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_tabnanny.py",
@@ -4473,20 +4827,25 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_tarfile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tarfile.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-rsqi9j2l/test_tarfile.py:5076:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 1,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_tcl.py",
@@ -4500,7 +4859,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_tempfile.py",
@@ -4514,7 +4874,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_termios.py",
@@ -4528,7 +4889,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_textwrap.py",
@@ -4542,7 +4904,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_thread.py",
@@ -4551,12 +4914,13 @@
         "DID_NOT_COMPILE",
         "ORACLE_UNSTABLE"
       ],
-      "diagnostic": "/tmp/pyc-measure-4n8bzgvz/test_thread.py:424:8: error: no binding for nonlocal 'pid' found [nonlocal]",
+      "diagnostic": "/home/joe/temp/pyc-measure-h32it64k/test_thread.py:424:8: error: no binding for nonlocal 'pid' found [nonlocal]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": true,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_thread_local_bytecode.py",
@@ -4573,7 +4937,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_threadedtempfile.py",
@@ -4587,7 +4952,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_threading.py",
@@ -4606,7 +4972,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_threading_local.py",
@@ -4620,7 +4987,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_threadsignals.py",
@@ -4634,7 +5002,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_time.py",
@@ -4651,7 +5020,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_timeit.py",
@@ -4668,20 +5038,23 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_timeout.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_timeout.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/tmp/pyc-measure-q757uc7c/test_timeout.py:20:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_tokenize.py",
@@ -4694,7 +5067,8 @@
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_trace.py",
@@ -4711,7 +5085,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_traceback.py",
@@ -4719,12 +5094,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-10x2rzgi/test_traceback.py:2180:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-rnz365eu/test_traceback.py:2180:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_tracemalloc.py",
@@ -4741,7 +5117,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_tstring.py",
@@ -4749,12 +5126,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-9eox97e0/test_tstring.py:9:12: error: cannot compile t-strings yet [t-strings]",
+      "diagnostic": "/home/joe/temp/pyc-measure-yjx2xtaz/test_tstring.py:9:12: error: cannot compile t-strings yet [t-strings]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_tty.py",
@@ -4768,7 +5146,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_tuple.py",
@@ -4785,7 +5164,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_type_aliases.py",
@@ -4793,10 +5173,11 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-525k2tdi/test_type_aliases.py:74:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/home/joe/temp/pyc-measure-l67fsti9/test_type_aliases.py:74:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_type_annotations.py",
@@ -4804,10 +5185,11 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-nvg8r4fv/test_type_annotations.py:54:12: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-ufmz_m62/test_type_annotations.py:54:12: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_type_cache.py",
@@ -4824,7 +5206,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_type_comments.py",
@@ -4838,7 +5221,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_type_params.py",
@@ -4846,10 +5230,11 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-fohwhbyx/test_type_params.py:0:0: error: no symtable scope for generator function 'generator1' at line 1041 [GeneratorExpressionError]",
+      "diagnostic": "/home/joe/temp/pyc-measure-fwch3q8n/test_type_params.py:0:0: error: no symtable scope for generator function 'generator1' at line 1041 [GeneratorExpressionError]",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_typechecks.py",
@@ -4857,12 +5242,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-3yfromui/test_typechecks.py:19:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-al3h1uos/test_typechecks.py:19:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_types.py",
@@ -4870,12 +5256,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-1n4akk7n/test_types.py:784:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/home/joe/temp/pyc-measure-84ozebz7/test_types.py:784:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_typing.py",
@@ -4883,12 +5270,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-0tj9v48d/test_typing.py:178:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-qsnowrrq/test_typing.py:178:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_ucn.py",
@@ -4902,7 +5290,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_unary.py",
@@ -4916,7 +5305,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_unicode_file.py",
@@ -4930,7 +5320,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_unicode_file_functions.py",
@@ -4944,7 +5335,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_unicode_identifiers.py",
@@ -4961,7 +5353,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_unicodedata.py",
@@ -4978,7 +5371,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_univnewlines.py",
@@ -4992,7 +5386,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_unpack.py",
@@ -5009,7 +5404,8 @@
       "exit": {
         "oracle": 1,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_unpack_ex.py",
@@ -5026,20 +5422,23 @@
       "exit": {
         "oracle": 1,
         "subject": 5
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_unparse.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_unparse.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/tmp/pyc-measure-brudisya/test_unparse.py:16:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_urllib.py",
@@ -5053,7 +5452,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_urllib2.py",
@@ -5067,7 +5467,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_urllib2_localnet.py",
@@ -5081,7 +5482,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_urllib2net.py",
@@ -5095,7 +5497,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_urllib_response.py",
@@ -5109,7 +5512,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_urllibnet.py",
@@ -5123,7 +5527,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_urlparse.py",
@@ -5140,7 +5545,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_userdict.py",
@@ -5154,7 +5560,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_userlist.py",
@@ -5168,7 +5575,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_userstring.py",
@@ -5182,7 +5590,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_utf8_mode.py",
@@ -5196,7 +5605,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_utf8source.py",
@@ -5210,20 +5620,26 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_uuid.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_uuid.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-yl6yc92t/test_uuid.py:779:16: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_wait3.py",
@@ -5237,7 +5653,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_wait4.py",
@@ -5251,7 +5668,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_wave.py",
@@ -5265,7 +5683,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_weakref.py",
@@ -5282,7 +5701,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_weakset.py",
@@ -5296,7 +5716,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_webbrowser.py",
@@ -5310,7 +5731,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_winapi.py",
@@ -5322,7 +5744,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_winconsoleio.py",
@@ -5334,7 +5757,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_winreg.py",
@@ -5348,7 +5772,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_winsound.py",
@@ -5360,20 +5785,27 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_with.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_with.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/pyc-measure-jpamvetc/test_with.py:614:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "",
       "normalizers": [
-        "elapsed"
+        "elapsed",
+        "heap_address"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_wmi.py",
@@ -5385,7 +5817,8 @@
       "exit": {
         "oracle": 1,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_wsgiref.py",
@@ -5399,7 +5832,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_xml_dom_minicompat.py",
@@ -5413,7 +5847,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_xml_dom_xmlbuilder.py",
@@ -5425,7 +5860,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_xml_etree.py",
@@ -5433,12 +5869,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-bz4jlvu0/test_xml_etree.py:198:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/home/joe/temp/pyc-measure-30k5x1a9/test_xml_etree.py:198:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_xml_etree_c.py",
@@ -5455,20 +5892,26 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_xmlrpc.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xmlrpc.py",
       "flags": [
-        "DID_NOT_COMPILE"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "/tmp/tmp.cKPxe4gVpr/mod.ll:33355:12: error: use of undefined value '%bb56'",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": {
+        "oracle": 0,
+        "subject": 1
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_xpickle.py",
@@ -5482,7 +5925,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_xxlimited.py",
@@ -5490,10 +5934,11 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-z4oiapx0/test_xxlimited.py:10:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/home/joe/temp/pyc-measure-oyq8lvkk/test_xxlimited.py:10:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_xxtestfuzz.py",
@@ -5507,7 +5952,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_yield_from.py",
@@ -5515,12 +5961,13 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-g0wvwzvo/test_yield_from.py:640:8: error: function captures 'LunchError', which has no closure cell here [yield]",
+      "diagnostic": "/home/joe/temp/pyc-measure-tskxj6_9/test_yield_from.py:640:8: error: function captures 'LunchError', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "exit": null
+      "exit": null,
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_zipapp.py",
@@ -5534,36 +5981,43 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_zipfile64.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zipfile64.py",
       "flags": [
+        "TIMEOUT"
+      ],
+      "diagnostic": "CPython did not finish within 60s",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": -1,
+        "subject": -1
+      },
+      "oracle_timed_out": true
+    },
+    {
+      "case": "Lib/test/test_zipimport.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zipimport.py",
+      "flags": [
+        "ORACLE_UNSTABLE",
+        "STDOUT_DIFFERS",
+        "EXIT_DIFFERS",
         "STDERR_DIFFERS"
       ],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": false,
+      "oracle_varied": true,
       "exit": {
-        "oracle": 1,
+        "oracle": 0,
         "subject": 1
-      }
-    },
-    {
-      "case": "Lib/test/test_zipimport.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zipimport.py",
-      "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "error: unable to open output file '/tmp/support-eafbd5.o': 'No space left on device'",
-      "normalizers": [
-        "elapsed"
-      ],
-      "oracle_varied": false,
-      "exit": null
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_zipimport_support.py",
@@ -5581,7 +6035,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_zlib.py",
@@ -5595,7 +6050,8 @@
       "exit": {
         "oracle": 0,
         "subject": 0
-      }
+      },
+      "oracle_timed_out": false
     },
     {
       "case": "Lib/test/test_zstd.py",
@@ -5612,7 +6068,8 @@
       "exit": {
         "oracle": 0,
         "subject": 1
-      }
+      },
+      "oracle_timed_out": false
     }
   ]
 }

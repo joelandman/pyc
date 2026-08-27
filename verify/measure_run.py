@@ -215,6 +215,7 @@ def report(out: list[Measurement], args, elapsed: float,
                 "diagnostic": r.diagnostic,
                 "normalizers": r.normalizers,
                 "oracle_varied": r.oracle_varied,
+                "oracle_timed_out": bool(r.oracle and r.oracle.timed_out),
                 "exit": ({"oracle": r.oracle.exit, "subject": r.subject.exit}
                          if r.oracle and r.subject else None),
             } for r in sorted(out, key=lambda x: x.case.name)],

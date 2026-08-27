@@ -11,11 +11,12 @@ Two things fail the gate, and both are measured rather than judged:
      a silent wrong answer (CHARTER I1), and it is a measurement, not a
      severity opinion: exit status and stdout are both recorded numbers.
 
-A case that newly became ORACLE_UNSTABLE, and nothing else, is reported but
-does not fail: pyc is not involved in that measurement at all -- it comes from
-two CPython runs -- so calling it a compiler regression would be false. It
-still counts against the pass rate, because the case genuinely has no ground
-truth any more.
+A case that newly lost its GROUND TRUTH is reported but does not fail. Two
+ways that happens, and pyc is not involved in either: the oracle disagreed with
+itself across the two runs (ORACLE_UNSTABLE), or CPython did not finish even at
+double the limit (TIMEOUT with the oracle dead). Both still count against the
+pass rate -- the case genuinely cannot be scored -- but neither is a compiler
+regression, and reporting one as such would be false.
 
 Everything else is reported as CHANGED and fails nothing. A case that used to
 be refused by the compiler and now runs and crashes has swapped one loud
@@ -47,6 +48,7 @@ RED, GRN, YEL, DIM, BOLD, RST = (
 
 STDOUT = "STDOUT_DIFFERS"
 UNSTABLE = "ORACLE_UNSTABLE"
+TIMEOUT = "TIMEOUT"
 IMPACTFUL = frozenset({"DID_NOT_COMPILE", "ORACLE_UNSTABLE", "TIMEOUT",
                        STDOUT, "EXIT_DIFFERS"})
 
@@ -80,6 +82,11 @@ def not_comparable(reason: str, detail: str) -> int:
 
 def flags_of(d: dict) -> dict[str, set[str]]:
     return {r["case"]: set(r["flags"]) for r in d["results"]}
+
+
+def oracle_failed(d: dict) -> dict[str, bool]:
+    """Cases where CPython itself produced no ground truth this run."""
+    return {r["case"]: bool(r.get("oracle_timed_out")) for r in d["results"]}
 
 
 def exits_of(d: dict) -> dict[str, int | None]:
@@ -144,6 +151,7 @@ def main() -> int:
 
     bmap, cmap = flags_of(base), flags_of(curr)
     bexit, cexit = exits_of(base), exits_of(curr)
+    cdead = oracle_failed(curr)
     shared = set(bmap) & set(cmap)
 
     regressed, silent, improved, changed, unstable = [], [], [], [], []
@@ -152,7 +160,12 @@ def main() -> int:
         now = bool(cmap[case] & IMPACTFUL)
         if now and not was:
             gained = cmap[case] & IMPACTFUL
-            if gained == {UNSTABLE}:
+            # Same reasoning as UNSTABLE, one step further along: if CPython
+            # itself did not finish, there is no ground truth this run and pyc
+            # is not what failed. test_zipfile64 builds multi-gigabyte archives
+            # and takes 107s under CPython here, against a 30s limit and a 60s
+            # retry -- a statement about the limit, not the compiler.
+            if gained == {UNSTABLE} or (gained == {TIMEOUT} and cdead.get(case)):
                 # The compiler cannot cause this: ORACLE_UNSTABLE is computed
                 # from two CPython runs with pyc nowhere in the picture. It
                 # still counts against the pass rate -- the case has no ground
@@ -200,8 +213,10 @@ def main() -> int:
     for case, fl in improved[:10]:
         print(f"  {GRN}now passes{RST} {case}: was {', '.join(fl)}")
     for case in unstable[:10]:
-        print(f"  {YEL}oracle unstable{RST}  {case}: CPython disagreed with "
-              f"CPython  {DIM}(not a compiler regression){RST}")
+        why = ("CPython itself did not finish" if cdead.get(case)
+               else "CPython disagreed with CPython")
+        print(f"  {YEL}no ground truth{RST}  {case}: {why}"
+              f"  {DIM}(not a compiler regression){RST}")
     for case, was, now in changed[:10]:
         print(f"  {DIM}changed{RST}   {case}: {','.join(was)} -> {','.join(now)}"
               f"  {DIM}(failed before and after; not a regression){RST}")

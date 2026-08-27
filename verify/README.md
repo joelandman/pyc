@@ -242,6 +242,15 @@ retried once at **2×** the limit. Only if that also expires is the case a
 included. There is no such thing as an "oracle failure" here; CPython taking
 too long is a fact about the timeout, not a broken measurement.
 
+**A timeout where CPython itself did not finish never fails the gate.** Six
+`Lib/test` files are in that state, and `test_zipfile64` is the honest example:
+it builds multi-gigabyte archives and takes **107 s** under CPython on this
+machine, measured, against a 30 s limit and a 60 s retry. pyc is not what
+failed. The case still counts against the pass rate — nothing was scored — but
+blaming the compiler for it would be false, exactly as with `ORACLE_UNSTABLE`.
+Each record carries `oracle_timed_out` so the comparator can tell the two
+apart.
+
 ### An unstable oracle is reported, never dropped
 
 The harness **runs the oracle twice — before and after the subject,
