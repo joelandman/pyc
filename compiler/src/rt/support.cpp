@@ -596,6 +596,53 @@ extern "C" PyObject* pyc_rt_build_class(const char* name, PyObject* bases,
     return cls;
 }
 
+// `raise X from Y`.
+//
+// Measured against 3.14.7, and every line below is one of those observations:
+//
+//   raise T from v          __cause__ = v,      __suppress_context__ = True
+//   raise T from ValueError __cause__ = ValueError()  -- the CLASS is called
+//   raise T from None       __cause__ = None,   __suppress_context__ = True
+//   raise T                 __cause__ = None,   __suppress_context__ = False
+//   raise T from 42         TypeError: exception causes must derive from
+//                           BaseException
+//
+// The `from None` row is the one worth stating twice: it does not merely leave
+// __cause__ unset, it SUPPRESSES the implicit context, which is the entire
+// point of writing it. __context__ itself is still recorded in every case;
+// only its display is suppressed.
+//
+// The cause is validated BEFORE the exception is raised, so a bad cause
+// produces the TypeError instead of the requested exception, as CPython does.
+extern "C" int pyc_rt_raise_from(PyObject* exc, PyObject* cause) {
+    PyObject* c = nullptr;                      // owned, or null for None
+    if (cause == Py_None) {
+        c = nullptr;
+    } else if (PyExceptionClass_Check(cause)) {
+        c = PyObject_CallNoArgs(cause);         // a class cause is instantiated
+        if (!c) return -1;
+    } else if (PyExceptionInstance_Check(cause)) {
+        c = Py_NewRef(cause);
+    } else {
+        PyErr_SetString(PyExc_TypeError,
+                        "exception causes must derive from BaseException");
+        return -1;
+    }
+
+    if (pyc_rt_raise(exc) == 0) {               // never happens: it returns -1
+        Py_XDECREF(c);
+        return -1;
+    }
+    // Take the exception back so the cause can be attached to the NORMALISED
+    // object -- `raise ValueError from e` raises a class, and only after
+    // normalisation is there an instance to attach to.
+    PyObject* raised = PyErr_GetRaisedException();
+    if (!raised) { Py_XDECREF(c); return -1; }
+    PyException_SetCause(raised, c);            // steals c; sets suppress_context
+    PyErr_SetRaisedException(raised);           // steals raised
+    return -1;
+}
+
 extern "C" int pyc_rt_raise(PyObject* exc) {
     // `raise E` and `raise E(...)` are both legal: a class is instantiated by
     // PyErr_SetObject, an instance is raised as-is. Anything else is the

@@ -237,6 +237,34 @@ private:
         // would UNDER-release a value that legitimately holds two references.
         for (auto it = owned_.rbegin(); it != owned_.rend(); ++it)
             emit_decref(*it, loc);
+        // An exception leaving an except handler must pop that handler's
+        // exc_info, exactly as return/break/continue do via pop_open_handlers.
+        // Only the frame-owned decref happened here, and dropping the
+        // reference is not the same as popping the stack: CPython's
+        // "currently handled exception" stayed set for the rest of the
+        // program, so
+        //
+        //     try:
+        //         try: raise ValueError("inner")
+        //         except ValueError: raise TypeError("outer")
+        //     except TypeError: pass
+        //     raise KeyError("later")
+        //
+        // gave the KeyError a __context__ of ValueError('inner') -- an
+        // exception that had been fully handled two statements earlier. Every
+        // later raise in the program inherited it, and its traceback claimed
+        // "During handling of the above exception, another exception occurred"
+        // about something unrelated.
+        //
+        // The same defect was fixed once for the return path; the unwind path
+        // was missed, because there the pad already touched the value and it
+        // looked handled.
+        //
+        // This is only safe because pyc_rt_pop_handled is may_raise = false.
+        // While it was marked as raising, call_capi built a landing pad for
+        // it, that pad popped handlers, and the compiler recursed until it
+        // hung -- diagnosing nothing at all.
+        pop_open_handlers(loc);
         if (try_stack_.empty()) {
             // Nothing catches here, so the exception LEAVES this function:
             // record where. Without this a compiled binary printed only the
@@ -324,9 +352,22 @@ private:
                                    std::nullopt});
                     return;
                 }
-                if (n.cause) { ok = unsupported("raise ... from", n.loc); return; }
                 ir::Value e = lower_expr(**n.exc, &ok);
                 if (!ok) return;
+                if (n.cause) {
+                    // Exception first, then cause: that is the order CPython's
+                    // compiler emits, and it is observable when either
+                    // expression has a side effect.
+                    ir::Value c = lower_expr(**n.cause, &ok);
+                    if (!ok) return;
+                    call_capi("pyc_rt_raise_from", {e, c}, n.loc, &ok, {e, c});
+                    if (!ok) return;
+                    std::uint32_t pad = make_landing_pad(n.loc);
+                    emit(ir::Instr{ir::Op::Br, {}, std::nullopt,
+                                   Ownership::NotAnObject, "", pad, 0, n.loc,
+                                   std::nullopt});
+                    return;
+                }
                 emit(ir::Instr{ir::Op::Raise, {e}, std::nullopt,
                                Ownership::NotAnObject, "", 0, 0, n.loc,
                                make_landing_pad(n.loc)});

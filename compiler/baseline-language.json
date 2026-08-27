@@ -13,10 +13,10 @@
       "-O0"
     ]
   },
-  "total": 769,
-  "passing": 759,
-  "clean": 752,
-  "pass_rate": 98.6996098829649,
+  "total": 771,
+  "passing": 761,
+  "clean": 754,
+  "pass_rate": 98.70298313878081,
   "counts": {
     "STDOUT_DIFFERS": 10,
     "EXIT_DIFFERS": 7,
@@ -9838,6 +9838,19 @@
       }
     },
     {
+      "case": "handled_exc_leaks.py",
+      "path": "verify/corpus/language/handled_exc_leaks.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
       "case": "lit_numeric_forms.py",
       "path": "verify/corpus/language/lit_numeric_forms.py",
       "flags": [],
@@ -9922,6 +9935,19 @@
     {
       "case": "nested_class_selfref.py",
       "path": "verify/corpus/known-gaps/nested_class_selfref.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "raise_from.py",
+      "path": "verify/corpus/language/raise_from.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],

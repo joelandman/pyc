@@ -835,12 +835,16 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"pyc_rt_assert_fail", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_del_global", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "p"},
     {"pyc_rt_reraise", Ownership::NotAnObject, true, 0, {}, false, "", false, "", ""},
+    {"pyc_rt_raise_from", Ownership::NotAnObject, true, 2, {}, false, "", false, "", "oo"},
     {"pyc_rt_super_fail", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "i"},
     {"pyc_rt_match_sequence", Ownership::Owned, true, 4, {}, false, "", false, "", "oiii"},
     {"pyc_rt_match_mapping", Ownership::Owned, true, 3, {}, false, "", false, "", "ooi"},
     {"pyc_rt_match_class", Ownership::Owned, true, 4, {}, false, "", false, "", "ooio"},
     {"pyc_rt_push_handled", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
-    {"pyc_rt_pop_handled", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
+    // may_raise = false: it returns 0 unconditionally, and marking it as
+    // raising made call_capi build a landing pad for it -- which recursed,
+    // because a landing pad now pops open handlers.
+    {"pyc_rt_pop_handled", Ownership::NotAnObject, false, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_import_star", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_import_from", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
     {"pyc_rt_import_attr", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},

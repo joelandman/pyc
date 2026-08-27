@@ -81,6 +81,12 @@ PyObject* pyc_rt_class_prepare(PyObject* meta, PyObject* name,
 // -1 so the caller's error edge is taken.
 int pyc_rt_raise(PyObject* exc);
 
+// `raise X from Y`. Sets __cause__ and __suppress_context__. A class cause is
+// instantiated, None suppresses the context without setting a cause, and
+// anything else is the TypeError CPython gives -- checked BEFORE raising, so a
+// bad cause replaces the requested exception rather than following it.
+int pyc_rt_raise_from(PyObject* exc, PyObject* cause);
+
 // Unpack `value` into exactly `n` items, returning them as a tuple. The
 // arity check and its message live here rather than in emitted IR, because
 // CPython's wording ("not enough values to unpack (expected 3, got 2)")
