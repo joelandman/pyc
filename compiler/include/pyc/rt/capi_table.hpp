@@ -824,6 +824,7 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"_Py_c_sum", Ownership::NotAnObject, true, 2, {}, false, "", false, "", "??"},
     {"PyImport_ImportModuleAttr", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
     {"PyImport_ImportModuleAttrString", Ownership::Owned, true, 2, {}, false, "", false, "", "pp"},
+    {"pyc_rt_periodic", Ownership::NotAnObject, true, 0, {}, false, "", false, "", ""},
     {"pyc_rt_bind_method", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_class_meta", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
     {"pyc_rt_class_prepare", Ownership::Owned, true, 4, {}, false, "", false, "", "oooo"},

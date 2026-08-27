@@ -442,6 +442,33 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     return reinterpret_cast<PyObject*>(fn);
 }
 
+// The periodic check CPython's interpreter loop performs and compiled code did
+// not. Called at every loop head.
+//
+// Two things went wrong without it, and both are the same missing check:
+//
+//   * SIGNALS NEVER RAN. `signal.alarm(1)` followed by `while True: n += 1`
+//     never reached the handler, and neither does Ctrl-C: a compiled program
+//     in a loop could not be interrupted at all.
+//   * THREADS STARVED. A worker thread in a loop held the GIL to completion.
+//     Measured by ordering: CPython printed "main ran" then "worker finished";
+//     pyc printed them the other way round, because the main thread got no
+//     chance to run until the worker's loop ended.
+//
+// Amortised over a counter, as CPython amortises its own eval-breaker check.
+// The save/restore pair is the documented way to offer the GIL to whoever is
+// waiting; between iterations is a safe point, since no object is half-updated
+// there.
+extern "C" int pyc_rt_periodic(void) {
+    static thread_local unsigned n = 0;
+    if (++n < 2048) return 0;
+    n = 0;
+    if (PyErr_CheckSignals() < 0) return -1;   // runs handlers; may raise
+    PyThreadState* s = PyEval_SaveThread();
+    PyEval_RestoreThread(s);
+    return 0;
+}
+
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {
     return PyObject_Vectorcall(callable, args, (size_t)nargs, nullptr);
 }

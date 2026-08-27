@@ -774,6 +774,7 @@ private:
                 [&](std::size_t gi, const ir::Value& iter_v) -> bool {
                     const comprehension& gg = gens[gi];
                     std::uint32_t head = new_block("comp.head");
+                    (void)0;
                     std::uint32_t body = new_block("comp.body");
                     std::uint32_t done = new_block("comp.done");
                     emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
@@ -3058,6 +3059,11 @@ private:
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", head, 0, n.loc, std::nullopt});
         set_block(head);
+        // Signals and thread switches, as CPython's eval loop does per
+        // instruction. Without it a compiled loop could not be interrupted and
+        // starved every other thread.
+        { bool pok = true; call_capi("pyc_rt_periodic", {}, n.loc, &pok);
+          if (!pok) return false; }
         ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::IterNext, {it}, item, Ownership::Owned, "",
                        body, done, n.loc, make_landing_pad(n.loc)});
@@ -3102,6 +3108,8 @@ private:
                        "", head, 0, n.loc, std::nullopt});
         set_block(head);
         bool ok = true;
+        call_capi("pyc_rt_periodic", {}, n.loc, &ok);
+        if (!ok) return false;
         ir::Value t = lower_predicate(*n.test, &ok);
         if (!ok) return false;
         emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,

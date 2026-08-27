@@ -77,6 +77,11 @@ PyObject* pyc_rt_class_meta(PyObject* bases, PyObject* kwds);
 PyObject* pyc_rt_class_prepare(PyObject* meta, PyObject* name,
                                PyObject* bases, PyObject* kwds);
 
+// The periodic check CPython's interpreter loop performs: run pending signal
+// handlers, and offer the GIL to any thread waiting for it. Called at every
+// loop head. Returns -1 if a handler raised, so Ctrl-C propagates.
+int pyc_rt_periodic(void);
+
 // Raise. Accepts a class or an instance, as `raise` does, and always returns
 // -1 so the caller's error edge is taken.
 int pyc_rt_raise(PyObject* exc);

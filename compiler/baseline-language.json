@@ -13,10 +13,10 @@
       "-O0"
     ]
   },
-  "total": 775,
-  "passing": 766,
-  "clean": 759,
-  "pass_rate": 98.83870967741936,
+  "total": 776,
+  "passing": 767,
+  "clean": 760,
+  "pass_rate": 98.84020618556701,
   "counts": {
     "STDOUT_DIFFERS": 9,
     "EXIT_DIFFERS": 6,
@@ -9910,6 +9910,19 @@
       "flags": [
         "STDOUT_DIFFERS"
       ],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "loop_periodic.py",
+      "path": "verify/corpus/language/loop_periodic.py",
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
