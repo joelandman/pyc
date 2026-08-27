@@ -14,24 +14,23 @@
     ]
   },
   "total": 389,
-  "passing": 148,
-  "clean": 129,
-  "pass_rate": 38.04627249357326,
+  "passing": 207,
+  "clean": 188,
+  "pass_rate": 53.2133676092545,
   "counts": {
     "DID_NOT_COMPILE": 94,
-    "ORACLE_UNSTABLE": 10,
-    "TIMEOUT": 14,
-    "STDOUT_DIFFERS": 15,
-    "EXIT_DIFFERS": 128,
-    "STDERR_DIFFERS": 151
+    "ORACLE_UNSTABLE": 11,
+    "TIMEOUT": 5,
+    "STDOUT_DIFFERS": 8,
+    "EXIT_DIFFERS": 75,
+    "STDERR_DIFFERS": 98
   },
   "results": [
     {
       "case": "Lib/test/test___all__.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test___all__.py",
       "flags": [
-        "ORACLE_UNSTABLE",
-        "STDOUT_DIFFERS"
+        "ORACLE_UNSTABLE"
       ],
       "diagnostic": "",
       "normalizers": [
@@ -46,10 +45,7 @@
     {
       "case": "Lib/test/test__colorize.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__colorize.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -57,7 +53,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -66,7 +62,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/tmp.JOdQc3O20r/mod.ll:27550:28: error: use of undefined value '%v141'",
+      "diagnostic": "/tmp/tmp.tycZnsIORv/mod.ll:27572:28: error: use of undefined value '%v141'",
       "normalizers": [
         "elapsed"
       ],
@@ -79,7 +75,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-oc7kgyph/test__interpreters.py:35:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-ze6a_zu2/test__interpreters.py:35:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -134,7 +130,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-ykcpytqo/test_abc.py:25:12: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-onzafhgk/test_abc.py:25:12: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -144,10 +140,7 @@
     {
       "case": "Lib/test/test_abstract_numbers.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_abstract_numbers.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -155,7 +148,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -164,7 +157,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-g6i_o4fy/test_android.py:70:16: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/tmp/pyc-measure-_7w0vszh/test_android.py:70:16: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -175,7 +168,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-8inf_w9o/test_annotationlib.py:221:12: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-2_9m08d7/test_annotationlib.py:221:12: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -198,7 +191,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-zex26zf5/test_argparse.py:201:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/tmp/pyc-measure-jywlt7cb/test_argparse.py:201:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
@@ -209,7 +202,6 @@
       "case": "Lib/test/test_array.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_array.py",
       "flags": [
-        "EXIT_DIFFERS",
         "STDERR_DIFFERS"
       ],
       "diagnostic": "",
@@ -219,7 +211,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -240,7 +232,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-foc6qr9a/test_asyncgen.py:45:4: error: function captures 'gen', which has no closure cell here [yield]",
+      "diagnostic": "/tmp/pyc-measure-viq11af4/test_asyncgen.py:45:4: error: function captures 'gen', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -250,11 +242,7 @@
     {
       "case": "Lib/test/test_atexit.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_atexit.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -262,7 +250,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -271,7 +259,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-303qwr0a/test_audit.py:23:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-zgbub9z7/test_audit.py:23:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed",
         "heap_address"
@@ -282,10 +270,7 @@
     {
       "case": "Lib/test/test_augassign.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_augassign.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -293,16 +278,13 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_base64.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_base64.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -310,7 +292,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -335,7 +317,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-xeyipqwa/test_bdb.py:588:8: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/tmp/pyc-measure-9263j6uz/test_bdb.py:588:8: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
@@ -390,7 +372,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-lto0qi17/test_binop.py:335:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-qjka_hep/test_binop.py:335:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -400,10 +382,7 @@
     {
       "case": "Lib/test/test_bisect.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bisect.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -411,16 +390,13 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_bool.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bool.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -428,7 +404,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -468,7 +444,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-s15a0ryo/test_build_details.py:137:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-l1_z05p5/test_build_details.py:137:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -479,7 +455,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/tmp.sx0uzhXYYC/mod.ll:62411:42: error: use of undefined value '%v29'",
+      "diagnostic": "/tmp/tmp.b7NJwHSUDK/mod.ll:62470:42: error: use of undefined value '%v29'",
       "normalizers": [
         "elapsed"
       ],
@@ -492,7 +468,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-3f12d_bc/test_bytes.py:35:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-yg4q6fw7/test_bytes.py:35:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -502,9 +478,7 @@
     {
       "case": "Lib/test/test_bz2.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bz2.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -518,11 +492,7 @@
     {
       "case": "Lib/test/test_c_locale_coercion.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_c_locale_coercion.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -530,16 +500,13 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_calendar.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_calendar.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -547,7 +514,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -556,7 +523,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-u90psglv/test_call.py:910:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/tmp/pyc-measure-90hpu67d/test_call.py:910:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -583,7 +550,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-8zjksbls/test_class.py:806:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-0602a109/test_class.py:806:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -596,7 +563,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-wu9_hhee/test_clinic.py:3292:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/tmp/pyc-measure-sxao7q75/test_clinic.py:3292:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -604,10 +571,7 @@
     {
       "case": "Lib/test/test_cmath.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_cmath.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -615,14 +579,13 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_cmd.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_cmd.py",
       "flags": [
-        "EXIT_DIFFERS",
         "STDERR_DIFFERS"
       ],
       "diagnostic": "",
@@ -632,7 +595,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -652,17 +615,15 @@
     {
       "case": "Lib/test/test_cmd_line_script.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_cmd_line_script.py",
-      "flags": [
-        "TIMEOUT"
-      ],
-      "diagnostic": "the binary did not finish within 60s",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": -1
+        "subject": 0
       }
     },
     {
@@ -671,7 +632,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-ulw7snjp/test_code.py:624:13: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
+      "diagnostic": "/tmp/pyc-measure-qbxhuuqt/test_code.py:624:13: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -695,10 +656,7 @@
     {
       "case": "Lib/test/test_codeccallbacks.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_codeccallbacks.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -706,7 +664,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -869,7 +827,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-fbcuox9g/test_codecs.py:29:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-su_okn9c/test_codecs.py:29:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -896,7 +854,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-g9aribo1/test_collections.py:1212:36: error: cannot compile yield yet [yield]",
+      "diagnostic": "/tmp/pyc-measure-aqa2s1_j/test_collections.py:1212:36: error: cannot compile yield yet [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -920,10 +878,7 @@
     {
       "case": "Lib/test/test_compare.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_compare.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -931,7 +886,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -940,7 +895,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-fnhn8lvf/test_compile.py:1224:12: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-vv95ou8q/test_compile.py:1224:12: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
@@ -953,7 +908,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-866xk3cb/test_compileall.py:480:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-b89nthu7/test_compileall.py:480:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -1033,7 +988,6 @@
       "case": "Lib/test/test_context.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_context.py",
       "flags": [
-        "EXIT_DIFFERS",
         "STDERR_DIFFERS"
       ],
       "diagnostic": "",
@@ -1043,7 +997,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -1082,7 +1036,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-9l1cp7pf/test_copy.py:98:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-fhr0qzx1/test_copy.py:98:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -1109,7 +1063,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-lb2cxoxo/test_coroutines.py:1223:8: error: function captures 'Manager', which has no closure cell here [yield]",
+      "diagnostic": "/tmp/pyc-measure-cepy2tbd/test_coroutines.py:1223:8: error: function captures 'Manager', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -1139,7 +1093,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-xhq2pt5e/test_crossinterp.py:1504:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-z_ft7tff/test_crossinterp.py:1504:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -1147,10 +1101,7 @@
     {
       "case": "Lib/test/test_csv.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_csv.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -1158,19 +1109,16 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_curses.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_curses.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
@@ -1341,7 +1289,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-ril03pgu/test_descr.py:478:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-ry78y90o/test_descr.py:478:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -1386,8 +1334,7 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
@@ -1416,10 +1363,7 @@
     {
       "case": "Lib/test/test_dictviews.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dictviews.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -1427,16 +1371,13 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_difflib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_difflib.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -1444,7 +1385,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -1453,7 +1394,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-np7f46ve/test_dis.py:1481:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/tmp/pyc-measure-w5bdqv99/test_dis.py:1481:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -1501,8 +1442,7 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
@@ -1516,7 +1456,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-igbmdgpa/test_dynamicclassattribute.py:85:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-hnswqbkw/test_dynamicclassattribute.py:85:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -1526,11 +1466,7 @@
     {
       "case": "Lib/test/test_eintr.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_eintr.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -1538,7 +1474,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -1561,7 +1497,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-k0ngarhr/test_enum.py:246:4: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-2sl9vntc/test_enum.py:246:4: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -1585,10 +1521,7 @@
     {
       "case": "Lib/test/test_eof.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_eof.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -1596,7 +1529,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -1633,7 +1566,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-yok117u9/test_except_star.py:25:12: error: cannot compile try/except* yet [try/except*]",
+      "diagnostic": "/tmp/pyc-measure-v9bherak/test_except_star.py:25:12: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
@@ -1646,7 +1579,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-p9hzmku3/test_exception_group.py:0:0: error: 'leaf_generator' freevars ('leaf_generator',) are not the same SET as symtable () [GeneratorExpressionError]",
+      "diagnostic": "/tmp/pyc-measure-hpwdde1s/test_exception_group.py:0:0: error: 'leaf_generator' freevars ('leaf_generator',) are not the same SET as symtable () [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -1673,7 +1606,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-ae_fs0fx/test_exception_variations.py:303:8: error: cannot compile try/except* yet [try/except*]",
+      "diagnostic": "/tmp/pyc-measure-cf_k7a3v/test_exception_variations.py:303:8: error: cannot compile try/except* yet [try/except*]",
       "normalizers": [
         "elapsed"
       ],
@@ -1686,7 +1619,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-nqw92c9d/test_exceptions.py:1411:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-6418c3uw/test_exceptions.py:1411:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -1714,31 +1647,31 @@
       "case": "Lib/test/test_external_inspection.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_external_inspection.py",
       "flags": [
-        "DID_NOT_COMPILE"
-      ],
-      "diagnostic": "/tmp/pyc-measure-1_d4otwi/test_external_inspection.py:299:39: error: generator expression captures 'id_to_task', which has no closure cell here [generator expressions]",
-      "normalizers": [
-        "elapsed"
-      ],
-      "oracle_varied": false,
-      "exit": null
-    },
-    {
-      "case": "Lib/test/test_faulthandler.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_faulthandler.py",
-      "flags": [
         "EXIT_DIFFERS",
         "STDERR_DIFFERS"
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
         "subject": 1
+      }
+    },
+    {
+      "case": "Lib/test/test_faulthandler.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_faulthandler.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [
+        "elapsed"
+      ],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
       }
     },
     {
@@ -1775,10 +1708,7 @@
     {
       "case": "Lib/test/test_file_eintr.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_file_eintr.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -1786,7 +1716,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -1821,16 +1751,17 @@
       "case": "Lib/test/test_fileio.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fileio.py",
       "flags": [
-        "TIMEOUT"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "the binary did not finish within 60s",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": -1
+        "subject": 1
       }
     },
     {
@@ -1856,7 +1787,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/tmp.oYa3mKvzVg/mod.ll:4279:3: error: instruction forward referenced with type 'ptr'",
+      "diagnostic": "/tmp/tmp.rXyXIKoOiw/mod.ll:4279:3: error: instruction forward referenced with type 'ptr'",
       "normalizers": [
         "elapsed"
       ],
@@ -1911,16 +1842,17 @@
       "case": "Lib/test/test_fork1.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fork1.py",
       "flags": [
-        "TIMEOUT"
+        "ORACLE_UNSTABLE",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "the binary did not finish within 60s",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": false,
+      "oracle_varied": true,
       "exit": {
         "oracle": 0,
-        "subject": -1
+        "subject": 0
       }
     },
     {
@@ -1948,7 +1880,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-2hr21a58/test_fractions.py:389:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-tfpk3n4v/test_fractions.py:389:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -2040,7 +1972,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-12s8adle/test_functools.py:797:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/tmp/pyc-measure-t4mufp9_/test_functools.py:797:8: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -2053,7 +1985,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/tmp.bk7eOZU5FD/mod.ll:5323:43: error: use of undefined value '%v70'",
+      "diagnostic": "/tmp/tmp.0E6ddEwlKU/mod.ll:5323:43: error: use of undefined value '%v70'",
       "normalizers": [
         "elapsed"
       ],
@@ -2094,7 +2026,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-o2hsrqr5/test_generators.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
+      "diagnostic": "/tmp/pyc-measure-5x4ljj6u/test_generators.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -2107,7 +2039,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-qd9triy9/test_genericalias.py:555:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/tmp/pyc-measure-eadc1ub2/test_genericalias.py:555:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [
         "elapsed"
       ],
@@ -2120,7 +2052,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-vb9mvlqc/test_genericclass.py:128:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-90ichu7s/test_genericclass.py:128:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -2194,7 +2126,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-dz3skvkb/test_getpath.py:979:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/tmp/pyc-measure-66difng3/test_getpath.py:979:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -2219,10 +2151,7 @@
     {
       "case": "Lib/test/test_glob.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_glob.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2230,7 +2159,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -2239,7 +2168,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-m90zfm1j/test_global.py:119:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/tmp/pyc-measure-if5ho2an/test_global.py:119:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [
         "elapsed"
       ],
@@ -2252,7 +2181,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-glf3fb7e/test_grammar.py:264:0: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-tcnhqvjg/test_grammar.py:264:0: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
@@ -2262,10 +2191,7 @@
     {
       "case": "Lib/test/test_graphlib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_graphlib.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2273,7 +2199,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -2293,10 +2219,7 @@
     {
       "case": "Lib/test/test_gzip.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_gzip.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2304,16 +2227,13 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_hash.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_hash.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2321,7 +2241,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -2344,10 +2264,7 @@
     {
       "case": "Lib/test/test_heapq.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_heapq.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2355,7 +2272,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -2364,7 +2281,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-krw2_gh7/test_hmac.py:1058:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-7sxqfkst/test_hmac.py:1058:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
@@ -2527,7 +2444,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-4w191vj1/test_io.py:70:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-wa8jzsb1/test_io.py:70:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -2565,10 +2482,7 @@
     {
       "case": "Lib/test/test_isinstance.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_isinstance.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2576,7 +2490,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -2585,7 +2499,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/tmp.Hbl8e7AZYx/mod.ll:42134:57: error: '%v8' defined with type 'i32' but expected 'ptr'",
+      "diagnostic": "/tmp/tmp.TENyc5jhrW/mod.ll:42240:57: error: '%v9' defined with type 'i32' but expected 'ptr'",
       "normalizers": [
         "elapsed"
       ],
@@ -2610,16 +2524,17 @@
       "case": "Lib/test/test_itertools.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_itertools.py",
       "flags": [
-        "TIMEOUT"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "the binary did not finish within 60s",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": -1
+        "subject": 1
       }
     },
     {
@@ -2642,7 +2557,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-rz3vvezt/test_keywordonlyarg.py:157:8: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
+      "diagnostic": "/tmp/pyc-measure-rwob0f43/test_keywordonlyarg.py:157:8: error: cannot compile positional-only or keyword-only lambda parameters yet [positional-only or keyword-only lambda parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -2690,10 +2605,7 @@
     {
       "case": "Lib/test/test_linecache.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_linecache.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2701,7 +2613,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -2718,7 +2630,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": -11
       }
     },
     {
@@ -2756,10 +2668,7 @@
     {
       "case": "Lib/test/test_locale.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_locale.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2767,7 +2676,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -2776,7 +2685,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-fpj91w0f/test_logging.py:3906:16: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-qkjt05fy/test_logging.py:3906:16: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
@@ -2789,7 +2698,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-8xh40qi3/test_long.py:1277:20: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/tmp/pyc-measure-z7bufwca/test_long.py:1277:20: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
@@ -2827,10 +2736,7 @@
     {
       "case": "Lib/test/test_mailbox.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_mailbox.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2838,7 +2744,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -2940,10 +2846,7 @@
     {
       "case": "Lib/test/test_mimetypes.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_mimetypes.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2951,7 +2854,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -2974,7 +2877,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-e0u18kpw/test_mmap.py:381:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/tmp/pyc-measure-wp8msza5/test_mmap.py:381:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
@@ -3001,7 +2904,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-ckab_3wb/test_monitoring.py:1008:12: error: function captures 'async_generator', which has no closure cell here [yield]",
+      "diagnostic": "/tmp/pyc-measure-pv09xmn7/test_monitoring.py:1008:12: error: function captures 'async_generator', which has no closure cell here [yield]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -3041,7 +2944,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-r19tofmv/test_named_expressions.py:521:25: error: generator expression captures 'lastNum', which has no closure cell here [generator expressions]",
+      "diagnostic": "/tmp/pyc-measure-u75mw540/test_named_expressions.py:521:25: error: generator expression captures 'lastNum', which has no closure cell here [generator expressions]",
       "normalizers": [
         "elapsed"
       ],
@@ -3113,7 +3016,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-e4468z68/test_opcache.py:94:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-yncmgpf7/test_opcache.py:94:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -3126,7 +3029,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-9w4vhd1x/test_opcodes.py:53:16: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-2ab9ttr8/test_opcodes.py:53:16: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
@@ -3153,7 +3056,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-seosj325/test_operator.py:677:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-oh2ooogc/test_operator.py:677:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -3183,7 +3086,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-kff9gj65/test_optparse.py:1502:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-64po2whf/test_optparse.py:1502:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -3213,7 +3116,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-4b9x9vhz/test_os.py:4197:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-2wnf7dfa/test_os.py:4197:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -3240,7 +3143,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-goycqh66/test_patma.py:14:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-sh3pa_i3/test_patma.py:14:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -3267,7 +3170,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-6per5zzs/test_peepholer.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
+      "diagnostic": "/tmp/pyc-measure-qcv04p_m/test_peepholer.py:0:0: error: 3 generator expressions but 4 symtable scopes; refusing to guess which closure belongs to which [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -3329,7 +3232,8 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed"
+        "elapsed",
+        "heap_address"
       ],
       "oracle_varied": false,
       "exit": {
@@ -3401,11 +3305,7 @@
     {
       "case": "Lib/test/test_platform.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_platform.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3413,7 +3313,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3447,10 +3347,7 @@
     {
       "case": "Lib/test/test_popen.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_popen.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3458,7 +3355,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3484,7 +3381,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-t90fqi_2/test_positional_only_arg.py:11:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/tmp/pyc-measure-_mfsj_5c/test_positional_only_arg.py:11:0: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -3497,7 +3394,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/tmp.AAOxU4aY6p/mod.ll:72875:3: error: instruction forward referenced with type 'ptr'",
+      "diagnostic": "/tmp/tmp.F3QOsZmQMz/mod.ll:72875:3: error: instruction forward referenced with type 'ptr'",
       "normalizers": [
         "elapsed"
       ],
@@ -3507,10 +3404,7 @@
     {
       "case": "Lib/test/test_posixpath.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_posixpath.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3518,7 +3412,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3541,7 +3435,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-sekm9383/test_pprint.py:75:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-zns2_evk/test_pprint.py:75:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
@@ -3618,9 +3512,7 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pty.py",
       "flags": [
         "ORACLE_UNSTABLE",
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
+        "STDOUT_DIFFERS"
       ],
       "diagnostic": "",
       "normalizers": [
@@ -3629,7 +3521,7 @@
       "oracle_varied": true,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3666,7 +3558,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-azwarwxe/test_py_compile.py:20:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-rismjk6w/test_py_compile.py:20:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -3693,7 +3585,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-eyp5h619/test_pyexpat.py:1106:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
+      "diagnostic": "/tmp/pyc-measure-hjlk_lu5/test_pyexpat.py:1106:4: error: cannot compile positional-only parameters yet [positional-only parameters]",
       "normalizers": [
         "elapsed"
       ],
@@ -3709,8 +3601,7 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
@@ -3721,10 +3612,7 @@
     {
       "case": "Lib/test/test_quopri.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_quopri.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3732,7 +3620,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3741,7 +3629,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-x3a9z6ie/test_raise.py:85:16: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/tmp/pyc-measure-d0bqvpvw/test_raise.py:85:16: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
@@ -3768,10 +3656,7 @@
     {
       "case": "Lib/test/test_range.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_range.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3779,7 +3664,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3802,10 +3687,7 @@
     {
       "case": "Lib/test/test_readline.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_readline.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3813,7 +3695,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3822,7 +3704,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-1w2htfa6/test_regrtest.py:577:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-hnmo15sg/test_regrtest.py:577:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
@@ -3832,26 +3714,7 @@
     {
       "case": "Lib/test/test_remote_pdb.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_remote_pdb.py",
-      "flags": [
-        "TIMEOUT"
-      ],
-      "diagnostic": "the binary did not finish within 60s",
-      "normalizers": [
-        "elapsed"
-      ],
-      "oracle_varied": false,
-      "exit": {
-        "oracle": 0,
-        "subject": -1
-      }
-    },
-    {
-      "case": "Lib/test/test_repl.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_repl.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3859,7 +3722,21 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
+      }
+    },
+    {
+      "case": "Lib/test/test_repl.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_repl.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [
+        "elapsed"
+      ],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
       }
     },
     {
@@ -3882,10 +3759,7 @@
     {
       "case": "Lib/test/test_resource.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_resource.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3893,16 +3767,13 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_richcmp.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_richcmp.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3910,7 +3781,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3967,7 +3838,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-q7ofdshy/test_sax.py:844:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-2ruoy2q1/test_sax.py:844:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -3980,7 +3851,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-g8y0weuw/test_sched.py:20:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-q6o69zg_/test_sched.py:20:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -3996,8 +3867,7 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
@@ -4008,10 +3878,7 @@
     {
       "case": "Lib/test/test_script_helper.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_script_helper.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4019,7 +3886,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -4039,11 +3906,7 @@
     {
       "case": "Lib/test/test_select.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_select.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4051,7 +3914,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -4074,7 +3937,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-xjhbd5l7/test_set.py:0:0: error: 'powerset' freevars ('powerset',) are not the same SET as symtable () [GeneratorExpressionError]",
+      "diagnostic": "/tmp/pyc-measure-vu05a837/test_set.py:0:0: error: 'powerset' freevars ('powerset',) are not the same SET as symtable () [GeneratorExpressionError]",
       "normalizers": [
         "elapsed"
       ],
@@ -4119,10 +3982,7 @@
     {
       "case": "Lib/test/test_shlex.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_shlex.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4130,7 +3990,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -4139,7 +3999,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-sxob6_c1/test_shutil.py:113:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-5oas7ftq/test_shutil.py:113:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -4168,10 +4028,7 @@
     {
       "case": "Lib/test/test_slice.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_slice.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4179,7 +4036,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -4213,10 +4070,7 @@
     {
       "case": "Lib/test/test_socket.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_socket.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4224,7 +4078,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -4250,19 +4104,16 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sort.py",
       "flags": [
         "ORACLE_UNSTABLE",
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
+        "STDOUT_DIFFERS"
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": true,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -4287,7 +4138,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-d1lnkwwh/test_ssl.py:160:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-jft1zgpd/test_ssl.py:160:8: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -4336,7 +4187,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-mvan4nw7/test_statistics.py:2146:12: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-s5dm3886/test_statistics.py:2146:12: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
@@ -4451,10 +4302,7 @@
     {
       "case": "Lib/test/test_structseq.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_structseq.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4462,7 +4310,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -4471,7 +4319,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-apjp6y42/test_subclassinit.py:39:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-44i4se5c/test_subclassinit.py:39:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -4498,7 +4346,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-s7wseon9/test_super.py:163:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-vboqht5x/test_super.py:163:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -4556,16 +4404,17 @@
       "case": "Lib/test/test_sys.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sys.py",
       "flags": [
-        "TIMEOUT"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "the binary did not finish within 60s",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": -1
+        "subject": 1
       }
     },
     {
@@ -4591,7 +4440,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-jxm8lqzz/test_sys_settrace.py:579:8: error: function captures 'AsyncIteratorWrapper', which has no closure cell here [yield]",
+      "diagnostic": "/tmp/pyc-measure-6r1qrp9e/test_sys_settrace.py:579:8: error: function captures 'AsyncIteratorWrapper', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -4632,7 +4481,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-jh6g5e_7/test_tarfile.py:5076:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-rsqi9j2l/test_tarfile.py:5076:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -4642,10 +4491,7 @@
     {
       "case": "Lib/test/test_tcl.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tcl.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4653,16 +4499,13 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_tempfile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tempfile.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4670,7 +4513,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -4708,7 +4551,7 @@
         "DID_NOT_COMPILE",
         "ORACLE_UNSTABLE"
       ],
-      "diagnostic": "/tmp/pyc-measure-hcj1vjfs/test_thread.py:424:8: error: no binding for nonlocal 'pid' found [nonlocal]",
+      "diagnostic": "/tmp/pyc-measure-4n8bzgvz/test_thread.py:424:8: error: no binding for nonlocal 'pid' found [nonlocal]",
       "normalizers": [
         "elapsed"
       ],
@@ -4768,26 +4611,7 @@
     {
       "case": "Lib/test/test_threading_local.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_threading_local.py",
-      "flags": [
-        "TIMEOUT"
-      ],
-      "diagnostic": "the binary did not finish within 60s",
-      "normalizers": [
-        "elapsed"
-      ],
-      "oracle_varied": false,
-      "exit": {
-        "oracle": 0,
-        "subject": -1
-      }
-    },
-    {
-      "case": "Lib/test/test_threadsignals.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_threadsignals.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4795,7 +4619,21 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
+      }
+    },
+    {
+      "case": "Lib/test/test_threadsignals.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_threadsignals.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [
+        "elapsed"
+      ],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
       }
     },
     {
@@ -4838,7 +4676,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-t1mzkkcq/test_timeout.py:20:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-q757uc7c/test_timeout.py:20:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -4881,7 +4719,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-fvyb2ntm/test_traceback.py:2180:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/tmp/pyc-measure-10x2rzgi/test_traceback.py:2180:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
@@ -4892,16 +4730,17 @@
       "case": "Lib/test/test_tracemalloc.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tracemalloc.py",
       "flags": [
-        "TIMEOUT"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "the binary did not finish within 60s",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": -1
+        "subject": 1
       }
     },
     {
@@ -4910,7 +4749,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-svf8lyv_/test_tstring.py:9:12: error: cannot compile t-strings yet [t-strings]",
+      "diagnostic": "/tmp/pyc-measure-9eox97e0/test_tstring.py:9:12: error: cannot compile t-strings yet [t-strings]",
       "normalizers": [
         "elapsed"
       ],
@@ -4954,7 +4793,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-xot18tk7/test_type_aliases.py:74:8: error: cannot compile type aliases yet [type aliases]",
+      "diagnostic": "/tmp/pyc-measure-525k2tdi/test_type_aliases.py:74:8: error: cannot compile type aliases yet [type aliases]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -4965,7 +4804,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-esohr77n/test_type_annotations.py:54:12: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-nvg8r4fv/test_type_annotations.py:54:12: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -5007,7 +4846,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-mkfwj_3m/test_type_params.py:0:0: error: no symtable scope for generator function 'generator1' at line 1041 [GeneratorExpressionError]",
+      "diagnostic": "/tmp/pyc-measure-fohwhbyx/test_type_params.py:0:0: error: no symtable scope for generator function 'generator1' at line 1041 [GeneratorExpressionError]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -5018,7 +4857,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-spj5quux/test_typechecks.py:19:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-3yfromui/test_typechecks.py:19:0: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -5031,7 +4870,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-rd_p9tsl/test_types.py:784:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
+      "diagnostic": "/tmp/pyc-measure-1n4akk7n/test_types.py:784:8: error: cannot compile metaclass= and class keywords yet [metaclass= and class keywords]",
       "normalizers": [
         "elapsed"
       ],
@@ -5044,7 +4883,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-t_d4692n/test_typing.py:178:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-0tj9v48d/test_typing.py:178:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [
         "elapsed"
       ],
@@ -5054,10 +4893,7 @@
     {
       "case": "Lib/test/test_ucn.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_ucn.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -5065,7 +4901,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -5198,7 +5034,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-m3uasw34/test_unparse.py:16:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-brudisya/test_unparse.py:16:4: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -5208,10 +5044,7 @@
     {
       "case": "Lib/test/test_urllib.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllib.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -5219,16 +5052,13 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_urllib2.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllib2.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -5236,15 +5066,13 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_urllib2_localnet.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_urllib2_localnet.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -5359,10 +5187,7 @@
     {
       "case": "Lib/test/test_utf8_mode.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_utf8_mode.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -5370,7 +5195,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -5393,7 +5218,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-67yu5o1m/test_uuid.py:779:16: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-yl6yc92t/test_uuid.py:779:16: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -5403,9 +5228,7 @@
     {
       "case": "Lib/test/test_wait3.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_wait3.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -5545,7 +5368,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-9wi6kd5h/test_with.py:614:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
+      "diagnostic": "/tmp/pyc-measure-jpamvetc/test_with.py:614:12: error: cannot compile return/break/continue inside with yet [return/break/continue inside with]",
       "normalizers": [
         "elapsed"
       ],
@@ -5567,10 +5390,7 @@
     {
       "case": "Lib/test/test_wsgiref.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_wsgiref.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -5578,7 +5398,7 @@
       "oracle_varied": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -5613,7 +5433,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-ovb7kmk4/test_xml_etree.py:198:12: error: cannot compile raise ... from yet [raise ... from]",
+      "diagnostic": "/tmp/pyc-measure-bz4jlvu0/test_xml_etree.py:198:12: error: cannot compile raise ... from yet [raise ... from]",
       "normalizers": [
         "elapsed"
       ],
@@ -5643,7 +5463,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/tmp.e442WUHy03/mod.ll:33355:12: error: use of undefined value '%bb56'",
+      "diagnostic": "/tmp/tmp.cKPxe4gVpr/mod.ll:33355:12: error: use of undefined value '%bb56'",
       "normalizers": [
         "elapsed"
       ],
@@ -5670,7 +5490,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-3wf5dolk/test_xxlimited.py:10:4: error: cannot compile annotated assignment yet [annotated assignment]",
+      "diagnostic": "/tmp/pyc-measure-z4oiapx0/test_xxlimited.py:10:4: error: cannot compile annotated assignment yet [annotated assignment]",
       "normalizers": [],
       "oracle_varied": false,
       "exit": null
@@ -5695,7 +5515,7 @@
       "flags": [
         "DID_NOT_COMPILE"
       ],
-      "diagnostic": "/tmp/pyc-measure-j_3n6gpf/test_yield_from.py:640:8: error: function captures 'LunchError', which has no closure cell here [yield]",
+      "diagnostic": "/tmp/pyc-measure-g0wvwzvo/test_yield_from.py:640:8: error: function captures 'LunchError', which has no closure cell here [yield]",
       "normalizers": [
         "elapsed"
       ],
@@ -5720,23 +5540,6 @@
       "case": "Lib/test/test_zipfile64.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zipfile64.py",
       "flags": [
-        "TIMEOUT"
-      ],
-      "diagnostic": "the binary did not finish within 60s",
-      "normalizers": [
-        "elapsed"
-      ],
-      "oracle_varied": false,
-      "exit": {
-        "oracle": 1,
-        "subject": -1
-      }
-    },
-    {
-      "case": "Lib/test/test_zipimport.py",
-      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zipimport.py",
-      "flags": [
-        "STDOUT_DIFFERS",
         "STDERR_DIFFERS"
       ],
       "diagnostic": "",
@@ -5750,13 +5553,24 @@
       }
     },
     {
+      "case": "Lib/test/test_zipimport.py",
+      "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zipimport.py",
+      "flags": [
+        "DID_NOT_COMPILE"
+      ],
+      "diagnostic": "error: unable to open output file '/tmp/support-eafbd5.o': 'No space left on device'",
+      "normalizers": [
+        "elapsed"
+      ],
+      "oracle_varied": false,
+      "exit": null
+    },
+    {
       "case": "Lib/test/test_zipimport_support.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zipimport_support.py",
       "flags": [
         "ORACLE_UNSTABLE",
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
+        "STDOUT_DIFFERS"
       ],
       "diagnostic": "",
       "normalizers": [
@@ -5766,7 +5580,7 @@
       "oracle_varied": true,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
