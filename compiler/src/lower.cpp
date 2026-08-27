@@ -559,7 +559,13 @@ private:
                 [&](const Slice& n){ if (n.lower && *n.lower) go(**n.lower);
                                      if (n.upper && *n.upper) go(**n.upper);
                                      if (n.step && *n.step) go(**n.step); },
-                [&](const NamedExpr& n){ go(*n.value); },
+                // The TARGET as well as the value. A walrus inside a
+                // comprehension WRITES to the enclosing scope, so the name has
+                // to be captured for the write to land there -- capturing only
+                // what is read left `{k: (v := k*2) for k in ...}` writing to a
+                // local slot of the synthetic function, and the enclosing `v`
+                // was never assigned at all.
+                [&](const NamedExpr& n){ go(*n.value); go(*n.target); },
                 [&](const Lambda& n){ go(*n.body); },
                 [&](const ListComp& n){ go(*n.elt); for (const comprehension& c : n.generators) go(*c.iter); },
                 [&](const SetComp& n){ go(*n.elt); for (const comprehension& c : n.generators) go(*c.iter); },

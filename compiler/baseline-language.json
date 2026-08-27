@@ -13,10 +13,10 @@
       "-O0"
     ]
   },
-  "total": 772,
-  "passing": 762,
-  "clean": 755,
-  "pass_rate": 98.70466321243524,
+  "total": 774,
+  "passing": 764,
+  "clean": 757,
+  "pass_rate": 98.70801033591731,
   "counts": {
     "STDOUT_DIFFERS": 10,
     "EXIT_DIFFERS": 7,
@@ -9946,6 +9946,19 @@
       }
     },
     {
+      "case": "nested_reads_coverage.py",
+      "path": "verify/corpus/language/nested_reads_coverage.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
       "case": "posonly_params.py",
       "path": "verify/corpus/language/posonly_params.py",
       "flags": [],
@@ -10080,6 +10093,19 @@
       "exit": {
         "oracle": 0,
         "subject": 1
+      }
+    },
+    {
+      "case": "walrus_scopes.py",
+      "path": "verify/corpus/language/walrus_scopes.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
       }
     },
     {

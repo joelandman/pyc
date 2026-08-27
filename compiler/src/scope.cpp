@@ -13,6 +13,7 @@
 //
 // Exhaustive over stmt by construction: a binding form CPython adds must break
 // this build rather than silently not binding (I4).
+#include <functional>
 #include "pyc/ast/generated.hpp"
 
 #include <set>
@@ -52,19 +53,87 @@ struct Collector {
         }, e.v);
     }
 
+    // PEP 572: a walrus binds in the CONTAINING scope, and inside a
+    // comprehension that means the scope containing the comprehension -- which
+    // is this one. `target()` already handles NamedExpr, but it is only ever
+    // reached for an assignment TARGET, so a walrus buried in an expression
+    // was never seen at all.
+    //
+    // Not descended into: def, class and lambda bodies are separate scopes and
+    // a walrus there binds in THEM. Comprehensions and generator expressions
+    // are descended into precisely because they are the case PEP 572 calls out.
+    void walrus(const expr& e) {
+        std::function<void(const expr&)> go = [&](const expr& x) {
+            std::visit(ov{
+                [&](const NamedExpr& n){ if (n.target) target(*n.target);
+                                         go(*n.value); },
+                [&](const BinOp& n){ go(*n.left); go(*n.right); },
+                [&](const BoolOp& n){ for (const expr& v : n.values) go(v); },
+                [&](const UnaryOp& n){ go(*n.operand); },
+                [&](const Compare& n){ go(*n.left);
+                                       for (const expr& v : n.comparators) go(v); },
+                [&](const Call& n){ go(*n.func); for (const expr& v : n.args) go(v);
+                                    for (const keyword& k : n.keywords) go(*k.value); },
+                [&](const Attribute& n){ go(*n.value); },
+                [&](const Subscript& n){ go(*n.value); go(*n.slice); },
+                [&](const IfExp& n){ go(*n.test); go(*n.body); go(*n.orelse); },
+                [&](const Tuple& n){ for (const expr& v : n.elts) go(v); },
+                [&](const List& n){ for (const expr& v : n.elts) go(v); },
+                [&](const Set& n){ for (const expr& v : n.elts) go(v); },
+                [&](const Dict& n){ for (const auto& k : n.keys) if (k && *k) go(**k);
+                                    for (const expr& v : n.values) go(v); },
+                [&](const Starred& n){ go(*n.value); },
+                [&](const Slice& n){ if (n.lower && *n.lower) go(**n.lower);
+                                     if (n.upper && *n.upper) go(**n.upper);
+                                     if (n.step && *n.step) go(**n.step); },
+                [&](const Await& n){ go(*n.value); },
+                [&](const Yield& n){ if (n.value) go(**n.value); },
+                [&](const YieldFrom& n){ go(*n.value); },
+                [&](const FormattedValue& n){ go(*n.value); },
+                [&](const JoinedStr& n){ for (const expr& v : n.values) go(v); },
+                [&](const TemplateStr& n){ for (const expr& v : n.values) go(v); },
+                [&](const Interpolation& n){ go(*n.value); },
+                [&](const ListComp& n){ comp_walrus(n.generators, &*n.elt, nullptr, go); },
+                [&](const SetComp& n){ comp_walrus(n.generators, &*n.elt, nullptr, go); },
+                [&](const GeneratorExp& n){ comp_walrus(n.generators, &*n.elt, nullptr, go); },
+                [&](const DictComp& n){ comp_walrus(n.generators, &*n.value, &*n.key, go); },
+                [&](const Lambda&){},          // its own scope
+                [&](const Name&){}, [&](const Constant&){},
+            }, x.v);
+        };
+        go(e);
+    }
+
+    template <class F>
+    void comp_walrus(const std::vector<comprehension>& gens, const expr* elt,
+                     const expr* key, F&& go) {
+        if (elt) go(*elt);
+        if (key) go(*key);
+        for (const comprehension& g : gens) {
+            go(*g.iter);
+            for (const expr& c : g.ifs) go(c);
+        }
+    }
+
     void block(const std::vector<stmt>& body) { for (const stmt& s : body) one(s); }
 
     void one(const stmt& s) {
         std::visit(ov{
-            [&](const Assign& n)    { for (const expr& t : n.targets) target(t); },
-            [&](const AugAssign& n) { if (n.target) target(*n.target); },
-            [&](const AnnAssign& n) { if (n.target && n.value) target(*n.target); },
+            [&](const Assign& n)    { for (const expr& t : n.targets) target(t);
+                                      walrus(*n.value); },
+            [&](const AugAssign& n) { if (n.target) target(*n.target);
+                                      walrus(*n.value); },
+            [&](const AnnAssign& n) { if (n.target && n.value) target(*n.target);
+                                      if (n.value) walrus(**n.value); },
             [&](const For& n)       { if (n.target) target(*n.target);
+                                      walrus(*n.iter);
                                       block(n.body); block(n.orelse); },
             [&](const AsyncFor& n)  { if (n.target) target(*n.target);
                                       block(n.body); block(n.orelse); },
-            [&](const While& n)     { block(n.body); block(n.orelse); },
-            [&](const If& n)        { block(n.body); block(n.orelse); },
+            [&](const While& n)     { walrus(*n.test);
+                                      block(n.body); block(n.orelse); },
+            [&](const If& n)        { walrus(*n.test);
+                                      block(n.body); block(n.orelse); },
             [&](const With& n)      { for (const withitem& w : n.items)
                                           if (w.optional_vars) target(**w.optional_vars);
                                       block(n.body); },
@@ -90,7 +159,9 @@ struct Collector {
             [&](const Nonlocal& n)    { for (const std::string& x : n.names) declared_nonlocal.insert(x); },
             [&](const TypeAlias& n)   { if (n.name) target(*n.name); },
             [&](const Delete& n)      { for (const expr& t : n.targets) target(t); },
-            [&](const Return&){}, [&](const Expr&){}, [&](const Pass&){},
+            [&](const Return& n){ if (n.value) walrus(**n.value); },
+            [&](const Expr& n){ walrus(*n.value); },
+            [&](const Pass&){},
             [&](const Break&){}, [&](const Continue&){}, [&](const Raise&){},
             [&](const Assert&){},
         }, s.v);
@@ -187,7 +258,15 @@ struct NestedReads {
             [&](const Slice& n){ if (n.lower && *n.lower) expr_(**n.lower, inside);
                                  if (n.upper && *n.upper) expr_(**n.upper, inside);
                                  if (n.step && *n.step) expr_(**n.step, inside); },
-            [&](const NamedExpr& n){ expr_(*n.value, inside); },
+            // The TARGET counts too, and only when nested. A walrus inside a
+            // comprehension binds in the ENCLOSING scope (PEP 572) while
+            // executing in the comprehension's, so the enclosing function has
+            // to hold it in a cell for the write to be visible. Reads were
+            // already collected here; the write was not, so
+            // `any((lastNum := num) == 1 for num in ...)` gave the genexp a
+            // freevar with no cell to bind it to.
+            [&](const NamedExpr& n){ expr_(*n.value, inside);
+                                     if (inside && n.target) expr_(*n.target, inside); },
             [&](const Await& n){ expr_(*n.value, inside); },
             [&](const Yield& n){ if (n.value) expr_(**n.value, inside); },
             [&](const YieldFrom& n){ expr_(*n.value, inside); },
@@ -213,14 +292,19 @@ struct NestedReads {
             // Entering a nested function: everything below is "inside".
             [&](const FunctionDef& n){ for (const stmt& y : n.body) stmt_(y, true);
                                        for (const expr& d : n.decorator_list) expr_(d, inside); },
-            [&](const AsyncFunctionDef& n){ for (const stmt& y : n.body) stmt_(y, true); },
-            [&](const ClassDef& n){ for (const stmt& y : n.body) stmt_(y, true); },
+            [&](const AsyncFunctionDef& n){ for (const stmt& y : n.body) stmt_(y, true);
+                                            for (const expr& d : n.decorator_list) expr_(d, inside); },
+            [&](const ClassDef& n){ for (const stmt& y : n.body) stmt_(y, true);
+                                    for (const expr& b : n.bases) expr_(b, inside);
+                                    for (const keyword& k : n.keywords) expr_(*k.value, inside);
+                                    for (const expr& d : n.decorator_list) expr_(d, inside); },
             [&](const Expr& n){ expr_(*n.value, inside); },
             [&](const Return& n){ if (n.value) expr_(**n.value, inside); },
             [&](const Assign& n){ expr_(*n.value, inside);
                                   for (const expr& t : n.targets) expr_(t, inside); },
             [&](const AugAssign& n){ expr_(*n.value, inside); expr_(*n.target, inside); },
-            [&](const AnnAssign& n){ if (n.value) expr_(**n.value, inside); },
+            [&](const AnnAssign& n){ if (n.value) expr_(**n.value, inside);
+                                     expr_(*n.target, inside); },
             [&](const If& n){ expr_(*n.test, inside);
                               for (const stmt& y : n.body) stmt_(y, inside);
                               for (const stmt& y : n.orelse) stmt_(y, inside); },
@@ -230,22 +314,52 @@ struct NestedReads {
             [&](const For& n){ expr_(*n.iter, inside); expr_(*n.target, inside);
                                for (const stmt& y : n.body) stmt_(y, inside);
                                for (const stmt& y : n.orelse) stmt_(y, inside); },
-            [&](const AsyncFor& n){ for (const stmt& y : n.body) stmt_(y, inside); },
-            [&](const With& n){ for (const withitem& w : n.items) expr_(*w.context_expr, inside);
+            [&](const AsyncFor& n){ expr_(*n.iter, inside); expr_(*n.target, inside);
+                                    for (const stmt& y : n.body) stmt_(y, inside);
+                                    for (const stmt& y : n.orelse) stmt_(y, inside); },
+            [&](const With& n){ for (const withitem& w : n.items) {
+                                    expr_(*w.context_expr, inside);
+                                    if (w.optional_vars) expr_(**w.optional_vars, inside);
+                                }
                                 for (const stmt& y : n.body) stmt_(y, inside); },
-            [&](const AsyncWith& n){ for (const stmt& y : n.body) stmt_(y, inside); },
+            [&](const AsyncWith& n){ for (const withitem& w : n.items) {
+                                         expr_(*w.context_expr, inside);
+                                         if (w.optional_vars) expr_(**w.optional_vars, inside);
+                                     }
+                                     for (const stmt& y : n.body) stmt_(y, inside); },
             [&](const Try& n){ for (const stmt& y : n.body) stmt_(y, inside);
                                for (const stmt& y : n.orelse) stmt_(y, inside);
                                for (const stmt& y : n.finalbody) stmt_(y, inside);
-                               for (const excepthandler& h : n.handlers)
-                                   for (const stmt& y : std::get<ExceptHandler>(h.v).body)
-                                       stmt_(y, inside); },
-            [&](const TryStar& n){ for (const stmt& y : n.body) stmt_(y, inside); },
+                               for (const excepthandler& h : n.handlers) {
+                                   const ExceptHandler& eh = std::get<ExceptHandler>(h.v);
+                                   // The caught TYPE is a name read like any
+                                   // other, and it was being skipped. Inside a
+                                   // nested scope that made the difference
+                                   // between a cell and no cell: `except E:`
+                                   // in a generator, with E a local of the
+                                   // enclosing function, gave the generator's
+                                   // code object a freevar that pyc had
+                                   // nothing to bind it to.
+                                   if (eh.type) expr_(**eh.type, inside);
+                                   for (const stmt& y : eh.body) stmt_(y, inside);
+                               } },
+            [&](const TryStar& n){ for (const stmt& y : n.body) stmt_(y, inside);
+                                   for (const stmt& y : n.orelse) stmt_(y, inside);
+                                   for (const stmt& y : n.finalbody) stmt_(y, inside);
+                                   for (const excepthandler& h : n.handlers) {
+                                       const ExceptHandler& eh = std::get<ExceptHandler>(h.v);
+                                       if (eh.type) expr_(**eh.type, inside);
+                                       for (const stmt& y : eh.body) stmt_(y, inside);
+                                   } },
             [&](const Match& n){ expr_(*n.subject, inside);
-                                 for (const match_case& c : n.cases)
-                                     for (const stmt& y : c.body) stmt_(y, inside); },
-            [&](const Raise& n){ if (n.exc) expr_(**n.exc, inside); },
-            [&](const Assert& n){ expr_(*n.test, inside); },
+                                 for (const match_case& c : n.cases) {
+                                     if (c.guard) expr_(**c.guard, inside);
+                                     for (const stmt& y : c.body) stmt_(y, inside);
+                                 } },
+            [&](const Raise& n){ if (n.exc) expr_(**n.exc, inside);
+                                 if (n.cause) expr_(**n.cause, inside); },
+            [&](const Assert& n){ expr_(*n.test, inside);
+                                  if (n.msg) expr_(**n.msg, inside); },
             [&](const Delete& n){ for (const expr& t : n.targets) expr_(t, inside); },
             [&](const Import&){}, [&](const ImportFrom&){}, [&](const Global&){},
             [&](const Nonlocal&){}, [&](const Pass&){}, [&](const Break&){},
