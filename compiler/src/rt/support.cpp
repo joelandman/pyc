@@ -437,21 +437,128 @@ extern "C" PyObject* pyc_rt_none(void) { Py_RETURN_NONE; }
 // and stops there, so the reference is taken explicitly.
 extern "C" PyObject* pyc_rt_ellipsis(void) { return Py_NewRef(Py_Ellipsis); }
 
-extern "C" PyObject* pyc_rt_build_class(const char* name, PyObject* bases,
-                                        PyObject* ns) {
-    // Most-derived metaclass, as type.__call__ requires: using `type`
-    // unconditionally breaks any class whose base has a custom metaclass
-    // (ABCMeta, enum.EnumMeta), and does so with a confusing error far from
-    // the cause.
-    PyObject* meta = reinterpret_cast<PyObject*>(&PyType_Type);
+// Resolve the metaclass for `class C(bases, metaclass=M, **kwds)`.
+//
+// An explicit `metaclass=` wins and is REMOVED from kwds, because it is
+// consumed by class creation and must not be forwarded to the metaclass call
+// or to __init_subclass__. Otherwise the most derived among the bases' types,
+// which is what type.__call__ requires: using `type` unconditionally breaks
+// any class whose base has a custom metaclass (ABCMeta, enum.EnumMeta), and
+// does so with a confusing error far from the cause.
+//
+// The winner must then be a subclass of every candidate. CPython raises
+// "metaclass conflict" for that, and so does this, rather than producing a
+// class whose type is silently wrong.
+extern "C" PyObject* pyc_rt_class_meta(PyObject* bases, PyObject* kwds) {
+    PyObject* meta = nullptr;
+    if (kwds) {
+        PyObject* explicit_meta = nullptr;
+        if (PyDict_GetItemStringRef(kwds, "metaclass", &explicit_meta) < 0)
+            return nullptr;
+        if (explicit_meta) {
+            if (PyDict_DelItemString(kwds, "metaclass") < 0) {
+                Py_DECREF(explicit_meta);
+                return nullptr;
+            }
+            meta = explicit_meta;                        // owned
+        }
+    }
+    if (!meta) meta = Py_NewRef(reinterpret_cast<PyObject*>(&PyType_Type));
+
+    // An explicit metaclass that is not a type at all is legal: CPython calls
+    // it directly and skips the derivation entirely.
+    if (!PyType_Check(meta)) return meta;
+
     Py_ssize_t n = PyTuple_GET_SIZE(bases);
     for (Py_ssize_t i = 0; i < n; ++i) {
         PyObject* b = PyTuple_GET_ITEM(bases, i);        // borrowed
         PyObject* bt = reinterpret_cast<PyObject*>(Py_TYPE(b));
         int sub = PyObject_IsSubclass(bt, meta);
-        if (sub < 0) return nullptr;
-        if (sub) meta = bt;
+        if (sub < 0) { Py_DECREF(meta); return nullptr; }
+        if (sub) { Py_INCREF(bt); Py_DECREF(meta); meta = bt; continue; }
+        int rev = PyObject_IsSubclass(meta, bt);
+        if (rev < 0) { Py_DECREF(meta); return nullptr; }
+        if (!rev) {
+            Py_DECREF(meta);
+            PyErr_SetString(PyExc_TypeError,
+                "metaclass conflict: the metaclass of a derived class must be "
+                "a (non-strict) subclass of the metaclasses of all its bases");
+            return nullptr;
+        }
     }
+    return meta;
+}
+
+// meta.__prepare__(name, bases, **kwds), or a plain dict when the metaclass
+// does not define it.
+//
+// This is not optional sugar. enum.EnumMeta.__prepare__ returns an _EnumDict
+// that records member order and rejects duplicates; building an enum in a
+// plain dict instead produces a class that is wrong rather than one that
+// fails, which is the outcome I1 exists to prevent.
+extern "C" PyObject* pyc_rt_class_prepare(PyObject* meta, PyObject* name,
+                                          PyObject* bases, PyObject* kwds) {
+    PyObject* prep = nullptr;
+    if (PyObject_GetOptionalAttrString(meta, "__prepare__", &prep) < 0)
+        return nullptr;
+    if (!prep) return PyDict_New();
+
+    PyObject* args = PyTuple_Pack(2, name, bases);
+    if (!args) { Py_DECREF(prep); return nullptr; }
+    PyObject* ns = PyObject_Call(prep, args, kwds);
+    Py_DECREF(args);
+    Py_DECREF(prep);
+    if (!ns) return nullptr;
+    // CPython requires a mapping here and says so plainly.
+    if (!PyMapping_Check(ns)) {
+        PyErr_Format(PyExc_TypeError,
+                     "%.200s.__prepare__() must return a mapping, not %.200s",
+                     PyType_Check(meta) ? ((PyTypeObject*)meta)->tp_name : "<metaclass>",
+                     Py_TYPE(ns)->tp_name);
+        Py_DECREF(ns);
+        return nullptr;
+    }
+    return ns;
+}
+
+// type.__new__ wraps three names when it finds a plain function under them:
+// __new__ becomes a staticmethod, __init_subclass__ and __class_getitem__
+// become classmethods. It tests PyFunction_Check, and a pyc-compiled callable
+// is a PycFuncType, not a PyFunctionObject -- so the wrapping was silently
+// skipped for every compiled class.
+//
+// The visible cost was `__init_subclass__() missing 1 required positional
+// argument: 'cls'`: unwrapped, it never received the subclass. __new__ only
+// appeared to work because a PycFunc has no descriptor binding, so it behaved
+// like a staticmethod by accident rather than by contract.
+//
+// Done here, before the metaclass runs, so the namespace it receives already
+// carries what CPython's would. Anything already wrapped, and anything that is
+// not one of ours or a real function, is left exactly as CPython leaves it.
+static int wrap_class_attr(PyObject* ns, const char* name, PyTypeObject* kind) {
+    PyObject* key = PyUnicode_FromString(name);
+    if (!key) return -1;
+    PyObject* fn = nullptr;
+    int rc = PyMapping_GetOptionalItem(ns, key, &fn);
+    if (rc < 0 || !fn) { Py_DECREF(key); return rc < 0 ? -1 : 0; }
+    if (!PyFunction_Check(fn) && !Py_IS_TYPE(fn, &PycFuncType)) {
+        Py_DECREF(fn); Py_DECREF(key); return 0;
+    }
+    PyObject* wrapped = PyObject_CallOneArg(reinterpret_cast<PyObject*>(kind), fn);
+    Py_DECREF(fn);
+    if (!wrapped) { Py_DECREF(key); return -1; }
+    int set = PyObject_SetItem(ns, key, wrapped);
+    Py_DECREF(wrapped);
+    Py_DECREF(key);
+    return set;
+}
+
+extern "C" PyObject* pyc_rt_build_class(const char* name, PyObject* bases,
+                                        PyObject* ns, PyObject* meta,
+                                        PyObject* kwds) {
+    if (wrap_class_attr(ns, "__new__", &PyStaticMethod_Type) < 0) return nullptr;
+    if (wrap_class_attr(ns, "__init_subclass__", &PyClassMethod_Type) < 0) return nullptr;
+    if (wrap_class_attr(ns, "__class_getitem__", &PyClassMethod_Type) < 0) return nullptr;
     // CPython's compiler emits `__module__ = __name__` into every class body,
     // so the namespace reaches the metaclass already carrying it. pyc did not,
     // so no compiled class had __module__ at all -- and unittest reads
@@ -478,8 +585,14 @@ extern "C" PyObject* pyc_rt_build_class(const char* name, PyObject* bases,
 
     PyObject* nm = PyUnicode_FromString(name);
     if (!nm) return nullptr;
-    PyObject* cls = PyObject_CallFunctionObjArgs(meta, nm, bases, ns, nullptr);
+    PyObject* args = PyTuple_Pack(3, nm, bases, ns);
     Py_DECREF(nm);
+    if (!args) return nullptr;
+    // kwds carries whatever the class statement wrote besides metaclass, and
+    // reaches both the metaclass and __init_subclass__ -- which is how
+    // `class C(Base, boundary=STRICT)` and `class C(Base, x=1)` work at all.
+    PyObject* cls = PyObject_Call(meta, args, kwds);
+    Py_DECREF(args);
     return cls;
 }
 

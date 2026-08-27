@@ -62,7 +62,20 @@ PyObject* pyc_rt_none(void);
 // rest of what __build_class__ does: resolve the most-derived metaclass and
 // call it. type.__new__ still runs __set_name__ and __init_subclass__, so
 // those hooks are not lost.
-PyObject* pyc_rt_build_class(const char* name, PyObject* bases, PyObject* ns);
+PyObject* pyc_rt_build_class(const char* name, PyObject* bases, PyObject* ns,
+                             PyObject* meta, PyObject* kwds);
+
+// Resolve the metaclass for a class statement. An explicit `metaclass=` wins
+// and is REMOVED from kwds; otherwise the most derived among the bases' types.
+// A conflict is a TypeError, as in CPython, never a silently wrong type.
+PyObject* pyc_rt_class_meta(PyObject* bases, PyObject* kwds);
+
+// meta.__prepare__(name, bases, **kwds), or a plain dict when absent. Required
+// for correctness, not convenience: enum.EnumMeta.__prepare__ returns an
+// _EnumDict that records member order, and a plain dict yields a wrong enum
+// rather than a failing one.
+PyObject* pyc_rt_class_prepare(PyObject* meta, PyObject* name,
+                               PyObject* bases, PyObject* kwds);
 
 // Raise. Accepts a class or an instance, as `raise` does, and always returns
 // -1 so the caller's error edge is taken.

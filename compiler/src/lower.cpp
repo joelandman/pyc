@@ -2800,8 +2800,6 @@ private:
     }
 
     bool lower_classdef(const ClassDef& n) {
-        if (!n.keywords.empty()) return unsupported("metaclass= and class keywords", n.loc);
-
         bool ok = true;
         // Bases first: they are ordinary expressions evaluated in the
         // ENCLOSING scope, before the body runs.
@@ -2817,7 +2815,46 @@ private:
             if (!ok) return false;
         }
 
-        ir::Value ns = call_capi("PyDict_New", {}, n.loc, &ok);
+        // `class C(B, metaclass=M, **kw)`. The keywords are evaluated here, in
+        // the enclosing scope and after the bases, which is the order CPython
+        // uses. `metaclass=` is consumed by pyc_rt_class_meta and removed, so
+        // it never reaches the metaclass call or __init_subclass__; everything
+        // else is forwarded to both.
+        ir::Value kwds;
+        if (!n.keywords.empty()) {
+            kwds = call_capi("PyDict_New", {}, n.loc, &ok);
+            if (!ok) return false;
+            mark_owned(kwds);
+            for (const keyword& k : n.keywords) {
+                ir::Value v = lower_expr(*k.value, &ok);
+                if (!ok) return false;
+                if (!k.arg) {
+                    // `**kw` in a class statement merges into the same dict.
+                    call_capi("PyDict_Update", {kwds, v}, n.loc, &ok, {v});
+                } else {
+                    ir::Value key = const_str(*k.arg, n.loc);
+                    call_capi("PyDict_SetItem", {kwds, key, v}, n.loc, &ok, {key, v});
+                }
+                if (!ok) return false;
+            }
+        } else {
+            kwds = const_null(n.loc);
+        }
+
+        ir::Value clsname = const_str(n.name, n.loc);
+        ir::Value meta = call_capi("pyc_rt_class_meta", {bases, kwds}, n.loc, &ok);
+        if (!ok) return false;
+        mark_owned(meta); forget(meta);
+        frame_owned_.push_back(meta);
+
+        // The namespace comes from the METACLASS, not from PyDict_New. That is
+        // load-bearing: enum.EnumMeta.__prepare__ returns an _EnumDict that
+        // records member order and rejects duplicates, and building an enum in
+        // a plain dict produces a class that is wrong rather than one that
+        // fails.
+        ir::Value ns = call_capi("pyc_rt_class_prepare",
+                                 {meta, clsname, bases, kwds}, n.loc, &ok,
+                                 {clsname});
         if (!ok) return false;
         mark_owned(ns);
 
@@ -2836,6 +2873,7 @@ private:
         forget(ns); forget(bases);
         frame_owned_.push_back(ns);
         frame_owned_.push_back(bases);
+        if (!n.keywords.empty()) { forget(kwds); frame_owned_.push_back(kwds); }
         auto saved_locals = locals_;
         locals_.clear();                  // names in a class body are not fast locals
         // Emitted while class_ns_ names this body's namespace, which is what
@@ -2853,21 +2891,29 @@ private:
         class_ns_.pop_back();
         qual_.pop_back();
         class_cells_.pop_back();
-        frame_owned_.pop_back();
-        frame_owned_.pop_back();
+        // frame_owned_ is a stack and landing pads snapshot it, so every pop
+        // must mirror its push in LIFO order. Pushed here, in order:
+        // meta, ccell, ns, bases, and kwds when there are any.
+        if (!n.keywords.empty()) frame_owned_.pop_back();   // kwds
+        frame_owned_.pop_back();                            // bases
+        frame_owned_.pop_back();                            // ns
 
         ir::Value cls = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        emit(ir::Instr{ir::Op::BuildClass, {bases, ns}, cls, Ownership::Owned,
-                       n.name, 0, 0, n.loc, make_landing_pad(n.loc)});
+        emit(ir::Instr{ir::Op::BuildClass, {bases, ns, meta, kwds}, cls,
+                       Ownership::Owned, n.name, 0, 0, n.loc,
+                       make_landing_pad(n.loc)});
         mark_owned(cls);
+        if (!n.keywords.empty()) emit_decref(kwds, n.loc);
         emit_decref(bases, n.loc);
         emit_decref(ns, n.loc);
         // Fill __class__ BEFORE decorators run: CPython binds the cell to the
         // undecorated class, which is what super() in a method resolves to.
         emit(ir::Instr{ir::Op::CellSet, {ccell, cls}, std::nullopt,
                        Ownership::NotAnObject, "__class__", 0, 0, n.loc, std::nullopt});
-        frame_owned_.pop_back();
+        frame_owned_.pop_back();                            // ccell
         emit_decref(ccell, n.loc);
+        frame_owned_.pop_back();                            // meta
+        emit_decref(meta, n.loc);
         cls = apply_decorators(n.decorator_list, cls, n.loc, &ok);
         if (!ok) return false;
         store_name(n.name, cls, n.loc);

@@ -825,6 +825,8 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"PyImport_ImportModuleAttr", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
     {"PyImport_ImportModuleAttrString", Ownership::Owned, true, 2, {}, false, "", false, "", "pp"},
     {"pyc_rt_bind_method", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_class_meta", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
+    {"pyc_rt_class_prepare", Ownership::Owned, true, 4, {}, false, "", false, "", "oooo"},
     {"pyc_rt_cm_exit", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_cm_enter", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_exit_normal", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},

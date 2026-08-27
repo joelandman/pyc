@@ -384,10 +384,15 @@ private:
                 break;
             }
             case Op::BuildClass: {
-                need("declare ptr @pyc_rt_build_class(ptr, ptr, ptr)");
+                // args: bases, ns, meta, kwds. The last two are null for a
+                // plain `class C:` -- PyObject_Call treats a null kwds as no
+                // keywords, so no separate path is needed for that case.
+                need("declare ptr @pyc_rt_build_class(ptr, ptr, ptr, ptr, ptr)");
                 o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_build_class(ptr "
                    << cstr(in.text) << ", ptr " << v(in.args[0])
-                   << ", ptr " << v(in.args[1]) << ")\n";
+                   << ", ptr " << v(in.args[1])
+                   << ", ptr " << v(in.args[2])
+                   << ", ptr " << v(in.args[3]) << ")\n";
                 check(in, v(*in.result), true);
                 break;
             }

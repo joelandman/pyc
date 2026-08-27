@@ -13,10 +13,10 @@
       "-O0"
     ]
   },
-  "total": 767,
-  "passing": 757,
-  "clean": 750,
-  "pass_rate": 98.69621903520209,
+  "total": 769,
+  "passing": 759,
+  "clean": 752,
+  "pass_rate": 98.6996098829649,
   "counts": {
     "STDOUT_DIFFERS": 10,
     "EXIT_DIFFERS": 7,
@@ -9532,6 +9532,32 @@
     {
       "case": "case_728.py",
       "path": "verify/corpus/language/case_728.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "class_implicit_wrappers.py",
+      "path": "verify/corpus/language/class_implicit_wrappers.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "class_keywords.py",
+      "path": "verify/corpus/language/class_keywords.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],
