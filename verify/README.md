@@ -352,6 +352,33 @@ export TMPDIR=~/temp        # not /tmp, which is a tmpfs on this machine
 Before believing any large drop in `DID_NOT_COMPILE` terms, check `df` and grep
 the diagnostics for `No space left`. This has bitten twice.
 
+## Do not edit the tree while a measurement is running
+
+`pycc` compiles `compiler/src/rt/*.cpp` on **every link**, so the runtime
+source is an input to every case in a run. Editing it mid-run makes every
+subsequent compile fail, and the result looks like a catastrophic compiler
+regression:
+
+```
+baseline   56.81%  (221/389)
+current    41.90%  (163/389)
+now fails  Lib/test/test_script_helper.py: DID_NOT_COMPILE
+now fails  Lib/test/test_secrets.py: DID_NOT_COMPILE
+...
+```
+
+Two things gave it away, and both are worth checking before believing such a
+drop. The failures were **clustered alphabetically** from `test_s…` — a real
+regression is spread across the corpus by construct, not by filename — and the
+diagnostic named the *compiler's own source*:
+
+```
+compiler/src/rt/support.cpp:527:22: error: conflicting types
+```
+
+A run started before an edit measures neither the old tree nor the new one.
+Finish the run, or start it after the edit.
+
 ## Reading a result
 
 **A pass rate is not reproducible without its measurement conditions.** Measured
