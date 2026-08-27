@@ -13,10 +13,10 @@
       "-O0"
     ]
   },
-  "total": 759,
-  "passing": 750,
-  "clean": 743,
-  "pass_rate": 98.81422924901186,
+  "total": 761,
+  "passing": 752,
+  "clean": 745,
+  "pass_rate": 98.8173455978975,
   "counts": {
     "STDOUT_DIFFERS": 9,
     "EXIT_DIFFERS": 6,
@@ -9175,6 +9175,30 @@
       "exit": {
         "oracle": 0,
         "subject": 1
+      }
+    },
+    {
+      "case": "with_early_exit.py",
+      "path": "verify/corpus/language/with_early_exit.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "with_early_exit_nesting.py",
+      "path": "verify/corpus/language/with_early_exit_nesting.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
       }
     }
   ]

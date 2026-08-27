@@ -1626,30 +1626,26 @@ private:
     // last one, the real body. Each item therefore gets its own landing pad and
     // its own __exit__, which is what makes the second manager's cleanup run
     // when the first one's body raises.
+    // __exit__ must run on EVERY exit path, including return, break and
+    // continue. This used to REFUSE those -- but the refusal scanned only the
+    // body's DIRECT children, and `If` was on the allowed list, so
+    //
+    //     with CM():
+    //         if c:
+    //             return "early"
+    //
+    // compiled, skipped __exit__, and exited 0 with the wrong output: a P0
+    // silent wrong answer, in the guard whose stated purpose was to prevent
+    // exactly that. A file handle stayed open, a lock stayed held.
+    //
+    // Deepening the scan would have closed the hole and kept refusing 20
+    // Lib/test files. Instead `with` now carries a FinallyCtx, which is the
+    // machinery try/finally already uses for the same problem: an early exit
+    // hands its pending return value or jump marker to the nearest cleanup
+    // rather than branching past it, the cleanup runs once, and then dispatches
+    // on what was pending. Nesting falls out for free -- after this __exit__
+    // runs, finish_return routes to the NEXT enclosing cleanup.
     bool lower_with_item(const With& n, std::size_t idx) {
-        // __exit__ must run on EVERY exit path. break/continue/return would
-        // leave the block without it, and silently skipping cleanup is worse
-        // than refusing -- a file handle stays open, a lock stays held.
-        // Scanned once, at the outermost item: every level shares one body.
-        for (const stmt& s2 : n.body) {
-            if (idx != 0) break;
-            bool bad = false;
-            std::visit(ov{
-                [&](const Return&){ bad = true; }, [&](const Break&){ bad = true; },
-                [&](const Continue&){ bad = true; },
-                [&](const Expr&){}, [&](const Assign&){}, [&](const AugAssign&){},
-                [&](const AnnAssign&){}, [&](const If&){}, [&](const While&){},
-                [&](const For&){}, [&](const AsyncFor&){}, [&](const With&){},
-                [&](const AsyncWith&){}, [&](const Try&){}, [&](const TryStar&){},
-                [&](const Match&){}, [&](const FunctionDef&){},
-                [&](const AsyncFunctionDef&){}, [&](const ClassDef&){},
-                [&](const Import&){}, [&](const ImportFrom&){}, [&](const Global&){},
-                [&](const Nonlocal&){}, [&](const Pass&){}, [&](const Raise&){},
-                [&](const Assert&){}, [&](const Delete&){}, [&](const TypeAlias&){},
-            }, s2.v);
-            if (bad) return unsupported("return/break/continue inside with", n.loc);
-        }
-
         bool ok = true;
         const withitem& w = n.items[idx];
         ir::Value mgr = lower_expr(*w.context_expr, &ok);
@@ -1666,21 +1662,116 @@ private:
         if (w.optional_vars) { if (!store_target(**w.optional_vars, entered, n.loc)) return false; }
         else if (owns(entered)) release(entered, n.loc);
 
+        FinallyCtx fin;
+        fin.entry = new_block("with.cleanup");
         std::uint32_t dispatch = new_block("with.unwind");
         std::uint32_t after    = new_block("with.after");
         try_stack_.push_back(dispatch);
+        fin_stack_.push_back(&fin);
+        // A break or continue targeting a loop INSIDE this body branches
+        // normally; only one leaving the body has to run __exit__ first.
+        std::size_t saved_fin_depth = fin_loop_depth_;
+        fin_loop_depth_ = loops_.size();
         if (idx + 1 < n.items.size()) {
             if (!lower_with_item(n, idx + 1)) ok = false;
         } else {
             for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
         }
+        fin_loop_depth_ = saved_fin_depth;
+        fin_stack_.pop_back();
         try_stack_.pop_back();
         if (!ok) return false;
 
+        // Normal completion is just another edge into the cleanup, carrying
+        // nothing. Recorded only if control can actually fall out: a body
+        // ending in `return` leaves the block terminated, and an edge from a
+        // terminated block would be a duplicate phi predecessor.
+        if (!terminated()) {
+            fin.edge((std::uint32_t)blk_, const_null(n.loc), const_null(n.loc),
+                     const_null(n.loc), const_null(n.loc));
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", fin.entry, 0, n.loc, std::nullopt});
+        }
+
+        set_block(fin.entry);
+        if (fin.pred_blocks.empty()) {
+            // Nothing reaches the cleanup -- the body always raised. The block
+            // still needs a terminator to be well formed; it is unreachable,
+            // so __exit__ must NOT run here. The exception path below is what
+            // actually calls it.
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", after, 0, n.loc, std::nullopt});
+        } else {
+        ir::Value p_ret = emit_phi(fin.pred_ret, fin.pred_blocks, n.loc);
+        ir::Value p_brk, p_cont;
+        if (fin.any_jump) {
+            p_brk  = emit_phi(fin.pred_brk,  fin.pred_blocks, n.loc);
+            p_cont = emit_phi(fin.pred_cont, fin.pred_blocks, n.loc);
+            forget(p_brk); forget(p_cont);
+        }
+        // __exit__ can run arbitrary code and can raise, so a pending return
+        // value has to be frame-owned across it or a landing pad leaks it.
+        forget(p_ret);
+        frame_owned_.push_back(p_ret);
         call_capi("pyc_rt_exit_normal", {exitf}, n.loc, &ok);
+        frame_owned_.pop_back();
         if (!ok) return false;
-        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", after, 0, n.loc, std::nullopt});
+
+        std::uint32_t ret_b   = new_block("with.return");
+        std::uint32_t jumps_b = new_block("with.jumps");
+        {
+            ir::Value nn = const_null(n.loc);
+            ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            emit(ir::Instr{ir::Op::Is, {p_ret, nn}, isnull, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+            emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
+                           Ownership::NotAnObject, "", jumps_b, ret_b,
+                           n.loc, std::nullopt});
+        }
+
+        // Each early exit releases exitf itself. `after` is left to do its own,
+        // so every path through the region drops exactly one reference.
+        set_block(ret_b);
+        emit_decref(exitf, n.loc);
+        mark_owned(p_ret);
+        if (!finish_return(p_ret, n.loc)) return false;
+
+        set_block(jumps_b);
+        if (!fin.any_jump) {
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", after, 0, n.loc, std::nullopt});
+        } else {
+            ir::Value nb = const_null(n.loc), nc = const_null(n.loc);
+            ir::Value is_brk = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            emit(ir::Instr{ir::Op::Is, {p_brk, nb}, is_brk, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+            ir::Value is_cont = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            emit(ir::Instr{ir::Op::Is, {p_cont, nc}, is_cont, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+            // At most one marker is non-null and Py_DecRef is Py_XDECREF, so
+            // releasing both unconditionally is right on every path.
+            mark_owned(p_brk); mark_owned(p_cont);
+            release(p_brk, n.loc); release(p_cont, n.loc);
+
+            std::uint32_t brk_b   = new_block("with.break");
+            std::uint32_t nobrk_b = new_block("with.nobreak");
+            emit(ir::Instr{ir::Op::CondBr, {is_brk}, std::nullopt,
+                           Ownership::NotAnObject, "", nobrk_b, brk_b,
+                           n.loc, std::nullopt});
+            set_block(brk_b);
+            emit_decref(exitf, n.loc);
+            if (!finish_jump(true, n.loc)) return false;
+
+            set_block(nobrk_b);
+            std::uint32_t cont_b = new_block("with.continue");
+            emit(ir::Instr{ir::Op::CondBr, {is_cont}, std::nullopt,
+                           Ownership::NotAnObject, "", after, cont_b,
+                           n.loc, std::nullopt});
+            set_block(cont_b);
+            emit_decref(exitf, n.loc);
+            if (!finish_jump(false, n.loc)) return false;
+        }
+        }
 
         set_block(dispatch);
         ir::Value sup = call_capi("pyc_rt_exit_exc", {exitf}, n.loc, &ok);
