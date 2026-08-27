@@ -368,6 +368,9 @@ private:
 
     struct Loop { std::uint32_t head, done; };
 
+    // Defined further down, next to the try/finally lowering that builds it.
+    struct FinallyCtx;
+
     // Saved lowering state while a nested function is built.
     struct FnScope {
         std::size_t fn, blk;
@@ -377,13 +380,20 @@ private:
         std::vector<std::uint32_t> tries;
         std::map<std::string, std::uint32_t> cells;
         std::vector<std::map<std::string, std::uint32_t>> enclosing;
+        // A nested function is a DIFFERENT function: the enclosing one's
+        // pending cleanups and open handlers do not apply to it, and its
+        // blocks are not addressable from here. See begin_function.
+        std::vector<FinallyCtx*> fins;
+        std::vector<ir::Value> handled;
+        std::size_t fin_depth;
     };
 
     FnScope begin_function(const std::string& name,
                            const std::vector<std::string>& params,
                            const std::vector<std::string>& locals) {
         FnScope sc{fn_idx_, blk_, locals_, owned_, frame_owned_, class_ns_,
-                   loops_, try_stack_, cells_, enclosing_cells_};
+                   loops_, try_stack_, cells_, enclosing_cells_,
+                   fin_stack_, handled_stack_, fin_loop_depth_};
         mod_.functions.push_back(
             ir::Function{.name=name, .params=params, .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
@@ -392,6 +402,16 @@ private:
         for (std::uint32_t i = 0; i < locals.size(); ++i) locals_[locals[i]] = i;
         owned_.clear(); frame_owned_.clear(); class_ns_.clear();
         loops_.clear(); try_stack_.clear();
+        // These are per-FUNCTION and were not being cleared. A `def` written
+        // inside a try/finally or a `with` therefore inherited the enclosing
+        // function's pending cleanup, so its `return` branched to a block that
+        // exists in a DIFFERENT function -- "use of undefined value '%bbN'",
+        // and the whole module failed to assemble.
+        //
+        // Pre-existing for try/finally; harmless for `with` only until `with`
+        // gained a cleanup of its own, at which point it reached far more code
+        // because unittest suites nest defs inside `with` constantly.
+        fin_stack_.clear(); handled_stack_.clear(); fin_loop_depth_ = 0;
         enclosing_cells_.push_back(sc.cells);
         cells_.clear();
         cur()->blocks.push_back(ir::Block{"entry", {}});
@@ -405,6 +425,8 @@ private:
         owned_ = sc.owned; frame_owned_ = sc.frame; class_ns_ = sc.class_ns;
         loops_ = sc.loops; try_stack_ = sc.tries;
         cells_ = sc.cells; enclosing_cells_ = sc.enclosing;
+        fin_stack_ = sc.fins; handled_stack_ = sc.handled;
+        fin_loop_depth_ = sc.fin_depth;
         return made;
     }
 
@@ -975,6 +997,16 @@ private:
         // branching to the ENCLOSING function's handler block, which is not a
         // label in this function at all.
         auto outer_tries = try_stack_;
+        // Same reasoning, and it was missed: a `return` inside a def written
+        // in a try/finally or a `with` body handed its value to the ENCLOSING
+        // function's pending cleanup and branched to that cleanup's block --
+        // "use of undefined value '%bbN'", and the module failed to assemble.
+        // Pre-existing for try/finally, and reached far more code once `with`
+        // gained a cleanup of its own, because unittest suites nest defs
+        // inside `with` constantly.
+        auto outer_fins = fin_stack_;
+        auto outer_handled = handled_stack_;
+        auto outer_fin_depth = fin_loop_depth_;
         // frame_owned_ must be saved too. A method lowered inside a class body
         // would otherwise inherit the class's namespace dict, and its landing
         // pads would emit a decref for a value defined in a DIFFERENT
@@ -1102,6 +1134,9 @@ private:
         owned_.clear();
         loops_.clear();
         try_stack_.clear();
+        fin_stack_.clear();
+        handled_stack_.clear();
+        fin_loop_depth_ = 0;
         frame_owned_.clear();
         class_ns_.clear();          // a method body is not a class body
         auto outer_qual = qual_;
@@ -1153,6 +1188,8 @@ private:
 
         fn_idx_ = outer_fn; blk_ = outer_blk; locals_ = outer_locals;
         owned_ = outer_owned; loops_ = outer_loops; try_stack_ = outer_tries;
+        fin_stack_ = outer_fins; handled_stack_ = outer_handled;
+        fin_loop_depth_ = outer_fin_depth;
         frame_owned_ = outer_frame; class_ns_ = outer_class_ns;
         cells_ = outer_cells; enclosing_cells_ = outer_enclosing;
         qual_ = outer_qual;

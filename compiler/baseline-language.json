@@ -13,10 +13,10 @@
       "-O0"
     ]
   },
-  "total": 761,
-  "passing": 752,
-  "clean": 745,
-  "pass_rate": 98.8173455978975,
+  "total": 762,
+  "passing": 753,
+  "clean": 746,
+  "pass_rate": 98.81889763779527,
   "counts": {
     "STDOUT_DIFFERS": 9,
     "EXIT_DIFFERS": 6,
@@ -8886,6 +8886,18 @@
     {
       "case": "const_fold.py",
       "path": "verify/corpus/language/const_fold.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "def_inside_cleanup.py",
+      "path": "verify/corpus/language/def_inside_cleanup.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],
