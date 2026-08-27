@@ -13,11 +13,12 @@
       "-O0"
     ]
   },
-  "total": 776,
+  "total": 777,
   "passing": 767,
   "clean": 760,
-  "pass_rate": 98.84020618556701,
+  "pass_rate": 98.71299871299871,
   "counts": {
+    "TIMEOUT": 1,
     "STDOUT_DIFFERS": 9,
     "EXIT_DIFFERS": 6,
     "STDERR_DIFFERS": 13
@@ -10073,6 +10074,21 @@
       "exit": {
         "oracle": 0,
         "subject": 0
+      }
+    },
+    {
+      "case": "thread_starvation.py",
+      "path": "verify/corpus/known-gaps/thread_starvation.py",
+      "flags": [
+        "TIMEOUT"
+      ],
+      "diagnostic": "the binary did not finish within 50s",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": -1
       }
     },
     {

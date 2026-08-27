@@ -442,31 +442,37 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     return reinterpret_cast<PyObject*>(fn);
 }
 
-// The periodic check CPython's interpreter loop performs and compiled code did
-// not. Called at every loop head.
+// Part of the periodic check CPython's interpreter loop performs, which
+// compiled code did not do at all. Called at every loop head, amortised over a
+// counter as CPython amortises its own eval-breaker check.
 //
-// Two things went wrong without it, and both are the same missing check:
+// WHAT THIS FIXES. Signals never ran: `signal.alarm(1)` with
+// `while True: n += 1` never reached the handler, and neither did Ctrl-C, so a
+// compiled program in a loop could not be interrupted AT ALL.
 //
-//   * SIGNALS NEVER RAN. `signal.alarm(1)` followed by `while True: n += 1`
-//     never reached the handler, and neither does Ctrl-C: a compiled program
-//     in a loop could not be interrupted at all.
-//   * THREADS STARVED. A worker thread in a loop held the GIL to completion.
-//     Measured by ordering: CPython printed "main ran" then "worker finished";
-//     pyc printed them the other way round, because the main thread got no
-//     chance to run until the worker's loop ended.
+// WHAT IS DELIBERATELY NOT HERE. CPython's check also offers the GIL to a
+// waiting thread, and without that a worker in a loop holds it to completion:
+// a closure flag set by another thread is never observed and the program
+// hangs. Adding the documented PyEval_SaveThread/RestoreThread pair here DOES
+// fix that -- Lib/test/test_syslog goes from hanging to passing in 0.2s -- but
+// it DEADLOCKS Lib/test/test_logging, in test_config_queue_handler, which
+// stops a QueueListener by enqueueing a sentinel and joining its thread. One
+// thread, 0% CPU, no progress.
 //
-// Amortised over a counter, as CPython amortises its own eval-breaker check.
-// The save/restore pair is the documented way to offer the GIL to whoever is
-// waiting; between iterations is a safe point, since no object is half-updated
-// there.
+// Two hypotheses were tested and refuted: that PyEval_RestoreThread was
+// blocking against finalisation (guarding on Py_IsFinalizing changed nothing),
+// and that the yield ran without the GIL held (guarding on PyGILState_Check
+// changed nothing). gdb cannot attach under this machine's ptrace_scope, so
+// there is no stack trace yet and the mechanism is NOT established.
+//
+// Shipping the half that is verified safe rather than the half that trades one
+// hang for another. Thread starvation is recorded in
+// verify/corpus/known-gaps/thread_starvation.py.
 extern "C" int pyc_rt_periodic(void) {
     static thread_local unsigned n = 0;
     if (++n < 2048) return 0;
     n = 0;
-    if (PyErr_CheckSignals() < 0) return -1;   // runs handlers; may raise
-    PyThreadState* s = PyEval_SaveThread();
-    PyEval_RestoreThread(s);
-    return 0;
+    return PyErr_CheckSignals();               // runs handlers; may raise
 }
 
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {
