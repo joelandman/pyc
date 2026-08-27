@@ -248,6 +248,45 @@ introduced it, and the target — never a silent fallthrough.
 See `VERSION_TARGETING.md` for the full design, the flag surface, and the
 measured facts it rests on.
 
+### I9 — A claim about this compiler is measured, or it is not made.
+
+**Added 2026-08-26.** Never guess. Guessing is permitted as a *search
+heuristic* and never as a conclusion; a failed guess is evidence of nothing.
+
+When an observation needs explaining:
+
+1. **Observe** the raw artefact — the emitted IR, the exact diagnostic, the
+   differing bytes. Not a summary of it, and not the bucket it was sorted into.
+2. **Synthesise** hypotheses that *differ in what they predict*. Ones that
+   predict the same observation are one hypothesis. This step is the one that
+   gets skipped: an observation arrives already wearing an explanation, and
+   adopting it without generating a rival is the failure mode itself. If only
+   one hypothesis comes to mind, look harder at the artefact.
+3. **Predict** what each implies would be true — and what would be true if it
+   did not hold.
+4. **Test** with the smallest experiment that discriminates. A control that
+   must keep passing is part of the test, not a nicety.
+5. **Claim** only what the test showed. Otherwise report it as unknown.
+
+**After two failed guesses, read the artefact.** Six hand-written reproducers
+for a `use of undefined value '%bb7'` failure all compiled cleanly; dumping the
+IR took one command and named the cause — a function containing no `with`
+ending in a branch to another function's block.
+
+**A control converts "X is broken" into a defect with a location.** The
+comprehension-cell P0 was interpretable only because a generator expression
+reading the same free variable kept passing; the nested-class defect, because a
+class *body* reading the same local kept passing.
+
+**Ask whether the defect predates the change.** For `fin_stack_` that turned
+"my change broke this" into "my change widened a pre-existing break" — a
+different fix, and a different risk.
+
+This binds the instrument as tightly as the compiler. Every instrument error on
+record — 48 phantom regressions, a phantom P0, 23 phantom leaks, a 3.6-point
+"regression" that was parallelism, a mis-attributed quarantine bucket — was a
+claim made from an observation with no test that could have falsified it.
+
 ### Deferred: per-function Python frames (decided 2026-08-25)
 
 Compiled functions push no Python frame, so `sys._getframe(N)` does not track

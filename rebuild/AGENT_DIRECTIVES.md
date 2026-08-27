@@ -28,6 +28,53 @@ decision (use int64 for `int`) that silently became an architectural one.
 
 ---
 
+## The second rule: never guess — hypothesise and test
+
+**A claim about this compiler is either measured or it is not made.**
+
+Guessing is permitted only as a *search heuristic*, never as a conclusion, and
+a failed guess is not evidence of anything. When an observation needs
+explaining, the procedure is:
+
+| step | what it produces |
+|---|---|
+| **1. Observe** | the raw artefact — the emitted IR, the exact diagnostic, the differing bytes. Not a summary of it, and not the bucket it was sorted into. |
+| **2. Synthesise** | one or more hypotheses that *differ in what they predict*. If they all predict the same observation, they are one hypothesis. |
+| **3. Predict** | for each, the specific thing that would be true if it held — and, as importantly, what would be true if it did not. |
+| **4. Test** | the smallest experiment that discriminates between them. A control that must keep passing counts as part of the test. |
+| **5. Claim** | only what the test showed. Anything else is reported as unknown. |
+
+Step 2 is the one that gets skipped. An observation usually arrives already
+wearing an explanation, and adopting that explanation without generating a
+rival to it is the whole failure mode. If only one hypothesis comes to mind,
+that is a signal to look harder at the artefact, not a signal that it is right.
+
+**When guessing has failed twice, stop and read the artefact.** On 2026-08-26 a
+`with`-lowering change produced `use of undefined value '%bb7'` across eight
+`Lib/test` files. Six hand-written candidate reproducers all compiled cleanly.
+Dumping the IR took one command and named the cause immediately: the offending
+function was `def spam(self): return self._spam`, containing no `with` at all,
+ending in a branch to a block belonging to a different function. Six guesses
+cost more than the one measurement that worked.
+
+**A control is not optional.** "This fix works" and "this fix works *and* the
+thing it must not disturb still works" are different claims. The comprehension
+cell fix was only interpretable because a generator expression reading the same
+free variable kept passing; the nested-class fix, because a class *body*
+reading the same local kept passing. Each control converted "closures are
+broken" into a defect with a location.
+
+**Check whether the defect predates the change.** Asking that question of the
+`fin_stack_` bug turned "my change broke this" into "my change widened a
+pre-existing break", which is a different fix and a different risk assessment.
+
+This applies to the instrument as much as the compiler. Every instrument error
+recorded in `verify/README.md` — 48 phantom regressions, a phantom P0, 23
+phantom leaks, a 3.6-point "regression" that was parallelism — was a claim made
+from an observation without a test that could have falsified it.
+
+---
+
 ## Preamble to paste into every agent
 
 > You are working on pyc, an AOT Python-to-native compiler. Read
@@ -49,6 +96,15 @@ decision (use int64 for `int`) that silently became an architectural one.
 >
 > Never hardcode expected output in a test. Tests compare against the pinned
 > CPython binary at runtime.
+>
+> **Never guess. Hypothesise and test.** Every claim you make about this
+> compiler must be something you measured. When an observation needs
+> explaining: write down the raw artefact, synthesise at least two hypotheses
+> that predict *different* observations, run the smallest experiment that tells
+> them apart, and report only what it showed. Say "unknown" rather than assert.
+> If two guessed reproducers have failed, stop guessing and read the artefact —
+> the IR, the diagnostic, the bytes. Include a control that must keep passing,
+> and check whether the defect predates your change.
 
 ---
 
@@ -218,7 +274,7 @@ over it in codegen.
 agent **reports to the user, not to the feature agents**, and its results may
 not be overridden by them.
 
-**INVARIANTS.** I5 (including **I5a**), I6.
+**INVARIANTS.** I5 (including **I5a**), I6, I9.
 
 **Deliverables.**
 1. **Differential harness.** Runs a program under pyc and under the pinned
