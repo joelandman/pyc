@@ -13,10 +13,10 @@
       "-O0"
     ]
   },
-  "total": 774,
-  "passing": 765,
-  "clean": 758,
-  "pass_rate": 98.83720930232558,
+  "total": 775,
+  "passing": 766,
+  "clean": 759,
+  "pass_rate": 98.83870967741936,
   "counts": {
     "STDOUT_DIFFERS": 9,
     "EXIT_DIFFERS": 6,
@@ -9987,6 +9987,19 @@
     {
       "case": "raise_from.py",
       "path": "verify/corpus/language/raise_from.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "recursive_generator.py",
+      "path": "verify/corpus/language/recursive_generator.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],

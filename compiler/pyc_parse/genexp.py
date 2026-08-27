@@ -242,6 +242,23 @@ CO_ASYNC_GENERATOR = 0x200
 def _compile_genfunc(node, frees: list[str], qualname: str, filename: str,
                      is_async: bool = False) -> tuple[bytes, list[str]]:
     shim = copy.deepcopy(node)
+    # The shim is RENAMED before it goes into the wrapper, and its real name is
+    # restored on the code object afterwards.
+    #
+    # Without this the wrapper changed the meaning of the function's own name.
+    # `def powerset(U): ... for S in powerset(U): ...` at module level is a
+    # GLOBAL self-reference, and symtable says so -- no free variables. Nest
+    # that same def inside `_pyc_wrap` and `powerset` becomes a local of the
+    # wrapper, so the compiled generator captures it as a freevar instead, and
+    # the two disagreed:
+    #
+    #     'powerset' freevars ('powerset',) are not the same SET as symtable ()
+    #
+    # With the shim renamed, the self-reference resolves exactly as it did in
+    # the original source: to the global when it was a global, and to the
+    # wrapper PARAMETER when the name really is free, since a free name is
+    # already passed in as one. Both cases come out matching symtable.
+    shim.name = "_pyc_genfn"
     # Decorators, defaults and annotations are all evaluated by the ENCLOSING
     # scope at def time. Compiling them into the wrapper would evaluate them in
     # the wrong scope, at the wrong moment, or both. pyc supplies the defaults
@@ -289,4 +306,8 @@ def _compile_genfunc(node, frees: list[str], qualname: str, filename: str,
             f"as symtable {tuple(frees)}")
     # co_qualname would read "_pyc_wrap.<locals>.name"; correct it at build
     # time so tracebacks and repr name the real function.
-    return marshal.dumps(inner.replace(co_qualname=qualname)), list(inner.co_freevars)
+    # co_name would read "_pyc_genfn" and co_qualname "_pyc_wrap.<locals>...";
+    # both are corrected at build time so tracebacks and repr name the real
+    # function.
+    return (marshal.dumps(inner.replace(co_name=node.name, co_qualname=qualname)),
+            list(inner.co_freevars))
