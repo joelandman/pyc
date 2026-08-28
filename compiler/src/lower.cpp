@@ -23,6 +23,12 @@
 #include <set>
 
 namespace pyc {
+// Locals provably holding only ints, and so eligible to live in a machine
+// register. Reported by PYC_DUMP_INTLOCALS while the analysis is being
+// validated against the corpus, ahead of anything depending on it.
+std::set<std::string> int_locals(const std::vector<std::string>&,
+                                 const std::vector<pyc::ast::stmt>&,
+                                 const std::set<std::string>&);
 std::vector<std::string> function_locals(const std::vector<std::string>&,
                                         const std::vector<pyc::ast::stmt>&);
 std::set<std::string> nested_reads(const std::vector<pyc::ast::stmt>&);
@@ -1106,6 +1112,14 @@ private:
         std::vector<std::string> cellvars;
         for (const std::string& l : own_locals)
             if (inner.count(l)) cellvars.push_back(l);
+
+        if (std::getenv("PYC_DUMP_INTLOCALS")) {
+            std::set<std::string> ints = int_locals(slotnames, n.body, inner);
+            std::fprintf(stderr, "intlocals %s:", n.name.c_str());
+            for (const std::string& l : own_locals)
+                std::fprintf(stderr, " %s%s", l.c_str(), ints.count(l) ? "*" : "");
+            std::fprintf(stderr, "\n");
+        }
         // A name is FREE when this function (or something nested in it) reads
         // it, it is not local here, and an enclosing function holds it in a
         // cell. Searching outward is what makes depth-3 nesting work.

@@ -217,6 +217,239 @@ std::set<std::string> declared_globals(const std::vector<stmt>& body) {
     return c.declared_global;
 }
 
+// Locals that provably hold nothing but a Python int, and can therefore be
+// kept in a machine register instead of on the heap.
+//
+// The prize is large and measured. Modelling one iteration of `s += i * 3`:
+//
+//     boxed, refcounts inlined (what pyc emits)   46.3 ns
+//     fused expression, one allocation            22.1 ns
+//     accumulator never becomes an object          0.3 ns
+//
+// So the win is not in avoiding dispatch, it is in the value never reaching
+// the heap at all -- which is only sound if the value is REALLY always an int.
+//
+// This analysis is deliberately over-restrictive, on the same reasoning the
+// cell analysis above states: a name it misses costs speed, a name it takes
+// wrongly is a silent wrong answer. Every rule below therefore rejects on
+// anything it cannot see through, and the fixpoint SHRINKS a candidate set.
+//
+// The scar this has to answer to is on ir::Op::ConstInt: materialising a
+// literal into a machine word is how the old tree wrapped factorial(25).
+// Overflow is not handled here -- it is handled at the operation, which keeps
+// a boxed fallback -- but a name is only offered up if its every binding is
+// arithmetic whose overflow the lowering knows how to catch.
+namespace {
+struct IntCandidates {
+    std::set<std::string> cand;
+    bool changed = false;
+
+    // `True` is an int by inheritance and must stay a bool: `type(True + 0)`
+    // is int but `type(True & True)` is bool, and unboxing would erase that.
+    static bool int_literal(const expr& e) {
+        const Constant* c = std::get_if<Constant>(&e.v);
+        // ConstBool is a SEPARATE alternative from ConstBigInt, which is
+        // exactly the distinction needed: `True` must not be unboxed to 1.
+        return c && std::holds_alternative<ConstBigInt>(c->value.v);
+    }
+
+    // Is this expression certainly an int, given the current candidate set?
+    bool is_int(const expr& e) const {
+        return std::visit(ov{
+            [&](const Constant&) { return int_literal(e); },
+            [&](const Name& n)   { return cand.count(n.id) > 0; },
+            [&](const BinOp& n)  {
+                return int_closed(n.op) && is_int(*n.left) && is_int(*n.right);
+            },
+            [&](const UnaryOp& n) {
+                // `not x` is a bool, not an int, so Not is absent here.
+                return (std::holds_alternative<USub>(n.op.v) ||
+                        std::holds_alternative<UAdd>(n.op.v) ||
+                        std::holds_alternative<Invert>(n.op.v)) && is_int(*n.operand);
+            },
+            [&](const auto&) { return false; },
+        }, e.v);
+    }
+
+    // Operators closed over the ints, each with an overflow form the lowering
+    // can check. Deliberately absent: `/` is float division whatever its
+    // operands, `**` can yield a float (2 ** -1) or an unbounded value from a
+    // tiny input, and `@` is not an int operator at all.
+    static bool int_closed(const operator_& op) {
+        return std::holds_alternative<Add>(op.v)      || std::holds_alternative<Sub>(op.v) ||
+               std::holds_alternative<Mult>(op.v)     || std::holds_alternative<FloorDiv>(op.v) ||
+               std::holds_alternative<Mod>(op.v)      || std::holds_alternative<LShift>(op.v) ||
+               std::holds_alternative<RShift>(op.v)   || std::holds_alternative<BitAnd>(op.v) ||
+               std::holds_alternative<BitOr>(op.v)    || std::holds_alternative<BitXor>(op.v);
+    }
+
+    // Syntactically `range(a[, b[, c]])`. Says nothing about what `range`
+    // resolves to -- see the obligation recorded at the For arm.
+    static bool is_range_call(const expr& e) {
+        const Call* c = std::get_if<Call>(&e.v);
+        if (!c || c->args.empty() || c->args.size() > 3 || !c->keywords.empty())
+            return false;
+        const Name* f = std::get_if<Name>(&c->func->v);
+        return f && f->id == "range";
+    }
+
+    // A binding known to produce an int without a value expression to check.
+    void bind_int(const expr& target) {
+        // Only a bare name. `for a, b in ...` unpacks, and range does not
+        // yield tuples anyway.
+        if (!std::get_if<Name>(&target.v)) { bind(target, nullptr); return; }
+    }
+
+    void drop(const std::string& n) {
+        if (cand.erase(n)) changed = true;
+    }
+
+    // Any binding of a candidate that is not provably an int disqualifies it.
+    // Non-Name targets (a.b, a[0], tuple unpacking, star targets) bind nothing
+    // relevant, or bind something whose value this cannot see -- both are
+    // handled by dropping every Name they mention.
+    void bind(const expr& target, const expr* value) {
+        std::visit(ov{
+            [&](const Name& n) {
+                if (!cand.count(n.id)) return;
+                if (!value || !is_int(*value)) drop(n.id);
+            },
+            // Unpacking yields elements this cannot type. Reject outright.
+            [&](const Tuple& t)   { for (const expr& x : t.elts) bind(x, nullptr); },
+            [&](const List& l)    { for (const expr& x : l.elts) bind(x, nullptr); },
+            [&](const Starred& x) { if (x.value) bind(*x.value, nullptr); },
+            [&](const auto&)      {},
+        }, target.v);
+    }
+
+    void block(const std::vector<stmt>& body) { for (const stmt& s : body) one(s); }
+
+    void one(const stmt& s) {
+        std::visit(ov{
+            [&](const Assign& n)    { for (const expr& t : n.targets) bind(t, &*n.value); },
+            [&](const AugAssign& n) {
+                // `x += e` is `x = x + e` for typing purposes, and x must
+                // already be a candidate for the result to be one.
+                if (!n.target) return;
+                const Name* nm = std::get_if<Name>(&n.target->v);
+                if (!nm) return;
+                if (!cand.count(nm->id)) return;
+                if (!int_closed(n.op) || !is_int(*n.value)) drop(nm->id);
+            },
+            [&](const AnnAssign& n) { if (n.target) bind(*n.target,
+                                          n.value ? &**n.value : nullptr); },
+            // `for i in range(...)` is the linchpin, not a nicety. Excluding
+            // it left 6 candidates in 1192 locals across the language corpus
+            // (0.5%): rejecting the induction variable cascades, because
+            // `s += i * 3` cannot type s once i is untyped, so the accumulator
+            // goes too and the loops this whole exercise is about select
+            // nothing.
+            //
+            // Whether `range` here IS the builtin is not a static question --
+            // the name can be rebound at runtime, including between two
+            // executions of the same loop. So this types the target on the
+            // syntactic shape and hands the LOWERING an obligation: guard that
+            // the callee is the builtin range at loop entry, and run the loop
+            // boxed when it is not. An unguarded lowering of this would be a
+            // silent wrong answer, which is why the obligation is written here
+            // rather than assumed.
+            [&](const For& n)       { if (n.target) {
+                                          if (is_range_call(*n.iter))
+                                              bind_int(*n.target);
+                                          else bind(*n.target, nullptr); }
+                                      block(n.body); block(n.orelse); },
+            [&](const AsyncFor& n)  { if (n.target) bind(*n.target, nullptr);
+                                      block(n.body); block(n.orelse); },
+            [&](const While& n)     { block(n.body); block(n.orelse); },
+            [&](const If& n)        { block(n.body); block(n.orelse); },
+            [&](const With& n)      { for (const withitem& w : n.items)
+                                          if (w.optional_vars) bind(**w.optional_vars, nullptr);
+                                      block(n.body); },
+            [&](const AsyncWith& n) { for (const withitem& w : n.items)
+                                          if (w.optional_vars) bind(**w.optional_vars, nullptr);
+                                      block(n.body); },
+            [&](const Try& n)       { block(n.body); block(n.orelse); block(n.finalbody);
+                                      for (const excepthandler& h : n.handlers) handler(h); },
+            [&](const TryStar& n)   { block(n.body); block(n.orelse); block(n.finalbody);
+                                      for (const excepthandler& h : n.handlers) handler(h); },
+            // A match capture binds the subject, which this cannot type.
+            [&](const Match& n)     { for (const match_case& c : n.cases) {
+                                          for (const std::string& b : match_captures(*c.pattern))
+                                              drop(b);
+                                          block(c.body); } },
+            [&](const FunctionDef& n)      { drop(n.name); },
+            [&](const AsyncFunctionDef& n) { drop(n.name); },
+            [&](const ClassDef& n)         { drop(n.name); },
+            [&](const Import& n)      { for (const alias& a : n.names)
+                                            drop(a.asname ? *a.asname
+                                                          : a.name.substr(0, a.name.find('.'))); },
+            [&](const ImportFrom& n)  { for (const alias& a : n.names)
+                                            drop(a.asname ? *a.asname : a.name); },
+            // `del x` on an unboxed local would need an unbound state this
+            // does not model. Cheap to reject, rare in arithmetic code.
+            [&](const Delete& n)      { for (const expr& t : n.targets)
+                                            if (const Name* nm = std::get_if<Name>(&t.v)) drop(nm->id); },
+            [&](const Global& n)      { for (const std::string& x : n.names) drop(x); },
+            [&](const Nonlocal& n)    { for (const std::string& x : n.names) drop(x); },
+            [&](const TypeAlias& n)   { if (n.name) bind(*n.name, nullptr); },
+            [&](const Return&){}, [&](const Expr&){}, [&](const Pass&){},
+            [&](const Break&){}, [&](const Continue&){}, [&](const Raise&){},
+            [&](const Assert&){},
+        }, s.v);
+    }
+
+    void handler(const excepthandler& h) {
+        std::visit(ov{
+            [&](const ExceptHandler& eh) {
+                if (eh.name) drop(*eh.name);
+                block(eh.body);
+            },
+        }, h.v);
+    }
+
+    // Every name a match case can bind. Over-approximate on purpose.
+    static std::vector<std::string> match_captures(const pattern& p) {
+        std::vector<std::string> out;
+        std::function<void(const pattern&)> go = [&](const pattern& q) {
+            std::visit(ov{
+                [&](const MatchAs& m)      { if (m.name) out.push_back(*m.name);
+                                             if (m.pattern) go(**m.pattern); },
+                [&](const MatchStar& m)    { if (m.name) out.push_back(*m.name); },
+                [&](const MatchMapping& m) { if (m.rest) out.push_back(*m.rest);
+                                             for (const pattern& x : m.patterns) go(x); },
+                [&](const MatchSequence& m){ for (const pattern& x : m.patterns) go(x); },
+                [&](const MatchOr& m)      { for (const pattern& x : m.patterns) go(x); },
+                [&](const MatchClass& m)   { for (const pattern& x : m.patterns) go(x);
+                                             for (const pattern& x : m.kwd_patterns) go(x); },
+                [&](const MatchValue&){}, [&](const MatchSingleton&){},
+            }, q.v);
+        };
+        go(p);
+        return out;
+    }
+};
+}  // namespace
+
+// The candidate set for one function body. Params are excluded: they arrive as
+// objects, so unboxing one means proving every caller passes an int, which is
+// not a function-local question.
+//
+// Iterated to a fixpoint because candidacy is mutually recursive -- `a = b + 1`
+// is only int if b is -- and because dropping a name can invalidate a binding
+// that depended on it. It shrinks monotonically, so it terminates.
+std::set<std::string> int_locals(const std::vector<std::string>& params,
+                                const std::vector<stmt>& body,
+                                const std::set<std::string>& captured) {
+    IntCandidates c;
+    for (const std::string& n : function_locals(params, body)) c.cand.insert(n);
+    // A captured name lives in a cell that an inner scope reads through; it
+    // cannot also live in a register.
+    for (const std::string& n : captured) c.cand.erase(n);
+    for (const std::string& p : params) c.cand.erase(p);
+    do { c.changed = false; c.block(body); } while (c.changed);
+    return c.cand;
+}
+
 // Names read anywhere inside NESTED functions/lambdas/comprehensions of this
 // body. Intersected with the enclosing function's locals, this is exactly the
 // set that must live in cells: a variable is only a cell variable because
