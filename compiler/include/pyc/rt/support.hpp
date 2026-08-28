@@ -89,6 +89,11 @@ PyObject* pyc_rt_load_global_obj(PyObject* name);
 int pyc_rt_store_global_obj(PyObject* name, PyObject* v);
 PyObject* pyc_rt_intern(const char* name);
 
+// Refcounting the optimiser can see through. Expand the target's own
+// Py_XINCREF/Py_XDECREF macros; inlined into generated code by LTO.
+void pyc_rt_incref(PyObject* o);
+void pyc_rt_decref(PyObject* o);
+
 // Resolve __main__'s dict once, at startup. Without it every global read and
 // write called PyImport_AddModule("__main__") first.
 void pyc_rt_globals_init(void);

@@ -52,6 +52,14 @@ runs:
           zlib1g-dev libssl-dev libffi-dev libbz2-dev liblzma-dev \
           libsqlite3-dev libreadline-dev libncurses-dev uuid-dev
         echo "PYC_CXX=clang++-22" >> "$GITHUB_ENV"
+        # pycc uses LTO to inline the runtime helpers into generated code, and
+        # falls back SILENTLY to a plain link when no plugin-aware linker is
+        # found (it cannot warn: its stderr is compared by the harness). A
+        # silent fallback in CI would mean slower binaries and a still-green
+        # gate, so assert the fast path here instead of assuming llvm.sh
+        # installed lld.
+        lld="$(clang++-22 -print-prog-name=ld.lld)"
+        [ -x "$lld" ] || { echo "no ld.lld: pycc would silently drop LTO"; exit 1; }
 
     - name: Resolve sysroot paths
       id: paths

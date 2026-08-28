@@ -147,13 +147,13 @@ private:
     // fails, so no error edge is emitted even where the IR carries one -- the
     // table was filled at startup or the program never began.
     void emit_const_use(const ir::Instr& in, char kind) {
-        need("declare void @Py_IncRef(ptr)");
+        need("declare void @pyc_rt_incref(ptr)");
         int slot = const_slot(kind, in.text);
         std::string p = fresh();
         o_ << "  " << p << " = getelementptr inbounds ptr, ptr "
            << "@.pyconsts, i64 " << slot << "\n";
         o_ << "  " << v(*in.result) << " = load ptr, ptr " << p << "\n";
-        o_ << "  call void @Py_IncRef(ptr " << v(*in.result) << ")\n";
+        o_ << "  call void @pyc_rt_incref(ptr " << v(*in.result) << ")\n";
     }
     std::string fresh() { return "%t" + std::to_string(tmp_++); }
     void need(const std::string& decl) { decls_.insert(decl); }
@@ -366,12 +366,12 @@ private:
                    << ", ptr " << v(in.args[0]) << ")\n";
                 break;
             case Op::IncRef:
-                need("declare void @Py_IncRef(ptr)");
-                o_ << "  call void @Py_IncRef(ptr " << v(in.args[0]) << ")\n";
+                need("declare void @pyc_rt_incref(ptr)");
+                o_ << "  call void @pyc_rt_incref(ptr " << v(in.args[0]) << ")\n";
                 break;
             case Op::DecRef:
-                need("declare void @Py_DecRef(ptr)");
-                o_ << "  call void @Py_DecRef(ptr " << v(in.args[0]) << ")\n";
+                need("declare void @pyc_rt_decref(ptr)");
+                o_ << "  call void @pyc_rt_decref(ptr " << v(in.args[0]) << ")\n";
                 break;
             case Op::CallCApi: emit_capi(in); break;
             case Op::CallObject: emit_call(in); break;

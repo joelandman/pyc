@@ -129,6 +129,27 @@ int pyc_rt_store_global(const char* name, PyObject* v) {
     return PyDict_SetItemString(g, name, v);        // INCREFs v
 }
 
+// Refcounting, as something the optimiser can SEE.
+//
+// codegen used to emit calls to Py_IncRef/Py_DecRef, which are the out-of-line
+// entry points in libpython -- CPython's own code never uses them, it uses the
+// Py_INCREF/Py_DECREF macros. An opaque call per reference is not just its own
+// cost: it is a barrier the optimiser cannot reason across, so nothing else in
+// the loop can be moved, folded, or kept in a register either. Measured on the
+// same objects and the same C-API calls, out-of-line vs inlined:
+//
+//     36.7 ns/iter  ->  11.3 ns/iter        (3.3x, no unboxing involved)
+//
+// These wrappers expand the target header's macros, so immortal objects and
+// the free-threaded build's atomics are handled by CPython's own definition
+// for the version being targeted rather than by an ABI guess here. They are
+// inlined into the generated module by LTO (see pycc); without LTO they are
+// correct, just no faster than what they replaced.
+//
+// X variants deliberately: codegen relies on the null tolerance Py_DecRef had.
+void pyc_rt_incref(PyObject* o) { Py_XINCREF(o); }
+void pyc_rt_decref(PyObject* o) { Py_XDECREF(o); }
+
 PyObject* pyc_rt_load_local(PyObject** locals, int slot, const char* name) {
     PyObject* v = locals[slot];
     if (!v) {

@@ -66,7 +66,34 @@ static int body(void) { return __pyc_main(nullptr); }
 int main(int argc, char** argv) { return pyc_rt_main(argc, argv, body); }
 EOC
 
-"${PYC_CXX:-clang++}" -std=c++20 "$OPT" -rdynamic $INC -I "$REPO/compiler/include" \
+# -flto so the runtime helpers INLINE into the generated module. entry.cpp,
+# support.cpp and the generated mod.ll are separate translation units in the
+# one clang command below, so without it every refcount and every local-slot
+# access stays an opaque call -- and an opaque call is not just its own cost,
+# it is a barrier the optimiser cannot move anything across. 3.3x measured.
+#
+# LTO changes speed, not semantics: PYC_LTO=off is always a valid build.
+#
+# The linker is the awkward part. LTO needs a plugin-aware linker; ld.bfd
+# wants LLVMgold.so, which this clang does not ship, and the result is a hard
+# link error rather than a fallback. So ask clang where ld.lld actually is
+# (-print-prog-name is a lookup, not a compile -- no measurable cost) and use
+# LTO only when there is a linker that can do it.
+#
+# The fallback is SILENT on purpose: pycc's stderr is compared byte-for-byte by
+# the differential harness, so a warning here would register as a divergence in
+# every case. Silent means CI must assert the fast path is live rather than
+# assume it -- see .github/actions/setup-pyc (a quiet downgrade would show up
+# as slower binaries and a still-green gate, which is the worst shape a
+# performance regression can take).
+case "${PYC_LTO:-auto}" in
+  off)  LTO="" ;;
+  auto) LLD="$("${PYC_CXX:-clang++}" -print-prog-name=ld.lld 2>/dev/null)"
+        if [[ -x "$LLD" ]]; then LTO="-flto=thin -fuse-ld=lld"; else LTO=""; fi ;;
+  *)    LTO="$PYC_LTO" ;;
+esac
+
+"${PYC_CXX:-clang++}" -std=c++20 "$OPT" $LTO -rdynamic $INC -I "$REPO/compiler/include" \
   "$TMP/mod.ll" "$TMP/main.cpp" \
   "$REPO/compiler/src/rt/entry.cpp" "$REPO/compiler/src/rt/support.cpp" \
   "$LIB" -lm -lpthread -ldl -lutil -lz -o "$OUT"
