@@ -192,3 +192,54 @@ record said "not established" rather than picking the next plausible story.
 Fixed by hoisting every alloca to the function entry block. The probe moved to
 `verify/corpus/language/deep_call_loop.py` and now covers both halves: a plain
 call in a loop, and the nested-filter dealloc it was originally written for.
+
+
+## E: a compiled loop never offers the GIL (2026-08-27, OPEN on cp314)
+
+`thread_starvation.py`. A worker thread in a compiled loop holds the GIL to
+completion, so a flag set by another thread is never observed and the program
+hangs. CPython's interpreter loop periodically runs signal handlers AND offers
+the GIL; pyc now does the first (`verify/corpus/language/loop_periodic.py`) and
+not the second.
+
+The second was implemented and reverted. It works, and it trades one hang for
+another:
+
+| with `PyEval_SaveThread`/`RestoreThread` at each loop head | |
+|---|---|
+| `Lib/test/test_syslog` | hangs → **passes in 0.2s** |
+| `Lib/test/test_logging` | passes in 23s → **DEADLOCKS** |
+
+The deadlock is in `test_config_queue_handler`, which stops a `QueueListener`
+by enqueueing a sentinel and joining its thread: one thread left, 0% CPU, no
+progress, reproducible. Two hypotheses tested and **refuted** — that
+`PyEval_RestoreThread` was blocking against finalisation (a `Py_IsFinalizing`
+guard changed nothing), and that the yield ran without the GIL held (a
+`PyGILState_Check` guard changed nothing). gdb cannot attach under this
+machine's `ptrace_scope`, so there is no stack trace and **the mechanism is not
+established**. Tuning the yield interval would be tuning a race, not fixing it.
+
+**The free-threaded target does not have this problem at all.** Measured on a
+`cp314t` sysroot: this probe passes, `test_syslog` passes 3/3, and exactly one
+corpus case differs between the two targets — this one. Zero cases fail only
+under free-threading.
+
+### Why `Lib/test/test_syslog` is recorded here rather than fixed by reverting
+
+It regressed when the alloca hoist landed (`6db99ec`), and the alloca fix is
+kept deliberately.
+
+The starvation is **pre-existing**: a minimal threaded-closure probe hangs on
+builds with and without the alloca hoist. `test_syslog` passed before it and
+hangs after, 3/3 either way, but what changed is stack layout and timing — not
+the defect. The honest reading is that `test_syslog` was passing by luck, and
+reverting would buy back a favourable schedule rather than correct behaviour.
+
+What reverting would cost, measured:
+
+- C-stack exhaustion returns: `RecursionError: Stack overflow (used 8148 kB)`
+  after ~500,000 calls, for **any** call in **any** loop. `c += 1` is fine;
+  `c += len(b"abc")` is not. That is most long-running programs.
+- `Lib/test/test_builtin`'s SIGSEGV returns — the last one in `Lib/test`.
+- `verify/corpus/language/deep_call_loop.py` fails, so the LANGUAGE gate breaks
+  too and the probe would have to move back here. Two baselines, not one.

@@ -29,6 +29,28 @@
 #
 #     CPython   1. main ran ... / 2. worker finished
 #     pyc       2. worker finished / 1. main ran
+#
+# THIS GAP IS SPECIFIC TO THE GIL TARGET. Measured against a cp314t
+# free-threaded sysroot built with tools/build-python-sysroot.sh --freethreaded:
+#
+#     corpus, cp314t   98.84%  768/777    this probe PASSES
+#     corpus, cp314    98.71%  767/777    this probe TIMES OUT
+#
+# and exactly one case differs between the two, this one. Zero cases fail only
+# under free-threading, so pyc's ownership model survives Py_GIL_DISABLED --
+# where refcounts are atomic and biased -- intact.
+#
+# Lib/test/test_syslog behaves the same way: hangs 3/3 on cp314, passes in 0s
+# 3/3 on cp314t. The hang is a GIL artefact, not a defect in the lowering.
+# Without a global lock there is nothing to yield and nothing to starve.
+#
+# The cost of that target is real and is why it is not the default: the same
+# 2M-iteration loop takes 0.839/0.895s on cp314 and 1.046/1.063s on cp314t for
+# pyc, and 0.131s vs 0.211s for CPython itself. PEP 703's documented trade.
+#
+# NOTE the corpus is almost entirely single-threaded. The cp314t run shows the
+# ABI change does not break the foundation; it does NOT show compiled code is
+# thread-safe. That needs a concurrency corpus that does not exist yet.
 import sys
 import threading
 import time
