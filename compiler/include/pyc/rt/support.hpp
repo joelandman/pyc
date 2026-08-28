@@ -82,6 +82,17 @@ PyObject* pyc_rt_class_prepare(PyObject* meta, PyObject* name,
 // loop head. Returns -1 if a handler raised, so Ctrl-C propagates.
 int pyc_rt_periodic(void);
 
+// Global access with the name already built and interned once at startup.
+// Building the name per access cost an allocation, a decode and a hash every
+// time, and made a global read 4.5x slower than CPython's.
+PyObject* pyc_rt_load_global_obj(PyObject* name);
+int pyc_rt_store_global_obj(PyObject* name, PyObject* v);
+PyObject* pyc_rt_intern(const char* name);
+
+// Resolve __main__'s dict once, at startup. Without it every global read and
+// write called PyImport_AddModule("__main__") first.
+void pyc_rt_globals_init(void);
+
 // Raise. Accepts a class or an instance, as `raise` does, and always returns
 // -1 so the caller's error edge is taken.
 int pyc_rt_raise(PyObject* exc);

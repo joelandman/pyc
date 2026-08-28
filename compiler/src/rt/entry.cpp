@@ -1,5 +1,6 @@
 #include <limits.h>
 #include "pyc/rt/entry.hpp"
+#include "pyc/rt/support.hpp"
 
 #include <Python.h>
 
@@ -166,6 +167,7 @@ static void set_executable(void) {
 int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
     int rc = configure(argc, argv);
     if (rc != 0) return rc < 0 ? 1 : rc;
+    pyc_rt_globals_init();
     set_executable();
     set_main_file(argv);
 

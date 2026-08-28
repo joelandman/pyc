@@ -120,6 +120,29 @@ private:
     std::map<std::string, int> pyconst_;
     std::vector<std::pair<char, std::string>> pyconst_order_;
 
+    // Global NAMES live in their own table, interned. Separate from the
+    // literal table on purpose: interning changes object identity, and a str
+    // literal's identity is observable where a global's name is not.
+    int name_slot(const std::string& text) {
+        auto it = pyname_.find(text);
+        if (it != pyname_.end()) return it->second;
+        int slot = (int)pyname_.size();
+        pyname_[text] = slot;
+        pyname_order_.push_back(text);
+        return slot;
+    }
+    std::map<std::string, int> pyname_;
+    std::vector<std::string> pyname_order_;
+
+    std::string name_ptr(const std::string& text) {
+        std::string p = fresh();
+        o_ << "  " << p << " = getelementptr inbounds ptr, ptr @.pycnames, i64 "
+           << name_slot(text) << "\n";
+        std::string v = fresh();
+        o_ << "  " << v << " = load ptr, ptr " << p << "\n";
+        return v;
+    }
+
     // A literal use: load the prebuilt object and take a reference. Never
     // fails, so no error edge is emitted even where the IR carries one -- the
     // table was filled at startup or the program never began.
@@ -296,12 +319,14 @@ private:
                 need("declare ptr @pyc_rt_ellipsis()");
                 o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_ellipsis()\n";
                 break;
-            case Op::LoadGlobal:
-                need("declare ptr @pyc_rt_load_global(ptr)");
-                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_load_global(ptr "
-                   << cstr(in.text) << ")\n";
+            case Op::LoadGlobal: {
+                need("declare ptr @pyc_rt_load_global_obj(ptr)");
+                std::string nm = name_ptr(in.text);
+                o_ << "  " << v(*in.result)
+                   << " = call ptr @pyc_rt_load_global_obj(ptr " << nm << ")\n";
                 check(in, v(*in.result), true);
                 break;
+            }
             case Op::ConstNull:
                 // No call: materialise the null pointer into an SSA name so a
                 // phi can take it as an operand.
@@ -314,10 +339,11 @@ private:
                 check(in, v(*in.result), true);
                 break;
             case Op::StoreGlobal: {
-                need("declare i32 @pyc_rt_store_global(ptr, ptr)");
+                need("declare i32 @pyc_rt_store_global_obj(ptr, ptr)");
+                std::string nm = name_ptr(in.text);
                 std::string r = fresh();
-                o_ << "  " << r << " = call i32 @pyc_rt_store_global(ptr "
-                   << cstr(in.text) << ", ptr " << v(in.args[0]) << ")\n";
+                o_ << "  " << r << " = call i32 @pyc_rt_store_global_obj(ptr "
+                   << nm << ", ptr " << v(in.args[0]) << ")\n";
                 break;
             }
             case Op::LoadLocal:
@@ -676,7 +702,10 @@ private:
     // its uses.
     void emit_pyconsts() {
         std::size_t n = pyconst_order_.size() ? pyconst_order_.size() : 1;
+        std::size_t nn = pyname_order_.size() ? pyname_order_.size() : 1;
         o_ << "\n@.pyconsts = internal global [" << n
+           << " x ptr] zeroinitializer\n";
+        o_ << "@.pycnames = internal global [" << nn
            << " x ptr] zeroinitializer\n\n";
         o_ << "define internal i32 @__pyc_init_consts() {\nentry:\n";
         for (std::size_t i = 0; i < pyconst_order_.size(); ++i) {
@@ -713,6 +742,21 @@ private:
             o_ << ok << ":\n";
             o_ << "  " << ptr << " = getelementptr inbounds ptr, ptr "
                << "@.pyconsts, i64 " << i << "\n";
+            o_ << "  store ptr " << val << ", ptr " << ptr << "\n";
+        }
+        for (std::size_t i = 0; i < pyname_order_.size(); ++i) {
+            const std::string& text = pyname_order_[i];
+            need("declare ptr @pyc_rt_intern(ptr)");
+            std::string val = "%g" + std::to_string(i);
+            std::string ptr = "%q" + std::to_string(i);
+            std::string ok = "gok" + std::to_string(i);
+            std::string isnull = "%m" + std::to_string(i);
+            o_ << "  " << val << " = call ptr @pyc_rt_intern(ptr " << cstr(text) << ")\n";
+            o_ << "  " << isnull << " = icmp eq ptr " << val << ", null\n";
+            o_ << "  br i1 " << isnull << ", label %fail, label %" << ok << "\n";
+            o_ << ok << ":\n";
+            o_ << "  " << ptr << " = getelementptr inbounds ptr, ptr "
+               << "@.pycnames, i64 " << i << "\n";
             o_ << "  store ptr " << val << ", ptr " << ptr << "\n";
         }
         o_ << "  ret i32 0\nfail:\n  ret i32 -1\n}\n";

@@ -12,7 +12,34 @@
 
 extern "C" {
 
+// The module dict of __main__, resolved ONCE.
+//
+// This used to call PyImport_AddModule("__main__") on every global access --
+// building a PyUnicode from the literal, searching sys.modules, and fetching
+// the module dict, before the actual lookup even started -- on every read AND
+// every write. It was the dominant cost of a global by a wide margin:
+//
+//     3M iterations      before     after      CPython
+//     local  int +=      0.087s     0.091s     0.098s
+//     global int +=      0.560s     0.134s     0.132s
+//     attribute loop     0.346s     0.134s     0.129s
+//
+// __main__'s dict does not change for the lifetime of a compiled program, so
+// it is resolved at startup and held. All eleven globals_dict() callers see
+// the identical borrowed dict they saw before; only the cost changes.
+//
+// The lazy path stays as a fallback for anything that runs before
+// pyc_rt_globals_init, because a borrowed reference to a module that has not
+// been created yet is not something to guess at.
+static PyObject* g_globals_cache = nullptr;
+
+extern "C" void pyc_rt_globals_init(void) {
+    PyObject* m = PyImport_AddModule("__main__");   // borrowed
+    g_globals_cache = m ? PyModule_GetDict(m) : nullptr;   // borrowed
+}
+
 static PyObject* globals_dict() {
+    if (g_globals_cache) return g_globals_cache;
     PyObject* m = PyImport_AddModule("__main__");   // borrowed
     return m ? PyModule_GetDict(m) : nullptr;       // borrowed
 }
@@ -31,6 +58,48 @@ PyObject* pyc_rt_load_classname(PyObject* ns, const char* name) {
     Py_DECREF(key);
     if (v) return v;
     return pyc_rt_load_global(name);
+}
+
+// Global access with the name already built and INTERNED.
+//
+// pyc_rt_load_global below builds a fresh PyUnicode from the C string on every
+// single access -- an allocation, a UTF-8 decode and a hash, per global read --
+// and pyc_rt_store_global does the same through PyDict_SetItemString. The name
+// is interned instead, so the dict lookup compares pointers and reuses a
+// cached hash, which is what CPython's LOAD_GLOBAL relies on.
+//
+// Worth recording what this is and is not worth. Interning was the FIRST
+// hypothesis for the 4.5x gap on globals and it was REFUTED: on its own it
+// moved 3M global increments 0.560s -> 0.512s, nowhere near the 0.087s a local
+// costs. The gap was the __main__ lookup above. Measured separately once that
+// was cached, interning is a real but secondary win -- 0.148/0.176s without,
+// 0.122/0.116s with -- which the larger cost had been hiding.
+extern "C" PyObject* pyc_rt_load_global_obj(PyObject* name) {
+    PyObject* g = globals_dict();
+    if (!g) return nullptr;
+    PyObject* v = nullptr;
+    if (PyDict_GetItemRef(g, name, &v) < 0) return nullptr;
+    if (v) return v;
+    // Not a module global: try builtins. This is what makes `print` an
+    // ordinary name lookup rather than a special case in lowering (I3).
+    PyObject* b = PyEval_GetBuiltins();             // borrowed
+    if (b && PyDict_GetItemRef(b, name, &v) < 0) return nullptr;
+    if (v) return v;
+    PyErr_Format(PyExc_NameError, "name '%U' is not defined", name);
+    return nullptr;
+}
+
+extern "C" int pyc_rt_store_global_obj(PyObject* name, PyObject* v) {
+    PyObject* g = globals_dict();
+    if (!g) return -1;
+    return PyDict_SetItem(g, name, v);              // INCREFs v
+}
+
+// Build one interned name for the table. Interned so dict lookups compare
+// pointers; kept separate from the literal table so literal identity semantics
+// are untouched.
+extern "C" PyObject* pyc_rt_intern(const char* name) {
+    return PyUnicode_InternFromString(name);
 }
 
 PyObject* pyc_rt_load_global(const char* name) {
