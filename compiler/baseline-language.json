@@ -13,10 +13,10 @@
       "-O0"
     ]
   },
-  "total": 777,
-  "passing": 767,
-  "clean": 760,
-  "pass_rate": 98.71299871299871,
+  "total": 787,
+  "passing": 777,
+  "clean": 770,
+  "pass_rate": 98.72935196950445,
   "counts": {
     "TIMEOUT": 1,
     "STDOUT_DIFFERS": 9,
@@ -9570,6 +9570,19 @@
       }
     },
     {
+      "case": "closure_across_threads.py",
+      "path": "verify/corpus/concurrency/closure_across_threads.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
       "case": "comp_cell_arith.py",
       "path": "verify/corpus/known-gaps/comp_cell_arith.py",
       "flags": [],
@@ -9773,6 +9786,19 @@
       }
     },
     {
+      "case": "event_barrier.py",
+      "path": "verify/corpus/concurrency/event_barrier.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
       "case": "exec_min.py",
       "path": "verify/corpus/known-gaps/exec_min.py",
       "flags": [
@@ -9787,6 +9813,19 @@
       "exit": {
         "oracle": 0,
         "subject": 1
+      }
+    },
+    {
+      "case": "executor_map.py",
+      "path": "verify/corpus/concurrency/executor_map.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
       }
     },
     {
@@ -9921,6 +9960,19 @@
       }
     },
     {
+      "case": "lock_counter.py",
+      "path": "verify/corpus/concurrency/lock_counter.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
       "case": "loop_periodic.py",
       "path": "verify/corpus/language/loop_periodic.py",
       "flags": [],
@@ -9999,6 +10051,19 @@
       }
     },
     {
+      "case": "queue_pipeline.py",
+      "path": "verify/corpus/concurrency/queue_pipeline.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
       "case": "raise_from.py",
       "path": "verify/corpus/language/raise_from.py",
       "flags": [],
@@ -10014,6 +10079,32 @@
     {
       "case": "recursive_generator.py",
       "path": "verify/corpus/language/recursive_generator.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "refcount_stress.py",
+      "path": "verify/corpus/concurrency/refcount_stress.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "shared_containers.py",
+      "path": "verify/corpus/concurrency/shared_containers.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],
@@ -10077,6 +10168,32 @@
       }
     },
     {
+      "case": "thread_exceptions.py",
+      "path": "verify/corpus/concurrency/thread_exceptions.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "thread_local_state.py",
+      "path": "verify/corpus/concurrency/thread_local_state.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
       "case": "thread_starvation.py",
       "path": "verify/corpus/known-gaps/thread_starvation.py",
       "flags": [
@@ -10089,6 +10206,19 @@
       "exit": {
         "oracle": 0,
         "subject": -1
+      }
+    },
+    {
+      "case": "threads_join.py",
+      "path": "verify/corpus/concurrency/threads_join.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
       }
     },
     {

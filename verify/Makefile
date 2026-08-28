@@ -35,6 +35,7 @@ fast:
 ## The pre-push / PR-equivalent gate.
 verify:
 	@$(RUN) --corpus $(CURDIR)/corpus/language --corpus $(CURDIR)/corpus/known-gaps \
+	  --corpus $(CURDIR)/corpus/concurrency \
 	  $(PYCFLAGS) --jobs $(JOBS) --run-timeout 15 --compile-timeout 90 \
 	  --show 12 --json $(OUT) $(ORACLE_ARGS)
 	@$(CHECK) --baseline $(REPO)/compiler/baseline-language.json \

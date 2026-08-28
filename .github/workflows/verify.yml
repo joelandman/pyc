@@ -111,6 +111,7 @@ jobs:
           PYC_LOWER="$RUNNER_TEMP/pyc_lower" ./verify/measure_run.py \
             --corpus verify/corpus/language \
             --corpus verify/corpus/known-gaps \
+            --corpus verify/corpus/concurrency \
             --pyc "$PWD/compiler/tools/pycc" \
             --pyc-flag=-O0 \
             --sysroot "$SYSROOT" \
