@@ -1,187 +1,86 @@
 # pyc
 
-An AOT (Ahead-Of-Time) compiler for a substantial Python subset. Parses Python
-source using the Python C API, lowers the AST through a visitor-based IR, generates
-LLVM IR, optimizes it, and produces standalone native executables via a minimal
-`PyObject*`-based boxed runtime with refcounting.
+An AOT compiler for Python. Parses with the target CPython, lowers a generated
+typed AST to LLVM IR, and links a native executable against that CPython —
+same object model, real stdlib, precompiled C-extension wheels.
 
-Written in C++ with Clang++ and LLVM (`find_package(LLVM)`; 18 historically,
-22 on the current development machine). No C/C++ intermediate language for
-the normal compiler path.
+Binding invariants: [rebuild/CHARTER.md](rebuild/CHARTER.md).
+Why the previous tree was discarded: [rebuild/ARCHITECTURE_REVIEW.md](rebuild/ARCHITECTURE_REVIEW.md).
 
 ## Status
 
-The project is being rebuilt on CPython's object model. See
-[rebuild/CHARTER.md](rebuild/CHARTER.md) for the binding invariants and
-[rebuild/ARCHITECTURE_REVIEW.md](rebuild/ARCHITECTURE_REVIEW.md) for why.
+Measured by `./verify/measure_run.py` against CPython 3.14.7. Every case is
+compared at run time; no expected output is stored ([CHARTER I5](rebuild/CHARTER.md)).
 
 | Corpus | Pass rate | |
 |---|---|---|
 | CPython `Lib/test/` | **63.24%** | 246/389 files |
-| language corpus | **98.71%** | 764/774 cases |
+| language corpus | **98.73%** | 777/787 cases |
 
-`Lib/test` is the north-star metric (CHARTER I6): the pass rate over CPython's
-own test suite, published low and honest, and never allowed to regress. Both
-numbers are `passing / corpus size` — the denominator is every file measured,
-so they move only when the compiler does. Every case is compared against a real
-CPython at run time; no expected output is stored anywhere
-([CHARTER I5](rebuild/CHARTER.md)), and values whose *shape* cannot be equal
-twice — a duration, a heap address — are collapsed before comparing, on both
-sides, rather than compared and reported as failures
-([I5a](rebuild/CHARTER.md)).
+`Lib/test` is the north-star metric (CHARTER I6). It may not regress.
 
-**Three P0 silent wrong answers**, all one cause: compiled code runs with no
-Python frame, so `locals()` and `globals()` return `None` and `bool(locals())`
-is `False` — exit status 0 with a wrong value (issue #9). Six further probes for
-the same gap fail loudly (`vars`, `eval`, `exec`). They are deliberately **in**
-the gate, in `verify/corpus/known-gaps/`, so the published number carries the
-gap rather than hiding it.
-
-Two further P0-class defects were found on 2026-08-26 and are **fixed**: a raw
-cell leaking out of comprehensions, where `[bool(flag) for …]` answered `True`
-for a false flag at exit 0; and a method of a class defined inside a function
-being unable to see that function's locals. Neither was visible to a 747-case
-corpus — an AST walk found *zero* cases exercising the first — so both were
-found by decomposing `Lib/test` failures, and their probes are retained as
-regression cover.
-
-That does not make red normal. The gate compares per case: a baselined P0 does
-not fail it, a **new** one does, and a baselined P0 that gets **fixed** trips
-the staleness detector and demands a refresh. The count can only go down.
-
-Measured by `./verify/measure_run.py`; gated per-commit in CI
-(`.github/workflows/verify.yml`) and nightly (`metric.yml`).
-
-> The rest of this file still describes the **previous** tree (`src/`,
-> `tests/runner.py`, the boxed `PyObject*` runtime). It has not been rewritten
-> for the new tree under `compiler/`.
+**Three P0 silent wrong answers**, all one cause: compiled code pushes no
+Python frame, so `locals()` / `globals()` return `None` and `bool(locals())`
+is `False` — exit 0 with a wrong value. Probes live in
+`verify/corpus/known-gaps/` and are **in** the gate. Plan:
+[rebuild/CORRECTNESS.md](rebuild/CORRECTNESS.md).
 
 ## Build
 
+Needs clang++/LLVM 22 and a CPython **sysroot** (Tier 1: static libpython,
+dynamic libc, `-rdynamic`).
+
 ```bash
-mkdir -p build && cd build
-cmake ..
-make -j$(nproc)
+./tools/build-python-sysroot.sh --version 3.14.7 --jobs "$(nproc)"
+make -C compiler                          # writes /tmp/pyc_lower
+export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
 ```
 
 ## Usage
 
 ```bash
-pyc hello.py -o hello          # compile
-pyc hello.py -o hello --static # fully static binary
-pyc hello.py --emit-llvm       # dump LLVM IR
-pyc hello.py -O2 -o hello      # with O2 optimisation
+./compiler/tools/pycc hello.py -o hello          # default -O1 (LLVM backend)
+./compiler/tools/pycc hello.py -o hello -O0
+./compiler/tools/pycc hello.py --emit-llvm -o hello.ll
 ./hello
 ```
 
-### Command-Line Options
+`pycc` produces a Tier-1 binary: no libpython `DT_NEEDED` entry, `dlopen` still
+works, so NumPy/PyTorch wheels load. Fully static (Tier 2) is deferred.
 
-| Flag | Description |
-|------|-------------|
-| `-o output` | Output file path (default: `a.out`) |
-| `--static` | Produce fully static binary (no dynamic libs) |
-| `-O0` | True O0: **no** runtime bitcode LTO, **no** LLVM passes (debug / raw IR) |
-| `-O1` | LLVM O1 + runtime bitcode LTO |
-| `-O2` | LLVM O2 + runtime bitcode LTO (default) |
-| `-O3` | LLVM O3 + runtime bitcode LTO |
-| `--opt=N` | Alias for `-ON` (deprecated) |
-| `--emit-llvm` | Emit LLVM IR to `output.ll` instead of binary |
-| `--emit-asm` / `-S` | Emit assembly to `output.s` instead of binary |
-| `-g` | Emit DWARF debug info (source line mapping for gdb/lldb). Use with `-O0`. Pretty-print `PyObject*` via `source tools/pyc_gdb.py` in gdb. |
-| `--verbose` | Print verbose compilation information |
-
-## Testing
+## Test
 
 ```bash
-cd build && make check   # or: ctest
+make -C verify fast      # language corpus, fail on a new silent wrong answer
+make -C verify verify    # PR-equivalent gate + monotonicity vs baseline
+make -C verify metric    # Lib/test — the published number
 ```
 
-`make check` runs `tests/runner.py` (inline `CASES` + `FILE_CASES` + dispatch-chain
-check, all at `-O0`), the import suite, and a thin `-O2` smoke (`tests/o2_smoke.py`).
-Its exit code is the suite's exit code — a green `make check` means those steps
-passed. For a single focused run:
+Oracle and subject must share the sysroot (`PYC_SYSROOT` or the default above).
 
-```bash
-PYC_BINARY=./build/pyc python3 tests/runner.py
-./test/import_tests/run_import_tests.sh
-PYC_BINARY=./build/pyc python3 tests/o2_smoke.py
-```
-
-The runner compiles each case and compares output against CPython. File-based
-programs in `tests/` cover optimization-sensitive behavior such as native
-`range` loops, numeric locals, numeric list mutation and aliasing, command-line
-arguments, default arguments, nested destructuring, `tests/modifiers.py`, and
-`tests/nbody.py`. `tests/mbs.py` is excluded because it exceeds the runner's
-5s per-command timeout (`time.perf_counter` itself is supported).
-
-## What Compiles Today
-
-See [FEATURES.md](FEATURES.md) for a complete list of supported features.
-
-### Quick Summary
-
-- **Types**: int, float, bool, str, list, dict, tuple, set, None, complex, bytes, bytearray, decimal.Decimal
-- **Operators**: `+ - * / // % **`, `== != < > <= >=`, `is`, `in`, `and`, `or`, `not`, unary `-`
-- **Control flow**: `if/elif/else`, `while`, `for`, `break`, `continue`, ternary
-- **Functions**: `def`, `lambda`, nested functions, closures (`nonlocal`), decorators
-- **Classes**: `class`, `__init__`, inheritance, `super()`, `__str__`/`__repr__`
-- **Exceptions**: `try/except/finally/else`, structured exceptions, exception classes
-- **Statements**: `with`, `match/case`, `assert`, `del`, walrus `:=`, `import`
-- **Builtins**: `print`, `range`, `len`, `str`, `int`, `float`, `complex`, `abs`, `min`, `max`, `list`, `enumerate`, `zip`, `sum`, `sorted`, `any`, `all`, `isinstance`, `bool`, `type`, `id`, `repr`, `hex`, `oct`, `bin`, `ord`, `chr`, `round`, `divmod`, `pow`, `reversed`, `cmp_to_key`
-- **Standard library stubs**: `re` (PCRE2-backed: search/match/finditer/findall/sub/split/compile, IGNORECASE/MULTILINE/DOTALL flags), `os` (path helpers, getcwd, listdir, makedirs, environ), `pathlib` (`Path`), `subprocess` (call, check_output), `sys`, `cmath`, `math` (~25 functions wrapping libm), `json` (dumps/loads), `random` (CPython-exact MT19937), `itertools` (chain/product/combinations/permutations/starmap/islice/zip_longest/accumulate/takewhile/dropwhile/compress/groupby/chain.from_iterable), `collections` (Counter incl. `most_common`/`elements`/`subtract`/`update`, deque, namedtuple, defaultdict), `datetime` (`date`/`datetime`/`timedelta`), `hashlib` (md5/sha1/sha256, from scratch), `base64`, `struct`, `heapq`, `bisect`, `statistics`, `string`, `textwrap`, `copy`, `uuid`, `functools` (reduce/partial/wraps/lru_cache), `operator`, `shutil`, `glob`, `csv`, `decimal` (`Decimal`, arbitrary precision via libmpdec) — see FEATURES.md
-
-## Architecture
+## Layout
 
 ```
-Python source
-    │  Python C API (ast.parse)
-    ▼
-ASTNode tree  (PythonParser.cpp)
-    │  LoweringVisitor
-    ▼
-ModuleIR  (IR.h / IR.cpp)
-    │  Codegen::generate
-    ▼
-llvm::Module  (Codegen.cpp)
-    │  LLVM passes (O0–O3)
-    ▼
-.o object file
-    │  clang++ + Runtime.cpp
-    ▼
-native executable
+compiler/     frontend, lowering, codegen, C-API binding, pycc
+verify/       differential harness and corpora
+rebuild/      CHARTER, interfaces, agent directives, correctness plan
+tools/        sysroot builder, nightly checker
 ```
 
-**Runtime** (`src/runtime/Runtime.cpp`): standalone C++ file, no CPython
-dependency. Provides `PyObject` (flat struct: `refcount`, `type`, `value`/`dvalue`/
-`list`/`dict`/`str`/`cell_content`), refcounting, arithmetic, comparison, print,
-and all builtins. Types: int, list, dict, str, float, bool/None, cell, super
-proxy, compiled regex, match object, exception, function, exception class,
-complex, date/datetime, timedelta, pathlib.Path.
-Exceptions use setjmp/longjmp frames. Callables dispatch through a registry of
-`__apply__` adapters (`Pyc_Apply`). Linked into every compiled binary.
-
-**IR**: linear instruction list per function. Instructions: `const`, `fconst`,
-`bconst`, `nconst`, `assign`, `add`/`sub`/`mul`/`div`/`truediv`/`mod`/`pow`,
-`icmp`, `br`, `label`, `call`, `ret`. IR instructions carry conservative result
-type metadata (`int`, `float`, `bool`, `str`, or `boxed`).
+Flow: target `ast.parse` → JSON → generated `pyc::ast` → SSA IR → LLVM IR →
+`clang++` + static libpython → native executable.
 
 ## Documentation
 
-- [README.md](README.md) — This file: build, usage, options, quick feature summary
-- [FEATURES.md](FEATURES.md) — Capability list (what compiles today)
-- [ISSUES.md](ISSUES.md) — Open bugs, latent issues, and closed-but-don't-reopen items
-- [IMPLEMENTATION.md](IMPLEMENTATION.md) — Design choices and a historical log of bug hunts
-- [KnownGapsPlan.md](KnownGapsPlan.md) — Gaps 1–4 (all fixed)
-- [AGENTS.md](AGENTS.md) — Build/test gotchas; SWE / SWR / Coordinator roles
-- [DEBUGGING_PLAN.md](DEBUGGING_PLAN.md) — `-g` DWARF (implemented; leftovers in ISSUES I-019)
-
-When a doc disagrees with `tests/runner.py` or the `pyc` binary, trust the executable.
+- [rebuild/CHARTER.md](rebuild/CHARTER.md) — product definition and invariants
+- [rebuild/INTERFACES.md](rebuild/INTERFACES.md) — layer contracts
+- [rebuild/AGENT_DIRECTIVES.md](rebuild/AGENT_DIRECTIVES.md) — how to work on it
+- [rebuild/CORRECTNESS.md](rebuild/CORRECTNESS.md) — open correctness work
+- [rebuild/UNBOXING.md](rebuild/UNBOXING.md) — performance (after correctness)
+- [compiler/README.md](compiler/README.md) — frontend / C-API notes
+- [verify/README.md](verify/README.md) — harness semantics
+- [AGENTS.md](AGENTS.md) — build/test for coding agents
 
 ## License
 
 Apache License 2.0 — see [LICENSE](LICENSE).
-
-## Development history
-
-Initially scaffolded with Grok (xAI). Extended substantially with Claude (Anthropic).
-See [GROK.md](GROK.md) for early history.

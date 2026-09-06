@@ -43,7 +43,7 @@ def find_pyc() -> Path | None:
     if (env := os.environ.get("PYC_BINARY")):
         if Path(env).exists():
             return Path(env)
-    for c in ("compiler/tools/pycc", "build/pyc", "pyc"):
+    for c in ("compiler/tools/pycc",):
         if Path(c).exists():
             return Path(c).resolve()
     return None

@@ -41,10 +41,9 @@ runs:
       run: |
         set -euxo pipefail
         # LLVM 22 is newer than ubuntu-24.04 ships, so it comes from
-        # apt.llvm.org. The new tree needs clang++ both to compile itself and
-        # to assemble the LLVM IR it emits, plus CPython's build deps for the
-        # sysroot. cmake/ninja/pcre2/libmpdec were OLD-tree dependencies: that
-        # runtime reimplemented decimal, which now comes from CPython.
+        # apt.llvm.org. clang++ compiles the compiler and assembles the LLVM
+        # IR it emits. The remaining packages are CPython's build deps for the
+        # sysroot.
         wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
         chmod +x /tmp/llvm.sh
         sudo /tmp/llvm.sh 22
@@ -134,9 +133,7 @@ runs:
       shell: bash
       run: |
         set -euxo pipefail
-        # The new tree has no build system yet: it is a handful of translation
-        # units, so it is built directly. Replace this when one lands, rather
-        # than growing the command.
+        # Keep in sync with compiler/Makefile.
         clang++-22 -std=c++20 -O2 -I compiler/include \
           compiler/src/pyc_lower_main.cpp compiler/src/lower.cpp \
           compiler/src/scope.cpp compiler/src/ir.cpp compiler/src/codegen.cpp \

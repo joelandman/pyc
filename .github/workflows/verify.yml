@@ -1,13 +1,7 @@
 # PR gate. Fast, blocking, runs on every push and pull request.
 #
-# Scope: the NEW tree (compiler/) against the rescued corpus. NOT the full
-# Lib/test metric -- that lives in metric.yml on a schedule, because it is too
-# slow to block a PR.
-#
-# The old tree under src/ is deliberately NOT built or gated here. Its 97.8%
-# came with five P0 silent wrong answers and hardcoded expectations that had
-# recorded its own bugs as correct; keeping that gate green would enforce the
-# property the architecture review argued is worthless.
+# Scope: compiler/ against the rescued corpus. NOT the full Lib/test metric --
+# that lives in metric.yml on a schedule, because it is too slow to block a PR.
 #
 # This gate enforces CHARTER I6 (the metric may never regress) via
 # verify/check_regression.py, not by requiring a fixed pass rate. A project

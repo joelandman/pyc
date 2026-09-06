@@ -1,8 +1,8 @@
 # compiler/ — the rebuilt pyc
 
-New tree. Contracts in `../rebuild/INTERFACES.md`, invariants in
-`../rebuild/CHARTER.md`. The legacy tree under `../src/` is not carried
-forward; see `../rebuild/ARCHITECTURE_REVIEW.md` for why.
+Contracts in `../rebuild/INTERFACES.md`, invariants in
+`../rebuild/CHARTER.md`. Why the previous runtime was discarded:
+`../rebuild/ARCHITECTURE_REVIEW.md`.
 
 ## A1 — frontend (in progress)
 

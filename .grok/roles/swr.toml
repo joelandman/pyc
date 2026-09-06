@@ -1,4 +1,3 @@
-# SWR — read-only reviewer; Coordinator applies ISSUES.md
-description = "Reviews a pyc ticket diff; crash/wrong-answer on this slice blocks merge"
+description = "Read-only review of one pyc slice against CHARTER.md"
 default_capability_mode = "read-only"
 reasoning_effort = "high"

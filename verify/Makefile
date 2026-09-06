@@ -13,7 +13,28 @@ CHECK   := $(CURDIR)/measure_compare.py
 JOBS    ?= $(shell nproc 2>/dev/null || echo 4)
 # Match the PR gate. See .github/workflows/verify.yml.
 PYCFLAGS ?= --pyc-flag=-O0
-SYSROOT ?=
+# The oracle MUST be the runtime the subject actually embeds. pycc links a
+# specific sysroot's libpython, so an oracle from anywhere else is measuring
+# two different installations against each other -- which is what
+# VERSION_TARGETING.md means by making the parse oracle and the differential
+# oracle the same binary, and what verify/README.md means by "prefer
+# --sysroot".
+#
+# This defaulted to empty, which silently used whatever `python3` was on PATH.
+# It produced a REGRESSION report: /home/joe/local/bin/python3 and the sysroot
+# are both 3.14.7 with an identical banner, so the comparator -- which keys on
+# version, deliberately, so CI and local sysroots stay comparable -- accepted
+# the pairing. test_build_details.py then "regressed", being precisely a test
+# of installation-specific build metadata: exit 0 under one install, exit 1
+# under the other, while the compiled binary followed the sysroot it embeds.
+#
+# Default it to the same sysroot pycc links, so the two cannot drift apart
+# without someone saying so explicitly.
+SYSROOT ?= $(PYC_SYSROOT)
+ifeq ($(strip $(SYSROOT)),)
+SYSROOT := $(HOME)/opt/py-sysroots/cp314-3.14.7-tier1
+endif
+UNUSED_SYSROOT ?=
 OUT     ?= $(CURDIR)/current.json
 
 ifeq ($(strip $(SYSROOT)),)
@@ -42,8 +63,15 @@ verify:
 	          --require-baseline --current $(OUT)
 
 ## The north-star number (CHARTER I6). Slow; normally left to scheduled CI.
+# $(PYCFLAGS) is not optional here. Baselines are keyed to the compiler flags
+# they were recorded under (732970e), and this target was the one that did not
+# pass them -- so every local `make metric` compiled at a different optimisation
+# level than compiler/baseline-libtest.json and the comparator refused the
+# comparison outright. It refuses loudly, which is the only reason this was
+# visible at all. CI passes --pyc-flag=-O0 by hand (metric.yml), so the
+# baseline itself and the nightly number were never affected.
 metric:
-	@$(RUN) --libtest --jobs $(JOBS) \
+	@$(RUN) --libtest $(PYCFLAGS) --jobs $(JOBS) \
 	  --run-timeout 30 --compile-timeout 120 \
 	  --show 20 --json $(CURDIR)/libtest.json $(ORACLE_ARGS)
 	@$(CHECK) --baseline $(REPO)/compiler/baseline-libtest.json \
