@@ -851,6 +851,7 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"pyc_rt_import_attr", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
     {"pyc_rt_cell_get", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_unpack_ex", Ownership::Owned, true, 3, {}, false, "", false, "", "oii"},
+    {"pyc_rt_push_frame", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
     {"PyArg_Parse", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
     {"PyArg_ParseTuple", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
     {"PyArg_ParseTupleAndKeywords", Ownership::Unknown, true, 0, {}, false, "", true, "3.2", ""},
@@ -1079,6 +1080,6 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"Py_PACK_VERSION", Ownership::Unknown, true, 0, {}, false, "", true, "3.14", ""},
 };
 
-inline constexpr int kCApiSymbolCount = 1059;
+inline constexpr int kCApiSymbolCount = 1060;
 
 }  // namespace pyc::rt

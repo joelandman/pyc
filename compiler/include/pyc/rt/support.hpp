@@ -200,6 +200,7 @@ int pyc_rt_install_frame(struct _frame* f, struct _PyInterpreterFrame** saved);
 void pyc_rt_uninstall_frame(struct _PyInterpreterFrame* saved);
 int pyc_rt_push_module_frame(void);
 void pyc_rt_pop_module_frame(void);
+PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals);
 
 #ifdef __cplusplus
 }

@@ -19,11 +19,10 @@ compared at run time; no expected output is stored ([CHARTER I5](rebuild/CHARTER
 
 `Lib/test` is the north-star metric (CHARTER I6). It may not regress.
 
-Python frames (C1a): compiled functions and the module body now push a
-`PyFrameObject`, so `locals()` / `globals()` / `eval` / `exec` match CPython
-on the known-gaps probes. Class-body `locals()` is still the enclosing
-module (one leftover). Eager frames are the expensive path; C1b will
-replace them with `_PyInterpreterFrame`. Plan:
+Python frames (C1a): compiled functions, the module body, and class bodies
+push a `PyFrameObject`, so `locals()` / `globals()` / `eval` / `exec` match
+CPython on the known-gaps probes. Eager frames are the expensive path; C1b
+will replace them with `_PyInterpreterFrame`. Plan:
 [rebuild/CORRECTNESS.md](rebuild/CORRECTNESS.md).
 
 ## Build

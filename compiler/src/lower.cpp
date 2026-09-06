@@ -2944,21 +2944,48 @@ private:
         if (!n.keywords.empty()) { forget(kwds); frame_owned_.push_back(kwds); }
         auto saved_locals = locals_;
         locals_.clear();                  // names in a class body are not fast locals
+        // A class body is not a call, so C1a's function trampoline never runs.
+        // Push a frame whose f_locals is the namespace; locals() then sees
+        // `y` rather than the enclosing module. The capsule destructor pops
+        // it, so a landing pad that decrefs the guard unwinds the frame.
+        ir::Value guard = call_capi("pyc_rt_push_frame", {clsname, ns}, n.loc, &ok);
+        if (!ok) { class_ns_.pop_back(); qual_.pop_back();
+                   class_cells_.pop_back(); return false; }
+        mark_owned(guard);
+        forget(guard);
+        std::uint32_t cls_unwind = new_block("class.unwind");
+        std::uint32_t cls_after  = new_block("class.after");
+        try_stack_.push_back(cls_unwind);
         // Emitted while class_ns_ names this body's namespace, which is what
         // __annotate__ captures, and before the body so the timing matches the
         // module case.
         AnnItems cann;
         collect_annotations(n.body, cann);
-        if (!emit_annotate(cann, n.loc)) { class_ns_.pop_back(); qual_.pop_back();
-                                           class_cells_.pop_back(); return false; }
+        if (!emit_annotate(cann, n.loc)) { try_stack_.pop_back(); class_ns_.pop_back();
+                                           qual_.pop_back(); class_cells_.pop_back();
+                                           return false; }
         for (const stmt& s2 : n.body)
-            if (!lower_stmt(s2)) { class_ns_.pop_back();
+            if (!lower_stmt(s2)) { try_stack_.pop_back(); class_ns_.pop_back();
                                    qual_.pop_back(); class_cells_.pop_back();
                                    return false; }
+        try_stack_.pop_back();
         locals_ = saved_locals;
         class_ns_.pop_back();
         qual_.pop_back();
         class_cells_.pop_back();
+        if (!terminated()) {
+            emit_decref(guard, n.loc);
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", cls_after, 0, n.loc, std::nullopt});
+        }
+        set_block(cls_unwind);
+        emit_decref(guard, n.loc);
+        {
+            std::uint32_t pad = make_landing_pad(n.loc);
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", pad, 0, n.loc, std::nullopt});
+        }
+        set_block(cls_after);
         // frame_owned_ is a stack and landing pads snapshot it, so every pop
         // must mirror its push in LIFO order. Pushed here, in order:
         // meta, ccell, ns, bases, and kwds when there are any.
