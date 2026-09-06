@@ -1,10 +1,8 @@
-# known-gaps — probes that currently FAIL
+# known-gaps — probes that currently FAIL, plus regression cover
 
-**Not wired into the test matrix.** Running these against the current compiler
-produces P0 silent wrong answers and crashes. They live here so the gap is
-written down and executable, not so CI goes red.
-
-Run them deliberately:
+Wired into the PR gate (`verify.yml` includes this corpus). A baselined
+failure does not fail the gate; a new one does. Fixed probes stay here when
+a large corpus could not see the defect.
 
 ```bash
 S=~/opt/py-sysroots/cp314-3.14.7-tier1
@@ -12,36 +10,16 @@ S=~/opt/py-sysroots/cp314-3.14.7-tier1
   --pyc "$PWD/compiler/tools/pycc" --pyc-flag=-O0 --sysroot "$S" --jobs 4
 ```
 
-These probes cover **four** defects, of which **three are fixed**: nine for
-missing Python frames (issue #9, open), nine `comp_cell_` for a raw cell
-leaking out of a comprehension (**FIXED**), and three `nested_class_` for a
-broken closure chain through a class body (**FIXED**). The last two were found
-on 2026-08-26 by decomposing the 128 `EXIT_DIFFERS` cases in the `Lib/test`
-baseline, and together they accounted for the two largest clusters in it. The
-fixed probes stay here as regression cover — a 747-case corpus could see
-neither defect, so these probes are the only thing standing between them and a
-silent return.
+Open: **E** (GIL / `thread_starvation.py`, C2). Fixed, kept as regression
+cover: **B** (comprehension cells), **C** (nested-class closures), **D**
+(C-stack alloca). **A** (Python frames, C1) moved to `language/`.
 
-## A: no Python frame (issue #9)
+## A: no Python frame (issue #9) — FIXED, moved to language/
 
-Nine probes, one cause — compiled code runs with no Python frame
-(issue #9, and `rebuild/CHARTER.md` "Deferred: per-function Python frames").
-
-| probe | pyc | CPython |
-|---|---|---|
-| `locals_none_p0.py` | `None` | `{'a': 1}` |
-| `globals_none_p0.py` | `globals() is None` → `True` | `False` |
-| `locals_bool_p0.py` | `bool(locals())` → `False` | `True` |
-| `vars_none_p0.py` | `SystemError: frame does not exist` | works |
-| `eval_min.py`, `eval_in_func.py` | `TypeError: eval must be given globals and locals when called without a frame` | `2` |
-| `exec_min.py` | `SystemError: globals and locals cannot be NULL` | works |
-| `frame_builtins.py`, `globals_probe.py` | `AttributeError`/`TypeError` on `None` | work |
-
-The first three are **silent**: exit status 0 with a wrong value. The rest fail
-loudly. Same missing frame either way — only some paths raise.
-
-`measure_run.py --fail-on-silent-wrong` reads `exit == 0` and `STDOUT_DIFFERS`
-straight off the record (CHARTER I1), with no baseline involved.
+C1a/C1b. The nine probes live in `verify/corpus/language/` as
+`locals_none_p0.py`, `globals_none_p0.py`, `locals_bool_p0.py`,
+`vars_none_p0.py`, `eval_min.py`, `eval_in_func.py`, `exec_min.py`,
+`frame_builtins.py`, `globals_probe.py`.
 
 ## B: a raw cell leaks out of comprehensions — FIXED 2026-08-26 (`fb54be2`)
 

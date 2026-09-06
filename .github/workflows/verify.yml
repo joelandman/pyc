@@ -93,15 +93,9 @@ jobs:
 
       - name: Differential run
         run: |
-          # known-gaps is gated deliberately. Its probes currently FAIL -- three
-          # of them as P0 silent wrong answers, all from issue #9 (compiled code
-          # runs with no Python frame). They are in the gate so the published
-          # number reflects the gap instead of hiding it.
-          #
-          # This does NOT make red normal: measure_compare compares per case,
-          # so a baselined silent wrong answer does not fail the gate but a NEW
-          # one does, and one that gets FIXED trips the staleness detector. The
-          # count can only go down.
+          # known-gaps is gated deliberately. Remaining open probes (C2 GIL)
+          # stay in the published number. A baselined failure does not fail
+          # the gate; a NEW silent wrong answer does. The count can only go down.
           PYC_LOWER="$RUNNER_TEMP/pyc_lower" ./verify/measure_run.py \
             --corpus verify/corpus/language \
             --corpus verify/corpus/known-gaps \

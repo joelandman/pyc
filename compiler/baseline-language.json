@@ -1,10 +1,10 @@
 {
   "schema": 4,
-  "jobs": 6,
+  "jobs": 16,
   "oracle": {
     "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14",
     "version": "3.14.7",
-    "banner": "3.14.7 (main, Aug 15 2026, 21:10:55) [GCC 13.3.0]",
+    "banner": "3.14.7 (main, Aug 29 2026, 11:06:52) [GCC 13.3.0]",
     "machine": "x86_64"
   },
   "subject": {
@@ -13,15 +13,13 @@
       "-O0"
     ]
   },
-  "total": 787,
-  "passing": 777,
-  "clean": 770,
-  "pass_rate": 98.72935196950445,
+  "total": 788,
+  "passing": 787,
+  "clean": 780,
+  "pass_rate": 99.8730964467005,
   "counts": {
     "TIMEOUT": 1,
-    "STDOUT_DIFFERS": 9,
-    "EXIT_DIFFERS": 6,
-    "STDERR_DIFFERS": 13
+    "STDERR_DIFFERS": 7
   },
   "results": [
     {
@@ -9753,36 +9751,28 @@
     },
     {
       "case": "eval_in_func.py",
-      "path": "verify/corpus/known-gaps/eval_in_func.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "path": "verify/corpus/language/eval_in_func.py",
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "eval_min.py",
-      "path": "verify/corpus/known-gaps/eval_min.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "path": "verify/corpus/language/eval_min.py",
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -9800,19 +9790,15 @@
     },
     {
       "case": "exec_min.py",
-      "path": "verify/corpus/known-gaps/exec_min.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "path": "verify/corpus/language/exec_min.py",
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -9830,19 +9816,15 @@
     },
     {
       "case": "frame_builtins.py",
-      "path": "verify/corpus/known-gaps/frame_builtins.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "path": "verify/corpus/language/frame_builtins.py",
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -9860,10 +9842,8 @@
     },
     {
       "case": "globals_none_p0.py",
-      "path": "verify/corpus/known-gaps/globals_none_p0.py",
-      "flags": [
-        "STDOUT_DIFFERS"
-      ],
+      "path": "verify/corpus/language/globals_none_p0.py",
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -9875,24 +9855,33 @@
     },
     {
       "case": "globals_probe.py",
-      "path": "verify/corpus/known-gaps/globals_probe.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "path": "verify/corpus/language/globals_probe.py",
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "handled_exc_leaks.py",
       "path": "verify/corpus/language/handled_exc_leaks.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "int_stress.py",
+      "path": "verify/corpus/language/int_stress.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],
@@ -9931,10 +9920,8 @@
     },
     {
       "case": "locals_bool_p0.py",
-      "path": "verify/corpus/known-gaps/locals_bool_p0.py",
-      "flags": [
-        "STDOUT_DIFFERS"
-      ],
+      "path": "verify/corpus/language/locals_bool_p0.py",
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -9946,10 +9933,8 @@
     },
     {
       "case": "locals_none_p0.py",
-      "path": "verify/corpus/known-gaps/locals_none_p0.py",
-      "flags": [
-        "STDOUT_DIFFERS"
-      ],
+      "path": "verify/corpus/language/locals_none_p0.py",
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -10199,7 +10184,7 @@
       "flags": [
         "TIMEOUT"
       ],
-      "diagnostic": "the binary did not finish within 50s",
+      "diagnostic": "the binary did not finish within 30s",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -10249,19 +10234,15 @@
     },
     {
       "case": "vars_none_p0.py",
-      "path": "verify/corpus/known-gaps/vars_none_p0.py",
-      "flags": [
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "path": "verify/corpus/language/vars_none_p0.py",
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {

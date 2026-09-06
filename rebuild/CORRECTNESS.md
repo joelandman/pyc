@@ -1,8 +1,7 @@
 # Correctness plan
 
 CHARTER order: correctness, completeness, performance. This file is the work
-that remains on the first of those. Performance is [UNBOXING.md](UNBOXING.md)
-and does not start until C1 is closed.
+that remains on the first of those. Performance is [UNBOXING.md](UNBOXING.md).
 
 Every item below was measured. Probes that currently fail live in
 `verify/corpus/known-gaps/` and are in the PR gate so the published number
@@ -10,8 +9,8 @@ carries the gap.
 
 ## C1 — per-function Python frames (P0)
 
-**Status: C1b landed.** Not opt-in (I2). known-gaps frame probes: **21/22**
-(the remaining timeout is C2).
+**Status: closed.** Not opt-in (I2). Frame probes live in `language/`.
+Gate corpus **787/788** (the timeout is C2 `thread_starvation.py`).
 
 **C1a** was eager `PyFrame_New` (59.88 ns/call, 2.43× slower than CPython).
 **C1b** pushes `_PyInterpreterFrame` on the thread datastack via
@@ -21,41 +20,8 @@ does not dangle. Measured: `locals()` returns the dict, `incomplete=0`,
 `FRAME_SPECIALS_SIZE == 10` on cp314. Function, module, and class bodies
 all use this path.
 
-Remaining to close C1: move the nine frame probes into `language/` and
-refresh the language baseline.
-
-Compiled functions push no Python frame. `sys._getframe` raises rather than
-lying (I1-clean at that boundary), but callers degrade:
-
-| probe | pyc | CPython | class |
-|---|---|---|---|
-| `locals_none_p0.py` | `None` | `{'a': 1}` | silent, exit 0 |
-| `globals_none_p0.py` | `True` (`is None`) | `False` | silent, exit 0 |
-| `locals_bool_p0.py` | `False` | `True` | silent, exit 0 |
-| `vars` / `eval` / `exec` | raise | work | loud, same hole |
-
-`doctest._normalize_module` walks one frame too few and returns an empty
-suite, so compiled `Lib/test/test_unpack.py` reports OK while running half
-its tests. `logging.findCaller`, `warnings` `stacklevel`,
-`dataclasses`/`namedtuple` module resolution: same gap.
-
-**Approach (already costed in CHARTER):** `_PyInterpreterFrame` with lazy
-`PyFrameObject`. Eager `PyFrameObject` is 59.88 ns/call — **2.43× slower
-than CPython**, non-starter. Interpreter-frame estimate ~8–12 ns vs 3.42 ns
-today, still ~2–3× faster than CPython.
-
-Coupling: `_PyInterpreterFrame` is `Py_BUILD_CORE` and its layout differs
-between `cp314` and `cp314t`. A layout-conformance check must fail the build
-when it shifts (I8).
-
-Do **not** revive the module-level trampoline (ce52560, reverted): it made
-the doctest failure quieter.
-
-**Done when:** the nine known-gaps frame probes match CPython; they move into
-`verify/corpus/language/`; the language baseline refreshes; no new P0.
-
-**Verify:** `make -C verify fast` with `--fail-on-silent-wrong`, then the
-known-gaps corpus, then a `Lib/test/test_unpack.py` doctest probe.
+**Done.** Nine frame probes moved to `language/`; `compiler/baseline-language.json`
+refreshed at 787/788. No new P0. Next is C2.
 
 ## C2 — compiled loops never offer the GIL (hang)
 
@@ -76,9 +42,8 @@ luck, and reverting reintroduces C-stack exhaustion.
 
 ## C3 — remaining language diffs that are not C1/C2
 
-**Status: after C1.** The language baseline's `STDOUT_DIFFERS` / `EXIT_DIFFERS`
-are the frame probes. `STDERR_DIFFERS` (traceback carets) do not count
-against the rate and are not C1.
+**Status: after C2.** Gate corpus has no `STDOUT_DIFFERS`. `STDERR_DIFFERS`
+(traceback carets) do not count against the rate.
 
 Do not start "drive `Lib/test` under unittest" here. That is a completeness
 increment and **will lower** the published I6 number; it is not a
@@ -86,4 +51,5 @@ correctness fix.
 
 ## Order
 
-C1 → C2 (investigation can overlap) → C3. Unboxing stays behind C1.
+C1 closed. C2 next. Unboxing stays behind C2 only insofar as compiled
+loops must still be interruptible; the unboxing analysis has already landed.
