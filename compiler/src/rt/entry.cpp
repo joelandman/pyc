@@ -172,6 +172,11 @@ int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
     set_main_file(argv);
 
     int status = 0;
+    if (pyc_rt_push_module_frame() < 0) {
+        PyErr_Print();
+        Py_FinalizeEx();
+        return 1;
+    }
     if (body && body() != 0) {
         // SystemExit is control flow, not an error: honour its code and do not
         // print a traceback, which is what CPython itself does.
@@ -195,6 +200,7 @@ int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
             status = 1;
         }
     }
+    pyc_rt_pop_module_frame();
 
     if (Py_FinalizeEx() < 0) {
         // Finalisation failure is reported, never swallowed: it usually means

@@ -672,13 +672,14 @@ private:
     std::map<std::string, std::string> argnames_;
     std::string argnames_global(std::size_t idx) {
         const ir::Function& f = m_.functions[idx];
-        if (f.params.empty()) return "null";
+        const auto& names = f.locals.empty() ? f.params : f.locals;
+        if (names.empty()) return "null";
         auto it = argnames_.find(std::to_string(idx));
         if (it != argnames_.end()) return it->second;
         std::string g = "@.args" + std::to_string(idx);
-        std::string body = "[" + std::to_string(f.params.size()) + " x ptr] [";
-        for (std::size_t i = 0; i < f.params.size(); ++i)
-            body += (i ? ", ptr " : "ptr ") + cstr(f.params[i]);
+        std::string body = "[" + std::to_string(names.size()) + " x ptr] [";
+        for (std::size_t i = 0; i < names.size(); ++i)
+            body += (i ? ", ptr " : "ptr ") + cstr(names[i]);
         body += "]";
         argnames_[std::to_string(idx)] = g;
         argname_defs_.push_back(g + " = private unnamed_addr constant " + body);

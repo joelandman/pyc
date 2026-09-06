@@ -10,8 +10,20 @@ carries the gap.
 
 ## C1 — per-function Python frames (P0)
 
-**Status: next.** CHARTER deferred this on 2026-08-25; taking it on is now
-the job. Not opt-in (I2).
+**Status: C1a landed.** CHARTER deferred this on 2026-08-25; taking it on is
+now the job. Not opt-in (I2).
+
+**C1a (eager `PyFrameObject`, 2026-09-06).** Measured first: `PyFrame_New`
+plus linking `tstate->current_frame` makes `locals()` return the dict
+(`incomplete=0`, `owner=2`). Wired into the function trampoline and the
+module body. known-gaps: 20/22 match; the three silent P0s pass.
+
+CHARTER cost: 59.88 ns/call — slower than CPython. **C1b** replaces this
+with a C-stack `_PyInterpreterFrame` (est. 8–12 ns).
+
+Leftover: class-body `locals()` still sees the enclosing module frame
+(`frame_builtins.py` line 5). Class bodies are lowered inline, not as a
+call. Separate slice.
 
 Compiled functions push no Python frame. `sys._getframe` raises rather than
 lying (I1-clean at that boundary), but callers degrade:

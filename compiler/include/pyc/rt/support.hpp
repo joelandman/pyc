@@ -194,6 +194,13 @@ int pyc_rt_import_star(PyObject* mod);
 // the fixed positions did not claim.
 PyObject* pyc_rt_unpack_ex(PyObject* value, Py_ssize_t nbefore, Py_ssize_t nafter);
 
+// C1a: make a compiled call visible to locals()/globals()/sys._getframe.
+struct _frame;
+int pyc_rt_install_frame(struct _frame* f, struct _PyInterpreterFrame** saved);
+void pyc_rt_uninstall_frame(struct _PyInterpreterFrame* saved);
+int pyc_rt_push_module_frame(void);
+void pyc_rt_pop_module_frame(void);
+
 #ifdef __cplusplus
 }
 #endif

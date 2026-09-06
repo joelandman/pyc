@@ -129,6 +129,32 @@ int pyc_rt_store_global(const char* name, PyObject* v) {
     return PyDict_SetItemString(g, name, v);        // INCREFs v
 }
 
+thread_local PyFrameObject* tls_module_fo = nullptr;
+thread_local struct _PyInterpreterFrame* tls_module_saved = nullptr;
+
+int pyc_rt_push_module_frame(void) {
+    PyObject* g = globals_dict();
+    if (!g) return -1;
+    PyCodeObject* co = PyCode_NewEmpty("<pyc>", "<module>", 1);
+    if (!co) return -1;
+    PyFrameObject* fo = PyFrame_New(PyThreadState_Get(), co, g, g);
+    Py_DECREF(co);
+    if (!fo) return -1;
+    if (pyc_rt_install_frame(fo, &tls_module_saved) < 0) {
+        Py_DECREF(fo);
+        return -1;
+    }
+    tls_module_fo = fo;
+    return 0;
+}
+
+void pyc_rt_pop_module_frame(void) {
+    pyc_rt_uninstall_frame(tls_module_saved);
+    Py_XDECREF(tls_module_fo);
+    tls_module_fo = nullptr;
+    tls_module_saved = nullptr;
+}
+
 // Refcounting, as something the optimiser can SEE.
 //
 // codegen used to emit calls to Py_IncRef/Py_DecRef, which are the out-of-line
@@ -149,6 +175,10 @@ int pyc_rt_store_global(const char* name, PyObject* v) {
 // X variants deliberately: codegen relies on the null tolerance Py_DecRef had.
 void pyc_rt_incref(PyObject* o) { Py_XINCREF(o); }
 void pyc_rt_decref(PyObject* o) { Py_XDECREF(o); }
+
+thread_local PyObject* tls_frame_locals = nullptr;
+thread_local const char* const* tls_frame_names = nullptr;
+thread_local int tls_frame_nnames = 0;
 
 PyObject* pyc_rt_load_local(PyObject** locals, int slot, const char* name) {
     PyObject* v = locals[slot];
@@ -177,6 +207,9 @@ int pyc_rt_del_local(PyObject** locals, int slot, const char* name) {
     }
     locals[slot] = nullptr;       // clear BEFORE the decref: __del__ may run
     Py_DECREF(old);               // and must not observe a dangling slot
+    if (tls_frame_locals && slot >= 0 && slot < tls_frame_nnames
+        && tls_frame_names && tls_frame_names[slot])
+        PyDict_DelItemString(tls_frame_locals, tls_frame_names[slot]);
     return 0;
 }
 
@@ -185,6 +218,11 @@ void pyc_rt_store_local(PyObject** locals, int slot, PyObject* v) {
     Py_XINCREF(v);
     locals[slot] = v;
     Py_XDECREF(old);          // after the store: a self-assignment must not free
+    if (tls_frame_locals && slot >= 0 && slot < tls_frame_nnames
+        && tls_frame_names && tls_frame_names[slot]) {
+        if (v) PyDict_SetItemString(tls_frame_locals, tls_frame_names[slot], v);
+        else PyDict_DelItemString(tls_frame_locals, tls_frame_names[slot]);
+    }
 }
 
 // --- callables -------------------------------------------------------------
@@ -203,7 +241,8 @@ struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
                PyObject* defaults; PyObject* kwdefaults;
                int vararg; int kwarg;
-               PyObject* closure; int nfree; };
+               PyObject* closure; int nfree;
+               PyCodeObject* frame_code; };
 
 PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
     if (!b) return nullptr;
@@ -372,7 +411,39 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
         }
     }
     {
+        // C1a: a Python frame so locals()/globals()/eval see this call.
+        PyObject* fdict = PyDict_New();
+        if (!fdict) goto fail;
+        if (b->argnames) {
+            for (int i = 0; i < b->nlocals; ++i) {
+                if (!locals[i] || !b->argnames[i]) continue;
+                if (PyDict_SetItemString(fdict, b->argnames[i], locals[i]) < 0) {
+                    Py_DECREF(fdict); goto fail;
+                }
+            }
+        }
+        if (!b->frame_code) {
+            b->frame_code = PyCode_NewEmpty("<pyc>", b->name, 1);
+            if (!b->frame_code) { Py_DECREF(fdict); goto fail; }
+        }
+        PyObject* g = globals_dict();
+        PyFrameObject* fo = g ? PyFrame_New(PyThreadState_Get(), b->frame_code, g, fdict)
+                              : nullptr;
+        if (!fo) { Py_DECREF(fdict); goto fail; }
+        struct _PyInterpreterFrame* saved = nullptr;
+        if (pyc_rt_install_frame(fo, &saved) < 0) { Py_DECREF(fo); goto fail; }
+        PyObject* prev_tls = tls_frame_locals;
+        const char* const* prev_names = tls_frame_names;
+        int prev_n = tls_frame_nnames;
+        tls_frame_locals = fdict;
+        tls_frame_names = b->argnames;
+        tls_frame_nnames = b->nlocals;
         PyObject* r = b->impl(locals);
+        tls_frame_locals = prev_tls;
+        tls_frame_names = prev_names;
+        tls_frame_nnames = prev_n;
+        pyc_rt_uninstall_frame(saved);
+        Py_DECREF(fo);
         for (int i = 0; i < b->nlocals; ++i) Py_XDECREF(locals[i]);
         delete[] locals;
         return r;
@@ -453,7 +524,7 @@ int func_set_name(PyObject* self, PyObject* v, void*) {
 void func_dealloc(PyObject* self) {
     PycFunc* f = reinterpret_cast<PycFunc*>(self);
     if (f->b) { Py_XDECREF(f->b->defaults); Py_XDECREF(f->b->kwdefaults);
-                Py_XDECREF(f->b->closure);
+                Py_XDECREF(f->b->closure); Py_XDECREF(f->b->frame_code);
                 std::free(f->b->name); delete f->b; }
     Py_XDECREF(f->name);
     Py_XDECREF(f->doc);
@@ -519,7 +590,7 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     }
     Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nposonly, nlocals, owned,
                                         argnames, defaults, kwdefaults,
-                                        vararg_slot, kwarg_slot, clo, nfree};
+                                        vararg_slot, kwarg_slot, clo, nfree, nullptr};
     if (!b) { Py_XDECREF(defaults); std::free(owned); return PyErr_NoMemory(); }
     if (!init_func_type()) { Py_XDECREF(defaults); std::free(owned); delete b; return nullptr; }
     PycFunc* fn = PyObject_New(PycFunc, &PycFuncType);

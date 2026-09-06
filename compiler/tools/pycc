@@ -96,4 +96,5 @@ esac
 "${PYC_CXX:-clang++}" -std=c++20 "$OPT" $LTO -rdynamic $INC -I "$REPO/compiler/include" \
   "$TMP/mod.ll" "$TMP/main.cpp" \
   "$REPO/compiler/src/rt/entry.cpp" "$REPO/compiler/src/rt/support.cpp" \
+  "$REPO/compiler/src/rt/frame.cpp" \
   "$LIB" -lm -lpthread -ldl -lutil -lz -o "$OUT"
