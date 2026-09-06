@@ -2,6 +2,7 @@
 #include <Python.h>
 #include "internal/pycore_interpframe.h"
 #include "internal/pycore_code.h"
+#include "internal/pycore_ceval.h"
 
 // C1b: an interpreter frame on CPython's datastack, not a PyFrameObject.
 //
@@ -20,6 +21,14 @@
 static_assert(FRAME_SPECIALS_SIZE == 10,
               "cp314 _PyInterpreterFrame specials changed; update C1b");
 #endif
+
+// CPython's eval loop calls this when eval_breaker has events. It runs
+// signal handlers AND detaches the GIL only if another thread asked
+// (_PY_GIL_DROP_REQUEST_BIT). Unconditional SaveThread/RestoreThread
+// deadlocked test_logging; this is the request-only path.
+extern "C" int pyc_rt_handle_pending(void) {
+    return _Py_HandlePending(PyThreadState_Get());
+}
 
 extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
                                      PyObject* locals) {

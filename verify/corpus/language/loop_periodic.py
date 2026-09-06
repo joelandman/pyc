@@ -4,8 +4,7 @@
 # compiled program sitting in a loop could not be interrupted AT ALL -- not by
 # SIGALRM, and not by Ctrl-C.
 #
-# The other half of CPython's check, offering the GIL to a waiting thread, is
-# NOT done: see verify/corpus/known-gaps/thread_starvation.py for why.
+# GIL yield is C2: _Py_HandlePending, not unconditional SaveThread.
 import signal
 import sys
 

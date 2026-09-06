@@ -14,11 +14,10 @@
     ]
   },
   "total": 788,
-  "passing": 787,
-  "clean": 780,
-  "pass_rate": 99.8730964467005,
+  "passing": 788,
+  "clean": 781,
+  "pass_rate": 100.0,
   "counts": {
-    "TIMEOUT": 1,
     "STDERR_DIFFERS": 7
   },
   "results": [
@@ -10180,17 +10179,15 @@
     },
     {
       "case": "thread_starvation.py",
-      "path": "verify/corpus/known-gaps/thread_starvation.py",
-      "flags": [
-        "TIMEOUT"
-      ],
-      "diagnostic": "the binary did not finish within 30s",
+      "path": "verify/corpus/language/thread_starvation.py",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": -1
+        "subject": 0
       }
     },
     {

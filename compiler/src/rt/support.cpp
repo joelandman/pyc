@@ -604,29 +604,15 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
 // `while True: n += 1` never reached the handler, and neither did Ctrl-C, so a
 // compiled program in a loop could not be interrupted AT ALL.
 //
-// WHAT IS DELIBERATELY NOT HERE. CPython's check also offers the GIL to a
-// waiting thread, and without that a worker in a loop holds it to completion:
-// a closure flag set by another thread is never observed and the program
-// hangs. Adding the documented PyEval_SaveThread/RestoreThread pair here DOES
-// fix that -- Lib/test/test_syslog goes from hanging to passing in 0.2s -- but
-// it DEADLOCKS Lib/test/test_logging, in test_config_queue_handler, which
-// stops a QueueListener by enqueueing a sentinel and joining its thread. One
-// thread, 0% CPU, no progress.
-//
-// Two hypotheses were tested and refuted: that PyEval_RestoreThread was
-// blocking against finalisation (guarding on Py_IsFinalizing changed nothing),
-// and that the yield ran without the GIL held (guarding on PyGILState_Check
-// changed nothing). gdb cannot attach under this machine's ptrace_scope, so
-// there is no stack trace yet and the mechanism is NOT established.
-//
-// Shipping the half that is verified safe rather than the half that trades one
-// hang for another. Thread starvation is recorded in
-// verify/corpus/known-gaps/thread_starvation.py.
+// GIL yield: CPython drops the GIL only when another thread asked
+// (_PY_GIL_DROP_REQUEST_BIT), via _Py_HandlePending. Unconditional
+// SaveThread/RestoreThread fixed thread_starvation and deadlocked
+// test_logging. HandlePending is the request-only path (C2).
 extern "C" int pyc_rt_periodic(void) {
     static thread_local unsigned n = 0;
     if (++n < 2048) return 0;
     n = 0;
-    return PyErr_CheckSignals();               // runs handlers; may raise
+    return pyc_rt_handle_pending();
 }
 
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {

@@ -81,6 +81,7 @@ PyObject* pyc_rt_class_prepare(PyObject* meta, PyObject* name,
 // handlers, and offer the GIL to any thread waiting for it. Called at every
 // loop head. Returns -1 if a handler raised, so Ctrl-C propagates.
 int pyc_rt_periodic(void);
+int pyc_rt_handle_pending(void);
 
 // Global access with the name already built and interned once at startup.
 // Building the name per access cost an allocation, a decode and a hash every
