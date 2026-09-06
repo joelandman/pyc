@@ -10,18 +10,19 @@ carries the gap.
 
 ## C1 — per-function Python frames (P0)
 
-**Status: C1a complete.** CHARTER deferred this on 2026-08-25; taking it on is
-now the job. Not opt-in (I2). known-gaps frame probes: **21/22** (the
-remaining timeout is C2).
+**Status: C1b landed.** Not opt-in (I2). known-gaps frame probes: **21/22**
+(the remaining timeout is C2).
 
-**C1a (eager `PyFrameObject`).** Measured first: `PyFrame_New` plus linking
-`tstate->current_frame` makes `locals()` return the dict. Wired into the
-function trampoline, the module body, and class bodies (`pyc_rt_push_frame`
-on the namespace, capsule dtor pops so landing pads unwind). The three
-silent P0s and `frame_builtins.py` match CPython.
+**C1a** was eager `PyFrame_New` (59.88 ns/call, 2.43× slower than CPython).
+**C1b** pushes `_PyInterpreterFrame` on the thread datastack via
+`_PyThreadState_PushFrame`. `PyFrameObject` is created only if something
+asks (`sys._getframe`); `_PyFrame_ClearExceptCode` takes ownership so it
+does not dangle. Measured: `locals()` returns the dict, `incomplete=0`,
+`FRAME_SPECIALS_SIZE == 10` on cp314. Function, module, and class bodies
+all use this path.
 
-CHARTER cost: 59.88 ns/call — slower than CPython. **C1b** replaces this
-with a C-stack `_PyInterpreterFrame` (est. 8–12 ns).
+Remaining to close C1: move the nine frame probes into `language/` and
+refresh the language baseline.
 
 Compiled functions push no Python frame. `sys._getframe` raises rather than
 lying (I1-clean at that boundary), but callers degrade:

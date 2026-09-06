@@ -1,47 +1,73 @@
 #define Py_BUILD_CORE 1
 #include <Python.h>
-#include <frameobject.h>
-#include "internal/pycore_frame.h"
 #include "internal/pycore_interpframe.h"
+#include "internal/pycore_code.h"
 
-// Link a PyFrameObject into tstate->current_frame so CPython builtins that
-// read _PyThreadState_GetFrame (locals, globals, eval, sys._getframe) see it.
+// C1b: an interpreter frame on CPython's datastack, not a PyFrameObject.
 //
-// PyFrame_New already builds a complete interpreter frame (owner
-// FRAME_OWNED_BY_FRAME_OBJECT, instr_ptr past firsttraceable). The only
-// internal access is f->f_frame and tstate->current_frame; both come from
-// the target headers, so a layout shift is a compile error (CHARTER I8).
+// PyFrame_New (C1a) was measured at 59.88 ns/call — 2.43× slower than
+// CPython. Pushing _PyInterpreterFrame via _PyThreadState_PushFrame and
+// leaving PyFrameObject lazy is the path CHARTER costed (~8–12 ns).
 //
-// This is C1a: eager PyFrameObject. CHARTER measured 59.88 ns/call. C1b
-// replaces it with a C-stack _PyInterpreterFrame.
+// The iframe lives on the thread's datastack (heap chunks), so a lazy
+// PyFrameObject created by sys._getframe can take ownership via
+// _PyFrame_ClearExceptCode rather than dangle at a C-stack address.
+//
+// Layout comes from the target headers. A field rename or GIL/free-threaded
+// split is a compile error here (I8). GIL 3.14.7: FRAME_SPECIALS_SIZE == 10.
 
-extern "C" int pyc_rt_install_frame(PyFrameObject* f,
-                                    struct _PyInterpreterFrame** saved) {
-    if (!f || !f->f_frame) return -1;
+#ifndef Py_GIL_DISABLED
+static_assert(FRAME_SPECIALS_SIZE == 10,
+              "cp314 _PyInterpreterFrame specials changed; update C1b");
+#endif
+
+extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
+                                     PyObject* locals) {
+    if (!code || !globals) return nullptr;
     PyThreadState* ts = PyThreadState_Get();
-    *saved = ts->current_frame;
-    f->f_frame->previous = *saved;
-    ts->current_frame = f->f_frame;
-    return 0;
+    int size = code->co_framesize;
+    if (size < FRAME_SPECIALS_SIZE) size = FRAME_SPECIALS_SIZE;
+    _PyInterpreterFrame* f = _PyThreadState_PushFrame(ts, (size_t)size);
+    if (!f) { PyErr_NoMemory(); return nullptr; }
+    f->previous = ts->current_frame;
+    f->f_funcobj = PyStackRef_None;
+    f->f_executable = PyStackRef_FromPyObjectNew(reinterpret_cast<PyObject*>(code));
+    f->f_globals = globals;
+    f->f_builtins = PyEval_GetBuiltins();
+    f->f_locals = locals;
+    if (locals) Py_INCREF(locals);
+    f->frame_obj = nullptr;
+    f->instr_ptr = _PyCode_CODE(code) + code->_co_firsttraceable + 1;
+    f->stackpointer = f->localsplus;
+#ifdef Py_GIL_DISABLED
+    f->tlbc_index = 0;
+#endif
+    f->return_offset = 0;
+    f->owner = FRAME_OWNED_BY_THREAD;
+    f->visited = 0;
+#ifdef Py_DEBUG
+    f->lltrace = 0;
+#endif
+    ts->current_frame = f;
+    return f;
 }
 
-extern "C" void pyc_rt_uninstall_frame(struct _PyInterpreterFrame* saved) {
-    PyThreadState_Get()->current_frame = saved;
-}
-
-static void frame_capsule_dtor(PyObject* cap) {
-    PyFrameObject* fo = (PyFrameObject*)PyCapsule_GetPointer(cap, "pyc.frame");
-    if (!fo) { PyErr_Clear(); return; }
+extern "C" void pyc_rt_interp_leave(void* frame) {
+    if (!frame) return;
+    auto* f = static_cast<_PyInterpreterFrame*>(frame);
     PyThreadState* ts = PyThreadState_Get();
-    if (fo->f_frame && ts->current_frame == fo->f_frame)
-        ts->current_frame = fo->f_frame->previous;
-    Py_DECREF(fo);
+    if (ts->current_frame == f) ts->current_frame = f->previous;
+    _PyFrame_ClearExceptCode(f);
+    PyStackRef_CLOSE(f->f_executable);
+    _PyThreadState_PopFrame(ts, f);
 }
 
-// Push a frame whose f_locals is `locals` (the class namespace, or any
-// mapping). The returned capsule's destructor pops the frame, so a landing
-// pad that decrefs it unwinds correctly. Locals is borrowed; we INCREF for
-// PyFrame_New, which steals.
+static void iframe_capsule_dtor(PyObject* cap) {
+    void* f = PyCapsule_GetPointer(cap, "pyc.iframe");
+    if (!f) { PyErr_Clear(); return; }
+    pyc_rt_interp_leave(f);
+}
+
 extern "C" PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals) {
     PyObject* g = PyEval_GetGlobals();
     if (!g) {
@@ -56,20 +82,10 @@ extern "C" PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals) {
     }
     PyCodeObject* co = PyCode_NewEmpty("<pyc>", nm, 1);
     if (!co) return nullptr;
-    Py_INCREF(locals);
-    PyFrameObject* fo = PyFrame_New(PyThreadState_Get(), co, g, locals);
+    void* f = pyc_rt_interp_enter(co, g, locals);
     Py_DECREF(co);
-    if (!fo) { Py_DECREF(locals); return nullptr; }
-    struct _PyInterpreterFrame* saved = nullptr;
-    if (pyc_rt_install_frame(fo, &saved) < 0) {
-        Py_DECREF(fo);
-        return nullptr;
-    }
-    PyObject* cap = PyCapsule_New(fo, "pyc.frame", frame_capsule_dtor);
-    if (!cap) {
-        pyc_rt_uninstall_frame(saved);
-        Py_DECREF(fo);
-        return nullptr;
-    }
+    if (!f) return nullptr;
+    PyObject* cap = PyCapsule_New(f, "pyc.iframe", iframe_capsule_dtor);
+    if (!cap) { pyc_rt_interp_leave(f); return nullptr; }
     return cap;
 }

@@ -129,30 +129,26 @@ int pyc_rt_store_global(const char* name, PyObject* v) {
     return PyDict_SetItemString(g, name, v);        // INCREFs v
 }
 
-thread_local PyFrameObject* tls_module_fo = nullptr;
-thread_local struct _PyInterpreterFrame* tls_module_saved = nullptr;
+thread_local void* tls_module_frame = nullptr;
+thread_local PyCodeObject* tls_module_code = nullptr;
 
 int pyc_rt_push_module_frame(void) {
     PyObject* g = globals_dict();
     if (!g) return -1;
     PyCodeObject* co = PyCode_NewEmpty("<pyc>", "<module>", 1);
     if (!co) return -1;
-    PyFrameObject* fo = PyFrame_New(PyThreadState_Get(), co, g, g);
-    Py_DECREF(co);
-    if (!fo) return -1;
-    if (pyc_rt_install_frame(fo, &tls_module_saved) < 0) {
-        Py_DECREF(fo);
-        return -1;
-    }
-    tls_module_fo = fo;
+    void* f = pyc_rt_interp_enter(co, g, g);
+    if (!f) { Py_DECREF(co); return -1; }
+    tls_module_frame = f;
+    tls_module_code = co;
     return 0;
 }
 
 void pyc_rt_pop_module_frame(void) {
-    pyc_rt_uninstall_frame(tls_module_saved);
-    Py_XDECREF(tls_module_fo);
-    tls_module_fo = nullptr;
-    tls_module_saved = nullptr;
+    pyc_rt_interp_leave(tls_module_frame);
+    Py_XDECREF(tls_module_code);
+    tls_module_frame = nullptr;
+    tls_module_code = nullptr;
 }
 
 // Refcounting, as something the optimiser can SEE.
@@ -427,11 +423,8 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
             if (!b->frame_code) { Py_DECREF(fdict); goto fail; }
         }
         PyObject* g = globals_dict();
-        PyFrameObject* fo = g ? PyFrame_New(PyThreadState_Get(), b->frame_code, g, fdict)
-                              : nullptr;
-        if (!fo) { Py_DECREF(fdict); goto fail; }
-        struct _PyInterpreterFrame* saved = nullptr;
-        if (pyc_rt_install_frame(fo, &saved) < 0) { Py_DECREF(fo); goto fail; }
+        void* fr = g ? pyc_rt_interp_enter(b->frame_code, g, fdict) : nullptr;
+        if (!fr) { Py_DECREF(fdict); goto fail; }
         PyObject* prev_tls = tls_frame_locals;
         const char* const* prev_names = tls_frame_names;
         int prev_n = tls_frame_nnames;
@@ -442,8 +435,8 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
         tls_frame_locals = prev_tls;
         tls_frame_names = prev_names;
         tls_frame_nnames = prev_n;
-        pyc_rt_uninstall_frame(saved);
-        Py_DECREF(fo);
+        pyc_rt_interp_leave(fr);
+        Py_DECREF(fdict);
         for (int i = 0; i < b->nlocals; ++i) Py_XDECREF(locals[i]);
         delete[] locals;
         return r;
