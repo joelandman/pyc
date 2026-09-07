@@ -26,6 +26,7 @@ all use this path.
 **Status: closed.** `pyc_rt_periodic` calls `_Py_HandlePending`, which
 detaches the GIL only when another thread set `_PY_GIL_DROP_REQUEST_BIT`.
 That is CPython's eval-breaker path, not unconditional SaveThread.
+Further GIL narrowing: [GIL.md](GIL.md).
 
 Measured: `thread_starvation.py` matches CPython; `loop_periodic.py` still
 matches; concurrency corpus 10/10; `test_syslog` 11/11 in 0.18s;
