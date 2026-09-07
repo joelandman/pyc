@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -122,6 +123,21 @@ enum class Op {
     // Build a callable from a lowered function and bind it in the enclosing
     // scope. Codegen turns this into a PyCFunction over the emitted C entry.
     MakeFunction,
+    // Unboxing (rebuild/UNBOXING.md). IntLoad/IntAddOvf are terminators
+    // with a fast edge (`target`) and a deopt edge (`target_else`).
+    I64Const,        // machine i64; `text` is decimal, must fit signed 64
+    IntLoad,         // slot in `imm`; result i64 on fast edge (`target`)
+    IntStore,        // args[0] is i64, `target` is slot
+    IntAddOvf, IntSubOvf, IntMulOvf,
+    IntNegOvf,       // unary minus; one arg
+    // Runtime guard for `for i in range(...)` (rebuild/UNBOXING.md).
+    // `target` is the range-id; `imm` is nargs; args are callee, a0, a1, a2
+    // (id 0 = null). Result is i32: 1 if the callee is builtin range and the
+    // args are exact ints that fit i64.
+    RangeGuard,
+    // Advance a native range. `imm` is the range-id. Fast edge yields the
+    // current i64 (`target`); `target_else` is exhaustion (incl. add overflow).
+    RangeNext,
 };
 
 const char* op_name(Op op);
@@ -135,7 +151,9 @@ const char* op_name(Op op);
 // text rather than linking this header. That copy is documented there.
 inline bool is_terminator(Op op) {
     return op == Op::Br || op == Op::CondBr || op == Op::Return
-        || op == Op::ReturnErr || op == Op::IterNext || op == Op::Raise;
+        || op == Op::ReturnErr || op == Op::IterNext || op == Op::Raise
+        || op == Op::IntLoad || op == Op::IntAddOvf || op == Op::IntSubOvf
+        || op == Op::IntMulOvf || op == Op::IntNegOvf || op == Op::RangeNext;
 }
 
 struct Instr {
@@ -204,6 +222,9 @@ struct Function {
     // Placed last so existing aggregate initialisers keep their meaning.
     std::vector<std::string> cellvars;
     std::vector<std::string> freevars;
+    // Locals the scope analysis proved hold only Python ints. Codegen
+    // keeps them in tagged i64 slots (rebuild/UNBOXING.md).
+    std::set<std::string> int_locals;
 
     Value fresh(Type t = {}) { return Value{next_value++, std::move(t)}; }
 };

@@ -18,6 +18,9 @@
 
 #include <string>
 #include <cstdio>
+#include <cstdlib>
+#include <cerrno>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <set>
@@ -96,6 +99,8 @@ private:
     // name -> slot, for the function currently being lowered. Empty at module
     // level, where every name is a global.
     std::map<std::string, std::uint32_t> locals_;
+    std::set<std::string> int_locals_;
+    std::uint32_t range_n_ = 0;
     // Names in THIS function whose slot holds a cell: either a local something
     // nested reads (a cellvar) or a name inherited from an enclosing function
     // (a freevar). Both are read with cell.get rather than load.local.
@@ -456,6 +461,8 @@ private:
         std::vector<FinallyCtx*> fins;
         std::vector<ir::Value> handled;
         std::size_t fin_depth;
+        std::set<std::string> ints;
+        std::uint32_t ranges;
     };
 
     FnScope begin_function(const std::string& name,
@@ -463,7 +470,8 @@ private:
                            const std::vector<std::string>& locals) {
         FnScope sc{fn_idx_, blk_, locals_, owned_, frame_owned_, class_ns_,
                    loops_, try_stack_, cells_, enclosing_cells_,
-                   fin_stack_, handled_stack_, fin_loop_depth_};
+                   fin_stack_, handled_stack_, fin_loop_depth_, int_locals_,
+                   range_n_};
         mod_.functions.push_back(
             ir::Function{.name=name, .params=params, .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
@@ -484,6 +492,8 @@ private:
         fin_stack_.clear(); handled_stack_.clear(); fin_loop_depth_ = 0;
         enclosing_cells_.push_back(sc.cells);
         cells_.clear();
+        int_locals_.clear();
+        range_n_ = 0;
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
         return sc;
@@ -497,6 +507,8 @@ private:
         cells_ = sc.cells; enclosing_cells_ = sc.enclosing;
         fin_stack_ = sc.fins; handled_stack_ = sc.handled;
         fin_loop_depth_ = sc.fin_depth;
+        int_locals_ = sc.ints;
+        range_n_ = sc.ranges;
         return made;
     }
 
@@ -1097,6 +1109,8 @@ private:
         auto outer_class_ns = class_ns_;
         auto outer_cells = cells_;
         auto outer_enclosing = enclosing_cells_;
+        auto outer_ints = int_locals_;
+        auto outer_ranges = range_n_;
 
         // *args and **kwargs get their own local slots, after the named
         // parameters and before everything else the body binds.
@@ -1215,6 +1229,9 @@ private:
         cur()->locals = all_locals;
         cur()->cellvars = cellvars;
         cur()->freevars = freevars;
+        cur()->int_locals = int_locals(slotnames, n.body, inner);
+        int_locals_ = cur()->int_locals;
+        range_n_ = 0;
         locals_.clear();
         for (std::uint32_t i = 0; i < all_locals.size(); ++i)
             locals_[all_locals[i]] = i;
@@ -1284,6 +1301,8 @@ private:
         frame_owned_ = outer_frame; class_ns_ = outer_class_ns;
         cells_ = outer_cells; enclosing_cells_ = outer_enclosing;
         qual_ = outer_qual;
+        int_locals_ = outer_ints;
+        range_n_ = outer_ranges;
         if (!ok) return false;
 
         // Bind the callable in the enclosing scope, by the same store path any
@@ -1699,11 +1718,62 @@ private:
         return m;
     }
 
+    bool try_aug_int(const AugAssign& n) {
+        const Name* nm = n.target ? std::get_if<Name>(&n.target->v) : nullptr;
+        if (!nm || !int_locals_.count(nm->id) || !class_ns_.empty()) return false;
+        ir::Op iop;
+        if (std::holds_alternative<Add>(n.op.v)) iop = ir::Op::IntAddOvf;
+        else if (std::holds_alternative<Sub>(n.op.v)) iop = ir::Op::IntSubOvf;
+        else if (std::holds_alternative<Mult>(n.op.v)) iop = ir::Op::IntMulOvf;
+        else return false;
+        if (!is_int_expr(*n.value)) return false;
+        auto it = locals_.find(nm->id);
+        if (it == locals_.end()) return false;
+        std::uint32_t deopt = new_block("int.aug.deopt");
+        std::uint32_t done = new_block("int.aug.done");
+        ir::Value lhs, rhs;
+        if (!emit_int_rvalue(*n.target, &lhs, deopt, n.loc)
+            || !emit_int_rvalue(*n.value, &rhs, deopt, n.loc)) {
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", deopt, 0, n.loc, std::nullopt});
+        } else {
+            ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            std::uint32_t okb = new_block("int.aug.ok");
+            ir::Instr in{iop, {lhs, rhs}, out, Ownership::NotAnObject,
+                         "", 0, 0, n.loc, std::nullopt};
+            in.target = okb;
+            in.target_else = deopt;
+            emit(std::move(in));
+            set_block(okb);
+            emit(ir::Instr{ir::Op::IntStore, {out}, std::nullopt,
+                           Ownership::NotAnObject, nm->id, it->second, 0, n.loc,
+                           std::nullopt});
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", done, 0, n.loc, std::nullopt});
+        }
+        set_block(deopt);
+        bool ok = true;
+        ir::Value cur_v = lower_expr(*n.target, &ok);
+        ir::Value rhs_b = ok ? lower_expr(*n.value, &ok) : ir::Value{};
+        const char* sym = iop == ir::Op::IntAddOvf ? "PyNumber_InPlaceAdd"
+                        : iop == ir::Op::IntSubOvf ? "PyNumber_InPlaceSubtract"
+                                                   : "PyNumber_InPlaceMultiply";
+        ir::Value boxed;
+        if (ok) boxed = call_capi(sym, {cur_v, rhs_b}, n.loc, &ok, {cur_v, rhs_b});
+        if (!ok) return false;
+        mark_owned(boxed);
+        store_name(nm->id, boxed, n.loc);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", done, 0, n.loc, std::nullopt});
+        set_block(done);
+        return true;
+    }
+
     // `x += y` is NOT `x = x + y`: it calls the in-place slot, so a list
     // extends in place and a tuple does not. Using the binary operator would
     // change observable behaviour for every mutable type.
     bool lower_augassign(const AugAssign& n) {
-        static const struct { const char* sym; } kUnused{nullptr}; (void)kUnused;
+        if (try_aug_int(n)) return true;
         const char* sym = nullptr;
         std::visit(ov{
             [&](const Add&)      { sym = "PyNumber_InPlaceAdd"; },
@@ -3075,7 +3145,149 @@ private:
         return true;
     }
 
+    bool is_native_range_for(const For& n) const {
+        const Name* t = n.target ? std::get_if<Name>(&n.target->v) : nullptr;
+        if (!t || !int_locals_.count(t->id) || !class_ns_.empty())
+            return false;
+        if (locals_.find(t->id) == locals_.end()) return false;
+        const Call* c = n.iter ? std::get_if<Call>(&n.iter->v) : nullptr;
+        if (!c || c->args.empty() || c->args.size() > 3 || !c->keywords.empty())
+            return false;
+        const Name* f = std::get_if<Name>(&c->func->v);
+        if (!f || f->id != "range") return false;
+        for (const expr& a : c->args)
+            if (std::holds_alternative<Starred>(a.v)) return false;
+        return true;
+    }
+
+    // Guarded native `for i in range(...)`. The analysis types the target on
+    // syntax alone; whether `range` is the builtin is decided here at run
+    // time. Rebuild/UNBOXING.md: unguarded lowering of this is a silent
+    // wrong answer.
+    bool lower_for_range(const For& n) {
+        const Call& c = std::get<Call>(n.iter->v);
+        const Name& tn = std::get<Name>(n.target->v);
+        auto slot = locals_.find(tn.id);
+        bool ok = true;
+        ir::Value fn = lower_expr(*c.func, &ok);
+        if (!ok) return false;
+        std::vector<ir::Value> args{fn};
+        for (const expr& a : c.args) {
+            ir::Value v = lower_expr(a, &ok);
+            if (!ok) return false;
+            args.push_back(v);
+        }
+        std::uint32_t rid = range_n_++;
+        ir::Value g = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        ir::Instr rg{ir::Op::RangeGuard, args, g, Ownership::NotAnObject,
+                     "", rid, 0, n.loc, std::nullopt};
+        rg.has_imm = true;
+        rg.imm = (std::int64_t)c.args.size();
+        emit(std::move(rg));
+
+        std::uint32_t native_e = new_block("range.native");
+        std::uint32_t boxed_e = new_block("range.boxed");
+        std::uint32_t join = new_block("range.join");
+        std::uint32_t head = new_block("for.head");
+        std::uint32_t nat_next = new_block("range.next");
+        std::uint32_t box_next = new_block("range.iter");
+        std::uint32_t body_n = new_block("range.body.n");
+        std::uint32_t body_b = new_block("range.body.b");
+        std::uint32_t body = new_block("for.body");
+        std::uint32_t done = new_block("for.done");
+        std::uint32_t brk = new_block("for.break");
+        std::uint32_t after = new_block("for.after");
+
+        emit(ir::Instr{ir::Op::CondBr, {g}, std::nullopt, Ownership::NotAnObject,
+                       "", native_e, boxed_e, n.loc, std::nullopt});
+
+        set_block(native_e);
+        for (const ir::Value& a : args) if (owns(a)) emit_decref(a, n.loc);
+        ir::Value it_n = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::ConstNull, {}, it_n, Ownership::AlwaysNull, "",
+                       0, 0, n.loc, std::nullopt});
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", join, 0, n.loc, std::nullopt});
+        std::uint32_t native_end = (std::uint32_t)blk_;
+
+        set_block(boxed_e);
+        ir::Value seq = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        std::vector<ir::Value> call_args = args;
+        emit(ir::Instr{ir::Op::CallObject, std::move(call_args), seq,
+                       Ownership::Owned, "", 0, 0, n.loc, make_landing_pad(n.loc)});
+        mark_owned(seq);
+        for (const ir::Value& a : args) if (owns(a)) emit_decref(a, n.loc);
+        ir::Value it_b = call_capi("PyObject_GetIter", {seq}, n.loc, &ok, {seq});
+        if (!ok) return false;
+        mark_owned(it_b);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", join, 0, n.loc, std::nullopt});
+        std::uint32_t boxed_end = (std::uint32_t)blk_;
+
+        set_block(join);
+        for (const ir::Value& a : args) forget(a);
+        forget(it_b);
+        ir::Value it = emit_phi({it_n, it_b}, {native_end, boxed_end}, n.loc);
+        forget(it);
+        frame_owned_.push_back(it);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", head, 0, n.loc, std::nullopt});
+
+        set_block(head);
+        { bool pok = true; call_capi("pyc_rt_periodic", {}, n.loc, &pok);
+          if (!pok) return false; }
+        emit(ir::Instr{ir::Op::CondBr, {g}, std::nullopt, Ownership::NotAnObject,
+                       "", nat_next, box_next, n.loc, std::nullopt});
+
+        set_block(nat_next);
+        ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        ir::Instr nxt{ir::Op::RangeNext, {}, iv, Ownership::NotAnObject,
+                      "", body_n, done, n.loc, std::nullopt};
+        nxt.has_imm = true;
+        nxt.imm = (std::int64_t)rid;
+        emit(std::move(nxt));
+        set_block(body_n);
+        emit(ir::Instr{ir::Op::IntStore, {iv}, std::nullopt, Ownership::NotAnObject,
+                       tn.id, slot->second, 0, n.loc, std::nullopt});
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", body, 0, n.loc, std::nullopt});
+
+        set_block(box_next);
+        ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::IterNext, {it}, item, Ownership::Owned, "",
+                       body_b, done, n.loc, make_landing_pad(n.loc)});
+        set_block(body_b);
+        mark_owned(item);
+        if (!store_target(*n.target, item, n.loc)) return false;
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", body, 0, n.loc, std::nullopt});
+
+        set_block(body);
+        loops_.push_back({head, brk});
+        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
+        loops_.pop_back();
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", head, 0, n.loc, std::nullopt});
+
+        set_block(brk);
+        emit_decref(it, n.loc);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", after, 0, n.loc, std::nullopt});
+
+        set_block(done);
+        frame_owned_.pop_back();
+        emit_decref(it, n.loc);
+        for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
+        if (!terminated())
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", after, 0, n.loc, std::nullopt});
+
+        set_block(after);
+        return true;
+    }
+
     bool lower_for(const For& n) {
+        if (is_native_range_for(n)) return lower_for_range(n);
 
         bool ok = true;
         ir::Value seq = lower_expr(*n.iter, &ok);
@@ -3189,7 +3401,144 @@ private:
         return true;
     }
 
+    static bool parse_i64(const std::string& digits, std::int64_t* out) {
+        errno = 0;
+        char* end = nullptr;
+        long long v = std::strtoll(digits.c_str(), &end, 10);
+        if (errno == ERANGE || !end || *end) return false;
+        *out = (std::int64_t)v;
+        return true;
+    }
+
+    bool is_int_expr(const expr& e) const {
+        return std::visit(ov{
+            [&](const Constant& c) {
+                const ConstBigInt* i = std::get_if<ConstBigInt>(&c.value.v);
+                std::int64_t tmp;
+                return i && parse_i64(i->digits, &tmp);
+            },
+            [&](const Name& n) { return int_locals_.count(n.id) > 0; },
+            [&](const BinOp& n) {
+                return (std::holds_alternative<Add>(n.op.v)
+                     || std::holds_alternative<Sub>(n.op.v)
+                     || std::holds_alternative<Mult>(n.op.v))
+                    && is_int_expr(*n.left) && is_int_expr(*n.right);
+            },
+            [&](const UnaryOp& n) {
+                return (std::holds_alternative<UAdd>(n.op.v)
+                     || std::holds_alternative<USub>(n.op.v))
+                    && is_int_expr(*n.operand);
+            },
+            [&](const auto&) { return false; },
+        }, e.v);
+    }
+
+    // Emit an i64 rvalue. On deopt (overflow, boxed slot) branch to deopt.
+    // Returns false if the shape is not unboxable (caller uses boxed path).
+    bool emit_int_rvalue(const expr& e, ir::Value* out, std::uint32_t deopt,
+                         const SourceLoc& loc) {
+        ir::Type ty{ir::Type::Kind::Int64, {}};
+        return std::visit(ov{
+            [&](const Constant& c) -> bool {
+                const ConstBigInt* i = std::get_if<ConstBigInt>(&c.value.v);
+                std::int64_t v;
+                if (!i || !parse_i64(i->digits, &v)) return false;
+                *out = cur()->fresh(ty);
+                emit(ir::Instr{ir::Op::I64Const, {}, *out, Ownership::NotAnObject,
+                               i->digits, 0, 0, loc, std::nullopt});
+                return true;
+            },
+            [&](const Name& n) -> bool {
+                auto it = locals_.find(n.id);
+                if (it == locals_.end() || !int_locals_.count(n.id)) return false;
+                *out = cur()->fresh(ty);
+                std::uint32_t okb = new_block("int.load.ok");
+                ir::Instr in{ir::Op::IntLoad, {}, *out, Ownership::NotAnObject,
+                             n.id, 0, 0, loc, make_landing_pad(loc)};
+                in.has_imm = true;
+                in.imm = it->second;
+                in.target = okb;
+                in.target_else = deopt;
+                emit(std::move(in));
+                set_block(okb);
+                return true;
+            },
+            [&](const BinOp& n) -> bool {
+                ir::Op op;
+                if (std::holds_alternative<Add>(n.op.v)) op = ir::Op::IntAddOvf;
+                else if (std::holds_alternative<Sub>(n.op.v)) op = ir::Op::IntSubOvf;
+                else if (std::holds_alternative<Mult>(n.op.v)) op = ir::Op::IntMulOvf;
+                else return false;
+                ir::Value l, r;
+                if (!emit_int_rvalue(*n.left, &l, deopt, loc)) return false;
+                if (!emit_int_rvalue(*n.right, &r, deopt, loc)) return false;
+                *out = cur()->fresh(ty);
+                std::uint32_t okb = new_block("int.op.ok");
+                ir::Instr in{op, {l, r}, *out, Ownership::NotAnObject,
+                             "", 0, 0, loc, std::nullopt};
+                in.target = okb;
+                in.target_else = deopt;
+                emit(std::move(in));
+                set_block(okb);
+                return true;
+            },
+            [&](const UnaryOp& n) -> bool {
+                if (std::holds_alternative<UAdd>(n.op.v))
+                    return emit_int_rvalue(*n.operand, out, deopt, loc);
+                if (!std::holds_alternative<USub>(n.op.v)) return false;
+                ir::Value x;
+                if (!emit_int_rvalue(*n.operand, &x, deopt, loc)) return false;
+                *out = cur()->fresh(ty);
+                std::uint32_t okb = new_block("int.neg.ok");
+                ir::Instr in{ir::Op::IntNegOvf, {x}, *out, Ownership::NotAnObject,
+                             "", 0, 0, loc, std::nullopt};
+                in.target = okb;
+                in.target_else = deopt;
+                emit(std::move(in));
+                set_block(okb);
+                return true;
+            },
+            [&](const auto&) -> bool { return false; },
+        }, e.v);
+    }
+
+    bool try_store_int(const std::string& name, const expr& value,
+                       const SourceLoc& loc) {
+        if (!int_locals_.count(name) || !class_ns_.empty()) return false;
+        if (!is_int_expr(value)) return false;
+        auto it = locals_.find(name);
+        if (it == locals_.end()) return false;
+        std::uint32_t deopt = new_block("int.deopt");
+        std::uint32_t done = new_block("int.done");
+        ir::Value iv;
+        if (!emit_int_rvalue(value, &iv, deopt, loc)) {
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", deopt, 0, loc, std::nullopt});
+        } else {
+            emit(ir::Instr{ir::Op::IntStore, {iv}, std::nullopt, Ownership::NotAnObject,
+                           name, it->second, 0, loc, std::nullopt});
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", done, 0, loc, std::nullopt});
+        }
+        set_block(deopt);
+        bool ok = true;
+        ir::Value boxed = lower_expr(value, &ok);
+        if (!ok) return false;
+        emit(ir::Instr{ir::Op::StoreLocal, {boxed}, std::nullopt,
+                       Ownership::NotAnObject, name, it->second, 0, loc, std::nullopt});
+        if (owns(boxed)) release(boxed, loc);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", done, 0, loc, std::nullopt});
+        set_block(done);
+        return true;
+    }
+
     bool lower_assign(const Assign& a) {
+        if (a.targets.size() == 1) {
+            if (const Name* nm = std::get_if<Name>(&a.targets[0].v)) {
+                if (try_store_int(nm->id, *a.value, a.loc)) return true;
+            }
+        }
         bool ok = true;
         ir::Value v = lower_expr(*a.value, &ok);
         if (!ok) return false;

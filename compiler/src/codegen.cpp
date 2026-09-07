@@ -199,10 +199,35 @@ private:
 
         o_ << (is_main ? "define i32 " : "define ptr ") << fname(idx)
            << "(ptr %locals) {\n";
-        if (!hoisted.empty()) {
+        bool ints = !f.int_locals.empty();
+        int nrange = 0;
+        for (const ir::Block& b : f.blocks)
+            for (const ir::Instr& in : b.instrs) {
+                if (in.op == ir::Op::RangeGuard && (int)in.target + 1 > nrange)
+                    nrange = (int)in.target + 1;
+                if (in.op == ir::Op::RangeNext && (int)in.imm + 1 > nrange)
+                    nrange = (int)in.imm + 1;
+            }
+        if (!hoisted.empty() || ints || nrange) {
             o_ << "entry:\n";
             for (const auto& [name, n] : hoisted)
                 o_ << "  " << name << " = alloca [" << n << " x ptr]\n";
+            if (ints) o_ << "  %int.scratch = alloca i64\n";
+            for (std::size_t s = 0; s < f.locals.size(); ++s) {
+                if (!f.int_locals.count(f.locals[s])) continue;
+                std::string p = "%islot" + std::to_string(s);
+                o_ << "  " << p << ".v = alloca i64\n";
+                o_ << "  " << p << ".b = alloca ptr\n";
+                o_ << "  " << p << ".s = alloca i8\n";
+                o_ << "  store i8 0, ptr " << p << ".s\n";
+                o_ << "  store ptr null, ptr " << p << ".b\n";
+            }
+            for (int r = 0; r < nrange; ++r) {
+                std::string p = "%rg" + std::to_string(r);
+                o_ << "  " << p << ".i = alloca i64\n";
+                o_ << "  " << p << ".e = alloca i64\n";
+                o_ << "  " << p << ".p = alloca i64\n";
+            }
             o_ << "  br label %bb0\n";
         }
         emit_blocks(f, idx, is_main);
@@ -347,6 +372,11 @@ private:
                 break;
             }
             case Op::LoadLocal:
+                if (in.target < f.locals.size()
+                    && f.int_locals.count(f.locals[in.target])) {
+                    emit_int_load_boxed(in);
+                    break;
+                }
                 need("declare ptr @pyc_rt_load_local(ptr, i32, ptr)");
                 o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_load_local(ptr %locals, i32 "
                    << in.target << ", ptr " << cstr(in.text) << ")\n";
@@ -361,6 +391,11 @@ private:
                 break;
             }
             case Op::StoreLocal:
+                if (in.target < f.locals.size()
+                    && f.int_locals.count(f.locals[in.target])) {
+                    emit_int_store_boxed(in);
+                    break;
+                }
                 need("declare void @pyc_rt_store_local(ptr, i32, ptr)");
                 o_ << "  call void @pyc_rt_store_local(ptr %locals, i32 " << in.target
                    << ", ptr " << v(in.args[0]) << ")\n";
@@ -564,8 +599,237 @@ private:
             case Op::ReturnErr:
                 o_ << (is_main ? "  ret i32 -1\n" : "  ret ptr null\n");
                 break;
+            case Op::I64Const:
+                o_ << "  " << v(*in.result) << " = add i64 0, " << in.text << "\n";
+                break;
+            case Op::IntLoad:
+                emit_int_load(in);
+                break;
+            case Op::IntStore:
+                emit_int_store_i64(in);
+                break;
+            case Op::IntAddOvf:
+                emit_int_ovf(in, "sadd");
+                break;
+            case Op::IntSubOvf:
+                emit_int_ovf(in, "ssub");
+                break;
+            case Op::IntMulOvf:
+                emit_int_ovf(in, "smul");
+                break;
+            case Op::IntNegOvf:
+                emit_int_neg(in);
+                break;
+            case Op::RangeGuard:
+                emit_range_guard(in);
+                break;
+            case Op::RangeNext:
+                emit_range_next(in);
+                break;
         }
-        (void)f;
+    }
+
+    static std::string islot(std::uint32_t slot) {
+        return "%islot" + std::to_string(slot);
+    }
+
+    void emit_unbound(const ir::Instr& in, const std::string& unb,
+                      const std::string& have) {
+        std::string ublk = "iunb" + std::to_string(tmp_++);
+        o_ << "  br i1 " << unb << ", label %" << ublk << ", label %" << have << "\n";
+        o_ << ublk << ":\n";
+        need("declare void @pyc_rt_raise_unbound(ptr)");
+        o_ << "  call void @pyc_rt_raise_unbound(ptr " << cstr(in.text) << ")\n";
+        o_ << "  br label %bb" << (in.on_error ? *in.on_error : 0) << "\n";
+    }
+
+    void emit_int_load(const ir::Instr& in) {
+        std::string p = islot((std::uint32_t)in.imm);
+        std::string s = fresh(), unb = fresh();
+        std::string have = "ihave" + std::to_string(tmp_++);
+        std::string fast = "ifast" + std::to_string(tmp_++);
+        std::string tryb = "itry" + std::to_string(tmp_++);
+        std::string fromb = "ifrom" + std::to_string(tmp_++);
+        std::string join = "ijoin" + std::to_string(tmp_++);
+        o_ << "  " << s << " = load i8, ptr " << p << ".s\n";
+        o_ << "  " << unb << " = icmp eq i8 " << s << ", 0\n";
+        emit_unbound(in, unb, have);
+        o_ << have << ":\n";
+        std::string is1 = fresh();
+        o_ << "  " << is1 << " = icmp eq i8 " << s << ", 1\n";
+        o_ << "  br i1 " << is1 << ", label %" << fast << ", label %" << tryb << "\n";
+        o_ << fast << ":\n";
+        std::string vf = fresh();
+        o_ << "  " << vf << " = load i64, ptr " << p << ".v\n";
+        o_ << "  br label %" << join << "\n";
+        o_ << tryb << ":\n";
+        need("declare i32 @pyc_rt_unbox_int(ptr, ptr)");
+        std::string b = fresh(), ok = fresh(), ok1 = fresh();
+        o_ << "  " << b << " = load ptr, ptr " << p << ".b\n";
+        o_ << "  " << ok << " = call i32 @pyc_rt_unbox_int(ptr " << b
+           << ", ptr %int.scratch)\n";
+        o_ << "  " << ok1 << " = icmp eq i32 " << ok << ", 1\n";
+        o_ << "  br i1 " << ok1 << ", label %" << fromb
+           << ", label %bb" << in.target_else << "\n";
+        o_ << fromb << ":\n";
+        std::string vb = fresh();
+        o_ << "  " << vb << " = load i64, ptr %int.scratch\n";
+        o_ << "  br label %" << join << "\n";
+        o_ << join << ":\n";
+        o_ << "  " << v(*in.result) << " = phi i64 [ " << vf << ", %" << fast
+           << " ], [ " << vb << ", %" << fromb << " ]\n";
+        o_ << "  br label %bb" << in.target << "\n";
+    }
+
+    void emit_int_store_i64(const ir::Instr& in) {
+        std::string p = islot(in.target);
+        need("declare void @pyc_rt_decref(ptr)");
+        o_ << "  store i64 " << v(in.args[0]) << ", ptr " << p << ".v\n";
+        o_ << "  store i8 1, ptr " << p << ".s\n";
+        std::string old = fresh();
+        o_ << "  " << old << " = load ptr, ptr " << p << ".b\n";
+        o_ << "  store ptr null, ptr " << p << ".b\n";
+        o_ << "  call void @pyc_rt_decref(ptr " << old << ")\n";
+    }
+
+    void emit_int_ovf(const ir::Instr& in, const char* op) {
+        std::string intr = std::string("@llvm.") + op + ".with.overflow.i64";
+        need("declare {i64, i1} " + intr + "(i64, i64)");
+        std::string agg = fresh(), ov = fresh();
+        o_ << "  " << agg << " = call {i64, i1} " << intr << "(i64 "
+           << v(in.args[0]) << ", i64 " << v(in.args[1]) << ")\n";
+        o_ << "  " << v(*in.result) << " = extractvalue {i64, i1} " << agg
+           << ", 0\n";
+        o_ << "  " << ov << " = extractvalue {i64, i1} " << agg << ", 1\n";
+        o_ << "  br i1 " << ov << ", label %bb" << in.target_else
+           << ", label %bb" << in.target << "\n";
+    }
+
+    void emit_int_neg(const ir::Instr& in) {
+        need("declare {i64, i1} @llvm.ssub.with.overflow.i64(i64, i64)");
+        std::string agg = fresh(), ov = fresh();
+        o_ << "  " << agg << " = call {i64, i1} @llvm.ssub.with.overflow.i64(i64 0, i64 "
+           << v(in.args[0]) << ")\n";
+        o_ << "  " << v(*in.result) << " = extractvalue {i64, i1} " << agg
+           << ", 0\n";
+        o_ << "  " << ov << " = extractvalue {i64, i1} " << agg << ", 1\n";
+        o_ << "  br i1 " << ov << ", label %bb" << in.target_else
+           << ", label %bb" << in.target << "\n";
+    }
+
+    void emit_int_load_boxed(const ir::Instr& in) {
+        std::string p = islot(in.target);
+        std::string s = fresh(), unb = fresh();
+        std::string have = "bh" + std::to_string(tmp_++);
+        std::string fast = "bf" + std::to_string(tmp_++);
+        std::string box = "bbx" + std::to_string(tmp_++);
+        std::string join = "bj" + std::to_string(tmp_++);
+        o_ << "  " << s << " = load i8, ptr " << p << ".s\n";
+        o_ << "  " << unb << " = icmp eq i8 " << s << ", 0\n";
+        emit_unbound(in, unb, have);
+        o_ << have << ":\n";
+        std::string is1 = fresh();
+        o_ << "  " << is1 << " = icmp eq i8 " << s << ", 1\n";
+        o_ << "  br i1 " << is1 << ", label %" << fast << ", label %" << box << "\n";
+        o_ << fast << ":\n";
+        need("declare ptr @PyLong_FromLongLong(i64)");
+        std::string iv = fresh(), bp = fresh();
+        o_ << "  " << iv << " = load i64, ptr " << p << ".v\n";
+        o_ << "  " << bp << " = call ptr @PyLong_FromLongLong(i64 " << iv << ")\n";
+        o_ << "  br label %" << join << "\n";
+        o_ << box << ":\n";
+        need("declare void @pyc_rt_incref(ptr)");
+        std::string bo = fresh();
+        o_ << "  " << bo << " = load ptr, ptr " << p << ".b\n";
+        o_ << "  call void @pyc_rt_incref(ptr " << bo << ")\n";
+        o_ << "  br label %" << join << "\n";
+        o_ << join << ":\n";
+        o_ << "  " << v(*in.result) << " = phi ptr [ " << bp << ", %" << fast
+           << " ], [ " << bo << ", %" << box << " ]\n";
+        tail_label_[cur_block_] = join;
+        check(in, v(*in.result), true);
+    }
+
+    void emit_int_store_boxed(const ir::Instr& in) {
+        std::string p = islot(in.target);
+        need("declare i32 @pyc_rt_unbox_int(ptr, ptr)");
+        need("declare void @pyc_rt_decref(ptr)");
+        need("declare void @pyc_rt_incref(ptr)");
+        std::string ok = fresh(), ok1 = fresh();
+        std::string asint = "asi" + std::to_string(tmp_++);
+        std::string asbox = "asb" + std::to_string(tmp_++);
+        std::string join = "asj" + std::to_string(tmp_++);
+        o_ << "  " << ok << " = call i32 @pyc_rt_unbox_int(ptr " << v(in.args[0])
+           << ", ptr %int.scratch)\n";
+        o_ << "  " << ok1 << " = icmp eq i32 " << ok << ", 1\n";
+        o_ << "  br i1 " << ok1 << ", label %" << asint << ", label %" << asbox << "\n";
+        o_ << asint << ":\n";
+        std::string nv = fresh(), old1 = fresh();
+        o_ << "  " << nv << " = load i64, ptr %int.scratch\n";
+        o_ << "  store i64 " << nv << ", ptr " << p << ".v\n";
+        o_ << "  store i8 1, ptr " << p << ".s\n";
+        o_ << "  " << old1 << " = load ptr, ptr " << p << ".b\n";
+        o_ << "  store ptr null, ptr " << p << ".b\n";
+        o_ << "  call void @pyc_rt_decref(ptr " << old1 << ")\n";
+        o_ << "  br label %" << join << "\n";
+        o_ << asbox << ":\n";
+        o_ << "  call void @pyc_rt_incref(ptr " << v(in.args[0]) << ")\n";
+        std::string old2 = fresh();
+        o_ << "  " << old2 << " = load ptr, ptr " << p << ".b\n";
+        o_ << "  store ptr " << v(in.args[0]) << ", ptr " << p << ".b\n";
+        o_ << "  store i8 2, ptr " << p << ".s\n";
+        o_ << "  call void @pyc_rt_decref(ptr " << old2 << ")\n";
+        o_ << "  br label %" << join << "\n";
+        o_ << join << ":\n";
+        tail_label_[cur_block_] = join;
+    }
+
+    void emit_range_guard(const ir::Instr& in) {
+        need("declare i32 @pyc_rt_range_native(ptr, ptr, ptr, ptr, i32, ptr, ptr, ptr)");
+        std::string p = "%rg" + std::to_string(in.target);
+        std::string a0 = in.args.size() > 1 ? v(in.args[1]) : std::string("null");
+        std::string a1 = in.args.size() > 2 ? v(in.args[2]) : std::string("null");
+        std::string a2 = in.args.size() > 3 ? v(in.args[3]) : std::string("null");
+        o_ << "  " << v(*in.result) << " = call i32 @pyc_rt_range_native(ptr "
+           << v(in.args[0]) << ", ptr " << a0 << ", ptr " << a1 << ", ptr " << a2
+           << ", i32 " << in.imm << ", ptr " << p << ".i, ptr " << p
+           << ".e, ptr " << p << ".p)\n";
+    }
+
+    void emit_range_next(const ir::Instr& in) {
+        std::string p = "%rg" + std::to_string((int)in.imm);
+        std::string c = fresh(), e = fresh(), st = fresh();
+        std::string pos = fresh();
+        std::string posc = "rpos" + std::to_string(tmp_++);
+        std::string negc = "rneg" + std::to_string(tmp_++);
+        std::string take = "rtake" + std::to_string(tmp_++);
+        o_ << "  " << c << " = load i64, ptr " << p << ".i\n";
+        o_ << "  " << e << " = load i64, ptr " << p << ".e\n";
+        o_ << "  " << st << " = load i64, ptr " << p << ".p\n";
+        o_ << "  " << pos << " = icmp sgt i64 " << st << ", 0\n";
+        o_ << "  br i1 " << pos << ", label %" << posc << ", label %" << negc << "\n";
+        o_ << posc << ":\n";
+        std::string ge = fresh();
+        o_ << "  " << ge << " = icmp sge i64 " << c << ", " << e << "\n";
+        o_ << "  br i1 " << ge << ", label %bb" << in.target_else
+           << ", label %" << take << "\n";
+        o_ << negc << ":\n";
+        std::string le = fresh();
+        o_ << "  " << le << " = icmp sle i64 " << c << ", " << e << "\n";
+        o_ << "  br i1 " << le << ", label %bb" << in.target_else
+           << ", label %" << take << "\n";
+        o_ << take << ":\n";
+        o_ << "  " << v(*in.result) << " = add i64 " << c << ", 0\n";
+        need("declare {i64, i1} @llvm.sadd.with.overflow.i64(i64, i64)");
+        std::string agg = fresh(), nv = fresh(), ov = fresh(), nxt = fresh();
+        o_ << "  " << agg << " = call {i64, i1} @llvm.sadd.with.overflow.i64(i64 "
+           << c << ", i64 " << st << ")\n";
+        o_ << "  " << nv << " = extractvalue {i64, i1} " << agg << ", 0\n";
+        o_ << "  " << ov << " = extractvalue {i64, i1} " << agg << ", 1\n";
+        o_ << "  " << nxt << " = select i1 " << ov << ", i64 " << e << ", i64 "
+           << nv << "\n";
+        o_ << "  store i64 " << nxt << ", ptr " << p << ".i\n";
+        o_ << "  br label %bb" << in.target << "\n";
     }
 
     void emit_capi(const ir::Instr& in) {

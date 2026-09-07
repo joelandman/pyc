@@ -596,6 +596,45 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     return reinterpret_cast<PyObject*>(fn);
 }
 
+extern "C" int pyc_rt_unbox_int(PyObject* o, int64_t* out) {
+    if (!o || !PyLong_CheckExact(o) || !out) return 0;
+    int ovf = 0;
+    long long v = PyLong_AsLongLongAndOverflow(o, &ovf);
+    if (ovf || PyErr_Occurred()) {
+        PyErr_Clear();
+        return 0;
+    }
+    *out = (int64_t)v;
+    return 1;
+}
+
+extern "C" int pyc_rt_range_native(PyObject* callee, PyObject* a0, PyObject* a1,
+                                   PyObject* a2, int nargs,
+                                   int64_t* start, int64_t* stop, int64_t* step) {
+    PyObject* b = PyEval_GetBuiltins();
+    if (!b || !callee) return 0;
+    PyObject* rng = PyDict_GetItemString(b, "range");
+    if (!rng || callee != rng) return 0;
+    int64_t s = 0, e = 0, p = 1;
+    if (nargs == 1) {
+        if (!pyc_rt_unbox_int(a0, &e)) return 0;
+    } else if (nargs == 2) {
+        if (!pyc_rt_unbox_int(a0, &s) || !pyc_rt_unbox_int(a1, &e)) return 0;
+    } else if (nargs == 3) {
+        if (!pyc_rt_unbox_int(a0, &s) || !pyc_rt_unbox_int(a1, &e)
+            || !pyc_rt_unbox_int(a2, &p)) return 0;
+        if (p == 0) return 0;
+    } else return 0;
+    *start = s; *stop = e; *step = p;
+    return 1;
+}
+
+extern "C" void pyc_rt_raise_unbound(const char* name) {
+    PyErr_Format(PyExc_UnboundLocalError,
+                 "cannot access local variable '%s' where it is not "
+                 "associated with a value", name ? name : "");
+}
+
 // Part of the periodic check CPython's interpreter loop performs, which
 // compiled code did not do at all. Called at every loop head, amortised over a
 // counter as CPython amortises its own eval-breaker check.

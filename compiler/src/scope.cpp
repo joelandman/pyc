@@ -430,6 +430,8 @@ struct IntCandidates {
 };
 }  // namespace
 
+std::set<std::string> all_reads(const std::vector<stmt>& body);
+
 // The candidate set for one function body. Params are excluded: they arrive as
 // objects, so unboxing one means proving every caller passes an int, which is
 // not a function-local question.
@@ -446,6 +448,14 @@ std::set<std::string> int_locals(const std::vector<std::string>& params,
     // cannot also live in a register.
     for (const std::string& n : captured) c.cand.erase(n);
     for (const std::string& p : params) c.cand.erase(p);
+    // locals()/vars()/eval/exec/dir read the frame. Unboxed values live in
+    // tagged allocas, not the frame, so a function that mentions any of these
+    // would silently omit them from locals() -- CHARTER I1.
+    {
+        std::set<std::string> reads = all_reads(body);
+        for (const char* n : {"locals", "vars", "eval", "exec", "dir"})
+            if (reads.count(n)) return {};
+    }
     do { c.changed = false; c.block(body); } while (c.changed);
     return c.cand;
 }

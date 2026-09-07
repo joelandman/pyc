@@ -48,6 +48,15 @@ const char* op_name(Op op) {
         case Op::CellSet:     return "cell.set";
         case Op::MakeFunction: return "makefunc";
         case Op::LoadClassName: return "load.classname";
+        case Op::I64Const:    return "i64.const";
+        case Op::IntLoad:     return "int.load";
+        case Op::IntStore:    return "int.store";
+        case Op::IntAddOvf:   return "int.add.ovf";
+        case Op::IntSubOvf:   return "int.sub.ovf";
+        case Op::IntMulOvf:   return "int.mul.ovf";
+        case Op::IntNegOvf:   return "int.neg.ovf";
+        case Op::RangeGuard:  return "range.guard";
+        case Op::RangeNext:   return "range.next";
     }
     return "?";
 }
@@ -143,6 +152,12 @@ std::string to_string(const Module& m) {
                 if (in.op == Op::CondBr)
                     o << " -> bb" << in.target << ", bb" << in.target_else;
                 if (in.op == Op::IterNext)
+                    o << " -> body bb" << in.target << ", done bb" << in.target_else;
+                if (in.op == Op::IntLoad || in.op == Op::IntAddOvf
+                    || in.op == Op::IntSubOvf || in.op == Op::IntMulOvf
+                    || in.op == Op::IntNegOvf)
+                    o << " -> ok bb" << in.target << ", deopt bb" << in.target_else;
+                if (in.op == Op::RangeNext)
                     o << " -> body bb" << in.target << ", done bb" << in.target_else;
                 if (in.result && in.result_ownership != Ownership::NotAnObject)
                     o << "  ; " << own_name(in.result_ownership);

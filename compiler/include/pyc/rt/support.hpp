@@ -82,6 +82,12 @@ PyObject* pyc_rt_class_prepare(PyObject* meta, PyObject* name,
 // loop head. Returns -1 if a handler raised, so Ctrl-C propagates.
 int pyc_rt_periodic(void);
 int pyc_rt_handle_pending(void);
+// 1 and writes *out if o is an exact int that fits in i64; 0 otherwise
+// (bool is rejected: it is an int subclass). No exception on 0.
+int pyc_rt_unbox_int(PyObject* o, int64_t* out);
+int pyc_rt_range_native(PyObject* callee, PyObject* a0, PyObject* a1, PyObject* a2,
+                        int nargs, int64_t* start, int64_t* stop, int64_t* step);
+void pyc_rt_raise_unbound(const char* name);
 
 // Global access with the name already built and interned once at startup.
 // Building the name per access cost an allocation, a decode and a hash every

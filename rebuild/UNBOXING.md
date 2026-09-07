@@ -2,8 +2,8 @@
 
 Keeping a Python `int` in a machine register instead of on the heap.
 
-Written mid-implementation. Step 1 (the analysis) has landed; steps 2 and 3
-have not. Every number here was measured on this machine against the target
+Written mid-implementation. Steps 1–3 have landed. Every number here was
+measured on this machine against the target
 sysroot `cp314-3.14.7-tier1`, and the commands are in the session that produced
 them. Nothing in this file is a projection unless it says so.
 
@@ -127,6 +127,9 @@ is a silent wrong answer.
   passes an int, which is not a function-local question.
 * **capture, `global`, `nonlocal`** -- the value lives in a cell something else
   reads through.
+* **`locals` / `vars` / `eval` / `exec` / `dir`** -- they read the frame. Tagged
+  slots live outside it, so a function that mentions any of these keeps every
+  local boxed.
 * **`del`** -- needs an unbound transition this does not model.
 * **unpacking, `except as`, `with as`, match captures, imports, defs** -- bind
   values the analysis cannot type.
@@ -154,15 +157,12 @@ where divergence hides.
    corpus files -- nothing consumes it yet, which is the point: it could be
    validated before anything depended on it. `PYC_DUMP_INTLOCALS` reports the
    per-function selection.
-2. **Tagged storage + unboxed arithmetic.** Candidates get the three slots;
-   stores from an object try to unbox (exact int, fits in i64) so the existing
-   iterator path benefits without waiting for step 3; loads as an object box on
-   demand. Needs one runtime helper, `pyc_rt_unbox_int`, because the alternative
-   is open-coding `PyLong_CheckExact` in LLVM, which means hardcoding the
-   offset of `ob_type` -- an ABI guess this tree has no business making.
-   Projected, not measured: ~35 -> ~11 ns/iter on `nested`, the residue being
-   the iterator's own allocation.
-3. **Native range loop**, carrying the guard above. Removes that residue.
+2. **Tagged storage + unboxed arithmetic** (landed). Candidates get the three
+   slots; stores from an object try to unbox (exact int, fits in i64) so the
+   existing iterator path benefits without waiting for step 3; loads as an
+   object box on demand. Overflow deopts to the C-API. `pyc_rt_unbox_int`
+   exists because open-coding `PyLong_CheckExact` would hardcode `ob_type`.
+3. **Native range loop** (landed), carrying the guard above.
 
-Steps 2 and 3 are only worth their complexity together; step 2 alone leaves the
-iterator allocating a `PyLong` per step.
+Steps 2 and 3 landed together: step 2 alone leaves the iterator allocating a
+`PyLong` per step. `verify fast` 766/766 at `-O0`, no new P0.
