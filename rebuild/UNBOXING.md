@@ -169,10 +169,19 @@ where divergence hides.
    an int -- `type(a < b)` is `bool`. `is`/`in` stay boxed (identity and
    containment are not i64). Mixed int/float and bool operands stay boxed.
    Deopt is the existing `PyObject_RichCompare` path.
+5. **While-loop i64 phis** (landed). A `while` whose body has no nested
+   `def`/`class` carries live int_locals in SSA phis at the head. Overflow
+   deopts to a boxed clone of the loop so the fast path has one predecessor
+   and the add result dominates the latch. `for`/`for-range` still IntLoad:
+   their native/boxed join does not dominate a latch the way `while` does.
+   Carrying a pre-loop `s = 0` into a `for` without a phi at that `for` is
+   a silent wrong answer (`s += i*j` stuck on 0). `IntStore` of an already
+   unboxed slot writes only `.v` (no `decref`).
 
 Steps 2 and 3 landed together: step 2 alone leaves the iterator allocating a
 `PyLong` per step. Step 4 closes the `while i < n` hole that still boxed
-every iteration. `verify fast` 766/766 at `-O0`, no new P0.
+every iteration. Step 5 is the while accumulator. `verify fast` 766/766 at
+`-O0`, no new P0.
 
 Measured on this machine, `n = 2000` (4e6 iters of `s += i * j`), `-O2`:
 
@@ -182,7 +191,22 @@ Measured on this machine, `n = 2000` (4e6 iters of `s += i * j`), `-O2`:
 | pyc, for-range (steps 2–3) | 0.024 |
 | pyc, `while i < n` before step 4 | 0.069 |
 | pyc, `while i < n` after step 4 | 0.022 |
-| C | 0.002 |
+| pyc, `while i < n` after step 5 | 0.016 |
+| pyc, for-range after step 5 | 0.018 |
+| C | 0.001 |
 
-The residue vs C is tagged-slot traffic (`IntLoad`/`IntStore` every
-iteration, plus `pyc_rt_decref` on the boxed fallback), not the compare.
+The residue vs C is still the TLS periodic check, overflow `jo`, and
+`for-range` IntLoad. GIL-free unboxed regions wait until that residue is
+the loop body with no object ops.
+
+i64 phis are refused when the body has a direct `if`/`try`/`with`/`match`,
+`return`/`break`/`continue`, or a nested loop: those joins do not dominate
+a latch the way a straight-line `while` does. Overflow in a phi loop
+redoes the current op through the C-API before switching to the boxed
+clone -- skipping it was a silent wrong add.
+
+**for-range SSA was attempted and reverted.** Unswitching native vs boxed
+into two loops made `for _ in range(10**9)` interrupted by SIGALRM
+SIGSEGV on shutdown (~half the runs, `loop_periodic.py`). Shared body
+through the tagged slot (step 3) does not. Do not retry unswitch without
+an unwind story for the native path.

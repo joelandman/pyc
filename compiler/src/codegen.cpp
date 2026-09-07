@@ -666,9 +666,12 @@ private:
         o_ << "  " << unb << " = icmp eq i8 " << s << ", 0\n";
         emit_unbound(in, unb, have);
         o_ << have << ":\n";
-        std::string is1 = fresh();
+        std::string is1 = fresh(), exp = fresh();
         o_ << "  " << is1 << " = icmp eq i8 " << s << ", 1\n";
-        o_ << "  br i1 " << is1 << ", label %" << fast << ", label %" << tryb << "\n";
+        need("declare i1 @llvm.expect.i1(i1, i1)");
+        o_ << "  " << exp << " = call i1 @llvm.expect.i1(i1 " << is1
+           << ", i1 true)\n";
+        o_ << "  br i1 " << exp << ", label %" << fast << ", label %" << tryb << "\n";
         o_ << fast << ":\n";
         std::string vf = fresh();
         o_ << "  " << vf << " = load i64, ptr " << p << ".v\n";
@@ -694,13 +697,30 @@ private:
 
     void emit_int_store_i64(const ir::Instr& in) {
         std::string p = islot(in.target);
-        need("declare void @pyc_rt_decref(ptr)");
+        std::string s = fresh(), is1 = fresh(), exp = fresh();
+        std::string fast = "stf" + std::to_string(tmp_++);
+        std::string slow = "sts" + std::to_string(tmp_++);
+        std::string join = "stj" + std::to_string(tmp_++);
+        o_ << "  " << s << " = load i8, ptr " << p << ".s\n";
+        o_ << "  " << is1 << " = icmp eq i8 " << s << ", 1\n";
+        need("declare i1 @llvm.expect.i1(i1, i1)");
+        o_ << "  " << exp << " = call i1 @llvm.expect.i1(i1 " << is1
+           << ", i1 true)\n";
+        o_ << "  br i1 " << exp << ", label %" << fast << ", label %" << slow << "\n";
+        o_ << fast << ":\n";
+        o_ << "  store i64 " << v(in.args[0]) << ", ptr " << p << ".v\n";
+        o_ << "  br label %" << join << "\n";
+        o_ << slow << ":\n";
         o_ << "  store i64 " << v(in.args[0]) << ", ptr " << p << ".v\n";
         o_ << "  store i8 1, ptr " << p << ".s\n";
+        need("declare void @pyc_rt_decref(ptr)");
         std::string old = fresh();
         o_ << "  " << old << " = load ptr, ptr " << p << ".b\n";
         o_ << "  store ptr null, ptr " << p << ".b\n";
         o_ << "  call void @pyc_rt_decref(ptr " << old << ")\n";
+        o_ << "  br label %" << join << "\n";
+        o_ << join << ":\n";
+        tail_label_[cur_block_] = join;
     }
 
     void emit_int_ovf(const ir::Instr& in, const char* op) {

@@ -95,6 +95,18 @@ def local_cmp():
     return type(r).__name__, r, (r + 1), s, 1 < 2 < 3
 print("local cmp:", local_cmp())
 
+def local_for():
+    n = 5
+    s = 0
+    for i in range(n):
+        s += i
+    t = 0
+    for i in range(3):
+        for j in range(3):
+            t += i * j
+    return s, t
+print("local for:", local_for())
+
 # --- int with __add__ on the right (reflected ops) -------------------------
 class R:
     def __radd__(self, o): return ("radd", o)
