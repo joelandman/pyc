@@ -81,6 +81,20 @@ print("unchanged after raise:", partial())
 print("mixed compare:", 1 < 1.5, (1 << 70) > 1e18, 2 ** 70 == float(2 ** 70))
 print("chain:", 1 < 2 < 3, 3 > 2 > 1, 1 < 2 > 3)
 
+# --- unboxed compare must still produce bool, not int ----------------------
+def local_cmp():
+    a = 3
+    b = 4
+    r = a < b
+    n = 5
+    i = 0
+    s = 0
+    while i < n:
+        s += i
+        i += 1
+    return type(r).__name__, r, (r + 1), s, 1 < 2 < 3
+print("local cmp:", local_cmp())
+
 # --- int with __add__ on the right (reflected ops) -------------------------
 class R:
     def __radd__(self, o): return ("radd", o)

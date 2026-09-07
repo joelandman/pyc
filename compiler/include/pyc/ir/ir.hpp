@@ -130,6 +130,10 @@ enum class Op {
     IntStore,        // args[0] is i64, `target` is slot
     IntAddOvf, IntSubOvf, IntMulOvf,
     IntNegOvf,       // unary minus; one arg
+    // i64 compare. `imm` is Py_LT..Py_GE (0..5). Result is i32 0/1, never a
+    // PyObject -- boxing it must go through PyBool_FromLong so `type(a < b)`
+    // stays `bool`. Not a terminator; cannot fail.
+    IntCmp,
     // Runtime guard for `for i in range(...)` (rebuild/UNBOXING.md).
     // `target` is the range-id; `imm` is nargs; args are callee, a0, a1, a2
     // (id 0 = null). Result is i32: 1 if the callee is builtin range and the

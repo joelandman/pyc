@@ -163,6 +163,26 @@ where divergence hides.
    object box on demand. Overflow deopts to the C-API. `pyc_rt_unbox_int`
    exists because open-coding `PyLong_CheckExact` would hardcode `ob_type`.
 3. **Native range loop** (landed), carrying the guard above.
+4. **Native compare** (landed). `if`/`while`/`assert` and compare *values*
+   (`x = a < b`) of two `int_locals` or constants use `icmp` on i64.
+   The result of a value compare is boxed with `PyBool_FromLong`, never as
+   an int -- `type(a < b)` is `bool`. `is`/`in` stay boxed (identity and
+   containment are not i64). Mixed int/float and bool operands stay boxed.
+   Deopt is the existing `PyObject_RichCompare` path.
 
 Steps 2 and 3 landed together: step 2 alone leaves the iterator allocating a
-`PyLong` per step. `verify fast` 766/766 at `-O0`, no new P0.
+`PyLong` per step. Step 4 closes the `while i < n` hole that still boxed
+every iteration. `verify fast` 766/766 at `-O0`, no new P0.
+
+Measured on this machine, `n = 2000` (4e6 iters of `s += i * j`), `-O2`:
+
+| | s |
+|---|---|
+| CPython | 0.197 (for) / 0.269 (while) |
+| pyc, for-range (steps 2–3) | 0.024 |
+| pyc, `while i < n` before step 4 | 0.069 |
+| pyc, `while i < n` after step 4 | 0.022 |
+| C | 0.002 |
+
+The residue vs C is tagged-slot traffic (`IntLoad`/`IntStore` every
+iteration, plus `pyc_rt_decref` on the boxed fallback), not the compare.

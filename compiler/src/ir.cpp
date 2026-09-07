@@ -55,6 +55,7 @@ const char* op_name(Op op) {
         case Op::IntSubOvf:   return "int.sub.ovf";
         case Op::IntMulOvf:   return "int.mul.ovf";
         case Op::IntNegOvf:   return "int.neg.ovf";
+        case Op::IntCmp:      return "int.cmp";
         case Op::RangeGuard:  return "range.guard";
         case Op::RangeNext:   return "range.next";
     }

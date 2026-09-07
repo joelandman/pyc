@@ -429,8 +429,16 @@ private:
 
     // Truthiness goes through PyObject_IsTrue like everything else -- there is
     // no fast path for "obviously a bool", because that would be a proof we
-    // have not made (I2).
+    // have not made (I2). An i64 compare is a different proof: both sides are
+    // int_locals or constants, so the predicate is an icmp, not a type test.
     ir::Value lower_predicate(const expr& e, bool* ok) {
+        ir::Value fast;
+        if (try_int_predicate(e, &fast, ok)) return fast;
+        if (!*ok) return {};
+        return lower_predicate_boxed(e, ok);
+    }
+
+    ir::Value lower_predicate_boxed(const expr& e, bool* ok) {
         ir::Value v = lower_expr(e, ok);
         if (!*ok) return {};
         ir::Value t = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
@@ -3981,6 +3989,18 @@ private:
         return out;
     }
 
+    ir::Value emit_bool_phi(const std::vector<ir::Value>& vals,
+                            const std::vector<std::uint32_t>& blocks,
+                            const SourceLoc& loc) {
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        ir::Instr in{ir::Op::Phi, vals, out, Ownership::NotAnObject, "",
+                     0, 0, loc, std::nullopt};
+        in.phi_blocks = blocks;
+        cur()->blocks[blk_].instrs.insert(cur()->blocks[blk_].instrs.begin(),
+                                          std::move(in));
+        return out;
+    }
+
     // `a and b` yields a if a is falsy, else b -- the VALUE, not a bool, and
     // b is not evaluated when a decides the answer. Both are observable, so
     // neither can be approximated with PyObject_IsTrue on the result.
@@ -4119,11 +4139,159 @@ private:
         return emit_phi({a, b}, {ae, be}, n.loc);
     }
 
+    int rich_opid(const cmpop& op) const {
+        int id = -1;
+        std::visit(ov{
+            [&](const Lt&)    { id = 0; },
+            [&](const LtE&)   { id = 1; },
+            [&](const Eq&)    { id = 2; },
+            [&](const NotEq&) { id = 3; },
+            [&](const Gt&)    { id = 4; },
+            [&](const GtE&)   { id = 5; },
+            [&](const Is&)    {},
+            [&](const IsNot&) {},
+            [&](const In&)    {},
+            [&](const NotIn&) {},
+        }, op.v);
+        return id;
+    }
+
+    bool can_int_compare(const Compare& n) const {
+        if (!class_ns_.empty()) return false;
+        if (n.ops.size() != n.comparators.size() || n.ops.empty()) return false;
+        if (!is_int_expr(*n.left)) return false;
+        for (std::size_t i = 0; i < n.ops.size(); ++i) {
+            if (rich_opid(n.ops[i]) < 0) return false;
+            if (!is_int_expr(n.comparators[i])) return false;
+        }
+        return true;
+    }
+
+    bool emit_int_cmp_i32(const Compare& n, ir::Value* out, std::uint32_t deopt,
+                          const SourceLoc& loc) {
+        ir::Value left;
+        if (!emit_int_rvalue(*n.left, &left, deopt, loc)) return false;
+        if (n.ops.size() == 1) {
+            ir::Value right;
+            if (!emit_int_rvalue(n.comparators[0], &right, deopt, loc)) return false;
+            *out = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+            ir::Instr in{ir::Op::IntCmp, {left, right}, *out, Ownership::NotAnObject,
+                         "", 0, 0, loc, std::nullopt};
+            in.has_imm = true;
+            in.imm = rich_opid(n.ops[0]);
+            emit(std::move(in));
+            return true;
+        }
+        std::uint32_t false_b = new_block("icmp.false");
+        std::uint32_t join = new_block("icmp.join");
+        ir::Value last;
+        std::uint32_t last_end = 0;
+        for (std::size_t i = 0; i < n.ops.size(); ++i) {
+            ir::Value right;
+            if (!emit_int_rvalue(n.comparators[i], &right, deopt, loc)) return false;
+            ir::Value c = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+            ir::Instr in{ir::Op::IntCmp, {left, right}, c, Ownership::NotAnObject,
+                         "", 0, 0, loc, std::nullopt};
+            in.has_imm = true;
+            in.imm = rich_opid(n.ops[i]);
+            emit(std::move(in));
+            if (i + 1 == n.ops.size()) {
+                last = c;
+                last_end = (std::uint32_t)blk_;
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", join, 0, loc, std::nullopt});
+            } else {
+                std::uint32_t next = new_block("icmp.next");
+                emit(ir::Instr{ir::Op::CondBr, {c}, std::nullopt, Ownership::NotAnObject,
+                               "", next, false_b, loc, std::nullopt});
+                set_block(next);
+                left = right;
+            }
+        }
+        set_block(false_b);
+        ir::Value z = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        emit(ir::Instr{ir::Op::IntConst, {}, z, Ownership::NotAnObject,
+                       "0", 0, 0, loc, std::nullopt});
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", join, 0, loc, std::nullopt});
+        std::uint32_t false_end = (std::uint32_t)blk_;
+        set_block(join);
+        *out = emit_bool_phi({last, z}, {last_end, false_end}, loc);
+        return true;
+    }
+
+    bool try_int_predicate(const expr& e, ir::Value* out, bool* ok) {
+        const Compare* n = std::get_if<Compare>(&e.v);
+        if (!n || !can_int_compare(*n)) return false;
+        std::uint32_t deopt = new_block("icmp.deopt");
+        ir::Value fast;
+        if (!emit_int_cmp_i32(*n, &fast, deopt, n->loc)) {
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", deopt, 0, n->loc, std::nullopt});
+            set_block(deopt);
+            return false;
+        }
+        std::uint32_t done = new_block("icmp.done");
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", done, 0, n->loc, std::nullopt});
+        std::uint32_t fast_end = (std::uint32_t)blk_;
+        set_block(deopt);
+        ir::Value boxed = lower_predicate_boxed(e, ok);
+        if (!*ok) return false;
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", done, 0, n->loc, std::nullopt});
+        std::uint32_t deopt_end = (std::uint32_t)blk_;
+        set_block(done);
+        *out = emit_bool_phi({fast, boxed}, {fast_end, deopt_end}, n->loc);
+        return true;
+    }
+
+    ir::Value lower_compare_boxed(const Compare& n, bool* ok) {
+        if (n.ops.size() > 1) return lower_chained_compare(n, ok);
+        ir::Value l = lower_expr(*n.left, ok);        if (!*ok) return {};
+        ir::Value r = lower_expr(n.comparators[0], ok); if (!*ok) return {};
+        return compare_one(l, r, n.ops[0], n.loc, ok);
+    }
+
+    bool try_int_compare_box(const Compare& n, ir::Value* out, bool* ok) {
+        if (!can_int_compare(n)) return false;
+        std::uint32_t deopt = new_block("icmp.box.deopt");
+        ir::Value pred;
+        if (!emit_int_cmp_i32(n, &pred, deopt, n.loc)) {
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", deopt, 0, n.loc, std::nullopt});
+            set_block(deopt);
+            return false;
+        }
+        std::uint32_t done = new_block("icmp.box.done");
+        ir::Value fast_b = box_bool(pred, n.loc, ok);
+        if (!*ok) return false;
+        // Leave owned_ before the deopt arm is lowered: a pad built there
+        // that decrefs fast_b would not dominate (the ifexp scar).
+        forget(fast_b);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", done, 0, n.loc, std::nullopt});
+        std::uint32_t fast_end = (std::uint32_t)blk_;
+        set_block(deopt);
+        ir::Value boxed = lower_compare_boxed(n, ok);
+        if (!*ok) return false;
+        forget(boxed);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", done, 0, n.loc, std::nullopt});
+        std::uint32_t deopt_end = (std::uint32_t)blk_;
+        set_block(done);
+        *out = emit_phi({fast_b, boxed}, {fast_end, deopt_end}, n.loc);
+        return true;
+    }
+
     ir::Value lower_compare(const Compare& n, bool* ok) {
         if (n.ops.size() != n.comparators.size() || n.ops.empty()) {
             *ok = err("malformed comparison", "Compare", n.loc);
             return {};
         }
+        ir::Value boxed;
+        if (try_int_compare_box(n, &boxed, ok)) return boxed;
+        if (!*ok) return {};
         // `a < b < c` is `a < b and b < c` with b evaluated ONCE and c not
         // evaluated at all when the first test fails. Both are observable, so
         // it gets the same short-circuit shape as `and` -- never

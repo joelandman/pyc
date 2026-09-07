@@ -541,7 +541,15 @@ private:
                 break;
             }
             case Op::Phi: {
-                o_ << "  " << v(*in.result) << " = phi ptr ";
+                const char* ty = "ptr";
+                if (in.result) {
+                    switch (in.result->type.kind) {
+                        case ir::Type::Kind::Int64: ty = "i64"; break;
+                        case ir::Type::Kind::Bool:  ty = "i32"; break;
+                        default: break;
+                    }
+                }
+                o_ << "  " << v(*in.result) << " = phi " << ty << " ";
                 for (std::size_t i = 0; i < in.args.size(); ++i) {
                     auto it = tail_label_.find(in.phi_blocks[i]);
                     std::string lbl = (it != tail_label_.end()) ? it->second
@@ -619,6 +627,9 @@ private:
                 break;
             case Op::IntNegOvf:
                 emit_int_neg(in);
+                break;
+            case Op::IntCmp:
+                emit_int_cmp(in);
                 break;
             case Op::RangeGuard:
                 emit_range_guard(in);
@@ -715,6 +726,22 @@ private:
         o_ << "  " << ov << " = extractvalue {i64, i1} " << agg << ", 1\n";
         o_ << "  br i1 " << ov << ", label %bb" << in.target_else
            << ", label %bb" << in.target << "\n";
+    }
+
+    void emit_int_cmp(const ir::Instr& in) {
+        const char* pred = "eq";
+        switch (in.imm) {
+            case 0: pred = "slt"; break;
+            case 1: pred = "sle"; break;
+            case 2: pred = "eq";  break;
+            case 3: pred = "ne";  break;
+            case 4: pred = "sgt"; break;
+            case 5: pred = "sge"; break;
+        }
+        std::string c = fresh();
+        o_ << "  " << c << " = icmp " << pred << " i64 " << v(in.args[0])
+           << ", " << v(in.args[1]) << "\n";
+        o_ << "  " << v(*in.result) << " = zext i1 " << c << " to i32\n";
     }
 
     void emit_int_load_boxed(const ir::Instr& in) {
