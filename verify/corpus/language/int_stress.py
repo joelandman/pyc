@@ -104,8 +104,24 @@ def local_for():
     for i in range(3):
         for j in range(3):
             t += i * j
-    return s, t
+    u = 0
+    for i in range(3):
+        u += 1 << 62
+    return s, t, u
 print("local for:", local_for())
+
+def local_while_param(n):
+    i = 0
+    s = 0
+    while i < n:
+        s += i
+        i += 1
+    return s
+print("local while param:", local_while_param(5))
+try:
+    local_while_param("x")
+except TypeError as e:
+    print("while param str:", type(e).__name__)
 
 # --- int with __add__ on the right (reflected ops) -------------------------
 class R:

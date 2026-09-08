@@ -50,6 +50,7 @@ const char* op_name(Op op) {
         case Op::LoadClassName: return "load.classname";
         case Op::I64Const:    return "i64.const";
         case Op::IntLoad:     return "int.load";
+        case Op::IntUnbox:    return "int.unbox";
         case Op::IntStore:    return "int.store";
         case Op::IntAddOvf:   return "int.add.ovf";
         case Op::IntSubOvf:   return "int.sub.ovf";
@@ -154,7 +155,8 @@ std::string to_string(const Module& m) {
                     o << " -> bb" << in.target << ", bb" << in.target_else;
                 if (in.op == Op::IterNext)
                     o << " -> body bb" << in.target << ", done bb" << in.target_else;
-                if (in.op == Op::IntLoad || in.op == Op::IntAddOvf
+                if (in.op == Op::IntLoad || in.op == Op::IntUnbox
+                    || in.op == Op::IntAddOvf
                     || in.op == Op::IntSubOvf || in.op == Op::IntMulOvf
                     || in.op == Op::IntNegOvf)
                     o << " -> ok bb" << in.target << ", deopt bb" << in.target_else;

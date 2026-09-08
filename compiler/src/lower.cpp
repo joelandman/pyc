@@ -39,6 +39,7 @@ std::set<std::string> nested_reads(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> declared_nonlocals(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> declared_globals(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> all_reads(const std::vector<pyc::ast::stmt>&);
+std::set<std::string> all_writes(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> nested_reads_expr(const pyc::ast::expr&);
 }
 
@@ -3221,8 +3222,6 @@ private:
     // wrong answer.
     bool lower_for_range(const For& n) {
         const Call& c = std::get<Call>(n.iter->v);
-        const Name& tn = std::get<Name>(n.target->v);
-        auto slot = locals_.find(tn.id);
         bool ok = true;
         ir::Value fn = lower_expr(*c.func, &ok);
         if (!ok) return false;
@@ -3243,16 +3242,6 @@ private:
         std::uint32_t native_e = new_block("range.native");
         std::uint32_t boxed_e = new_block("range.boxed");
         std::uint32_t join = new_block("range.join");
-        std::uint32_t head = new_block("for.head");
-        std::uint32_t nat_next = new_block("range.next");
-        std::uint32_t box_next = new_block("range.iter");
-        std::uint32_t body_n = new_block("range.body.n");
-        std::uint32_t body_b = new_block("range.body.b");
-        std::uint32_t body = new_block("for.body");
-        std::uint32_t done = new_block("for.done");
-        std::uint32_t brk = new_block("for.break");
-        std::uint32_t after = new_block("for.after");
-
         emit(ir::Instr{ir::Op::CondBr, {g}, std::nullopt, Ownership::NotAnObject,
                        "", native_e, boxed_e, n.loc, std::nullopt});
 
@@ -3285,15 +3274,48 @@ private:
         ir::Value it = emit_phi({it_n, it_b}, {native_end, boxed_end}, n.loc);
         forget(it);
         frame_owned_.push_back(it);
+
+        std::uint32_t after = new_block("for.after");
+        if (!emit_for_range_loop(n, g, it, rid, after, false)) return false;
+        set_block(after);
+        live_i64_.clear();
+        return true;
+    }
+
+    bool emit_for_range_loop(const For& n, ir::Value g, ir::Value it,
+                             std::uint32_t rid, std::uint32_t after, bool clone) {
+        const Name& tn = std::get<Name>(n.target->v);
+        auto slot = locals_.find(tn.id);
+        std::uint32_t boxed = 0;
+        if (clone) {
+            live_i64_.clear();
+            frame_owned_.push_back(it);
+        } else {
+            boxed = prepare_i64_loop(n.body, n.loc, tn.id);
+        }
+        std::uint32_t pre = (std::uint32_t)blk_;
+        std::uint32_t head = new_block("for.head");
+        std::uint32_t nat_next = new_block("range.next");
+        std::uint32_t box_next = new_block("range.iter");
+        std::uint32_t body_n = new_block("range.body.n");
+        std::uint32_t body_b = new_block("range.body.b");
+        std::uint32_t body = new_block("for.body");
+        std::uint32_t done = new_block("for.done");
+        std::uint32_t brk = new_block("for.break");
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", head, 0, n.loc, std::nullopt});
 
         set_block(head);
-        live_i64_.clear();
+        if (boxed) begin_i64_loop(head, pre, brk, n.body, boxed, n.loc);
+        else {
+            live_i64_.clear();
+            loops_.push_back({head, brk});
+        }
         { bool pok = true; call_capi("pyc_rt_periodic", {}, n.loc, &pok);
           if (!pok) return false; }
         emit(ir::Instr{ir::Op::CondBr, {g}, std::nullopt, Ownership::NotAnObject,
                        "", nat_next, box_next, n.loc, std::nullopt});
+        auto live_at_pred = live_i64_;
 
         set_block(nat_next);
         ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
@@ -3319,9 +3341,16 @@ private:
                        "", body, 0, n.loc, std::nullopt});
 
         set_block(body);
-        loops_.push_back({head, brk});
-        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
-        loops_.pop_back();
+        if (boxed) {
+            for (std::size_t i = 0; i < n.body.size(); ++i) {
+                stmt_idx_.back() = i;
+                if (!lower_stmt(n.body[i])) return false;
+            }
+            finish_i64_loop_body(head);
+        } else {
+            for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
+            loops_.pop_back();
+        }
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", head, 0, n.loc, std::nullopt});
 
@@ -3333,14 +3362,20 @@ private:
         set_block(done);
         frame_owned_.pop_back();
         emit_decref(it, n.loc);
+        live_i64_ = live_at_pred;
         for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
         if (!terminated())
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                            "", after, 0, n.loc, std::nullopt});
 
+        if (clone) return true;
         set_block(after);
-        live_i64_.clear();
-        return true;
+        return finish_boxed_clone(boxed, after, n.loc, [&]{
+            std::uint32_t ca = new_block("for.clone.after");
+            if (!emit_for_range_loop(n, g, it, rid, ca, true)) return false;
+            set_block(ca);
+            return true;
+        });
     }
 
     bool lower_for_over_iter(ir::Value it, const For& n, std::uint32_t after) {
@@ -3406,7 +3441,8 @@ private:
     }
 
     bool lower_while(const While& n) {
-        std::uint32_t boxed = prepare_i64_loop(n.body, n.loc);
+        std::uint32_t boxed = prepare_i64_loop(n.body, n.loc, {},
+                                              nested_reads_expr(*n.test));
         std::uint32_t pre = (std::uint32_t)blk_;
         std::uint32_t head = new_block("while.head");
         std::uint32_t body = new_block("while.body");
@@ -3481,7 +3517,9 @@ private:
                 std::int64_t tmp;
                 return i && parse_i64(i->digits, &tmp);
             },
-            [&](const Name& n) { return int_locals_.count(n.id) > 0; },
+            [&](const Name& n) {
+                return int_locals_.count(n.id) > 0 || live_i64_.count(n.id) > 0;
+            },
             [&](const BinOp& n) {
                 return (std::holds_alternative<Add>(n.op.v)
                      || std::holds_alternative<Sub>(n.op.v)
@@ -3545,19 +3583,27 @@ private:
         return loops_.empty() ? 0 : loops_.back().boxed_head;
     }
 
+    bool is_param(const std::string& name) const {
+        for (const std::string& p : cur()->params) if (p == name) return true;
+        return false;
+    }
+
     std::uint32_t prepare_i64_loop(const std::vector<stmt>& body,
                                    const SourceLoc& loc,
-                                   const std::string& skip = {}) {
+                                   const std::string& skip = {},
+                                   std::set<std::string> extra = {}) {
         if (!can_i64_phis(body)) {
             live_i64_.clear();
             return 0;
         }
         std::uint32_t boxed = new_block("loop.boxed");
-        for (const std::string& name : all_reads(body)) {
+        std::set<std::string> names = all_reads(body);
+        std::set<std::string> writes = all_writes(body);
+        for (const std::string& name : names) {
             if (!int_locals_.count(name) || live_i64_.count(name)) continue;
             if (!skip.empty() && name == skip) continue;
             auto it = locals_.find(name);
-            if (it == locals_.end()) continue;
+            if (it == locals_.end() || cells_.count(name)) continue;
             ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
             std::uint32_t okb = new_block("int.preload");
             ir::Instr in{ir::Op::IntLoad, {}, iv, Ownership::NotAnObject,
@@ -3568,6 +3614,30 @@ private:
             in.target_else = boxed;
             emit(std::move(in));
             set_block(okb);
+            live_i64_[name] = iv;
+        }
+        names.insert(extra.begin(), extra.end());
+        for (const std::string& name : names) {
+            if (live_i64_.count(name) || int_locals_.count(name)) continue;
+            if (!skip.empty() && name == skip) continue;
+            auto it = locals_.find(name);
+            if (it == locals_.end() || cells_.count(name)) continue;
+            if (!is_param(name) || writes.count(name)) continue;
+            ir::Value obj = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, obj, Ownership::Owned, name,
+                           it->second, 0, loc, make_landing_pad(loc)});
+            mark_owned(obj);
+            ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            std::uint32_t okb = new_block("int.unbox");
+            std::uint32_t fail = new_block("int.unbox.fail");
+            emit(ir::Instr{ir::Op::IntUnbox, {obj}, iv, Ownership::NotAnObject,
+                           name, okb, fail, loc, std::nullopt});
+            set_block(fail);
+            emit_decref(obj, loc);
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", boxed, 0, loc, std::nullopt});
+            set_block(okb);
+            release(obj, loc);
             live_i64_[name] = iv;
         }
         return boxed;
@@ -3678,9 +3748,10 @@ private:
             },
             [&](const Name& n) -> bool {
                 auto it = locals_.find(n.id);
-                if (it == locals_.end() || !int_locals_.count(n.id)) return false;
+                if (it == locals_.end()) return false;
                 auto lv = live_i64_.find(n.id);
                 if (lv != live_i64_.end()) { *out = lv->second; return true; }
+                if (!int_locals_.count(n.id)) return false;
                 *out = cur()->fresh(ty);
                 std::uint32_t okb = new_block("int.load.ok");
                 ir::Instr in{ir::Op::IntLoad, {}, *out, Ownership::NotAnObject,

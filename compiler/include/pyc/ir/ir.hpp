@@ -127,6 +127,7 @@ enum class Op {
     // with a fast edge (`target`) and a deopt edge (`target_else`).
     I64Const,        // machine i64; `text` is decimal, must fit signed 64
     IntLoad,         // slot in `imm`; result i64 on fast edge (`target`)
+    IntUnbox,        // args[0] boxed; result i64 on fast edge (`target`)
     IntStore,        // args[0] is i64, `target` is slot
     IntAddOvf, IntSubOvf, IntMulOvf,
     IntNegOvf,       // unary minus; one arg
@@ -156,7 +157,8 @@ const char* op_name(Op op);
 inline bool is_terminator(Op op) {
     return op == Op::Br || op == Op::CondBr || op == Op::Return
         || op == Op::ReturnErr || op == Op::IterNext || op == Op::Raise
-        || op == Op::IntLoad || op == Op::IntAddOvf || op == Op::IntSubOvf
+        || op == Op::IntLoad || op == Op::IntUnbox
+        || op == Op::IntAddOvf || op == Op::IntSubOvf
         || op == Op::IntMulOvf || op == Op::IntNegOvf || op == Op::RangeNext;
 }
 

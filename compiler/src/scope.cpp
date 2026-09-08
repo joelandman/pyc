@@ -623,6 +623,12 @@ std::set<std::string> all_reads(const std::vector<stmt>& body) {
     return out;
 }
 
+std::set<std::string> all_writes(const std::vector<stmt>& body) {
+    Collector c;
+    c.block(body);
+    return c.bound;
+}
+
 std::set<std::string> nested_reads(const std::vector<stmt>& body) {
     std::set<std::string> out;
     NestedReads nr{out};

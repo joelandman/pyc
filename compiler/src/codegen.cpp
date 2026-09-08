@@ -613,6 +613,9 @@ private:
             case Op::IntLoad:
                 emit_int_load(in);
                 break;
+            case Op::IntUnbox:
+                emit_int_unbox(in);
+                break;
             case Op::IntStore:
                 emit_int_store_i64(in);
                 break;
@@ -721,6 +724,21 @@ private:
         o_ << "  br label %" << join << "\n";
         o_ << join << ":\n";
         tail_label_[cur_block_] = join;
+    }
+
+    void emit_int_unbox(const ir::Instr& in) {
+        need("declare i32 @pyc_rt_unbox_int(ptr, ptr)");
+        std::string ok = fresh(), ok1 = fresh();
+        std::string take = "utake" + std::to_string(tmp_++);
+        o_ << "  " << ok << " = call i32 @pyc_rt_unbox_int(ptr " << v(in.args[0])
+           << ", ptr %int.scratch)\n";
+        o_ << "  " << ok1 << " = icmp eq i32 " << ok << ", 1\n";
+        o_ << "  br i1 " << ok1 << ", label %" << take
+           << ", label %bb" << in.target_else << "\n";
+        o_ << take << ":\n";
+        o_ << "  " << v(*in.result) << " = load i64, ptr %int.scratch\n";
+        o_ << "  br label %bb" << in.target << "\n";
+        tail_label_[cur_block_] = take;
     }
 
     void emit_int_ovf(const ir::Instr& in, const char* op) {

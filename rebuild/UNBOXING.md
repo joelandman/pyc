@@ -172,16 +172,30 @@ where divergence hides.
 5. **While-loop i64 phis** (landed). A `while` whose body has no nested
    `def`/`class` carries live int_locals in SSA phis at the head. Overflow
    deopts to a boxed clone of the loop so the fast path has one predecessor
-   and the add result dominates the latch. `for`/`for-range` still IntLoad:
-   their native/boxed join does not dominate a latch the way `while` does.
-   Carrying a pre-loop `s = 0` into a `for` without a phi at that `for` is
-   a silent wrong answer (`s += i*j` stuck on 0). `IntStore` of an already
-   unboxed slot writes only `.v` (no `decref`).
+   and the add result dominates the latch. Carrying a pre-loop `s = 0` into
+   a loop without a phi at that loop is a silent wrong answer (`s += i*j`
+   stuck on 0). `IntStore` of an already unboxed slot writes only `.v`
+   (no `decref`).
+6. **for-range i64 phis** (landed). Same `can_i64_phis` as while, shared
+   native/boxed body (not unswitch). Accumulators are phis at the head;
+   the range target stays a tagged slot. Overflow deopts to a boxed clone
+   that continues the **same** `rid` / iterator -- restarting `range()`
+   is a silent extra trip. Nested `for i: for j: s += i*j` phis `s` and
+   `i` on the inner loop.
+7. **Read-only param unbox at phi-loop entry** (landed). Params are not
+   `int_locals` (they arrive as objects). A `while i < n` whose `n` is a
+   parameter therefore boxed every compare -- nested `s += i*j` 0.056s
+   vs 0.005s with a local `n`. At loop entry, a parameter that the body
+   does not assign is `IntUnbox`'d into the live i64 map (fail → boxed
+   clone). `True`/`"x"` stay boxed (`PyLong_CheckExact`). Do not IntLoad
+   names that appear only in the `while` test: `while (n := 3)` is still
+   unbound at entry (`walrus_scopes.py`).
 
 Steps 2 and 3 landed together: step 2 alone leaves the iterator allocating a
 `PyLong` per step. Step 4 closes the `while i < n` hole that still boxed
-every iteration. Step 5 is the while accumulator. `verify fast` 766/766 at
-`-O0`, no new P0.
+every iteration. Step 5 is the while accumulator. Step 6 is the for-range
+accumulator. Step 7 is `while i < n` when `n` is a parameter. `verify fast`
+766/766 at `-O0`, no new P0.
 
 Measured on this machine, `n = 2000` (4e6 iters of `s += i * j`), `-O2`:
 
@@ -193,11 +207,15 @@ Measured on this machine, `n = 2000` (4e6 iters of `s += i * j`), `-O2`:
 | pyc, `while i < n` after step 4 | 0.022 |
 | pyc, `while i < n` after step 5 | 0.016 |
 | pyc, for-range after step 5 | 0.018 |
+| pyc, for-range after step 6, `-O0` | 0.012 (was 0.018 on this machine) |
+| pyc, for-range after step 6, `-O2` | 0.007 (same as step 5 here; LLVM already promoted tagged slots) |
+| pyc, `while i < n` param, before step 7 | 0.056 |
+| pyc, `while i < n` param, after step 7 | 0.005 |
 | C | 0.001 |
 
 The residue vs C is still the TLS periodic check, overflow `jo`, and
-`for-range` IntLoad. GIL-free unboxed regions wait until that residue is
-the loop body with no object ops.
+the range-target IntLoad. GIL-free unboxed regions wait until that residue
+is the loop body with no object ops.
 
 i64 phis are refused when the body has a direct `if`/`try`/`with`/`match`,
 `return`/`break`/`continue`, or a nested loop: those joins do not dominate
@@ -205,8 +223,9 @@ a latch the way a straight-line `while` does. Overflow in a phi loop
 redoes the current op through the C-API before switching to the boxed
 clone -- skipping it was a silent wrong add.
 
-**for-range SSA was attempted and reverted.** Unswitching native vs boxed
-into two loops made `for _ in range(10**9)` interrupted by SIGALRM
+**for-range unswitch was attempted and reverted.** Unswitching native vs
+boxed into two loops made `for _ in range(10**9)` interrupted by SIGALRM
 SIGSEGV on shutdown (~half the runs, `loop_periodic.py`). Shared body
-through the tagged slot (step 3) does not. Do not retry unswitch without
-an unwind story for the native path.
+through the tagged slot (step 3) does not. Step 6 keeps that shared body
+and puts accumulator phis at the head. Do not retry unswitch without an
+unwind story for the native path.
