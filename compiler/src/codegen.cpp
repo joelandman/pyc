@@ -303,14 +303,16 @@ private:
                 break;
             }
             case Op::MakeGenFunc: {
-                need("declare ptr @pyc_rt_make_genfunc(ptr, i64, ptr, ptr, ptr)");
+                need("declare ptr @pyc_rt_make_genfunc(ptr, i64, ptr, ptr, ptr, ptr)");
                 std::string cache = "@.gfcache" + std::to_string(genexp_n_++);
                 genexp_caches_.push_back(cache + " = internal global ptr null");
                 o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_make_genfunc(ptr "
                    << cstr(in.text) << ", i64 " << in.text.size()
                    << ", ptr " << cache
                    << ", ptr " << v(in.args[0])
-                   << ", ptr " << v(in.args[1]) << ")\n";
+                   << ", ptr " << v(in.args[1])
+                   << ", ptr " << (in.args.size() > 2 && in.args[2].valid()
+                                     ? v(in.args[2]) : "null") << ")\n";
                 check(in, v(*in.result), true);
                 break;
             }
@@ -640,6 +642,10 @@ private:
             case Op::RangeNext:
                 emit_range_next(in);
                 break;
+            case Op::RangeBound:
+                o_ << "  " << v(*in.result) << " = load i64, ptr %rg"
+                   << (int)in.imm << "." << in.text << "\n";
+                break;
         }
     }
 
@@ -871,13 +877,16 @@ private:
 
     void emit_range_next(const ir::Instr& in) {
         std::string p = "%rg" + std::to_string((int)in.imm);
-        std::string c = fresh(), e = fresh(), st = fresh();
+        std::string c = fresh(), st = fresh();
         std::string pos = fresh();
         std::string posc = "rpos" + std::to_string(tmp_++);
         std::string negc = "rneg" + std::to_string(tmp_++);
         std::string take = "rtake" + std::to_string(tmp_++);
         o_ << "  " << c << " = load i64, ptr " << p << ".i\n";
-        o_ << "  " << e << " = load i64, ptr " << p << ".e\n";
+        const bool ssa_stop = in.args.size() >= 1 && in.args[0].valid();
+        std::string e = ssa_stop ? v(in.args[0]) : fresh();
+        if (!ssa_stop)
+            o_ << "  " << e << " = load i64, ptr " << p << ".e\n";
         if (in.text == "1") {
             need("declare i1 @llvm.expect.i1(i1, i1)");
             std::string ge = fresh(), gexp = fresh();

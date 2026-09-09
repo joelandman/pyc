@@ -1142,7 +1142,7 @@ extern "C" void pyc_rt_add_traceback(PyObject** cache, const char* file,
 // enclosing scope at def time, which is pyc's job and not the wrapper's.
 extern "C" PyObject* pyc_rt_make_genfunc(const char* blob, Py_ssize_t len,
                                          PyObject** cache, PyObject* closure,
-                                         PyObject* defaults) {
+                                         PyObject* defaults, PyObject* kwdefaults) {
     if (!*cache) {
         *cache = PyMarshal_ReadObjectFromString(const_cast<char*>(blob), len);
         if (!*cache) return nullptr;
@@ -1155,6 +1155,8 @@ extern "C" PyObject* pyc_rt_make_genfunc(const char* blob, Py_ssize_t len,
         && PyFunction_SetClosure(fn, closure) < 0) { Py_DECREF(fn); return nullptr; }
     if (defaults && defaults != Py_None
         && PyFunction_SetDefaults(fn, defaults) < 0) { Py_DECREF(fn); return nullptr; }
+    if (kwdefaults && kwdefaults != Py_None
+        && PyFunction_SetKwDefaults(fn, kwdefaults) < 0) { Py_DECREF(fn); return nullptr; }
     return fn;
 }
 
@@ -1502,4 +1504,92 @@ extern "C" int pyc_rt_pop_handled(PyObject* prev) {
     Py_XINCREF(p);
     PyErr_SetHandledException(p);                     // steals
     return 0;
+}
+
+// except*: split `exc` into (match, rest). Non-groups are wrapped when they
+// match, so the handler always sees an ExceptionGroup (PEP 654).
+extern "C" PyObject* pyc_rt_except_star_split(PyObject* exc, PyObject* type) {
+    if (!exc || !type) { PyErr_BadInternalCall(); return nullptr; }
+    PyObject* splitf = PyObject_GetAttrString(exc, "split");
+    if (splitf) {
+        PyObject* pair = PyObject_CallOneArg(splitf, type);
+        Py_DECREF(splitf);
+        return pair;
+    }
+    PyErr_Clear();
+    int m = PyErr_GivenExceptionMatches(exc, type);
+    if (m < 0) return nullptr;
+    PyObject* match;
+    PyObject* rest;
+    if (m) {
+        PyObject* lst = PyList_New(1);
+        if (!lst) return nullptr;
+        Py_INCREF(exc);
+        PyList_SET_ITEM(lst, 0, exc);
+        PyObject* b = PyEval_GetBuiltins();
+        PyObject* eg = b ? PyDict_GetItemString(b, "ExceptionGroup") : nullptr;
+        match = eg ? PyObject_CallFunction(eg, "sO", "", lst) : nullptr;
+        Py_DECREF(lst);
+        if (!match) return nullptr;
+        rest = Py_NewRef(Py_None);
+    } else {
+        match = Py_NewRef(Py_None);
+        rest = Py_NewRef(exc);
+    }
+    PyObject* out = PyTuple_Pack(2, match, rest);
+    Py_DECREF(match);
+    Py_DECREF(rest);
+    return out;
+}
+
+extern "C" PyObject* pyc_rt_type_alias(PyObject* name, PyObject* value,
+                                       PyObject* params) {
+    PyObject* typing = PyImport_ImportModule("typing");
+    if (!typing) return nullptr;
+    PyObject* cls = PyObject_GetAttrString(typing, "TypeAliasType");
+    Py_DECREF(typing);
+    if (!cls) return nullptr;
+    PyObject* args = PyTuple_Pack(2, name, value);
+    if (!args) { Py_DECREF(cls); return nullptr; }
+    PyObject* kw = nullptr;
+    if (params && params != Py_None) {
+        kw = PyDict_New();
+        if (!kw || PyDict_SetItemString(kw, "type_params", params) < 0) {
+            Py_XDECREF(kw); Py_DECREF(args); Py_DECREF(cls); return nullptr;
+        }
+    }
+    PyObject* r = PyObject_Call(cls, args, kw);
+    Py_XDECREF(kw);
+    Py_DECREF(args);
+    Py_DECREF(cls);
+    return r;
+}
+
+extern "C" PyObject* pyc_rt_interpolation(PyObject* value, PyObject* expr,
+                                          PyObject* conv, PyObject* spec) {
+    PyObject* mod = PyImport_ImportModule("string.templatelib");
+    if (!mod) return nullptr;
+    PyObject* cls = PyObject_GetAttrString(mod, "Interpolation");
+    Py_DECREF(mod);
+    if (!cls) return nullptr;
+    PyObject* args = PyTuple_Pack(4, value, expr, conv, spec);
+    if (!args) { Py_DECREF(cls); return nullptr; }
+    PyObject* r = PyObject_Call(cls, args, nullptr);
+    Py_DECREF(args);
+    Py_DECREF(cls);
+    return r;
+}
+
+extern "C" PyObject* pyc_rt_template(PyObject* parts) {
+    PyObject* mod = PyImport_ImportModule("string.templatelib");
+    if (!mod) return nullptr;
+    PyObject* cls = PyObject_GetAttrString(mod, "Template");
+    Py_DECREF(mod);
+    if (!cls) return nullptr;
+    PyObject* args = PySequence_Tuple(parts);
+    if (!args) { Py_DECREF(cls); return nullptr; }
+    PyObject* r = PyObject_Call(cls, args, nullptr);
+    Py_DECREF(args);
+    Py_DECREF(cls);
+    return r;
 }

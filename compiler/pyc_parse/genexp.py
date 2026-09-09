@@ -34,8 +34,13 @@ class GenexpError(Exception):
 
 def _genexp_scopes(st, out):
     for ch in st.get_children():
+        # User `def genexpr(...)` is also named genexpr. The compiler's
+        # wrapper uses `.0` as the outer-iterator parameter; a method
+        # named genexpr does not.
         if ch.get_name() == "genexpr":
-            out.append(ch)
+            params = ch.get_parameters() if hasattr(ch, "get_parameters") else ()
+            if ".0" in params:
+                out.append(ch)
         _genexp_scopes(ch, out)
 
 

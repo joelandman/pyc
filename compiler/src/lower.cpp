@@ -397,7 +397,7 @@ private:
                                make_landing_pad(n.loc)});
             },
             [&](const Try& n)              { ok = lower_try(n); },
-            [&](const TryStar& n)          { ok = unsupported("try/except*", n.loc); },
+            [&](const TryStar& n)          { ok = lower_trystar(n); },
             [&](const Assert& n)           {
                 // `assert c, m` is `if not c: raise AssertionError(m)`. The
                 // message expression is evaluated ONLY on failure.
@@ -435,7 +435,7 @@ private:
             },
             [&](const Break& n)            { ok = finish_jump(true, n.loc); },
             [&](const Continue& n)         { ok = finish_jump(false, n.loc); },
-            [&](const TypeAlias& n)        { ok = unsupported("type aliases", n.loc); },
+            [&](const TypeAlias& n)        { ok = lower_type_alias(n); },
         }, s.v);
         return ok;
     }
@@ -984,7 +984,6 @@ private:
     // there is nothing left for pyc to lower inside it.
     bool lower_async_functiondef(const AsyncFunctionDef& n) {
         const arguments& a = *n.args;
-        if (!a.kwonlyargs.empty())  return unsupported("keyword-only parameters", n.loc);
         // Defaults are evaluated ONCE, here, in the enclosing scope.
         bool dok = true;
         ir::Value defaults;
@@ -1001,12 +1000,32 @@ private:
                 if (!dok) return false;
             }
         }
-        return lower_cpython_function(n.name, n.decorator_list, defaults, n.loc);
+        ir::Value kwdefaults;
+        if (!a.kwonlyargs.empty()) {
+            bool any = false;
+            for (const auto& kd : a.kw_defaults) if (kd.has_value()) any = true;
+            if (any) {
+                kwdefaults = call_capi("PyDict_New", {}, n.loc, &dok);
+                if (!dok) return false;
+                mark_owned(kwdefaults);
+                for (std::size_t i = 0; i < a.kw_defaults.size() && i < a.kwonlyargs.size(); ++i) {
+                    if (!a.kw_defaults[i].has_value()) continue;
+                    ir::Value d = lower_expr(*a.kw_defaults[i].value(), &dok);
+                    if (!dok) return false;
+                    ir::Value k = const_str(a.kwonlyargs[i].arg, n.loc);
+                    call_capi("PyDict_SetItem", {kwdefaults, k, d}, n.loc, &dok, {k, d});
+                    if (!dok) return false;
+                }
+            }
+        }
+        return lower_cpython_function(n.name, n.decorator_list, defaults, n.loc,
+                                      kwdefaults);
     }
 
     bool lower_cpython_function(const std::string& name,
                                 const std::vector<expr>& decorators,
-                                ir::Value defaults, const SourceLoc& loc) {
+                                ir::Value defaults, const SourceLoc& loc,
+                                ir::Value kwdefaults = {}) {
         const GenexpEntry* gf = find_genexp(loc);
         if (!gf) return err("no compiled code object for this function",
                             "async function definitions", loc);
@@ -1035,12 +1054,14 @@ private:
         ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::MakeGenFunc,
                        {closure.valid() ? closure : ir::Value{},
-                        defaults.valid() ? defaults : ir::Value{}},
+                        defaults.valid() ? defaults : ir::Value{},
+                        kwdefaults.valid() ? kwdefaults : ir::Value{}},
                        fv, Ownership::Owned, gf->code, 0, 0, loc,
                        make_landing_pad(loc)});
         mark_owned(fv);
         if (closure.valid() && owns(closure)) release(closure, loc);
         if (defaults.valid() && owns(defaults)) release(defaults, loc);
+        if (kwdefaults.valid() && owns(kwdefaults)) release(kwdefaults, loc);
         bool okd = true;
         fv = apply_decorators(decorators, fv, loc, &okd);
         if (!okd) return false;
@@ -1524,8 +1545,14 @@ private:
                     emit(ir::Instr{ir::Op::DelGlobal, {}, r, Ownership::NotAnObject,
                                    n2.id, 0, 0, n.loc, make_landing_pad(n.loc)});
                 },
-                [&](const Tuple& n2)     { ok = unsupported("del of a tuple target", n2.loc); },
-                [&](const List& n2)      { ok = unsupported("del of a list target", n2.loc); },
+                [&](const Tuple& n2) {
+                    Delete inner{n2.elts, n.loc};
+                    ok = lower_delete(inner);
+                },
+                [&](const List& n2) {
+                    Delete inner{n2.elts, n.loc};
+                    ok = lower_delete(inner);
+                },
                 [&](const Starred& n2)   { ok = bad_target("a starred target", n2.loc); },
                 [&](const BinOp& x){ ok = bad_target("an expression", x.loc); },
                 [&](const BoolOp& x){ ok = bad_target("an expression", x.loc); },
@@ -1587,7 +1614,6 @@ private:
             emit_int_const(na, after, loc);
             tup = call_capi("pyc_rt_unpack_ex", {v, nb, na}, loc, &ok);
             if (!ok) return false;
-            mark_owned(tup);
         } else {
             tup = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             ir::Instr in{ir::Op::Unpack, {v}, tup, Ownership::Owned, "",
@@ -2345,8 +2371,14 @@ private:
     }
 
     bool lower_try(const Try& n) {
-        if (n.finalbody.empty()) return lower_try_except(n);
-        return lower_try_finally(n);
+        if (n.finalbody.empty()) return lower_try_except(n, false);
+        return lower_try_finally(n, false);
+    }
+
+    bool lower_trystar(const TryStar& n) {
+        Try t{n.body, n.handlers, n.orelse, n.finalbody, n.loc};
+        if (n.finalbody.empty()) return lower_try_except(t, true);
+        return lower_try_finally(t, true);
     }
 
     // try/finally, with ONE copy of the cleanup.
@@ -2363,7 +2395,7 @@ private:
     // decref owned_ before branching, and the normal path has none live), so
     // the live set at the join is the same on every edge, which is exactly
     // what the duplicated form could not guarantee.
-    bool lower_try_finally(const Try& n) {
+    bool lower_try_finally(const Try& n, bool star) {
         FinallyCtx fin;
         fin.entry = new_block("finally.body");
         std::uint32_t catch_b = new_block("finally.catch");
@@ -2382,7 +2414,7 @@ private:
         } else {
             // try/except/finally is try/except wrapped in a finally region.
             Try inner{n.body, n.handlers, n.orelse, {}, n.loc};
-            ok = lower_try_except(inner);
+            ok = lower_try_except(inner, star);
         }
         fin_stack_.pop_back();
         fin_loop_depth_ = saved_fin_depth;
@@ -2589,7 +2621,7 @@ private:
         return true;
     }
 
-    bool lower_try_except(const Try& n) {
+    bool lower_try_except(const Try& n, bool star) {
         if (n.handlers.empty()) return unsupported("try without except", n.loc);
 
         std::uint32_t dispatch = new_block("except.dispatch");
@@ -2621,11 +2653,46 @@ private:
         mark_owned(prev_handled); forget(prev_handled);
         frame_owned_.push_back(prev_handled);
 
+        ir::Value remaining = exc;
         for (const excepthandler& h : n.handlers) {
             const ExceptHandler& eh = std::get<ExceptHandler>(h.v);
             std::uint32_t body_b = new_block("except.body");
             std::uint32_t next_b = new_block("except.next");
-            if (eh.type) {
+            ir::Value bound = exc;
+            ir::Value rest;
+            if (star) {
+                if (!eh.type) return unsupported("bare except*", n.loc);
+                ir::Value ty = lower_expr(**eh.type, &ok);
+                if (!ok) return false;
+                ir::Value pair = call_capi("pyc_rt_except_star_split",
+                                           {remaining, ty}, n.loc, &ok, {ty});
+                if (!ok) return false;
+                mark_owned(pair);
+                ir::Value i0 = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::ConstInt, {}, i0, Ownership::Owned, "0",
+                               0, 0, n.loc, std::nullopt});
+                mark_owned(i0);
+                ir::Value i1 = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::ConstInt, {}, i1, Ownership::Owned, "1",
+                               0, 0, n.loc, std::nullopt});
+                mark_owned(i1);
+                bound = call_capi("PyObject_GetItem", {pair, i0}, n.loc, &ok, {i0});
+                if (!ok) return false;
+                mark_owned(bound);
+                rest = call_capi("PyObject_GetItem", {pair, i1}, n.loc, &ok, {i1});
+                if (!ok) return false;
+                mark_owned(rest);
+                if (owns(pair)) release(pair, n.loc);
+                ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
+                               0, 0, n.loc, std::nullopt});
+                ir::Value isnone = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+                emit(ir::Instr{ir::Op::Is, {bound, nn}, isnone, Ownership::NotAnObject,
+                               "", 0, 0, n.loc, std::nullopt});
+                emit(ir::Instr{ir::Op::CondBr, {isnone}, std::nullopt,
+                               Ownership::NotAnObject, "", next_b, body_b,
+                               n.loc, std::nullopt});
+            } else if (eh.type) {
                 ir::Value ty = lower_expr(**eh.type, &ok);
                 if (!ok) return false;
                 ir::Value m = call_capi("PyErr_GivenExceptionMatches", {exc, ty},
@@ -2640,7 +2707,7 @@ private:
             }
             set_block(body_b);
             reload_live_i64_from_slots(live_in, n.loc);
-            if (eh.name) store_name(*eh.name, exc, n.loc);   // INCREFs; exc stays ours
+            if (eh.name) store_name(*eh.name, bound, n.loc);   // INCREFs; bound stays ours
             // Open for the duration of the handler body, so a return, break or
             // continue out of it pops before leaving.
             handled_stack_.push_back(prev_handled);
@@ -2648,24 +2715,44 @@ private:
                 if (!lower_stmt(s2)) { handled_stack_.pop_back(); return false; }
             handled_stack_.pop_back();
             if (terminated()) { set_block(next_b); continue; }
-            call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
-            if (!ok) return false;
-            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                           "", after, 0, n.loc, std::nullopt});
+            if (star) {
+                remaining = rest;
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", next_b, 0, n.loc, std::nullopt});
+            } else {
+                call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
+                if (!ok) return false;
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", after, 0, n.loc, std::nullopt});
+            }
             set_block(next_b);
         }
 
-        // No handler matched: put the exception back and propagate. The
-        // reference is STOLEN by SetRaisedException, so it must not be
-        // released afterwards -- §4's table makes that automatic.
+        // No handler matched (or except* leftover): put the exception back
+        // and propagate. SetRaisedException STEALS.
         call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
         if (!ok) return false;
         frame_owned_.pop_back();          // prev_handled
         emit_decref(prev_handled, n.loc);
         frame_owned_.pop_back();          // exc
-        call_capi("PyErr_SetRaisedException", {exc}, n.loc, &ok);
+        ir::Value reraised = star ? remaining : exc;
+        if (star) {
+            ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
+                           0, 0, n.loc, std::nullopt});
+            ir::Value isnone = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            emit(ir::Instr{ir::Op::Is, {remaining, nn}, isnone, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+            std::uint32_t reraise_b = new_block("exceptstar.reraise");
+            emit(ir::Instr{ir::Op::CondBr, {isnone}, std::nullopt,
+                           Ownership::NotAnObject, "", after, reraise_b,
+                           n.loc, std::nullopt});
+            set_block(reraise_b);
+        }
+        call_capi("PyErr_SetRaisedException", {reraised}, n.loc, &ok);
         if (!ok) return false;
-        forget(exc);
+        forget(reraised);
+        if (!star) forget(exc);
         std::uint32_t pad = make_landing_pad(n.loc);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", pad, 0, n.loc, std::nullopt});
@@ -3087,16 +3174,25 @@ private:
         bool ok = true;
         // Bases first: they are ordinary expressions evaluated in the
         // ENCLOSING scope, before the body runs.
-        ir::Value bases = call_capi_imm("PyTuple_New", {},
-                                        (std::int64_t)n.bases.size(), 0, n.loc, &ok);
-        if (!ok) return false;
-        mark_owned(bases);
-        for (std::size_t i = 0; i < n.bases.size(); ++i) {
-            ir::Value b = lower_expr(n.bases[i], &ok);
+        ir::Value bases;
+        bool star_base = false;
+        for (const expr& b : n.bases)
+            if (std::holds_alternative<Starred>(b.v)) { star_base = true; break; }
+        if (star_base) {
+            bases = lower_spliced(n.bases, "PyTuple", n.loc, &ok);
             if (!ok) return false;
-            // PyTuple_SetItem steals, so `b` must not be released after.
-            call_capi_imm("PyTuple_SetItem", {bases, b}, (std::int64_t)i, 1, n.loc, &ok);
+        } else {
+            bases = call_capi_imm("PyTuple_New", {},
+                                  (std::int64_t)n.bases.size(), 0, n.loc, &ok);
             if (!ok) return false;
+            mark_owned(bases);
+            for (std::size_t i = 0; i < n.bases.size(); ++i) {
+                ir::Value b = lower_expr(n.bases[i], &ok);
+                if (!ok) return false;
+                // PyTuple_SetItem steals, so `b` must not be released after.
+                call_capi_imm("PyTuple_SetItem", {bases, b}, (std::int64_t)i, 1, n.loc, &ok);
+                if (!ok) return false;
+            }
         }
 
         // `class C(B, metaclass=M, **kw)`. The keywords are evaluated here, in
@@ -3341,6 +3437,12 @@ private:
         ir::Value it_n = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::ConstNull, {}, it_n, Ownership::AlwaysNull, "",
                        0, 0, n.loc, std::nullopt});
+        ir::Value stop_n = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        ir::Instr rb{ir::Op::RangeBound, {}, stop_n, Ownership::NotAnObject,
+                     "e", 0, 0, n.loc, std::nullopt};
+        rb.has_imm = true;
+        rb.imm = (std::int64_t)rid;
+        emit(std::move(rb));
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", join, 0, n.loc, std::nullopt});
         std::uint32_t native_end = (std::uint32_t)blk_;
@@ -3355,6 +3457,9 @@ private:
         ir::Value it_b = call_capi("PyObject_GetIter", {seq}, n.loc, &ok, {seq});
         if (!ok) return false;
         mark_owned(it_b);
+        ir::Value stop_b = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        emit(ir::Instr{ir::Op::I64Const, {}, stop_b, Ownership::NotAnObject,
+                       "0", 0, 0, n.loc, std::nullopt});
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", join, 0, n.loc, std::nullopt});
         std::uint32_t boxed_end = (std::uint32_t)blk_;
@@ -3365,17 +3470,26 @@ private:
         ir::Value it = emit_phi({it_n, it_b}, {native_end, boxed_end}, n.loc);
         forget(it);
         frame_owned_.push_back(it);
+        ir::Value stop = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        {
+            ir::Instr sp{ir::Op::Phi, {stop_n, stop_b}, stop, Ownership::NotAnObject,
+                         "", 0, 0, n.loc, std::nullopt};
+            sp.phi_blocks = {native_end, boxed_end};
+            cur()->blocks[blk_].instrs.insert(cur()->blocks[blk_].instrs.begin(),
+                                              std::move(sp));
+        }
 
         std::uint32_t after = new_block("for.after");
         auto outer_live = live_i64_;
-        if (!emit_for_range_loop(n, g, it, rid, after, false)) return false;
+        if (!emit_for_range_loop(n, g, it, rid, after, false, stop)) return false;
         set_block(after);
         rejoin_outer_live(std::move(outer_live), n.loc);
         return true;
     }
 
     bool emit_for_range_loop(const For& n, ir::Value g, ir::Value it,
-                             std::uint32_t rid, std::uint32_t after, bool clone) {
+                             std::uint32_t rid, std::uint32_t after, bool clone,
+                             ir::Value stop) {
         const Name& tn = std::get<Name>(n.target->v);
         auto slot = locals_.find(tn.id);
         std::uint32_t boxed = 0;
@@ -3411,7 +3525,7 @@ private:
 
         set_block(nat_next);
         ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
-        ir::Instr nxt{ir::Op::RangeNext, {}, iv, Ownership::NotAnObject,
+        ir::Instr nxt{ir::Op::RangeNext, {stop}, iv, Ownership::NotAnObject,
                       "", body_n, done, n.loc, std::nullopt};
         nxt.has_imm = true;
         nxt.imm = (std::int64_t)rid;
@@ -3506,7 +3620,7 @@ private:
         set_block(after);
         return finish_boxed_clone(boxed, after, n.loc, [&]{
             std::uint32_t ca = new_block("for.clone.after");
-            if (!emit_for_range_loop(n, g, it, rid, ca, true)) return false;
+            if (!emit_for_range_loop(n, g, it, rid, ca, true, stop)) return false;
             set_block(ca);
             return true;
         });
@@ -4084,6 +4198,28 @@ private:
                 else if (std::holds_alternative<Sub>(n.op.v)) op = ir::Op::IntSubOvf;
                 else if (std::holds_alternative<Mult>(n.op.v)) op = ir::Op::IntMulOvf;
                 else return false;
+                auto as_i64 = [&](const expr& e, std::int64_t* v) {
+                    const Constant* c = std::get_if<Constant>(&e.v);
+                    if (!c) return false;
+                    const ConstBigInt* i = std::get_if<ConstBigInt>(&c->value.v);
+                    return i && parse_i64(i->digits, v);
+                };
+                std::int64_t lv, rv, ovv;
+                if (as_i64(*n.left, &lv) && as_i64(*n.right, &rv)) {
+                    bool overflow = false;
+                    if (op == ir::Op::IntAddOvf)
+                        overflow = __builtin_add_overflow(lv, rv, &ovv);
+                    else if (op == ir::Op::IntSubOvf)
+                        overflow = __builtin_sub_overflow(lv, rv, &ovv);
+                    else
+                        overflow = __builtin_mul_overflow(lv, rv, &ovv);
+                    if (!overflow) {
+                        *out = cur()->fresh(ty);
+                        emit(ir::Instr{ir::Op::I64Const, {}, *out, Ownership::NotAnObject,
+                                       std::to_string(ovv), 0, 0, loc, std::nullopt});
+                        return true;
+                    }
+                }
                 ir::Value l, r;
                 if (!emit_int_rvalue(*n.left, &l, deopt, loc)) return false;
                 if (!emit_int_rvalue(*n.right, &r, deopt, loc)) return false;
@@ -4248,8 +4384,8 @@ private:
             [&](const Compare& n)       { out = lower_compare(n, ok); },
             [&](const FormattedValue& n){ out = lower_formatted(n, ok); },
             [&](const JoinedStr& n)     { out = lower_joined(n, ok); },
-            [&](const TemplateStr& n)   { *ok = unsupported("t-strings", n.loc); },
-            [&](const Interpolation& n) { *ok = unsupported("t-string interpolation", n.loc); },
+            [&](const TemplateStr& n)   { out = lower_template(n, ok); },
+            [&](const Interpolation& n) { out = lower_interpolation(n, ok); },
             [&](const Attribute& n)     { out = lower_attribute(n, ok); },
             [&](const Subscript& n)     { out = lower_subscript(n, ok); },
             [&](const Starred& n)       { *ok = unsupported("star-unpacking", n.loc); },
@@ -5086,6 +5222,70 @@ private:
 
     // One interpolation: conversion (!r/!s/!a) first, then format spec.
     // The order matters -- `f"{x!r:>10}"` pads the repr, not the value.
+    bool lower_type_alias(const TypeAlias& n) {
+        const Name* nm = n.name ? std::get_if<Name>(&n.name->v) : nullptr;
+        if (!nm) return unsupported("type alias target", n.loc);
+        bool ok = true;
+        ir::Value namestr = const_str(nm->id, n.loc);
+        ir::Value val = lower_expr(*n.value, &ok);
+        if (!ok) return false;
+        ir::Value params = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::ConstNone, {}, params, Ownership::Owned, "",
+                       0, 0, n.loc, std::nullopt});
+        mark_owned(params);
+        if (!n.type_params.empty()) {
+            if (owns(params)) release(params, n.loc);
+            return unsupported("parametrized type aliases", n.loc);
+        }
+        ir::Value ta = call_capi("pyc_rt_type_alias", {namestr, val, params},
+                                 n.loc, &ok, {namestr, val, params});
+        if (!ok) return false;
+        mark_owned(ta);
+        store_name(nm->id, ta, n.loc);
+        return true;
+    }
+
+    ir::Value lower_interpolation(const Interpolation& n, bool* ok) {
+        ir::Value val = lower_expr(*n.value, ok);
+        if (!*ok) return {};
+        ir::Value expr = const_str(n.str, n.loc);
+        ir::Value conv;
+        if (n.conversion == 's' || n.conversion == 'r' || n.conversion == 'a') {
+            conv = const_str(std::string(1, (char)n.conversion), n.loc);
+        } else {
+            conv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstNone, {}, conv, Ownership::Owned, "",
+                           0, 0, n.loc, std::nullopt});
+            mark_owned(conv);
+        }
+        ir::Value spec;
+        if (n.format_spec && *n.format_spec) {
+            spec = lower_expr(**n.format_spec, ok);
+            if (!*ok) return {};
+        } else {
+            spec = const_str("", n.loc);
+        }
+        ir::Value out = call_capi("pyc_rt_interpolation", {val, expr, conv, spec},
+                                  n.loc, ok, {val, expr, conv, spec});
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
+    ir::Value lower_template(const TemplateStr& n, bool* ok) {
+        ir::Value parts = call_capi_imm("PyList_New", {}, 0, 0, n.loc, ok);
+        if (!*ok) return {};
+        mark_owned(parts);
+        for (const expr& e : n.values) {
+            ir::Value v = lower_expr(e, ok);
+            if (!*ok) return {};
+            call_capi("PyList_Append", {parts, v}, n.loc, ok, {v});
+            if (!*ok) return {};
+        }
+        ir::Value out = call_capi("pyc_rt_template", {parts}, n.loc, ok, {parts});
+        if (*ok) mark_owned(out);
+        return out;
+    }
+
     ir::Value lower_formatted(const FormattedValue& n, bool* ok) {
         ir::Value v = lower_expr(*n.value, ok);
         if (!*ok) return {};

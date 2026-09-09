@@ -234,6 +234,9 @@ where divergence hides.
 16. **`range(n)` increment** (landed). Step 1 (`range(n)` / `range(a,b)`)
     uses `add i64, 1`: taking the body edge (`c < stop`) proves `c+1`
     fits. Do not `nsw` the `s += i*j` accumulator without a fit proof.
+    Stop is an SSA phi at `range.join` (`RangeBound`), not a per-iter
+    load of the `range_native` alloca. The counter stays in the alloca
+    so `continue` still advances.
 
 Steps 2 and 3 landed together: step 2 alone leaves the iterator allocating a
 `PyLong` per step. Step 4 closes the `while i < n` hole that still boxed

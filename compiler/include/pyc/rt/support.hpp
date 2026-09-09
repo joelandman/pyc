@@ -185,7 +185,8 @@ PyObject* pyc_rt_make_genexp(const char* blob, Py_ssize_t len, PyObject** cache,
 
 // A generator function: marshalled code object + closure cells + defaults.
 PyObject* pyc_rt_make_genfunc(const char* blob, Py_ssize_t len, PyObject** cache,
-                              PyObject* closure, PyObject* defaults);
+                              PyObject* closure, PyObject* defaults,
+                              PyObject* kwdefaults);
 
 // Bare `raise`: re-raise whatever exception is currently being handled.
 int pyc_rt_reraise(void);
@@ -195,6 +196,11 @@ int pyc_rt_reraise(void);
 // handled exception so nesting restores correctly.
 PyObject* pyc_rt_push_handled(PyObject* exc);
 int pyc_rt_pop_handled(PyObject* prev);
+PyObject* pyc_rt_except_star_split(PyObject* exc, PyObject* type);
+PyObject* pyc_rt_type_alias(PyObject* name, PyObject* value, PyObject* params);
+PyObject* pyc_rt_interpolation(PyObject* value, PyObject* expr,
+                               PyObject* conv, PyObject* spec);
+PyObject* pyc_rt_template(PyObject* parts);
 // `from mod import *`
 int pyc_rt_import_star(PyObject* mod);
 

@@ -59,6 +59,7 @@ const char* op_name(Op op) {
         case Op::IntCmp:      return "int.cmp";
         case Op::RangeGuard:  return "range.guard";
         case Op::RangeNext:   return "range.next";
+        case Op::RangeBound:  return "range.bound";
     }
     return "?";
 }

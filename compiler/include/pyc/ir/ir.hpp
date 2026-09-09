@@ -143,6 +143,9 @@ enum class Op {
     // Advance a native range. `imm` is the range-id. Fast edge yields the
     // current i64 (`target`); `target_else` is exhaustion (incl. add overflow).
     RangeNext,
+    // Load start/stop/step written by RangeGuard. `imm` is the range-id;
+    // `text` is "i" / "e" / "p". Not a terminator.
+    RangeBound,
 };
 
 const char* op_name(Op op);

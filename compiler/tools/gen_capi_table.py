@@ -216,6 +216,11 @@ _PYC_RUNTIME = {
     "pyc_rt_import_attr":  ("PyObject*", "+1", ["PyObject*", "PyObject*"]),
     "pyc_rt_cell_get":     ("PyObject*", "+1", ["PyObject*"]),
     "pyc_rt_unpack_ex":    ("PyObject*", "+1", ["PyObject*", "Py_ssize_t", "Py_ssize_t"]),
+    "pyc_rt_except_star_split": ("PyObject*", "+1", ["PyObject*", "PyObject*"]),
+    "pyc_rt_type_alias":   ("PyObject*", "+1", ["PyObject*", "PyObject*", "PyObject*"]),
+    "pyc_rt_interpolation": ("PyObject*", "+1",
+                             ["PyObject*", "PyObject*", "PyObject*", "PyObject*"]),
+    "pyc_rt_template":     ("PyObject*", "+1", ["PyObject*"]),
     "pyc_rt_push_frame":   ("PyObject*", "+1", ["PyObject*", "PyObject*"]),
 }
 

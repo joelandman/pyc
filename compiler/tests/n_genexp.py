@@ -21,6 +21,10 @@ import inspect
 gg = (x for x in [1])
 print("type:", type(gg).__name__, "| isgenerator:", inspect.isgenerator(gg))
 print("sum:", sum(x * x for x in range(5)))
+class C:
+    def genexpr(self):
+        return 1
+print("method genexpr:", C().genexpr(), list(x for x in [2]))
 print("join:", ",".join(str(x) for x in range(4)))
 import itertools
 inf = (x for x in itertools.count())
