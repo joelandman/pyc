@@ -3331,9 +3331,10 @@ private:
         frame_owned_.push_back(it);
 
         std::uint32_t after = new_block("for.after");
+        auto outer_live = live_i64_;
         if (!emit_for_range_loop(n, g, it, rid, after, false)) return false;
         set_block(after);
-        live_i64_.clear();
+        rejoin_outer_live(std::move(outer_live), n.loc);
         return true;
     }
 
@@ -3490,12 +3491,15 @@ private:
         // and break cannot share an exit. Both must still release the iterator
         // exactly once.
         std::uint32_t after = new_block("for.after");
+        auto outer_live = live_i64_;
         if (!lower_for_over_iter(it, n, after)) return false;
         set_block(after);
+        rejoin_outer_live(std::move(outer_live), n.loc);
         return true;
     }
 
     bool lower_while(const While& n) {
+        auto outer_live = live_i64_;
         std::uint32_t boxed = prepare_i64_loop(n.body, n.loc, {},
                                               nested_reads_expr(*n.test));
         std::uint32_t pre = (std::uint32_t)blk_;
@@ -3539,7 +3543,7 @@ private:
         set_block(after);
         if (!finish_boxed_clone(boxed, after, n.loc, [&]{ return lower_while(n); }))
             return false;
-        live_i64_.clear();
+        rejoin_outer_live(std::move(outer_live), n.loc);
         return true;
     }
 
@@ -3632,10 +3636,53 @@ private:
         return false;
     }
 
+    bool nested_loops_phiable(const std::vector<stmt>& body) const {
+        for (const stmt& s : body) {
+            if (const For* n = std::get_if<For>(&s.v)) {
+                if (!is_native_range_for(*n) || !can_i64_phis(n->body))
+                    return false;
+                if (!nested_loops_phiable(n->orelse)) return false;
+            } else if (const While* n = std::get_if<While>(&s.v)) {
+                if (!can_i64_phis(n->body) || !nested_loops_phiable(n->orelse))
+                    return false;
+            } else if (std::holds_alternative<AsyncFor>(s.v)) {
+                return false;
+            } else if (const If* n = std::get_if<If>(&s.v)) {
+                if (!nested_loops_phiable(n->body) || !nested_loops_phiable(n->orelse))
+                    return false;
+            }
+        }
+        return true;
+    }
+
     bool can_i64_phis(const std::vector<stmt>& body) const {
         return !force_boxed_ints_ && !int_locals_.empty()
             && !stmts_have_def(body) && !stmts_have_cfg_join(body)
-            && !stmts_have_nested_loop(body);
+            && nested_loops_phiable(body);
+    }
+
+    void rejoin_outer_live(std::map<std::string, ir::Value> outer,
+                           const SourceLoc& loc) {
+        auto inner = live_i64_;
+        live_i64_ = std::move(outer);
+        std::uint32_t deopt = loop_boxed_head();
+        if (!deopt) return;
+        for (const auto& [name, _] : inner) {
+            if (!int_locals_.count(name) || cells_.count(name)) continue;
+            auto it = locals_.find(name);
+            if (it == locals_.end()) continue;
+            ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            std::uint32_t okb = new_block("int.rejoin");
+            ir::Instr in{ir::Op::IntLoad, {}, iv, Ownership::NotAnObject,
+                         name, 0, 0, loc, make_landing_pad(loc)};
+            in.has_imm = true;
+            in.imm = it->second;
+            in.target = okb;
+            in.target_else = deopt;
+            emit(std::move(in));
+            set_block(okb);
+            live_i64_[name] = iv;
+        }
     }
 
     std::uint32_t loop_boxed_head() const {
@@ -3661,6 +3708,7 @@ private:
         for (const std::string& name : names) {
             if (!int_locals_.count(name) || live_i64_.count(name)) continue;
             if (!skip.empty() && name == skip) continue;
+            if (writes.count(name)) continue;
             auto it = locals_.find(name);
             if (it == locals_.end() || cells_.count(name)) continue;
             ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});

@@ -198,8 +198,13 @@ where divergence hides.
 9. **`continue` / `break` / `return` in phi-loops** (landed). `continue`
    is an extra predecessor of the loop-head phis with the live i64s at
    the jump. `break`/`return` do not feed the latch; if the body is
-   terminated, the latch incoming is omitted. `try`/`with`/`match` and
-   nested loops still refuse.
+   terminated, the latch incoming is omitted.
+10. **Nested-loop rejoin** (landed). An outer phi-loop may contain inner
+    `while` / native for-range whose bodies are themselves phiable.
+    Inner phis do not dominate the outer latch, so the inner exit
+    IntLoads updated names from tagged slots. Names assigned in a loop
+    body and not live-in are not preloaded (avoids UnboundLocal on
+    `j = 0` inside). Generic `for` and `try`/`with`/`match` still refuse.
 
 Steps 2 and 3 landed together: step 2 alone leaves the iterator allocating a
 `PyLong` per step. Step 4 closes the `while i < n` hole that still boxed
@@ -228,8 +233,8 @@ the range-target IntLoad. GIL-free unboxed regions wait until that residue
 is the loop body with no object ops.
 
 i64 phis are refused when the body has a `try`/`with`/`match` or a nested
-loop: those joins do not dominate a latch the way a straight-line `while`
-or an `if` endif does. Overflow in a phi loop
+generic `for`: those joins do not dominate a latch the way a straight-line
+`while` or an `if` endif does. Overflow in a phi loop
 redoes the current op through the C-API before switching to the boxed
 clone -- skipping it was a silent wrong add.
 

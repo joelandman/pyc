@@ -166,6 +166,23 @@ def local_break_cont():
         return u
     return s, i, t, early()
 print("local break cont:", local_break_cont())
+
+def local_nested():
+    n = 4
+    s = 0
+    i = 0
+    while i < n:
+        j = 0
+        while j < n:
+            s += i * j
+            j += 1
+        i += 1
+    t = 0
+    for a in range(n):
+        for b in range(n):
+            t += a * b
+    return s, t
+print("local nested:", local_nested())
 try:
     local_while_param("x")
 except TypeError as e:
