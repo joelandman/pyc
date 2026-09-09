@@ -150,3 +150,10 @@ than in BLAS? Unknown. Not a GIL-policy change until measured.
 
 Until (1), C2 is the whole GIL policy: hold it like CPython, drop it
 when asked.
+
+Step 11 of unboxing landed a first GIL-free region: innermost phi-`while`
+with no Call/attribute in the body. Periodic still runs at the head with
+the GIL held. Object ops (`incref`/`decref`/`unbox`) call `pyc_gil_ensure`
+so a deopt cannot decref detached. `thread_starvation.py` and
+`loop_periodic.py` stay green. Single-thread nested `i*j` is not expected
+to match C: the residue is overflow `jo`, not the GIL.

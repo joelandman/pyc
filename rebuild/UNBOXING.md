@@ -204,7 +204,13 @@ where divergence hides.
     Inner phis do not dominate the outer latch, so the inner exit
     IntLoads updated names from tagged slots. Names assigned in a loop
     body and not live-in are not preloaded (avoids UnboundLocal on
-    `j = 0` inside). Generic `for` and `try`/`with`/`match` still refuse.
+    `j = 0` inside).     Generic `for` and `try`/`with`/`match` still refuse.
+11. **GIL-free innermost phi-`while`** (landed). A `while` whose body is
+    phiable, has no nested loop, and has no Call/attribute/etc. drops the
+    GIL for the body (`PyEval_SaveThread`) and reacquires on latch,
+    `break`/`continue`/`return`, deopt, and any incref/decref/unbox.
+    for-range is not eligible (shared boxed `IterNext`). This is a
+    concurrency cut, not the 7× vs C (that residue is still `jo`).
 
 Steps 2 and 3 landed together: step 2 alone leaves the iterator allocating a
 `PyLong` per step. Step 4 closes the `while i < n` hole that still boxed
@@ -228,9 +234,9 @@ Measured on this machine, `n = 2000` (4e6 iters of `s += i * j`), `-O2`:
 | pyc, `while i < n` param, after step 7 | 0.005 |
 | C | 0.001 |
 
-The residue vs C is still the TLS periodic check, overflow `jo`, and
-the range-target IntLoad. GIL-free unboxed regions wait until that residue
-is the loop body with no object ops.
+The residue vs C is still overflow `jo` and the range-target IntLoad.
+GIL-free (step 11) is a concurrency cut on innermost phi-`while` bodies;
+it is not expected to close the 7× vs C.
 
 i64 phis are refused when the body has a `try`/`with`/`match` or a nested
 generic `for`: those joins do not dominate a latch the way a straight-line

@@ -82,6 +82,8 @@ PyObject* pyc_rt_class_prepare(PyObject* meta, PyObject* name,
 // loop head. Returns -1 if a handler raised, so Ctrl-C propagates.
 int pyc_rt_periodic(void);
 int pyc_rt_handle_pending(void);
+int pyc_rt_gil_release(void);
+int pyc_rt_gil_acquire(void);
 // 1 and writes *out if o is an exact int that fits in i64; 0 otherwise
 // (bool is rejected: it is an int subclass). No exception on 0.
 int pyc_rt_unbox_int(PyObject* o, int64_t* out);

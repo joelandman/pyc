@@ -169,8 +169,30 @@ void pyc_rt_pop_module_frame(void) {
 // correct, just no faster than what they replaced.
 //
 // X variants deliberately: codegen relies on the null tolerance Py_DecRef had.
-void pyc_rt_incref(PyObject* o) { Py_XINCREF(o); }
-void pyc_rt_decref(PyObject* o) { Py_XDECREF(o); }
+static thread_local PyThreadState* pyc_gil_saved = nullptr;
+static thread_local int pyc_gil_free_depth = 0;
+
+static void pyc_gil_ensure(void) {
+    if (pyc_gil_saved) {
+        PyEval_RestoreThread(pyc_gil_saved);
+        pyc_gil_saved = nullptr;
+    }
+}
+
+void pyc_rt_incref(PyObject* o) { pyc_gil_ensure(); Py_XINCREF(o); }
+void pyc_rt_decref(PyObject* o) { pyc_gil_ensure(); Py_XDECREF(o); }
+
+extern "C" int pyc_rt_gil_release(void) {
+    if (!pyc_gil_saved) pyc_gil_saved = PyEval_SaveThread();
+    pyc_gil_free_depth++;
+    return 0;
+}
+
+extern "C" int pyc_rt_gil_acquire(void) {
+    if (pyc_gil_free_depth > 0) pyc_gil_free_depth--;
+    if (pyc_gil_free_depth == 0) pyc_gil_ensure();
+    return 0;
+}
 
 thread_local PyObject* tls_frame_locals = nullptr;
 thread_local const char* const* tls_frame_names = nullptr;
@@ -597,6 +619,7 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
 }
 
 extern "C" int pyc_rt_unbox_int(PyObject* o, int64_t* out) {
+    pyc_gil_ensure();
     if (!o || !PyLong_CheckExact(o) || !out) return 0;
     int ovf = 0;
     long long v = PyLong_AsLongLongAndOverflow(o, &ovf);
@@ -630,6 +653,7 @@ extern "C" int pyc_rt_range_native(PyObject* callee, PyObject* a0, PyObject* a1,
 }
 
 extern "C" void pyc_rt_raise_unbound(const char* name) {
+    pyc_gil_ensure();
     PyErr_Format(PyExc_UnboundLocalError,
                  "cannot access local variable '%s' where it is not "
                  "associated with a value", name ? name : "");

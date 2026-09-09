@@ -2505,6 +2505,11 @@ private:
     // does: hand the pending jump to the nearest cleanup instead of branching
     // straight out, so it still runs.
     bool finish_jump(bool is_break, const SourceLoc& loc) {
+        {
+            bool gok = true;
+            call_capi("pyc_rt_gil_acquire", {}, loc, &gok);
+            if (!gok) return false;
+        }
         pop_open_handlers(loc);
         if (!fin_stack_.empty() && loops_.size() <= fin_loop_depth_) {
             FinallyCtx* f = fin_stack_.back();
@@ -2535,6 +2540,11 @@ private:
     // to the nearest pending cleanup rather than returned directly, so every
     // cleanup between here and the function boundary still runs.
     bool finish_return(const ir::Value& v, const SourceLoc& loc) {
+        {
+            bool gok = true;
+            call_capi("pyc_rt_gil_acquire", {}, loc, &gok);
+            if (!gok) return false;
+        }
         pop_open_handlers(loc);
         // The returned reference is handed on, so it must NOT be released --
         // but every other live temporary must be, or an early return leaks
@@ -3521,9 +3531,21 @@ private:
                        "", body, done, n.loc, std::nullopt});
         auto live_at_pred = live_i64_;
         set_block(body);
+        bool gil_free = boxed && !stmts_have_nested_loop(n.body)
+                     && stmts_gil_free(n.body);
+        if (gil_free) {
+            bool gok = true;
+            call_capi("pyc_rt_gil_release", {}, n.loc, &gok);
+            if (!gok) return false;
+        }
         for (std::size_t i = 0; i < n.body.size(); ++i) {
             stmt_idx_.back() = i;
             if (!lower_stmt(n.body[i])) return false;
+        }
+        if (gil_free && !terminated()) {
+            bool gok = true;
+            call_capi("pyc_rt_gil_acquire", {}, n.loc, &gok);
+            if (!gok) return false;
         }
         finish_i64_loop_body(head);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
@@ -3622,6 +3644,24 @@ private:
         return false;
     }
 
+    bool stmts_gil_free(const std::vector<stmt>& body) const {
+        struct F : ast::WalkSink {
+            bool bad = false;
+            void on(std::string_view k) override {
+                if (k == "Call" || k == "Attribute" || k == "Subscript"
+                    || k == "Raise" || k == "Await" || k == "Yield"
+                    || k == "YieldFrom" || k == "List" || k == "Dict"
+                    || k == "Set" || k == "Tuple" || k == "ListComp"
+                    || k == "DictComp" || k == "SetComp" || k == "GeneratorExp"
+                    || k == "Lambda" || k == "JoinedStr" || k == "FormattedValue"
+                    || k == "Starred")
+                    bad = true;
+            }
+        } f;
+        for (const stmt& s : body) ast::walk(s, f);
+        return !f.bad;
+    }
+
     bool stmts_have_nested_loop(const std::vector<stmt>& body) const {
         for (const stmt& s : body) {
             if (std::holds_alternative<For>(s.v)
@@ -3664,9 +3704,16 @@ private:
     void rejoin_outer_live(std::map<std::string, ir::Value> outer,
                            const SourceLoc& loc) {
         auto inner = live_i64_;
-        live_i64_ = std::move(outer);
         std::uint32_t deopt = loop_boxed_head();
-        if (!deopt) return;
+        if (inner.empty()) {
+            live_i64_ = std::move(outer);
+            return;
+        }
+        if (!deopt) {
+            live_i64_ = std::move(inner);
+            return;
+        }
+        live_i64_ = std::move(outer);
         for (const auto& [name, _] : inner) {
             if (!int_locals_.count(name) || cells_.count(name)) continue;
             auto it = locals_.find(name);
@@ -3810,6 +3857,11 @@ private:
     bool deopt_to_boxed_loop(const SourceLoc& loc) {
         std::uint32_t bh = loop_boxed_head();
         if (!bh) return false;
+        {
+            bool gok = true;
+            call_capi("pyc_rt_gil_acquire", {}, loc, &gok);
+            if (!gok) return false;
+        }
         bool saved_fb = force_boxed_ints_;
         auto saved_live = live_i64_;
         force_boxed_ints_ = true;
