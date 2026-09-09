@@ -1817,7 +1817,6 @@ private:
         auto it = locals_.find(nm->id);
         if (it == locals_.end()) return false;
         std::uint32_t deopt = new_block("int.aug.deopt");
-        std::uint32_t done = new_block("int.aug.done");
         ir::Value lhs, rhs, out;
         bool fast = emit_int_rvalue(*n.target, &lhs, deopt, n.loc)
                  && emit_int_rvalue(*n.value, &rhs, deopt, n.loc);
@@ -1845,6 +1844,9 @@ private:
                 live_i64_[nm->id] = out;
                 return true;
             }
+        }
+        std::uint32_t done = new_block("int.aug.done");
+        if (fast) {
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                            "", done, 0, n.loc, std::nullopt});
         }
@@ -4103,7 +4105,6 @@ private:
         auto it = locals_.find(name);
         if (it == locals_.end()) return false;
         std::uint32_t deopt = new_block("int.deopt");
-        std::uint32_t done = new_block("int.done");
         ir::Value iv;
         if (!emit_int_rvalue(value, &iv, deopt, loc)) {
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
@@ -4121,6 +4122,9 @@ private:
                 return true;
             }
             live_i64_[name] = iv;
+        }
+        std::uint32_t done = new_block("int.done");
+        if (iv.valid()) {
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                            "", done, 0, loc, std::nullopt});
         }
