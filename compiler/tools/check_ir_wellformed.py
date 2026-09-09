@@ -63,7 +63,25 @@ def is_pad(block: str) -> bool:
     return block.startswith("unwind.")
 
 
+FUNC = re.compile(r"^func ")
+
+
 def check(ir: str) -> list[str]:
+    # Value ids reset per function. Treating the module as one namespace
+    # aliases %N in f with %N in g, so a leak in f is "released" by g.
+    problems: list[str] = []
+    cur: list[str] = []
+    for line in ir.splitlines():
+        if FUNC.match(line) and cur:
+            problems.extend(_check_func("\n".join(cur)))
+            cur = []
+        cur.append(line)
+    if cur:
+        problems.extend(_check_func("\n".join(cur)))
+    return problems
+
+
+def _check_func(ir: str) -> list[str]:
     problems: list[str] = []
     block, terms, nblocks = None, 0, 0
     defined: set[str] = set()
@@ -192,6 +210,17 @@ def main() -> int:
         "; m\nfunc f()\n  entry:\n    %2 = call.capi \"PyNumber_Add\" %9 %9  ; owned\n"
         "    decref %2\n    ret\n",
         "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n    ret %1\n")
+    # Ids reset per function. Without a split, g's decref of %1 would hide
+    # f's leak, and a later finally.catch %1 would inherit f's unwind-only
+    # release (case_476.py false positive).
+    sc.require_detects("id reuse across functions", check,
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n    ret\n"
+        "func g()\n  entry:\n    %1 = const.int \"1\"  ; owned\n"
+        "    decref %1\n    ret\n",
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n"
+        "    decref %1\n    ret\n"
+        "func g()\n  entry:\n    %1 = const.int \"1\"  ; owned\n"
+        "    decref %1\n    ret\n")
 
     ok = bad = unsup = 0
     outcomes = []

@@ -898,7 +898,7 @@ private:
             o_ << take << ":\n";
             o_ << "  " << v(*in.result) << " = add i64 " << c << ", 0\n";
             std::string nv = fresh();
-            o_ << "  " << nv << " = add i64 " << c << ", 1\n";
+            o_ << "  " << nv << " = add nsw i64 " << c << ", 1\n";
             o_ << "  store i64 " << nv << ", ptr " << p << ".i\n";
             o_ << "  br label %bb" << in.target << "\n";
             return;

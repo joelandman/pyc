@@ -1542,6 +1542,62 @@ extern "C" PyObject* pyc_rt_except_star_split(PyObject* exc, PyObject* type) {
     return out;
 }
 
+extern "C" PyObject* pyc_rt_newref(PyObject* o) {
+    if (!o) { PyErr_BadInternalCall(); return nullptr; }
+    return Py_NewRef(o);
+}
+
+extern "C" PyObject* pyc_rt_type_param(PyObject* kind, PyObject* name,
+                                       PyObject* bound, PyObject* deflt) {
+    if (!kind || !name) { PyErr_BadInternalCall(); return nullptr; }
+    long k = PyLong_AsLong(kind);
+    if (k < 0 && PyErr_Occurred()) return nullptr;
+    PyObject* typing = PyImport_ImportModule("typing");
+    if (!typing) return nullptr;
+    const char* clsname = k == 1 ? "TypeVarTuple" : k == 2 ? "ParamSpec" : "TypeVar";
+    PyObject* cls = PyObject_GetAttrString(typing, clsname);
+    Py_DECREF(typing);
+    if (!cls) return nullptr;
+    PyObject* kw = PyDict_New();
+    if (!kw) { Py_DECREF(cls); return nullptr; }
+    if (k == 0 && PyDict_SetItemString(kw, "infer_variance", Py_True) < 0) {
+        Py_DECREF(kw); Py_DECREF(cls); return nullptr;
+    }
+    if (deflt && deflt != Py_None) {
+        if (PyDict_SetItemString(kw, "default", deflt) < 0) {
+            Py_DECREF(kw); Py_DECREF(cls); return nullptr;
+        }
+    }
+    PyObject* args;
+    if (k == 0 && bound && bound != Py_None && PyTuple_Check(bound)) {
+        PyObject* n = PyTuple_Pack(1, name);
+        if (!n) { Py_DECREF(kw); Py_DECREF(cls); return nullptr; }
+        args = PySequence_Concat(n, bound);
+        Py_DECREF(n);
+    } else {
+        args = PyTuple_Pack(1, name);
+        if (args && bound && bound != Py_None && k != 1) {
+            if (PyDict_SetItemString(kw, "bound", bound) < 0) {
+                Py_DECREF(args); Py_DECREF(kw); Py_DECREF(cls); return nullptr;
+            }
+        }
+    }
+    if (!args) { Py_DECREF(kw); Py_DECREF(cls); return nullptr; }
+    PyObject* r = PyObject_Call(cls, args, kw);
+    Py_DECREF(args); Py_DECREF(kw); Py_DECREF(cls);
+    return r;
+}
+
+extern "C" int pyc_rt_del_if_same(PyObject* ns, PyObject* name, PyObject* tv) {
+    if (!ns || !name || !tv) { PyErr_BadInternalCall(); return -1; }
+    PyObject* cur = PyObject_GetItem(ns, name);
+    if (!cur) { PyErr_Clear(); return 0; }
+    int same = (cur == tv);
+    Py_DECREF(cur);
+    if (same && PyObject_DelItem(ns, name) < 0) return -1;
+    return 0;
+}
+
 extern "C" PyObject* pyc_rt_type_alias(PyObject* name, PyObject* value,
                                        PyObject* params) {
     PyObject* typing = PyImport_ImportModule("typing");

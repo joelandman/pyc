@@ -471,7 +471,7 @@ private:
     struct FnScope {
         std::size_t fn, blk;
         std::map<std::string, std::uint32_t> locals;
-        std::vector<ir::Value> owned, frame, class_ns;
+        std::vector<ir::Value> owned, frame, class_ns, class_cells;
         std::vector<Loop> loops;
         std::vector<std::uint32_t> tries;
         std::map<std::string, std::uint32_t> cells;
@@ -486,15 +486,19 @@ private:
         std::map<std::string, ir::Value> live_i64;
         bool force_boxed_ints;
         std::uint32_t ranges;
+        std::vector<std::map<std::string, ir::Value>> type_param_env;
     };
 
     FnScope begin_function(const std::string& name,
                            const std::vector<std::string>& params,
                            const std::vector<std::string>& locals) {
         FnScope sc{fn_idx_, blk_, locals_, owned_, frame_owned_, class_ns_,
+                   class_cells_,
                    loops_, try_stack_, cells_, enclosing_cells_,
                    fin_stack_, handled_stack_, fin_loop_depth_, int_locals_,
                    live_i64_, force_boxed_ints_, range_n_};
+        sc.type_param_env = type_param_env_;
+        type_param_env_.clear();
         mod_.functions.push_back(
             ir::Function{.name=name, .params=params, .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
@@ -502,6 +506,7 @@ private:
         locals_.clear();
         for (std::uint32_t i = 0; i < locals.size(); ++i) locals_[locals[i]] = i;
         owned_.clear(); frame_owned_.clear(); class_ns_.clear();
+        class_cells_.clear();
         loops_.clear(); try_stack_.clear();
         // These are per-FUNCTION and were not being cleared. A `def` written
         // inside a try/finally or a `with` therefore inherited the enclosing
@@ -528,6 +533,7 @@ private:
         std::size_t made = fn_idx_;
         fn_idx_ = sc.fn; blk_ = sc.blk; locals_ = sc.locals;
         owned_ = sc.owned; frame_owned_ = sc.frame; class_ns_ = sc.class_ns;
+        class_cells_ = sc.class_cells;
         loops_ = sc.loops; try_stack_ = sc.tries;
         cells_ = sc.cells; enclosing_cells_ = sc.enclosing;
         fin_stack_ = sc.fins; handled_stack_ = sc.handled;
@@ -536,6 +542,7 @@ private:
         live_i64_ = sc.live_i64;
         force_boxed_ints_ = sc.force_boxed_ints;
         range_n_ = sc.ranges;
+        type_param_env_ = sc.type_param_env;
         return made;
     }
 
@@ -670,6 +677,44 @@ private:
                     if (!*ok) return {};
                 }
             }
+        }
+        if (const GenexpEntry* gf = find_genexp(n.loc)) {
+            ir::Value closure;
+            if (!gf->freevars.empty()) {
+                closure = call_capi_imm("PyTuple_New", {},
+                                        (std::int64_t)gf->freevars.size(), 0, n.loc, ok);
+                if (!*ok) return {};
+                mark_owned(closure);
+                for (std::size_t i = 0; i < gf->freevars.size(); ++i) {
+                    const std::string& fv2 = gf->freevars[i];
+                    auto cit = cells_.find(fv2);
+                    if (cit == cells_.end()) {
+                        *ok = err("function captures '" + fv2 +
+                                  "', which has no closure cell here", "yield", n.loc);
+                        return {};
+                    }
+                    ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                    emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned,
+                                   fv2, cit->second, 0, n.loc, make_landing_pad(n.loc)});
+                    mark_owned(cell);
+                    call_capi_imm("PyTuple_SetItem", {closure, cell},
+                                  (std::int64_t)i, 1, n.loc, ok);
+                    if (!*ok) return {};
+                }
+            }
+            ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::MakeGenFunc,
+                           {closure.valid() ? closure : ir::Value{},
+                            lam_defaults.valid() ? lam_defaults : ir::Value{},
+                            lam_kwdefaults.valid() ? lam_kwdefaults : ir::Value{}},
+                           fv, Ownership::Owned, gf->code, 0, 0, n.loc,
+                           make_landing_pad(n.loc)});
+            mark_owned(fv);
+            if (closure.valid() && owns(closure)) release(closure, n.loc);
+            if (lam_defaults.valid() && owns(lam_defaults)) release(lam_defaults, n.loc);
+            if (lam_kwdefaults.valid() && owns(lam_kwdefaults)) release(lam_kwdefaults, n.loc);
+            *ok = true;
+            return fv;
         }
         std::vector<std::string> params;
         for (const arg& p : a.posonlyargs) params.push_back(p.arg);
@@ -1171,12 +1216,14 @@ private:
         // function -- which LLVM rejects as "does not dominate all uses".
         auto outer_frame = frame_owned_;
         auto outer_class_ns = class_ns_;
+        auto outer_class_cells = class_cells_;
         auto outer_cells = cells_;
         auto outer_enclosing = enclosing_cells_;
         auto outer_ints = int_locals_;
         auto outer_live = live_i64_;
         auto outer_force_boxed = force_boxed_ints_;
         auto outer_ranges = range_n_;
+        auto outer_tp_env = type_param_env_;
 
         // *args and **kwargs get their own local slots, after the named
         // parameters and before everything else the body binds.
@@ -1265,8 +1312,34 @@ private:
         }
         // Closure cells for the nested function come from THIS function's
         // slots, so they must be read before the scope switches.
+        std::map<std::string, ir::Value> tp_cells;
+        ir::Value tp_tuple;
+        if (!n.type_params.empty()) {
+            std::vector<std::pair<std::string, ir::Value>> bindings;
+            if (!emit_type_params(n.type_params, n.loc, &tp_tuple, &bindings))
+                return false;
+            for (auto& [nm, tv] : bindings) {
+                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::CellNew, {}, cell, Ownership::Owned, nm,
+                               0, 0, n.loc, make_landing_pad(n.loc)});
+                mark_owned(cell);
+                emit(ir::Instr{ir::Op::CellSet, {cell, tv}, std::nullopt,
+                               Ownership::NotAnObject, nm, 0, 0, n.loc, std::nullopt});
+                tp_cells[nm] = cell;
+                if (owns(tv)) release(tv, n.loc);
+                bool have = false;
+                for (const std::string& f2 : freevars) if (f2 == nm) { have = true; break; }
+                if (!have) freevars.push_back(nm);
+            }
+        }
         std::vector<ir::Value> closure_cells;
         for (const std::string& fv2 : freevars) {
+            if (auto tit = tp_cells.find(fv2); tit != tp_cells.end()) {
+                emit(ir::Instr{ir::Op::IncRef, {tit->second}, std::nullopt,
+                               Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+                closure_cells.push_back(tit->second);
+                continue;
+            }
             if (fv2 == "__class__" && !class_cells_.empty()) {
                 // Already a cell value in hand; it has no enclosing slot.
                 ir::Value c = class_cells_.back();
@@ -1315,6 +1388,8 @@ private:
         fin_loop_depth_ = 0;
         frame_owned_.clear();
         class_ns_.clear();          // a method body is not a class body
+        class_cells_.clear();       // nested defs LoadLocal __class__, not the class-body SSA
+        type_param_env_.clear();
         auto outer_qual = qual_;
         // A name bound inside a function body is qualified through <locals>.
         // A method's qualname is "C.foo", so the class prefix stays, but the
@@ -1367,12 +1442,14 @@ private:
         fin_stack_ = outer_fins; handled_stack_ = outer_handled;
         fin_loop_depth_ = outer_fin_depth;
         frame_owned_ = outer_frame; class_ns_ = outer_class_ns;
+        class_cells_ = outer_class_cells;
         cells_ = outer_cells; enclosing_cells_ = outer_enclosing;
         qual_ = outer_qual;
         int_locals_ = outer_ints;
         live_i64_ = outer_live;
         force_boxed_ints_ = outer_force_boxed;
         range_n_ = outer_ranges;
+        type_param_env_ = outer_tp_env;
         if (!ok) return false;
 
         // Bind the callable in the enclosing scope, by the same store path any
@@ -1398,6 +1475,13 @@ private:
         mark_owned(fv);
         if (defaults.valid() && owns(defaults)) release(defaults, n.loc);
         if (kwdefaults.valid() && owns(kwdefaults)) release(kwdefaults, n.loc);
+        if (tp_tuple.valid()) {
+            ir::Value key = const_str("__type_params__", n.loc);
+            bool tok = true;
+            call_capi("PyObject_SetAttr", {fv, key, tp_tuple}, n.loc, &tok, {key});
+            if (!tok) return false;
+            if (owns(tp_tuple)) release(tp_tuple, n.loc);
+        }
         // MakeFunction does not consume the cells -- it INCREFs them into the
         // closure tuple -- so the references loaded above are still ours. The
         // lambda path already released them; this one leaked one cell per
@@ -1667,6 +1751,7 @@ private:
     // is filled only AFTER the class exists. Methods are built before that, so
     // the cell -- not the class -- is what they capture.
     std::vector<ir::Value> class_cells_;
+    std::vector<std::map<std::string, ir::Value>> type_param_env_;
 
     using AnnItems = std::vector<std::pair<std::string, const expr*>>;
 
@@ -2118,6 +2203,10 @@ private:
         }
         if (ok) {
             frame_owned_.pop_back();          // d, handed to the return
+            if (in_class && !frame_owned_.empty()) {
+                emit_decref(frame_owned_.back(), loc);
+                frame_owned_.pop_back();
+            }
             emit(ir::Instr{ir::Op::Return, {d}, std::nullopt,
                            Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
         }
@@ -2683,15 +2772,24 @@ private:
                 if (!ok) return false;
                 mark_owned(rest);
                 if (owns(pair)) release(pair, n.loc);
+                // Pads after the try must not decref these: they are defined
+                // only on the exception path. Manual decref on each arm.
+                forget(bound); forget(rest);
                 ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
                 emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
                                0, 0, n.loc, std::nullopt});
                 ir::Value isnone = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
                 emit(ir::Instr{ir::Op::Is, {bound, nn}, isnone, Ownership::NotAnObject,
                                "", 0, 0, n.loc, std::nullopt});
+                std::uint32_t nomatch_b = new_block("exceptstar.nomatch");
                 emit(ir::Instr{ir::Op::CondBr, {isnone}, std::nullopt,
-                               Ownership::NotAnObject, "", next_b, body_b,
+                               Ownership::NotAnObject, "", nomatch_b, body_b,
                                n.loc, std::nullopt});
+                set_block(nomatch_b);
+                emit_decref(bound, n.loc);
+                remaining = rest;
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", next_b, 0, n.loc, std::nullopt});
             } else if (eh.type) {
                 ir::Value ty = lower_expr(**eh.type, &ok);
                 if (!ok) return false;
@@ -2708,6 +2806,10 @@ private:
             set_block(body_b);
             reload_live_i64_from_slots(live_in, n.loc);
             if (eh.name) store_name(*eh.name, bound, n.loc);   // INCREFs; bound stays ours
+            if (star) {
+                emit_decref(bound, n.loc);
+                mark_owned(rest);           // return from the handler releases it
+            }
             // Open for the duration of the handler body, so a return, break or
             // continue out of it pops before leaving.
             handled_stack_.push_back(prev_handled);
@@ -2716,6 +2818,7 @@ private:
             handled_stack_.pop_back();
             if (terminated()) { set_block(next_b); continue; }
             if (star) {
+                forget(rest);
                 remaining = rest;
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                "", next_b, 0, n.loc, std::nullopt});
@@ -2735,6 +2838,7 @@ private:
         frame_owned_.pop_back();          // prev_handled
         emit_decref(prev_handled, n.loc);
         frame_owned_.pop_back();          // exc
+        if (star) emit_decref(exc, n.loc);  // remaining is a split rest, not exc
         ir::Value reraised = star ? remaining : exc;
         if (star) {
             ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
@@ -2744,9 +2848,14 @@ private:
             emit(ir::Instr{ir::Op::Is, {remaining, nn}, isnone, Ownership::NotAnObject,
                            "", 0, 0, n.loc, std::nullopt});
             std::uint32_t reraise_b = new_block("exceptstar.reraise");
+            std::uint32_t done_b = new_block("exceptstar.done");
             emit(ir::Instr{ir::Op::CondBr, {isnone}, std::nullopt,
-                           Ownership::NotAnObject, "", after, reraise_b,
+                           Ownership::NotAnObject, "", done_b, reraise_b,
                            n.loc, std::nullopt});
+            set_block(done_b);
+            emit_decref(remaining, n.loc);
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", after, 0, n.loc, std::nullopt});
             set_block(reraise_b);
         }
         call_capi("PyErr_SetRaisedException", {reraised}, n.loc, &ok);
@@ -3256,6 +3365,14 @@ private:
         if (!n.keywords.empty()) { forget(kwds); frame_owned_.push_back(kwds); }
         auto saved_locals = locals_;
         locals_.clear();                  // names in a class body are not fast locals
+        std::vector<std::pair<std::string, ir::Value>> class_tps;
+        ir::Value class_tp_tuple;
+        if (!n.type_params.empty()) {
+            if (!emit_type_params(n.type_params, n.loc, &class_tp_tuple, &class_tps))
+                return false;
+            for (auto& [nm, tv] : class_tps)
+                store_name_keep(nm, tv, n.loc);
+        }
         // A class body is not a call, so C1a's function trampoline never runs.
         // Push a frame whose f_locals is the namespace; locals() then sees
         // `y` rather than the enclosing module. The capsule destructor pops
@@ -3281,6 +3398,11 @@ private:
                                    qual_.pop_back(); class_cells_.pop_back();
                                    return false; }
         try_stack_.pop_back();
+        for (auto& [nm, tv] : class_tps) {
+            ir::Value key = const_str(nm, n.loc);
+            call_capi("pyc_rt_del_if_same", {ns, key, tv}, n.loc, &ok, {key});
+            if (!ok) return false;
+        }
         locals_ = saved_locals;
         class_ns_.pop_back();
         qual_.pop_back();
@@ -3317,6 +3439,14 @@ private:
         // undecorated class, which is what super() in a method resolves to.
         emit(ir::Instr{ir::Op::CellSet, {ccell, cls}, std::nullopt,
                        Ownership::NotAnObject, "__class__", 0, 0, n.loc, std::nullopt});
+        if (class_tp_tuple.valid()) {
+            ir::Value key = const_str("__type_params__", n.loc);
+            call_capi("PyObject_SetAttr", {cls, key, class_tp_tuple}, n.loc, &ok, {key});
+            if (!ok) return false;
+            if (owns(class_tp_tuple)) release(class_tp_tuple, n.loc);
+            for (auto& [nm, tv] : class_tps)
+                if (owns(tv)) release(tv, n.loc);
+        }
         frame_owned_.pop_back();                            // ccell
         emit_decref(ccell, n.loc);
         frame_owned_.pop_back();                            // meta
@@ -3948,7 +4078,9 @@ private:
             return;
         }
         if (!deopt) {
-            live_i64_ = std::move(inner);
+            // Loop-head phis do not dominate the boxed clone's exit, which
+            // joins here. Drop them; a later use IntLoads from the slot.
+            live_i64_.clear();
             return;
         }
         live_i64_ = std::move(outer);
@@ -4480,6 +4612,13 @@ private:
             *ok = true;
             return out;
         } else {
+            for (auto eit = type_param_env_.rbegin(); eit != type_param_env_.rend(); ++eit) {
+                auto fit = eit->find(n.id);
+                if (fit == eit->end()) continue;
+                out = call_capi("pyc_rt_newref", {fit->second}, n.loc, ok);
+                if (*ok) mark_owned(out);
+                return out;
+            }
             emit(ir::Instr{ir::Op::LoadGlobal, {}, out, Ownership::Owned,
                            n.id, 0, 0, n.loc, make_landing_pad(n.loc)});
         }
@@ -5222,26 +5361,114 @@ private:
 
     // One interpolation: conversion (!r/!s/!a) first, then format spec.
     // The order matters -- `f"{x!r:>10}"` pads the repr, not the value.
+    bool emit_type_params(const std::vector<type_param>& tps, const SourceLoc& loc,
+                          ir::Value* tup,
+                          std::vector<std::pair<std::string, ir::Value>>* binds) {
+        bool ok = true;
+        *tup = call_capi_imm("PyTuple_New", {}, (std::int64_t)tps.size(), 0, loc, &ok);
+        if (!ok) return false;
+        mark_owned(*tup);
+        for (std::size_t i = 0; i < tps.size(); ++i) {
+            std::string nm;
+            int kind = 0;
+            const expr* bound = nullptr;
+            const expr* deflt = nullptr;
+            std::visit(ov{
+                [&](const TypeVar& t) {
+                    nm = t.name; kind = 0;
+                    if (t.bound) bound = &**t.bound;
+                    if (t.default_value) deflt = &**t.default_value;
+                },
+                [&](const TypeVarTuple& t) {
+                    nm = t.name; kind = 1;
+                    if (t.default_value) deflt = &**t.default_value;
+                },
+                [&](const ParamSpec& t) {
+                    nm = t.name; kind = 2;
+                    if (t.default_value) deflt = &**t.default_value;
+                },
+            }, tps[i].v);
+            ir::Value kn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstInt, {}, kn, Ownership::Owned,
+                           std::to_string(kind), 0, 0, loc, std::nullopt});
+            mark_owned(kn);
+            ir::Value namestr = const_str(nm, loc);
+            ir::Value b, d;
+            if (bound) {
+                b = lower_expr(*bound, &ok);
+                if (!ok) return false;
+            } else {
+                b = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::ConstNone, {}, b, Ownership::Owned, "",
+                               0, 0, loc, std::nullopt});
+                mark_owned(b);
+            }
+            if (deflt) {
+                d = lower_expr(*deflt, &ok);
+                if (!ok) return false;
+            } else {
+                d = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::ConstNone, {}, d, Ownership::Owned, "",
+                               0, 0, loc, std::nullopt});
+                mark_owned(d);
+            }
+            ir::Value tv = call_capi("pyc_rt_type_param", {kn, namestr, b, d},
+                                     loc, &ok, {kn, namestr, b, d});
+            if (!ok) return false;
+            mark_owned(tv);
+            emit(ir::Instr{ir::Op::IncRef, {tv}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+            call_capi_imm("PyTuple_SetItem", {*tup, tv}, (std::int64_t)i, 1, loc, &ok);
+            if (!ok) return false;
+            binds->push_back({nm, tv});
+        }
+        return true;
+    }
+
     bool lower_type_alias(const TypeAlias& n) {
         const Name* nm = n.name ? std::get_if<Name>(&n.name->v) : nullptr;
         if (!nm) return unsupported("type alias target", n.loc);
         bool ok = true;
         ir::Value namestr = const_str(nm->id, n.loc);
-        ir::Value val = lower_expr(*n.value, &ok);
-        if (!ok) return false;
-        ir::Value params = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        emit(ir::Instr{ir::Op::ConstNone, {}, params, Ownership::Owned, "",
-                       0, 0, n.loc, std::nullopt});
-        mark_owned(params);
-        if (!n.type_params.empty()) {
-            if (owns(params)) release(params, n.loc);
-            return unsupported("parametrized type aliases", n.loc);
+        ir::Value params;
+        std::vector<std::pair<std::string, ir::Value>> bindings;
+        const bool in_class = !class_ns_.empty();
+        if (n.type_params.empty()) {
+            params = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstNone, {}, params, Ownership::Owned, "",
+                           0, 0, n.loc, std::nullopt});
+            mark_owned(params);
+        } else {
+            if (!emit_type_params(n.type_params, n.loc, &params, &bindings))
+                return false;
+            if (in_class) {
+                for (auto& [k, v] : bindings) store_name_keep(k, v, n.loc);
+            } else {
+                std::map<std::string, ir::Value> env;
+                for (auto& [k, v] : bindings) env[k] = v;
+                type_param_env_.push_back(std::move(env));
+            }
         }
+        ir::Value val = lower_expr(*n.value, &ok);
+        if (!n.type_params.empty()) {
+            if (in_class) {
+                for (auto& [k, v] : bindings) {
+                    ir::Value key = const_str(k, n.loc);
+                    call_capi("pyc_rt_del_if_same", {class_ns_.back(), key, v},
+                              n.loc, &ok, {key});
+                    if (!ok) return false;
+                }
+            } else {
+                type_param_env_.pop_back();
+            }
+        }
+        if (!ok) return false;
         ir::Value ta = call_capi("pyc_rt_type_alias", {namestr, val, params},
                                  n.loc, &ok, {namestr, val, params});
         if (!ok) return false;
         mark_owned(ta);
         store_name(nm->id, ta, n.loc);
+        for (auto& [k, v] : bindings) if (owns(v)) release(v, n.loc);
         return true;
     }
 

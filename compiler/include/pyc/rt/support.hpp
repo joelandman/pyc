@@ -197,6 +197,10 @@ int pyc_rt_reraise(void);
 PyObject* pyc_rt_push_handled(PyObject* exc);
 int pyc_rt_pop_handled(PyObject* prev);
 PyObject* pyc_rt_except_star_split(PyObject* exc, PyObject* type);
+PyObject* pyc_rt_newref(PyObject* o);
+PyObject* pyc_rt_type_param(PyObject* kind, PyObject* name, PyObject* bound,
+                            PyObject* deflt);
+int pyc_rt_del_if_same(PyObject* ns, PyObject* name, PyObject* tv);
 PyObject* pyc_rt_type_alias(PyObject* name, PyObject* value, PyObject* params);
 PyObject* pyc_rt_interpolation(PyObject* value, PyObject* expr,
                                PyObject* conv, PyObject* spec);

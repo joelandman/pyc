@@ -173,6 +173,42 @@ def _is_generator_body(node) -> bool:
     return found
 
 
+def _is_generator_expr(e) -> bool:
+    """Does this expression yield in THIS scope? Nested lambdas do not count."""
+    SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+    if isinstance(e, (ast.Yield, ast.YieldFrom)):
+        return True
+    found = False
+
+    def walk(n):
+        nonlocal found
+        if found:
+            return
+        for ch in ast.iter_child_nodes(n):
+            if isinstance(ch, SCOPES):
+                continue
+            if isinstance(ch, (ast.Yield, ast.YieldFrom)):
+                found = True
+                return
+            walk(ch)
+
+    walk(e)
+    return found
+
+
+def _lambda_as_func(node: ast.Lambda) -> ast.FunctionDef:
+    fn = ast.FunctionDef(
+        name="<lambda>",
+        args=copy.deepcopy(node.args),
+        body=[ast.Return(value=copy.deepcopy(node.body))],
+        decorator_list=[], returns=None, type_params=[],
+        lineno=node.lineno, col_offset=node.col_offset,
+        end_lineno=getattr(node, "end_lineno", None),
+        end_col_offset=getattr(node, "end_col_offset", None))
+    ast.fix_missing_locations(fn)
+    return fn
+
+
 def _qualname_of(stack: list[str], name: str) -> str:
     return ".".join(stack + [name]) if stack else name
 
@@ -230,6 +266,24 @@ def collect_genfuncs(tree: ast.Module, source: bytes, filename: str) -> list[dic
                 sub = scope_for(children, ch.name, ch.lineno)
                 visit(ch, sub, stack + [ch.name])
             else:
+                if isinstance(ch, ast.Lambda):
+                    sub = scope_for(children, "lambda", ch.lineno)
+                    if _is_generator_expr(ch.body):
+                        if sub is None:
+                            raise GenexpError(
+                                f"no symtable scope for lambda generator "
+                                f"at line {ch.lineno}")
+                        frees = list(sub.get_frees())
+                        code, frees = _compile_genfunc(
+                            _lambda_as_func(ch), frees,
+                            _qualname_of(stack, "<lambda>"), filename)
+                        out.append({
+                            "line": ch.lineno, "col": ch.col_offset,
+                            "freevars": frees,
+                            "code": base64.b64encode(code).decode("ascii"),
+                        })
+                    visit(ch, sub, stack)
+                    continue
                 visit(ch, scope, stack)
 
     visit(tree, st, [])
