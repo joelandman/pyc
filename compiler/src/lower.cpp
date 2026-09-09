@@ -1712,6 +1712,46 @@ private:
         if (owns(v)) release(v, loc);
     }
 
+    bool lower_stmt_list(const std::vector<stmt>& body) {
+        body_stk_.push_back(&body);
+        stmt_idx_.push_back(0);
+        for (std::size_t i = 0; i < body.size(); ++i) {
+            stmt_idx_.back() = i;
+            if (!lower_stmt(body[i])) {
+                body_stk_.pop_back();
+                stmt_idx_.pop_back();
+                return false;
+            }
+        }
+        body_stk_.pop_back();
+        stmt_idx_.pop_back();
+        return true;
+    }
+
+    void merge_live_i64(const std::map<std::string, ir::Value>& live_then,
+                        std::uint32_t then_end,
+                        const std::map<std::string, ir::Value>& live_else,
+                        std::uint32_t else_end,
+                        const SourceLoc& loc) {
+        std::map<std::string, ir::Value> next;
+        for (const auto& [name, tv] : live_then) {
+            auto ev = live_else.find(name);
+            if (ev == live_else.end()) continue;
+            if (tv.id == ev->second.id) {
+                next[name] = tv;
+                continue;
+            }
+            ir::Value phi = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            ir::Instr in{ir::Op::Phi, {tv, ev->second}, phi, Ownership::NotAnObject,
+                         "", 0, 0, loc, std::nullopt};
+            in.phi_blocks = {then_end, else_end};
+            cur()->blocks[blk_].instrs.insert(cur()->blocks[blk_].instrs.begin(),
+                                              std::move(in));
+            next[name] = phi;
+        }
+        live_i64_ = std::move(next);
+    }
+
     bool lower_if(const If& n) {
         bool ok = true;
         ir::Value t = lower_predicate(*n.test, &ok);
@@ -1721,15 +1761,28 @@ private:
         std::uint32_t join_b = new_block("endif");
         emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
                        "", then_b, else_b, n.loc, std::nullopt});
+        auto live_in = live_i64_;
         set_block(then_b);
-        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
+        if (!lower_stmt_list(n.body)) return false;
+        bool then_ok = !terminated();
+        std::uint32_t then_end = (std::uint32_t)blk_;
+        auto live_then = live_i64_;
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", join_b, 0, n.loc, std::nullopt});
+        live_i64_ = live_in;
         set_block(else_b);
-        for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
+        if (!lower_stmt_list(n.orelse)) return false;
+        bool else_ok = !terminated();
+        std::uint32_t else_end = (std::uint32_t)blk_;
+        auto live_else = live_i64_;
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", join_b, 0, n.loc, std::nullopt});
         set_block(join_b);
+        if (then_ok && else_ok)
+            merge_live_i64(live_then, then_end, live_else, else_end, n.loc);
+        else if (then_ok) live_i64_ = std::move(live_then);
+        else if (else_ok) live_i64_ = std::move(live_else);
+        else live_i64_.clear();
         return true;
     }
 
@@ -3549,8 +3602,7 @@ private:
 
     bool stmts_have_cfg_join(const std::vector<stmt>& body) const {
         for (const stmt& s : body) {
-            if (std::holds_alternative<If>(s.v)
-             || std::holds_alternative<Try>(s.v)
+            if (std::holds_alternative<Try>(s.v)
              || std::holds_alternative<TryStar>(s.v)
              || std::holds_alternative<With>(s.v)
              || std::holds_alternative<AsyncWith>(s.v)
@@ -3559,6 +3611,10 @@ private:
              || std::holds_alternative<Break>(s.v)
              || std::holds_alternative<Continue>(s.v))
                 return true;
+            if (const If* n = std::get_if<If>(&s.v)) {
+                if (stmts_have_cfg_join(n->body) || stmts_have_cfg_join(n->orelse))
+                    return true;
+            }
         }
         return false;
     }
@@ -3569,6 +3625,10 @@ private:
              || std::holds_alternative<AsyncFor>(s.v)
              || std::holds_alternative<While>(s.v))
                 return true;
+            if (const If* n = std::get_if<If>(&s.v)) {
+                if (stmts_have_nested_loop(n->body) || stmts_have_nested_loop(n->orelse))
+                    return true;
+            }
         }
         return false;
     }
@@ -3699,9 +3759,9 @@ private:
         auto saved_live = live_i64_;
         force_boxed_ints_ = true;
         live_i64_.clear();
-        if (!body_stk_.empty()) {
-            const auto& body = *body_stk_.back();
-            for (std::size_t k = stmt_idx_.back() + 1; k < body.size(); ++k)
+        for (std::size_t fi = body_stk_.size(); fi > 0; --fi) {
+            const auto& body = *body_stk_[fi - 1];
+            for (std::size_t k = stmt_idx_[fi - 1] + 1; k < body.size(); ++k)
                 if (!lower_stmt(body[k])) {
                     force_boxed_ints_ = saved_fb;
                     live_i64_ = saved_live;

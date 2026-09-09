@@ -118,6 +118,24 @@ def local_while_param(n):
         i += 1
     return s
 print("local while param:", local_while_param(5))
+
+def local_if():
+    s = 0
+    if False:
+        s = 5
+    s += 1
+    n = 5
+    i = 0
+    t = 0
+    u = 0
+    while i < n:
+        if i < 3:
+            t += i
+        else:
+            u += i
+        i += 1
+    return s, t, u
+print("local if:", local_if())
 try:
     local_while_param("x")
 except TypeError as e:
