@@ -208,6 +208,7 @@ def local_try_with():
         u += 1
     return s, t, u
 print("local try with:", local_try_with())
+print("lambda kwonly:", (lambda a, *, b=2: a + b)(3), (lambda *, k: k)(k=4))
 try:
     local_while_param("x")
 except TypeError as e:

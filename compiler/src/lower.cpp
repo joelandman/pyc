@@ -635,13 +635,6 @@ private:
         // *args and **kwargs work exactly as they do for a def -- same
         // trampoline, same slots -- including the `/` and `*` markers, which
         // are carried by nposonly and nkwonly exactly as they are for a def.
-        // Keyword-only stays refused here only because a lambda cannot carry
-        // kw_defaults through this path yet; a REQUIRED keyword-only parameter
-        // is a hole that the defaults tuple cannot represent.
-        if (!a.kwonlyargs.empty()) {
-            *ok = unsupported("keyword-only lambda parameters", n.loc);
-            return {};
-        }
         // Lambda defaults are ordinary defaults: evaluated once, here, in the
         // enclosing scope. `lambda x, k=k: ...` inside a loop is the standard
         // way to capture the current value rather than the cell.
@@ -659,9 +652,29 @@ private:
                 if (!*ok) return {};
             }
         }
+        const int nkwonly = (int)a.kwonlyargs.size();
+        ir::Value lam_kwdefaults;
+        if (nkwonly > 0) {
+            bool any = false;
+            for (const auto& kd : a.kw_defaults) if (kd.has_value()) any = true;
+            if (any) {
+                lam_kwdefaults = call_capi("PyDict_New", {}, n.loc, ok);
+                if (!*ok) return {};
+                mark_owned(lam_kwdefaults);
+                for (std::size_t i = 0; i < a.kw_defaults.size() && i < a.kwonlyargs.size(); ++i) {
+                    if (!a.kw_defaults[i].has_value()) continue;
+                    ir::Value d = lower_expr(*a.kw_defaults[i].value(), ok);
+                    if (!*ok) return {};
+                    ir::Value k = const_str(a.kwonlyargs[i].arg, n.loc);
+                    call_capi("PyDict_SetItem", {lam_kwdefaults, k, d}, n.loc, ok, {k, d});
+                    if (!*ok) return {};
+                }
+            }
+        }
         std::vector<std::string> params;
         for (const arg& p : a.posonlyargs) params.push_back(p.arg);
         for (const arg& p : a.args) params.push_back(p.arg);
+        for (const arg& p : a.kwonlyargs) params.push_back(p.arg);
         // *args and **kwargs get their own slots, after the named parameters.
         std::vector<std::string> slotnames = params;
         int vararg_slot = -1, kwarg_slot = -1;
@@ -692,6 +705,7 @@ private:
 
         FnScope sc = begin_function("<lambda>", params, lam_locals);
         cur()->nposonly = (int)a.posonlyargs.size();
+        cur()->nkwonly = nkwonly;
         cur()->freevars = freevars;
         for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
         bool bok = true;
@@ -703,12 +717,14 @@ private:
         if (!bok) { *ok = false; return {}; }
         *ok = true;
         ir::Value out = make_function_value(idx, qualname("<lambda>"), n.loc, closure_cells,
-                                            lam_defaults, vararg_slot, kwarg_slot);
+                                            lam_defaults, vararg_slot, kwarg_slot,
+                                            lam_kwdefaults);
         // Guarded, NOT unconditional: the lambda path restores the owned set
         // differently from the def path, and re-marking here double-freed the
         // captured cell -- `return lambda x: x + n` crashed with no output.
         for (const ir::Value& c : closure_cells) if (owns(c)) release(c, n.loc);
         if (lam_defaults.valid() && owns(lam_defaults)) release(lam_defaults, n.loc);
+        if (lam_kwdefaults.valid() && owns(lam_kwdefaults)) release(lam_kwdefaults, n.loc);
         return out;
     }
 
@@ -3399,6 +3415,10 @@ private:
                       "", body_n, done, n.loc, std::nullopt};
         nxt.has_imm = true;
         nxt.imm = (std::int64_t)rid;
+        {
+            const Call& rc = std::get<Call>(n.iter->v);
+            if (rc.args.size() <= 2) nxt.text = "1";
+        }
         emit(std::move(nxt));
         set_block(body_n);
         emit(ir::Instr{ir::Op::IntStore, {iv}, std::nullopt, Ownership::NotAnObject,

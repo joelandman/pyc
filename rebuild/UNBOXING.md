@@ -228,9 +228,12 @@ where divergence hides.
 15. **for-range target phi** (landed). Native `RangeNext` and boxed
     `IntLoad` of `i` join at `for.body`, so the shared body uses SSA `i`
     rather than IntLoad every iter. `i` is not a loop-head phi (each
-    iter defines it). Unbox fail on the boxed arm finishes this iter
+    iter defines it).     Unbox fail on the boxed arm finishes this iter
     boxed then continues the clone; it must not skip the item. No
     unswitch.
+16. **`range(n)` increment** (landed). Step 1 (`range(n)` / `range(a,b)`)
+    uses `add i64, 1`: taking the body edge (`c < stop`) proves `c+1`
+    fits. Do not `nsw` the `s += i*j` accumulator without a fit proof.
 
 Steps 2 and 3 landed together: step 2 alone leaves the iterator allocating a
 `PyLong` per step. Step 4 closes the `while i < n` hole that still boxed
@@ -255,10 +258,16 @@ Measured on this machine, `n = 2000` (4e6 iters of `s += i * j`), `-O2`:
 | pyc, for-range after steps 14–15, `-O2` | 0.008 (same as step 6 here) |
 | C | 0.001 |
 
-The residue vs C was overflow `jo` and the range-target IntLoad.
-Steps 14–15 mark `jo` cold and phi the range target; remeasure before
-claiming the 7× closed. GIL-free (step 11) is a concurrency cut on
-innermost phi-`while` bodies; it is not expected to close that gap.
+At `-O2` the overflow `jo` is already gone (llvm.expect). C still wins
+because clang algebraically closes `s += i*j` over `range(n)` to O(1);
+pyc still iterates. That closed form needs `nsw`, which is UB on
+overflow and is a silent wrap for large `n` (I1). Do not emit `nsw`
+without a proof that the accumulator fits i64.
+
+`range(n)` / `range(a, b)` (step 1) increments with `add i64, 1`:
+`c < stop` already implies `c+1` fits. The general step still uses
+`sadd.with.overflow`. GIL-free (step 11) is a concurrency cut; it is
+not expected to close the gap vs C.
 
 i64 phis are refused when the body has `match` / `TryStar` / `AsyncWith`.
 `try`/`with` and generic `for` rejoin via IntLoad (steps 12–13). Overflow

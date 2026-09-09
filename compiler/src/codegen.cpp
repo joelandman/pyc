@@ -878,6 +878,22 @@ private:
         std::string take = "rtake" + std::to_string(tmp_++);
         o_ << "  " << c << " = load i64, ptr " << p << ".i\n";
         o_ << "  " << e << " = load i64, ptr " << p << ".e\n";
+        if (in.text == "1") {
+            need("declare i1 @llvm.expect.i1(i1, i1)");
+            std::string ge = fresh(), gexp = fresh();
+            o_ << "  " << ge << " = icmp sge i64 " << c << ", " << e << "\n";
+            o_ << "  " << gexp << " = call i1 @llvm.expect.i1(i1 " << ge
+               << ", i1 false)\n";
+            o_ << "  br i1 " << gexp << ", label %bb" << in.target_else
+               << ", label %" << take << "\n";
+            o_ << take << ":\n";
+            o_ << "  " << v(*in.result) << " = add i64 " << c << ", 0\n";
+            std::string nv = fresh();
+            o_ << "  " << nv << " = add i64 " << c << ", 1\n";
+            o_ << "  store i64 " << nv << ", ptr " << p << ".i\n";
+            o_ << "  br label %bb" << in.target << "\n";
+            return;
+        }
         o_ << "  " << st << " = load i64, ptr " << p << ".p\n";
         o_ << "  " << pos << " = icmp sgt i64 " << st << ", 0\n";
         o_ << "  br i1 " << pos << ", label %" << posc << ", label %" << negc << "\n";
