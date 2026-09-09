@@ -183,6 +183,31 @@ def local_nested():
             t += a * b
     return s, t
 print("local nested:", local_nested())
+
+def local_try_with():
+    s = 0
+    i = 0
+    n = 5
+    while i < n:
+        try:
+            s += i
+        except Exception:
+            pass
+        i += 1
+    class CM:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    t = 0
+    j = 0
+    while j < 4:
+        with CM():
+            t += j
+        j += 1
+    u = 0
+    for x in [1, 2, 3]:
+        u += 1
+    return s, t, u
+print("local try with:", local_try_with())
 try:
     local_while_param("x")
 except TypeError as e:

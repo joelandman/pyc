@@ -2138,6 +2138,7 @@ private:
         fin.entry = new_block("with.cleanup");
         std::uint32_t dispatch = new_block("with.unwind");
         std::uint32_t after    = new_block("with.after");
+        auto live_in = live_i64_;
         try_stack_.push_back(dispatch);
         fin_stack_.push_back(&fin);
         // A break or continue targeting a loop INSIDE this body branches
@@ -2261,6 +2262,7 @@ private:
         set_block(after);
         frame_owned_.pop_back();
         emit_decref(exitf, n.loc);
+        reload_live_i64_from_slots(live_in, n.loc);
         return true;
     }
 
@@ -2348,6 +2350,7 @@ private:
         fin.entry = new_block("finally.body");
         std::uint32_t catch_b = new_block("finally.catch");
         std::uint32_t after   = new_block("try.after");
+        auto live_in = live_i64_;
 
         // Uncaught exceptions from the guarded region land here, not in an
         // enclosing handler: the cleanup has to run first.
@@ -2409,6 +2412,7 @@ private:
         forget(p_exc); forget(p_ret);
         frame_owned_.push_back(p_exc);
         frame_owned_.push_back(p_ret);
+        reload_live_i64_from_slots(live_in, n.loc);
         for (const stmt& s2 : n.finalbody) if (!lower_stmt(s2)) return false;
         frame_owned_.pop_back();
         frame_owned_.pop_back();
@@ -2462,6 +2466,7 @@ private:
         // reported "break outside a loop" for a try/finally containing no
         // break at all.
         set_block(after);
+        reload_live_i64_from_slots(live_in, n.loc);
         if (!fin.any_jump) return true;
 
         // Both tests are computed BEFORE the markers are released: the
@@ -2571,6 +2576,7 @@ private:
 
         std::uint32_t dispatch = new_block("except.dispatch");
         std::uint32_t after    = new_block("try.after");
+        auto live_in = live_i64_;
 
         try_stack_.push_back(dispatch);
         bool ok = true;
@@ -2615,6 +2621,7 @@ private:
                                "", body_b, 0, n.loc, std::nullopt});
             }
             set_block(body_b);
+            reload_live_i64_from_slots(live_in, n.loc);
             if (eh.name) store_name(*eh.name, exc, n.loc);   // INCREFs; exc stays ours
             // Open for the duration of the handler body, so a return, break or
             // continue out of it pops before leaving.
@@ -2647,6 +2654,7 @@ private:
 
         set_block(after);
         if (owns(prev_handled)) release(prev_handled, n.loc);
+        reload_live_i64_from_slots(live_in, n.loc);
         return true;
     }
 
@@ -3445,6 +3453,10 @@ private:
     }
 
     bool lower_for_over_iter(ir::Value it, const For& n, std::uint32_t after) {
+        const Name* tn = n.target ? std::get_if<Name>(&n.target->v) : nullptr;
+        std::string skip = tn ? tn->id : std::string{};
+        std::uint32_t boxed = prepare_i64_loop(n.body, n.loc, skip);
+        std::uint32_t pre = (std::uint32_t)blk_;
         std::uint32_t head = new_block("for.head");
         std::uint32_t body = new_block("for.body");
         std::uint32_t done = new_block("for.done");
@@ -3452,19 +3464,31 @@ private:
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", head, 0, n.loc, std::nullopt});
         set_block(head);
-        live_i64_.clear();
+        if (boxed) begin_i64_loop(head, pre, brk, n.body, boxed, n.loc);
+        else {
+            live_i64_.clear();
+            loops_.push_back({head, brk});
+        }
         { bool pok = true; call_capi("pyc_rt_periodic", {}, n.loc, &pok);
           if (!pok) return false; }
         ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::IterNext, {it}, item, Ownership::Owned, "",
                        body, done, n.loc, make_landing_pad(n.loc)});
+        auto live_at_pred = live_i64_;
 
         set_block(body);
         mark_owned(item);
         if (!store_target(*n.target, item, n.loc)) return false;
-        loops_.push_back({head, brk});
-        for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
-        loops_.pop_back();
+        if (boxed) {
+            for (std::size_t i = 0; i < n.body.size(); ++i) {
+                stmt_idx_.back() = i;
+                if (!lower_stmt(n.body[i])) return false;
+            }
+            finish_i64_loop_body(head);
+        } else {
+            for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
+            loops_.pop_back();
+        }
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", head, 0, n.loc, std::nullopt});
 
@@ -3474,12 +3498,19 @@ private:
                        "", after, 0, n.loc, std::nullopt});
 
         set_block(done);
-        frame_owned_.pop_back();
+        if (!force_boxed_ints_) frame_owned_.pop_back();
         emit_decref(it, n.loc);
+        live_i64_ = live_at_pred;
         for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
         if (!terminated())
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                            "", after, 0, n.loc, std::nullopt});
+        if (boxed) {
+            set_block(after);
+            if (!finish_boxed_clone(boxed, after, n.loc, [&]{
+                return lower_for_over_iter(it, n, after);
+            })) return false;
+        }
         return true;
     }
 
@@ -3630,15 +3661,25 @@ private:
 
     bool stmts_have_cfg_join(const std::vector<stmt>& body) const {
         for (const stmt& s : body) {
-            if (std::holds_alternative<Try>(s.v)
+            if (std::holds_alternative<Match>(s.v)
              || std::holds_alternative<TryStar>(s.v)
-             || std::holds_alternative<With>(s.v)
-             || std::holds_alternative<AsyncWith>(s.v)
-             || std::holds_alternative<Match>(s.v))
+             || std::holds_alternative<AsyncWith>(s.v))
                 return true;
             if (const If* n = std::get_if<If>(&s.v)) {
                 if (stmts_have_cfg_join(n->body) || stmts_have_cfg_join(n->orelse))
                     return true;
+            }
+            if (const Try* n = std::get_if<Try>(&s.v)) {
+                if (stmts_have_cfg_join(n->body) || stmts_have_cfg_join(n->orelse)
+                    || stmts_have_cfg_join(n->finalbody))
+                    return true;
+                for (const excepthandler& h : n->handlers) {
+                    const ExceptHandler* eh = std::get_if<ExceptHandler>(&h.v);
+                    if (eh && stmts_have_cfg_join(eh->body)) return true;
+                }
+            }
+            if (const With* n = std::get_if<With>(&s.v)) {
+                if (stmts_have_cfg_join(n->body)) return true;
             }
         }
         return false;
@@ -3654,7 +3695,9 @@ private:
                     || k == "Set" || k == "Tuple" || k == "ListComp"
                     || k == "DictComp" || k == "SetComp" || k == "GeneratorExp"
                     || k == "Lambda" || k == "JoinedStr" || k == "FormattedValue"
-                    || k == "Starred")
+                    || k == "Starred" || k == "Try" || k == "TryStar"
+                    || k == "With" || k == "AsyncWith" || k == "Match"
+                    || k == "For" || k == "AsyncFor")
                     bad = true;
             }
         } f;
@@ -3672,6 +3715,18 @@ private:
                 if (stmts_have_nested_loop(n->body) || stmts_have_nested_loop(n->orelse))
                     return true;
             }
+            if (const Try* n = std::get_if<Try>(&s.v)) {
+                if (stmts_have_nested_loop(n->body) || stmts_have_nested_loop(n->orelse)
+                    || stmts_have_nested_loop(n->finalbody))
+                    return true;
+                for (const excepthandler& h : n->handlers) {
+                    const ExceptHandler* eh = std::get_if<ExceptHandler>(&h.v);
+                    if (eh && stmts_have_nested_loop(eh->body)) return true;
+                }
+            }
+            if (const With* n = std::get_if<With>(&s.v)) {
+                if (stmts_have_nested_loop(n->body)) return true;
+            }
         }
         return false;
     }
@@ -3679,9 +3734,8 @@ private:
     bool nested_loops_phiable(const std::vector<stmt>& body) const {
         for (const stmt& s : body) {
             if (const For* n = std::get_if<For>(&s.v)) {
-                if (!is_native_range_for(*n) || !can_i64_phis(n->body))
+                if (!can_i64_phis(n->body) || !nested_loops_phiable(n->orelse))
                     return false;
-                if (!nested_loops_phiable(n->orelse)) return false;
             } else if (const While* n = std::get_if<While>(&s.v)) {
                 if (!can_i64_phis(n->body) || !nested_loops_phiable(n->orelse))
                     return false;
@@ -3690,6 +3744,16 @@ private:
             } else if (const If* n = std::get_if<If>(&s.v)) {
                 if (!nested_loops_phiable(n->body) || !nested_loops_phiable(n->orelse))
                     return false;
+            } else if (const Try* n = std::get_if<Try>(&s.v)) {
+                if (!nested_loops_phiable(n->body) || !nested_loops_phiable(n->orelse)
+                    || !nested_loops_phiable(n->finalbody))
+                    return false;
+                for (const excepthandler& h : n->handlers) {
+                    const ExceptHandler* eh = std::get_if<ExceptHandler>(&h.v);
+                    if (eh && !nested_loops_phiable(eh->body)) return false;
+                }
+            } else if (const With* n = std::get_if<With>(&s.v)) {
+                if (!nested_loops_phiable(n->body)) return false;
             }
         }
         return true;
@@ -3720,6 +3784,29 @@ private:
             if (it == locals_.end()) continue;
             ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
             std::uint32_t okb = new_block("int.rejoin");
+            ir::Instr in{ir::Op::IntLoad, {}, iv, Ownership::NotAnObject,
+                         name, 0, 0, loc, make_landing_pad(loc)};
+            in.has_imm = true;
+            in.imm = it->second;
+            in.target = okb;
+            in.target_else = deopt;
+            emit(std::move(in));
+            set_block(okb);
+            live_i64_[name] = iv;
+        }
+    }
+
+    void reload_live_i64_from_slots(const std::map<std::string, ir::Value>& names,
+                                    const SourceLoc& loc) {
+        std::uint32_t deopt = loop_boxed_head();
+        live_i64_.clear();
+        if (!deopt) return;
+        for (const auto& [name, _] : names) {
+            if (!int_locals_.count(name) || cells_.count(name)) continue;
+            auto it = locals_.find(name);
+            if (it == locals_.end()) continue;
+            ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            std::uint32_t okb = new_block("int.reload");
             ir::Instr in{ir::Op::IntLoad, {}, iv, Ownership::NotAnObject,
                          name, 0, 0, loc, make_landing_pad(loc)};
             in.has_imm = true;

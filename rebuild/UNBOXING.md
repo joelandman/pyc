@@ -201,16 +201,26 @@ where divergence hides.
    terminated, the latch incoming is omitted.
 10. **Nested-loop rejoin** (landed). An outer phi-loop may contain inner
     `while` / native for-range whose bodies are themselves phiable.
-    Inner phis do not dominate the outer latch, so the inner exit
-    IntLoads updated names from tagged slots. Names assigned in a loop
-    body and not live-in are not preloaded (avoids UnboundLocal on
-    `j = 0` inside).     Generic `for` and `try`/`with`/`match` still refuse.
+     Inner phis do not dominate the outer latch, so the inner exit
+     IntLoads updated names from tagged slots. Names assigned in a loop
+     body and not live-in are not preloaded (avoids UnboundLocal on
+     `j = 0` inside). `match` still refuses.
 11. **GIL-free innermost phi-`while`** (landed). A `while` whose body is
     phiable, has no nested loop, and has no Call/attribute/etc. drops the
     GIL for the body (`PyEval_SaveThread`) and reacquires on latch,
     `break`/`continue`/`return`, deopt, and any incref/decref/unbox.
     for-range is not eligible (shared boxed `IterNext`). This is a
     concurrency cut, not the 7× vs C (that residue is still `jo`).
+    `try`/`with`/`for` in the body also refuse GIL-free (C-API).
+12. **`try`/`with` rejoin** (landed). A phi-loop may contain `try`/`with`.
+    Exception and `__exit__` joins do not dominate the latch, so live i64s
+    are IntLoaded from tagged slots at `except`/`finally`/`with.after`.
+    `match` / `TryStar` / `AsyncWith` still refuse.
+13. **Generic-`for` phis** (landed). `for x in xs` (not native range) uses
+    the same head phis as `while`. The iterator and target stay boxed;
+    accumulators are phis. Overflow deopts to a boxed clone that continues
+    the **same** iterator. Clone must not `frame_owned_.pop` the GetIter
+    already popped on the fast done path.
 
 Steps 2 and 3 landed together: step 2 alone leaves the iterator allocating a
 `PyLong` per step. Step 4 closes the `while i < n` hole that still boxed
@@ -238,11 +248,10 @@ The residue vs C is still overflow `jo` and the range-target IntLoad.
 GIL-free (step 11) is a concurrency cut on innermost phi-`while` bodies;
 it is not expected to close the 7× vs C.
 
-i64 phis are refused when the body has a `try`/`with`/`match` or a nested
-generic `for`: those joins do not dominate a latch the way a straight-line
-`while` or an `if` endif does. Overflow in a phi loop
-redoes the current op through the C-API before switching to the boxed
-clone -- skipping it was a silent wrong add.
+i64 phis are refused when the body has `match` / `TryStar` / `AsyncWith`.
+`try`/`with` and generic `for` rejoin via IntLoad (steps 12–13). Overflow
+in a phi loop redoes the current op through the C-API before switching to
+the boxed clone -- skipping it was a silent wrong add.
 
 **for-range unswitch was attempted and reverted.** Unswitching native vs
 boxed into two loops made `for _ in range(10**9)` interrupted by SIGALRM
