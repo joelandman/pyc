@@ -750,7 +750,11 @@ private:
         o_ << "  " << v(*in.result) << " = extractvalue {i64, i1} " << agg
            << ", 0\n";
         o_ << "  " << ov << " = extractvalue {i64, i1} " << agg << ", 1\n";
-        o_ << "  br i1 " << ov << ", label %bb" << in.target_else
+        need("declare i1 @llvm.expect.i1(i1, i1)");
+        std::string exp = fresh();
+        o_ << "  " << exp << " = call i1 @llvm.expect.i1(i1 " << ov
+           << ", i1 false)\n";
+        o_ << "  br i1 " << exp << ", label %bb" << in.target_else
            << ", label %bb" << in.target << "\n";
     }
 
@@ -762,7 +766,11 @@ private:
         o_ << "  " << v(*in.result) << " = extractvalue {i64, i1} " << agg
            << ", 0\n";
         o_ << "  " << ov << " = extractvalue {i64, i1} " << agg << ", 1\n";
-        o_ << "  br i1 " << ov << ", label %bb" << in.target_else
+        need("declare i1 @llvm.expect.i1(i1, i1)");
+        std::string exp = fresh();
+        o_ << "  " << exp << " = call i1 @llvm.expect.i1(i1 " << ov
+           << ", i1 false)\n";
+        o_ << "  br i1 " << exp << ", label %bb" << in.target_else
            << ", label %bb" << in.target << "\n";
     }
 
@@ -873,15 +881,20 @@ private:
         o_ << "  " << st << " = load i64, ptr " << p << ".p\n";
         o_ << "  " << pos << " = icmp sgt i64 " << st << ", 0\n";
         o_ << "  br i1 " << pos << ", label %" << posc << ", label %" << negc << "\n";
+        need("declare i1 @llvm.expect.i1(i1, i1)");
         o_ << posc << ":\n";
-        std::string ge = fresh();
+        std::string ge = fresh(), gexp = fresh();
         o_ << "  " << ge << " = icmp sge i64 " << c << ", " << e << "\n";
-        o_ << "  br i1 " << ge << ", label %bb" << in.target_else
+        o_ << "  " << gexp << " = call i1 @llvm.expect.i1(i1 " << ge
+           << ", i1 false)\n";
+        o_ << "  br i1 " << gexp << ", label %bb" << in.target_else
            << ", label %" << take << "\n";
         o_ << negc << ":\n";
-        std::string le = fresh();
+        std::string le = fresh(), lexp = fresh();
         o_ << "  " << le << " = icmp sle i64 " << c << ", " << e << "\n";
-        o_ << "  br i1 " << le << ", label %bb" << in.target_else
+        o_ << "  " << lexp << " = call i1 @llvm.expect.i1(i1 " << le
+           << ", i1 false)\n";
+        o_ << "  br i1 " << lexp << ", label %bb" << in.target_else
            << ", label %" << take << "\n";
         o_ << take << ":\n";
         o_ << "  " << v(*in.result) << " = add i64 " << c << ", 0\n";

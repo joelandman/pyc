@@ -221,6 +221,16 @@ where divergence hides.
     accumulators are phis. Overflow deopts to a boxed clone that continues
     the **same** iterator. Clone must not `frame_owned_.pop` the GetIter
     already popped on the fast done path.
+14. **Cold overflow** (landed). `IntAddOvf`/`Sub`/`Mul`/`Neg` still use
+    `llvm.*.with.overflow`; the overflow successor is
+    `llvm.expect.i1(..., false)` so the `jo` is cold. Checks are not
+    removed. RangeNext exhaustion is the same expect-false.
+15. **for-range target phi** (landed). Native `RangeNext` and boxed
+    `IntLoad` of `i` join at `for.body`, so the shared body uses SSA `i`
+    rather than IntLoad every iter. `i` is not a loop-head phi (each
+    iter defines it). Unbox fail on the boxed arm finishes this iter
+    boxed then continues the clone; it must not skip the item. No
+    unswitch.
 
 Steps 2 and 3 landed together: step 2 alone leaves the iterator allocating a
 `PyLong` per step. Step 4 closes the `while i < n` hole that still boxed
@@ -242,11 +252,13 @@ Measured on this machine, `n = 2000` (4e6 iters of `s += i * j`), `-O2`:
 | pyc, for-range after step 6, `-O2` | 0.007 (same as step 5 here; LLVM already promoted tagged slots) |
 | pyc, `while i < n` param, before step 7 | 0.056 |
 | pyc, `while i < n` param, after step 7 | 0.005 |
+| pyc, for-range after steps 14–15, `-O2` | 0.008 (same as step 6 here) |
 | C | 0.001 |
 
-The residue vs C is still overflow `jo` and the range-target IntLoad.
-GIL-free (step 11) is a concurrency cut on innermost phi-`while` bodies;
-it is not expected to close the 7× vs C.
+The residue vs C was overflow `jo` and the range-target IntLoad.
+Steps 14–15 mark `jo` cold and phi the range target; remeasure before
+claiming the 7× closed. GIL-free (step 11) is a concurrency cut on
+innermost phi-`while` bodies; it is not expected to close that gap.
 
 i64 phis are refused when the body has `match` / `TryStar` / `AsyncWith`.
 `try`/`with` and generic `for` rejoin via IntLoad (steps 12–13). Overflow

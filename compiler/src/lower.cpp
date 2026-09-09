@@ -3401,8 +3401,11 @@ private:
         set_block(body_n);
         emit(ir::Instr{ir::Op::IntStore, {iv}, std::nullopt, Ownership::NotAnObject,
                        tn.id, slot->second, 0, n.loc, std::nullopt});
+        auto live_n = live_i64_;
+        if (boxed && int_locals_.count(tn.id)) live_n[tn.id] = iv;
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", body, 0, n.loc, std::nullopt});
+        std::uint32_t nat_end = (std::uint32_t)blk_;
 
         set_block(box_next);
         ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
@@ -3411,10 +3414,45 @@ private:
         set_block(body_b);
         mark_owned(item);
         if (!store_target(*n.target, item, n.loc)) return false;
+        if (boxed && int_locals_.count(tn.id) && slot != locals_.end()) {
+            ir::Value bv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            std::uint32_t okb = new_block("range.i.load");
+            std::uint32_t fail = new_block("range.i.fail");
+            ir::Instr in{ir::Op::IntLoad, {}, bv, Ownership::NotAnObject,
+                         tn.id, 0, 0, n.loc, make_landing_pad(n.loc)};
+            in.has_imm = true;
+            in.imm = slot->second;
+            in.target = okb;
+            in.target_else = fail;
+            emit(std::move(in));
+            set_block(fail);
+            {
+                bool saved_fb = force_boxed_ints_;
+                auto saved_live = live_i64_;
+                auto saved_fo = frame_owned_;
+                auto saved_own = owned_;
+                force_boxed_ints_ = true;
+                live_i64_.clear();
+                for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
+                force_boxed_ints_ = saved_fb;
+                if (!terminated())
+                    emit(ir::Instr{ir::Op::Br, {}, std::nullopt,
+                                   Ownership::NotAnObject, "", boxed, 0, n.loc,
+                                   std::nullopt});
+                live_i64_ = std::move(saved_live);
+                frame_owned_ = std::move(saved_fo);
+                owned_ = std::move(saved_own);
+            }
+            set_block(okb);
+            live_i64_[tn.id] = bv;
+        }
+        auto live_b = live_i64_;
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", body, 0, n.loc, std::nullopt});
+        std::uint32_t box_end = (std::uint32_t)blk_;
 
         set_block(body);
+        if (boxed) merge_live_i64(live_n, nat_end, live_b, box_end, n.loc);
         if (boxed) {
             for (std::size_t i = 0; i < n.body.size(); ++i) {
                 stmt_idx_.back() = i;
