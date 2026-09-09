@@ -748,6 +748,15 @@ private:
     }
 
     void emit_int_ovf(const ir::Instr& in, const char* op) {
+        if (in.text == "nsw") {
+            const char* ll = "add";
+            if (std::string(op) == "ssub") ll = "sub";
+            else if (std::string(op) == "smul") ll = "mul";
+            o_ << "  " << v(*in.result) << " = " << ll << " nsw i64 "
+               << v(in.args[0]) << ", " << v(in.args[1]) << "\n";
+            o_ << "  br label %bb" << in.target << "\n";
+            return;
+        }
         std::string intr = std::string("@llvm.") + op + ".with.overflow.i64";
         need("declare {i64, i1} " + intr + "(i64, i64)");
         std::string agg = fresh(), ov = fresh();

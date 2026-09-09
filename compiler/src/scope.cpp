@@ -605,7 +605,11 @@ struct NestedReads {
                                   if (n.msg) expr_(**n.msg, inside); },
             [&](const Delete& n){ for (const expr& t : n.targets) expr_(t, inside); },
             [&](const Import&){}, [&](const ImportFrom&){}, [&](const Global&){},
-            [&](const Nonlocal&){}, [&](const Pass&){}, [&](const Break&){},
+            [&](const Nonlocal& n){
+                if (inside)
+                    for (const std::string& x : n.names) out.insert(x);
+            },
+            [&](const Pass&){}, [&](const Break&){},
             [&](const Continue&){}, [&](const TypeAlias&){},
         }, s.v);
     }

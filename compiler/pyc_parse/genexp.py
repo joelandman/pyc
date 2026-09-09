@@ -221,6 +221,11 @@ def collect_genfuncs(tree: ast.Module, source: bytes, filename: str) -> list[dic
     def scope_for(scopes, name, lineno):
         for sc in scopes:
             if sc.get_name() == name and sc.get_lineno() == lineno:
+                if sc.get_type() == "type parameters":
+                    found = scope_for(sc.get_children(), name, lineno)
+                    if found is not None:
+                        return found
+                    continue
                 return sc
         return None
 
@@ -323,6 +328,7 @@ def _compile_genfunc(node, frees: list[str], qualname: str, filename: str,
     # the wrong scope, at the wrong moment, or both. pyc supplies the defaults
     # through the function object and applies the decorators itself.
     shim.decorator_list = []
+    shim.type_params = []
     shim.returns = None
     shim.args.defaults = []
     shim.args.kw_defaults = [None] * len(shim.args.kw_defaults)

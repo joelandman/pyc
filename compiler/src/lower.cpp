@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 
 namespace pyc {
@@ -103,6 +104,31 @@ private:
     std::map<std::string, std::uint32_t> locals_;
     std::set<std::string> int_locals_;
     std::map<std::string, ir::Value> live_i64_;
+    std::map<std::string, std::pair<std::int64_t, std::int64_t>> int_bounds_;
+    std::vector<std::optional<std::int64_t>> loop_trips_;
+    struct RangeBoundScope {
+        Lowerer& L;
+        std::string name;
+        std::optional<std::pair<std::int64_t, std::int64_t>> saved;
+        RangeBoundScope(Lowerer& l, std::string n, bool have,
+                        std::int64_t lo, std::int64_t hi, std::int64_t trip)
+            : L(l), name(std::move(n)) {
+            auto it = L.int_bounds_.find(name);
+            if (it != L.int_bounds_.end()) saved = it->second;
+            if (have) {
+                L.int_bounds_[name] = {lo, hi};
+                L.loop_trips_.push_back(trip);
+            } else {
+                L.int_bounds_.erase(name);
+                L.loop_trips_.push_back(std::nullopt);
+            }
+        }
+        ~RangeBoundScope() {
+            if (!L.loop_trips_.empty()) L.loop_trips_.pop_back();
+            if (saved) L.int_bounds_[name] = *saved;
+            else L.int_bounds_.erase(name);
+        }
+    };
     bool force_boxed_ints_ = false;
     std::vector<const std::vector<stmt>*> body_stk_;
     std::vector<std::size_t> stmt_idx_;
@@ -522,6 +548,8 @@ private:
         cells_.clear();
         int_locals_.clear();
         live_i64_.clear();
+        int_bounds_.clear();
+        loop_trips_.clear();
         force_boxed_ints_ = false;
         range_n_ = 0;
         cur()->blocks.push_back(ir::Block{"entry", {}});
@@ -1063,14 +1091,33 @@ private:
                 }
             }
         }
+        std::map<std::string, ir::Value> tp_cells;
+        ir::Value tp_tuple;
+        if (!n.type_params.empty()) {
+            std::vector<std::pair<std::string, ir::Value>> bindings;
+            if (!emit_type_params(n.type_params, n.loc, &tp_tuple, &bindings))
+                return false;
+            for (auto& [nm, tv] : bindings) {
+                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::CellNew, {}, cell, Ownership::Owned, nm,
+                               0, 0, n.loc, make_landing_pad(n.loc)});
+                mark_owned(cell);
+                emit(ir::Instr{ir::Op::CellSet, {cell, tv}, std::nullopt,
+                               Ownership::NotAnObject, nm, 0, 0, n.loc, std::nullopt});
+                tp_cells[nm] = cell;
+                if (owns(tv)) release(tv, n.loc);
+            }
+        }
         return lower_cpython_function(n.name, n.decorator_list, defaults, n.loc,
-                                      kwdefaults);
+                                      kwdefaults, tp_cells, tp_tuple);
     }
 
     bool lower_cpython_function(const std::string& name,
                                 const std::vector<expr>& decorators,
                                 ir::Value defaults, const SourceLoc& loc,
-                                ir::Value kwdefaults = {}) {
+                                ir::Value kwdefaults = {},
+                                std::map<std::string, ir::Value> extra_cells = {},
+                                ir::Value tp_tuple = {}) {
         const GenexpEntry* gf = find_genexp(loc);
         if (!gf) return err("no compiled code object for this function",
                             "async function definitions", loc);
@@ -1083,14 +1130,21 @@ private:
             mark_owned(closure);
             for (std::size_t i = 0; i < gf->freevars.size(); ++i) {
                 const std::string& fv2 = gf->freevars[i];
-                auto cit = cells_.find(fv2);
-                if (cit == cells_.end())
-                    return err("function captures '" + fv2 +
-                               "', which has no closure cell here", "yield", loc);
-                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-                emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned,
-                               fv2, cit->second, 0, loc, make_landing_pad(loc)});
-                mark_owned(cell);
+                ir::Value cell;
+                if (auto eit = extra_cells.find(fv2); eit != extra_cells.end()) {
+                    cell = eit->second;
+                    emit(ir::Instr{ir::Op::IncRef, {cell}, std::nullopt,
+                                   Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+                } else {
+                    auto cit = cells_.find(fv2);
+                    if (cit == cells_.end())
+                        return err("function captures '" + fv2 +
+                                   "', which has no closure cell here", "yield", loc);
+                    cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                    emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned,
+                                   fv2, cit->second, 0, loc, make_landing_pad(loc)});
+                    mark_owned(cell);
+                }
                 call_capi_imm("PyTuple_SetItem", {closure, cell},
                               (std::int64_t)i, 1, loc, &cok);      // steals
                 if (!cok) return false;
@@ -1107,6 +1161,15 @@ private:
         if (closure.valid() && owns(closure)) release(closure, loc);
         if (defaults.valid() && owns(defaults)) release(defaults, loc);
         if (kwdefaults.valid() && owns(kwdefaults)) release(kwdefaults, loc);
+        if (tp_tuple.valid()) {
+            ir::Value key = const_str("__type_params__", loc);
+            bool tok = true;
+            call_capi("PyObject_SetAttr", {fv, key, tp_tuple}, loc, &tok, {key});
+            if (!tok) return false;
+            if (owns(tp_tuple)) release(tp_tuple, loc);
+        }
+        for (auto& [nm, cell] : extra_cells)
+            if (owns(cell)) release(cell, loc);
         bool okd = true;
         fv = apply_decorators(decorators, fv, loc, &okd);
         if (!okd) return false;
@@ -1184,10 +1247,29 @@ private:
         // the body pushes this function's own scope onto qual_.
         const std::string fn_qualname = qualname(n.name);
 
+        std::map<std::string, ir::Value> tp_cells;
+        ir::Value tp_tuple;
+        if (!n.type_params.empty()) {
+            std::vector<std::pair<std::string, ir::Value>> bindings;
+            if (!emit_type_params(n.type_params, n.loc, &tp_tuple, &bindings))
+                return false;
+            for (auto& [nm, tv] : bindings) {
+                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::CellNew, {}, cell, Ownership::Owned, nm,
+                               0, 0, n.loc, make_landing_pad(n.loc)});
+                mark_owned(cell);
+                emit(ir::Instr{ir::Op::CellSet, {cell, tv}, std::nullopt,
+                               Ownership::NotAnObject, nm, 0, 0, n.loc, std::nullopt});
+                tp_cells[nm] = cell;
+                if (owns(tv)) release(tv, n.loc);
+            }
+        }
+
         // A def containing yield, and every async def, has its body compiled
         // by CPython and run by the interpreter (rebuild/GENERATORS.md).
         if (find_genexp(n.loc))
-            return lower_cpython_function(n.name, n.decorator_list, defaults, n.loc);
+            return lower_cpython_function(n.name, n.decorator_list, defaults, n.loc,
+                                          kwdefaults, tp_cells, tp_tuple);
 
         // Save the enclosing function's state: a nested def is lowered into a
         // separate ir::Function, and must not inherit the outer local map.
@@ -1312,25 +1394,10 @@ private:
         }
         // Closure cells for the nested function come from THIS function's
         // slots, so they must be read before the scope switches.
-        std::map<std::string, ir::Value> tp_cells;
-        ir::Value tp_tuple;
-        if (!n.type_params.empty()) {
-            std::vector<std::pair<std::string, ir::Value>> bindings;
-            if (!emit_type_params(n.type_params, n.loc, &tp_tuple, &bindings))
-                return false;
-            for (auto& [nm, tv] : bindings) {
-                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-                emit(ir::Instr{ir::Op::CellNew, {}, cell, Ownership::Owned, nm,
-                               0, 0, n.loc, make_landing_pad(n.loc)});
-                mark_owned(cell);
-                emit(ir::Instr{ir::Op::CellSet, {cell, tv}, std::nullopt,
-                               Ownership::NotAnObject, nm, 0, 0, n.loc, std::nullopt});
-                tp_cells[nm] = cell;
-                if (owns(tv)) release(tv, n.loc);
-                bool have = false;
-                for (const std::string& f2 : freevars) if (f2 == nm) { have = true; break; }
-                if (!have) freevars.push_back(nm);
-            }
+        for (const auto& [nm, cell] : tp_cells) {
+            bool have = false;
+            for (const std::string& f2 : freevars) if (f2 == nm) { have = true; break; }
+            if (!have) freevars.push_back(nm);
         }
         std::vector<ir::Value> closure_cells;
         for (const std::string& fv2 : freevars) {
@@ -1371,6 +1438,8 @@ private:
         cur()->int_locals = int_locals(slotnames, n.body, inner);
         int_locals_ = cur()->int_locals;
         live_i64_.clear();
+        int_bounds_.clear();
+        loop_trips_.clear();
         force_boxed_ints_ = false;
         range_n_ = 0;
         locals_.clear();
@@ -1957,6 +2026,24 @@ private:
                          "", 0, 0, n.loc, std::nullopt};
             in.target = okb;
             in.target_else = deopt;
+            if (iop == ir::Op::IntAddOvf) {
+                std::int64_t vlo, vhi;
+                auto sb = int_bounds_.find(nm->id);
+                if (sb != int_bounds_.end() && sb->second.first >= 0
+                    && expr_i64_bounds(*n.value, &vlo, &vhi) && vlo >= 0
+                    && !loop_trips_.empty()) {
+                    bool tok = true;
+                    std::int64_t T = 1;
+                    for (const auto& t : loop_trips_) {
+                        if (!t) { tok = false; break; }
+                        if (__builtin_mul_overflow(T, *t, &T)) { tok = false; break; }
+                    }
+                    std::int64_t acc, tot;
+                    if (tok && !__builtin_mul_overflow(T, vhi, &acc)
+                        && !__builtin_add_overflow(sb->second.second, acc, &tot))
+                        in.text = "nsw";
+                }
+            }
             emit(std::move(in));
             set_block(okb);
             emit(ir::Instr{ir::Op::IntStore, {out}, std::nullopt,
@@ -3621,6 +3708,10 @@ private:
                              std::uint32_t rid, std::uint32_t after, bool clone,
                              ir::Value stop) {
         const Name& tn = std::get<Name>(n.target->v);
+        std::int64_t rlo = 0, rhi = 0, rtrip = 0;
+        const Call& rc = std::get<Call>(n.iter->v);
+        bool have_rb = const_range_bounds(rc, &rlo, &rhi, &rtrip);
+        RangeBoundScope rbs{*this, tn.id, have_rb, rlo, rhi, rtrip};
         auto slot = locals_.find(tn.id);
         std::uint32_t boxed = 0;
         if (clone) {
@@ -3738,7 +3829,7 @@ private:
                        "", after, 0, n.loc, std::nullopt});
 
         set_block(done);
-        frame_owned_.pop_back();
+        if (!frame_owned_.empty()) frame_owned_.pop_back();
         emit_decref(it, n.loc);
         live_i64_ = live_at_pred;
         for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
@@ -3802,7 +3893,7 @@ private:
                        "", after, 0, n.loc, std::nullopt});
 
         set_block(done);
-        if (!force_boxed_ints_) frame_owned_.pop_back();
+        if (!frame_owned_.empty()) frame_owned_.pop_back();
         emit_decref(it, n.loc);
         live_i64_ = live_at_pred;
         for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
@@ -3924,6 +4015,139 @@ private:
         if (errno == ERANGE || !end || *end) return false;
         *out = (std::int64_t)v;
         return true;
+    }
+
+    bool const_i64_expr(const expr& e, std::int64_t* v) const {
+        if (const Constant* c = std::get_if<Constant>(&e.v)) {
+            const ConstBigInt* i = std::get_if<ConstBigInt>(&c->value.v);
+            return i && parse_i64(i->digits, v);
+        }
+        if (const Name* n = std::get_if<Name>(&e.v)) {
+            auto it = int_bounds_.find(n->id);
+            if (it != int_bounds_.end() && it->second.first == it->second.second) {
+                *v = it->second.first;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool const_range_bounds(const Call& c, std::int64_t* lo, std::int64_t* hi,
+                            std::int64_t* trip) const {
+        if (c.args.empty() || c.args.size() > 2 || !c.keywords.empty())
+            return false;
+        std::int64_t start = 0, stop = 0;
+        if (c.args.size() == 1) {
+            if (!const_i64_expr(c.args[0], &stop)) return false;
+        } else {
+            if (!const_i64_expr(c.args[0], &start)
+             || !const_i64_expr(c.args[1], &stop))
+                return false;
+        }
+        if (start >= stop) return false;
+        std::int64_t t;
+        if (__builtin_sub_overflow(stop, start, &t)) return false;
+        *lo = start;
+        *hi = stop - 1;
+        *trip = t;
+        return true;
+    }
+
+    static bool combine_add(std::int64_t a0, std::int64_t a1, std::int64_t b0,
+                            std::int64_t b1, std::int64_t* lo, std::int64_t* hi) {
+        std::int64_t c[4];
+        if (__builtin_add_overflow(a0, b0, &c[0])
+         || __builtin_add_overflow(a0, b1, &c[1])
+         || __builtin_add_overflow(a1, b0, &c[2])
+         || __builtin_add_overflow(a1, b1, &c[3]))
+            return false;
+        *lo = *hi = c[0];
+        for (int i = 1; i < 4; ++i) {
+            if (c[i] < *lo) *lo = c[i];
+            if (c[i] > *hi) *hi = c[i];
+        }
+        return true;
+    }
+    static bool combine_sub(std::int64_t a0, std::int64_t a1, std::int64_t b0,
+                            std::int64_t b1, std::int64_t* lo, std::int64_t* hi) {
+        std::int64_t c[4];
+        if (__builtin_sub_overflow(a0, b0, &c[0])
+         || __builtin_sub_overflow(a0, b1, &c[1])
+         || __builtin_sub_overflow(a1, b0, &c[2])
+         || __builtin_sub_overflow(a1, b1, &c[3]))
+            return false;
+        *lo = *hi = c[0];
+        for (int i = 1; i < 4; ++i) {
+            if (c[i] < *lo) *lo = c[i];
+            if (c[i] > *hi) *hi = c[i];
+        }
+        return true;
+    }
+    static bool combine_mul(std::int64_t a0, std::int64_t a1, std::int64_t b0,
+                            std::int64_t b1, std::int64_t* lo, std::int64_t* hi) {
+        std::int64_t c[4];
+        if (__builtin_mul_overflow(a0, b0, &c[0])
+         || __builtin_mul_overflow(a0, b1, &c[1])
+         || __builtin_mul_overflow(a1, b0, &c[2])
+         || __builtin_mul_overflow(a1, b1, &c[3]))
+            return false;
+        *lo = *hi = c[0];
+        for (int i = 1; i < 4; ++i) {
+            if (c[i] < *lo) *lo = c[i];
+            if (c[i] > *hi) *hi = c[i];
+        }
+        return true;
+    }
+
+    bool expr_i64_bounds(const expr& e, std::int64_t* lo, std::int64_t* hi) const {
+        return std::visit(ov{
+            [&](const Constant& c) -> bool {
+                const ConstBigInt* i = std::get_if<ConstBigInt>(&c.value.v);
+                std::int64_t v;
+                if (!i || !parse_i64(i->digits, &v)) return false;
+                *lo = *hi = v;
+                return true;
+            },
+            [&](const Name& n) -> bool {
+                auto it = int_bounds_.find(n.id);
+                if (it == int_bounds_.end()) return false;
+                *lo = it->second.first;
+                *hi = it->second.second;
+                return true;
+            },
+            [&](const BinOp& n) -> bool {
+                std::int64_t l0, l1, r0, r1;
+                if (!expr_i64_bounds(*n.left, &l0, &l1)
+                 || !expr_i64_bounds(*n.right, &r0, &r1))
+                    return false;
+                if (std::holds_alternative<Add>(n.op.v))
+                    return combine_add(l0, l1, r0, r1, lo, hi);
+                if (std::holds_alternative<Sub>(n.op.v))
+                    return combine_sub(l0, l1, r0, r1, lo, hi);
+                if (std::holds_alternative<Mult>(n.op.v))
+                    return combine_mul(l0, l1, r0, r1, lo, hi);
+                return false;
+            },
+            [&](const UnaryOp& n) -> bool {
+                if (std::holds_alternative<UAdd>(n.op.v))
+                    return expr_i64_bounds(*n.operand, lo, hi);
+                if (!std::holds_alternative<USub>(n.op.v)) return false;
+                std::int64_t a, b, x, y;
+                if (!expr_i64_bounds(*n.operand, &a, &b)) return false;
+                if (__builtin_sub_overflow(0, b, &x)
+                 || __builtin_sub_overflow(0, a, &y))
+                    return false;
+                *lo = x < y ? x : y;
+                *hi = x > y ? x : y;
+                return true;
+            },
+            [&](const auto&) -> bool { return false; },
+        }, e.v);
+    }
+
+    bool result_fits_i64(const expr& e) const {
+        std::int64_t lo, hi;
+        return expr_i64_bounds(e, &lo, &hi);
     }
 
     bool is_int_expr(const expr& e) const {
@@ -4281,12 +4505,16 @@ private:
         set_block(boxed);
         force_boxed_ints_ = true;
         auto saved = live_i64_;
+        auto saved_fo = frame_owned_;
+        auto saved_own = owned_;
         live_i64_.clear();
         if (!lower_boxed()) return false;
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", after, 0, loc, std::nullopt});
         force_boxed_ints_ = false;
         live_i64_ = std::move(saved);
+        frame_owned_ = std::move(saved_fo);
+        owned_ = std::move(saved_own);
         set_block(after);
         return true;
     }
@@ -4361,6 +4589,8 @@ private:
                              "", 0, 0, loc, std::nullopt};
                 in.target = okb;
                 in.target_else = deopt;
+                std::int64_t blo, bhi;
+                if (expr_i64_bounds(e, &blo, &bhi)) in.text = "nsw";
                 emit(std::move(in));
                 set_block(okb);
                 return true;
@@ -4407,9 +4637,23 @@ private:
                 if (!deopt_to_boxed_loop(loc)) return false;
                 set_block(fast_blk);
                 live_i64_[name] = iv;
+                {
+                    std::int64_t blo, bhi;
+                    if (expr_i64_bounds(value, &blo, &bhi))
+                        int_bounds_[name] = {blo, bhi};
+                    else
+                        int_bounds_.erase(name);
+                }
                 return true;
             }
             live_i64_[name] = iv;
+            {
+                std::int64_t blo, bhi;
+                if (expr_i64_bounds(value, &blo, &bhi))
+                    int_bounds_[name] = {blo, bhi};
+                else
+                    int_bounds_.erase(name);
+            }
         }
         std::uint32_t done = new_block("int.done");
         if (iv.valid()) {
