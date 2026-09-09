@@ -2523,6 +2523,8 @@ private:
         if (loops_.empty())
             return err(is_break ? "break outside a loop" : "continue outside a loop",
                        is_break ? "break" : "continue", loc);
+        if (!is_break && loops_.back().boxed_head)
+            add_i64_phi_incoming(loops_.back().head, (std::uint32_t)blk_);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject, "",
                        is_break ? loops_.back().done : loops_.back().head,
                        0, loc, std::nullopt});
@@ -3606,10 +3608,7 @@ private:
              || std::holds_alternative<TryStar>(s.v)
              || std::holds_alternative<With>(s.v)
              || std::holds_alternative<AsyncWith>(s.v)
-             || std::holds_alternative<Match>(s.v)
-             || std::holds_alternative<Return>(s.v)
-             || std::holds_alternative<Break>(s.v)
-             || std::holds_alternative<Continue>(s.v))
+             || std::holds_alternative<Match>(s.v))
                 return true;
             if (const If* n = std::get_if<If>(&s.v)) {
                 if (stmts_have_cfg_join(n->body) || stmts_have_cfg_join(n->orelse))
@@ -3717,7 +3716,12 @@ private:
         stmt_idx_.pop_back();
         std::uint32_t boxed = loops_.empty() ? 0 : loops_.back().boxed_head;
         if (!loops_.empty()) loops_.pop_back();
-        if (boxed) close_i64_phis(head);
+        if (!boxed) return;
+        if (!terminated()) close_i64_phis(head);
+        else {
+            while (!i64_phis_.empty() && i64_phis_.back().head == head)
+                i64_phis_.pop_back();
+        }
     }
 
     void open_i64_phis(std::uint32_t head, std::uint32_t pre, const SourceLoc& loc) {
@@ -3737,8 +3741,7 @@ private:
         live_i64_ = std::move(next);
     }
 
-    void close_i64_phis(std::uint32_t head) {
-        std::uint32_t latch = (std::uint32_t)blk_;
+    void add_i64_phi_incoming(std::uint32_t head, std::uint32_t from) {
         for (auto it = i64_phis_.rbegin(); it != i64_phis_.rend(); ++it) {
             if (it->head != head) break;
             ir::Value inc = it->phi;
@@ -3746,8 +3749,12 @@ private:
             if (lv != live_i64_.end()) inc = lv->second;
             ir::Instr& phi = cur()->blocks[head].instrs[it->instr_idx];
             phi.args.push_back(inc);
-            phi.phi_blocks.push_back(latch);
+            phi.phi_blocks.push_back(from);
         }
+    }
+
+    void close_i64_phis(std::uint32_t head) {
+        add_i64_phi_incoming(head, (std::uint32_t)blk_);
         while (!i64_phis_.empty() && i64_phis_.back().head == head)
             i64_phis_.pop_back();
     }

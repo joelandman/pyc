@@ -136,6 +136,36 @@ def local_if():
         i += 1
     return s, t, u
 print("local if:", local_if())
+
+def local_break_cont():
+    n = 5
+    i = 0
+    s = 0
+    while i < n:
+        i += 1
+        if i == 2:
+            continue
+        if i == 4:
+            break
+        s += i
+    t = 0
+    for j in range(5):
+        if j == 2:
+            continue
+        if j == 4:
+            break
+        t += j
+    def early():
+        u = 0
+        k = 0
+        while k < 5:
+            if k == 3:
+                return u
+            u += k
+            k += 1
+        return u
+    return s, i, t, early()
+print("local break cont:", local_break_cont())
 try:
     local_while_param("x")
 except TypeError as e:
