@@ -454,7 +454,7 @@ PyCodeObject* make_func_code(Bound* b) {
         Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
         return nullptr;
     }
-    int flags = CO_OPTIMIZED | CO_NEWLOCALS;
+    int flags = CO_NEWLOCALS;
     if (b->vararg >= 0) flags |= CO_VARARGS;
     if (b->kwarg >= 0) flags |= CO_VARKEYWORDS;
     PyCodeObject* co = PyUnstable_Code_NewWithPosOnlyArgs(
@@ -696,8 +696,13 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
         if (!fdict) goto fail;
         if (b->argnames) {
             for (int i = 0; i < b->nlocals; ++i) {
-                if (!locals[i] || !b->argnames[i]) continue;
-                if (PyDict_SetItemString(fdict, b->argnames[i], locals[i]) < 0) {
+                if (!locals[i] || !b->argnames[i] || !b->argnames[i][0]) continue;
+                PyObject* v = locals[i];
+                if (PyCell_Check(v)) {
+                    v = PyCell_GET(v);
+                    if (!v) continue;
+                }
+                if (PyDict_SetItemString(fdict, b->argnames[i], v) < 0) {
                     Py_DECREF(fdict); goto fail;
                 }
             }

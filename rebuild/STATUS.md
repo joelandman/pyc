@@ -69,10 +69,10 @@ Probes: `verify/corpus/language/getframemodulename.py`,
 
 4. **`EXIT_DIFFERS`.** Dump first. `test_super` **40/40** (3 skipped);
    `test_copy` **81/81**; `test_funcattrs` **35/35**; `test_genericclass`
-   **22/22**; `test_decorators` **15/16**. Frames fill fast locals so
-   `eval(..., None, None)` sees them. `__mro_entries__` expands non-type
-   bases and stores `__orig_bases__`. Remaining Lib/test `EXIT_DIFFERS`
-   still need dumps.
+   **22/22**; `test_bytes` **319/319** (8 skip); `test_dict` **121/121**;
+   `test_complex` **37/37**; `test_format` **18/18**; `test_dynamic` **11/11**.
+   Frames use the function's builtins; `locals()`/`eval` see function
+   locals (cell contents, not cells). Remaining `EXIT_DIFFERS` still need dumps.
 5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
    lowering): `star-unpacking` (parser SyntaxError for star-as-expr;
    call/list/set unpack runs), `starred assignment` (sole `*a =` is

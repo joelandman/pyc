@@ -2,6 +2,7 @@
 #include <Python.h>
 #include "pyc/rt/support.hpp"
 #include <new>
+#include "cpython/funcobject.h"
 #include "internal/pycore_interpframe.h"
 #include "internal/pycore_code.h"
 #include "internal/pycore_ceval.h"
@@ -45,6 +46,11 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
     f->f_executable = PyStackRef_FromPyObjectNew(reinterpret_cast<PyObject*>(code));
     f->f_globals = globals;
     f->f_builtins = PyEval_GetBuiltins();
+    if (func && PyFunction_Check(func)) {
+        auto* fo = reinterpret_cast<PyFunctionObject*>(func);
+        if (fo->func_globals) f->f_globals = fo->func_globals;
+        if (fo->func_builtins) f->f_builtins = fo->func_builtins;
+    }
     f->f_locals = locals;
     if (locals) Py_INCREF(locals);
     f->frame_obj = nullptr;
@@ -85,18 +91,37 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
     return f;
 }
 
+#ifndef CO_FAST_LOCAL
+#define CO_FAST_LOCAL 0x20
+#define CO_FAST_CELL  0x40
+#define CO_FAST_FREE  0x80
+#endif
+
 extern "C" void pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n) {
     if (!frame || !locals || n <= 0) return;
     auto* f = static_cast<_PyInterpreterFrame*>(frame);
     PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
         PyStackRef_AsPyObjectBorrow(f->f_executable));
     int nplus = co ? co->co_nlocalsplus : 0;
+    int nfast = co ? co->co_nlocals : 0;
     int m = n < nplus ? n : nplus;
+    char* kinds = nullptr;
+    Py_ssize_t nk = 0;
+    if (co && co->co_localspluskinds && PyBytes_Check(co->co_localspluskinds)) {
+        kinds = PyBytes_AS_STRING(co->co_localspluskinds);
+        nk = PyBytes_GET_SIZE(co->co_localspluskinds);
+    }
     for (int i = 0; i < m; ++i) {
         if (locals[i])
             f->localsplus[i] = PyStackRef_FromPyObjectNew(locals[i]);
         else
             f->localsplus[i] = PyStackRef_NULL;
+        if (kinds && i < nk) {
+            if (locals[i] && PyCell_Check(locals[i]))
+                kinds[i] = (i >= nfast) ? (char)CO_FAST_FREE : (char)CO_FAST_CELL;
+            else
+                kinds[i] = (char)CO_FAST_LOCAL;
+        }
     }
 }
 
