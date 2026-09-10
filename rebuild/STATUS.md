@@ -67,10 +67,10 @@ Probes: `verify/corpus/language/getframemodulename.py`,
 
 ### P1 — completeness without silent wrong answers
 
-4. **`EXIT_DIFFERS`.** Dump first. `test_super` was 3 fail + 9 err; after
-   `__classcell__` in ns, cell-aware `super()`, and not rewriting a shadowed
-   `super`, it is 1 fail + 4 err (`__closure__`, patched global `super`,
-   `global __class__` in a class body, `del` first arg then `super()`).
+4. **`EXIT_DIFFERS`.** Dump first. `test_super` **40/40** (3 skipped) on HEAD:
+   `__classcell__` in ns, cell-aware `super()`, `__closure__`, `global`/`nonlocal
+   __class__` in a class body, `del` then `super()`. Remaining Lib/test
+   `EXIT_DIFFERS` still need artefact dumps.
 5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
    lowering): `star-unpacking` (star as expression), `starred assignment`
    (star as sole store target; `a, *b, c =` is implemented), `yield` /
@@ -78,10 +78,11 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    marshalled), `async for` / `async with`, `async comprehensions`,
    comprehension `for` targets that are not a `Name`, genexp/symtable count
    mismatch (`compiler/pyc_parse/genexp.py`).
-6. **`PycFunc` is not `PyFunction`.** Getset is name/qualname/dict/doc/module/globals.
-   `inspect`, `__code__`, defaults, closure, annotations, `PyFunction_Check`
-   diverge. Class-build wraps three names (`support.cpp`); that is a patch,
-   not the protocol (I3).
+6. **`PycFunc` is not `PyFunction`.** Now also `__closure__`, `__code__`
+   (empty `PyCode_NewEmpty`), `__defaults__`/`__kwdefaults__`, `__copy__`/
+   `__deepcopy__`, `__reduce__` (by name), vectorcall, `Py_EnterRecursiveCall`
+   in the trampoline. Still not `PyFunction_Check`; `exec(f.__code__)` cannot
+   run native bodies; `co_consts` has no genexps; `dis` still diverges.
 7. **I8 CLI not implemented.** `pycc` hardcodes `$SYSROOT/bin/python3.14`.
    No `--python`, `-std`, `--python-abi`. `pyc_parse --feature-version`
    exists and is unused by the driver.

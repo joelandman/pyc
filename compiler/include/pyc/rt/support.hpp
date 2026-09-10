@@ -164,6 +164,8 @@ PyObject* pyc_rt_load_classname(PyObject* ns, const char* name);
 
 // Unresolvable zero-argument super(); raises the RuntimeError CPython raises.
 int pyc_rt_super_fail(int has_args);
+PyObject* pyc_rt_call_super0(PyObject* fn, PyObject* klass, PyObject* self);
+PyObject* pyc_rt_super_classcell(PyObject* cell);
 int pyc_rt_check_classcell(PyObject* cell, PyObject* cls, PyObject* name);
 
 // Pattern matching. Py_None means "did not match"; a tuple holds the extracted

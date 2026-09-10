@@ -1702,6 +1702,18 @@ private:
                     call_capi("PyObject_DelItem", {obj, key}, n.loc, &ok, {obj, key});
                 },
                 [&](const Name& n2)      {
+                    auto cit = cells_.find(n2.id);
+                    if (cit != cells_.end()) {
+                        ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                        emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, n2.id,
+                                       cit->second, 0, n.loc, make_landing_pad(n.loc)});
+                        mark_owned(cell);
+                        emit(ir::Instr{ir::Op::CellSet, {cell, ir::Value{}}, std::nullopt,
+                                       Ownership::NotAnObject, n2.id, 0, 0, n.loc,
+                                       std::nullopt});
+                        release(cell, n.loc);
+                        return;
+                    }
                     auto lit = locals_.find(n2.id);
                     if (lit != locals_.end()) {
                         emit(ir::Instr{ir::Op::DelLocal, {}, std::nullopt,
@@ -1836,6 +1848,8 @@ private:
     // the cell -- not the class -- is what they capture.
     std::vector<ir::Value> class_cells_;
     std::vector<char> class_cell_used_;
+    std::vector<std::set<std::string>> class_globals_;
+    std::vector<std::set<std::string>> class_nonlocals_;
     std::vector<std::map<std::string, ir::Value>> type_param_env_;
 
     using AnnItems = std::vector<std::pair<std::string, const expr*>>;
@@ -1908,6 +1922,26 @@ private:
             return;
         }
         if (!class_ns_.empty()) {
+            if (!class_globals_.empty() && class_globals_.back().count(name)) {
+                emit(ir::Instr{ir::Op::StoreGlobal, {v}, std::nullopt,
+                               Ownership::NotAnObject, name, 0, 0, loc, std::nullopt});
+                if (owns(v)) release(v, loc);
+                return;
+            }
+            if (!class_nonlocals_.empty() && class_nonlocals_.back().count(name)) {
+                auto ncit = cells_.find(name);
+                if (ncit != cells_.end()) {
+                    ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                    emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, name,
+                                   ncit->second, 0, loc, make_landing_pad(loc)});
+                    mark_owned(cell);
+                    emit(ir::Instr{ir::Op::CellSet, {cell, v}, std::nullopt,
+                                   Ownership::NotAnObject, name, 0, 0, loc, std::nullopt});
+                    release(cell, loc);
+                    if (owns(v)) release(v, loc);
+                    return;
+                }
+            }
             bool ok = true;
             ir::Value key = const_str(name, loc);
             call_capi("PyObject_SetItem", {class_ns_.back(), key, v}, loc, &ok, {key});
@@ -3467,6 +3501,8 @@ private:
         class_cell_used_.push_back(0);
 
         class_ns_.push_back(ns);
+        class_globals_.push_back(declared_globals(n.body));
+        class_nonlocals_.push_back(declared_nonlocals(n.body));
         const std::string qn_str = qualname(n.name);
         qual_.push_back(n.name);
         {
@@ -3492,7 +3528,8 @@ private:
         // `y` rather than the enclosing module. The capsule destructor pops
         // it, so a landing pad that decrefs the guard unwinds the frame.
         ir::Value guard = call_capi("pyc_rt_push_frame", {clsname, ns}, n.loc, &ok);
-        if (!ok) { class_ns_.pop_back(); qual_.pop_back();
+        if (!ok) { class_ns_.pop_back(); class_globals_.pop_back();
+                   class_nonlocals_.pop_back(); qual_.pop_back();
                    class_cells_.pop_back(); class_cell_used_.pop_back(); return false; }
         mark_owned(guard);
         forget(guard);
@@ -3505,11 +3542,15 @@ private:
         AnnItems cann;
         collect_annotations(n.body, cann);
         if (!emit_annotate(cann, n.loc)) { try_stack_.pop_back(); class_ns_.pop_back();
+                                           class_globals_.pop_back();
+                                           class_nonlocals_.pop_back();
                                            qual_.pop_back(); class_cells_.pop_back();
                                            class_cell_used_.pop_back();
                                            return false; }
         for (const stmt& s2 : n.body)
             if (!lower_stmt(s2)) { try_stack_.pop_back(); class_ns_.pop_back();
+                                   class_globals_.pop_back();
+                                   class_nonlocals_.pop_back();
                                    qual_.pop_back(); class_cells_.pop_back();
                                    class_cell_used_.pop_back();
                                    return false; }
@@ -3523,6 +3564,8 @@ private:
         if (need_classcell) store_name_keep("__classcell__", ccell, n.loc);
         locals_ = saved_locals;
         class_ns_.pop_back();
+        class_globals_.pop_back();
+        class_nonlocals_.pop_back();
         qual_.pop_back();
         class_cells_.pop_back();
         class_cell_used_.pop_back();
@@ -4986,20 +5029,17 @@ private:
         emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, "__class__",
                        cslot, 0, c.loc, make_landing_pad(c.loc)});
         mark_owned(cell);
-        ir::Value klass = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        emit(ir::Instr{ir::Op::CellGet, {cell}, klass, Ownership::Owned, "__class__",
-                       0, 0, c.loc, make_landing_pad(c.loc)});
+        ir::Value klass = call_capi("pyc_rt_super_classcell", {cell}, c.loc, ok, {cell});
+        if (!*ok) return {};
         mark_owned(klass);
-        release(cell, c.loc);
         if (cur()->params.empty()) { *ok = true; return {}; }
         Name selfn{cur()->params[0], Load{}, c.loc};
         ir::Value self = lower_name(selfn, ok);
         if (!*ok) return {};
-        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        emit(ir::Instr{ir::Op::CallObject, {fn, klass, self}, out, Ownership::Owned,
-                       "", 0, 0, c.loc, make_landing_pad(c.loc)});
+        ir::Value out = call_capi("pyc_rt_call_super0", {fn, klass, self}, c.loc, ok,
+                                  {fn, klass, self});
+        if (!*ok) return {};
         mark_owned(out);
-        release(fn, c.loc); release(klass, c.loc); release(self, c.loc);
         *ok = true;
         return out;
     }

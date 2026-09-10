@@ -454,7 +454,16 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
         tls_frame_locals = fdict;
         tls_frame_names = b->argnames;
         tls_frame_nnames = b->nlocals;
+        if (Py_EnterRecursiveCall("")) {
+            tls_frame_locals = prev_tls;
+            tls_frame_names = prev_names;
+            tls_frame_nnames = prev_n;
+            pyc_rt_interp_leave(fr);
+            Py_DECREF(fdict);
+            goto fail;
+        }
         PyObject* r = b->impl(locals);
+        Py_LeaveRecursiveCall();
         tls_frame_locals = prev_tls;
         tls_frame_names = prev_names;
         tls_frame_nnames = prev_n;
@@ -488,7 +497,35 @@ namespace {
 // name and dict are writable: functools.wraps assigns __name__, __qualname__,
 // __doc__, __module__ and __wrapped__ onto the wrapper, so a read-only
 // function object makes every @functools.wraps decorator fail.
-struct PycFunc { PyObject_HEAD Bound* b; PyObject* name; PyObject* doc; PyObject* module; PyObject* dict; };
+struct PycFunc { PyObject_HEAD Bound* b; PyObject* name; PyObject* doc; PyObject* module; PyObject* dict;
+                 vectorcallfunc vectorcall; };
+
+PyObject* func_vectorcall(PyObject* callable, PyObject* const* args,
+                          size_t nargsf, PyObject* kwnames) {
+    Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
+    PyObject* tup = PyTuple_New(nargs);
+    if (!tup) return nullptr;
+    for (Py_ssize_t i = 0; i < nargs; ++i) {
+        PyObject* a = args[i];
+        Py_INCREF(a);
+        PyTuple_SET_ITEM(tup, i, a);
+    }
+    PyObject* kw = nullptr;
+    if (kwnames) {
+        Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
+        kw = PyDict_New();
+        if (!kw) { Py_DECREF(tup); return nullptr; }
+        for (Py_ssize_t i = 0; i < nkw; ++i) {
+            if (PyDict_SetItem(kw, PyTuple_GET_ITEM(kwnames, i), args[nargs + i]) < 0) {
+                Py_DECREF(kw); Py_DECREF(tup); return nullptr;
+            }
+        }
+    }
+    PyObject* r = trampoline(reinterpret_cast<PycFunc*>(callable)->b, tup, kw);
+    Py_DECREF(tup);
+    Py_XDECREF(kw);
+    return r;
+}
 
 PyObject* func_call(PyObject* self, PyObject* args, PyObject* kwargs) {
     return trampoline(reinterpret_cast<PycFunc*>(self)->b, args, kwargs);
@@ -558,6 +595,78 @@ PyObject* func_get_globals(PyObject*, void*) {
     return g;
 }
 
+PyObject* func_get_closure(PyObject* self, void*) {
+    PyObject* c = reinterpret_cast<PycFunc*>(self)->b->closure;
+    if (!c) Py_RETURN_NONE;
+    Py_INCREF(c);
+    return c;
+}
+
+PyObject* func_get_code(PyObject* self, void*) {
+    PyCodeObject* co = reinterpret_cast<PycFunc*>(self)->b->frame_code;
+    if (!co) Py_RETURN_NONE;
+    Py_INCREF(co);
+    return reinterpret_cast<PyObject*>(co);
+}
+
+PyObject* func_get_defaults(PyObject* self, void*) {
+    PyObject* d = reinterpret_cast<PycFunc*>(self)->b->defaults;
+    if (!d) Py_RETURN_NONE;
+    Py_INCREF(d);
+    return d;
+}
+
+int func_set_defaults(PyObject* self, PyObject* v, void*) {
+    if (v && v != Py_None && !PyTuple_Check(v)) {
+        PyErr_SetString(PyExc_TypeError, "__defaults__ must be set to a tuple object");
+        return -1;
+    }
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    if (v == Py_None) v = nullptr;
+    Py_XINCREF(v);
+    Py_XSETREF(f->b->defaults, v);
+    return 0;
+}
+
+PyObject* func_get_kwdefaults(PyObject* self, void*) {
+    PyObject* d = reinterpret_cast<PycFunc*>(self)->b->kwdefaults;
+    if (!d) Py_RETURN_NONE;
+    Py_INCREF(d);
+    return d;
+}
+
+int func_set_kwdefaults(PyObject* self, PyObject* v, void*) {
+    if (v && v != Py_None && !PyDict_Check(v)) {
+        PyErr_SetString(PyExc_TypeError, "__kwdefaults__ must be set to a dict object");
+        return -1;
+    }
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    if (v == Py_None) v = nullptr;
+    Py_XINCREF(v);
+    Py_XSETREF(f->b->kwdefaults, v);
+    return 0;
+}
+
+PyObject* func_copy(PyObject* self, PyObject*) {
+    Py_INCREF(self);
+    return self;
+}
+
+PyObject* func_deepcopy(PyObject* self, PyObject*) {
+    Py_INCREF(self);
+    return self;
+}
+
+PyObject* func_reduce(PyObject* self, PyObject*) {
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    if (!f->name) {
+        PyErr_SetString(PyExc_TypeError, "cannot pickle 'function' object");
+        return nullptr;
+    }
+    Py_INCREF(f->name);
+    return f->name;
+}
+
 void func_dealloc(PyObject* self) {
     PycFunc* f = reinterpret_cast<PycFunc*>(self);
     if (f->b) { Py_XDECREF(f->b->defaults); Py_XDECREF(f->b->kwdefaults);
@@ -580,7 +689,18 @@ PyGetSetDef func_getset[] = {
     {"__doc__", func_get_doc, func_set_doc, nullptr, nullptr},
     {"__module__", func_get_module, func_set_module, nullptr, nullptr},
     {"__globals__", func_get_globals, nullptr, nullptr, nullptr},
+    {"__closure__", func_get_closure, nullptr, nullptr, nullptr},
+    {"__code__", func_get_code, nullptr, nullptr, nullptr},
+    {"__defaults__", func_get_defaults, func_set_defaults, nullptr, nullptr},
+    {"__kwdefaults__", func_get_kwdefaults, func_set_kwdefaults, nullptr, nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
+};
+
+PyMethodDef func_methods[] = {
+    {"__copy__", func_copy, METH_NOARGS, nullptr},
+    {"__deepcopy__", func_deepcopy, METH_O, nullptr},
+    {"__reduce__", func_reduce, METH_NOARGS, nullptr},
+    {nullptr, nullptr, 0, nullptr},
 };
 
 PyTypeObject PycFuncType = {
@@ -593,12 +713,14 @@ bool init_func_type() {
     static bool done = false, okv = false;
     if (done) return okv;
     done = true;
-    PycFuncType.tp_flags = Py_TPFLAGS_DEFAULT;
-    PycFuncType.tp_call = func_call;
+    PycFuncType.tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_VECTORCALL;
+    PycFuncType.tp_call = PyVectorcall_Call;
+    PycFuncType.tp_vectorcall_offset = offsetof(PycFunc, vectorcall);
     PycFuncType.tp_repr = func_repr;
     PycFuncType.tp_descr_get = func_descr_get;
     PycFuncType.tp_dealloc = func_dealloc;
     PycFuncType.tp_getset = func_getset;
+    PycFuncType.tp_methods = func_methods;
     PycFuncType.tp_getattro = PyObject_GenericGetAttr;
     PycFuncType.tp_setattro = PyObject_GenericSetAttr;
     PycFuncType.tp_dictoffset = offsetof(PycFunc, dict);
@@ -641,6 +763,7 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     fn->dict = nullptr;                 // created lazily by generic setattr
     fn->doc = nullptr;                  // reads as None until a docstring is set
     fn->module = nullptr;
+    fn->vectorcall = func_vectorcall;
     PyObject* g = globals_dict();
     PyObject* modname = g ? PyDict_GetItemString(g, "__name__") : nullptr;
     if (modname) {
@@ -1381,10 +1504,40 @@ extern "C" PyObject* pyc_rt_match_class(PyObject* subj, PyObject* cls,
 }
 
 extern "C" int pyc_rt_super_fail(int has_args) {
+    if (has_args && tls_frame_locals && tls_frame_names && tls_frame_nnames > 0
+        && tls_frame_names[0]
+        && !PyDict_GetItemString(tls_frame_locals, tls_frame_names[0])) {
+        PyErr_SetString(PyExc_RuntimeError, "super(): arg[0] deleted");
+        return -1;
+    }
     PyErr_SetString(PyExc_RuntimeError,
                     has_args ? "super(): __class__ cell not found"
                              : "super(): no arguments");
     return -1;
+}
+
+extern "C" PyObject* pyc_rt_call_super0(PyObject* fn, PyObject* klass,
+                                        PyObject* self) {
+    PyObject* b = PyEval_GetBuiltins();
+    PyObject* builtin = b ? PyDict_GetItemString(b, "super") : nullptr;
+    if (fn != builtin)
+        return PyObject_CallNoArgs(fn);
+    PyObject* args[2] = {klass, self};
+    return PyObject_Vectorcall(fn, args, 2, nullptr);
+}
+
+extern "C" PyObject* pyc_rt_super_classcell(PyObject* cell) {
+    if (!cell || !PyCell_Check(cell)) {
+        PyErr_SetString(PyExc_RuntimeError, "super(): bad __class__ cell");
+        return nullptr;
+    }
+    PyObject* v = PyCell_GET(cell);
+    if (!v) {
+        PyErr_SetString(PyExc_RuntimeError, "super(): empty __class__ cell");
+        return nullptr;
+    }
+    Py_INCREF(v);
+    return v;
 }
 
 extern "C" int pyc_rt_check_classcell(PyObject* cell, PyObject* cls,

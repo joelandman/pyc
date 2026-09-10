@@ -841,6 +841,8 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"pyc_rt_raise_from", Ownership::NotAnObject, true, 2, {}, false, "", false, "", "oo"},
     {"pyc_rt_super_fail", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "i"},
     {"pyc_rt_check_classcell", Ownership::NotAnObject, true, 3, {}, false, "", false, "", "ooo"},
+    {"pyc_rt_call_super0", Ownership::Owned, true, 3, {}, false, "", false, "", "ooo"},
+    {"pyc_rt_super_classcell", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_match_sequence", Ownership::Owned, true, 4, {}, false, "", false, "", "oiii"},
     {"pyc_rt_match_mapping", Ownership::Owned, true, 3, {}, false, "", false, "", "ooi"},
     {"pyc_rt_match_class", Ownership::Owned, true, 4, {}, false, "", false, "", "ooio"},
@@ -1090,6 +1092,6 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"Py_PACK_VERSION", Ownership::Unknown, true, 0, {}, false, "", true, "3.14", ""},
 };
 
-inline constexpr int kCApiSymbolCount = 1061;
+inline constexpr int kCApiSymbolCount = 1063;
 
 }  // namespace pyc::rt
