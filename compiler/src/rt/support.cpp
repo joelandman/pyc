@@ -137,7 +137,7 @@ int pyc_rt_push_module_frame(void) {
     if (!g) return -1;
     PyCodeObject* co = PyCode_NewEmpty("<pyc>", "<module>", 1);
     if (!co) return -1;
-    void* f = pyc_rt_interp_enter(co, g, g);
+    void* f = pyc_rt_interp_enter(co, g, g, nullptr);
     if (!f) { Py_DECREF(co); return -1; }
     tls_module_frame = f;
     tls_module_code = co;
@@ -259,8 +259,8 @@ struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
                PyObject* defaults; PyObject* kwdefaults;
                int vararg; int kwarg;
-               PyObject* closure; int nfree;
-               PyCodeObject* frame_code; };
+                PyObject* closure; int nfree;
+                PyCodeObject* frame_code; PyObject* frame_func; };
 
 PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
     if (!b) return nullptr;
@@ -445,7 +445,8 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
             if (!b->frame_code) { Py_DECREF(fdict); goto fail; }
         }
         PyObject* g = globals_dict();
-        void* fr = g ? pyc_rt_interp_enter(b->frame_code, g, fdict) : nullptr;
+        void* fr = g ? pyc_rt_interp_enter(b->frame_code, g, fdict, b->frame_func)
+                     : nullptr;
         if (!fr) { Py_DECREF(fdict); goto fail; }
         PyObject* prev_tls = tls_frame_locals;
         const char* const* prev_names = tls_frame_names;
@@ -561,6 +562,7 @@ void func_dealloc(PyObject* self) {
     PycFunc* f = reinterpret_cast<PycFunc*>(self);
     if (f->b) { Py_XDECREF(f->b->defaults); Py_XDECREF(f->b->kwdefaults);
                 Py_XDECREF(f->b->closure); Py_XDECREF(f->b->frame_code);
+                Py_XDECREF(f->b->frame_func);
                 std::free(f->b->name); delete f->b; }
     Py_XDECREF(f->name);
     Py_XDECREF(f->doc);
@@ -629,7 +631,8 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     }
     Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nposonly, nlocals, owned,
                                         argnames, defaults, kwdefaults,
-                                        vararg_slot, kwarg_slot, clo, nfree, nullptr};
+                                        vararg_slot, kwarg_slot, clo, nfree,
+                                        nullptr, nullptr};
     if (!b) { Py_XDECREF(defaults); std::free(owned); return PyErr_NoMemory(); }
     if (!init_func_type()) { Py_XDECREF(defaults); std::free(owned); delete b; return nullptr; }
     PycFunc* fn = PyObject_New(PycFunc, &PycFuncType);
@@ -646,6 +649,11 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     }
     fn->name = PyUnicode_FromString(name);
     if (!fn->name) { Py_DECREF(fn); return nullptr; }
+    // Snapshot the function object at DEF time so sys._getframemodulename
+    // still reports __main__ after the module rebinds __name__.
+    b->frame_code = PyCode_NewEmpty("<pyc>", owned, 1);
+    if (b->frame_code && g)
+        b->frame_func = PyFunction_New(reinterpret_cast<PyObject*>(b->frame_code), g);
     return reinterpret_cast<PyObject*>(fn);
 }
 

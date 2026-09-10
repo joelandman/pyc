@@ -31,7 +31,7 @@ extern "C" int pyc_rt_handle_pending(void) {
 }
 
 extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
-                                     PyObject* locals) {
+                                     PyObject* locals, PyObject* func) {
     if (!code || !globals) return nullptr;
     PyThreadState* ts = PyThreadState_Get();
     int size = code->co_framesize;
@@ -39,7 +39,6 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
     _PyInterpreterFrame* f = _PyThreadState_PushFrame(ts, (size_t)size);
     if (!f) { PyErr_NoMemory(); return nullptr; }
     f->previous = ts->current_frame;
-    f->f_funcobj = PyStackRef_None;
     f->f_executable = PyStackRef_FromPyObjectNew(reinterpret_cast<PyObject*>(code));
     f->f_globals = globals;
     f->f_builtins = PyEval_GetBuiltins();
@@ -57,6 +56,24 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
 #ifdef Py_DEBUG
     f->lltrace = 0;
 #endif
+    // sys._getframemodulename reads f_funcobj via PyFunction_GetModule.
+    // A real PyFunctionObject is required (PycFunc fails PyFunction_Check).
+    // `func` is the def-time snapshot: constructing here from live globals
+    // would pick up `__name__ = "test.test_metaclass"` and miss sys.modules.
+    PyObject* fn = func;
+    if (!fn || !PyFunction_Check(fn)) {
+        fn = PyFunction_New(reinterpret_cast<PyObject*>(code), globals);
+        if (!fn) {
+            Py_XDECREF(locals);
+            PyStackRef_CLOSE(f->f_executable);
+            _PyThreadState_PopFrame(ts, f);
+            return nullptr;
+        }
+        f->f_funcobj = PyStackRef_FromPyObjectNew(fn);
+        Py_DECREF(fn);
+    } else {
+        f->f_funcobj = PyStackRef_FromPyObjectNew(fn);
+    }
     ts->current_frame = f;
     return f;
 }
@@ -91,7 +108,7 @@ extern "C" PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals) {
     }
     PyCodeObject* co = PyCode_NewEmpty("<pyc>", nm, 1);
     if (!co) return nullptr;
-    void* f = pyc_rt_interp_enter(co, g, locals);
+    void* f = pyc_rt_interp_enter(co, g, locals, nullptr);
     Py_DECREF(co);
     if (!f) return nullptr;
     PyObject* cap = PyCapsule_New(f, "pyc.iframe", iframe_capsule_dtor);

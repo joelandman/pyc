@@ -214,7 +214,8 @@ int pyc_rt_import_star(PyObject* mod);
 PyObject* pyc_rt_unpack_ex(PyObject* value, Py_ssize_t nbefore, Py_ssize_t nafter);
 
 // C1b: interpreter frame on the thread datastack. locals is borrowed.
-void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals, PyObject* locals);
+void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals, PyObject* locals,
+                          PyObject* func);
 void  pyc_rt_interp_leave(void* frame);
 int pyc_rt_push_module_frame(void);
 void pyc_rt_pop_module_frame(void);

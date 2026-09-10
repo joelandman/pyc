@@ -1,0 +1,213 @@
+# pyc — current state and MVP
+
+**Date:** 2026-09-10. Numbers from `compiler/baseline-libtest.json` and
+`compiler/baseline-language.json` unless marked unknown. CHARTER remains
+binding; this file is the dashboard, not an amendment.
+
+Roles that produced this: Architect (`agents/architect.md`), PM
+(`agents/pm.md`), SWE-compiler (`agents/swe-compiler.md`), SWE-runtime
+(`agents/swe-runtime.md`).
+
+## Verdict
+
+The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
+libpython, C-API protocols, I1 refusals, I5 differential harness, published
+I6. Language + gaps + concurrency is **788/788** impactful. `Lib/test` is
+**246/389 = 63.24%** (`-O0`), mostly **module-level import**, not unittest.
+C1 (frames) and C2 (periodic GIL) are closed. The remaining product gap is
+not a new runtime: it is well-formed IR on every accepted program, named
+refusals instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and a
+developer toolchain that still requires a purpose-built 3.14.7 sysroot.
+
+## Measured now
+
+| Check | Result |
+|---|---|
+| language + gaps + concurrency | 788/788 impactful |
+| `Lib/test` (I6) | 246/389 (63.24%) |
+| I6 composition | 214 clean + 32 `STDERR_DIFFERS`-only = 246 pass |
+| `DID_NOT_COMPILE` | 24 |
+| `EXIT_DIFFERS` | 102 (95 of them CPython 0 / pyc 1) |
+| `STDOUT_DIFFERS` | 13 (10 oracle-unstable) |
+| timeout | 8 (6 CPython budget; 2 pyc: `test_exceptions`, `test_syslog`) |
+| `ORACLE_UNSTABLE` | 12 |
+| A1 round-trip | 3.14.7 and 3.13.15 TOTAL (`compiler/README.md`) |
+| Tier-1 / NumPy | CI wheel smoke; `ldd` has no libpython `DT_NEEDED` |
+| C1b / C2 | closed; probes in `language/` |
+
+Do not drive `Lib/test` under unittest yet. That will lower I6
+(`CORRECTNESS.md` C3) without explaining the 102 exit diffs.
+
+## Major remaining issues
+
+Ranked by Architect and SWE-compiler. Causes of most `EXIT_DIFFERS` are
+**unknown** — dump artefacts before adding syntax.
+
+### P0 — correctness of what we already accept
+
+**Closed 2026-09-10** (measured on HEAD vs sysroot 3.14.7; `baseline-libtest.json`
+is stale, 2026-08-27).
+
+1. **Malformed IR.** `test_super.py`, `test_tokenize.py`, `test__interpreters.py`
+   all compile on HEAD (`llvm-as-22` / `opt-22 -passes=verify` clean). SSA
+   fixes after the baseline (`a979c32`, `185304e`, …) closed this. Remaining
+   `test_super` diffs are unittest failures, not invalid IR.
+2. **`test_unpack` exit 0 vs 1.** Both sides now exit 1. The old subject-0
+   was `DocTestSuite()` never running.
+3. **Subject exit 5.** Not SIGTRAP. unittest's "NO TESTS RAN" is exit 5.
+   Cause: `sys._getframemodulename` returned None (`f_funcobj` was
+   `PyStackRef_None`; doctest does not fall back to `f_globals['__name__']`)
+   and `__main__.__doc__` was unset, so module doctests were empty.
+   After the frame-func + module-doc fixes, exit matches CPython on
+   `test_unpack`, `test_unpack_ex`, `test_extcall`, `test_genexps`,
+   `test_pep646_syntax`, `test_descrtut`, `test_metaclass`.
+
+Probes: `verify/corpus/language/getframemodulename.py`,
+`getframemodulename_rebind.py`, `doctest_suite.py`, `module_doc.py`.
+
+### P1 — completeness without silent wrong answers
+
+4. **102 unexplained `EXIT_DIFFERS`.** Nested-class closures are fixed; do
+   not reuse that story. Next work is artefact dump, not new features.
+5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
+   lowering): `star-unpacking` (star as expression), `starred assignment`
+   (star as sole store target; `a, *b, c =` is implemented), `yield` /
+   `yield from` / `await` as native exprs (function-level yield is
+   marshalled), `async for` / `async with`, `async comprehensions`,
+   comprehension `for` targets that are not a `Name`, genexp/symtable count
+   mismatch (`compiler/pyc_parse/genexp.py`).
+6. **`PycFunc` is not `PyFunction`.** Getset is name/qualname/dict/doc/module/globals.
+   `inspect`, `__code__`, defaults, closure, annotations, `PyFunction_Check`
+   diverge. Class-build wraps three names (`support.cpp`); that is a patch,
+   not the protocol (I3).
+7. **I8 CLI not implemented.** `pycc` hardcodes `$SYSROOT/bin/python3.14`.
+   No `--python`, `-std`, `--python-abi`. `pyc_parse --feature-version`
+   exists and is unused by the driver.
+8. **Lock-file scale.** `lower.cpp` ~6k lines. Header still says nothing
+   unboxes; unboxing has landed (`UNBOXING.md` 1–16).
+
+### P2 — product / process
+
+9. **Baseline vs HEAD drift.** Current `lower.cpp` implements t-strings,
+   `except*`, type aliases, kw-only lambdas; baseline may still record
+   those as compile diagnostics. Re-run metric before treating that list as
+   current.
+10. **Developer sysroot.** LLVM 22 + hand-built 3.14.7 tree +
+    `PYC_LOWER=/tmp/pyc_lower`. See workstream S below.
+11. **Output not relocatable.** `entry.cpp` does not set `PyConfig.home`;
+    prefix is baked into static libpython.
+12. **A2 leak bar** (`Py_REF_DEBUG` slope on the corpus) not measured on the
+    metric sysroot.
+
+### Closed — do not re-open
+
+C1b frames, C2 `_Py_HandlePending`, comprehension cells, nested-class
+closures, alloca hoist, I3 (no method-name chains), I4 generated AST +
+generic-arm lint, I5/I5a, I7 NumPy in CI. Unboxing stays behind proofs.
+
+## MVP
+
+CHARTER product: native, deployable, CPython-correct, approaching real
+Python. Completeness before speed. CHARTER §4 is **v1**, not MVP.
+
+**MVP means:** a real program compiles to one Tier-1 binary that matches
+CPython on what it accepts, is easy to copy (`ldd`: no libpython, `dlopen`
+works), and completeness is measured and not gamed. Not: C speed, two
+`--python=` targets, Tier 2, native generators, unittest-driven `Lib/test`.
+
+| # | Check | Bar |
+|---|---|---|
+| M1 | `make -C verify verify` | 788/788 impactful; no new silent-wrong |
+| M2 | `make -C verify fast` | `--fail-on-silent-wrong` |
+| M3 | CI `ldd` smoke | no `libpython` `DT_NEEDED` |
+| M4 | CI wheel step | NumPy import+run in that binary |
+| M5 | I6 vs README | **246/389 (63.24%)**, no regress |
+| M6 | remaining compile fails | construct + line + reason — **not** invalid LLVM IR |
+
+**Not MVP gates:** unittest metric; `--python=3.13`; ELF `-static`; unboxing
+vs C.
+
+## Next steps
+
+**Now**
+
+- Keep M1–M5 green.
+- Dump stderr/IR for P0 (malformed IR, `test_unpack`, exit-5) and the 102
+  `EXIT_DIFFERS` before adding syntax.
+- Re-run `make -C verify metric` so baseline matches HEAD (t-strings /
+  `except*` / type aliases).
+- This file is the dashboard. CHARTER frame-deferred text is stale; amend
+  only with user sign-off.
+
+**Next (MVP completeness)**
+
+1. Turn LLVM verifier failures into fixes or I1 diagnostics (M6).
+2. Probe remaining refusals (I1a): comprehension store targets, star-as-expr,
+   yield detection vs marshal path. Implement only what real programs hit.
+3. Function-object protocol (`PycFunc` → something `inspect` can use), or a
+   loud refusal — no callsite dispatch (I3).
+4. `__annotate__(format)` to match 3.14, or `NotImplementedError` for
+   unimplemented formats — never a wrong dict.
+5. Workstream S phases 0–2 (sysroot as data + prebuilt artifact).
+
+**Later (v1 / CHARTER §4)**
+
+I8 two targets from one binary; more Lib/test; unittest-driven metric;
+native generators; traceback carets; Tier 2; unboxing remainder.
+
+Suggested compiler order (SWE-compiler): I1a probes → function protocol →
+`__annotate__` → comprehension `for` targets → leave async-in-native alone
+→ grow Lib/test by fixing loud failures → unboxing/carets last.
+
+## Workstream S — stop requiring a local CPython *build*
+
+Two different things. Do not mix them.
+
+**(a) Output binaries link static libpython (Tier 1).** Settled (CHARTER §2,
+I7). Wheels need it. **Do not drop.**
+
+**(b) Developers/CI must compile a purpose-built 3.14.7 sysroot**
+(`tools/build-python-sysroot.sh`, default
+`$HOME/opt/py-sysroots/cp314-3.14.7-tier1`). This is **not** implied by (a).
+It is onboarding and CI friction.
+
+Four Pythons are conflated today:
+
+| | Role | Need Python headers in `pyc_lower`? |
+|---|---|---|
+| A | Host: run `pyc_parse` (subprocess) | **No.** `pyc_lower` is plain clang++. |
+| B | Target: headers + `libpython.a` to **link the user's program** | Yes, including `internal/pycore_*.h` for C1b (`frame.cpp`). |
+| C | Oracle: I5 differential tests | Same interpreter as B. |
+| D | Purpose-built Tier-1 vs stock distro | Distro 3.12 cannot do B/C/I7. |
+
+Parse already uses the target interpreter (VERSION_TARGETING option (b)).
+I8 is design, not the current driver: `pycc` hardcodes `python3.14` and
+does not read `pyc-sysroot.json`.
+
+**What cannot be removed:** libpython in every output; internal headers for
+C1b; same CPython for parse + link + I5 when claiming correctness; wheel
+ABI = sysroot ABI; stdlib next to that libpython at run time.
+
+**Rejected:** stock distro `libpython` for linking; parse-3.12 / link-3.14;
+an independent runtime.
+
+| Phase | What | Unlocks |
+|---|---|---|
+| S0 now | Document (a)≠(b). Fix stale “frontend links libpython” CI comment. | Honest onboarding |
+| S1 next | `pycc` reads `pyc-sysroot.json`; `--python-sysroot` alias; stop hardcoding `python3.14` | I8 locally |
+| S2 next | Publish a prebuilt sysroot tarball (CI already caches the tree). `build-python-sysroot.sh` remains the *producer*, not the onboarding step. | Developers do not compile CPython |
+| S3 later | Relocatable toolchain (`pycc` finds sysroot next to itself) **and** `PyConfig.home` so *output* binaries find stdlib after the tree moves | Download ≠ `$HOME/opt/...` |
+| S4 later | Casual `pycc file.py` uses bundled/downloaded sysroot. Missing target → compile error, not a wrong binary. Verify still uses that interpreter as oracle. PATH `python3` only for parse-only / `--emit-llvm` when `version_info[:2]` matches the PTD. | No local CPython install to compile a program |
+| S5 v1 | Release layout: `bin/pycc`, `lib/pyc/`, `sysroot/`. `--python=X.Y` is a second artifact, not a flag on one libpython. | VERSION_TARGETING as shipped |
+
+S2 is the first phase that removes “build this specific Python on your
+machine.” S4 is when the *compiler user* no longer needs a local copy.
+Contributors changing A2 still rebuild the sysroot when headers change.
+
+## Doc debt (do not confuse with compiler bugs)
+
+Stale vs executable: CHARTER still says frames are deferred; INTERFACES §5
+CLI is unimplemented; VERSION_TARGETING / CHARTER §6 still mention
+`/home/joe/local`; `compiler/README.md` still lists some refusals that have
+landed; GENERATORS/GIL/UNBOXING status lines lag the code. Trust `pycc` and
+`verify/` over those sentences. CHARTER edits need explicit sign-off.

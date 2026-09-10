@@ -11,4 +11,8 @@ compiler logic except tiny mechanical edits.
 - Commit only when asked. Push only when asked.
 
 Tickets: [rebuild/CORRECTNESS.md](../rebuild/CORRECTNESS.md).
+Dashboard: [rebuild/STATUS.md](../rebuild/STATUS.md).
 Contracts: [rebuild/AGENT_DIRECTIVES.md](../rebuild/AGENT_DIRECTIVES.md).
+
+Peer roles: [architect.md](architect.md), [pm.md](pm.md),
+[swe-compiler.md](swe-compiler.md), [swe-runtime.md](swe-runtime.md).

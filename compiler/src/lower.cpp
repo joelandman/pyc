@@ -80,6 +80,18 @@ public:
         AnnItems mann;
         collect_annotations(mm->body, mann);
         if (!emit_annotate(mann, {})) return false;
+        if (!mm->body.empty()) {
+            const Expr* e = std::get_if<Expr>(&mm->body.front().v);
+            if (e) {
+                const Constant* c = std::get_if<Constant>(&e->value->v);
+                if (c && std::holds_alternative<ConstStr>(c->value.v)) {
+                    bool ok = true;
+                    ir::Value doc = lower_expr(*e->value, &ok);
+                    if (!ok) return false;
+                    store_name("__doc__", doc, e->loc);
+                }
+            }
+        }
         for (const stmt& s : mm->body)
             if (!lower_stmt(s)) return false;
         emit(ir::Instr{ir::Op::Return, {}, std::nullopt,

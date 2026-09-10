@@ -24,6 +24,9 @@ push `_PyInterpreterFrame` on the thread datastack, so `locals()` /
 `globals()` / `eval` / `exec` / `sys._getframe` match CPython on the
 known-gaps probes. Plan: [rebuild/CORRECTNESS.md](rebuild/CORRECTNESS.md).
 
+Current state, MVP checklist, and sysroot-independence plan:
+[rebuild/STATUS.md](rebuild/STATUS.md).
+
 ## Build
 
 Needs clang++/LLVM 22 and a CPython **sysroot** (Tier 1: static libpython,
@@ -74,6 +77,7 @@ Flow: target `ast.parse` → JSON → generated `pyc::ast` → SSA IR → LLVM I
 - [rebuild/CHARTER.md](rebuild/CHARTER.md) — product definition and invariants
 - [rebuild/INTERFACES.md](rebuild/INTERFACES.md) — layer contracts
 - [rebuild/AGENT_DIRECTIVES.md](rebuild/AGENT_DIRECTIVES.md) — how to work on it
+- [rebuild/STATUS.md](rebuild/STATUS.md) — current state, MVP, next steps
 - [rebuild/CORRECTNESS.md](rebuild/CORRECTNESS.md) — open correctness work
 - [rebuild/UNBOXING.md](rebuild/UNBOXING.md) — performance (after correctness)
 - [compiler/README.md](compiler/README.md) — frontend / C-API notes
