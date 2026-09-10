@@ -262,6 +262,43 @@ struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                 PyObject* closure; int nfree;
                 PyCodeObject* frame_code; PyObject* frame_func; };
 
+PyCodeObject* make_func_code(Bound* b) {
+    int npar = b->nargs + b->nkwonly;
+    if (b->vararg >= 0) npar++;
+    if (b->kwarg >= 0) npar++;
+    int nvar = b->nlocals > npar ? b->nlocals : npar;
+    if (nvar < 0) nvar = 0;
+    PyObject* varnames = PyTuple_New(nvar);
+    if (!varnames) return nullptr;
+    for (int i = 0; i < nvar; ++i) {
+        const char* s = (b->argnames && i < b->nlocals && b->argnames[i])
+                            ? b->argnames[i] : "";
+        PyObject* u = PyUnicode_FromString(s);
+        if (!u) { Py_DECREF(varnames); return nullptr; }
+        PyTuple_SET_ITEM(varnames, i, u);
+    }
+    PyObject* empty_bytes = PyBytes_FromStringAndSize("", 0);
+    PyObject* empty_tuple = PyTuple_New(0);
+    PyObject* filename = PyUnicode_FromString("<pyc>");
+    PyObject* name = PyUnicode_FromString(b->name ? b->name : "<fn>");
+    if (!empty_bytes || !empty_tuple || !filename || !name) {
+        Py_XDECREF(empty_bytes); Py_XDECREF(empty_tuple);
+        Py_XDECREF(filename); Py_XDECREF(name); Py_DECREF(varnames);
+        return nullptr;
+    }
+    int flags = CO_OPTIMIZED | CO_NEWLOCALS;
+    if (b->vararg >= 0) flags |= CO_VARARGS;
+    if (b->kwarg >= 0) flags |= CO_VARKEYWORDS;
+    PyCodeObject* co = PyUnstable_Code_NewWithPosOnlyArgs(
+        b->nargs, b->nposonly, b->nkwonly, nvar, 1, flags,
+        empty_bytes, empty_tuple, empty_tuple, varnames,
+        empty_tuple, empty_tuple, filename, name, name, 1,
+        empty_bytes, empty_bytes);
+    Py_DECREF(empty_bytes); Py_DECREF(empty_tuple);
+    Py_DECREF(filename); Py_DECREF(name); Py_DECREF(varnames);
+    return co;
+}
+
 PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
     if (!b) return nullptr;
     Py_ssize_t npos = PyTuple_GET_SIZE(args);
@@ -441,7 +478,7 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
             }
         }
         if (!b->frame_code) {
-            b->frame_code = PyCode_NewEmpty("<pyc>", b->name, 1);
+            b->frame_code = make_func_code(b);
             if (!b->frame_code) { Py_DECREF(fdict); goto fail; }
         }
         PyObject* g = globals_dict();
@@ -498,6 +535,7 @@ namespace {
 // __doc__, __module__ and __wrapped__ onto the wrapper, so a read-only
 // function object makes every @functools.wraps decorator fail.
 struct PycFunc { PyObject_HEAD Bound* b; PyObject* name; PyObject* doc; PyObject* module; PyObject* dict;
+                 PyObject* annotate; PyObject* annotations;
                  vectorcallfunc vectorcall; };
 
 PyObject* func_vectorcall(PyObject* callable, PyObject* const* args,
@@ -647,6 +685,61 @@ int func_set_kwdefaults(PyObject* self, PyObject* v, void*) {
     return 0;
 }
 
+PyObject* func_get_annotate(PyObject* self, void*) {
+    PyObject* a = reinterpret_cast<PycFunc*>(self)->annotate;
+    if (!a) Py_RETURN_NONE;
+    Py_INCREF(a);
+    return a;
+}
+
+int func_set_annotate(PyObject* self, PyObject* v, void*) {
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    if (v == Py_None) v = nullptr;
+    Py_XINCREF(v);
+    Py_XSETREF(f->annotate, v);
+    Py_CLEAR(f->annotations);
+    return 0;
+}
+
+PyObject* func_get_annotations(PyObject* self, void*) {
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    if (f->annotations) {
+        Py_INCREF(f->annotations);
+        return f->annotations;
+    }
+    if (!f->annotate) {
+        f->annotations = PyDict_New();
+        if (!f->annotations) return nullptr;
+        Py_INCREF(f->annotations);
+        return f->annotations;
+    }
+    PyObject* fmt = PyLong_FromLong(1);
+    if (!fmt) return nullptr;
+    PyObject* d = PyObject_CallOneArg(f->annotate, fmt);
+    Py_DECREF(fmt);
+    if (!d) return nullptr;
+    if (!PyDict_Check(d)) {
+        Py_DECREF(d);
+        PyErr_SetString(PyExc_TypeError, "__annotate__() must return a dict");
+        return nullptr;
+    }
+    f->annotations = d;
+    Py_INCREF(d);
+    return d;
+}
+
+int func_set_annotations(PyObject* self, PyObject* v, void*) {
+    if (v && v != Py_None && !PyDict_Check(v)) {
+        PyErr_SetString(PyExc_TypeError, "__annotations__ must be set to a dict object");
+        return -1;
+    }
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    if (v == Py_None) v = nullptr;
+    Py_XINCREF(v);
+    Py_XSETREF(f->annotations, v);
+    return 0;
+}
+
 PyObject* func_copy(PyObject* self, PyObject*) {
     Py_INCREF(self);
     return self;
@@ -677,6 +770,8 @@ void func_dealloc(PyObject* self) {
     Py_XDECREF(f->doc);
     Py_XDECREF(f->module);
     Py_XDECREF(f->dict);
+    Py_XDECREF(f->annotate);
+    Py_XDECREF(f->annotations);
     Py_TYPE(self)->tp_free(self);
 }
 
@@ -693,6 +788,8 @@ PyGetSetDef func_getset[] = {
     {"__code__", func_get_code, nullptr, nullptr, nullptr},
     {"__defaults__", func_get_defaults, func_set_defaults, nullptr, nullptr},
     {"__kwdefaults__", func_get_kwdefaults, func_set_kwdefaults, nullptr, nullptr},
+    {"__annotate__", func_get_annotate, func_set_annotate, nullptr, nullptr},
+    {"__annotations__", func_get_annotations, func_set_annotations, nullptr, nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
 
@@ -763,6 +860,8 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     fn->dict = nullptr;                 // created lazily by generic setattr
     fn->doc = nullptr;                  // reads as None until a docstring is set
     fn->module = nullptr;
+    fn->annotate = nullptr;
+    fn->annotations = nullptr;
     fn->vectorcall = func_vectorcall;
     PyObject* g = globals_dict();
     PyObject* modname = g ? PyDict_GetItemString(g, "__name__") : nullptr;
@@ -774,7 +873,7 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     if (!fn->name) { Py_DECREF(fn); return nullptr; }
     // Snapshot the function object at DEF time so sys._getframemodulename
     // still reports __main__ after the module rebinds __name__.
-    b->frame_code = PyCode_NewEmpty("<pyc>", owned, 1);
+    b->frame_code = make_func_code(b);
     if (b->frame_code && g)
         b->frame_func = PyFunction_New(reinterpret_cast<PyObject*>(b->frame_code), g);
     return reinterpret_cast<PyObject*>(fn);

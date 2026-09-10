@@ -72,17 +72,20 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    __class__` in a class body, `del` then `super()`. Remaining Lib/test
    `EXIT_DIFFERS` still need artefact dumps.
 5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
-   lowering): `star-unpacking` (star as expression), `starred assignment`
-   (star as sole store target; `a, *b, c =` is implemented), `yield` /
-   `yield from` / `await` as native exprs (function-level yield is
-   marshalled), `async for` / `async with`, `async comprehensions`,
-   comprehension `for` targets that are not a `Name`, genexp/symtable count
-   mismatch (`compiler/pyc_parse/genexp.py`).
+   lowering): `star-unpacking` (parser SyntaxError for star-as-expr;
+   call/list/set unpack runs), `starred assignment` (sole `*a =` is
+   CPython SyntaxError; `a, *b, c =` is implemented), `yield` / `await` /
+   `async for` / `async with` in native (function-level yield/async is
+   marshalled). Comprehension `for` targets now include Name/tuple/list
+   and attribute/subscript. Remaining: async comprehensions, genexp/
+   symtable count mismatch (`compiler/pyc_parse/genexp.py`).
 6. **`PycFunc` is not `PyFunction`.** Now also `__closure__`, `__code__`
-   (empty `PyCode_NewEmpty`), `__defaults__`/`__kwdefaults__`, `__copy__`/
-   `__deepcopy__`, `__reduce__` (by name), vectorcall, `Py_EnterRecursiveCall`
-   in the trampoline. Still not `PyFunction_Check`; `exec(f.__code__)` cannot
-   run native bodies; `co_consts` has no genexps; `dis` still diverges.
+   (argcount/varnames/flags for `inspect.signature`), `__defaults__`/
+   `__kwdefaults__`, `__copy__`/`__deepcopy__`, `__reduce__` (by name),
+   vectorcall, `Py_EnterRecursiveCall` in the trampoline, `__annotate__`/
+   `__annotations__` (param + return; format 1). Nested annotations that
+   capture enclosing locals still NameError. Still not `PyFunction_Check`;
+   `exec(f.__code__)` cannot run native bodies.
 7. **I8 CLI not implemented.** `pycc` hardcodes `$SYSROOT/bin/python3.14`.
    No `--python`, `-std`, `--python-abi`. `pyc_parse --feature-version`
    exists and is unused by the driver.
@@ -145,12 +148,12 @@ vs C.
 **Next (MVP completeness)**
 
 1. Turn LLVM verifier failures into fixes or I1 diagnostics (M6).
-2. Probe remaining refusals (I1a): comprehension store targets, star-as-expr,
-   yield detection vs marshal path. Implement only what real programs hit.
-3. Function-object protocol (`PycFunc` → something `inspect` can use), or a
-   loud refusal — no callsite dispatch (I3).
-4. `__annotate__(format)` to match 3.14, or `NotImplementedError` for
-   unimplemented formats — never a wrong dict.
+2. I1a probed: star/yield/async in well-formed programs marshal or parse;
+   comprehension attr/tuple targets implemented. Async comprehensions remain.
+3. Function-object protocol: pickle/vectorcall/__annotate__/signature landed.
+   Still not `PyFunction_Check`; `exec(f.__code__)` cannot run native bodies.
+4. Module/class `__annotate__` exists; function param/return `__annotate__`
+   landed (format 1). Nested capture of enclosing locals still NameError.
 5. Workstream S phases 0–2 (sysroot as data + prebuilt artifact).
 
 **Later (v1 / CHARTER §4)**

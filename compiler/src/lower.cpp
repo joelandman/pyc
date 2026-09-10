@@ -831,11 +831,6 @@ private:
             if (c.is_async) { *ok = unsupported("async comprehensions", loc); return {}; }
             collect_target_names(*c.target, vars);
         }
-        if (vars.empty()) {
-            *ok = unsupported("this comprehension target", loc);
-            return {};
-        }
-        const std::string var = vars[0];
 
         std::set<std::string> bound(vars.begin(), vars.end());
         std::set<std::string> captured;
@@ -843,6 +838,9 @@ private:
         if (key) free_locals(*key, bound, captured);
         for (const comprehension& c : gens) {
             for (const expr& cond : c.ifs) free_locals(cond, bound, captured);
+            // Attribute/subscript targets read names (`a` in `a.b`) that are
+            // not bound by the comprehension; capture them so the store lands.
+            free_locals(*c.target, bound, captured);
             // Only the FIRST iterable is evaluated outside; later ones are
             // expressions inside the comprehension and may capture too.
             if (&c != &gens[0]) free_locals(*c.iter, bound, captured);
@@ -1574,6 +1572,7 @@ private:
         // above dropped them from the owned set: re-mark before releasing.
         for (const ir::Value& c : closure_cells) { mark_owned(c); release(c, n.loc); }
         if (!set_docstring(fv, n.body, n.loc)) return false;
+        if (!attach_func_annotate(fv, n)) return false;
         // A pyc function is a descriptor now, so a method in a class dict
         // binds self by itself; pyc_rt_bind_method is a pass-through kept so
         // the class path has one place to change if that stops being true.
@@ -2288,37 +2287,28 @@ private:
     // raise NameError on an undefined annotation -- so matching that is what
     // the evidence supports. If a test demands NotImplementedError for a
     // format, the differential harness will say so.
-    bool emit_annotate(const AnnItems& items, const SourceLoc& loc) {
-        if (items.empty()) return true;
-
-        bool ok = true;
-        // A class body's annotations may read names bound in that body
-        // (`local = int` then `x: local`), so the namespace under construction
-        // has to be reachable from inside. It arrives as a DEFAULT ARGUMENT
-        // rather than a hidden parameter or a closure cell, because the caller
-        // is CPython's own descriptor and it calls __annotate__(format) with
-        // exactly one argument. The dict is fully populated by then.
-        const bool in_class = !class_ns_.empty();
+    ir::Value make_annotate_fn(const AnnItems& items, const SourceLoc& loc,
+                               bool class_scope, bool* ok) {
         ir::Value defaults;
-        if (in_class) {
+        if (class_scope) {
             ir::Value ns = class_ns_.back();
-            defaults = call_capi_imm("PyTuple_New", {}, 1, 0, loc, &ok);
-            if (!ok) return false;
+            defaults = call_capi_imm("PyTuple_New", {}, 1, 0, loc, ok);
+            if (!*ok) return {};
             mark_owned(defaults);
             emit(ir::Instr{ir::Op::IncRef, {ns}, std::nullopt,
                            Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
-            call_capi_imm("PyTuple_SetItem", {defaults, ns}, 0, 1, loc, &ok);
-            if (!ok) return false;
+            call_capi_imm("PyTuple_SetItem", {defaults, ns}, 0, 1, loc, ok);
+            if (!*ok) return {};
         }
 
         std::vector<std::string> params{"format"};
         std::vector<std::string> locals = params;
-        if (in_class) { params.push_back(".ns"); locals.push_back(".ns"); }
+        if (class_scope) { params.push_back(".ns"); locals.push_back(".ns"); }
 
         FnScope sc = begin_function("__annotate__", params, locals);
         auto saved_ns = class_ns_;
         class_ns_.clear();
-        if (in_class) {
+        if (class_scope) {
             ir::Value ns = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             emit(ir::Instr{ir::Op::LoadLocal, {}, ns, Ownership::Owned, ".ns",
                            1, 0, loc, make_landing_pad(loc)});
@@ -2326,21 +2316,21 @@ private:
             frame_owned_.push_back(ns);
             class_ns_.push_back(ns);
         }
-        ir::Value d = call_capi("PyDict_New", {}, loc, &ok);
-        if (ok) {
+        ir::Value d = call_capi("PyDict_New", {}, loc, ok);
+        if (*ok) {
             mark_owned(d); forget(d);
             frame_owned_.push_back(d);
             for (const auto& [name, ann] : items) {
-                ir::Value v = lower_expr(*ann, &ok);
-                if (!ok) break;
+                ir::Value v = lower_expr(*ann, ok);
+                if (!*ok) break;
                 ir::Value k = const_str(name, loc);
-                call_capi("PyDict_SetItem", {d, k, v}, loc, &ok, {k, v});
-                if (!ok) break;
+                call_capi("PyDict_SetItem", {d, k, v}, loc, ok, {k, v});
+                if (!*ok) break;
             }
         }
-        if (ok) {
-            frame_owned_.pop_back();          // d, handed to the return
-            if (in_class && !frame_owned_.empty()) {
+        if (*ok) {
+            frame_owned_.pop_back();
+            if (class_scope && !frame_owned_.empty()) {
                 emit_decref(frame_owned_.back(), loc);
                 frame_owned_.pop_back();
             }
@@ -2349,14 +2339,42 @@ private:
         }
         class_ns_ = saved_ns;
         std::size_t idx = end_function(sc);
-        if (!ok) return false;
-
+        if (!*ok) return {};
         ir::Value fn = make_function_value(idx, qualname("__annotate__"), loc,
                                            {}, defaults);
+        if (class_scope && owns(defaults)) release(defaults, loc);
+        return fn;
+    }
+
+    bool emit_annotate(const AnnItems& items, const SourceLoc& loc) {
+        if (items.empty()) return true;
+        bool ok = true;
+        ir::Value fn = make_annotate_fn(items, loc, !class_ns_.empty(), &ok);
+        if (!ok) return false;
         store_name("__annotate__", fn, loc);
         if (owns(fn)) release(fn, loc);
-        if (in_class && owns(defaults)) release(defaults, loc);
         return true;
+    }
+
+    bool attach_func_annotate(const ir::Value& fv, const FunctionDef& n) {
+        AnnItems items;
+        auto add_arg = [&](const arg& p) {
+            if (p.annotation) items.emplace_back(p.arg, &**p.annotation);
+        };
+        const arguments& a = *n.args;
+        for (const arg& p : a.posonlyargs) add_arg(p);
+        for (const arg& p : a.args) add_arg(p);
+        if (a.vararg) add_arg(**a.vararg);
+        for (const arg& p : a.kwonlyargs) add_arg(p);
+        if (a.kwarg) add_arg(**a.kwarg);
+        if (n.returns) items.emplace_back("return", &**n.returns);
+        if (items.empty()) return true;
+        bool ok = true;
+        ir::Value fn = make_annotate_fn(items, n.loc, false, &ok);
+        if (!ok) return false;
+        ir::Value key = const_str("__annotate__", n.loc);
+        call_capi("PyObject_SetAttr", {fv, key, fn}, n.loc, &ok, {key, fn});
+        return ok;
     }
 
     bool lower_with(const With& n) { return lower_with_item(n, 0); }
