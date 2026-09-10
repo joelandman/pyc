@@ -15,8 +15,29 @@ import json
 import sys
 
 from . import SCHEMA_VERSION, encode_node
+import base64
+import marshal
+import types
+
 from .genexp import (collect as collect_genexps, collect_genfuncs,
                      GenexpError)
+
+def collect_annotate_consts(code):
+    out = []
+    def walk(co):
+        for c in co.co_consts:
+            if not isinstance(c, types.CodeType):
+                continue
+            if c.co_name == "__annotate__":
+                out.append({
+                    "line": co.co_firstlineno,
+                    "col": -1,
+                    "code": base64.b64encode(marshal.dumps(c)).decode("ascii"),
+                })
+            else:
+                walk(c)
+    walk(code)
+    return out
 
 # Real code nests deeper than CPython's default 1000 frames allows once each
 # AST level costs several: sympy's resolvent_lookup.py reaches depth 568.
@@ -67,7 +88,10 @@ def main(argv: list[str] | None = None) -> int:
         #
         # feature_version deliberately does NOT apply here: it is a parser
         # option, and this call exists only for its checks.
-        compile(tree, args.file, "exec")
+        # compile(source), not compile(tree): this module has
+        # `from __future__ import annotations`, which would leak into
+        # compile(tree) and stringify every annotation (I1).
+        compiled = compile(src, args.file, "exec", dont_inherit=True)
     except SyntaxError as e:
         # Structured so the driver can render a §1.1 Diagnostic rather than
         # reformatting a traceback.
@@ -88,7 +112,8 @@ def main(argv: list[str] | None = None) -> int:
     # faithful to it, so synthetic fields have no place in it.
     try:
         genexps = collect_genexps(tree, src, args.file) \
-                + collect_genfuncs(tree, src, args.file)
+                + collect_genfuncs(tree, src, args.file) \
+                + collect_annotate_consts(compiled)
     except GenexpError as e:
         json.dump({"schema_version": SCHEMA_VERSION, "error": {
             "kind": "GeneratorExpressionError", "message": str(e),

@@ -36,6 +36,7 @@ void      pyc_rt_store_local(PyObject** locals, int slot, PyObject* v);
 // Defaults are evaluated once at DEF time and shared across calls -- the
 // behaviour behind the mutable-default surprise -- so they are built by the
 // caller, not here.
+int pyc_rt_stash_marshal(const char* p, Py_ssize_t n);
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                int nargs, int nkwonly, int nposonly, int nlocals,
                                const char* const* argnames,

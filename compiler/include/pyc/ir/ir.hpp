@@ -231,6 +231,7 @@ struct Function {
     // Placed last so existing aggregate initialisers keep their meaning.
     std::vector<std::string> cellvars;
     std::vector<std::string> freevars;
+    std::vector<std::string> extra_marshal;
     // Locals the scope analysis proved hold only Python ints. Codegen
     // keeps them in tagged i64 slots (rebuild/UNBOXING.md).
     std::set<std::string> int_locals;

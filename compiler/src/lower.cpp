@@ -1450,6 +1450,9 @@ private:
         cur()->locals = all_locals;
         cur()->cellvars = cellvars;
         cur()->freevars = freevars;
+        for (const GenexpEntry& g : genexps_)
+            if (g.line == n.loc.line && g.col < 0)
+                cur()->extra_marshal.push_back(g.code);
         cur()->int_locals = int_locals(slotnames, n.body, inner);
         int_locals_ = cur()->int_locals;
         live_i64_.clear();

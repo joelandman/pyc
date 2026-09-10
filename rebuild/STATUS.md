@@ -90,7 +90,9 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    `exec(f.__code__, closure=...)` runs the native body via a stub bytecode
     helper that reads the eval frame's function closure. LoadGlobal uses the
     current frame's globals (and mapping `__getitem__`), so FORWARDREF
-    annotate reconstruction works.
+    annotate reconstruction works. Nested `__annotate__` code objects from
+    CPython's compile sit in the outer `co_consts`. Unexpected keywords
+    offer a "Did you mean" suggestion.
 7. **I8 CLI (S1).** `pycc` finds the sysroot interpreter (manifest or
    `bin/python3`), `--python-sysroot` aliases `--sysroot`, `--python`/`-std`/
    `--python-abi`/`--list-python-targets` work. `-std` is `--feature-version`.

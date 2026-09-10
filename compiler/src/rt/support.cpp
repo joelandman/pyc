@@ -32,6 +32,14 @@ extern "C" {
 // pyc_rt_globals_init, because a borrowed reference to a module that has not
 // been created yet is not something to guess at.
 static PyObject* g_globals_cache = nullptr;
+static std::vector<PyObject*> g_extra_consts;
+
+extern "C" int pyc_rt_stash_marshal(const char* p, Py_ssize_t n) {
+    PyObject* o = PyMarshal_ReadObjectFromString(const_cast<char*>(p), n);
+    if (!o) return -1;
+    g_extra_consts.push_back(o);
+    return 0;
+}
 
 extern "C" void pyc_rt_globals_init(void) {
     PyObject* m = PyImport_AddModule("__main__");   // borrowed
@@ -276,6 +284,74 @@ struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
                int vararg; int kwarg; int nfree; };
 
+constexpr int kMoveCost = 2;
+constexpr int kCaseCost = 1;
+constexpr size_t kMaxSuggest = 40;
+
+int subst_cost(char a, char b) {
+    if ((a & 31) != (b & 31)) return kMoveCost;
+    if (a == b) return 0;
+    if (a >= 'A' && a <= 'Z') a = static_cast<char>(a + ('a' - 'A'));
+    if (b >= 'A' && b <= 'Z') b = static_cast<char>(b + ('a' - 'A'));
+    return a == b ? kCaseCost : kMoveCost;
+}
+
+Py_ssize_t edit_distance(const char* a, size_t na, const char* b, size_t nb,
+                         size_t max_cost, size_t* buf) {
+    while (na && nb && a[0] == b[0]) { a++; na--; b++; nb--; }
+    while (na && nb && a[na - 1] == b[nb - 1]) { na--; nb--; }
+    if (na == 0 || nb == 0) return static_cast<Py_ssize_t>((na + nb) * kMoveCost);
+    if (na > kMaxSuggest || nb > kMaxSuggest) return static_cast<Py_ssize_t>(max_cost + 1);
+    if (nb < na) { const char* t = a; a = b; b = t; size_t tn = na; na = nb; nb = tn; }
+    if ((nb - na) * kMoveCost > max_cost) return static_cast<Py_ssize_t>(max_cost + 1);
+    size_t tmp = kMoveCost;
+    for (size_t i = 0; i < na; ++i) { buf[i] = tmp; tmp += kMoveCost; }
+    size_t result = 0;
+    for (size_t bi = 0; bi < nb; ++bi) {
+        char code = b[bi];
+        size_t distance = result = bi * kMoveCost;
+        size_t minimum = static_cast<size_t>(-1);
+        for (size_t i = 0; i < na; ++i) {
+            size_t substitute = distance + static_cast<size_t>(subst_cost(code, a[i]));
+            distance = buf[i];
+            size_t insdel = (result < distance ? result : distance) + kMoveCost;
+            result = insdel < substitute ? insdel : substitute;
+            buf[i] = result;
+            if (result < minimum) minimum = result;
+        }
+        if (minimum > max_cost) return static_cast<Py_ssize_t>(max_cost + 1);
+    }
+    return static_cast<Py_ssize_t>(result);
+}
+
+PyObject* keyword_suggestion(PyObject* dir, PyObject* name) {
+    if (!dir || !name || !PyList_CheckExact(dir)) return nullptr;
+    Py_ssize_t n = PyList_GET_SIZE(dir);
+    if (n <= 0 || n >= 750) return nullptr;
+    Py_ssize_t nsz = 0;
+    const char* ns = PyUnicode_AsUTF8AndSize(name, &nsz);
+    if (!ns) { PyErr_Clear(); return nullptr; }
+    size_t buf[kMaxSuggest];
+    Py_ssize_t best_d = PY_SSIZE_T_MAX;
+    PyObject* best = nullptr;
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* item = PyList_GET_ITEM(dir, i);
+        if (PyUnicode_Check(item) && PyUnicode_Compare(name, item) == 0) continue;
+        Py_ssize_t isz = 0;
+        const char* is = PyUnicode_AsUTF8AndSize(item, &isz);
+        if (!is) { PyErr_Clear(); continue; }
+        Py_ssize_t max_d = (nsz + isz + 3) * kMoveCost / 6;
+        if (best_d != PY_SSIZE_T_MAX && max_d > best_d - 1) max_d = best_d - 1;
+        Py_ssize_t d = edit_distance(ns, static_cast<size_t>(nsz), is,
+                                     static_cast<size_t>(isz),
+                                     static_cast<size_t>(max_d), buf);
+        if (d > max_d) continue;
+        if (!best || d < best_d) { best = item; best_d = d; }
+    }
+    if (best) Py_INCREF(best);
+    return best;
+}
+
 void bound_capsule_dtor(PyObject* cap) {
     Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(cap, "pyc.Bound"));
     if (!b) { PyErr_Clear(); return; }
@@ -335,8 +411,22 @@ PyCodeObject* make_func_code(Bound* b) {
         }
     }
     // consts[0] None, [1] Bound capsule, [2] eval helper so exec(f.__code__)
-    // runs the native body through the current frame's cells.
-    PyObject* consts = PyTuple_Pack(3, Py_None, cap, run_helper);
+    // runs the native body through the current frame's cells. Stashed marshal
+    // objects (nested __annotate__ code objects) follow.
+    PyObject* consts;
+    if (g_extra_consts.empty()) {
+        consts = PyTuple_Pack(3, Py_None, cap, run_helper);
+    } else {
+        consts = PyTuple_New(3 + (Py_ssize_t)g_extra_consts.size());
+        if (consts) {
+            Py_INCREF(Py_None); PyTuple_SET_ITEM(consts, 0, Py_None);
+            Py_INCREF(cap); PyTuple_SET_ITEM(consts, 1, cap);
+            Py_INCREF(run_helper); PyTuple_SET_ITEM(consts, 2, run_helper);
+            for (size_t i = 0; i < g_extra_consts.size(); ++i)
+                PyTuple_SET_ITEM(consts, 3 + (Py_ssize_t)i, g_extra_consts[i]);
+            g_extra_consts.clear();
+        }
+    }
     Py_DECREF(cap);
     if (!consts) { Py_DECREF(varnames); Py_DECREF(freevars); return nullptr; }
     static const char kEvalCode[] = {
@@ -388,7 +478,7 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
     Py_ssize_t npos = PyTuple_GET_SIZE(args);
     const char* nm = b->name ? b->name : "<fn>";
     if (func) {
-        PyObject* nobj = reinterpret_cast<PyFunctionObject*>(func)->func_name;
+        PyObject* nobj = reinterpret_cast<PyFunctionObject*>(func)->func_qualname;
         if (nobj && PyUnicode_Check(nobj)) {
             const char* s = PyUnicode_AsUTF8(nobj);
             if (s) nm = s;
@@ -486,9 +576,38 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
                 for (int i = 0; i < b->nposonly; ++i)
                     if (std::strcmp(ks, b->argnames[i]) == 0) { posonly_name = true; break; }
                 if (posonly_name) { posonly_kw.push_back(ks); continue; }
-                PyErr_Format(PyExc_TypeError,
-                             "%s() got an unexpected keyword argument '%s'",
-                             nm, ks);
+                {
+                    const char* sug = nullptr;
+                    if (b->argnames) {
+                        PyObject* cands = PyList_New(0);
+                        if (cands) {
+                            for (int i = b->nposonly; i < b->nargs + b->nkwonly; ++i) {
+                                if (!b->argnames[i] || !b->argnames[i][0]) continue;
+                                PyObject* u = PyUnicode_FromString(b->argnames[i]);
+                                if (!u || PyList_Append(cands, u) < 0) { Py_XDECREF(u); break; }
+                                Py_DECREF(u);
+                            }
+                            PyObject* kn = PyUnicode_FromString(ks);
+                            if (kn) {
+                                PyObject* s = keyword_suggestion(cands, kn);
+                                if (s) {
+                                    sug = PyUnicode_AsUTF8(s);
+                                    PyErr_Format(PyExc_TypeError,
+                                        "%s() got an unexpected keyword argument '%s'. Did you mean '%s'?",
+                                        nm, ks, sug ? sug : "");
+                                    Py_DECREF(s);
+                                    Py_DECREF(kn); Py_DECREF(cands);
+                                    goto fail;
+                                }
+                                Py_DECREF(kn);
+                            }
+                            Py_DECREF(cands);
+                        }
+                    }
+                    PyErr_Format(PyExc_TypeError,
+                                 "%s() got an unexpected keyword argument '%s'",
+                                 nm, ks);
+                }
                 goto fail;
             }
             if (locals[slot]) {

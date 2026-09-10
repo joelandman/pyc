@@ -564,9 +564,16 @@ private:
             }
             case Op::MakeFunction: {
                 need("declare ptr @pyc_rt_make_function(ptr, ptr, i32, i32, i32, i32, ptr, ptr, ptr, i32, i32, ptr, i32)");
+                need("declare i32 @pyc_rt_stash_marshal(ptr, i64)");
                 std::size_t ti = (std::size_t)in.imm;
                 bool valid = in.has_imm && ti < m_.functions.size();
                 const ir::Function* t = valid ? &m_.functions[ti] : nullptr;
+                if (t) {
+                    for (const std::string& blob : t->extra_marshal) {
+                        o_ << "  " << fresh() << " = call i32 @pyc_rt_stash_marshal(ptr "
+                           << cstr(blob) << ", i64 " << blob.size() << ")\n";
+                    }
+                }
                 // The parameter-name table lets the callee bind keywords.
                 std::string names = t ? argnames_global(ti) : "null";
                 std::string clo = closure_arg(in);      // fills pre_
