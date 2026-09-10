@@ -140,6 +140,7 @@ private:
     };
     std::vector<I64Phi> i64_phis_;
     std::uint32_t range_n_ = 0;
+    std::string range_ctr_;
     // Names in THIS function whose slot holds a cell: either a local something
     // nested reads (a cellvar) or a name inherited from an enclosing function
     // (a freevar). Both are read with cell.get rather than load.local.
@@ -2453,6 +2454,7 @@ private:
                            n.loc, std::nullopt});
             set_block(brk_b);
             emit_decref(exitf, n.loc);
+            reload_live_i64_from_slots(live_in, n.loc);
             if (!finish_jump(true, n.loc)) return false;
 
             set_block(nobrk_b);
@@ -2462,6 +2464,7 @@ private:
                            n.loc, std::nullopt});
             set_block(cont_b);
             emit_decref(exitf, n.loc);
+            reload_live_i64_from_slots(live_in, n.loc);
             if (!finish_jump(false, n.loc)) return false;
         }
         }
@@ -3035,7 +3038,9 @@ private:
         if (subj_owned) { forget(subject); frame_owned_.push_back(subject); }
 
         std::uint32_t after = new_block("match.after");
+        auto live_in = live_i64_;
         for (const match_case& c : n.cases) {
+            live_i64_ = live_in;
             std::uint32_t fail = new_block("match.next");
             std::vector<Capture> caps;
             if (!lower_pattern(*c.pattern, subject, fail, caps)) {
@@ -3072,6 +3077,7 @@ private:
                        "", after, 0, n.loc, std::nullopt});
         set_block(after);
         if (subj_owned) { frame_owned_.pop_back(); emit_decref(subject, n.loc); }
+        live_i64_.clear();
         return true;
     }
 
@@ -3445,7 +3451,12 @@ private:
         class_cells_.push_back(ccell);
 
         class_ns_.push_back(ns);
+        const std::string qn_str = qualname(n.name);
         qual_.push_back(n.name);
+        {
+            ir::Value qn = const_str(qn_str, n.loc);
+            store_name("__qualname__", qn, n.loc);
+        }
         forget(ns); forget(bases);
         frame_owned_.push_back(ns);
         frame_owned_.push_back(bases);
@@ -3660,6 +3671,12 @@ private:
         rb.has_imm = true;
         rb.imm = (std::int64_t)rid;
         emit(std::move(rb));
+        ir::Value start_n = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        ir::Instr rbi{ir::Op::RangeBound, {}, start_n, Ownership::NotAnObject,
+                      "i", 0, 0, n.loc, std::nullopt};
+        rbi.has_imm = true;
+        rbi.imm = (std::int64_t)rid;
+        emit(std::move(rbi));
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", join, 0, n.loc, std::nullopt});
         std::uint32_t native_end = (std::uint32_t)blk_;
@@ -3676,6 +3693,9 @@ private:
         mark_owned(it_b);
         ir::Value stop_b = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
         emit(ir::Instr{ir::Op::I64Const, {}, stop_b, Ownership::NotAnObject,
+                       "0", 0, 0, n.loc, std::nullopt});
+        ir::Value start_b = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        emit(ir::Instr{ir::Op::I64Const, {}, start_b, Ownership::NotAnObject,
                        "0", 0, 0, n.loc, std::nullopt});
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", join, 0, n.loc, std::nullopt});
@@ -3695,10 +3715,19 @@ private:
             cur()->blocks[blk_].instrs.insert(cur()->blocks[blk_].instrs.begin(),
                                               std::move(sp));
         }
+        ir::Value start = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        {
+            ir::Instr sp{ir::Op::Phi, {start_n, start_b}, start, Ownership::NotAnObject,
+                         "", 0, 0, n.loc, std::nullopt};
+            sp.phi_blocks = {native_end, boxed_end};
+            cur()->blocks[blk_].instrs.insert(cur()->blocks[blk_].instrs.begin(),
+                                              std::move(sp));
+        }
 
         std::uint32_t after = new_block("for.after");
         auto outer_live = live_i64_;
-        if (!emit_for_range_loop(n, g, it, rid, after, false, stop)) return false;
+        if (!emit_for_range_loop(n, g, it, rid, after, false, stop, start))
+            return false;
         set_block(after);
         rejoin_outer_live(std::move(outer_live), n.loc);
         return true;
@@ -3706,7 +3735,7 @@ private:
 
     bool emit_for_range_loop(const For& n, ir::Value g, ir::Value it,
                              std::uint32_t rid, std::uint32_t after, bool clone,
-                             ir::Value stop) {
+                             ir::Value stop, ir::Value start = {}) {
         const Name& tn = std::get<Name>(n.target->v);
         std::int64_t rlo = 0, rhi = 0, rtrip = 0;
         const Call& rc = std::get<Call>(n.iter->v);
@@ -3720,6 +3749,13 @@ private:
         } else {
             boxed = prepare_i64_loop(n.body, n.loc, tn.id);
         }
+        if (boxed && start.valid()) live_i64_[tn.id] = start;
+        struct CtrScope {
+            std::string& slot;
+            std::string old;
+            ~CtrScope() { slot = std::move(old); }
+        } ctr_scope{range_ctr_, range_ctr_};
+        if (boxed) range_ctr_ = tn.id;
         std::uint32_t pre = (std::uint32_t)blk_;
         std::uint32_t head = new_block("for.head");
         std::uint32_t nat_next = new_block("range.next");
@@ -3746,7 +3782,10 @@ private:
 
         set_block(nat_next);
         ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
-        ir::Instr nxt{ir::Op::RangeNext, {stop}, iv, Ownership::NotAnObject,
+        ir::Value ctr;
+        if (auto cit = live_i64_.find(tn.id); cit != live_i64_.end())
+            ctr = cit->second;
+        ir::Instr nxt{ir::Op::RangeNext, {stop, ctr}, iv, Ownership::NotAnObject,
                       "", body_n, done, n.loc, std::nullopt};
         nxt.has_imm = true;
         nxt.imm = (std::int64_t)rid;
@@ -3841,7 +3880,8 @@ private:
         set_block(after);
         return finish_boxed_clone(boxed, after, n.loc, [&]{
             std::uint32_t ca = new_block("for.clone.after");
-            if (!emit_for_range_loop(n, g, it, rid, ca, true, stop)) return false;
+            if (!emit_for_range_loop(n, g, it, rid, ca, true, stop, start))
+                return false;
             set_block(ca);
             return true;
         });
@@ -4454,6 +4494,26 @@ private:
     }
 
     void add_i64_phi_incoming(std::uint32_t head, std::uint32_t from) {
+        if (!range_ctr_.empty()) {
+            auto lv = live_i64_.find(range_ctr_);
+            if (lv != live_i64_.end()) {
+                ir::Type ty{ir::Type::Kind::Int64, {}};
+                ir::Value one = cur()->fresh(ty);
+                emit(ir::Instr{ir::Op::I64Const, {}, one, Ownership::NotAnObject,
+                               "1", 0, 0, {}, std::nullopt});
+                ir::Value nxt = cur()->fresh(ty);
+                std::uint32_t okb = new_block("range.inc");
+                ir::Instr ad{ir::Op::IntAddOvf, {lv->second, one}, nxt,
+                             Ownership::NotAnObject, "nsw", 0, 0, {},
+                             std::nullopt};
+                ad.target = okb;
+                ad.target_else = okb;
+                emit(std::move(ad));
+                set_block(okb);
+                live_i64_[range_ctr_] = nxt;
+                from = okb;
+            }
+        }
         for (auto it = i64_phis_.rbegin(); it != i64_phis_.rend(); ++it) {
             if (it->head != head) break;
             ir::Value inc = it->phi;
@@ -4669,6 +4729,7 @@ private:
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", done, 0, loc, std::nullopt});
         set_block(done);
+        live_i64_.erase(name);
         return true;
     }
 

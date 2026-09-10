@@ -891,7 +891,11 @@ private:
         std::string posc = "rpos" + std::to_string(tmp_++);
         std::string negc = "rneg" + std::to_string(tmp_++);
         std::string take = "rtake" + std::to_string(tmp_++);
-        o_ << "  " << c << " = load i64, ptr " << p << ".i\n";
+        const bool ssa_cur = in.args.size() >= 2 && in.args[1].valid();
+        if (ssa_cur)
+            c = v(in.args[1]);
+        else
+            o_ << "  " << c << " = load i64, ptr " << p << ".i\n";
         const bool ssa_stop = in.args.size() >= 1 && in.args[0].valid();
         std::string e = ssa_stop ? v(in.args[0]) : fresh();
         if (!ssa_stop)
