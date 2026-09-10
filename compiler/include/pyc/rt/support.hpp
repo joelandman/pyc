@@ -73,6 +73,8 @@ PyObject* pyc_rt_build_class(const char* name, PyObject* bases, PyObject* ns,
 // Resolve the metaclass for a class statement. An explicit `metaclass=` wins
 // and is REMOVED from kwds; otherwise the most derived among the bases' types.
 // A conflict is a TypeError, as in CPython, never a silently wrong type.
+PyObject* pyc_rt_expand_bases(PyObject* bases);
+int pyc_rt_set_orig_bases(PyObject* cls, PyObject* orig, PyObject* expanded);
 PyObject* pyc_rt_class_meta(PyObject* bases, PyObject* kwds);
 
 // meta.__prepare__(name, bases, **kwds), or a plain dict when absent. Required
@@ -225,6 +227,7 @@ PyObject* pyc_rt_unpack_ex(PyObject* value, Py_ssize_t nbefore, Py_ssize_t nafte
 // C1b: interpreter frame on the thread datastack. locals is borrowed.
 void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals, PyObject* locals,
                           PyObject* func);
+void  pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n);
 void  pyc_rt_interp_leave(void* frame);
 int pyc_rt_push_module_frame(void);
 void pyc_rt_pop_module_frame(void);

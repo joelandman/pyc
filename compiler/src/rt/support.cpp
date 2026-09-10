@@ -369,21 +369,43 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
     PyObject* kwdefaults = PyFunction_GET_KW_DEFAULTS(func);
     PyObject* closure = PyFunction_GET_CLOSURE(func);
     Py_ssize_t npos = PyTuple_GET_SIZE(args);
+    const char* nm = b->name ? b->name : "<fn>";
+    if (func) {
+        PyObject* nobj = reinterpret_cast<PyFunctionObject*>(func)->func_name;
+        if (nobj && PyUnicode_Check(nobj)) {
+            const char* s = PyUnicode_AsUTF8(nobj);
+            if (s) nm = s;
+        }
+    }
     if (npos > b->nargs && b->vararg < 0) {
         // CPython names the whole accepted RANGE when defaults make the lower
         // bound differ: "takes from 1 to 2 positional arguments".
         Py_ssize_t ndef0 = defaults ? PyTuple_GET_SIZE(defaults) : 0;
-        if (ndef0 > 0)
+        int nkwonly_given = 0;
+        if (kwargs && b->nkwonly > 0 && b->argnames) {
+            for (int i = b->nargs; i < b->nargs + b->nkwonly; ++i) {
+                if (b->argnames[i] && PyDict_GetItemString(kwargs, b->argnames[i]))
+                    nkwonly_given++;
+            }
+        }
+        if (nkwonly_given > 0 && ndef0 == 0)
+            PyErr_Format(PyExc_TypeError,
+                         "%s() takes %d positional argument%s but %zd positional "
+                         "argument%s (and %d keyword-only argument%s) were given",
+                         nm, b->nargs, b->nargs == 1 ? "" : "s", npos,
+                         npos == 1 ? "" : "s", nkwonly_given,
+                         nkwonly_given == 1 ? "" : "s");
+        else if (ndef0 > 0)
             PyErr_Format(PyExc_TypeError,
                          "%s() takes from %zd to %d positional argument%s "
                          "but %zd %s given",
-                         b->name, (Py_ssize_t)b->nargs - ndef0, b->nargs,
+                         nm, (Py_ssize_t)b->nargs - ndef0, b->nargs,
                          b->nargs == 1 ? "" : "s", npos,
                          npos == 1 ? "was" : "were");
         else
             PyErr_Format(PyExc_TypeError,
                          "%s() takes %d positional argument%s but %zd %s given",
-                         b->name, b->nargs, b->nargs == 1 ? "" : "s", npos,
+                         nm, b->nargs, b->nargs == 1 ? "" : "s", npos,
                          npos == 1 ? "was" : "were");
         return nullptr;
     }
@@ -449,13 +471,13 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
                 if (posonly_name) { posonly_kw.push_back(ks); continue; }
                 PyErr_Format(PyExc_TypeError,
                              "%s() got an unexpected keyword argument '%s'",
-                             b->name, ks);
+                             nm, ks);
                 goto fail;
             }
             if (locals[slot]) {
                 PyErr_Format(PyExc_TypeError,
                              "%s() got multiple values for argument '%s'",
-                             b->name, ks);
+                             nm, ks);
                 goto fail;
             }
             Py_INCREF(val);
@@ -473,7 +495,7 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
         }
         PyErr_Format(PyExc_TypeError,
                      "%s() got some positional-only arguments passed as "
-                     "keyword arguments: '%s'", b->name, names.c_str());
+                     "keyword arguments: '%s'", nm, names.c_str());
         goto fail;
     }
     {
@@ -519,7 +541,7 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
             std::string names = join(missing);
             PyErr_Format(PyExc_TypeError,
                          "%s() missing %zd required positional argument%s: %s",
-                         b->name, (Py_ssize_t)missing.size(),
+                         nm, (Py_ssize_t)missing.size(),
                          missing.size() == 1 ? "" : "s", names.c_str());
             goto fail;
         }
@@ -527,7 +549,7 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
             std::string names = join(missing_kwonly);
             PyErr_Format(PyExc_TypeError,
                          "%s() missing %zd required keyword-only argument%s: %s",
-                         b->name, (Py_ssize_t)missing_kwonly.size(),
+                         nm, (Py_ssize_t)missing_kwonly.size(),
                          missing_kwonly.size() == 1 ? "" : "s", names.c_str());
             goto fail;
         }
@@ -549,6 +571,7 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
         void* fr = (g && co) ? pyc_rt_interp_enter(co, g, fdict, func)
                              : nullptr;
         if (!fr) { Py_DECREF(fdict); goto fail; }
+        pyc_rt_interp_fill_locals(fr, locals, b->nlocals);
         PyObject* prev_tls = tls_frame_locals;
         const char* const* prev_names = tls_frame_names;
         int prev_n = tls_frame_nnames;
@@ -772,6 +795,72 @@ extern "C" PyObject* pyc_rt_ellipsis(void) { return Py_NewRef(Py_Ellipsis); }
 // The winner must then be a subclass of every candidate. CPython raises
 // "metaclass conflict" for that, and so does this, rather than producing a
 // class whose type is silently wrong.
+extern "C" PyObject* pyc_rt_expand_bases(PyObject* bases) {
+    if (!bases || !PyTuple_Check(bases)) {
+        PyErr_SetString(PyExc_TypeError, "bases must be a tuple");
+        return nullptr;
+    }
+    Py_ssize_t n = PyTuple_GET_SIZE(bases);
+    PyObject* acc = nullptr;
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* base = PyTuple_GET_ITEM(bases, i);
+        if (PyType_Check(base)) {
+            if (acc && PyList_Append(acc, base) < 0) goto fail;
+            continue;
+        }
+        PyObject* meth = nullptr;
+        if (PyObject_GetOptionalAttrString(base, "__mro_entries__", &meth) < 0)
+            goto fail;
+        if (!meth) {
+            if (acc && PyList_Append(acc, base) < 0) goto fail;
+            continue;
+        }
+        PyObject* repl = PyObject_CallOneArg(meth, bases);
+        Py_DECREF(meth);
+        if (!repl) goto fail;
+        if (!PyTuple_Check(repl)) {
+            PyErr_SetString(PyExc_TypeError, "__mro_entries__ must return a tuple");
+            Py_DECREF(repl);
+            goto fail;
+        }
+        if (!acc) {
+            acc = PyList_New(0);
+            if (!acc) { Py_DECREF(repl); return nullptr; }
+            for (Py_ssize_t j = 0; j < i; ++j) {
+                if (PyList_Append(acc, PyTuple_GET_ITEM(bases, j)) < 0) {
+                    Py_DECREF(repl); goto fail;
+                }
+            }
+        }
+        Py_ssize_t rn = PyTuple_GET_SIZE(repl);
+        for (Py_ssize_t j = 0; j < rn; ++j) {
+            if (PyList_Append(acc, PyTuple_GET_ITEM(repl, j)) < 0) {
+                Py_DECREF(repl); goto fail;
+            }
+        }
+        Py_DECREF(repl);
+    }
+    if (!acc) { Py_INCREF(bases); return bases; }
+    {
+        PyObject* out = PyList_AsTuple(acc);
+        Py_DECREF(acc);
+        return out;
+    }
+fail:
+    Py_XDECREF(acc);
+    return nullptr;
+}
+
+extern "C" int pyc_rt_set_orig_bases(PyObject* ns, PyObject* orig,
+                                     PyObject* expanded) {
+    if (!ns || orig == expanded) return 0;
+    PyObject* key = PyUnicode_InternFromString("__orig_bases__");
+    if (!key) return -1;
+    int r = PyObject_SetItem(ns, key, orig);
+    Py_DECREF(key);
+    return r;
+}
+
 extern "C" PyObject* pyc_rt_class_meta(PyObject* bases, PyObject* kwds) {
     PyObject* meta = nullptr;
     if (kwds) {
@@ -884,7 +973,7 @@ extern "C" PyObject* pyc_rt_build_class(const char* name, PyObject* bases,
     // still wins, as it does in CPython.
     PyObject* modkey = PyUnicode_InternFromString("__module__");
     if (!modkey) return nullptr;
-    int has_mod = PyDict_Contains(ns, modkey);
+    int has_mod = PyMapping_HasKey(ns, modkey);
     if (has_mod < 0) { Py_DECREF(modkey); return nullptr; }
     if (has_mod == 0) {
         PyObject* g = globals_dict();                       // borrowed

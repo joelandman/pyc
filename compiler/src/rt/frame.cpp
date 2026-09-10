@@ -49,7 +49,12 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
     if (locals) Py_INCREF(locals);
     f->frame_obj = nullptr;
     f->instr_ptr = _PyCode_CODE(code) + code->_co_firsttraceable + 1;
-    f->stackpointer = f->localsplus;
+    {
+        int nplus = code->co_nlocalsplus;
+        if (nplus < 0) nplus = 0;
+        for (int i = 0; i < nplus; ++i) f->localsplus[i] = PyStackRef_NULL;
+        f->stackpointer = f->localsplus + nplus;
+    }
 #ifdef Py_GIL_DISABLED
     f->tlbc_index = 0;
 #endif
@@ -78,6 +83,21 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
     }
     ts->current_frame = f;
     return f;
+}
+
+extern "C" void pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n) {
+    if (!frame || !locals || n <= 0) return;
+    auto* f = static_cast<_PyInterpreterFrame*>(frame);
+    PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
+        PyStackRef_AsPyObjectBorrow(f->f_executable));
+    int nplus = co ? co->co_nlocalsplus : 0;
+    int m = n < nplus ? n : nplus;
+    for (int i = 0; i < m; ++i) {
+        if (locals[i])
+            f->localsplus[i] = PyStackRef_FromPyObjectNew(locals[i]);
+        else
+            f->localsplus[i] = PyStackRef_NULL;
+    }
 }
 
 extern "C" void pyc_rt_interp_leave(void* frame) {

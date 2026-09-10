@@ -3500,6 +3500,13 @@ private:
                 if (!ok) return false;
             }
         }
+        ir::Value orig_bases = bases;
+        {
+            ir::Value expanded = call_capi("pyc_rt_expand_bases", {bases}, n.loc, &ok);
+            if (!ok) return false;
+            mark_owned(expanded);
+            bases = expanded;
+        }
 
         // `class C(B, metaclass=M, **kw)`. The keywords are evaluated here, in
         // the enclosing scope and after the bases, which is the order CPython
@@ -3644,6 +3651,9 @@ private:
         frame_owned_.pop_back();                            // bases
         frame_owned_.pop_back();                            // ns
 
+        call_capi("pyc_rt_set_orig_bases", {ns, orig_bases, bases}, n.loc, &ok,
+                 {orig_bases});
+        if (!ok) return false;
         ir::Value cls = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::BuildClass, {bases, ns, meta, kwds}, cls,
                        Ownership::Owned, n.name, 0, 0, n.loc,

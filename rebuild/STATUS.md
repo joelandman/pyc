@@ -67,10 +67,12 @@ Probes: `verify/corpus/language/getframemodulename.py`,
 
 ### P1 — completeness without silent wrong answers
 
-4. **`EXIT_DIFFERS`.** Dump first. `test_super` **40/40** (3 skipped) on HEAD:
-   `__classcell__` in ns, cell-aware `super()`, `__closure__`, `global`/`nonlocal
-   __class__` in a class body, `del` then `super()`. Remaining Lib/test
-   `EXIT_DIFFERS` still need artefact dumps.
+4. **`EXIT_DIFFERS`.** Dump first. `test_super` **40/40** (3 skipped);
+   `test_copy` **81/81**; `test_funcattrs` **35/35**; `test_genericclass`
+   **22/22**; `test_decorators` **15/16**. Frames fill fast locals so
+   `eval(..., None, None)` sees them. `__mro_entries__` expands non-type
+   bases and stores `__orig_bases__`. Remaining Lib/test `EXIT_DIFFERS`
+   still need dumps.
 5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
    lowering): `star-unpacking` (parser SyntaxError for star-as-expr;
    call/list/set unpack runs), `starred assignment` (sole `*a =` is
@@ -78,8 +80,8 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    `async for` / `async with` in native (function-level yield/async is
    marshalled). Comprehension `for` targets now include Name/tuple/list
     and attribute/subscript. Star-as-annotation is `typing.Unpack`;
-    `__annotate__(format>2)` is NotImplementedError. Remaining: async
-    comprehensions.
+    `__annotate__(format>2)` is NotImplementedError. Async comprehensions
+    in `async def` marshal; in a sync function they are a parse SyntaxError.
 6. **Compiled callables are `PyFunction`.** `PyFunction_New` +
    `PyFunction_SetVectorcall` onto the native trampoline. `PyFunction_Check`,
    `inspect.signature`, `__closure__`, `__annotate__`, `__name__`/`__qualname__`
