@@ -67,8 +67,10 @@ Probes: `verify/corpus/language/getframemodulename.py`,
 
 ### P1 — completeness without silent wrong answers
 
-4. **102 unexplained `EXIT_DIFFERS`.** Nested-class closures are fixed; do
-   not reuse that story. Next work is artefact dump, not new features.
+4. **`EXIT_DIFFERS`.** Dump first. `test_super` was 3 fail + 9 err; after
+   `__classcell__` in ns, cell-aware `super()`, and not rewriting a shadowed
+   `super`, it is 1 fail + 4 err (`__closure__`, patched global `super`,
+   `global __class__` in a class body, `del` first arg then `super()`).
 5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
    lowering): `star-unpacking` (star as expression), `starred assignment`
    (star as sole store target; `a, *b, c =` is implemented), `yield` /

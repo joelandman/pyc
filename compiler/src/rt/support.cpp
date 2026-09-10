@@ -1387,6 +1387,24 @@ extern "C" int pyc_rt_super_fail(int has_args) {
     return -1;
 }
 
+extern "C" int pyc_rt_check_classcell(PyObject* cell, PyObject* cls,
+                                      PyObject* name) {
+    if (!cell || !PyCell_Check(cell) || !cls || !PyType_Check(cls)) return 0;
+    PyObject* cell_cls = PyCell_GET(cell);
+    if (cell_cls == cls) return 0;
+    if (!cell_cls) {
+        PyErr_Format(PyExc_RuntimeError,
+                     "__class__ not set defining %R as %R. "
+                     "Was __classcell__ propagated to type.__new__?",
+                     name, cls);
+    } else {
+        PyErr_Format(PyExc_TypeError,
+                     "__class__ set to %R defining %R as %R",
+                     cell_cls, name, cls);
+    }
+    return -1;
+}
+
 extern "C" int pyc_rt_assert_fail(PyObject* msg) {
     if (msg) PyErr_SetObject(PyExc_AssertionError, msg);
     else     PyErr_SetNone(PyExc_AssertionError);

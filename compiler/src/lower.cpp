@@ -1377,8 +1377,10 @@ private:
             // implicit __class__ cell, exactly as CPython's symtable does.
             if (!class_cells_.empty()) {
                 std::set<std::string> all = all_reads(n.body);
-                if (all.count("super") || all.count("__class__"))
+                if (all.count("super") || all.count("__class__")) {
                     reads.insert("__class__");
+                    if (!class_cell_used_.empty()) class_cell_used_.back() = 1;
+                }
             }
             std::set<std::string> own(own_locals.begin(), own_locals.end());
             for (const std::string& r : reads) {
@@ -1833,6 +1835,7 @@ private:
     // is filled only AFTER the class exists. Methods are built before that, so
     // the cell -- not the class -- is what they capture.
     std::vector<ir::Value> class_cells_;
+    std::vector<char> class_cell_used_;
     std::vector<std::map<std::string, ir::Value>> type_param_env_;
 
     using AnnItems = std::vector<std::pair<std::string, const expr*>>;
@@ -3461,6 +3464,7 @@ private:
         mark_owned(ccell); forget(ccell);
         frame_owned_.push_back(ccell);
         class_cells_.push_back(ccell);
+        class_cell_used_.push_back(0);
 
         class_ns_.push_back(ns);
         const std::string qn_str = qualname(n.name);
@@ -3489,7 +3493,7 @@ private:
         // it, so a landing pad that decrefs the guard unwinds the frame.
         ir::Value guard = call_capi("pyc_rt_push_frame", {clsname, ns}, n.loc, &ok);
         if (!ok) { class_ns_.pop_back(); qual_.pop_back();
-                   class_cells_.pop_back(); return false; }
+                   class_cells_.pop_back(); class_cell_used_.pop_back(); return false; }
         mark_owned(guard);
         forget(guard);
         std::uint32_t cls_unwind = new_block("class.unwind");
@@ -3502,10 +3506,12 @@ private:
         collect_annotations(n.body, cann);
         if (!emit_annotate(cann, n.loc)) { try_stack_.pop_back(); class_ns_.pop_back();
                                            qual_.pop_back(); class_cells_.pop_back();
+                                           class_cell_used_.pop_back();
                                            return false; }
         for (const stmt& s2 : n.body)
             if (!lower_stmt(s2)) { try_stack_.pop_back(); class_ns_.pop_back();
                                    qual_.pop_back(); class_cells_.pop_back();
+                                   class_cell_used_.pop_back();
                                    return false; }
         try_stack_.pop_back();
         for (auto& [nm, tv] : class_tps) {
@@ -3513,10 +3519,13 @@ private:
             call_capi("pyc_rt_del_if_same", {ns, key, tv}, n.loc, &ok, {key});
             if (!ok) return false;
         }
+        bool need_classcell = !class_cell_used_.empty() && class_cell_used_.back();
+        if (need_classcell) store_name_keep("__classcell__", ccell, n.loc);
         locals_ = saved_locals;
         class_ns_.pop_back();
         qual_.pop_back();
         class_cells_.pop_back();
+        class_cell_used_.pop_back();
         if (!terminated()) {
             emit_decref(guard, n.loc);
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
@@ -3545,10 +3554,14 @@ private:
         if (!n.keywords.empty()) emit_decref(kwds, n.loc);
         emit_decref(bases, n.loc);
         emit_decref(ns, n.loc);
-        // Fill __class__ BEFORE decorators run: CPython binds the cell to the
-        // undecorated class, which is what super() in a method resolves to.
-        emit(ir::Instr{ir::Op::CellSet, {ccell, cls}, std::nullopt,
-                       Ownership::NotAnObject, "__class__", 0, 0, n.loc, std::nullopt});
+        // type.__new__ fills the cell from ns['__classcell__']. Filling it
+        // here skipped that, so metaclasses that drop or swap the cell never
+        // raised, and ns never contained __classcell__.
+        if (need_classcell) {
+            ir::Value nm = const_str(n.name, n.loc);
+            call_capi("pyc_rt_check_classcell", {ccell, cls, nm}, n.loc, &ok, {nm});
+            if (!ok) return false;
+        }
         if (class_tp_tuple.valid()) {
             ir::Value key = const_str("__type_params__", n.loc);
             call_capi("PyObject_SetAttr", {cls, key, class_tp_tuple}, n.loc, &ok, {key});
@@ -4978,10 +4991,10 @@ private:
                        0, 0, c.loc, make_landing_pad(c.loc)});
         mark_owned(klass);
         release(cell, c.loc);
-        ir::Value self = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-        emit(ir::Instr{ir::Op::LoadLocal, {}, self, Ownership::Owned, "self",
-                       0, 0, c.loc, make_landing_pad(c.loc)});
-        mark_owned(self);
+        if (cur()->params.empty()) { *ok = true; return {}; }
+        Name selfn{cur()->params[0], Load{}, c.loc};
+        ir::Value self = lower_name(selfn, ok);
+        if (!*ok) return {};
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::CallObject, {fn, klass, self}, out, Ownership::Owned,
                        "", 0, 0, c.loc, make_landing_pad(c.loc)});
@@ -4999,9 +5012,10 @@ private:
         // the zero-argument form means.
         if (std::holds_alternative<Name>(c.func->v)
             && std::get<Name>(c.func->v).id == "super"
-            && c.args.empty() && c.keywords.empty()) {
+            && c.args.empty() && c.keywords.empty()
+            && !locals_.count("super") && !cells_.count("super")) {
             auto cit = cells_.find("__class__");
-            if (cit != cells_.end() && !locals_.empty() && class_ns_.empty()) {
+            if (cit != cells_.end() && !cur()->params.empty() && class_ns_.empty()) {
                 ir::Value out = lower_super_zero(c, ok);
                 if (out.valid() || !*ok) return out;
             }
