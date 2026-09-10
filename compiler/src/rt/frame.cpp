@@ -57,9 +57,8 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
     f->lltrace = 0;
 #endif
     // sys._getframemodulename reads f_funcobj via PyFunction_GetModule.
-    // A real PyFunctionObject is required (PycFunc fails PyFunction_Check).
-    // `func` is the def-time snapshot: constructing here from live globals
-    // would pick up `__name__ = "test.test_metaclass"` and miss sys.modules.
+    // Compiled callables are real PyFunction objects; `func` is the def-time
+    // function so a later `__name__` rebind on the module is not picked up.
     PyObject* fn = func;
     if (!fn || !PyFunction_Check(fn)) {
         fn = PyFunction_New(reinterpret_cast<PyObject*>(code), globals);

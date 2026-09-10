@@ -257,55 +257,86 @@ namespace {
 // is a hole and a tuple cannot hold one.
 struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
-               PyObject* defaults; PyObject* kwdefaults;
-               int vararg; int kwarg;
-                PyObject* closure; int nfree;
-                PyCodeObject* frame_code; PyObject* frame_func; };
+               int vararg; int kwarg; int nfree; };
+
+void bound_capsule_dtor(PyObject* cap) {
+    Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(cap, "pyc.Bound"));
+    if (!b) { PyErr_Clear(); return; }
+    std::free(b->name);
+    delete b;
+}
+
+Bound* bound_from_func(PyObject* func) {
+    if (!func || !PyFunction_Check(func)) return nullptr;
+    auto* co = reinterpret_cast<PyCodeObject*>(PyFunction_GET_CODE(func));
+    if (!co || !co->co_consts || PyTuple_GET_SIZE(co->co_consts) < 1) return nullptr;
+    return static_cast<Bound*>(PyCapsule_GetPointer(
+        PyTuple_GET_ITEM(co->co_consts, 0), "pyc.Bound"));
+}
 
 PyCodeObject* make_func_code(Bound* b) {
-    int npar = b->nargs + b->nkwonly;
-    if (b->vararg >= 0) npar++;
-    if (b->kwarg >= 0) npar++;
-    int nvar = b->nlocals > npar ? b->nlocals : npar;
-    if (nvar < 0) nvar = 0;
-    PyObject* varnames = PyTuple_New(nvar);
-    if (!varnames) return nullptr;
-    for (int i = 0; i < nvar; ++i) {
+    int nfree = b->nfree > 0 ? b->nfree : 0;
+    int nfast = b->nlocals - nfree;
+    if (nfast < 0) nfast = 0;
+    PyObject* varnames = PyTuple_New(nfast);
+    if (!varnames) { std::free(b->name); delete b; return nullptr; }
+    for (int i = 0; i < nfast; ++i) {
         const char* s = (b->argnames && i < b->nlocals && b->argnames[i])
                             ? b->argnames[i] : "";
         PyObject* u = PyUnicode_FromString(s);
-        if (!u) { Py_DECREF(varnames); return nullptr; }
+        if (!u) { Py_DECREF(varnames); std::free(b->name); delete b; return nullptr; }
         PyTuple_SET_ITEM(varnames, i, u);
     }
+    PyObject* freevars = PyTuple_New(nfree);
+    if (!freevars) { Py_DECREF(varnames); std::free(b->name); delete b; return nullptr; }
+    for (int i = 0; i < nfree; ++i) {
+        int slot = nfast + i;
+        const char* s = (b->argnames && slot < b->nlocals && b->argnames[slot])
+                            ? b->argnames[slot] : "";
+        PyObject* u = PyUnicode_FromString(s);
+        if (!u) { Py_DECREF(varnames); Py_DECREF(freevars); std::free(b->name); delete b; return nullptr; }
+        PyTuple_SET_ITEM(freevars, i, u);
+    }
+    PyObject* cap = PyCapsule_New(b, "pyc.Bound", bound_capsule_dtor);
+    if (!cap) { Py_DECREF(varnames); Py_DECREF(freevars); std::free(b->name); delete b; return nullptr; }
+    PyObject* consts = PyTuple_Pack(1, cap);
+    Py_DECREF(cap);
+    if (!consts) { Py_DECREF(varnames); Py_DECREF(freevars); return nullptr; }
     PyObject* empty_bytes = PyBytes_FromStringAndSize("", 0);
     PyObject* empty_tuple = PyTuple_New(0);
     PyObject* filename = PyUnicode_FromString("<pyc>");
     PyObject* name = PyUnicode_FromString(b->name ? b->name : "<fn>");
     if (!empty_bytes || !empty_tuple || !filename || !name) {
         Py_XDECREF(empty_bytes); Py_XDECREF(empty_tuple);
-        Py_XDECREF(filename); Py_XDECREF(name); Py_DECREF(varnames);
+        Py_XDECREF(filename); Py_XDECREF(name);
+        Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
         return nullptr;
     }
     int flags = CO_OPTIMIZED | CO_NEWLOCALS;
     if (b->vararg >= 0) flags |= CO_VARARGS;
     if (b->kwarg >= 0) flags |= CO_VARKEYWORDS;
     PyCodeObject* co = PyUnstable_Code_NewWithPosOnlyArgs(
-        b->nargs, b->nposonly, b->nkwonly, nvar, 1, flags,
-        empty_bytes, empty_tuple, empty_tuple, varnames,
-        empty_tuple, empty_tuple, filename, name, name, 1,
+        b->nargs, b->nposonly, b->nkwonly, nfast, 1, flags,
+        empty_bytes, consts, empty_tuple, varnames,
+        freevars, empty_tuple, filename, name, name, 1,
         empty_bytes, empty_bytes);
     Py_DECREF(empty_bytes); Py_DECREF(empty_tuple);
-    Py_DECREF(filename); Py_DECREF(name); Py_DECREF(varnames);
+    Py_DECREF(filename); Py_DECREF(name);
+    Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
     return co;
 }
 
-PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
+PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
+    Bound* b = bound_from_func(func);
     if (!b) return nullptr;
+    PyObject* defaults = PyFunction_GET_DEFAULTS(func);
+    PyObject* kwdefaults = PyFunction_GET_KW_DEFAULTS(func);
+    PyObject* closure = PyFunction_GET_CLOSURE(func);
     Py_ssize_t npos = PyTuple_GET_SIZE(args);
     if (npos > b->nargs && b->vararg < 0) {
         // CPython names the whole accepted RANGE when defaults make the lower
         // bound differ: "takes from 1 to 2 positional arguments".
-        Py_ssize_t ndef0 = b->defaults ? PyTuple_GET_SIZE(b->defaults) : 0;
+        Py_ssize_t ndef0 = defaults ? PyTuple_GET_SIZE(defaults) : 0;
         if (ndef0 > 0)
             PyErr_Format(PyExc_TypeError,
                          "%s() takes from %zd to %d positional argument%s "
@@ -347,7 +378,7 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
     // Free variables occupy the LAST nfree slots, holding the cells
     // themselves so writes through them are visible to the enclosing scope.
     for (int i = 0; i < b->nfree; ++i) {
-        PyObject* cell = PyTuple_GET_ITEM(b->closure, i);
+        PyObject* cell = PyTuple_GET_ITEM(closure, i);
         Py_INCREF(cell);
         locals[b->nlocals - b->nfree + i] = cell;
     }
@@ -412,12 +443,12 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
     {
         // Defaults cover the LAST k parameters, so parameter i takes
         // defaults[i - (nargs - k)].
-        Py_ssize_t ndef = b->defaults ? PyTuple_GET_SIZE(b->defaults) : 0;
+        Py_ssize_t ndef = defaults ? PyTuple_GET_SIZE(defaults) : 0;
         Py_ssize_t first_def = b->nargs - ndef;
         for (int i = 0; i < b->nargs; ++i) {
             if (locals[i]) continue;
             if (ndef && i >= first_def) {
-                PyObject* d = PyTuple_GET_ITEM(b->defaults, i - first_def);
+                PyObject* d = PyTuple_GET_ITEM(defaults, i - first_def);
                 Py_INCREF(d);
                 locals[i] = d;
                 continue;
@@ -430,8 +461,8 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
         // positional and being wrong about it.
         for (int i = b->nargs; i < b->nargs + b->nkwonly; ++i) {
             if (locals[i]) continue;
-            PyObject* d = b->kwdefaults
-                ? PyDict_GetItemString(b->kwdefaults, b->argnames[i]) : nullptr;
+            PyObject* d = kwdefaults
+                ? PyDict_GetItemString(kwdefaults, b->argnames[i]) : nullptr;
             if (d) { Py_INCREF(d); locals[i] = d; continue; }
             missing_kwonly.push_back(b->argnames[i]);
         }
@@ -477,13 +508,10 @@ PyObject* trampoline(Bound* b, PyObject* args, PyObject* kwargs) {
                 }
             }
         }
-        if (!b->frame_code) {
-            b->frame_code = make_func_code(b);
-            if (!b->frame_code) { Py_DECREF(fdict); goto fail; }
-        }
         PyObject* g = globals_dict();
-        void* fr = g ? pyc_rt_interp_enter(b->frame_code, g, fdict, b->frame_func)
-                     : nullptr;
+        auto* co = reinterpret_cast<PyCodeObject*>(PyFunction_GET_CODE(func));
+        void* fr = (g && co) ? pyc_rt_interp_enter(co, g, fdict, func)
+                             : nullptr;
         if (!fr) { Py_DECREF(fdict); goto fail; }
         PyObject* prev_tls = tls_frame_locals;
         const char* const* prev_names = tls_frame_names;
@@ -516,28 +544,6 @@ fail:
     return nullptr;
 }
 
-}  // namespace
-
-namespace {
-// A real function object.
-//
-// pyc functions used to be PyCFunction. A PyCFunction is not a descriptor, so
-// it does not bind self on attribute access: methods needed an explicit
-// PyInstanceMethod wrapper at class-definition time, and a function assigned
-// to a class LATER (`cls.__repr__ = f`, the decorator idiom) was never wrapped
-// and lost self entirely. It also reprs as "<built-in method f>" where CPython
-// says "<function f at 0x...>".
-//
-// Both are the same root cause, so both are fixed in the same place: give the
-// object a type of its own that implements tp_descr_get and tp_repr the way a
-// Python function does.
-// name and dict are writable: functools.wraps assigns __name__, __qualname__,
-// __doc__, __module__ and __wrapped__ onto the wrapper, so a read-only
-// function object makes every @functools.wraps decorator fail.
-struct PycFunc { PyObject_HEAD Bound* b; PyObject* name; PyObject* doc; PyObject* module; PyObject* dict;
-                 PyObject* annotate; PyObject* annotations;
-                 vectorcallfunc vectorcall; };
-
 PyObject* func_vectorcall(PyObject* callable, PyObject* const* args,
                           size_t nargsf, PyObject* kwnames) {
     Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
@@ -559,273 +565,14 @@ PyObject* func_vectorcall(PyObject* callable, PyObject* const* args,
             }
         }
     }
-    PyObject* r = trampoline(reinterpret_cast<PycFunc*>(callable)->b, tup, kw);
+    PyObject* r = trampoline(callable, tup, kw);
     Py_DECREF(tup);
     Py_XDECREF(kw);
     return r;
 }
 
-PyObject* func_call(PyObject* self, PyObject* args, PyObject* kwargs) {
-    return trampoline(reinterpret_cast<PycFunc*>(self)->b, args, kwargs);
-}
-
-PyObject* func_descr_get(PyObject* self, PyObject* obj, PyObject* /*type*/) {
-    // Accessed on the class itself, not an instance: stay unbound.
-    if (!obj || obj == Py_None) { Py_INCREF(self); return self; }
-    return PyMethod_New(self, obj);
-}
-
-PyObject* func_repr(PyObject* self) {
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    return PyUnicode_FromFormat("<function %U at %p>", f->name, self);
-}
-
-PyObject* func_get_name(PyObject* self, void*) {
-    PyObject* n = reinterpret_cast<PycFunc*>(self)->name;
-    Py_INCREF(n);
-    return n;
-}
-
-PyObject* func_get_doc(PyObject* self, void*) {
-    PyObject* d = reinterpret_cast<PycFunc*>(self)->doc;
-    if (!d) d = Py_None;                // absent docstring reads as None
-    Py_INCREF(d);
-    return d;
-}
-
-int func_set_doc(PyObject* self, PyObject* v, void*) {
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    Py_XINCREF(v);
-    Py_XSETREF(f->doc, v);
-    return 0;
-}
-
-int func_set_name(PyObject* self, PyObject* v, void*) {
-    if (!v || !PyUnicode_Check(v)) {
-        PyErr_SetString(PyExc_TypeError,
-                        "__name__ must be set to a string object");
-        return -1;
-    }
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    Py_INCREF(v);
-    Py_XSETREF(f->name, v);
-    return 0;
-}
-
-PyObject* func_get_module(PyObject* self, void*) {
-    PyObject* m = reinterpret_cast<PycFunc*>(self)->module;
-    if (!m) m = Py_None;
-    Py_INCREF(m);
-    return m;
-}
-
-int func_set_module(PyObject* self, PyObject* v, void*) {
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    Py_XINCREF(v);
-    Py_XSETREF(f->module, v);
-    return 0;
-}
-
-PyObject* func_get_globals(PyObject*, void*) {
-    PyObject* g = globals_dict();
-    if (!g) Py_RETURN_NONE;
-    Py_INCREF(g);
-    return g;
-}
-
-PyObject* func_get_closure(PyObject* self, void*) {
-    PyObject* c = reinterpret_cast<PycFunc*>(self)->b->closure;
-    if (!c) Py_RETURN_NONE;
-    Py_INCREF(c);
-    return c;
-}
-
-PyObject* func_get_code(PyObject* self, void*) {
-    PyCodeObject* co = reinterpret_cast<PycFunc*>(self)->b->frame_code;
-    if (!co) Py_RETURN_NONE;
-    Py_INCREF(co);
-    return reinterpret_cast<PyObject*>(co);
-}
-
-PyObject* func_get_defaults(PyObject* self, void*) {
-    PyObject* d = reinterpret_cast<PycFunc*>(self)->b->defaults;
-    if (!d) Py_RETURN_NONE;
-    Py_INCREF(d);
-    return d;
-}
-
-int func_set_defaults(PyObject* self, PyObject* v, void*) {
-    if (v && v != Py_None && !PyTuple_Check(v)) {
-        PyErr_SetString(PyExc_TypeError, "__defaults__ must be set to a tuple object");
-        return -1;
-    }
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    if (v == Py_None) v = nullptr;
-    Py_XINCREF(v);
-    Py_XSETREF(f->b->defaults, v);
-    return 0;
-}
-
-PyObject* func_get_kwdefaults(PyObject* self, void*) {
-    PyObject* d = reinterpret_cast<PycFunc*>(self)->b->kwdefaults;
-    if (!d) Py_RETURN_NONE;
-    Py_INCREF(d);
-    return d;
-}
-
-int func_set_kwdefaults(PyObject* self, PyObject* v, void*) {
-    if (v && v != Py_None && !PyDict_Check(v)) {
-        PyErr_SetString(PyExc_TypeError, "__kwdefaults__ must be set to a dict object");
-        return -1;
-    }
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    if (v == Py_None) v = nullptr;
-    Py_XINCREF(v);
-    Py_XSETREF(f->b->kwdefaults, v);
-    return 0;
-}
-
-PyObject* func_get_annotate(PyObject* self, void*) {
-    PyObject* a = reinterpret_cast<PycFunc*>(self)->annotate;
-    if (!a) Py_RETURN_NONE;
-    Py_INCREF(a);
-    return a;
-}
-
-int func_set_annotate(PyObject* self, PyObject* v, void*) {
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    if (v == Py_None) v = nullptr;
-    Py_XINCREF(v);
-    Py_XSETREF(f->annotate, v);
-    Py_CLEAR(f->annotations);
-    return 0;
-}
-
-PyObject* func_get_annotations(PyObject* self, void*) {
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    if (f->annotations) {
-        Py_INCREF(f->annotations);
-        return f->annotations;
-    }
-    if (!f->annotate) {
-        f->annotations = PyDict_New();
-        if (!f->annotations) return nullptr;
-        Py_INCREF(f->annotations);
-        return f->annotations;
-    }
-    PyObject* fmt = PyLong_FromLong(1);
-    if (!fmt) return nullptr;
-    PyObject* d = PyObject_CallOneArg(f->annotate, fmt);
-    Py_DECREF(fmt);
-    if (!d) return nullptr;
-    if (!PyDict_Check(d)) {
-        Py_DECREF(d);
-        PyErr_SetString(PyExc_TypeError, "__annotate__() must return a dict");
-        return nullptr;
-    }
-    f->annotations = d;
-    Py_INCREF(d);
-    return d;
-}
-
-int func_set_annotations(PyObject* self, PyObject* v, void*) {
-    if (v && v != Py_None && !PyDict_Check(v)) {
-        PyErr_SetString(PyExc_TypeError, "__annotations__ must be set to a dict object");
-        return -1;
-    }
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    if (v == Py_None) v = nullptr;
-    Py_XINCREF(v);
-    Py_XSETREF(f->annotations, v);
-    return 0;
-}
-
-PyObject* func_copy(PyObject* self, PyObject*) {
-    Py_INCREF(self);
-    return self;
-}
-
-PyObject* func_deepcopy(PyObject* self, PyObject*) {
-    Py_INCREF(self);
-    return self;
-}
-
-PyObject* func_reduce(PyObject* self, PyObject*) {
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    if (!f->name) {
-        PyErr_SetString(PyExc_TypeError, "cannot pickle 'function' object");
-        return nullptr;
-    }
-    Py_INCREF(f->name);
-    return f->name;
-}
-
-void func_dealloc(PyObject* self) {
-    PycFunc* f = reinterpret_cast<PycFunc*>(self);
-    if (f->b) { Py_XDECREF(f->b->defaults); Py_XDECREF(f->b->kwdefaults);
-                Py_XDECREF(f->b->closure); Py_XDECREF(f->b->frame_code);
-                Py_XDECREF(f->b->frame_func);
-                std::free(f->b->name); delete f->b; }
-    Py_XDECREF(f->name);
-    Py_XDECREF(f->doc);
-    Py_XDECREF(f->module);
-    Py_XDECREF(f->dict);
-    Py_XDECREF(f->annotate);
-    Py_XDECREF(f->annotations);
-    Py_TYPE(self)->tp_free(self);
-}
-
-PyGetSetDef func_getset[] = {
-    {"__name__", func_get_name, func_set_name, nullptr, nullptr},
-    {"__qualname__", func_get_name, func_set_name, nullptr, nullptr},
-    // tp_dictoffset alone gives the object storage but no way to REACH it;
-    // functools.wraps reads wrapper.__dict__ directly.
-    {"__dict__", PyObject_GenericGetDict, PyObject_GenericSetDict, nullptr, nullptr},
-    {"__doc__", func_get_doc, func_set_doc, nullptr, nullptr},
-    {"__module__", func_get_module, func_set_module, nullptr, nullptr},
-    {"__globals__", func_get_globals, nullptr, nullptr, nullptr},
-    {"__closure__", func_get_closure, nullptr, nullptr, nullptr},
-    {"__code__", func_get_code, nullptr, nullptr, nullptr},
-    {"__defaults__", func_get_defaults, func_set_defaults, nullptr, nullptr},
-    {"__kwdefaults__", func_get_kwdefaults, func_set_kwdefaults, nullptr, nullptr},
-    {"__annotate__", func_get_annotate, func_set_annotate, nullptr, nullptr},
-    {"__annotations__", func_get_annotations, func_set_annotations, nullptr, nullptr},
-    {nullptr, nullptr, nullptr, nullptr, nullptr},
-};
-
-PyMethodDef func_methods[] = {
-    {"__copy__", func_copy, METH_NOARGS, nullptr},
-    {"__deepcopy__", func_deepcopy, METH_O, nullptr},
-    {"__reduce__", func_reduce, METH_NOARGS, nullptr},
-    {nullptr, nullptr, 0, nullptr},
-};
-
-PyTypeObject PycFuncType = {
-    PyVarObject_HEAD_INIT(nullptr, 0)
-    "function",                     // tp_name -- what type(f).__name__ reports
-    sizeof(PycFunc),
-};
-
-bool init_func_type() {
-    static bool done = false, okv = false;
-    if (done) return okv;
-    done = true;
-    PycFuncType.tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_VECTORCALL;
-    PycFuncType.tp_call = PyVectorcall_Call;
-    PycFuncType.tp_vectorcall_offset = offsetof(PycFunc, vectorcall);
-    PycFuncType.tp_repr = func_repr;
-    PycFuncType.tp_descr_get = func_descr_get;
-    PycFuncType.tp_dealloc = func_dealloc;
-    PycFuncType.tp_getset = func_getset;
-    PycFuncType.tp_methods = func_methods;
-    PycFuncType.tp_getattro = PyObject_GenericGetAttr;
-    PycFuncType.tp_setattro = PyObject_GenericSetAttr;
-    PycFuncType.tp_dictoffset = offsetof(PycFunc, dict);
-    PycFuncType.tp_new = nullptr;
-    okv = PyType_Ready(&PycFuncType) == 0;
-    return okv;
-}
 }  // namespace
+
 
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                int nargs, int nkwonly, int nposonly, int nlocals,
@@ -835,48 +582,34 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                PyObject** closure, int nfree) {
     char* owned = strdup(name);
     if (!owned) return PyErr_NoMemory();
-    Py_XINCREF(defaults);
-    Py_XINCREF(kwdefaults);
-    // The closure is captured as a tuple of CELLS, not values: the whole point
-    // is that the inner function sees later assignments to the outer variable.
-    PyObject* clo = nullptr;
+    Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nposonly, nlocals, owned,
+                                        argnames, vararg_slot, kwarg_slot, nfree};
+    if (!b) { std::free(owned); return PyErr_NoMemory(); }
+    PyCodeObject* co = make_func_code(b);
+    if (!co) return nullptr;
+    PyObject* g = globals_dict();
+    if (!g) { Py_DECREF(co); PyErr_SetString(PyExc_RuntimeError, "no globals"); return nullptr; }
+    PyObject* qn = PyUnicode_FromString(name);
+    if (!qn) { Py_DECREF(co); return nullptr; }
+    PyObject* fn = PyFunction_NewWithQualName(reinterpret_cast<PyObject*>(co), g, qn);
+    Py_DECREF(co);
+    Py_DECREF(qn);
+    if (!fn) return nullptr;
+    if (defaults && PyFunction_SetDefaults(fn, defaults) < 0) { Py_DECREF(fn); return nullptr; }
+    if (kwdefaults && PyFunction_SetKwDefaults(fn, kwdefaults) < 0) { Py_DECREF(fn); return nullptr; }
     if (nfree > 0) {
-        clo = PyTuple_New(nfree);
-        if (!clo) { Py_XDECREF(defaults); std::free(owned); return nullptr; }
+        PyObject* clo = PyTuple_New(nfree);
+        if (!clo) { Py_DECREF(fn); return nullptr; }
         for (int i = 0; i < nfree; ++i) {
             Py_INCREF(closure[i]);
             PyTuple_SET_ITEM(clo, i, closure[i]);
         }
+        int rc = PyFunction_SetClosure(fn, clo);
+        Py_DECREF(clo);
+        if (rc < 0) { Py_DECREF(fn); return nullptr; }
     }
-    Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nposonly, nlocals, owned,
-                                        argnames, defaults, kwdefaults,
-                                        vararg_slot, kwarg_slot, clo, nfree,
-                                        nullptr, nullptr};
-    if (!b) { Py_XDECREF(defaults); std::free(owned); return PyErr_NoMemory(); }
-    if (!init_func_type()) { Py_XDECREF(defaults); std::free(owned); delete b; return nullptr; }
-    PycFunc* fn = PyObject_New(PycFunc, &PycFuncType);
-    if (!fn) { Py_XDECREF(defaults); std::free(owned); delete b; return nullptr; }
-    fn->b = b;
-    fn->dict = nullptr;                 // created lazily by generic setattr
-    fn->doc = nullptr;                  // reads as None until a docstring is set
-    fn->module = nullptr;
-    fn->annotate = nullptr;
-    fn->annotations = nullptr;
-    fn->vectorcall = func_vectorcall;
-    PyObject* g = globals_dict();
-    PyObject* modname = g ? PyDict_GetItemString(g, "__name__") : nullptr;
-    if (modname) {
-        Py_INCREF(modname);
-        fn->module = modname;
-    }
-    fn->name = PyUnicode_FromString(name);
-    if (!fn->name) { Py_DECREF(fn); return nullptr; }
-    // Snapshot the function object at DEF time so sys._getframemodulename
-    // still reports __main__ after the module rebinds __name__.
-    b->frame_code = make_func_code(b);
-    if (b->frame_code && g)
-        b->frame_func = PyFunction_New(reinterpret_cast<PyObject*>(b->frame_code), g);
-    return reinterpret_cast<PyObject*>(fn);
+    PyFunction_SetVectorcall(reinterpret_cast<PyFunctionObject*>(fn), func_vectorcall);
+    return fn;
 }
 
 extern "C" int pyc_rt_unbox_int(PyObject* o, int64_t* out) {
@@ -1047,25 +780,15 @@ extern "C" PyObject* pyc_rt_class_prepare(PyObject* meta, PyObject* name,
 
 // type.__new__ wraps three names when it finds a plain function under them:
 // __new__ becomes a staticmethod, __init_subclass__ and __class_getitem__
-// become classmethods. It tests PyFunction_Check, and a pyc-compiled callable
-// is a PycFuncType, not a PyFunctionObject -- so the wrapping was silently
-// skipped for every compiled class.
-//
-// The visible cost was `__init_subclass__() missing 1 required positional
-// argument: 'cls'`: unwrapped, it never received the subclass. __new__ only
-// appeared to work because a PycFunc has no descriptor binding, so it behaved
-// like a staticmethod by accident rather than by contract.
-//
-// Done here, before the metaclass runs, so the namespace it receives already
-// carries what CPython's would. Anything already wrapped, and anything that is
-// not one of ours or a real function, is left exactly as CPython leaves it.
+// become classmethods. It tests PyFunction_Check. Compiled callables are
+// real PyFunction objects, so this matches CPython's own wrap.
 static int wrap_class_attr(PyObject* ns, const char* name, PyTypeObject* kind) {
     PyObject* key = PyUnicode_FromString(name);
     if (!key) return -1;
     PyObject* fn = nullptr;
     int rc = PyMapping_GetOptionalItem(ns, key, &fn);
     if (rc < 0 || !fn) { Py_DECREF(key); return rc < 0 ? -1 : 0; }
-    if (!PyFunction_Check(fn) && !Py_IS_TYPE(fn, &PycFuncType)) {
+    if (!PyFunction_Check(fn)) {
         Py_DECREF(fn); Py_DECREF(key); return 0;
     }
     PyObject* wrapped = PyObject_CallOneArg(reinterpret_cast<PyObject*>(kind), fn);

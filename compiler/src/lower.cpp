@@ -2301,11 +2301,32 @@ private:
             if (!*ok) return {};
         }
 
+        std::set<std::string> reads;
+        for (const auto& [name, ann] : items) {
+            auto r = nested_reads_expr(*ann);
+            reads.insert(r.begin(), r.end());
+        }
+        std::vector<std::string> freevars;
+        std::vector<ir::Value> closure_cells;
+        for (const std::string& r : reads) {
+            auto cit = cells_.find(r);
+            if (cit == cells_.end()) continue;
+            freevars.push_back(r);
+            ir::Value c = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, c, Ownership::Owned, r,
+                           cit->second, 0, loc, make_landing_pad(loc)});
+            mark_owned(c);
+            closure_cells.push_back(c);
+        }
+
         std::vector<std::string> params{"format"};
         std::vector<std::string> locals = params;
         if (class_scope) { params.push_back(".ns"); locals.push_back(".ns"); }
+        for (const std::string& f2 : freevars) locals.push_back(f2);
 
         FnScope sc = begin_function("__annotate__", params, locals);
+        cur()->freevars = freevars;
+        for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
         auto saved_ns = class_ns_;
         class_ns_.clear();
         if (class_scope) {
@@ -2341,7 +2362,8 @@ private:
         std::size_t idx = end_function(sc);
         if (!*ok) return {};
         ir::Value fn = make_function_value(idx, qualname("__annotate__"), loc,
-                                           {}, defaults);
+                                           closure_cells, defaults);
+        for (const ir::Value& c : closure_cells) if (owns(c)) release(c, loc);
         if (class_scope && owns(defaults)) release(defaults, loc);
         return fn;
     }

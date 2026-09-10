@@ -472,6 +472,21 @@ namespace {
 struct NestedReads {
     std::set<std::string>& out;
 
+    void anns(const arguments& a, const std::optional<Box<expr>>& returns, bool inside) {
+        auto arg_ann = [&](const arg& p) {
+            if (p.annotation) expr_(**p.annotation, true);
+        };
+        for (const arg& p : a.posonlyargs) arg_ann(p);
+        for (const arg& p : a.args) arg_ann(p);
+        if (a.vararg) arg_ann(**a.vararg);
+        for (const arg& p : a.kwonlyargs) arg_ann(p);
+        if (a.kwarg) arg_ann(**a.kwarg);
+        if (returns) expr_(**returns, true);
+        for (const expr& d : a.defaults) expr_(d, inside);
+        for (const auto& kd : a.kw_defaults)
+            if (kd.has_value()) expr_(**kd, inside);
+    }
+
     void expr_(const expr& e, bool inside) {
         std::visit(ov{
             [&](const Name& n){ if (inside) out.insert(n.id); },
@@ -533,10 +548,16 @@ struct NestedReads {
     void stmt_(const stmt& s, bool inside) {
         std::visit(ov{
             // Entering a nested function: everything below is "inside".
-            [&](const FunctionDef& n){ for (const stmt& y : n.body) stmt_(y, true);
-                                       for (const expr& d : n.decorator_list) expr_(d, inside); },
-            [&](const AsyncFunctionDef& n){ for (const stmt& y : n.body) stmt_(y, true);
-                                            for (const expr& d : n.decorator_list) expr_(d, inside); },
+            [&](const FunctionDef& n){
+                for (const stmt& y : n.body) stmt_(y, true);
+                for (const expr& d : n.decorator_list) expr_(d, inside);
+                anns(*n.args, n.returns, inside);
+            },
+            [&](const AsyncFunctionDef& n){
+                for (const stmt& y : n.body) stmt_(y, true);
+                for (const expr& d : n.decorator_list) expr_(d, inside);
+                anns(*n.args, n.returns, inside);
+            },
             [&](const ClassDef& n){ for (const stmt& y : n.body) stmt_(y, true);
                                     for (const expr& b : n.bases) expr_(b, inside);
                                     for (const keyword& k : n.keywords) expr_(*k.value, inside);
@@ -547,7 +568,8 @@ struct NestedReads {
                                   for (const expr& t : n.targets) expr_(t, inside); },
             [&](const AugAssign& n){ expr_(*n.value, inside); expr_(*n.target, inside); },
             [&](const AnnAssign& n){ if (n.value) expr_(**n.value, inside);
-                                     expr_(*n.target, inside); },
+                                     expr_(*n.target, inside);
+                                     expr_(*n.annotation, inside); },
             [&](const If& n){ expr_(*n.test, inside);
                               for (const stmt& y : n.body) stmt_(y, inside);
                               for (const stmt& y : n.orelse) stmt_(y, inside); },
