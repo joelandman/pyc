@@ -487,7 +487,7 @@ namespace {
 // name and dict are writable: functools.wraps assigns __name__, __qualname__,
 // __doc__, __module__ and __wrapped__ onto the wrapper, so a read-only
 // function object makes every @functools.wraps decorator fail.
-struct PycFunc { PyObject_HEAD Bound* b; PyObject* name; PyObject* doc; PyObject* dict; };
+struct PycFunc { PyObject_HEAD Bound* b; PyObject* name; PyObject* doc; PyObject* module; PyObject* dict; };
 
 PyObject* func_call(PyObject* self, PyObject* args, PyObject* kwargs) {
     return trampoline(reinterpret_cast<PycFunc*>(self)->b, args, kwargs);
@@ -536,6 +536,27 @@ int func_set_name(PyObject* self, PyObject* v, void*) {
     return 0;
 }
 
+PyObject* func_get_module(PyObject* self, void*) {
+    PyObject* m = reinterpret_cast<PycFunc*>(self)->module;
+    if (!m) m = Py_None;
+    Py_INCREF(m);
+    return m;
+}
+
+int func_set_module(PyObject* self, PyObject* v, void*) {
+    PycFunc* f = reinterpret_cast<PycFunc*>(self);
+    Py_XINCREF(v);
+    Py_XSETREF(f->module, v);
+    return 0;
+}
+
+PyObject* func_get_globals(PyObject*, void*) {
+    PyObject* g = globals_dict();
+    if (!g) Py_RETURN_NONE;
+    Py_INCREF(g);
+    return g;
+}
+
 void func_dealloc(PyObject* self) {
     PycFunc* f = reinterpret_cast<PycFunc*>(self);
     if (f->b) { Py_XDECREF(f->b->defaults); Py_XDECREF(f->b->kwdefaults);
@@ -543,6 +564,7 @@ void func_dealloc(PyObject* self) {
                 std::free(f->b->name); delete f->b; }
     Py_XDECREF(f->name);
     Py_XDECREF(f->doc);
+    Py_XDECREF(f->module);
     Py_XDECREF(f->dict);
     Py_TYPE(self)->tp_free(self);
 }
@@ -554,6 +576,8 @@ PyGetSetDef func_getset[] = {
     // functools.wraps reads wrapper.__dict__ directly.
     {"__dict__", PyObject_GenericGetDict, PyObject_GenericSetDict, nullptr, nullptr},
     {"__doc__", func_get_doc, func_set_doc, nullptr, nullptr},
+    {"__module__", func_get_module, func_set_module, nullptr, nullptr},
+    {"__globals__", func_get_globals, nullptr, nullptr, nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr},
 };
 
@@ -613,6 +637,13 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     fn->b = b;
     fn->dict = nullptr;                 // created lazily by generic setattr
     fn->doc = nullptr;                  // reads as None until a docstring is set
+    fn->module = nullptr;
+    PyObject* g = globals_dict();
+    PyObject* modname = g ? PyDict_GetItemString(g, "__name__") : nullptr;
+    if (modname) {
+        Py_INCREF(modname);
+        fn->module = modname;
+    }
     fn->name = PyUnicode_FromString(name);
     if (!fn->name) { Py_DECREF(fn); return nullptr; }
     return reinterpret_cast<PyObject*>(fn);
@@ -1395,7 +1426,8 @@ extern "C" int pyc_rt_reraise(void) {
 //
 // names is a comma-separated list rather than a tuple so the lowering stays one
 // call with two string constants; building the tuple is this function's job.
-extern "C" PyObject* pyc_rt_import_from(PyObject* module, PyObject* names) {
+extern "C" PyObject* pyc_rt_import_from(PyObject* module, PyObject* names,
+                                        int level) {
     const char* csv = PyUnicode_AsUTF8(names);
     if (!csv) return nullptr;
     PyObject* fromlist = PyList_New(0);
@@ -1414,7 +1446,7 @@ extern "C" PyObject* pyc_rt_import_from(PyObject* module, PyObject* names) {
     }
     PyObject* globals = globals_dict();          // borrowed, may be null
     PyObject* mod = PyImport_ImportModuleLevelObject(
-        module, globals, globals, fromlist, 0);
+        module, globals, globals, fromlist, level);
     Py_DECREF(fromlist);
     return mod;                                  // new reference
 }

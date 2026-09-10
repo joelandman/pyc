@@ -849,7 +849,7 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     // because a landing pad now pops open handlers.
     {"pyc_rt_pop_handled", Ownership::NotAnObject, false, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_import_star", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
-    {"pyc_rt_import_from", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
+    {"pyc_rt_import_from", Ownership::Owned, true, 3, {}, false, "", false, "", "ooi"},
     {"pyc_rt_import_attr", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
     {"pyc_rt_cell_get", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_unpack_ex", Ownership::Owned, true, 3, {}, false, "", false, "", "oii"},

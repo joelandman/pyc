@@ -3573,19 +3573,26 @@ private:
     }
 
     bool lower_import_from(const ImportFrom& n) {
-        if (n.level && *n.level > 0)
-            return unsupported("relative imports", n.loc);
+        const std::int64_t level = n.level ? *n.level : 0;
         for (const alias& a : n.names)
             if (a.name == "*") {
                 bool wok = true;
                 std::string m2 = n.module ? *n.module : std::string();
-                if (m2.empty()) return unsupported("wildcard import without a module", n.loc);
-                ir::Value mod = emit_import(m2, false, n.loc);
+                if (m2.empty() && level == 0)
+                    return unsupported("wildcard import without a module", n.loc);
+                ir::Value modname = const_str(m2, n.loc);
+                ir::Value names = const_str("*", n.loc);
+                ir::Value mod = call_capi("pyc_rt_import_from",
+                    {modname, names, int_const(level, n.loc)}, n.loc, &wok,
+                    {modname, names});
+                if (!wok) return false;
+                mark_owned(mod);
                 call_capi("pyc_rt_import_star", {mod}, n.loc, &wok, {mod});
                 return wok;
             }
         std::string mod = n.module ? *n.module : std::string();
-        if (mod.empty()) return unsupported("import from an unnamed module", n.loc);
+        if (mod.empty() && level == 0)
+            return unsupported("import from an unnamed module", n.loc);
 
         bool ok = true;
         // Import WITH a fromlist. `import X` then getattr is not the same
@@ -3599,7 +3606,8 @@ private:
         }
         ir::Value modname = const_str(mod, n.loc);
         ir::Value names = const_str(csv, n.loc);
-        ir::Value m = call_capi("pyc_rt_import_from", {modname, names},
+        ir::Value m = call_capi("pyc_rt_import_from",
+                                {modname, names, int_const(level, n.loc)},
                                 n.loc, &ok, {modname, names});
         if (!ok) return false;
         mark_owned(m);
@@ -4833,20 +4841,39 @@ private:
         return out;
     }
 
-    ir::Value lower_const(const Constant& c, bool* ok) {
+    ir::Value lower_const_tuple(const std::vector<ConstantValue>& items,
+                                const SourceLoc& loc, bool* ok) {
+        ir::Value seq = call_capi_imm("PyTuple_New", {},
+                                      (std::int64_t)items.size(), 0, loc, ok);
+        if (!*ok) return {};
+        mark_owned(seq);
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            ir::Value v = lower_const_value(items[i], loc, ok);
+            if (!*ok) return {};
+            call_capi_imm("PyTuple_SetItem", {seq, v}, (std::int64_t)i, 1, loc, ok);
+            if (!*ok) return {};
+        }
+        return seq;
+    }
+
+    ir::Value lower_const_value(const ConstantValue& cv, const SourceLoc& loc,
+                                bool* ok) {
+        if (const ConstTuple* t = std::get_if<ConstTuple>(&cv.v))
+            return lower_const_tuple(t->items, loc, ok);
+        if (const ConstFrozenSet* f = std::get_if<ConstFrozenSet>(&cv.v)) {
+            ir::Value tup = lower_const_tuple(f->items, loc, ok);
+            if (!*ok) return {};
+            ir::Value out = call_capi("PyFrozenSet_New", {tup}, loc, ok, {tup});
+            if (*ok) mark_owned(out);
+            return out;
+        }
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         ir::Instr in{ir::Op::ConstNone, {}, out, Ownership::Owned, "", 0, 0,
-                     c.loc, std::nullopt};
+                     loc, std::nullopt};
         std::visit(ov{
-            // The literal stays DECIMAL TEXT all the way to codegen, which
-            // hands it to PyLong_FromString. Nothing here can wrap.
             [&](const ConstBigInt& v) { in.op = ir::Op::ConstInt;   in.text = v.digits; },
             [&](const ConstFloat& v)  {
                 in.op = ir::Op::ConstFloat;
-                // NOT std::to_string: it formats with %f at six decimals, so
-                // 1e-300 became "0.000000" -- the literal silently compiled to
-                // ZERO -- and 3.14159265358979 became "3.141593". %.17g
-                // round-trips every IEEE-754 double exactly.
                 char buf[64];
                 std::snprintf(buf, sizeof buf, "%.17g", v.value);
                 in.text = buf;
@@ -4858,30 +4885,20 @@ private:
             [&](const ConstEllipsis&) { in.op = ir::Op::ConstEllipsis; },
             [&](const ConstComplex& v) {
                 in.op = ir::Op::ConstComplex;
-                // LLVM needs a literal it can parse as a double; %.17g is
-                // exact for IEEE-754 round-tripping.
                 char buf[80];
                 std::snprintf(buf, sizeof buf, "%.17g %.17g", v.real, v.imag);
                 in.text = buf;
             },
-            [&](const ConstTuple&)    { *ok = unsupported("tuple constants", c.loc); },
-            [&](const ConstFrozenSet&){ *ok = unsupported("frozenset constants", c.loc); },
-        }, c.value.v);
-        if (!*ok) return {};
-        // NOT given an error edge yet, deliberately. Int, float and bytes
-        // literals allocate too, so they carry the same latent failure as
-        // const_str -- but adding pads here made check_ir_wellformed report
-        // n_finally.py malformed ("owned value released only on unwind
-        // paths"), and shipping a verified fix beside an unverified one that
-        // breaks the checker is not a trade worth making. Bisected: const_str
-        // alone is clean, this switch alone reproduces it.
-        //
-        // The real answer for all of them is to hoist literals to module-level
-        // globals built once at startup, which removes the failure point
-        // rather than checking it, and is faster. Tracked as follow-up work.
+            [&](const ConstTuple&) {},
+            [&](const ConstFrozenSet&) {},
+        }, cv.v);
         emit(std::move(in));
         mark_owned(out);
         return out;
+    }
+
+    ir::Value lower_const(const Constant& c, bool* ok) {
+        return lower_const_value(c.value, c.loc, ok);
     }
 
     ir::Value lower_name(const Name& n, bool* ok) {
@@ -5026,7 +5043,15 @@ private:
     ir::Value lower_subscript(const Subscript& n, bool* ok) {
         ir::Value obj = lower_expr(*n.value, ok);
         if (!*ok) return {};
-        ir::Value key = lower_expr(*n.slice, ok);
+        ir::Value key;
+        if (const Starred* st = std::get_if<Starred>(&n.slice->v)) {
+            ir::Value v = lower_expr(*st->value, ok);
+            if (!*ok) return {};
+            key = call_capi("PySequence_Tuple", {v}, n.loc, ok, {v});
+            if (*ok) mark_owned(key);
+        } else {
+            key = lower_expr(*n.slice, ok);
+        }
         if (!*ok) return {};
         ir::Value out = call_capi("PyObject_GetItem", {obj, key}, n.loc, ok, {obj, key});
         if (*ok) mark_owned(out);
