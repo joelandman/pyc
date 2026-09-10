@@ -39,9 +39,24 @@ extern "C" void pyc_rt_globals_init(void) {
 }
 
 static PyObject* globals_dict() {
+    PyObject* g = PyEval_GetGlobals();
+    if (g) return g;
     if (g_globals_cache) return g_globals_cache;
     PyObject* m = PyImport_AddModule("__main__");   // borrowed
     return m ? PyModule_GetDict(m) : nullptr;       // borrowed
+}
+
+static PyObject* mapping_get(PyObject* map, PyObject* key) {
+    if (!map || !key) return nullptr;
+    if (PyDict_CheckExact(map)) {
+        PyObject* v = nullptr;
+        if (PyDict_GetItemRef(map, key, &v) < 0) return nullptr;
+        return v;
+    }
+    PyObject* v = PyObject_GetItem(map, key);
+    if (v) return v;
+    if (PyErr_ExceptionMatches(PyExc_KeyError)) PyErr_Clear();
+    return nullptr;
 }
 
 // Name lookup inside a CLASS BODY. CPython compiles these to LOAD_NAME:
@@ -77,14 +92,15 @@ PyObject* pyc_rt_load_classname(PyObject* ns, const char* name) {
 extern "C" PyObject* pyc_rt_load_global_obj(PyObject* name) {
     PyObject* g = globals_dict();
     if (!g) return nullptr;
-    PyObject* v = nullptr;
-    if (PyDict_GetItemRef(g, name, &v) < 0) return nullptr;
+    PyObject* v = mapping_get(g, name);
     if (v) return v;
+    if (PyErr_Occurred()) return nullptr;
     // Not a module global: try builtins. This is what makes `print` an
     // ordinary name lookup rather than a special case in lowering (I3).
     PyObject* b = PyEval_GetBuiltins();             // borrowed
-    if (b && PyDict_GetItemRef(b, name, &v) < 0) return nullptr;
+    v = mapping_get(b, name);
     if (v) return v;
+    if (PyErr_Occurred()) return nullptr;
     PyErr_Format(PyExc_NameError, "name '%U' is not defined", name);
     return nullptr;
 }
@@ -108,15 +124,16 @@ PyObject* pyc_rt_load_global(const char* name) {
     PyObject* key = PyUnicode_FromString(name);
     if (!key) return nullptr;
 
-    PyObject* v = nullptr;
-    if (PyDict_GetItemRef(g, key, &v) < 0) { Py_DECREF(key); return nullptr; }
+    PyObject* v = mapping_get(g, key);
     if (v) { Py_DECREF(key); return v; }
+    if (PyErr_Occurred()) { Py_DECREF(key); return nullptr; }
 
     // Not a module global: try builtins. This is what makes `print` an
     // ordinary name lookup rather than a special case in lowering (I3).
     PyObject* b = PyEval_GetBuiltins();             // borrowed
-    if (b && PyDict_GetItemRef(b, key, &v) < 0) { Py_DECREF(key); return nullptr; }
+    v = mapping_get(b, key);
     if (v) { Py_DECREF(key); return v; }
+    if (PyErr_Occurred()) { Py_DECREF(key); return nullptr; }
 
     PyErr_Format(PyExc_NameError, "name '%s' is not defined", name);
     Py_DECREF(key);
@@ -566,7 +583,8 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
                 }
             }
         }
-        PyObject* g = globals_dict();
+        PyObject* g = PyFunction_GET_GLOBALS(func);
+        if (!g) g = globals_dict();
         auto* co = reinterpret_cast<PyCodeObject*>(PyFunction_GET_CODE(func));
         void* fr = (g && co) ? pyc_rt_interp_enter(co, g, fdict, func)
                              : nullptr;
