@@ -1256,7 +1256,9 @@ private:
 
         // The qualname is fixed BEFORE the body is lowered, because lowering
         // the body pushes this function's own scope onto qual_.
-        const std::string fn_qualname = qualname(n.name);
+        const std::string fn_qualname =
+            (!func_globals_.empty() && func_globals_.back().count(n.name))
+                ? n.name : qualname(n.name);
 
         std::map<std::string, ir::Value> tp_cells;
         ir::Value tp_tuple;
@@ -1475,7 +1477,9 @@ private:
         auto outer_qual = qual_;
         // A name bound inside a function body is qualified through <locals>.
         // A method's qualname is "C.foo", so the class prefix stays, but the
-        // enclosing FUNCTION contributes "name.<locals>".
+        // enclosing FUNCTION contributes "name.<locals>". A `global def`
+        // starts a new qualname root, the same as a module-level def.
+        if (fn_qualname == n.name) qual_.clear();
         qual_.push_back(n.name + ".<locals>");
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
@@ -1509,7 +1513,9 @@ private:
         }
 
         bool ok = true;
+        func_globals_.push_back(declared_globals(n.body));
         for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
+        func_globals_.pop_back();
         if (ok) {
             // Falling off the end returns None, always.
             ir::Value none = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
@@ -1848,6 +1854,7 @@ private:
     std::vector<ir::Value> class_cells_;
     std::vector<char> class_cell_used_;
     std::vector<std::set<std::string>> class_globals_;
+    std::vector<std::set<std::string>> func_globals_;
     std::vector<std::set<std::string>> class_nonlocals_;
     std::vector<std::map<std::string, ir::Value>> type_param_env_;
 
@@ -2327,6 +2334,14 @@ private:
         FnScope sc = begin_function("__annotate__", params, locals);
         cur()->freevars = freevars;
         for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
+        {
+            ir::Value fmt = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, fmt, Ownership::Owned, "format",
+                           0, 0, loc, make_landing_pad(loc)});
+            mark_owned(fmt);
+            ir::Value chk = call_capi("pyc_rt_annotate_check_format", {fmt}, loc, ok, {fmt});
+            if (*ok) { mark_owned(chk); release(chk, loc); }
+        }
         auto saved_ns = class_ns_;
         class_ns_.clear();
         if (class_scope) {
@@ -4941,7 +4956,12 @@ private:
             [&](const Interpolation& n) { out = lower_interpolation(n, ok); },
             [&](const Attribute& n)     { out = lower_attribute(n, ok); },
             [&](const Subscript& n)     { out = lower_subscript(n, ok); },
-            [&](const Starred& n)       { *ok = unsupported("star-unpacking", n.loc); },
+            [&](const Starred& n) {
+                ir::Value v = lower_expr(*n.value, ok);
+                if (!*ok) return;
+                out = call_capi("pyc_rt_star_annotation", {v}, n.loc, ok, {v});
+                if (*ok) mark_owned(out);
+            },
             [&](const List& n)          { out = lower_sequence(n.elts, "PyList", n.loc, ok); },
             [&](const Tuple& n)         { out = lower_sequence(n.elts, "PyTuple", n.loc, ok); },
             [&](const Slice& n)         { out = lower_slice(n, ok); },
@@ -5019,8 +5039,14 @@ private:
             emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, n.id,
                            cit->second, 0, n.loc, make_landing_pad(n.loc)});
             mark_owned(cell);
-            emit(ir::Instr{ir::Op::CellGet, {cell}, out, Ownership::Owned, n.id,
-                           0, 0, n.loc, make_landing_pad(n.loc)});
+            bool is_free = false;
+            for (const std::string& fv : cur()->freevars)
+                if (fv == n.id) { is_free = true; break; }
+            ir::Instr cg{ir::Op::CellGet, {cell}, out, Ownership::Owned, n.id,
+                         0, 0, n.loc, make_landing_pad(n.loc)};
+            cg.imm = is_free ? 1 : 0;
+            cg.has_imm = true;
+            emit(std::move(cg));
             release(cell, n.loc);
             mark_owned(out);
             *ok = true;

@@ -854,7 +854,9 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"pyc_rt_import_star", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_import_from", Ownership::Owned, true, 3, {}, false, "", false, "", "ooi"},
     {"pyc_rt_import_attr", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
-    {"pyc_rt_cell_get", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_cell_get", Ownership::Owned, true, 3, {}, false, "", false, "", "opi"},
+    {"pyc_rt_star_annotation", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_annotate_check_format", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_unpack_ex", Ownership::Owned, true, 3, {}, false, "", false, "", "oii"},
     {"pyc_rt_except_star_split", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
     {"pyc_rt_newref", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
@@ -1092,6 +1094,6 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"Py_PACK_VERSION", Ownership::Unknown, true, 0, {}, false, "", true, "3.14", ""},
 };
 
-inline constexpr int kCApiSymbolCount = 1063;
+inline constexpr int kCApiSymbolCount = 1065;
 
 }  // namespace pyc::rt

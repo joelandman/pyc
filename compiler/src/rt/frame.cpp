@@ -1,8 +1,11 @@
 #define Py_BUILD_CORE 1
 #include <Python.h>
+#include "pyc/rt/support.hpp"
+#include <new>
 #include "internal/pycore_interpframe.h"
 #include "internal/pycore_code.h"
 #include "internal/pycore_ceval.h"
+#include "internal/pycore_frame.h"
 
 // C1b: an interpreter frame on CPython's datastack, not a PyFrameObject.
 //
@@ -113,4 +116,54 @@ extern "C" PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals) {
     PyObject* cap = PyCapsule_New(f, "pyc.iframe", iframe_capsule_dtor);
     if (!cap) { pyc_rt_interp_leave(f); return nullptr; }
     return cap;
+}
+
+extern "C" PyObject* pyc_rt_run_from_frame(PyObject*, PyObject*) {
+    PyFrameObject* fo = PyEval_GetFrame();
+    _PyInterpreterFrame* f = fo ? fo->f_frame : PyThreadState_Get()->current_frame;
+    if (!f) {
+        PyErr_SetString(PyExc_RuntimeError, "pyc eval without a frame");
+        return nullptr;
+    }
+    PyObject* code = PyStackRef_AsPyObjectBorrow(f->f_executable);
+    auto* co = reinterpret_cast<PyCodeObject*>(code);
+    int nfast = co->co_nlocals;
+    int nfree = (int)PyCode_GetNumFree(co);
+    int n = nfast + nfree;
+    if (n < 0) n = 0;
+    _PyStackRef* arr = _PyFrame_GetLocalsArray(f);
+    PyObject** locals = new (std::nothrow) PyObject*[n ? n : 1];
+    if (!locals) return PyErr_NoMemory();
+    for (int i = 0; i < n; ++i) locals[i] = nullptr;
+    for (int i = 0; i < nfast && i < co->co_nlocalsplus; ++i) {
+        if (PyStackRef_IsNull(arr[i])) continue;
+        PyObject* o = PyStackRef_AsPyObjectBorrow(arr[i]);
+        locals[i] = o;
+        Py_XINCREF(o);
+    }
+    PyObject* clo = nullptr;
+    if (!PyStackRef_IsNull(f->f_funcobj)) {
+        PyObject* func = PyStackRef_AsPyObjectBorrow(f->f_funcobj);
+        if (func && PyFunction_Check(func)) clo = PyFunction_GET_CLOSURE(func);
+    }
+    if (clo && PyTuple_Check(clo)) {
+        Py_ssize_t cn = PyTuple_GET_SIZE(clo);
+        for (int i = 0; i < nfree && i < cn; ++i) {
+            PyObject* cell = PyTuple_GET_ITEM(clo, i);
+            Py_INCREF(cell);
+            locals[nfast + i] = cell;
+        }
+    } else {
+        int base = nfast;
+        for (int i = 0; i < nfree && base + i < co->co_nlocalsplus; ++i) {
+            if (PyStackRef_IsNull(arr[base + i])) continue;
+            PyObject* o = PyStackRef_AsPyObjectBorrow(arr[base + i]);
+            locals[nfast + i] = o;
+            Py_XINCREF(o);
+        }
+    }
+    PyObject* r = pyc_rt_invoke_code(code, locals);
+    for (int i = 0; i < n; ++i) Py_XDECREF(locals[i]);
+    delete[] locals;
+    return r;
 }

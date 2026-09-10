@@ -43,6 +43,11 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                int vararg_slot, int kwarg_slot,
                                PyObject** closure, int nfree);
 
+// Run a compiled function body from the current eval frame (exec/eval of
+// f.__code__). locals are borrowed from the iframe.
+PyObject* pyc_rt_invoke_code(PyObject* code, PyObject** locals);
+PyObject* pyc_rt_run_from_frame(PyObject* self, PyObject* args);
+
 // Vectorcall over an argument array.
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs);
 
@@ -154,10 +159,11 @@ int pyc_rt_assert_fail(PyObject* msg);
 // `del name` at module scope.
 int pyc_rt_del_global(const char* name);
 
-// Read a cell. An empty cell means the variable was read before assignment,
-// which CPython reports as NameError for a free variable -- PyCell_Get would
-// simply return NULL with no exception set, which would look like a crash.
-PyObject* pyc_rt_cell_get(PyObject* cell);
+// Read a cell. An empty cellvar is UnboundLocalError; an empty freevar is
+// NameError. PyCell_Get returns NULL with no exception set.
+PyObject* pyc_rt_cell_get(PyObject* cell, const char* name, int is_free);
+PyObject* pyc_rt_star_annotation(PyObject* v);
+PyObject* pyc_rt_annotate_check_format(PyObject* format);
 
 // Class-body name lookup: namespace, then globals, then builtins (LOAD_NAME).
 PyObject* pyc_rt_load_classname(PyObject* ns, const char* name);

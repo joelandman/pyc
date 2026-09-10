@@ -266,12 +266,22 @@ void bound_capsule_dtor(PyObject* cap) {
     delete b;
 }
 
+Bound* bound_from_code(PyObject* code) {
+    if (!code || !PyCode_Check(code)) return nullptr;
+    auto* co = reinterpret_cast<PyCodeObject*>(code);
+    if (!co->co_consts) return nullptr;
+    Py_ssize_t n = PyTuple_GET_SIZE(co->co_consts);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* x = PyTuple_GET_ITEM(co->co_consts, i);
+        if (PyCapsule_IsValid(x, "pyc.Bound"))
+            return static_cast<Bound*>(PyCapsule_GetPointer(x, "pyc.Bound"));
+    }
+    return nullptr;
+}
+
 Bound* bound_from_func(PyObject* func) {
     if (!func || !PyFunction_Check(func)) return nullptr;
-    auto* co = reinterpret_cast<PyCodeObject*>(PyFunction_GET_CODE(func));
-    if (!co || !co->co_consts || PyTuple_GET_SIZE(co->co_consts) < 1) return nullptr;
-    return static_cast<Bound*>(PyCapsule_GetPointer(
-        PyTuple_GET_ITEM(co->co_consts, 0), "pyc.Bound"));
+    return bound_from_code(PyFunction_GET_CODE(func));
 }
 
 PyCodeObject* make_func_code(Bound* b) {
@@ -299,16 +309,41 @@ PyCodeObject* make_func_code(Bound* b) {
     }
     PyObject* cap = PyCapsule_New(b, "pyc.Bound", bound_capsule_dtor);
     if (!cap) { Py_DECREF(varnames); Py_DECREF(freevars); std::free(b->name); delete b; return nullptr; }
-    PyObject* consts = PyTuple_Pack(1, cap);
+    static PyMethodDef run_md = {"__pyc_eval__", pyc_rt_run_from_frame, METH_NOARGS, nullptr};
+    static PyObject* run_helper = nullptr;
+    if (!run_helper) {
+        run_helper = PyCFunction_New(&run_md, nullptr);
+        if (!run_helper) {
+            Py_DECREF(cap); Py_DECREF(varnames); Py_DECREF(freevars); return nullptr;
+        }
+    }
+    // consts[0] None, [1] Bound capsule, [2] eval helper so exec(f.__code__)
+    // runs the native body through the current frame's cells.
+    PyObject* consts = PyTuple_Pack(3, Py_None, cap, run_helper);
     Py_DECREF(cap);
     if (!consts) { Py_DECREF(varnames); Py_DECREF(freevars); return nullptr; }
+    static const char kEvalCode[] = {
+        '\x80', '\x00',             // RESUME 0
+        'R', '\x02',                // LOAD_CONST 2
+        '\x21', '\x00',             // PUSH_NULL
+        '\x34', '\x00',             // CALL 0
+        '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
+        '#', '\x00'                 // RETURN_VALUE
+    };
+    static const char kPassLines[] = {'\x80', '\x00', '\xd9', '\x04', '\x08'};
+    PyObject* bytecode = PyBytes_FromStringAndSize(kEvalCode, 16);
+    PyObject* linetable = PyBytes_FromStringAndSize(kPassLines, 5);
     PyObject* empty_bytes = PyBytes_FromStringAndSize("", 0);
     PyObject* empty_tuple = PyTuple_New(0);
     PyObject* filename = PyUnicode_FromString("<pyc>");
-    PyObject* name = PyUnicode_FromString(b->name ? b->name : "<fn>");
-    if (!empty_bytes || !empty_tuple || !filename || !name) {
-        Py_XDECREF(empty_bytes); Py_XDECREF(empty_tuple);
-        Py_XDECREF(filename); Py_XDECREF(name);
+    const char* full = b->name ? b->name : "<fn>";
+    const char* shortn = full;
+    if (const char* dot = std::strrchr(full, '.')) shortn = dot + 1;
+    PyObject* name = PyUnicode_FromString(shortn);
+    PyObject* qual = PyUnicode_FromString(full);
+    if (!bytecode || !linetable || !empty_bytes || !empty_tuple || !filename || !name || !qual) {
+        Py_XDECREF(bytecode); Py_XDECREF(linetable); Py_XDECREF(empty_bytes);
+        Py_XDECREF(empty_tuple); Py_XDECREF(filename); Py_XDECREF(name); Py_XDECREF(qual);
         Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
         return nullptr;
     }
@@ -316,12 +351,13 @@ PyCodeObject* make_func_code(Bound* b) {
     if (b->vararg >= 0) flags |= CO_VARARGS;
     if (b->kwarg >= 0) flags |= CO_VARKEYWORDS;
     PyCodeObject* co = PyUnstable_Code_NewWithPosOnlyArgs(
-        b->nargs, b->nposonly, b->nkwonly, nfast, 1, flags,
-        empty_bytes, consts, empty_tuple, varnames,
-        freevars, empty_tuple, filename, name, name, 1,
-        empty_bytes, empty_bytes);
-    Py_DECREF(empty_bytes); Py_DECREF(empty_tuple);
-    Py_DECREF(filename); Py_DECREF(name);
+        b->nargs, b->nposonly, b->nkwonly, nfast, 2, flags,
+        bytecode, consts, empty_tuple, varnames,
+        freevars, empty_tuple, filename, name, qual, 1,
+        linetable, empty_bytes);
+    Py_DECREF(bytecode); Py_DECREF(linetable); Py_DECREF(empty_bytes);
+    Py_DECREF(empty_tuple);
+    Py_DECREF(filename); Py_DECREF(name); Py_DECREF(qual);
     Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
     return co;
 }
@@ -571,8 +607,37 @@ PyObject* func_vectorcall(PyObject* callable, PyObject* const* args,
     return r;
 }
 
+int pyc_func_watch(PyFunction_WatchEvent ev, PyFunctionObject* func, PyObject* new_value) {
+    if (ev == PyFunction_EVENT_CREATE) {
+        if (bound_from_func(reinterpret_cast<PyObject*>(func)))
+            PyFunction_SetVectorcall(func, func_vectorcall);
+    } else if (ev == PyFunction_EVENT_MODIFY_CODE && new_value) {
+        if (bound_from_code(new_value))
+            PyFunction_SetVectorcall(func, func_vectorcall);
+    }
+    return 0;
+}
+
+void ensure_func_watch() {
+    static bool done = false;
+    if (done) return;
+    done = true;
+    PyFunction_AddWatcher(pyc_func_watch);
+}
+
 }  // namespace
 
+PyObject* pyc_rt_invoke_code(PyObject* code, PyObject** locals) {
+    Bound* b = bound_from_code(code);
+    if (!b) {
+        PyErr_SetString(PyExc_SystemError, "pyc eval of non-pyc code");
+        return nullptr;
+    }
+    if (Py_EnterRecursiveCall("")) return nullptr;
+    PyObject* r = b->impl(locals);
+    Py_LeaveRecursiveCall();
+    return r;
+}
 
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                int nargs, int nkwonly, int nposonly, int nlocals,
@@ -580,6 +645,7 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                PyObject* defaults, PyObject* kwdefaults,
                                int vararg_slot, int kwarg_slot,
                                PyObject** closure, int nfree) {
+    ensure_func_watch();
     char* owned = strdup(name);
     if (!owned) return PyErr_NoMemory();
     Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nposonly, nlocals, owned,
@@ -1398,11 +1464,40 @@ extern "C" int pyc_rt_del_global(const char* name) {
     return 0;
 }
 
-extern "C" PyObject* pyc_rt_cell_get(PyObject* cell) {
+extern "C" PyObject* pyc_rt_star_annotation(PyObject* v) {
+    PyObject* typing = PyImport_ImportModule("typing");
+    if (!typing) return nullptr;
+    PyObject* unpack = PyObject_GetAttrString(typing, "Unpack");
+    Py_DECREF(typing);
+    if (!unpack) return nullptr;
+    PyObject* r = PyObject_GetItem(unpack, v);
+    Py_DECREF(unpack);
+    return r;
+}
+
+extern "C" PyObject* pyc_rt_annotate_check_format(PyObject* format) {
+    long f = PyLong_AsLong(format);
+    if (f == -1 && PyErr_Occurred()) return nullptr;
+    if (f > 2) {
+        PyErr_SetNone(PyExc_NotImplementedError);
+        return nullptr;
+    }
+    Py_RETURN_NONE;
+}
+
+extern "C" PyObject* pyc_rt_cell_get(PyObject* cell, const char* name, int is_free) {
     PyObject* v = PyCell_Get(cell);
-    if (!v && !PyErr_Occurred())
-        PyErr_SetString(PyExc_NameError,
-                        "free variable referenced before assignment in enclosing scope");
+    if (!v && !PyErr_Occurred()) {
+        const char* n = name ? name : "?";
+        if (is_free)
+            PyErr_Format(PyExc_NameError,
+                         "cannot access free variable '%s' where it is not "
+                         "associated with a value in enclosing scope", n);
+        else
+            PyErr_Format(PyExc_UnboundLocalError,
+                         "cannot access local variable '%s' where it is not "
+                         "associated with a value", n);
+    }
     return v;
 }
 

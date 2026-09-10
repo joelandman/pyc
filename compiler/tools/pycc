@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Compile a Python file to a native executable (INTERFACES.md §5, first cut).
+# Compile a Python file to a native executable (INTERFACES.md §5).
 #
-#   pycc prog.py -o prog [--sysroot DIR] [--emit-llvm]
+#   pycc prog.py -o prog [--python=X.Y] [-std=pyX.Y] [--python-sysroot DIR]
 #
 # Tier 1 by construction: static libpython plus -rdynamic, so the binary has no
 # libpython dependency yet can still dlopen extension modules and wheels.
@@ -11,6 +11,10 @@ SYSROOT="${PYC_SYSROOT:-$HOME/opt/py-sysroots/cp314-3.14.7-tier1}"
 LOWER="${PYC_LOWER:-/tmp/pyc_lower}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SRC=""; OUT="a.out"; KEEP=0; EMIT_LLVM=0; OPT="-O1"
+PYTHON_VER="${PYC_PYTHON:-}"
+STD_VER=""
+PYTHON_ABI=""
+LIST_TARGETS=0
 # A bare `*)` arm here silently turned any mistyped flag into the source file
 # name: `--pyc-flag=-O0` reached realpath as `-O0` and the resulting failure
 # looked like a compiler bug. Unknown flags are refused, and the source is
@@ -18,7 +22,15 @@ SRC=""; OUT="a.out"; KEEP=0; EMIT_LLVM=0; OPT="-O1"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -o) OUT="$2"; shift 2;;
-    --sysroot) SYSROOT="$2"; shift 2;;
+    --sysroot|--python-sysroot) SYSROOT="$2"; shift 2;;
+    --sysroot=*|--python-sysroot=*) SYSROOT="${1#*=}"; shift;;
+    --python) PYTHON_VER="$2"; shift 2;;
+    --python=*) PYTHON_VER="${1#*=}"; shift;;
+    --python-abi) PYTHON_ABI="$2"; shift 2;;
+    --python-abi=*) PYTHON_ABI="${1#*=}"; shift;;
+    -std) STD_VER="$2"; shift 2;;
+    -std=*) STD_VER="${1#*=}"; shift;;
+    --list-python-targets) LIST_TARGETS=1; shift;;
     --keep) KEEP=1; shift;;
     --emit-llvm) EMIT_LLVM=1; shift;;
     # pyc has no optimiser of its own yet (A3 is outstanding). -O selects the
@@ -32,9 +44,95 @@ while [[ $# -gt 0 ]]; do
       SRC="$1"; shift;;
   esac
 done
-[[ -n "$SRC" ]] || { echo "usage: pycc FILE [-o OUT]" >&2; exit 2; }
 
-PY="$SYSROOT/bin/python3.14"
+xy_le() {
+  local a="${1#py}" b="${2#py}"
+  local a0 a1 b0 b1
+  IFS=. read -r a0 a1 _ <<< "$a"
+  IFS=. read -r b0 b1 _ <<< "$b"
+  (( a0 < b0 || (a0 == b0 && a1 <= b1) ))
+}
+
+find_interpreter() {
+  local root="$1" want="${2:-}"
+  local m="$root/pyc-sysroot.json" interp=""
+  if [[ -f "$m" ]]; then
+    interp="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("interpreter") or "")' "$m" 2>/dev/null || true)"
+  fi
+  if [[ -n "$interp" && -x "$interp" ]]; then
+    printf '%s' "$interp"; return 0
+  fi
+  if [[ -n "$want" && -x "$root/bin/python$want" ]]; then
+    printf '%s' "$root/bin/python$want"; return 0
+  fi
+  if [[ -x "$root/bin/python3" ]]; then
+    printf '%s' "$root/bin/python3"; return 0
+  fi
+  local cand
+  cand="$(compgen -G "$root/bin/python3.[0-9]*" | grep -v -- '-config$' | sort -V | tail -1 || true)"
+  if [[ -n "$cand" && -x "$cand" ]]; then
+    printf '%s' "$cand"; return 0
+  fi
+  return 1
+}
+
+PY="$(find_interpreter "$SYSROOT" "${PYTHON_VER:-}" || true)"
+if [[ -z "$PY" ]]; then
+  echo "pycc: no interpreter in sysroot $SYSROOT" >&2
+  exit 2
+fi
+XY="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+ABI="$("$PY" -c 'import sys,sysconfig
+a="cp%d%d"%sys.version_info[:2]
+if sysconfig.get_config_var("Py_GIL_DISABLED"): a+="t"
+if hasattr(sys,"gettotalrefcount"): a+="d"
+print(a)')"
+
+if [[ $LIST_TARGETS -eq 1 ]]; then
+  echo "target  $XY  abi=$ABI"
+  echo "  sysroot      $SYSROOT"
+  echo "  interpreter  $PY"
+  if [[ -d "$HOME/opt/py-sysroots" ]]; then
+    echo "installed sysroots:"
+    for d in "$HOME/opt/py-sysroots"/*; do
+      [[ -d "$d" ]] || continue
+      p="$(find_interpreter "$d" || true)"
+      if [[ -n "$p" ]]; then
+        echo "  $d  $($p -c 'import sys; print("%d.%d"%sys.version_info[:2])')"
+      else
+        echo "  $d  (no interpreter)"
+      fi
+    done
+  fi
+  exit 0
+fi
+
+[[ -n "$SRC" ]] || { echo "usage: pycc FILE [-o OUT] [--python=X.Y] [-std=pyX.Y] [--python-sysroot DIR]" >&2; exit 2; }
+
+if [[ -n "$PYTHON_VER" ]]; then
+  PYTHON_VER="${PYTHON_VER#py}"
+  if [[ "$XY" != "$PYTHON_VER" ]]; then
+    echo "pycc: sysroot is Python $XY, not $PYTHON_VER" >&2
+    echo "  --python=$PYTHON_VER" >&2
+    echo "  sysroot $SYSROOT" >&2
+    exit 2
+  fi
+fi
+if [[ -n "$PYTHON_ABI" && "$PYTHON_ABI" != "$ABI" ]]; then
+  echo "pycc: sysroot ABI is $ABI, not $PYTHON_ABI" >&2
+  echo "  --python-abi=$PYTHON_ABI" >&2
+  echo "  sysroot $SYSROOT" >&2
+  exit 2
+fi
+STD_XY=""
+if [[ -n "$STD_VER" ]]; then
+  STD_XY="${STD_VER#py}"
+  if ! xy_le "$STD_XY" "$XY"; then
+    echo "pycc: -std=py$STD_XY requires a runtime of $STD_XY or newer; --python=$XY" >&2
+    exit 2
+  fi
+fi
+
 TMP="$(mktemp -d)"; trap '[[ $KEEP == 1 ]] || rm -rf "$TMP"' EXIT
 
 # Parse with the TARGET interpreter (VERSION_TARGETING.md): the AST is the
@@ -46,8 +144,10 @@ TMP="$(mktemp -d)"; trap '[[ $KEEP == 1 ]] || rm -rf "$TMP"' EXIT
 # exit, not as text on stderr. Exiting here on the status alone discarded it:
 # the user saw a bare exit 1 with no diagnostic. Hand the envelope to the
 # lowering stage, which renders it in the standard file:line:col form.
+PARSE_ARGS=("$(realpath "$SRC")")
+if [[ -n "$STD_XY" ]]; then PARSE_ARGS+=(--feature-version "$STD_XY"); fi
 if ! PYTHONPATH="$REPO/compiler${PYTHONPATH:+:$PYTHONPATH}" \
-     "$PY" -m pyc_parse "$(realpath "$SRC")" > "$TMP/ast.json" 2>"$TMP/parse.err"; then
+     "$PY" -m pyc_parse "${PARSE_ARGS[@]}" > "$TMP/ast.json" 2>"$TMP/parse.err"; then
   [[ -s "$TMP/parse.err" ]] && cat "$TMP/parse.err" >&2
   [[ -s "$TMP/ast.json" ]] && "$LOWER" "$TMP/ast.json" >/dev/null
   exit 1
@@ -55,7 +155,11 @@ fi
 "$LOWER" "$TMP/ast.json" --emit-llvm > "$TMP/mod.ll" || exit 1
 if [[ $EMIT_LLVM == 1 ]]; then cp "$TMP/mod.ll" "$OUT"; exit 0; fi
 
-INC="$($SYSROOT/bin/python3.14-config --includes)"
+if [[ -x "${PY}-config" ]]; then CFG="${PY}-config"
+elif [[ -x "$SYSROOT/bin/python3-config" ]]; then CFG="$SYSROOT/bin/python3-config"
+else echo "pycc: no python-config next to $PY" >&2; exit 2
+fi
+INC="$("$CFG" --includes)"
 LIBPL="$($PY -c 'import sysconfig;print(sysconfig.get_config_var("LIBPL"))')"
 LIB="$LIBPL/$($PY -c 'import sysconfig;print(sysconfig.get_config_var("LIBRARY"))')"
 

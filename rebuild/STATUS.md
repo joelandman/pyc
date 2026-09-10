@@ -77,15 +77,20 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    CPython SyntaxError; `a, *b, c =` is implemented), `yield` / `await` /
    `async for` / `async with` in native (function-level yield/async is
    marshalled). Comprehension `for` targets now include Name/tuple/list
-   and attribute/subscript. Remaining: async comprehensions, genexp/
-   symtable count mismatch (`compiler/pyc_parse/genexp.py`).
+    and attribute/subscript. Star-as-annotation is `typing.Unpack`;
+    `__annotate__(format>2)` is NotImplementedError. Remaining: async
+    comprehensions.
 6. **Compiled callables are `PyFunction`.** `PyFunction_New` +
    `PyFunction_SetVectorcall` onto the native trampoline. `PyFunction_Check`,
-   `inspect.signature`, `__closure__`, `__annotate__` all MATCH. Remaining:
-   `exec(f.__code__)` cannot run native bodies (empty bytecode).
-7. **I8 CLI not implemented.** `pycc` hardcodes `$SYSROOT/bin/python3.14`.
-   No `--python`, `-std`, `--python-abi`. `pyc_parse --feature-version`
-   exists and is unused by the driver.
+   `inspect.signature`, `__closure__`, `__annotate__`, `__name__`/`__qualname__`
+   all MATCH. `type(f)(f.__code__, ns)` reuses the trampoline via a function
+   watcher. Empty cellvar is UnboundLocalError; empty freevar is NameError.
+   `exec(f.__code__, closure=...)` runs the native body via a stub bytecode
+   helper that reads the eval frame's function closure.
+7. **I8 CLI (S1).** `pycc` finds the sysroot interpreter (manifest or
+   `bin/python3`), `--python-sysroot` aliases `--sysroot`, `--python`/`-std`/
+   `--python-abi`/`--list-python-targets` work. `-std` is `--feature-version`.
+   Two runtimes from one binary is still S5.
 8. **Lock-file scale.** `lower.cpp` ~6k lines. Header still says nothing
    unboxes; unboxing has landed (`UNBOXING.md` 1–16).
 
@@ -145,10 +150,10 @@ vs C.
 **Next (MVP completeness)**
 
 1. Turn LLVM verifier failures into fixes or I1 diagnostics (M6).
-2. I1a probed: star/yield/async in well-formed programs marshal or parse;
-   comprehension attr/tuple targets implemented. Async comprehensions remain.
+2. I1a: star-as-annotation is Unpack; format>2 is NotImplementedError.
+   Async comprehensions remain.
 3. Function-object protocol: real `PyFunction` + vectorcall trampoline.
-   `exec(f.__code__)` cannot run native bodies.
+   `exec(f.__code__, closure=)` runs the native body.
 4. Module/class `__annotate__` exists; function param/return `__annotate__`
    landed (format 1), including nested capture of enclosing locals via cells.
 5. Workstream S phases 0–2 (sysroot as data + prebuilt artifact).
@@ -184,8 +189,8 @@ Four Pythons are conflated today:
 | D | Purpose-built Tier-1 vs stock distro | Distro 3.12 cannot do B/C/I7. |
 
 Parse already uses the target interpreter (VERSION_TARGETING option (b)).
-I8 is design, not the current driver: `pycc` hardcodes `python3.14` and
-does not read `pyc-sysroot.json`.
+S1: `pycc` reads `pyc-sysroot.json` when present and does not hardcode
+`python3.14`. `--python=X.Y` as a second artifact is S5.
 
 **What cannot be removed:** libpython in every output; internal headers for
 C1b; same CPython for parse + link + I5 when claiming correctness; wheel
@@ -197,7 +202,7 @@ an independent runtime.
 | Phase | What | Unlocks |
 |---|---|---|
 | S0 now | Document (a)≠(b). Fix stale “frontend links libpython” CI comment. | Honest onboarding |
-| S1 next | `pycc` reads `pyc-sysroot.json`; `--python-sysroot` alias; stop hardcoding `python3.14` | I8 locally |
+| S1 done | `pycc` reads `pyc-sysroot.json`; `--python-sysroot`; no hardcoded `python3.14` | I8 locally |
 | S2 next | Publish a prebuilt sysroot tarball (CI already caches the tree). `build-python-sysroot.sh` remains the *producer*, not the onboarding step. | Developers do not compile CPython |
 | S3 later | Relocatable toolchain (`pycc` finds sysroot next to itself) **and** `PyConfig.home` so *output* binaries find stdlib after the tree moves | Download ≠ `$HOME/opt/...` |
 | S4 later | Casual `pycc file.py` uses bundled/downloaded sysroot. Missing target → compile error, not a wrong binary. Verify still uses that interpreter as oracle. PATH `python3` only for parse-only / `--emit-llvm` when `version_info[:2]` matches the PTD. | No local CPython install to compile a program |

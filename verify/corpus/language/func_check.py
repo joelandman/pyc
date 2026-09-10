@@ -22,3 +22,8 @@ class C:
     def m(self, x):
         return x
 print(C().m(4), str(inspect.signature(C().m)))
+
+def func(s):
+    return len(s)
+func2 = type(func)(func.__code__, {})
+print(func2("abc"), func.__name__, f.__qualname__)

@@ -447,9 +447,10 @@ private:
                 break;
             }
             case Op::CellGet: {
-                need("declare ptr @pyc_rt_cell_get(ptr)");
+                need("declare ptr @pyc_rt_cell_get(ptr, ptr, i32)");
                 o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_cell_get(ptr "
-                   << v(in.args[0]) << ")\n";
+                   << v(in.args[0]) << ", ptr " << cstr(in.text)
+                   << ", i32 " << (int)in.imm << ")\n";
                 check(in, v(*in.result), true);
                 break;
             }
