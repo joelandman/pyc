@@ -1447,12 +1447,28 @@ extern "C" int pyc_rt_exit_exc(PyObject* exitf) {
     PyObject* r = PyObject_CallFunctionObjArgs(exitf, type, exc,
                                                tb ? tb : Py_None, nullptr);
     Py_XDECREF(tb);
-    if (!r) { Py_DECREF(exc); return -1; }
+    if (!r) {
+        PyObject* raised = PyErr_GetRaisedException();
+        if (raised && raised != exc)
+            PyException_SetContext(raised, exc);
+        else
+            Py_DECREF(exc);
+        if (raised) PyErr_SetRaisedException(raised);
+        return -1;
+    }
     int suppress = PyObject_IsTrue(r);
     Py_DECREF(r);
-    if (suppress < 0) { Py_DECREF(exc); return -1; }
+    if (suppress < 0) {
+        PyObject* raised = PyErr_GetRaisedException();
+        if (raised && raised != exc)
+            PyException_SetContext(raised, exc);
+        else
+            Py_DECREF(exc);
+        if (raised) PyErr_SetRaisedException(raised);
+        return -1;
+    }
     if (suppress) { Py_DECREF(exc); return 1; }
-    PyErr_SetRaisedException(exc);                        // steals exc
+    PyErr_SetRaisedException(exc);
     return 0;
 }
 
