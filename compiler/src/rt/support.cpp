@@ -184,12 +184,14 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable) {
     for (int i = 16; i + 1 < kLineSlots * 2; i += 2)
         codebuf[static_cast<std::size_t>(i)] = static_cast<char>(kNop);
     std::vector<char> lines;
-    lines.reserve(static_cast<std::size_t>(kLineSlots) * 2);
-    lines.push_back(static_cast<char>(128 | (13 << 3)));
+    lines.reserve(static_cast<std::size_t>(kLineSlots) * 3);
+    lines.push_back(static_cast<char>(128 | (10 << 3)));
+    lines.push_back(0);
     lines.push_back(0);
     for (int i = 1; i < kLineSlots; ++i) {
-        lines.push_back(static_cast<char>(128 | (13 << 3)));
-        lines.push_back(2);
+        lines.push_back(static_cast<char>(128 | (11 << 3)));
+        lines.push_back(0);
+        lines.push_back(0);
     }
     *bytecode = PyBytes_FromStringAndSize(codebuf.data(), (Py_ssize_t)codebuf.size());
     *linetable = PyBytes_FromStringAndSize(lines.data(), (Py_ssize_t)lines.size());
@@ -360,7 +362,7 @@ namespace {
 // is a hole and a tuple cannot hold one.
 struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
-               int vararg; int kwarg; int nfree; };
+               int vararg; int kwarg; int nfree; int firstlineno; };
 
 constexpr int kMoveCost = 2;
 constexpr int kCaseCost = 1;
@@ -533,7 +535,8 @@ PyCodeObject* make_func_code(Bound* b) {
     PyCodeObject* co = PyUnstable_Code_NewWithPosOnlyArgs(
         b->nargs, b->nposonly, b->nkwonly, nfast, 2, flags,
         bytecode, consts, empty_tuple, varnames,
-        freevars, empty_tuple, filename, name, qual, 1,
+        freevars, empty_tuple, filename, name, qual,
+        b->firstlineno > 0 ? b->firstlineno : 1,
         linetable, empty_bytes);
     Py_DECREF(bytecode); Py_DECREF(linetable); Py_DECREF(empty_bytes);
     Py_DECREF(empty_tuple);
@@ -882,12 +885,13 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                const char* const* argnames,
                                PyObject* defaults, PyObject* kwdefaults,
                                int vararg_slot, int kwarg_slot,
-                               PyObject** closure, int nfree) {
+                               PyObject** closure, int nfree, int firstlineno) {
     ensure_func_watch();
     char* owned = strdup(name);
     if (!owned) return PyErr_NoMemory();
     Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nposonly, nlocals, owned,
-                                        argnames, vararg_slot, kwarg_slot, nfree};
+                                        argnames, vararg_slot, kwarg_slot, nfree,
+                                        firstlineno > 0 ? firstlineno : 1};
     if (!b) { std::free(owned); return PyErr_NoMemory(); }
     PyCodeObject* co = make_func_code(b);
     if (!co) return nullptr;
@@ -1500,26 +1504,20 @@ extern "C" PyObject* pyc_rt_make_genexp(const char* blob, Py_ssize_t len,
 // site so a raise inside a loop does not rebuild it.
 extern "C" void pyc_rt_add_traceback(PyObject** cache, const char* file,
                                      const char* func, int line) {
-    // Must not disturb the exception being propagated: everything here runs
-    // with an error already set, so any failure is swallowed and the original
-    // error left exactly as it was.
-    PyObject *t = nullptr, *v = nullptr, *tb = nullptr;
-    PyErr_Fetch(&t, &v, &tb);
+    (void)cache; (void)file; (void)func; (void)line;
+    pyc_rt_traceback_here();
+}
 
-    if (!*cache) {
-        *cache = (PyObject*)PyCode_NewEmpty(file, func, line);
-        if (!*cache) { PyErr_Clear(); PyErr_Restore(t, v, tb); return; }
+extern "C" int pyc_rt_tuple_maybe_untrack(PyObject* t) {
+    if (!t || !PyTuple_CheckExact(t)) return 0;
+    if (!PyObject_GC_IsTracked(t)) return 0;
+    Py_ssize_t n = PyTuple_GET_SIZE(t);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* x = PyTuple_GET_ITEM(t, i);
+        if (x && PyObject_GC_IsTracked(x)) return 0;
     }
-    PyObject* globals = PyDict_New();
-    if (!globals) { PyErr_Clear(); PyErr_Restore(t, v, tb); return; }
-    PyFrameObject* frame = PyFrame_New(PyThreadState_Get(),
-                                       (PyCodeObject*)*cache, globals, nullptr);
-    Py_DECREF(globals);
-    if (!frame) { PyErr_Clear(); PyErr_Restore(t, v, tb); return; }
-
-    PyErr_Restore(t, v, tb);
-    PyTraceBack_Here(frame);
-    Py_DECREF(frame);
+    PyObject_GC_UnTrack(t);
+    return 0;
 }
 
 // A generator FUNCTION. Same mechanism as a generator expression: the body was

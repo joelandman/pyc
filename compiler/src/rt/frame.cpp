@@ -126,6 +126,10 @@ extern "C" void pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n)
 }
 
 extern "C" void pyc_rt_set_lineno(int line) {
+    pyc_rt_set_location(line, -1, -1);
+}
+
+extern "C" void pyc_rt_set_location(int line, int col, int end_col) {
     if (line < 1) return;
     PyThreadState* ts = PyThreadState_Get();
     _PyInterpreterFrame* f = ts->current_frame;
@@ -144,6 +148,30 @@ extern "C" void pyc_rt_set_lineno(int line) {
     if (off >= nunits) off = (int)nunits - 1;
     f->instr_ptr = _PyCode_CODE(co) + off;
     if (f->frame_obj) f->frame_obj->f_lineno = line;
+    if (col >= 0 && co->co_linetable && PyBytes_Check(co->co_linetable)) {
+        Py_ssize_t nlt = PyBytes_GET_SIZE(co->co_linetable);
+        Py_ssize_t at = (Py_ssize_t)off * 3;
+        if (at + 2 < nlt) {
+            char* p = PyBytes_AS_STRING(co->co_linetable);
+            int c = col > 127 ? 127 : col;
+            int e = end_col < c ? c : (end_col > 127 ? 127 : end_col);
+            p[at + 1] = (char)c;
+            p[at + 2] = (char)e;
+        }
+    }
+}
+
+extern "C" void pyc_rt_traceback_here(void) {
+    PyObject *t = nullptr, *v = nullptr, *tb = nullptr;
+    PyErr_Fetch(&t, &v, &tb);
+    PyThreadState* ts = PyThreadState_Get();
+    _PyInterpreterFrame* f = ts->current_frame;
+    while (f && _PyFrame_IsIncomplete(f)) f = f->previous;
+    if (!f) { PyErr_Restore(t, v, tb); return; }
+    PyFrameObject* fo = _PyFrame_GetFrameObject(f);
+    if (!fo) { PyErr_Clear(); PyErr_Restore(t, v, tb); return; }
+    PyErr_Restore(t, v, tb);
+    PyTraceBack_Here(fo);
 }
 
 extern "C" void pyc_rt_interp_leave(void* frame) {

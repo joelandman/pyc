@@ -834,6 +834,7 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"pyc_rt_class_prepare", Ownership::Owned, true, 4, {}, false, "", false, "", "oooo"},
     {"pyc_rt_cm_exit", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_cm_enter", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_tuple_maybe_untrack", Ownership::NotAnObject, false, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_exit_normal", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_exit_exc", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_extend", Ownership::NotAnObject, true, 2, {}, false, "", false, "", "oo"},

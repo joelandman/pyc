@@ -228,6 +228,27 @@ private:
     // searching outward, which is what makes capture work at any depth.
     std::vector<std::map<std::string, std::uint32_t>> enclosing_cells_;
 
+    static SourceLoc expr_loc(const expr& e) {
+        SourceLoc loc;
+        std::visit(ov{
+            [&](const Attribute& n){ loc = n.loc; }, [&](const Await& n){ loc = n.loc; },
+            [&](const BinOp& n){ loc = n.loc; }, [&](const BoolOp& n){ loc = n.loc; },
+            [&](const Call& n){ loc = n.loc; }, [&](const Compare& n){ loc = n.loc; },
+            [&](const Constant& n){ loc = n.loc; }, [&](const Dict& n){ loc = n.loc; },
+            [&](const DictComp& n){ loc = n.loc; }, [&](const FormattedValue& n){ loc = n.loc; },
+            [&](const GeneratorExp& n){ loc = n.loc; }, [&](const IfExp& n){ loc = n.loc; },
+            [&](const Interpolation& n){ loc = n.loc; }, [&](const JoinedStr& n){ loc = n.loc; },
+            [&](const Lambda& n){ loc = n.loc; }, [&](const List& n){ loc = n.loc; },
+            [&](const ListComp& n){ loc = n.loc; }, [&](const Name& n){ loc = n.loc; },
+            [&](const NamedExpr& n){ loc = n.loc; }, [&](const Set& n){ loc = n.loc; },
+            [&](const SetComp& n){ loc = n.loc; }, [&](const Slice& n){ loc = n.loc; },
+            [&](const Starred& n){ loc = n.loc; }, [&](const Subscript& n){ loc = n.loc; },
+            [&](const TemplateStr& n){ loc = n.loc; }, [&](const Tuple& n){ loc = n.loc; },
+            [&](const UnaryOp& n){ loc = n.loc; }, [&](const Yield& n){ loc = n.loc; },
+            [&](const YieldFrom& n){ loc = n.loc; },
+        }, e.v);
+        return loc;
+    }
     bool err(std::string msg, std::string construct, SourceLoc loc) {
         diags_.report(Diagnostic{Diagnostic::Severity::Error, std::move(msg),
                                  std::move(loc), std::move(construct), {}});
@@ -576,7 +597,7 @@ private:
     struct FnScope {
         std::size_t fn, blk;
         std::map<std::string, std::uint32_t> locals;
-        std::vector<ir::Value> owned, frame, class_ns, class_cells;
+        std::vector<ir::Value> owned, frame, class_ns, class_cells, class_dict_cells;
         std::vector<Loop> loops;
         std::vector<std::uint32_t> tries;
         std::map<std::string, std::uint32_t> cells;
@@ -598,7 +619,7 @@ private:
                            const std::vector<std::string>& params,
                            const std::vector<std::string>& locals) {
         FnScope sc{fn_idx_, blk_, locals_, owned_, frame_owned_, class_ns_,
-                   class_cells_,
+                   class_cells_, class_dict_cells_,
                    loops_, try_stack_, cells_, enclosing_cells_,
                    fin_stack_, handled_stack_, fin_loop_depth_, int_locals_,
                    live_i64_, force_boxed_ints_, range_n_};
@@ -611,7 +632,7 @@ private:
         locals_.clear();
         for (std::uint32_t i = 0; i < locals.size(); ++i) locals_[locals[i]] = i;
         owned_.clear(); frame_owned_.clear(); class_ns_.clear();
-        class_cells_.clear();
+        class_cells_.clear(); class_dict_cells_.clear();
         loops_.clear(); try_stack_.clear();
         // These are per-FUNCTION and were not being cleared. A `def` written
         // inside a try/finally or a `with` therefore inherited the enclosing
@@ -641,6 +662,7 @@ private:
         fn_idx_ = sc.fn; blk_ = sc.blk; locals_ = sc.locals;
         owned_ = sc.owned; frame_owned_ = sc.frame; class_ns_ = sc.class_ns;
         class_cells_ = sc.class_cells;
+        class_dict_cells_ = sc.class_dict_cells;
         loops_ = sc.loops; try_stack_ = sc.tries;
         cells_ = sc.cells; enclosing_cells_ = sc.enclosing;
         fin_stack_ = sc.fins; handled_stack_ = sc.handled;
@@ -844,6 +866,14 @@ private:
         std::vector<ir::Value> closure_cells;
         for (const std::string& r : reads) {
             if (own.count(r)) { cellvars.push_back(r); continue; }
+            if (r == "__classdict__" && !class_dict_cells_.empty()) {
+                freevars.push_back(r);
+                ir::Value c = class_dict_cells_.back();
+                emit(ir::Instr{ir::Op::IncRef, {c}, std::nullopt,
+                               Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+                closure_cells.push_back(c);
+                continue;
+            }
             auto cit = cells_.find(r);
             if (cit == cells_.end()) continue;
             freevars.push_back(r);
@@ -943,7 +973,7 @@ private:
         // Evaluate the ITERABLE in the enclosing scope, as Python does.
         ir::Value seq = lower_expr(*g.iter, ok);
         if (!*ok) return {};
-        ir::Value iter = call_capi("PyObject_GetIter", {seq}, loc, ok, {seq});
+        ir::Value iter = call_capi("PyObject_GetIter", {seq}, expr_loc(*g.iter), ok, {seq});
         if (!*ok) return {};
         mark_owned(iter);
 
@@ -993,6 +1023,18 @@ private:
                     capvals.push_back(c);
                     cell_caps.push_back("__class__");
                     if (!class_cell_used_.empty()) class_cell_used_.back() = 1;
+                }
+            }
+            if (nr.count("__classdict__") && !class_dict_cells_.empty()) {
+                bool have = false;
+                for (const std::string& c : caps) if (c == "__classdict__") { have = true; break; }
+                if (!have) {
+                    ir::Value c = class_dict_cells_.back();
+                    emit(ir::Instr{ir::Op::IncRef, {c}, std::nullopt,
+                                   Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+                    caps.push_back("__classdict__");
+                    capvals.push_back(c);
+                    cell_caps.push_back("__classdict__");
                 }
             }
         }
@@ -1072,7 +1114,8 @@ private:
                     set_block(head);
                     ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
                     emit(ir::Instr{ir::Op::IterNext, {iter_v}, item, Ownership::Owned,
-                                   "", body, done, loc, make_landing_pad(loc)});
+                                   "", body, done, expr_loc(*gg.iter),
+                                   make_landing_pad(expr_loc(*gg.iter))});
                     set_block(body);
                     mark_owned(item);
                     if (!store_target(*gg.target, item, loc)) return false;
@@ -1466,6 +1509,7 @@ private:
         auto outer_frame = frame_owned_;
         auto outer_class_ns = class_ns_;
         auto outer_class_cells = class_cells_;
+        auto outer_class_dict_cells = class_dict_cells_;
         auto outer_cells = cells_;
         auto outer_enclosing = enclosing_cells_;
         auto outer_ints = int_locals_;
@@ -1544,12 +1588,17 @@ private:
                     reads.insert("__class__");
                     if (!class_cell_used_.empty()) class_cell_used_.back() = 1;
                 }
+                if (all.count("__classdict__")) reads.insert("__classdict__");
             }
             std::set<std::string> own(own_locals.begin(), own_locals.end());
             for (const std::string& r : reads) {
                 if (own.count(r)) continue;
                 if (r == "__class__" && !class_cells_.empty()) {
                     freevars.push_back(r);          // sourced from class_cells_
+                    continue;
+                }
+                if (r == "__classdict__" && !class_dict_cells_.empty()) {
+                    freevars.push_back(r);
                     continue;
                 }
                 bool in_enclosing = cells_.count(r) > 0;
@@ -1588,6 +1637,13 @@ private:
             if (fv2 == "__class__" && !class_cells_.empty()) {
                 // Already a cell value in hand; it has no enclosing slot.
                 ir::Value c = class_cells_.back();
+                emit(ir::Instr{ir::Op::IncRef, {c}, std::nullopt,
+                               Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+                closure_cells.push_back(c);
+                continue;
+            }
+            if (fv2 == "__classdict__" && !class_dict_cells_.empty()) {
+                ir::Value c = class_dict_cells_.back();
                 emit(ir::Instr{ir::Op::IncRef, {c}, std::nullopt,
                                Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
                 closure_cells.push_back(c);
@@ -1651,6 +1707,7 @@ private:
         frame_owned_.clear();
         class_ns_.clear();          // a method body is not a class body
         class_cells_.clear();       // nested defs LoadLocal __class__, not the class-body SSA
+        class_dict_cells_.clear();
         type_param_env_.clear();
         auto outer_qual = qual_;
         // A name bound inside a function body is qualified through <locals>.
@@ -1709,6 +1766,7 @@ private:
         fin_loop_depth_ = outer_fin_depth;
         frame_owned_ = outer_frame; class_ns_ = outer_class_ns;
         class_cells_ = outer_class_cells;
+        class_dict_cells_ = outer_class_dict_cells;
         cells_ = outer_cells; enclosing_cells_ = outer_enclosing;
         qual_ = outer_qual;
         int_locals_ = outer_ints;
@@ -2061,6 +2119,7 @@ private:
     // is filled only AFTER the class exists. Methods are built before that, so
     // the cell -- not the class -- is what they capture.
     std::vector<ir::Value> class_cells_;
+    std::vector<ir::Value> class_dict_cells_;
     std::vector<char> class_cell_used_;
     std::vector<std::set<std::string>> class_globals_;
     std::vector<std::set<std::string>> func_globals_;
@@ -2681,13 +2740,14 @@ private:
         const withitem& w = n.items[idx];
         ir::Value mgr = lower_expr(*w.context_expr, &ok);
         if (!ok) return false;
+        const SourceLoc wloc = expr_loc(*w.context_expr);
         // __exit__ is looked up BEFORE __enter__ runs, as CPython does: a
         // manager missing __exit__ must fail before any setup happens.
-        ir::Value exitf = call_capi("pyc_rt_cm_exit", {mgr}, n.loc, &ok);
+        ir::Value exitf = call_capi("pyc_rt_cm_exit", {mgr}, wloc, &ok);
         if (!ok) return false;
         mark_owned(exitf); forget(exitf);
         frame_owned_.push_back(exitf);
-        ir::Value entered = call_capi("pyc_rt_cm_enter", {mgr}, n.loc, &ok, {mgr});
+        ir::Value entered = call_capi("pyc_rt_cm_enter", {mgr}, wloc, &ok, {mgr});
         if (!ok) return false;
         mark_owned(entered);
         if (w.optional_vars) { if (!store_target(**w.optional_vars, entered, n.loc)) return false; }
@@ -2745,7 +2805,7 @@ private:
         // value has to be frame-owned across it or a landing pad leaks it.
         forget(p_ret);
         frame_owned_.push_back(p_ret);
-        call_capi("pyc_rt_exit_normal", {exitf}, n.loc, &ok);
+        call_capi("pyc_rt_exit_normal", {exitf}, wloc, &ok);
         frame_owned_.pop_back();
         if (!ok) return false;
 
@@ -2808,14 +2868,14 @@ private:
         }
 
         set_block(dispatch);
-        ir::Value sup = call_capi("pyc_rt_exit_exc", {exitf}, n.loc, &ok);
+        ir::Value sup = call_capi("pyc_rt_exit_exc", {exitf}, wloc, &ok);
         if (!ok) return false;
         std::uint32_t reraise = new_block("with.reraise");
         emit(ir::Instr{ir::Op::CondBr, {sup}, std::nullopt, Ownership::NotAnObject,
                        "", after, reraise, n.loc, std::nullopt});
         set_block(reraise);
         frame_owned_.pop_back();
-        std::uint32_t pad = make_landing_pad(n.loc);
+        std::uint32_t pad = make_landing_pad(wloc);
         frame_owned_.push_back(exitf);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", pad, 0, n.loc, std::nullopt});
@@ -3795,6 +3855,14 @@ private:
         frame_owned_.push_back(ccell);
         class_cells_.push_back(ccell);
         class_cell_used_.push_back(0);
+        ir::Value dcell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::CellNew, {}, dcell, Ownership::Owned, "__classdict__",
+                       0, 0, n.loc, std::nullopt});
+        mark_owned(dcell);
+        emit(ir::Instr{ir::Op::CellSet, {dcell, ns}, std::nullopt,
+                       Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+        forget(dcell);
+        class_dict_cells_.push_back(dcell);
 
         class_ns_.push_back(ns);
         class_globals_.push_back(declared_globals(n.body));
@@ -3826,7 +3894,8 @@ private:
         ir::Value guard = call_capi("pyc_rt_push_frame", {clsname, ns}, n.loc, &ok);
         if (!ok) { class_ns_.pop_back(); class_globals_.pop_back();
                    class_nonlocals_.pop_back(); qual_.pop_back();
-                   class_cells_.pop_back(); class_cell_used_.pop_back(); return false; }
+                   class_cells_.pop_back(); class_cell_used_.pop_back();
+                   class_dict_cells_.pop_back(); return false; }
         mark_owned(guard);
         forget(guard);
         std::uint32_t cls_unwind = new_block("class.unwind");
@@ -3842,13 +3911,26 @@ private:
                                            class_nonlocals_.pop_back();
                                            qual_.pop_back(); class_cells_.pop_back();
                                            class_cell_used_.pop_back();
+                                           class_dict_cells_.pop_back();
                                            return false; }
+        if (!n.body.empty()) {
+            const Expr* e = std::get_if<Expr>(&n.body.front().v);
+            if (e) {
+                const Constant* c = std::get_if<Constant>(&e->value->v);
+                if (c && std::holds_alternative<ConstStr>(c->value.v)) {
+                    ir::Value doc = lower_expr(*e->value, &ok);
+                    if (!ok) return false;
+                    store_name("__doc__", doc, e->loc);
+                }
+            }
+        }
         for (const stmt& s2 : n.body)
             if (!lower_stmt(s2)) { try_stack_.pop_back(); class_ns_.pop_back();
                                    class_globals_.pop_back();
                                    class_nonlocals_.pop_back();
                                    qual_.pop_back(); class_cells_.pop_back();
                                    class_cell_used_.pop_back();
+                                   class_dict_cells_.pop_back();
                                    return false; }
         try_stack_.pop_back();
         for (auto& [nm, tv] : class_tps) {
@@ -3865,12 +3947,15 @@ private:
         qual_.pop_back();
         class_cells_.pop_back();
         class_cell_used_.pop_back();
+        class_dict_cells_.pop_back();
         if (!terminated()) {
+            emit_decref(dcell, n.loc);
             emit_decref(guard, n.loc);
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                            "", cls_after, 0, n.loc, std::nullopt});
         }
         set_block(cls_unwind);
+        emit_decref(dcell, n.loc);
         emit_decref(guard, n.loc);
         {
             std::uint32_t pad = make_landing_pad(n.loc);
@@ -4283,7 +4368,7 @@ private:
           if (!pok) return false; }
         ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::IterNext, {it}, item, Ownership::Owned, "",
-                       body, done, n.loc, make_landing_pad(n.loc)});
+                       body, done, expr_loc(*n.iter), make_landing_pad(expr_loc(*n.iter))});
         auto live_at_pred = live_i64_;
 
         set_block(body);
@@ -4334,7 +4419,7 @@ private:
         // that decides how `for` traverses, so a user class defining
         // __iter__ works exactly as a list does -- the divergence the old
         // tree had between comprehensions and sum() is not expressible here.
-        ir::Value it = call_capi("PyObject_GetIter", {seq}, n.loc, &ok, {seq});
+        ir::Value it = call_capi("PyObject_GetIter", {seq}, expr_loc(*n.iter), &ok, {seq});
         if (!ok) return false;
         mark_owned(it); forget(it);
         frame_owned_.push_back(it);
@@ -5542,6 +5627,8 @@ private:
             call_capi_imm(set.c_str(), {seq, v}, (std::int64_t)i, 1, loc, ok);
             if (!*ok) return {};
         }
+        if (std::string(prefix) == "PyTuple")
+            call_capi("pyc_rt_tuple_maybe_untrack", {seq}, loc, ok);
         return seq;
     }
 
@@ -6443,6 +6530,8 @@ private:
         }
         ir::Value out = call_capi(sym, {l, r}, b.loc, ok, {l, r});
         if (*ok) mark_owned(out);
+        if (*ok && std::string(sym) == "PyNumber_Multiply")
+            call_capi("pyc_rt_tuple_maybe_untrack", {out}, b.loc, ok);
         return out;
     }
 };

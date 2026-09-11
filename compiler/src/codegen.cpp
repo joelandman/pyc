@@ -85,6 +85,8 @@ private:
     std::map<std::size_t, std::string> tail_label_;
     std::size_t cur_block_ = 0;
     int last_line_ = 0;
+    int last_col_ = -1;
+    int last_end_col_ = -1;
 
     std::string cstr(const std::string& text) {
         auto it = strs_.find(text);
@@ -238,6 +240,8 @@ private:
     void emit_blocks(const ir::Function& f, std::size_t idx, bool is_main) {
         (void)idx;
         last_line_ = 0;
+        last_col_ = -1;
+        last_end_col_ = -1;
         for (std::size_t b = 0; b < f.blocks.size(); ++b) {
             o_ << "bb" << b << ":\n";
             cur_block_ = b;
@@ -294,10 +298,15 @@ private:
 
     void emit_instr(const ir::Function& f, const ir::Instr& in, bool is_main) {
         using ir::Op;
-        if (in.op != ir::Op::Phi && in.loc.line > 0 && in.loc.line != last_line_) {
-            need("declare void @pyc_rt_set_lineno(i32)");
-            o_ << "  call void @pyc_rt_set_lineno(i32 " << in.loc.line << ")\n";
+        if (in.op != ir::Op::Phi && in.loc.line > 0 &&
+            (in.loc.line != last_line_ || in.loc.col != last_col_ ||
+             in.loc.end_col != last_end_col_)) {
+            need("declare void @pyc_rt_set_location(i32, i32, i32)");
+            o_ << "  call void @pyc_rt_set_location(i32 " << in.loc.line
+               << ", i32 " << in.loc.col << ", i32 " << in.loc.end_col << ")\n";
             last_line_ = in.loc.line;
+            last_col_ = in.loc.col;
+            last_end_col_ = in.loc.end_col;
         }
         switch (in.op) {
             case Op::ConstInt:  emit_const_use(in, 'i'); break;
@@ -579,7 +588,7 @@ private:
                 break;
             }
             case Op::MakeFunction: {
-                need("declare ptr @pyc_rt_make_function(ptr, ptr, i32, i32, i32, i32, ptr, ptr, ptr, i32, i32, ptr, i32)");
+                need("declare ptr @pyc_rt_make_function(ptr, ptr, i32, i32, i32, i32, ptr, ptr, ptr, i32, i32, ptr, i32, i32)");
                 need("declare i32 @pyc_rt_stash_marshal(ptr, i64)");
                 std::size_t ti = (std::size_t)in.imm;
                 bool valid = in.has_imm && ti < m_.functions.size();
@@ -607,8 +616,9 @@ private:
                                     ? "null" : v(in.args[1]))
                    << ", i32 " << ((int)in.target - 1)
                    << ", i32 " << ((int)in.target_else - 1)
-                   << ", ptr " << clo
-                   << ", i32 " << (t ? (int)t->freevars.size() : 0) << ")\n";
+                    << ", ptr " << clo
+                    << ", i32 " << (t ? (int)t->freevars.size() : 0)
+                    << ", i32 " << (in.loc.line > 0 ? in.loc.line : 1) << ")\n";
                 check(in, v(*in.result), true);
                 break;
             }

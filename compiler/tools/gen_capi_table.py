@@ -197,6 +197,7 @@ _PYC_RUNTIME = {
     "pyc_rt_bind_method": ("PyObject*", "+1", ["PyObject*"]),
     "pyc_rt_cm_exit":      ("PyObject*", "+1", ["PyObject*"]),
     "pyc_rt_cm_enter":     ("PyObject*", "+1", ["PyObject*"]),
+    "pyc_rt_tuple_maybe_untrack": ("int", "", ["PyObject*"]),
     "pyc_rt_exit_normal":  ("int", "", ["PyObject*"]),
     "pyc_rt_exit_exc":     ("int", "", ["PyObject*"]),
     "pyc_rt_extend":       ("int", "", ["PyObject*", "PyObject*"]),
