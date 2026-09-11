@@ -74,9 +74,10 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     `test_decorators` **16/16**; `test_builtin` **147/147** (6 skip);
     `test_functools` **325/325**; `test_scope` **41/41**; `test_binop` **12/12**;
     `test_named_expressions` **74/74**. `f(*args)` keeps the tuple identity
-    for `tp_call`; `global __x` mangles like CPython. `test_call` still has
-    two recursion ERRORs (C stack / `_testinternalcapi` .so). Remaining
-    dumps: carets, `__classdict__`.
+    for `tp_call`; `global __x` mangles like CPython. `test_call` 185/186
+    (3 skip): `_testinternalcapi` loads via `--whole-archive`; `test_super_deep`
+    still overflows 8MB C stack at ~17k -O0 frames. Remaining dumps: carets,
+    `__classdict__`.
 5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
    lowering): `star-unpacking` (parser SyntaxError for star-as-expr;
    call/list/set unpack runs), `starred assignment` (sole `*a =` is

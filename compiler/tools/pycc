@@ -5,6 +5,9 @@
 #
 # Tier 1 by construction: static libpython plus -rdynamic, so the binary has no
 # libpython dependency yet can still dlopen extension modules and wheels.
+# --whole-archive pulls every libpython object: without it, unused internals
+# (e.g. _PyInterpreterConfig_InitFromDict) are omitted and a later dlopen of
+# _testinternalcapi fails with an undefined symbol.
 set -euo pipefail
 
 SYSROOT="${PYC_SYSROOT:-$HOME/opt/py-sysroots/cp314-3.14.7-tier1}"
@@ -197,8 +200,16 @@ case "${PYC_LTO:-auto}" in
   *)    LTO="$PYC_LTO" ;;
 esac
 
-"${PYC_CXX:-clang++}" -std=c++20 "$OPT" $LTO -rdynamic $INC -I "$REPO/compiler/include" \
+# The trampoline lives in support.cpp. Compiling it at the user's -O0 makes
+# each Python call ~1.7KB of C stack and overflows 8MB at a few thousand
+# frames. Runtime objects are always -O2; generated IR keeps "$OPT".
+CXX="${PYC_CXX:-clang++}"
+INC_ALL="$INC -I $REPO/compiler/include"
+for rt in entry support frame; do
+  "$CXX" -std=c++20 -O2 $LTO $INC_ALL -c "$REPO/compiler/src/rt/${rt}.cpp" -o "$TMP/${rt}.o"
+done
+"$CXX" -std=c++20 "$OPT" $LTO -rdynamic $INC_ALL \
   "$TMP/mod.ll" "$TMP/main.cpp" \
-  "$REPO/compiler/src/rt/entry.cpp" "$REPO/compiler/src/rt/support.cpp" \
-  "$REPO/compiler/src/rt/frame.cpp" \
-  "$LIB" -lm -lpthread -ldl -lutil -lz -o "$OUT"
+  "$TMP/entry.o" "$TMP/support.o" "$TMP/frame.o" \
+  -Wl,--whole-archive "$LIB" -Wl,--no-whole-archive \
+  -lm -lpthread -ldl -lutil -lz -o "$OUT"
