@@ -51,6 +51,7 @@ PyObject* pyc_rt_run_from_frame(PyObject* self, PyObject* args);
 
 // Vectorcall over an argument array.
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs);
+PyObject* pyc_rt_call_ex(PyObject* callable, PyObject* args, PyObject* kwargs);
 
 // Literals. The integer literal arrives as DECIMAL TEXT and is parsed by
 // CPython, so a value of any magnitude is exact -- there is no path here

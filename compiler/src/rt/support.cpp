@@ -920,6 +920,23 @@ PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {
     return PyObject_Vectorcall(callable, args, (size_t)nargs, nullptr);
 }
 
+PyObject* pyc_rt_call_ex(PyObject* callable, PyObject* args, PyObject* kwargs) {
+    PyObject* t = args;
+    int own = 0;
+    if (!t) {
+        t = PyTuple_New(0);
+        if (!t) return nullptr;
+        own = 1;
+    } else if (!PyTuple_Check(t)) {
+        t = PySequence_Tuple(args);
+        if (!t) return nullptr;
+        own = 1;
+    }
+    PyObject* r = PyObject_Call(callable, t, kwargs);
+    if (own) Py_DECREF(t);
+    return r;
+}
+
 PyObject* pyc_rt_int_from_text(const char* digits) {
     return PyLong_FromString(digits, nullptr, 10);
 }

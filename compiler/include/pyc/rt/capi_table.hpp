@@ -857,6 +857,7 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"pyc_rt_import_from", Ownership::Owned, true, 3, {}, false, "", false, "", "ooi"},
     {"pyc_rt_import_attr", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
     {"pyc_rt_cell_get", Ownership::Owned, true, 3, {}, false, "", false, "", "opi"},
+    {"pyc_rt_call_ex", Ownership::Owned, true, 3, {}, false, "", false, "", "ooo"},
     {"pyc_rt_star_annotation", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_annotate_check_format", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_unpack_ex", Ownership::Owned, true, 3, {}, false, "", false, "", "oii"},

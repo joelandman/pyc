@@ -72,11 +72,11 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    **22/22**; `test_bytes` **319/319** (8 skip); `test_dict` **121/121**;
     `test_complex` **37/37**; `test_format` **18/18**; `test_dynamic` **11/11**;
     `test_decorators` **16/16**; `test_builtin` **147/147** (6 skip);
-    `test_functools` **325/325**; `test_scope` **41/41**; `test_binop` **12/12**.
-    Private-name mangling; listcomp loop vars captured by nested lambdas;
-    `with` missing-method messages; walrus in a while test is not preloaded
-    as an int. Remaining `EXIT_DIFFERS` still need dumps (carets, C-API
-    stack margin, `__classdict__`, mangled `global`).
+    `test_functools` **325/325**; `test_scope` **41/41**; `test_binop` **12/12**;
+    `test_named_expressions` **74/74**. `f(*args)` keeps the tuple identity
+    for `tp_call`; `global __x` mangles like CPython. `test_call` still has
+    two recursion ERRORs (C stack / `_testinternalcapi` .so). Remaining
+    dumps: carets, `__classdict__`.
 5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
    lowering): `star-unpacking` (parser SyntaxError for star-as-expr;
    call/list/set unpack runs), `starred assignment` (sole `*a =` is

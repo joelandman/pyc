@@ -215,6 +215,7 @@ _PYC_RUNTIME = {
     "pyc_rt_import_from":  ("PyObject*", "+1", ["PyObject*", "PyObject*", "int"]),
     "pyc_rt_import_attr":  ("PyObject*", "+1", ["PyObject*", "PyObject*"]),
     "pyc_rt_cell_get":     ("PyObject*", "+1", ["PyObject*", "const char*", "int"]),
+    "pyc_rt_call_ex":      ("PyObject*", "+1", ["PyObject*", "PyObject*", "PyObject*"]),
     "pyc_rt_expand_bases": ("PyObject*", "+1", ["PyObject*"]),
     "pyc_rt_set_orig_bases": ("int", "", ["PyObject*", "PyObject*", "PyObject*"]),
     "pyc_rt_star_annotation": ("PyObject*", "+1", ["PyObject*"]),

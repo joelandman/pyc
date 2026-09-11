@@ -23,6 +23,7 @@
 #include <cerrno>
 #include <cstdint>
 #include <functional>
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <set>
@@ -1482,6 +1483,15 @@ private:
 
         // --- closure analysis -------------------------------------------
         std::vector<std::string> own_locals = function_locals(slotnames, n.body);
+        std::set<std::string> glob_all = declared_globals(n.body);
+        {
+            std::set<std::string> extra;
+            for (const std::string& g : glob_all) extra.insert(mangle_ident(g));
+            glob_all.insert(extra.begin(), extra.end());
+            own_locals.erase(std::remove_if(own_locals.begin(), own_locals.end(),
+                [&](const std::string& l){ return glob_all.count(l); }),
+                own_locals.end());
+        }
         // A local is a CELL variable exactly when something nested reads it.
         std::set<std::string> inner = nested_reads(n.body);
         std::vector<std::string> cellvars;
@@ -1522,7 +1532,7 @@ private:
             reads.insert(inner.begin(), inner.end());
             // `global x` means module scope even if an enclosing function has
             // a cell named x. Capturing it would read a different variable.
-            for (const std::string& g : declared_globals(n.body)) reads.erase(g);
+            for (const std::string& g : glob_all) reads.erase(g);
             // A `nonlocal` name is free even if it is only ever written.
             std::set<std::string> nl = declared_nonlocals(n.body);
             reads.insert(nl.begin(), nl.end());
@@ -1681,7 +1691,7 @@ private:
         }
 
         bool ok = true;
-        func_globals_.push_back(declared_globals(n.body));
+        func_globals_.push_back(glob_all);
         for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
         func_globals_.pop_back();
         if (ok) {
@@ -6351,6 +6361,21 @@ private:
     }
 
     ir::Value lower_call_starred(const Call& c, const ir::Value& fn, bool* ok) {
+        // f(*args) must pass that tuple through to tp_call so identity is
+        // preserved (PEP 590). Splicing into a new tuple broke assertIs.
+        if (c.args.size() == 1 && std::holds_alternative<Starred>(c.args[0].v)) {
+            ir::Value v = lower_expr(*std::get<Starred>(c.args[0].v).value, ok);
+            if (!*ok) return {};
+            ir::Value kw = const_null(c.loc);
+            if (!c.keywords.empty()) {
+                kw = build_kwargs(c.keywords, c.loc, ok);
+                if (!*ok) return {};
+            }
+            ir::Value out = call_capi("pyc_rt_call_ex", {fn, v, kw}, c.loc, ok,
+                                      {fn, v, kw});
+            if (*ok) mark_owned(out);
+            return out;
+        }
         ir::Value tup = lower_spliced(c.args, "PyTuple", c.loc, ok);
         if (!*ok) return {};
         ir::Value kw;
