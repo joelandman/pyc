@@ -80,11 +80,14 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     `test_generators` 59/59, `test_asyncgen` 85/85, `test_yield_from` 43/43,
     `test_genexps` 1/1, `test_generator_stop` 2/2; genexp `__qualname__` repaired.
     `test_coroutines` **99/99**. Dumped EXIT_DIFFERS
-    leftovers: doctest traceback ellipsis (`test_unpack`/`extcall` — also
-    fails under CPython as `__main__`); `test_compile` linenos/AST.
-    MATCH: `test_iter` 57/57; `test_with` 54/54; `test_listcomps` 66/66;
-    `test_dictcomps` 10/10; `test_setcomps` 2/2; `test_tuple` 38/38;
-    `test_property` subclass `__doc__`; `__classdict__` in nested comps.
+    leftovers: `test_super_deep` C-stack; `test_compile` bytecode/linenos of
+    native `__code__` (not `compile()`); `test_dis` Bound capsule vs nested
+    code in `co_consts`; `test_raise` reraise/__context__; `test_gc` extra
+    collect; `test_str` `_testcapi` nomemory. `test_unpack`/`extcall` doctest
+    exit 1 on both sides as `__main__`.
+    MATCH: `test_iter` 57; `test_with` 54; `test_listcomps` 66;
+    `test_dictcomps` 10; `test_setcomps` 2; `test_tuple` 38;
+    `test_exception_group` 52; `test_property` subclass `__doc__`.
  5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
     lowering): `star-unpacking` (parser SyntaxError for star-as-expr;
     call/list/set unpack runs), `starred assignment` (sole `*a =` is

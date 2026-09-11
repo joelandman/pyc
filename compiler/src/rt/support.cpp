@@ -186,8 +186,8 @@ static void append_svarint(std::vector<char>& o, int val) {
 
 static bool build_linemap(PyObject** bytecode, PyObject** linetable,
                           const int* locs = nullptr, int nlocs = 0,
-                          int firstlineno = 1) {
-    static const char kEvalCode[] = {
+                          int firstlineno = 1, int helper_idx = 2) {
+    char kEvalCode[] = {
         '\x80', '\x00',
         'R', '\x02',
         '\x21', '\x00',
@@ -195,6 +195,7 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable,
         '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
         '#', '\x00'
     };
+    kEvalCode[3] = static_cast<char>(helper_idx);
     if (!locs || nlocs <= 0) {
         std::vector<char> codebuf(kLineSlots * 2, 0);
         std::memcpy(codebuf.data(), kEvalCode, 16);
@@ -534,27 +535,24 @@ PyCodeObject* make_func_code(Bound* b) {
             Py_DECREF(cap); Py_DECREF(varnames); Py_DECREF(freevars); return nullptr;
         }
     }
-    // consts[0] None, [1] Bound capsule, [2] eval helper so exec(f.__code__)
-    // runs the native body through the current frame's cells. Stashed marshal
-    // objects (nested __annotate__ code objects) follow.
-    PyObject* consts;
-    if (g_extra_consts.empty()) {
-        consts = PyTuple_Pack(3, Py_None, cap, run_helper);
-    } else {
-        consts = PyTuple_New(3 + (Py_ssize_t)g_extra_consts.size());
-        if (consts) {
-            Py_INCREF(Py_None); PyTuple_SET_ITEM(consts, 0, Py_None);
-            Py_INCREF(cap); PyTuple_SET_ITEM(consts, 1, cap);
-            Py_INCREF(run_helper); PyTuple_SET_ITEM(consts, 2, run_helper);
-            for (size_t i = 0; i < g_extra_consts.size(); ++i)
-                PyTuple_SET_ITEM(consts, 3 + (Py_ssize_t)i, g_extra_consts[i]);
-            g_extra_consts.clear();
-        }
+    // Nested marshalled code objects first (CPython puts nested codes at
+    // the front of co_consts), then None, Bound capsule, eval helper.
+    const int nextra = (int)g_extra_consts.size();
+    const int helper_idx = nextra + 2;
+    PyObject* consts = PyTuple_New(nextra + 3);
+    if (consts) {
+        for (int i = 0; i < nextra; ++i)
+            PyTuple_SET_ITEM(consts, i, g_extra_consts[static_cast<size_t>(i)]);
+        g_extra_consts.clear();
+        Py_INCREF(Py_None); PyTuple_SET_ITEM(consts, nextra, Py_None);
+        Py_INCREF(cap); PyTuple_SET_ITEM(consts, nextra + 1, cap);
+        Py_INCREF(run_helper); PyTuple_SET_ITEM(consts, nextra + 2, run_helper);
     }
     Py_DECREF(cap);
     if (!consts) { Py_DECREF(varnames); Py_DECREF(freevars); return nullptr; }
     PyObject *bytecode = nullptr, *linetable = nullptr;
-    if (!build_linemap(&bytecode, &linetable, b->locs, b->nlocs, b->firstlineno)) {
+    if (!build_linemap(&bytecode, &linetable, b->locs, b->nlocs, b->firstlineno,
+                       helper_idx)) {
         Py_XDECREF(bytecode); Py_XDECREF(linetable);
         Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
         return nullptr;

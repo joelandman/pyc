@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -106,6 +107,9 @@ static void set_main_file(char** argv) {
         char* rp = ::realpath(argv[0], nullptr);
         if (rp) { path = rp; std::free(rp); }
     }
+    const char* src = pyc_rt_source_file();
+    if (src && src[0] && std::strcmp(src, "<pyc>") != 0 && ::access(src, R_OK) == 0)
+        path = src;
     if (path.empty()) return;      // better no __file__ than a wrong one
 
     PyObject* m = PyImport_AddModule("__main__");            // borrowed
