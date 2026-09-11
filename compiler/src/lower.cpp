@@ -26,6 +26,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <utility>
 
 namespace pyc {
 // Locals provably holding only ints, and so eligible to live in a machine
@@ -63,6 +64,70 @@ public:
         for (const GenexpEntry& g : genexps_)
             if (g.line == loc.line && g.col == loc.col) return &g;
         return nullptr;
+    }
+
+    void nested_scope_ranges(const std::vector<stmt>& body,
+                             std::vector<std::pair<int, int>>& out) {
+        for (const stmt& s : body) {
+            std::visit(ov{
+                [&](const FunctionDef& n) {
+                    out.push_back({n.loc.line,
+                                   n.loc.end_line ? n.loc.end_line : n.loc.line});
+                },
+                [&](const AsyncFunctionDef& n) {
+                    out.push_back({n.loc.line,
+                                   n.loc.end_line ? n.loc.end_line : n.loc.line});
+                },
+                [&](const ClassDef& n) {
+                    out.push_back({n.loc.line,
+                                   n.loc.end_line ? n.loc.end_line : n.loc.line});
+                },
+                [&](const If& n) {
+                    nested_scope_ranges(n.body, out);
+                    nested_scope_ranges(n.orelse, out);
+                },
+                [&](const While& n) {
+                    nested_scope_ranges(n.body, out);
+                    nested_scope_ranges(n.orelse, out);
+                },
+                [&](const For& n) {
+                    nested_scope_ranges(n.body, out);
+                    nested_scope_ranges(n.orelse, out);
+                },
+                [&](const AsyncFor& n) {
+                    nested_scope_ranges(n.body, out);
+                    nested_scope_ranges(n.orelse, out);
+                },
+                [&](const With& n) { nested_scope_ranges(n.body, out); },
+                [&](const AsyncWith& n) { nested_scope_ranges(n.body, out); },
+                [&](const Try& n) {
+                    nested_scope_ranges(n.body, out);
+                    nested_scope_ranges(n.orelse, out);
+                    nested_scope_ranges(n.finalbody, out);
+                    for (const excepthandler& h : n.handlers)
+                        nested_scope_ranges(std::get<ExceptHandler>(h.v).body, out);
+                },
+                [&](const TryStar& n) {
+                    nested_scope_ranges(n.body, out);
+                    nested_scope_ranges(n.orelse, out);
+                    nested_scope_ranges(n.finalbody, out);
+                    for (const excepthandler& h : n.handlers)
+                        nested_scope_ranges(std::get<ExceptHandler>(h.v).body, out);
+                },
+                [&](const Match& n) {
+                    for (const match_case& c : n.cases)
+                        nested_scope_ranges(c.body, out);
+                },
+                [&](const AnnAssign&) {}, [&](const Assert&) {},
+                [&](const Assign&) {}, [&](const AugAssign&) {},
+                [&](const Break&) {}, [&](const Continue&) {},
+                [&](const Delete&) {}, [&](const Expr&) {},
+                [&](const Global&) {}, [&](const Import&) {},
+                [&](const ImportFrom&) {}, [&](const Nonlocal&) {},
+                [&](const Pass&) {}, [&](const Raise&) {},
+                [&](const Return&) {}, [&](const TypeAlias&) {},
+            }, s.v);
+        }
     }
 
     bool lower_module(const ast::mod& node) {
@@ -328,17 +393,16 @@ private:
         // it, that pad popped handlers, and the compiler recursed until it
         // hung -- diagnosing nothing at all.
         pop_open_handlers(loc);
+        // Record this frame on every unwind, including a local except.
+        // CPython still puts the current frame on e.__traceback__ when
+        // `try: raise E except E as e` catches in the same function;
+        // previously we only annotated frames that left the function, so
+        // dir(e.__traceback__) saw None.
+        emit(ir::Instr{ir::Op::AddTraceback, {}, std::nullopt,
+                       Ownership::NotAnObject,
+                       fn_idx_ == 0 ? "<module>" : cur()->name,
+                       0, 0, loc, std::nullopt});
         if (try_stack_.empty()) {
-            // Nothing catches here, so the exception LEAVES this function:
-            // record where. Without this a compiled binary printed only the
-            // exception type and message, with no file, line or function at
-            // all -- the thing you most need from a crash in a deployed
-            // program. Only on paths that actually propagate, and the line is
-            // this pad's own, so it names the failing operation.
-            emit(ir::Instr{ir::Op::AddTraceback, {}, std::nullopt,
-                           Ownership::NotAnObject,
-                           fn_idx_ == 0 ? "<module>" : cur()->name,
-                           0, 0, loc, std::nullopt});
             // Nothing catches here: release everything the frame holds and
             // propagate on the C-API convention.
             for (auto it = frame_owned_.rbegin(); it != frame_owned_.rend(); ++it)
@@ -1120,7 +1184,8 @@ private:
             }
         }
         return lower_cpython_function(n.name, n.decorator_list, defaults, n.loc,
-                                      kwdefaults, tp_cells, tp_tuple);
+                                      kwdefaults, tp_cells, tp_tuple,
+                                      &*n.args, &n.returns);
     }
 
     bool lower_cpython_function(const std::string& name,
@@ -1128,7 +1193,9 @@ private:
                                 ir::Value defaults, const SourceLoc& loc,
                                 ir::Value kwdefaults = {},
                                 std::map<std::string, ir::Value> extra_cells = {},
-                                ir::Value tp_tuple = {}) {
+                                ir::Value tp_tuple = {},
+                                const arguments* ann_args = nullptr,
+                                const std::optional<Box<expr>>* ann_ret = nullptr) {
         const GenexpEntry* gf = find_genexp(loc);
         if (!gf) return err("no compiled code object for this function",
                             "async function definitions", loc);
@@ -1181,6 +1248,11 @@ private:
         }
         for (auto& [nm, cell] : extra_cells)
             if (owns(cell)) release(cell, loc);
+        if (ann_args) {
+            if (!attach_func_annotate(fv, *ann_args,
+                    ann_ret ? *ann_ret : std::optional<Box<expr>>{}, loc))
+                return false;
+        }
         bool okd = true;
         fv = apply_decorators(decorators, fv, loc, &okd);
         if (!okd) return false;
@@ -1282,7 +1354,8 @@ private:
         // by CPython and run by the interpreter (rebuild/GENERATORS.md).
         if (find_genexp(n.loc))
             return lower_cpython_function(n.name, n.decorator_list, defaults, n.loc,
-                                          kwdefaults, tp_cells, tp_tuple);
+                                          kwdefaults, tp_cells, tp_tuple,
+                                          &*n.args, &n.returns);
 
         // Save the enclosing function's state: a nested def is lowered into a
         // separate ir::Function, and must not inherit the outer local map.
@@ -1450,9 +1523,21 @@ private:
         cur()->locals = all_locals;
         cur()->cellvars = cellvars;
         cur()->freevars = freevars;
-        for (const GenexpEntry& g : genexps_)
-            if (g.line == n.loc.line && g.col < 0)
-                cur()->extra_marshal.push_back(g.code);
+        std::vector<std::pair<int, int>> nested;
+        nested_scope_ranges(n.body, nested);
+        int fn_end = n.loc.end_line ? n.loc.end_line : n.loc.line;
+        for (const GenexpEntry& g : genexps_) {
+            if (g.col < 0) {
+                if (g.line == n.loc.line)
+                    cur()->extra_marshal.push_back(g.code);
+                continue;
+            }
+            if (g.line < n.loc.line || g.line > fn_end) continue;
+            bool inner = false;
+            for (auto [a, b] : nested)
+                if (g.line >= a && g.line <= b) { inner = true; break; }
+            if (!inner) cur()->extra_marshal.push_back(g.code);
+        }
         cur()->int_locals = int_locals(slotnames, n.body, inner);
         int_locals_ = cur()->int_locals;
         live_i64_.clear();
@@ -1601,14 +1686,19 @@ private:
         return true;
     }
 
-    // @a @b def f  ->  f = a(b(f)). Applied BOTTOM-UP, i.e. nearest the def
-    // first, which is the order Python specifies and the opposite of how the
-    // list reads.
+    // Evaluate decorator expressions top-down (source order), then apply
+    // bottom-up: @a @b def f  ->  f = a(b(f)).
     ir::Value apply_decorators(const std::vector<expr>& decos,
                                ir::Value fv, const SourceLoc& loc, bool* ok) {
-        for (auto it = decos.rbegin(); it != decos.rend(); ++it) {
-            ir::Value d = lower_expr(*it, ok);
+        std::vector<ir::Value> ds;
+        ds.reserve(decos.size());
+        for (const auto& d : decos) {
+            ir::Value v = lower_expr(d, ok);
             if (!*ok) return fv;
+            ds.push_back(v);
+        }
+        for (auto it = ds.rbegin(); it != ds.rend(); ++it) {
+            ir::Value d = *it;
             ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             std::vector<ir::Value> args{d, fv};
             emit(ir::Instr{ir::Op::CallObject, args, out, Ownership::Owned, "",
@@ -2396,25 +2486,29 @@ private:
         return true;
     }
 
-    bool attach_func_annotate(const ir::Value& fv, const FunctionDef& n) {
+    bool attach_func_annotate(const ir::Value& fv, const arguments& a,
+                             const std::optional<Box<expr>>& returns,
+                             const SourceLoc& loc) {
         AnnItems items;
         auto add_arg = [&](const arg& p) {
             if (p.annotation) items.emplace_back(p.arg, &**p.annotation);
         };
-        const arguments& a = *n.args;
         for (const arg& p : a.posonlyargs) add_arg(p);
         for (const arg& p : a.args) add_arg(p);
         if (a.vararg) add_arg(**a.vararg);
         for (const arg& p : a.kwonlyargs) add_arg(p);
         if (a.kwarg) add_arg(**a.kwarg);
-        if (n.returns) items.emplace_back("return", &**n.returns);
+        if (returns) items.emplace_back("return", &**returns);
         if (items.empty()) return true;
         bool ok = true;
-        ir::Value fn = make_annotate_fn(items, n.loc, false, &ok);
+        ir::Value fn = make_annotate_fn(items, loc, false, &ok);
         if (!ok) return false;
-        ir::Value key = const_str("__annotate__", n.loc);
-        call_capi("PyObject_SetAttr", {fv, key, fn}, n.loc, &ok, {key, fn});
+        ir::Value key = const_str("__annotate__", loc);
+        call_capi("PyObject_SetAttr", {fv, key, fn}, loc, &ok, {key, fn});
         return ok;
+    }
+    bool attach_func_annotate(const ir::Value& fv, const FunctionDef& n) {
+        return attach_func_annotate(fv, *n.args, n.returns, n.loc);
     }
 
     bool lower_with(const With& n) { return lower_with_item(n, 0); }
