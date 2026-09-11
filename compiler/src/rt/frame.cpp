@@ -155,6 +155,10 @@ extern "C" PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals) {
     }
     PyCodeObject* co = PyCode_NewEmpty("<pyc>", nm, 1);
     if (!co) return nullptr;
+    // GetLocals on an optimized code object rebuilds f_locals from
+    // empty fast locals and drops the class namespace mapping, so
+    // locals()["x"]=43 would not be visible to LOAD_NAME.
+    co->co_flags &= ~CO_OPTIMIZED;
     void* f = pyc_rt_interp_enter(co, g, locals, nullptr);
     Py_DECREF(co);
     if (!f) return nullptr;

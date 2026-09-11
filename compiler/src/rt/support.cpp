@@ -73,13 +73,22 @@ static PyObject* mapping_get(PyObject* map, PyObject* key) {
 // body -- `x = 7` then `def get(self, k, default=x)` raised NameError, because
 // the default is evaluated in the class body, where x is a namespace entry and
 // not a global.
-PyObject* pyc_rt_load_classname(PyObject* ns, const char* name) {
+PyObject* pyc_rt_load_classname(PyObject* ns, const char* name, PyObject* cell) {
     PyObject* key = PyUnicode_FromString(name);
     if (!key) return nullptr;
     PyObject* v = nullptr;
     if (PyDict_GetItemRef(ns, key, &v) < 0) { Py_DECREF(key); return nullptr; }
     Py_DECREF(key);
     if (v) return v;
+    if (cell && PyCell_Check(cell)) {
+        v = PyCell_GET(cell);
+        if (v) return Py_NewRef(v);
+        PyErr_Format(PyExc_NameError,
+                     "cannot access free variable '%s' where it is not "
+                     "associated with a value in enclosing scope",
+                     name ? name : "?");
+        return nullptr;
+    }
     return pyc_rt_load_global(name);
 }
 
@@ -251,8 +260,9 @@ int pyc_rt_del_local(PyObject** locals, int slot, const char* name) {
     locals[slot] = nullptr;       // clear BEFORE the decref: __del__ may run
     Py_DECREF(old);               // and must not observe a dangling slot
     if (tls_frame_locals && slot >= 0 && slot < tls_frame_nnames
-        && tls_frame_names && tls_frame_names[slot])
-        PyDict_DelItemString(tls_frame_locals, tls_frame_names[slot]);
+        && tls_frame_names && tls_frame_names[slot]
+        && PyDict_DelItemString(tls_frame_locals, tls_frame_names[slot]) < 0)
+        PyErr_Clear();
     return 0;
 }
 
@@ -263,8 +273,11 @@ void pyc_rt_store_local(PyObject** locals, int slot, PyObject* v) {
     Py_XDECREF(old);          // after the store: a self-assignment must not free
     if (tls_frame_locals && slot >= 0 && slot < tls_frame_nnames
         && tls_frame_names && tls_frame_names[slot]) {
-        if (v) PyDict_SetItemString(tls_frame_locals, tls_frame_names[slot], v);
-        else PyDict_DelItemString(tls_frame_locals, tls_frame_names[slot]);
+        PyObject* shown = v;
+        if (v && PyCell_Check(v)) shown = PyCell_GET(v);
+        if (shown) PyDict_SetItemString(tls_frame_locals, tls_frame_names[slot], shown);
+        else if (PyDict_DelItemString(tls_frame_locals, tls_frame_names[slot]) < 0)
+            PyErr_Clear();
     }
 }
 
@@ -1714,6 +1727,16 @@ extern "C" PyObject* pyc_rt_annotate_check_format(PyObject* format) {
         return nullptr;
     }
     Py_RETURN_NONE;
+}
+
+extern "C" int pyc_rt_cell_set(PyObject* cell, PyObject* v, const char* name) {
+    if (PyCell_Set(cell, v) < 0) return -1;
+    if (tls_frame_locals && name && name[0]) {
+        if (v) PyDict_SetItemString(tls_frame_locals, name, v);
+        else if (PyDict_DelItemString(tls_frame_locals, name) < 0)
+            PyErr_Clear();
+    }
+    return 0;
 }
 
 extern "C" PyObject* pyc_rt_cell_get(PyObject* cell, const char* name, int is_free) {

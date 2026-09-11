@@ -837,10 +837,11 @@ private:
         // comprehension's can -- cells remove that asymmetry.
         std::set<std::string> reads = nested_reads_expr(*n.body);
         std::set<std::string> own(slotnames.begin(), slotnames.end());
+        std::vector<std::string> cellvars;
         std::vector<std::string> freevars;
         std::vector<ir::Value> closure_cells;
         for (const std::string& r : reads) {
-            if (own.count(r)) continue;
+            if (own.count(r)) { cellvars.push_back(r); continue; }
             auto cit = cells_.find(r);
             if (cit == cells_.end()) continue;
             freevars.push_back(r);
@@ -856,8 +857,34 @@ private:
         FnScope sc = begin_function("<lambda>", params, lam_locals);
         cur()->nposonly = (int)a.posonlyargs.size();
         cur()->nkwonly = nkwonly;
+        cur()->cellvars = cellvars;
         cur()->freevars = freevars;
+        for (const std::string& c : cellvars) cells_[c] = locals_[c];
         for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
+        for (const std::string& c : cellvars) {
+            std::uint32_t slot = locals_[c];
+            bool is_param = slot < params.size()
+                         || (vararg_slot >= 0 && (int)slot == vararg_slot)
+                         || (kwarg_slot >= 0 && (int)slot == kwarg_slot);
+            ir::Value seed;
+            if (is_param) {
+                seed = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::LoadLocal, {}, seed, Ownership::Owned, c,
+                               slot, 0, n.loc, std::nullopt});
+                mark_owned(seed);
+            }
+            ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::CellNew,
+                           seed.valid() ? std::vector<ir::Value>{seed}
+                                        : std::vector<ir::Value>{},
+                           cell, Ownership::Owned, c, 0, 0, n.loc,
+                           make_landing_pad(n.loc)});
+            mark_owned(cell);
+            if (seed.valid()) release(seed, n.loc);
+            emit(ir::Instr{ir::Op::StoreLocal, {cell}, std::nullopt,
+                           Ownership::NotAnObject, c, slot, 0, n.loc, std::nullopt});
+            release(cell, n.loc);
+        }
         bool bok = true;
         ir::Value r = lower_expr(*n.body, &bok);
         if (bok)
@@ -1800,6 +1827,32 @@ private:
                     call_capi("PyObject_DelItem", {obj, key}, n.loc, &ok, {obj, key});
                 },
                 [&](const Name& n2)      {
+                    if (!class_ns_.empty()) {
+                        if (!class_nonlocals_.empty()
+                            && class_nonlocals_.back().count(n2.id)) {
+                            auto cit = cells_.find(n2.id);
+                            if (cit != cells_.end()) {
+                                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                                emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, n2.id,
+                                               cit->second, 0, n.loc, make_landing_pad(n.loc)});
+                                mark_owned(cell);
+                                emit(ir::Instr{ir::Op::CellSet, {cell, ir::Value{}}, std::nullopt,
+                                               Ownership::NotAnObject, n2.id, 0, 0, n.loc,
+                                               std::nullopt});
+                                release(cell, n.loc);
+                                return;
+                            }
+                        }
+                        if (!class_globals_.empty() && class_globals_.back().count(n2.id)) {
+                            ir::Value r = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+                            emit(ir::Instr{ir::Op::DelGlobal, {}, r, Ownership::NotAnObject,
+                                           n2.id, 0, 0, n.loc, make_landing_pad(n.loc)});
+                            return;
+                        }
+                        ir::Value key = const_str(n2.id, n.loc);
+                        call_capi("PyObject_DelItem", {class_ns_.back(), key}, n.loc, &ok, {key});
+                        return;
+                    }
                     auto cit = cells_.find(n2.id);
                     if (cit != cells_.end()) {
                         ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
@@ -5141,7 +5194,7 @@ private:
         // which is precisely why print/len/sum cannot diverge (I3).
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         auto cit = cells_.find(n.id);
-        if (cit != cells_.end()) {
+        if (cit != cells_.end() && class_ns_.empty()) {
             ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, n.id,
                            cit->second, 0, n.loc, make_landing_pad(n.loc)});
@@ -5166,11 +5219,44 @@ private:
             emit(ir::Instr{ir::Op::LoadLocal, {}, out, Ownership::Owned,
                            n.id, it->second, 0, n.loc, make_landing_pad(n.loc)});
         } else if (!class_ns_.empty()) {
-            // A class body is LOAD_NAME territory: the namespace under
-            // construction, then globals, then builtins.
-            emit(ir::Instr{ir::Op::LoadClassName, {class_ns_.back()}, out,
+            if (!class_nonlocals_.empty() && class_nonlocals_.back().count(n.id)
+                && cit != cells_.end()) {
+                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, n.id,
+                               cit->second, 0, n.loc, make_landing_pad(n.loc)});
+                mark_owned(cell);
+                ir::Instr cg{ir::Op::CellGet, {cell}, out, Ownership::Owned, n.id,
+                             0, 0, n.loc, make_landing_pad(n.loc)};
+                cg.imm = 1;
+                cg.has_imm = true;
+                emit(std::move(cg));
+                release(cell, n.loc);
+                mark_owned(out);
+                *ok = true;
+                return out;
+            }
+            if (!class_globals_.empty() && class_globals_.back().count(n.id)) {
+                emit(ir::Instr{ir::Op::LoadGlobal, {}, out, Ownership::Owned,
+                               n.id, 0, 0, n.loc, make_landing_pad(n.loc)});
+                mark_owned(out);
+                *ok = true;
+                return out;
+            }
+            // LOAD_FROM_DICT_OR_DEREF: class namespace first, then the
+            // enclosing cell, then globals. locals()["x"]=43 must win over
+            // the closure (issue 17853).
+            std::vector<ir::Value> args{class_ns_.back()};
+            if (cit != cells_.end()) {
+                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, n.id,
+                               cit->second, 0, n.loc, make_landing_pad(n.loc)});
+                mark_owned(cell);
+                args.push_back(cell);
+            }
+            emit(ir::Instr{ir::Op::LoadClassName, args, out,
                            Ownership::Owned, n.id, 0, 0, n.loc,
                            make_landing_pad(n.loc)});
+            if (args.size() > 1 && owns(args[1])) release(args[1], n.loc);
             mark_owned(out);
             *ok = true;
             return out;

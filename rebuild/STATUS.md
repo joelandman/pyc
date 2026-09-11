@@ -72,10 +72,10 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    **22/22**; `test_bytes` **319/319** (8 skip); `test_dict` **121/121**;
     `test_complex` **37/37**; `test_format` **18/18**; `test_dynamic` **11/11**;
     `test_decorators` **16/16**; `test_builtin` **147/147** (6 skip);
-    `test_functools` **325/325**. Decorators evaluate top-down then apply
-    bottom-up; genexp code objects sit in `co_consts`; caught exceptions
-    carry a traceback; marshalled generators get `__annotate__`. Remaining
-    `EXIT_DIFFERS` still need dumps.
+    `test_functools` **325/325**; `test_scope` **41/41**. Nested lambdas
+    capture through cells; class-body names are dict-or-deref; `locals()`
+    shows cell contents; `del` in a class body deletes from the namespace.
+    Remaining `EXIT_DIFFERS` still need dumps.
 5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
    lowering): `star-unpacking` (parser SyntaxError for star-as-expr;
    call/list/set unpack runs), `starred assignment` (sole `*a =` is

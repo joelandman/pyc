@@ -165,11 +165,12 @@ int pyc_rt_del_global(const char* name);
 // Read a cell. An empty cellvar is UnboundLocalError; an empty freevar is
 // NameError. PyCell_Get returns NULL with no exception set.
 PyObject* pyc_rt_cell_get(PyObject* cell, const char* name, int is_free);
+int pyc_rt_cell_set(PyObject* cell, PyObject* v, const char* name);
 PyObject* pyc_rt_star_annotation(PyObject* v);
 PyObject* pyc_rt_annotate_check_format(PyObject* format);
 
 // Class-body name lookup: namespace, then globals, then builtins (LOAD_NAME).
-PyObject* pyc_rt_load_classname(PyObject* ns, const char* name);
+PyObject* pyc_rt_load_classname(PyObject* ns, const char* name, PyObject* cell);
 
 // Unresolvable zero-argument super(); raises the RuntimeError CPython raises.
 int pyc_rt_super_fail(int has_args);
