@@ -1189,8 +1189,9 @@ private:
         for (const ir::Value& c : capvals) args.push_back(c);
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         std::vector<ir::Value> saved = args;
+        SourceLoc cloc = expr_loc(*g.iter);
         emit(ir::Instr{ir::Op::CallObject, args, out, Ownership::Owned, "",
-                       0, 0, loc, make_landing_pad(loc)});
+                       0, 0, cloc, make_landing_pad(cloc)});
         for (const ir::Value& a : saved) if (owns(a)) release(a, loc);
         mark_owned(out);
         *ok = true;

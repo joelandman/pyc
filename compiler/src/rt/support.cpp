@@ -168,9 +168,25 @@ thread_local void* tls_module_frame = nullptr;
 thread_local PyCodeObject* tls_module_code = nullptr;
 static const char* g_source_file = "<pyc>";
 static constexpr int kLineSlots = 8192;
+static constexpr int kStubUnits = 8;
 static constexpr uint8_t kNop = 27;
 
-static bool build_linemap(PyObject** bytecode, PyObject** linetable) {
+static void append_varint(std::vector<char>& o, unsigned val) {
+    while (val >= 64) {
+        o.push_back(static_cast<char>(64 | (val & 63)));
+        val >>= 6;
+    }
+    o.push_back(static_cast<char>(val));
+}
+static void append_svarint(std::vector<char>& o, int val) {
+    unsigned uval = val < 0 ? (((0u - (unsigned)val) << 1) | 1u)
+                            : ((unsigned)val << 1);
+    append_varint(o, uval);
+}
+
+static bool build_linemap(PyObject** bytecode, PyObject** linetable,
+                          const int* locs = nullptr, int nlocs = 0,
+                          int firstlineno = 1) {
     static const char kEvalCode[] = {
         '\x80', '\x00',
         'R', '\x02',
@@ -179,19 +195,46 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable) {
         '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
         '#', '\x00'
     };
-    std::vector<char> codebuf(kLineSlots * 2, 0);
+    if (!locs || nlocs <= 0) {
+        std::vector<char> codebuf(kLineSlots * 2, 0);
+        std::memcpy(codebuf.data(), kEvalCode, 16);
+        for (int i = 16; i + 1 < kLineSlots * 2; i += 2)
+            codebuf[static_cast<std::size_t>(i)] = static_cast<char>(kNop);
+        std::vector<char> lines;
+        lines.reserve(static_cast<std::size_t>(kLineSlots) * 3);
+        lines.push_back(static_cast<char>(128 | (10 << 3)));
+        lines.push_back(0);
+        lines.push_back(0);
+        for (int i = 1; i < kLineSlots; ++i) {
+            lines.push_back(static_cast<char>(128 | (11 << 3)));
+            lines.push_back(0);
+            lines.push_back(0);
+        }
+        *bytecode = PyBytes_FromStringAndSize(codebuf.data(), (Py_ssize_t)codebuf.size());
+        *linetable = PyBytes_FromStringAndSize(lines.data(), (Py_ssize_t)lines.size());
+        return *bytecode && *linetable;
+    }
+    int nunits = kStubUnits + nlocs;
+    std::vector<char> codebuf(nunits * 2, 0);
     std::memcpy(codebuf.data(), kEvalCode, 16);
-    for (int i = 16; i + 1 < kLineSlots * 2; i += 2)
+    for (int i = 16; i + 1 < nunits * 2; i += 2)
         codebuf[static_cast<std::size_t>(i)] = static_cast<char>(kNop);
     std::vector<char> lines;
-    lines.reserve(static_cast<std::size_t>(kLineSlots) * 3);
-    lines.push_back(static_cast<char>(128 | (10 << 3)));
-    lines.push_back(0);
-    lines.push_back(0);
-    for (int i = 1; i < kLineSlots; ++i) {
-        lines.push_back(static_cast<char>(128 | (11 << 3)));
-        lines.push_back(0);
-        lines.push_back(0);
+    lines.push_back(static_cast<char>(128 | (15 << 3) | 7));
+    int prev = firstlineno > 0 ? firstlineno : 1;
+    for (int i = 0; i < nlocs; ++i) {
+        int line = locs[i * 3];
+        int col = locs[i * 3 + 1];
+        int end_col = locs[i * 3 + 2];
+        if (line < 1) line = prev;
+        if (col < 0) col = 0;
+        if (end_col < col) end_col = col;
+        lines.push_back(static_cast<char>(128 | (14 << 3)));
+        append_svarint(lines, line - prev);
+        append_varint(lines, 0);
+        append_varint(lines, (unsigned)col + 1);
+        append_varint(lines, (unsigned)end_col + 1);
+        prev = line;
     }
     *bytecode = PyBytes_FromStringAndSize(codebuf.data(), (Py_ssize_t)codebuf.size());
     *linetable = PyBytes_FromStringAndSize(lines.data(), (Py_ssize_t)lines.size());
@@ -362,7 +405,8 @@ namespace {
 // is a hole and a tuple cannot hold one.
 struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
-               int vararg; int kwarg; int nfree; int firstlineno; };
+               int vararg; int kwarg; int nfree; int firstlineno;
+               const int* locs; int nlocs; };
 
 constexpr int kMoveCost = 2;
 constexpr int kCaseCost = 1;
@@ -510,7 +554,7 @@ PyCodeObject* make_func_code(Bound* b) {
     Py_DECREF(cap);
     if (!consts) { Py_DECREF(varnames); Py_DECREF(freevars); return nullptr; }
     PyObject *bytecode = nullptr, *linetable = nullptr;
-    if (!build_linemap(&bytecode, &linetable)) {
+    if (!build_linemap(&bytecode, &linetable, b->locs, b->nlocs, b->firstlineno)) {
         Py_XDECREF(bytecode); Py_XDECREF(linetable);
         Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
         return nullptr;
@@ -885,13 +929,15 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                const char* const* argnames,
                                PyObject* defaults, PyObject* kwdefaults,
                                int vararg_slot, int kwarg_slot,
-                               PyObject** closure, int nfree, int firstlineno) {
+                               PyObject** closure, int nfree, int firstlineno,
+                               const int* locs, int nlocs) {
     ensure_func_watch();
     char* owned = strdup(name);
     if (!owned) return PyErr_NoMemory();
     Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nposonly, nlocals, owned,
                                         argnames, vararg_slot, kwarg_slot, nfree,
-                                        firstlineno > 0 ? firstlineno : 1};
+                                        firstlineno > 0 ? firstlineno : 1,
+                                        locs, nlocs};
     if (!b) { std::free(owned); return PyErr_NoMemory(); }
     PyCodeObject* co = make_func_code(b);
     if (!co) return nullptr;

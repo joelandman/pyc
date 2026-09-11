@@ -80,9 +80,10 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     `test_generators` 59/59, `test_asyncgen` 85/85, `test_yield_from` 43/43,
     `test_genexps` 1/1, `test_generator_stop` 2/2; genexp `__qualname__` repaired.
     `test_coroutines` **99/99**. Dumped EXIT_DIFFERS
-    leftovers: same-line multi-`with` carets; some comp `next` locations;
-    doctest traceback ellipsis (`test_unpack`/`extcall`); `test_compile` linenos/AST.
-    MATCH: `test_iter` 57/57 (exception locations); `test_tuple` 38/38;
+    leftovers: doctest traceback ellipsis (`test_unpack`/`extcall` — also
+    fails under CPython as `__main__`); `test_compile` linenos/AST.
+    MATCH: `test_iter` 57/57; `test_with` 54/54; `test_listcomps` 66/66;
+    `test_dictcomps` 10/10; `test_setcomps` 2/2; `test_tuple` 38/38;
     `test_property` subclass `__doc__`; `__classdict__` in nested comps.
  5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
     lowering): `star-unpacking` (parser SyntaxError for star-as-expr;

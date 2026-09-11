@@ -42,7 +42,8 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                const char* const* argnames,
                                PyObject* defaults, PyObject* kwdefaults,
                                int vararg_slot, int kwarg_slot,
-                               PyObject** closure, int nfree, int firstlineno);
+                               PyObject** closure, int nfree, int firstlineno,
+                               const int* locs, int nlocs);
 
 // Run a compiled function body from the current eval frame (exec/eval of
 // f.__code__). locals are borrowed from the iframe.
@@ -239,6 +240,7 @@ void pyc_rt_set_source_file(const char* file);
 const char* pyc_rt_source_file(void);
 void pyc_rt_set_lineno(int line);
 void pyc_rt_set_location(int line, int col, int end_col);
+void pyc_rt_set_lasti(int slot);
 void pyc_rt_traceback_here(void);
 int pyc_rt_tuple_maybe_untrack(PyObject* t);
 

@@ -125,6 +125,25 @@ extern "C" void pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n)
     }
 }
 
+extern "C" void pyc_rt_set_lasti(int slot) {
+    if (slot < 0) return;
+    PyThreadState* ts = PyThreadState_Get();
+    _PyInterpreterFrame* f = ts->current_frame;
+    if (!f) return;
+    PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
+        PyStackRef_AsPyObjectBorrow(f->f_executable));
+    if (!co) return;
+    PyObject* raw = PyCode_GetCode(co);
+    if (!raw) { PyErr_Clear(); return; }
+    Py_ssize_t nunits = PyBytes_GET_SIZE(raw) / (Py_ssize_t)sizeof(_Py_CODEUNIT);
+    Py_DECREF(raw);
+    int off = 8 + slot;
+    if (off < co->_co_firsttraceable) off = co->_co_firsttraceable;
+    if (off >= nunits) off = nunits > 0 ? (int)nunits - 1 : 0;
+    f->instr_ptr = _PyCode_CODE(co) + off;
+    if (f->frame_obj) f->frame_obj->f_lineno = 0;
+}
+
 extern "C" void pyc_rt_set_lineno(int line) {
     pyc_rt_set_location(line, -1, -1);
 }
@@ -170,6 +189,13 @@ extern "C" void pyc_rt_traceback_here(void) {
     if (!f) { PyErr_Restore(t, v, tb); return; }
     PyFrameObject* fo = _PyFrame_GetFrameObject(f);
     if (!fo) { PyErr_Clear(); PyErr_Restore(t, v, tb); return; }
+    if (tb && PyTraceBack_Check(tb)) {
+        PyTracebackObject* tbo = reinterpret_cast<PyTracebackObject*>(tb);
+        if (tbo->tb_frame == fo) {
+            PyErr_Restore(t, v, tb);
+            return;
+        }
+    }
     PyErr_Restore(t, v, tb);
     PyTraceBack_Here(fo);
 }
