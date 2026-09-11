@@ -43,6 +43,7 @@ std::set<std::string> declared_globals(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> all_reads(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> all_writes(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> nested_reads_expr(const pyc::ast::expr&);
+std::set<std::string> walrus_writes(const pyc::ast::expr&);
 }
 
 namespace pyc {
@@ -970,6 +971,30 @@ private:
             capvals.push_back(v);
             if (cells_.count(c)) cell_caps.push_back(c);
         }
+        if (!class_cells_.empty()) {
+            std::set<std::string> nr;
+            if (elt) {
+                auto r = nested_reads_expr(*elt);
+                nr.insert(r.begin(), r.end());
+            }
+            if (key) {
+                auto r = nested_reads_expr(*key);
+                nr.insert(r.begin(), r.end());
+            }
+            if (nr.count("__class__") || nr.count("super")) {
+                bool have = false;
+                for (const std::string& c : caps) if (c == "__class__") { have = true; break; }
+                if (!have) {
+                    ir::Value c = class_cells_.back();
+                    emit(ir::Instr{ir::Op::IncRef, {c}, std::nullopt,
+                                   Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+                    caps.push_back("__class__");
+                    capvals.push_back(c);
+                    cell_caps.push_back("__class__");
+                    if (!class_cell_used_.empty()) class_cell_used_.back() = 1;
+                }
+            }
+        }
 
         std::vector<std::string> params{".0"};
         for (const std::string& c : caps) params.push_back(c);
@@ -982,6 +1007,34 @@ private:
         // begin_function clears cells_; re-declare the captured cells so
         // lower_name emits cell.get for them rather than a raw load.
         for (const std::string& c : cell_caps) cells_[c] = locals_[c];
+        {
+            std::set<std::string> nested;
+            if (elt) {
+                auto r = nested_reads_expr(*elt);
+                nested.insert(r.begin(), r.end());
+            }
+            if (key) {
+                auto r = nested_reads_expr(*key);
+                nested.insert(r.begin(), r.end());
+            }
+            for (const comprehension& c : gens)
+                for (const expr& cond : c.ifs) {
+                    auto r = nested_reads_expr(cond);
+                    nested.insert(r.begin(), r.end());
+                }
+            for (const std::string& x : vars) {
+                if (!nested.count(x) || cells_.count(x)) continue;
+                cells_[x] = locals_[x];
+                ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::CellNew, {}, cell, Ownership::Owned, x,
+                               0, 0, loc, make_landing_pad(loc)});
+                mark_owned(cell);
+                emit(ir::Instr{ir::Op::StoreLocal, {cell}, std::nullopt,
+                               Ownership::NotAnObject, x, locals_[x], 0, loc,
+                               std::nullopt});
+                release(cell, loc);
+            }
+        }
         bool bok = true;
         ir::Value acc;
         if (std::string(kind) == "list")
@@ -1761,7 +1814,7 @@ private:
             [&](const Attribute& n) {
                 ir::Value obj = lower_expr(*n.value, &ok);
                 if (!ok) return;
-                ir::Value name = const_str(n.attr, loc);
+                ir::Value name = const_str(mangle_ident(n.attr), loc);
                 call_capi("PyObject_SetAttr", {obj, name, v}, loc, &ok, {obj, name});
                 if (ok && owns(v)) release(v, loc);
             },
@@ -1816,7 +1869,7 @@ private:
                 [&](const Attribute& a2) {
                     ir::Value obj = lower_expr(*a2.value, &ok);
                     if (!ok) return;
-                    ir::Value nm = const_str(a2.attr, n.loc);
+                    ir::Value nm = const_str(mangle_ident(a2.attr), n.loc);
                     call_capi("PyObject_DelAttr", {obj, nm}, n.loc, &ok, {obj, nm});
                 },
                 [&](const Subscript& s2) {
@@ -2047,6 +2100,26 @@ private:
         return q + name;
     }
 
+    std::string mangle_class() const {
+        for (auto it = qual_.rbegin(); it != qual_.rend(); ++it) {
+            if (it->find(".<locals>") != std::string::npos) continue;
+            size_t i = 0;
+            while (i < it->size() && (*it)[i] == '_') ++i;
+            if (i == it->size()) return {};
+            return it->substr(i);
+        }
+        return {};
+    }
+
+    std::string mangle_ident(const std::string& id) const {
+        std::string cls = mangle_class();
+        if (cls.empty() || id.size() < 3 || id[0] != '_' || id[1] != '_')
+            return id;
+        if (id.size() >= 2 && id[id.size() - 1] == '_' && id[id.size() - 2] == '_')
+            return id;
+        return "_" + cls + id;
+    }
+
     // Bind without consuming the caller's reference. The namespace INCREFs,
     // so the value remains ours to use afterwards -- which is what makes
     // `(x := f())` evaluate to the same object it binds.
@@ -2058,7 +2131,8 @@ private:
         if (was) mark_owned(v);
     }
 
-    void store_name(const std::string& name, const ir::Value& v, const SourceLoc& loc) {
+    void store_name(const std::string& raw, const ir::Value& v, const SourceLoc& loc) {
+        std::string name = (locals_.count(raw) || cells_.count(raw)) ? raw : mangle_ident(raw);
         auto cit = cells_.find(name);
         if (cit != cells_.end() && class_ns_.empty()) {
             ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
@@ -2357,7 +2431,7 @@ private:
             if (!ok) return false;
             mark_owned(cur_v);
         } else if (has_base) {
-            ir::Value nm = const_str(std::get<Attribute>(n.target->v).attr, n.loc);
+            ir::Value nm = const_str(mangle_ident(std::get<Attribute>(n.target->v).attr), n.loc);
             cur_v = call_capi("PyObject_GetAttr", {base, nm}, n.loc, &ok, {nm});
             if (!ok) return false;
             mark_owned(cur_v);
@@ -2386,7 +2460,7 @@ private:
             return ok;
         }
         if (has_base) {
-            ir::Value nm = const_str(std::get<Attribute>(n.target->v).attr, n.loc);
+            ir::Value nm = const_str(mangle_ident(std::get<Attribute>(n.target->v).attr), n.loc);
             call_capi("PyObject_SetAttr", {base, nm, out}, n.loc, &ok, {base, nm});
             if (ok && owns(out)) release(out, n.loc);
             return ok;
@@ -4267,8 +4341,10 @@ private:
 
     bool lower_while(const While& n) {
         auto outer_live = live_i64_;
+        std::set<std::string> test_reads = nested_reads_expr(*n.test);
+        std::set<std::string> test_walrus = walrus_writes(*n.test);
         std::uint32_t boxed = prepare_i64_loop(n.body, n.loc, {},
-                                              nested_reads_expr(*n.test));
+                                              test_reads, test_walrus);
         std::uint32_t pre = (std::uint32_t)blk_;
         std::uint32_t head = new_block("while.head");
         std::uint32_t body = new_block("while.body");
@@ -4692,7 +4768,8 @@ private:
     std::uint32_t prepare_i64_loop(const std::vector<stmt>& body,
                                    const SourceLoc& loc,
                                    const std::string& skip = {},
-                                   std::set<std::string> extra = {}) {
+                                   std::set<std::string> extra = {},
+                                   std::set<std::string> extra_writes = {}) {
         if (!can_i64_phis(body)) {
             live_i64_.clear();
             return 0;
@@ -4700,6 +4777,7 @@ private:
         std::uint32_t boxed = new_block("loop.boxed");
         std::set<std::string> names = all_reads(body);
         std::set<std::string> writes = all_writes(body);
+        writes.insert(extra_writes.begin(), extra_writes.end());
         for (const std::string& name : names) {
             if (!int_locals_.count(name) || live_i64_.count(name)) continue;
             if (!skip.empty() && name == skip) continue;
@@ -5193,6 +5271,8 @@ private:
         // No builtin is special here. `print` is a global load like any other,
         // which is precisely why print/len/sum cannot diverge (I3).
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        const std::string id = (locals_.count(n.id) || cells_.count(n.id))
+                                   ? n.id : mangle_ident(n.id);
         auto cit = cells_.find(n.id);
         if (cit != cells_.end() && class_ns_.empty()) {
             ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
@@ -5237,7 +5317,7 @@ private:
             }
             if (!class_globals_.empty() && class_globals_.back().count(n.id)) {
                 emit(ir::Instr{ir::Op::LoadGlobal, {}, out, Ownership::Owned,
-                               n.id, 0, 0, n.loc, make_landing_pad(n.loc)});
+                               id, 0, 0, n.loc, make_landing_pad(n.loc)});
                 mark_owned(out);
                 *ok = true;
                 return out;
@@ -5254,7 +5334,7 @@ private:
                 args.push_back(cell);
             }
             emit(ir::Instr{ir::Op::LoadClassName, args, out,
-                           Ownership::Owned, n.id, 0, 0, n.loc,
+                           Ownership::Owned, id, 0, 0, n.loc,
                            make_landing_pad(n.loc)});
             if (args.size() > 1 && owns(args[1])) release(args[1], n.loc);
             mark_owned(out);
@@ -5269,7 +5349,7 @@ private:
                 return out;
             }
             emit(ir::Instr{ir::Op::LoadGlobal, {}, out, Ownership::Owned,
-                           n.id, 0, 0, n.loc, make_landing_pad(n.loc)});
+                           id, 0, 0, n.loc, make_landing_pad(n.loc)});
         }
         mark_owned(out);
         *ok = true;
@@ -5359,7 +5439,7 @@ private:
     ir::Value lower_attribute(const Attribute& n, bool* ok) {
         ir::Value obj = lower_expr(*n.value, ok);
         if (!*ok) return {};
-        ir::Value name = const_str(n.attr, n.loc);
+        ir::Value name = const_str(mangle_ident(n.attr), n.loc);
         ir::Value out = call_capi("PyObject_GetAttr", {obj, name}, n.loc, ok, {obj, name});
         if (*ok) mark_owned(out);
         return out;

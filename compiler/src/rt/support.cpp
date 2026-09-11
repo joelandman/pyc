@@ -1260,8 +1260,9 @@ PyObject* type_lookup(PyObject* mgr, const char* name) {
     if (!f) {
         PyErr_Clear();
         PyErr_Format(PyExc_TypeError,
-                     "'%s' object does not support the context manager protocol",
-                     Py_TYPE(mgr)->tp_name);
+                     "'%s' object does not support the context manager protocol "
+                     "(missed %s method)",
+                     Py_TYPE(mgr)->tp_name, name);
         return nullptr;
     }
     return f;

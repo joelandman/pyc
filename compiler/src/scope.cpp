@@ -217,6 +217,12 @@ std::set<std::string> declared_globals(const std::vector<stmt>& body) {
     return c.declared_global;
 }
 
+std::set<std::string> walrus_writes(const expr& e) {
+    Collector c;
+    c.walrus(e);
+    return c.bound;
+}
+
 // Locals that provably hold nothing but a Python int, and can therefore be
 // kept in a machine register instead of on the heap.
 //
