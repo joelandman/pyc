@@ -1301,8 +1301,16 @@ extern "C" int pyc_rt_raise_from(PyObject* exc, PyObject* cause) {
     if (cause == Py_None) {
         c = nullptr;
     } else if (PyExceptionClass_Check(cause)) {
-        c = PyObject_CallNoArgs(cause);         // a class cause is instantiated
+        c = PyObject_CallNoArgs(cause);
         if (!c) return -1;
+        if (!PyExceptionInstance_Check(c)) {
+            PyErr_Format(PyExc_TypeError,
+                         "calling %R should have returned an instance of "
+                         "BaseException, not %R",
+                         cause, Py_TYPE(c));
+            Py_DECREF(c);
+            return -1;
+        }
     } else if (PyExceptionInstance_Check(cause)) {
         c = Py_NewRef(cause);
     } else {

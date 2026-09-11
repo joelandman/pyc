@@ -200,11 +200,47 @@ extern "C" void pyc_rt_traceback_here(void) {
     PyTraceBack_Here(fo);
 }
 
+static void snapshot_newlocals_into_fast(_PyInterpreterFrame* f) {
+    PyObject* dict = f->f_locals;
+    if (!dict || !PyDict_Check(dict)) return;
+    PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
+        PyStackRef_AsPyObjectBorrow(f->f_executable));
+    if (!co || !(co->co_flags & CO_NEWLOCALS)) return;
+    PyObject* names = co->co_localsplusnames;
+    if (!names || !PyTuple_Check(names)) {
+        Py_CLEAR(f->f_locals);
+        return;
+    }
+    int nplus = co->co_nlocalsplus;
+    Py_ssize_t nt = PyTuple_GET_SIZE(names);
+    if (nplus > nt) nplus = (int)nt;
+    char* kinds = nullptr;
+    Py_ssize_t nk = 0;
+    if (co->co_localspluskinds && PyBytes_Check(co->co_localspluskinds)) {
+        kinds = PyBytes_AS_STRING(co->co_localspluskinds);
+        nk = PyBytes_GET_SIZE(co->co_localspluskinds);
+    }
+    for (int i = 0; i < nplus; ++i) {
+        if (kinds && i < nk && (kinds[i] & (CO_FAST_CELL | CO_FAST_FREE)))
+            continue;
+        PyObject* name = PyTuple_GET_ITEM(names, i);
+        PyObject* val = PyDict_GetItemWithError(dict, name);
+        if (!val && PyErr_Occurred()) PyErr_Clear();
+        if (!PyStackRef_IsNull(f->localsplus[i]))
+            PyStackRef_CLOSE(f->localsplus[i]);
+        f->localsplus[i] = val ? PyStackRef_FromPyObjectNew(val)
+                               : PyStackRef_NULL;
+    }
+    Py_CLEAR(f->f_locals);
+}
+
 extern "C" void pyc_rt_interp_leave(void* frame) {
     if (!frame) return;
     auto* f = static_cast<_PyInterpreterFrame*>(frame);
     PyThreadState* ts = PyThreadState_Get();
     if (ts->current_frame == f) ts->current_frame = f->previous;
+    if (f->frame_obj)
+        snapshot_newlocals_into_fast(f);
     _PyFrame_ClearExceptCode(f);
     PyStackRef_CLOSE(f->f_executable);
     _PyThreadState_PopFrame(ts, f);

@@ -80,11 +80,11 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     `test_generators` 59/59, `test_asyncgen` 85/85, `test_yield_from` 43/43,
     `test_genexps` 1/1, `test_generator_stop` 2/2; genexp `__qualname__` repaired.
     `test_coroutines` **99/99**. Dumped EXIT_DIFFERS
-    leftovers: `test_super_deep` C-stack; `test_compile` bytecode/linenos of
-    native `__code__` (not `compile()`); `test_dis` Bound capsule vs nested
-    code in `co_consts`; `test_raise` reraise/__context__; `test_gc` extra
-    collect; `test_str` `_testcapi` nomemory. `test_unpack`/`extcall` doctest
-    exit 1 on both sides as `__main__`.
+    leftovers: `test_super_deep` (~464 B/C-frame, 90k needs ~42MB);
+    `test_compile` native `__code__` bytecode (A); `test_dis` Bound at
+    `co_consts[1]`; `test_raise` 2 left (`__exit__` context, assert tuple
+    msg); `test_gc` get_objects/heap_size; `test_str` nomemory vs `with`
+    GetAttr. `test_unpack`/`extcall` exit 1 both sides as `__main__`.
     MATCH: `test_iter` 57; `test_with` 54; `test_listcomps` 66;
     `test_dictcomps` 10; `test_setcomps` 2; `test_tuple` 38;
     `test_exception_group` 52; `test_property` subclass `__doc__`.

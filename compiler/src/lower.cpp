@@ -510,6 +510,7 @@ private:
                     // expression has a side effect.
                     ir::Value c = lower_expr(**n.cause, &ok);
                     if (!ok) return;
+                    chain_handled_as_raised(n.loc);
                     call_capi("pyc_rt_raise_from", {e, c}, n.loc, &ok, {e, c});
                     if (!ok) return;
                     std::uint32_t pad = make_landing_pad(n.loc);
@@ -518,6 +519,7 @@ private:
                                    std::nullopt});
                     return;
                 }
+                chain_handled_as_raised(n.loc);
                 emit(ir::Instr{ir::Op::Raise, {e}, std::nullopt,
                                Ownership::NotAnObject, "", 0, 0, n.loc,
                                make_landing_pad(n.loc)});
@@ -593,6 +595,14 @@ private:
     // Defined further down, next to the try/finally lowering that builds it.
     struct FinallyCtx;
 
+    // An except handler currently open. `try_depth` is try_stack_.size() when
+    // the handler was entered: a nested try inside the handler pushes more,
+    // and a landing pad must not pop this entry until unwind leaves it.
+    struct HandledEntry {
+        ir::Value prev;
+        std::size_t try_depth;
+    };
+
     // Saved lowering state while a nested function is built.
     struct FnScope {
         std::size_t fn, blk;
@@ -606,7 +616,7 @@ private:
         // pending cleanups and open handlers do not apply to it, and its
         // blocks are not addressable from here. See begin_function.
         std::vector<FinallyCtx*> fins;
-        std::vector<ir::Value> handled;
+        std::vector<HandledEntry> handled;
         std::size_t fin_depth;
         std::set<std::string> ints;
         std::map<std::string, ir::Value> live_i64;
@@ -2164,6 +2174,84 @@ private:
             }, s2.v);
         }
     }
+
+    static void note_self_store(const expr& target, const std::string& self,
+                                std::vector<std::string>& out,
+                                std::set<std::string>& seen) {
+        if (const Attribute* a = std::get_if<Attribute>(&target.v)) {
+            if (const Name* nm = std::get_if<Name>(&a->value->v)) {
+                if (nm->id == self && !seen.count(a->attr)) {
+                    seen.insert(a->attr);
+                    out.push_back(a->attr);
+                }
+            }
+        } else if (const Tuple* t = std::get_if<Tuple>(&target.v)) {
+            for (const expr& e : t->elts) note_self_store(e, self, out, seen);
+        } else if (const List* l = std::get_if<List>(&target.v)) {
+            for (const expr& e : l->elts) note_self_store(e, self, out, seen);
+        }
+    }
+
+    static void walk_method_stores(const std::vector<stmt>& body,
+                                   const std::string& self,
+                                   std::vector<std::string>& out,
+                                   std::set<std::string>& seen) {
+        for (const stmt& s2 : body) {
+            std::visit(ov{
+                [&](const Assign& a){
+                    for (const expr& t : a.targets) note_self_store(t, self, out, seen);
+                },
+                [&](const AnnAssign& a){ note_self_store(*a.target, self, out, seen); },
+                [&](const AugAssign& a){ note_self_store(*a.target, self, out, seen); },
+                [&](const If& x){ walk_method_stores(x.body, self, out, seen);
+                                  walk_method_stores(x.orelse, self, out, seen); },
+                [&](const While& x){ walk_method_stores(x.body, self, out, seen);
+                                     walk_method_stores(x.orelse, self, out, seen); },
+                [&](const For& x){ walk_method_stores(x.body, self, out, seen);
+                                   walk_method_stores(x.orelse, self, out, seen); },
+                [&](const AsyncFor& x){ walk_method_stores(x.body, self, out, seen); },
+                [&](const With& x){ walk_method_stores(x.body, self, out, seen); },
+                [&](const AsyncWith& x){ walk_method_stores(x.body, self, out, seen); },
+                [&](const Try& x){
+                    walk_method_stores(x.body, self, out, seen);
+                    walk_method_stores(x.orelse, self, out, seen);
+                    walk_method_stores(x.finalbody, self, out, seen);
+                    for (const excepthandler& h : x.handlers)
+                        walk_method_stores(std::get<ExceptHandler>(h.v).body, self, out, seen);
+                },
+                [&](const TryStar& x){ walk_method_stores(x.body, self, out, seen); },
+                [&](const Match& x){
+                    for (const match_case& c : x.cases)
+                        walk_method_stores(c.body, self, out, seen);
+                },
+                [&](const FunctionDef& n){ walk_method_stores(n.body, self, out, seen); },
+                [&](const AsyncFunctionDef& n){ walk_method_stores(n.body, self, out, seen); },
+                [&](const ClassDef&){}, [&](const Return&){}, [&](const Delete&){},
+                [&](const Expr&){}, [&](const Raise&){}, [&](const Assert&){},
+                [&](const Import&){}, [&](const ImportFrom&){}, [&](const Global&){},
+                [&](const Nonlocal&){}, [&](const Pass&){}, [&](const Break&){},
+                [&](const Continue&){}, [&](const TypeAlias&){},
+            }, s2.v);
+        }
+    }
+
+    static void collect_static_attrs(const std::vector<stmt>& body,
+                                     std::vector<std::string>& out) {
+        std::set<std::string> seen;
+        for (const stmt& s2 : body) {
+            const FunctionDef* fn = std::get_if<FunctionDef>(&s2.v);
+            const AsyncFunctionDef* afn = std::get_if<AsyncFunctionDef>(&s2.v);
+            const arguments* args = fn ? &*fn->args : (afn ? &*afn->args : nullptr);
+            const std::vector<stmt>* mb = fn ? &fn->body : (afn ? &afn->body : nullptr);
+            if (!args || !mb) continue;
+            std::string self;
+            if (!args->posonlyargs.empty()) self = args->posonlyargs[0].arg;
+            else if (!args->args.empty()) self = args->args[0].arg;
+            else continue;
+            walk_method_stores(*mb, self, out, seen);
+        }
+    }
+
     std::string qualname(const std::string& name) const {
         std::string q;
         for (const std::string& c : qual_) { q += c; q += "."; }
@@ -2915,16 +3003,63 @@ private:
     // exception the __context__ of the next unrelated one: `return` from an
     // except block, then a later raise, printed "During handling of the above
     // exception" for an exception that had been fully handled.
-    std::vector<ir::Value> handled_stack_;
+    std::vector<HandledEntry> handled_stack_;
 
-    // Pop every open handler, innermost first. Emitted before any exit that
-    // leaves the handler without falling off its end.
+    // Pop handlers this unwind is leaving, innermost first. A nested try
+    // inside a handler is a deeper try_stack_: the handler stays open so a
+    // later bare `raise` still sees it. Popping every open handler here made
+    //
+    //     try:
+    //         raise TypeError("foo")
+    //     except TypeError:
+    //         try:
+    //             raise KeyError("caught")
+    //         except KeyError:
+    //             pass
+    //         raise
+    //
+    // report "No active exception to reraise" — the KeyError's pad had
+    // already restored the TypeError off the stack.
     void pop_open_handlers(const SourceLoc& loc) {
+        std::size_t depth = try_stack_.size();
         for (auto it = handled_stack_.rbegin(); it != handled_stack_.rend(); ++it) {
+            if (it->try_depth < depth) continue;
             bool ok = true;
-            call_capi("pyc_rt_pop_handled", {*it}, loc, &ok);
+            call_capi("pyc_rt_pop_handled", {it->prev}, loc, &ok);
             (void)ok;
         }
+    }
+
+    // NULL means nothing is being handled, not failure. call_capi would treat
+    // that NULL as an error edge.
+    ir::Value emit_get_handled(const SourceLoc& loc) {
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::CallCApi, {}, out, Ownership::Owned,
+                       "PyErr_GetHandledException", 0, 0, loc, std::nullopt});
+        return out;
+    }
+
+    // CPython's RAISE installs the handled exception as currently-raised so
+    // PyErr_SetObject (inside pyc_rt_raise) records it as __context__ and
+    // breaks cycles. Bare `raise` does not go through this.
+    void chain_handled_as_raised(const SourceLoc& loc) {
+        ir::Value h = emit_get_handled(loc);
+        ir::Value nn = const_null(loc);
+        ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+        emit(ir::Instr{ir::Op::Is, {h, nn}, isnull, Ownership::NotAnObject,
+                       "", 0, 0, loc, std::nullopt});
+        std::uint32_t has_b = new_block("raise.ctx");
+        std::uint32_t cont_b = new_block("raise.go");
+        emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
+                       Ownership::NotAnObject, "", cont_b, has_b,
+                       loc, std::nullopt});
+        set_block(has_b);
+        bool ok = true;
+        call_capi("PyErr_SetRaisedException", {h}, loc, &ok);
+        (void)ok;
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", cont_b, 0, loc, std::nullopt});
+        set_block(cont_b);
     }
     // Loop depth when the innermost finally region was entered. A break inside
     // a try/finally must run the cleanup on its way out, which the dispatch
@@ -3040,8 +3175,70 @@ private:
         forget(p_exc); forget(p_ret);
         frame_owned_.push_back(p_exc);
         frame_owned_.push_back(p_ret);
+
+        // CPython PUSH_EXC_INFO before a finally that was entered by an
+        // exception: the pending exception is the handled one for the
+        // cleanup, so a bare `raise` re-raises it and `raise OSError` chains
+        // it as __context__. On the normal path, snapshot the current handled
+        // exception so a landing-pad pop is a no-op rather than clearing an
+        // enclosing except.
+        std::uint32_t push_b = new_block("finally.push");
+        std::uint32_t snap_b = new_block("finally.snap");
+        std::uint32_t none_b = new_block("finally.snapnone");
+        std::uint32_t some_b = new_block("finally.snapsome");
+        std::uint32_t body_b = new_block("finally.run");
+        {
+            ir::Value nn = const_null(n.loc);
+            ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            emit(ir::Instr{ir::Op::Is, {p_exc, nn}, isnull, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+            emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
+                           Ownership::NotAnObject, "", snap_b, push_b,
+                           n.loc, std::nullopt});
+        }
+        set_block(push_b);
+        ir::Value pushed_prev = call_capi("pyc_rt_push_handled", {p_exc}, n.loc, &ok);
+        if (!ok) return false;
+        mark_owned(pushed_prev); forget(pushed_prev);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", body_b, 0, n.loc, std::nullopt});
+        set_block(snap_b);
+        ir::Value snapped = emit_get_handled(n.loc);
+        {
+            ir::Value nn = const_null(n.loc);
+            ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            emit(ir::Instr{ir::Op::Is, {snapped, nn}, isnull, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+            emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
+                           Ownership::NotAnObject, "", none_b, some_b,
+                           n.loc, std::nullopt});
+        }
+        set_block(none_b);
+        ir::Value none_prev = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::ConstNone, {}, none_prev, Ownership::Owned, "",
+                       0, 0, n.loc, std::nullopt});
+        forget(none_prev);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", body_b, 0, n.loc, std::nullopt});
+        set_block(some_b);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", body_b, 0, n.loc, std::nullopt});
+        set_block(body_b);
+        ir::Value prev_h = emit_phi({pushed_prev, none_prev, snapped},
+                                    {push_b, none_b, some_b}, n.loc);
+        forget(prev_h);
+        frame_owned_.push_back(prev_h);
+        handled_stack_.push_back({prev_h, try_stack_.size()});
+
         reload_live_i64_from_slots(live_in, n.loc);
         for (const stmt& s2 : n.finalbody) if (!lower_stmt(s2)) return false;
+        handled_stack_.pop_back();
+        frame_owned_.pop_back();
+        if (!terminated()) {
+            call_capi("pyc_rt_pop_handled", {prev_h}, n.loc, &ok);
+            if (!ok) return false;
+            emit_decref(prev_h, n.loc);
+        }
         frame_owned_.pop_back();
         frame_owned_.pop_back();
 
@@ -3301,7 +3498,7 @@ private:
             }
             // Open for the duration of the handler body, so a return, break or
             // continue out of it pops before leaving.
-            handled_stack_.push_back(prev_handled);
+            handled_stack_.push_back({prev_handled, try_stack_.size()});
             for (const stmt& s2 : eh.body)
                 if (!lower_stmt(s2)) { handled_stack_.pop_back(); return false; }
             handled_stack_.pop_back();
@@ -3941,6 +4138,20 @@ private:
         }
         bool need_classcell = !class_cell_used_.empty() && class_cell_used_.back();
         if (need_classcell) store_name_keep("__classcell__", ccell, n.loc);
+        {
+            std::vector<std::string> sattrs;
+            collect_static_attrs(n.body, sattrs);
+            ir::Value tup = call_capi_imm("PyTuple_New", {},
+                                          (std::int64_t)sattrs.size(), 0, n.loc, &ok);
+            if (!ok) return false;
+            mark_owned(tup);
+            for (std::size_t i = 0; i < sattrs.size(); ++i) {
+                ir::Value s = const_str(sattrs[i], n.loc);
+                call_capi_imm("PyTuple_SetItem", {tup, s}, (std::int64_t)i, 1, n.loc, &ok);
+                if (!ok) return false;
+            }
+            store_name("__static_attributes__", tup, n.loc);
+        }
         locals_ = saved_locals;
         class_ns_.pop_back();
         class_globals_.pop_back();
@@ -5364,8 +5575,15 @@ private:
     }
 
     ir::Value lower_name(const Name& n, bool* ok) {
-        // No builtin is special here. `print` is a global load like any other,
-        // which is precisely why print/len/sum cannot diverge (I3).
+        // __debug__ is a compile-time constant, not a builtins lookup.
+        if (n.id == "__debug__" && !locals_.count(n.id) && !cells_.count(n.id)) {
+            ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::ConstBool, {}, out, Ownership::Owned, "True",
+                           0, 0, n.loc, std::nullopt});
+            mark_owned(out);
+            *ok = true;
+            return out;
+        }
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         const std::string id = (locals_.count(n.id) || cells_.count(n.id))
                                    ? n.id : mangle_ident(n.id);
