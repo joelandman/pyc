@@ -84,6 +84,7 @@ private:
     std::ostringstream pre_;      // instructions that must precede a call
     std::map<std::size_t, std::string> tail_label_;
     std::size_t cur_block_ = 0;
+    int last_line_ = 0;
 
     std::string cstr(const std::string& text) {
         auto it = strs_.find(text);
@@ -236,6 +237,7 @@ private:
 
     void emit_blocks(const ir::Function& f, std::size_t idx, bool is_main) {
         (void)idx;
+        last_line_ = 0;
         for (std::size_t b = 0; b < f.blocks.size(); ++b) {
             o_ << "bb" << b << ":\n";
             cur_block_ = b;
@@ -245,6 +247,9 @@ private:
             // bb0 rather than in a separate entry block so the block numbering
             // the rest of codegen depends on is untouched.
             if (is_main && b == 0) {
+                need("declare void @pyc_rt_set_source_file(ptr)");
+                o_ << "  call void @pyc_rt_set_source_file(ptr "
+                   << cstr(m_.source_file) << ")\n";
                 std::string rc = fresh(), bad = fresh();
                 o_ << "  " << rc << " = call i32 @__pyc_init_consts()\n";
                 o_ << "  " << bad << " = icmp slt i32 " << rc << ", 0\n";
@@ -262,7 +267,10 @@ private:
     void emit_block(const ir::Function& f, const ir::Block& b,
                     std::size_t idx, bool is_main) {
         (void)idx;
-        for (const ir::Instr& in : b.instrs) emit_instr(f, in, is_main);
+        for (const ir::Instr& in : b.instrs)
+            if (in.op == ir::Op::Phi) emit_instr(f, in, is_main);
+        for (const ir::Instr& in : b.instrs)
+            if (in.op != ir::Op::Phi) emit_instr(f, in, is_main);
         // A block with no terminator falls through; lowering guarantees one,
         // but an empty landing pad target would otherwise emit invalid IR.
         if (b.instrs.empty() || !ir::is_terminator(b.instrs.back().op))
@@ -286,6 +294,11 @@ private:
 
     void emit_instr(const ir::Function& f, const ir::Instr& in, bool is_main) {
         using ir::Op;
+        if (in.op != ir::Op::Phi && in.loc.line > 0 && in.loc.line != last_line_) {
+            need("declare void @pyc_rt_set_lineno(i32)");
+            o_ << "  call void @pyc_rt_set_lineno(i32 " << in.loc.line << ")\n";
+            last_line_ = in.loc.line;
+        }
         switch (in.op) {
             case Op::ConstInt:  emit_const_use(in, 'i'); break;
             case Op::ConstStr:  emit_const_use(in, 's'); break;

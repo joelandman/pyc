@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -165,11 +166,75 @@ int pyc_rt_store_global(const char* name, PyObject* v) {
 
 thread_local void* tls_module_frame = nullptr;
 thread_local PyCodeObject* tls_module_code = nullptr;
+static const char* g_source_file = "<pyc>";
+static constexpr int kLineSlots = 8192;
+static constexpr uint8_t kNop = 27;
+
+static bool build_linemap(PyObject** bytecode, PyObject** linetable) {
+    static const char kEvalCode[] = {
+        '\x80', '\x00',
+        'R', '\x02',
+        '\x21', '\x00',
+        '\x34', '\x00',
+        '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
+        '#', '\x00'
+    };
+    std::vector<char> codebuf(kLineSlots * 2, 0);
+    std::memcpy(codebuf.data(), kEvalCode, 16);
+    for (int i = 16; i + 1 < kLineSlots * 2; i += 2)
+        codebuf[static_cast<std::size_t>(i)] = static_cast<char>(kNop);
+    std::vector<char> lines;
+    lines.reserve(static_cast<std::size_t>(kLineSlots) * 2);
+    lines.push_back(static_cast<char>(128 | (13 << 3)));
+    lines.push_back(0);
+    for (int i = 1; i < kLineSlots; ++i) {
+        lines.push_back(static_cast<char>(128 | (13 << 3)));
+        lines.push_back(2);
+    }
+    *bytecode = PyBytes_FromStringAndSize(codebuf.data(), (Py_ssize_t)codebuf.size());
+    *linetable = PyBytes_FromStringAndSize(lines.data(), (Py_ssize_t)lines.size());
+    return *bytecode && *linetable;
+}
+
+const char* pyc_rt_source_file(void) { return g_source_file; }
+
+void pyc_rt_set_source_file(const char* file) {
+    if (file && file[0]) g_source_file = file;
+    if (tls_module_code) {
+        PyObject* u = PyUnicode_FromString(g_source_file);
+        if (u) {
+            Py_XSETREF(tls_module_code->co_filename, u);
+        } else {
+            PyErr_Clear();
+        }
+    }
+}
 
 int pyc_rt_push_module_frame(void) {
     PyObject* g = globals_dict();
     if (!g) return -1;
-    PyCodeObject* co = PyCode_NewEmpty("<pyc>", "<module>", 1);
+    PyObject *bytecode = nullptr, *linetable = nullptr;
+    if (!build_linemap(&bytecode, &linetable)) {
+        Py_XDECREF(bytecode); Py_XDECREF(linetable); return -1;
+    }
+    PyObject* empty_bytes = PyBytes_FromStringAndSize("", 0);
+    PyObject* empty_tuple = PyTuple_New(0);
+    PyObject* filename = PyUnicode_FromString(g_source_file);
+    PyObject* name = PyUnicode_FromString("<module>");
+    PyObject* consts = PyTuple_Pack(1, Py_None);
+    if (!empty_bytes || !empty_tuple || !filename || !name || !consts) {
+        Py_XDECREF(bytecode); Py_XDECREF(linetable); Py_XDECREF(empty_bytes);
+        Py_XDECREF(empty_tuple); Py_XDECREF(filename); Py_XDECREF(name);
+        Py_XDECREF(consts);
+        return -1;
+    }
+    PyCodeObject* co = PyUnstable_Code_NewWithPosOnlyArgs(
+        0, 0, 0, 0, 1, 0,
+        bytecode, consts, empty_tuple, empty_tuple,
+        empty_tuple, empty_tuple, filename, name, name, 1,
+        linetable, empty_bytes);
+    Py_DECREF(bytecode); Py_DECREF(linetable); Py_DECREF(empty_bytes);
+    Py_DECREF(empty_tuple); Py_DECREF(filename); Py_DECREF(name); Py_DECREF(consts);
     if (!co) return -1;
     void* f = pyc_rt_interp_enter(co, g, g, nullptr);
     if (!f) { Py_DECREF(co); return -1; }
@@ -442,20 +507,15 @@ PyCodeObject* make_func_code(Bound* b) {
     }
     Py_DECREF(cap);
     if (!consts) { Py_DECREF(varnames); Py_DECREF(freevars); return nullptr; }
-    static const char kEvalCode[] = {
-        '\x80', '\x00',             // RESUME 0
-        'R', '\x02',                // LOAD_CONST 2
-        '\x21', '\x00',             // PUSH_NULL
-        '\x34', '\x00',             // CALL 0
-        '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
-        '#', '\x00'                 // RETURN_VALUE
-    };
-    static const char kPassLines[] = {'\x80', '\x00', '\xd9', '\x04', '\x08'};
-    PyObject* bytecode = PyBytes_FromStringAndSize(kEvalCode, 16);
-    PyObject* linetable = PyBytes_FromStringAndSize(kPassLines, 5);
+    PyObject *bytecode = nullptr, *linetable = nullptr;
+    if (!build_linemap(&bytecode, &linetable)) {
+        Py_XDECREF(bytecode); Py_XDECREF(linetable);
+        Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
+        return nullptr;
+    }
     PyObject* empty_bytes = PyBytes_FromStringAndSize("", 0);
     PyObject* empty_tuple = PyTuple_New(0);
-    PyObject* filename = PyUnicode_FromString("<pyc>");
+    PyObject* filename = PyUnicode_FromString(g_source_file);
     const char* full = b->name ? b->name : "<fn>";
     const char* shortn = full;
     if (const char* dot = std::strrchr(full, '.')) shortn = dot + 1;

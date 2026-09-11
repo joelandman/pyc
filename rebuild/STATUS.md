@@ -79,7 +79,7 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     still overflows 8MB C stack at ~17k -O0 frames. Yield/async marshal MATCH:
     `test_generators` 59/59, `test_asyncgen` 85/85, `test_yield_from` 43/43,
     `test_genexps` 1/1, `test_generator_stop` 2/2; genexp `__qualname__` repaired.
-    `test_coroutines` 97/99 (origin-tracking line numbers). Dumped EXIT_DIFFERS
+    `test_coroutines` **99/99**. Dumped EXIT_DIFFERS
     leftovers: exception-location carets (`test_iter`/`comps`/`with`);
     `__classdict__` in nested comps; `test_with` async-hint MATCH (carets remain);
     doctest traceback ellipsis (`test_unpack`/`extcall`); `gc.is_tracked` on

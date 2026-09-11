@@ -235,6 +235,9 @@ void  pyc_rt_interp_leave(void* frame);
 int pyc_rt_push_module_frame(void);
 void pyc_rt_pop_module_frame(void);
 PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals);
+void pyc_rt_set_source_file(const char* file);
+const char* pyc_rt_source_file(void);
+void pyc_rt_set_lineno(int line);
 
 #ifdef __cplusplus
 }

@@ -125,6 +125,27 @@ extern "C" void pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n)
     }
 }
 
+extern "C" void pyc_rt_set_lineno(int line) {
+    if (line < 1) return;
+    PyThreadState* ts = PyThreadState_Get();
+    _PyInterpreterFrame* f = ts->current_frame;
+    if (!f) return;
+    PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
+        PyStackRef_AsPyObjectBorrow(f->f_executable));
+    if (!co) return;
+    PyObject* raw = PyCode_GetCode(co);
+    if (!raw) { PyErr_Clear(); return; }
+    Py_ssize_t nunits = PyBytes_GET_SIZE(raw) / (Py_ssize_t)sizeof(_Py_CODEUNIT);
+    Py_DECREF(raw);
+    if (nunits <= 0) return;
+    int off = line - co->co_firstlineno;
+    if (off < 0) off = 0;
+    if (off < co->_co_firsttraceable) off = co->_co_firsttraceable;
+    if (off >= nunits) off = (int)nunits - 1;
+    f->instr_ptr = _PyCode_CODE(co) + off;
+    if (f->frame_obj) f->frame_obj->f_lineno = line;
+}
+
 extern "C" void pyc_rt_interp_leave(void* frame) {
     if (!frame) return;
     auto* f = static_cast<_PyInterpreterFrame*>(frame);
@@ -153,7 +174,7 @@ extern "C" PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals) {
         const char* s = PyUnicode_AsUTF8(name);
         if (s && s[0]) nm = s;
     }
-    PyCodeObject* co = PyCode_NewEmpty("<pyc>", nm, 1);
+    PyCodeObject* co = PyCode_NewEmpty(pyc_rt_source_file(), nm, 1);
     if (!co) return nullptr;
     // GetLocals on an optimized code object rebuilds f_locals from
     // empty fast locals and drops the class namespace mapping, so
