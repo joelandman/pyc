@@ -1276,10 +1276,24 @@ PyObject* type_lookup(PyObject* mgr, const char* name) {
     PyObject* f = PyObject_GetAttrString(t, name);
     if (!f) {
         PyErr_Clear();
-        PyErr_Format(PyExc_TypeError,
-                     "'%s' object does not support the context manager protocol "
-                     "(missed %s method)",
-                     Py_TYPE(mgr)->tp_name, name);
+        PyObject* ae = PyObject_GetAttrString(t, "__aenter__");
+        PyObject* ax = PyObject_GetAttrString(t, "__aexit__");
+        PyErr_Clear();
+        const bool async_cm = ae && ax;
+        Py_XDECREF(ae);
+        Py_XDECREF(ax);
+        if (async_cm) {
+            PyErr_Format(PyExc_TypeError,
+                         "'%s' object does not support the context manager protocol "
+                         "(missed %s method) but it supports the asynchronous "
+                         "context manager protocol. Did you mean to use 'async with'?",
+                         Py_TYPE(mgr)->tp_name, name);
+        } else {
+            PyErr_Format(PyExc_TypeError,
+                         "'%s' object does not support the context manager protocol "
+                         "(missed %s method)",
+                         Py_TYPE(mgr)->tp_name, name);
+        }
         return nullptr;
     }
     return f;

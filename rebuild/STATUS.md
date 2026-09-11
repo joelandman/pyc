@@ -74,19 +74,26 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     `test_decorators` **16/16**; `test_builtin` **147/147** (6 skip);
     `test_functools` **325/325**; `test_scope` **41/41**; `test_binop` **12/12**;
     `test_named_expressions` **74/74**. `f(*args)` keeps the tuple identity
-    for `tp_call`; `global __x` mangles like CPython. `test_call` 185/186
+     for `tp_call`; `global __x` mangles like CPython. `test_call` 185/186
     (3 skip): `_testinternalcapi` loads via `--whole-archive`; `test_super_deep`
-    still overflows 8MB C stack at ~17k -O0 frames. Remaining dumps: carets,
-    `__classdict__`.
-5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
-   lowering): `star-unpacking` (parser SyntaxError for star-as-expr;
-   call/list/set unpack runs), `starred assignment` (sole `*a =` is
-   CPython SyntaxError; `a, *b, c =` is implemented), `yield` / `await` /
-   `async for` / `async with` in native (function-level yield/async is
-   marshalled). Comprehension `for` targets now include Name/tuple/list
-    and attribute/subscript. Star-as-annotation is `typing.Unpack`;
-    `__annotate__(format>2)` is NotImplementedError. Async comprehensions
-    in `async def` marshal; in a sync function they are a parse SyntaxError.
+    still overflows 8MB C stack at ~17k -O0 frames. Yield/async marshal MATCH:
+    `test_generators` 59/59, `test_asyncgen` 85/85, `test_yield_from` 43/43,
+    `test_genexps` 1/1, `test_generator_stop` 2/2; genexp `__qualname__` repaired.
+    `test_coroutines` 97/99 (origin-tracking line numbers). Dumped EXIT_DIFFERS
+    leftovers: exception-location carets (`test_iter`/`comps`/`with`);
+    `__classdict__` in nested comps; `test_with` async-hint MATCH (carets remain);
+    doctest traceback ellipsis (`test_unpack`/`extcall`); `gc.is_tracked` on
+    int-tuples; property subclass `__doc__`; `test_compile` linenos/AST.
+ 5. **Honest I1 refusals** still in `lower.cpp` (if they reach native
+    lowering): `star-unpacking` (parser SyntaxError for star-as-expr;
+    call/list/set unpack runs), `starred assignment` (sole `*a =` is
+    CPython SyntaxError; `a, *b, c =` is implemented), `yield` / `await` /
+    `async for` / `async with` (backstops: function-level yield/async marshals,
+    so these arms do not fire on valid 3.14). Comprehension `for` targets now
+    include Name/tuple/list and attribute/subscript. Star-as-annotation is
+    `typing.Unpack`; `__annotate__(format>2)` is NotImplementedError. Async
+    comprehensions in `async def` marshal; in a sync function they are a
+    parse SyntaxError.
 6. **Compiled callables are `PyFunction`.** `PyFunction_New` +
    `PyFunction_SetVectorcall` onto the native trampoline. `PyFunction_Check`,
    `inspect.signature`, `__closure__`, `__annotate__`, `__name__`/`__qualname__`

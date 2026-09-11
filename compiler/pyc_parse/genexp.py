@@ -44,25 +44,45 @@ def _genexp_scopes(st, out):
         _genexp_scopes(ch, out)
 
 
+def _genexp_nodes(tree: ast.Module) -> list[tuple[ast.GeneratorExp, str]]:
+    found: list[tuple[ast.GeneratorExp, str]] = []
+
+    def visit(node, stack):
+        for ch in ast.iter_child_nodes(node):
+            if isinstance(ch, ast.GeneratorExp):
+                found.append((ch, _qualname_of(stack, "<genexpr>")))
+                visit(ch, stack)
+            elif isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(ch, stack + [ch.name, "<locals>"])
+            elif isinstance(ch, ast.ClassDef):
+                visit(ch, stack + [ch.name])
+            elif isinstance(ch, ast.Lambda):
+                visit(ch, stack + ["<lambda>", "<locals>"])
+            else:
+                visit(ch, stack)
+
+    visit(tree, [])
+    return found
+
+
 def collect(tree: ast.Module, source: bytes, filename: str) -> list[dict]:
     """One entry per generator expression, keyed by source position."""
-    nodes = [n for n in ast.walk(tree) if isinstance(n, ast.GeneratorExp)]
-    if not nodes:
+    found = _genexp_nodes(tree)
+    if not found:
         return []
-    # ast.walk is breadth-first; sort into source order so both sides agree.
-    nodes.sort(key=lambda n: (n.lineno, n.col_offset))
+    found.sort(key=lambda t: (t[0].lineno, t[0].col_offset))
 
     scopes: list = []
     _genexp_scopes(symtable.symtable(source, filename, "exec"), scopes)
     scopes.sort(key=lambda s: s.get_lineno())
 
-    if len(scopes) != len(nodes):
+    if len(scopes) != len(found):
         raise GenexpError(
-            f"{len(nodes)} generator expressions but {len(scopes)} symtable "
+            f"{len(found)} generator expressions but {len(scopes)} symtable "
             f"scopes; refusing to guess which closure belongs to which")
 
     out = []
-    for node, scope in zip(nodes, scopes):
+    for (node, qualname), scope in zip(found, scopes):
         # A disagreement here would silently pair a genexp with another's
         # closure, so it is an error rather than a best effort.
         if scope.get_lineno() != node.lineno:
@@ -70,7 +90,7 @@ def collect(tree: ast.Module, source: bytes, filename: str) -> list[dict]:
                 f"generator expression at line {node.lineno} does not match "
                 f"symtable scope at line {scope.get_lineno()}")
         frees = list(scope.get_frees())
-        code, frees = _compile_one(node, frees, filename)   # co_freevars order
+        code, frees = _compile_one(node, frees, filename, qualname)
         out.append({
             "line": node.lineno,
             "col": node.col_offset,
@@ -81,7 +101,7 @@ def collect(tree: ast.Module, source: bytes, filename: str) -> list[dict]:
 
 
 def _compile_one(node: ast.GeneratorExp, frees: list[str],
-                 filename: str) -> tuple[bytes, list[str]]:
+                 filename: str, qualname: str) -> tuple[bytes, list[str]]:
     # The outermost iterable is evaluated EAGERLY by the enclosing scope and
     # handed in, so inside the wrapper it is just a parameter.
     shim = copy.deepcopy(node)
@@ -124,7 +144,8 @@ def _compile_one(node: ast.GeneratorExp, frees: list[str],
         raise GenexpError(
             f"genexp freevars {inner.co_freevars} are not the same SET as "
             f"symtable {tuple(frees)}")
-    return marshal.dumps(inner), list(inner.co_freevars)
+    return (marshal.dumps(inner.replace(co_qualname=qualname)),
+            list(inner.co_freevars))
 
 
 def _only_code(consts, what: str) -> types.CodeType:
