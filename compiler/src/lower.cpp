@@ -3497,6 +3497,8 @@ private:
             reload_live_i64_from_slots(live_in, n.loc);
             if (eh.name) store_name(*eh.name, bound, n.loc);   // INCREFs; bound stays ours
             if (star) {
+                call_capi("pyc_rt_set_handled", {bound}, n.loc, &ok);
+                if (!ok) return false;
                 emit_decref(bound, n.loc);
                 mark_owned(rest);           // return from the handler releases it
             }

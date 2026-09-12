@@ -854,6 +854,7 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     // raising made call_capi build a landing pad for it -- which recursed,
     // because a landing pad now pops open handlers.
     {"pyc_rt_pop_handled", Ownership::NotAnObject, false, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_set_handled", Ownership::NotAnObject, false, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_import_star", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_import_from", Ownership::Owned, true, 3, {}, false, "", false, "", "ooi"},
     {"pyc_rt_import_attr", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},

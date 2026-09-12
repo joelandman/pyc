@@ -2051,6 +2051,12 @@ extern "C" int pyc_rt_pop_handled(PyObject* prev) {
     return 0;
 }
 
+extern "C" int pyc_rt_set_handled(PyObject* exc) {
+    Py_XINCREF(exc);
+    PyErr_SetHandledException(exc);
+    return 0;
+}
+
 // except*: split `exc` into (match, rest). Non-groups are wrapped when they
 // match, so the handler always sees an ExceptionGroup (PEP 654).
 extern "C" PyObject* pyc_rt_except_star_split(PyObject* exc, PyObject* type) {
@@ -2059,6 +2065,21 @@ extern "C" PyObject* pyc_rt_except_star_split(PyObject* exc, PyObject* type) {
     if (splitf) {
         PyObject* pair = PyObject_CallOneArg(splitf, type);
         Py_DECREF(splitf);
+        if (!pair) return nullptr;
+        if (!PyTuple_Check(pair)) {
+            PyErr_Format(PyExc_TypeError,
+                         "split must return a tuple, not %.200s",
+                         Py_TYPE(pair)->tp_name);
+            Py_DECREF(pair);
+            return nullptr;
+        }
+        Py_ssize_t n = PyTuple_GET_SIZE(pair);
+        if (n < 2) {
+            PyErr_Format(PyExc_TypeError,
+                         "split must return a 2-tuple, got tuple of size %zd", n);
+            Py_DECREF(pair);
+            return nullptr;
+        }
         return pair;
     }
     PyErr_Clear();
