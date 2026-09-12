@@ -2763,8 +2763,11 @@ private:
 
     bool emit_annotate(const AnnItems& items, const SourceLoc& loc) {
         if (items.empty()) return true;
+        AnnItems keyed;
+        for (const auto& [name, ann] : items)
+            keyed.emplace_back(mangle_ident(name), ann);
         bool ok = true;
-        ir::Value fn = make_annotate_fn(items, loc, !class_ns_.empty(), &ok);
+        ir::Value fn = make_annotate_fn(keyed, loc, !class_ns_.empty(), &ok);
         if (!ok) return false;
         store_name("__annotate__", fn, loc);
         if (owns(fn)) release(fn, loc);
@@ -2776,7 +2779,8 @@ private:
                              const SourceLoc& loc) {
         AnnItems items;
         auto add_arg = [&](const arg& p) {
-            if (p.annotation) items.emplace_back(p.arg, &**p.annotation);
+            if (p.annotation)
+                items.emplace_back(mangle_ident(p.arg), &**p.annotation);
         };
         for (const arg& p : a.posonlyargs) add_arg(p);
         for (const arg& p : a.args) add_arg(p);

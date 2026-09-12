@@ -123,8 +123,10 @@ struct Collector {
                                       walrus(*n.value); },
             [&](const AugAssign& n) { if (n.target) target(*n.target);
                                       walrus(*n.value); },
-            [&](const AnnAssign& n) { if (n.target && n.value) target(*n.target);
-                                      if (n.value) walrus(**n.value); },
+            [&](const AnnAssign& n) {
+                if (n.target && n.simple) target(*n.target);
+                if (n.value) walrus(**n.value);
+            },
             [&](const For& n)       { if (n.target) target(*n.target);
                                       walrus(*n.iter);
                                       block(n.body); block(n.orelse); },
