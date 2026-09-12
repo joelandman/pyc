@@ -14,6 +14,12 @@
 
 extern "C" {
 
+static const char* g_python_home = nullptr;
+
+void pyc_rt_set_python_home(const char* home) {
+    if (home && home[0]) g_python_home = home;
+}
+
 long long pyc_rt_total_refcount(void) {
 #ifdef Py_REF_DEBUG
     return static_cast<long long>(_Py_GetGlobalRefTotal());
@@ -55,6 +61,33 @@ static int add_program_dir_to_path(void) {
     return 0;
 }
 
+static std::string resolve_home() {
+    if (const char* e = std::getenv("PYTHONHOME")) {
+        if (e[0]) return e;
+    }
+    char exe[4096];
+    ssize_t n = ::readlink("/proc/self/exe", exe, sizeof exe - 1);
+    if (n > 0) {
+        exe[n] = '\0';
+        std::string dir(exe);
+        auto slash = dir.find_last_of('/');
+        if (slash != std::string::npos) dir.resize(slash);
+        char probe[4096];
+        std::snprintf(probe, sizeof probe, "%s/lib/python%d.%d",
+                      dir.c_str(), PY_MAJOR_VERSION, PY_MINOR_VERSION);
+        if (::access(probe, R_OK) == 0) return dir;
+        slash = dir.find_last_of('/');
+        if (slash != std::string::npos) {
+            std::string parent = dir.substr(0, slash);
+            std::snprintf(probe, sizeof probe, "%s/lib/python%d.%d",
+                          parent.c_str(), PY_MAJOR_VERSION, PY_MINOR_VERSION);
+            if (::access(probe, R_OK) == 0) return parent;
+        }
+    }
+    if (g_python_home && g_python_home[0]) return g_python_home;
+    return {};
+}
+
 static int configure(int argc, char** argv) {
     PyConfig config;
     // PEP 587. The pre-587 Py_SetProgramName/Py_SetPath family is deprecated
@@ -69,7 +102,14 @@ static int configure(int argc, char** argv) {
     // often not permitted.
     config.write_bytecode = 0;
 
-    PyStatus status = PyConfig_SetBytesArgv(&config, argc, argv);
+    std::string home = resolve_home();
+    PyStatus status;
+    if (!home.empty()) {
+        status = PyConfig_SetBytesString(&config, &config.home, home.c_str());
+        if (PyStatus_Exception(status)) goto fail;
+    }
+
+    status = PyConfig_SetBytesArgv(&config, argc, argv);
     if (PyStatus_Exception(status)) goto fail;
 
     status = Py_InitializeFromConfig(&config);

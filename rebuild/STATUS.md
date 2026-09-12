@@ -1,6 +1,6 @@
 # pyc — current state and MVP
 
-**Date:** 2026-09-10. Numbers from `compiler/baseline-libtest.json` and
+**Date:** 2026-09-12. Numbers from `compiler/baseline-libtest.json` and
 `compiler/baseline-language.json` unless marked unknown. CHARTER remains
 binding; this file is the dashboard, not an amendment.
 
@@ -13,30 +13,33 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
 I6. Language + gaps + concurrency is **788/788** impactful. `Lib/test` is
-**246/389 = 63.24%** (`-O0`), mostly **module-level import**, not unittest.
-C1 (frames) and C2 (periodic GIL) are closed. The remaining product gap is
-not a new runtime: it is well-formed IR on every accepted program, named
-refusals instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and a
-developer toolchain that still requires a purpose-built 3.14.7 sysroot.
+**272/389 = 69.92%** (`-O0`, sysroot 3.14.7, `--stdlib`). C1 (frames) and
+C2 (periodic GIL) are closed. The remaining product gap is not a new
+runtime: it is well-formed IR on every accepted program, named refusals
+instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and a developer
+toolchain that still requires a purpose-built 3.14.7 sysroot.
 
 ## Measured now
 
 | Check | Result |
 |---|---|
 | language + gaps + concurrency | 788/788 impactful |
-| `Lib/test` (I6) | 246/389 (63.24%) |
-| I6 composition | 214 clean + 32 `STDERR_DIFFERS`-only = 246 pass |
-| `DID_NOT_COMPILE` | 24 |
-| `EXIT_DIFFERS` | 102 (95 of them CPython 0 / pyc 1) |
-| `STDOUT_DIFFERS` | 13 (10 oracle-unstable) |
-| timeout | 8 (6 CPython budget; 2 pyc: `test_exceptions`, `test_syslog`) |
-| `ORACLE_UNSTABLE` | 12 |
+| `Lib/test` (I6) | 272/389 (69.92%) |
+| I6 composition | 254 clean + 18 `STDERR_DIFFERS`-only = 272 pass |
+| `DID_NOT_COMPILE` | 0 |
+| `EXIT_DIFFERS` | 98 |
+| `STDOUT_DIFFERS` | 10 |
+| timeout | 11 |
+| `ORACLE_UNSTABLE` | 11 |
 | A1 round-trip | 3.14.7 and 3.13.15 TOTAL (`compiler/README.md`) |
 | Tier-1 / NumPy | CI wheel smoke; `ldd` has no libpython `DT_NEEDED` |
 | C1b / C2 | closed; probes in `language/` |
 
-Do not drive `Lib/test` under unittest yet. That will lower I6
-(`CORRECTNESS.md` C3) without explaining the 102 exit diffs.
+I6 is file-as-script vs sysroot 3.14.7 with `--stdlib` (unittest can
+import `test.support`). Do not treat unittest MATCH on a single file as
+the I6 row. The 2026-08-27 snapshot (246/389, 24 DNC) is replaced:
+`--stdlib` was missing locally, so many files imported and exited 0
+without running tests. Net +26 (67 newly passing, 41 now fail).
 
 ## Major remaining issues
 
@@ -80,6 +83,8 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     `test_generators` 59/59, `test_asyncgen` 85/85, `test_yield_from` 43/43,
     `test_genexps` 1/1, `test_generator_stop` 2/2; genexp `__qualname__` repaired.
     `test_coroutines` **99/99**. Dumped EXIT_DIFFERS
+    Former I6 `DID_NOT_COMPILE` (24 files) all **compile on HEAD** (t-strings,
+    `except*`, type aliases, kw-only lambdas, genexp/genfunc marshal).
     leftovers: `test_super_deep` (~464 B/C-frame, 90k needs ~42MB);
     `test_compile` native `__code__` bytecode (A); `test_dis` Bound at
     `co_consts[1]`;     `test_raise` **37/37**; `test_gc` get_objects/heap_size;
@@ -118,14 +123,13 @@ Probes: `verify/corpus/language/getframemodulename.py`,
 
 ### P2 — product / process
 
-9. **Baseline vs HEAD drift.** Current `lower.cpp` implements t-strings,
-   `except*`, type aliases, kw-only lambdas; baseline may still record
-   those as compile diagnostics. Re-run metric before treating that list as
-   current.
+9. **I6 republished 2026-09-12.** `compiler/baseline-libtest.json` is
+    272/389 vs sysroot 3.14.7, `jobs=8`, `-O0`. `DID_NOT_COMPILE` is 0.
 10. **Developer sysroot.** LLVM 22 + hand-built 3.14.7 tree +
     `PYC_LOWER=/tmp/pyc_lower`. See workstream S below.
-11. **Output not relocatable.** `entry.cpp` does not set `PyConfig.home`;
-    prefix is baked into static libpython.
+11. **Output home.** `PyConfig.home` is set from `PYTHONHOME`, then
+     `lib/pythonX.Y` next to (or above) the executable, then the compile-time
+     sysroot. Prefix is no longer implicit-only.
 12. **A2 leak bar** (`Py_REF_DEBUG` slope on the corpus) not measured on the
     metric sysroot.
 
@@ -226,7 +230,7 @@ an independent runtime.
 | S0 now | Document (a)≠(b). Fix stale “frontend links libpython” CI comment. | Honest onboarding |
 | S1 done | `pycc` reads `pyc-sysroot.json`; `--python-sysroot`; no hardcoded `python3.14` | I8 locally |
 | S2 next | Publish a prebuilt sysroot tarball (CI already caches the tree). `build-python-sysroot.sh` remains the *producer*, not the onboarding step. | Developers do not compile CPython |
-| S3 later | Relocatable toolchain (`pycc` finds sysroot next to itself) **and** `PyConfig.home` so *output* binaries find stdlib after the tree moves | Download ≠ `$HOME/opt/...` |
+| S3 later | Relocatable toolchain (`pycc` finds sysroot next to itself). Output `PyConfig.home` landed (PYTHONHOME, beside-exe, baked sysroot). | Download ≠ `$HOME/opt/...` |
 | S4 later | Casual `pycc file.py` uses bundled/downloaded sysroot. Missing target → compile error, not a wrong binary. Verify still uses that interpreter as oracle. PATH `python3` only for parse-only / `--emit-llvm` when `version_info[:2]` matches the PTD. | No local CPython install to compile a program |
 | S5 v1 | Release layout: `bin/pycc`, `lib/pyc/`, `sysroot/`. `--python=X.Y` is a second artifact, not a flag on one libpython. | VERSION_TARGETING as shipped |
 

@@ -129,19 +129,26 @@ def from_cpython_libtest(stdlib_root: Path, oracle: Path, *,
 
 
 def resolve_sysroot_oracle(sysroot: Path | None) -> Path | None:
-    """Read the interpreter out of a pyc-sysroot.json manifest.
+    """Oracle for a sysroot: manifest interpreter, else `$sysroot/bin/python3*`.
 
     The parse oracle and the differential oracle must be the same binary — a
     divergence has to be measured against the runtime actually being targeted
-    (VERSION_TARGETING.md).
+    (VERSION_TARGETING.md). Local sysroots may lack `pyc-sysroot.json`; falling
+    back to PATH python3 then measures the wrong install.
     """
     if sysroot is None:
         return None
-    manifest = Path(sysroot) / "pyc-sysroot.json"
-    if not manifest.is_file():
-        return None
-    import json
+    root = Path(sysroot)
+    manifest = root / "pyc-sysroot.json"
+    if manifest.is_file():
+        import json
 
-    data = json.loads(manifest.read_text())
-    interp = data.get("interpreter")
-    return Path(interp) if interp and os.path.exists(interp) else None
+        data = json.loads(manifest.read_text())
+        interp = data.get("interpreter")
+        if interp and os.path.exists(interp):
+            return Path(interp)
+    for name in ("python3.14", "python3"):
+        cand = root / "bin" / name
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return cand
+    return None

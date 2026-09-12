@@ -114,7 +114,17 @@ def main() -> int:
                   if p.is_file() and not p.name.startswith("_")]
     cases += [Case(path=f) for f in args.file]
     if args.libtest:
-        stdlib = args.stdlib or Path(sysconfig.get_paths()["stdlib"])
+        stdlib = args.stdlib
+        if stdlib is None and args.sysroot is not None:
+            import subprocess
+            r = subprocess.run(
+                [str(oracle), "-c",
+                 "import sysconfig;print(sysconfig.get_paths()['stdlib'])"],
+                capture_output=True, text=True, timeout=30)
+            if r.returncode == 0 and r.stdout.strip():
+                stdlib = Path(r.stdout.strip())
+        if stdlib is None:
+            stdlib = Path(sysconfig.get_paths()["stdlib"])
         cases += list(corpus_mod.from_cpython_libtest(
             stdlib, oracle, limit=args.libtest_limit))
     if not cases:

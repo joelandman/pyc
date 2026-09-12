@@ -15,6 +15,8 @@ extern "C" {
 // tree's jump-based frames are a documented frame-leak source.
 typedef int (*PycModuleBody)(void);
 
+void pyc_rt_set_python_home(const char* home);
+
 // Full program lifecycle. Returns the process exit status.
 int pyc_rt_main(int argc, char** argv, PycModuleBody body);
 

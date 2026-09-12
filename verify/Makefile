@@ -72,6 +72,8 @@ verify:
 # baseline itself and the nightly number were never affected.
 metric:
 	@$(RUN) --libtest $(PYCFLAGS) --jobs $(JOBS) \
+	  --pyc $(REPO)/compiler/tools/pycc \
+	  --stdlib $(SYSROOT)/lib/python3.14 \
 	  --run-timeout 30 --compile-timeout 120 \
 	  --show 20 --json $(CURDIR)/libtest.json $(ORACLE_ARGS)
 	@$(CHECK) --baseline $(REPO)/compiler/baseline-libtest.json \
