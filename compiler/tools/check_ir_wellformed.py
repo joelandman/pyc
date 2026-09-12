@@ -42,6 +42,7 @@ DECREF = re.compile(r"^    decref %(\d+)$")
 # leaked. Counting it as a leak is a false positive, and a checker that cries
 # wolf gets ignored just as surely as one that stays silent.
 RET_VAL = re.compile(r"^    ret %(\d+)$")
+RAISE_VAL = re.compile(r"^    raise %(\d+)\b")
 # A phi CONSUMES its incoming values: ownership transfers to the phi result,
 # which is then released once for whichever path was taken. Counting the
 # operands as leaked is the same false positive as `ret %N` was.
@@ -114,7 +115,7 @@ def _check_func(ir: str) -> list[str]:
             if OWNED.search(line):
                 owned.add(d.group(1))
                 def_block[d.group(1)] = block or "?"
-        r = DECREF.match(line) or RET_VAL.match(line)
+        r = DECREF.match(line) or RET_VAL.match(line) or RAISE_VAL.match(line)
         if r:
             released[r.group(1)] = released.get(r.group(1), 0) + 1
             release_blocks.setdefault(r.group(1), set()).add(block or "?")
@@ -205,6 +206,12 @@ def main() -> int:
         "  unwind.0:\n    decref %1\n    ret.err\n",
         "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n"
         "    decref %1\n    ret\n"
+        "  unwind.0:\n    decref %1\n    ret.err\n")
+    sc.require_detects("raise transfers like ret", check,
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n    ret\n"
+        "  unwind.0:\n    decref %1\n    ret.err\n",
+        "; m\nfunc f()\n  entry:\n    %1 = const.int \"1\"  ; owned\n"
+        "    raise %1\n"
         "  unwind.0:\n    decref %1\n    ret.err\n")
     sc.require_detects("use before definition", check,
         "; m\nfunc f()\n  entry:\n    %2 = call.capi \"PyNumber_Add\" %9 %9  ; owned\n"

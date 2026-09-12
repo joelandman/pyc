@@ -3468,9 +3468,11 @@ private:
                 ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
                 emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
                                0, 0, n.loc, std::nullopt});
+                mark_owned(nn);
                 ir::Value isnone = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
                 emit(ir::Instr{ir::Op::Is, {bound, nn}, isnone, Ownership::NotAnObject,
                                "", 0, 0, n.loc, std::nullopt});
+                release(nn, n.loc);
                 std::uint32_t nomatch_b = new_block("exceptstar.nomatch");
                 emit(ir::Instr{ir::Op::CondBr, {isnone}, std::nullopt,
                                Ownership::NotAnObject, "", nomatch_b, body_b,
@@ -3536,9 +3538,11 @@ private:
             ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
                            0, 0, n.loc, std::nullopt});
+            mark_owned(nn);
             ir::Value isnone = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
             emit(ir::Instr{ir::Op::Is, {remaining, nn}, isnone, Ownership::NotAnObject,
                            "", 0, 0, n.loc, std::nullopt});
+            release(nn, n.loc);
             std::uint32_t reraise_b = new_block("exceptstar.reraise");
             std::uint32_t done_b = new_block("exceptstar.done");
             emit(ir::Instr{ir::Op::CondBr, {isnone}, std::nullopt,
