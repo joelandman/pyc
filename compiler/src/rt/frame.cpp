@@ -225,6 +225,8 @@ static void snapshot_newlocals_into_fast(_PyInterpreterFrame* f) {
         kinds = PyBytes_AS_STRING(co->co_localspluskinds);
         nk = PyBytes_GET_SIZE(co->co_localspluskinds);
     }
+    PyObject *et = nullptr, *ev = nullptr, *tb = nullptr;
+    PyErr_Fetch(&et, &ev, &tb);
     for (int i = 0; i < nplus; ++i) {
         if (kinds && i < nk && (kinds[i] & (CO_FAST_CELL | CO_FAST_FREE)))
             continue;
@@ -237,6 +239,7 @@ static void snapshot_newlocals_into_fast(_PyInterpreterFrame* f) {
                                : PyStackRef_NULL;
     }
     Py_CLEAR(f->f_locals);
+    PyErr_Restore(et, ev, tb);
 }
 
 extern "C" void pyc_rt_interp_leave(void* frame) {
