@@ -1849,8 +1849,13 @@ extern "C" int pyc_rt_check_classcell(PyObject* cell, PyObject* cls,
 }
 
 extern "C" int pyc_rt_assert_fail(PyObject* msg) {
-    if (msg) PyErr_SetObject(PyExc_AssertionError, msg);
-    else     PyErr_SetNone(PyExc_AssertionError);
+    if (!msg) {
+        PyErr_SetNone(PyExc_AssertionError);
+        return -1;
+    }
+    PyObject* e = PyObject_CallOneArg(PyExc_AssertionError, msg);
+    if (!e) return -1;
+    PyErr_SetRaisedException(e);
     return -1;
 }
 

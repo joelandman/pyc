@@ -82,7 +82,7 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     `test_coroutines` **99/99**. Dumped EXIT_DIFFERS
     leftovers: `test_super_deep` (~464 B/C-frame, 90k needs ~42MB);
     `test_compile` native `__code__` bytecode (A); `test_dis` Bound at
-    `co_consts[1]`;     `test_raise` 1 left (assert tuple msg); `test_gc` get_objects/heap_size;
+    `co_consts[1]`;     `test_raise` **37/37**; `test_gc` get_objects/heap_size;
     `test_str` nomemory vs `with`
     GetAttr. `test_unpack`/`extcall` exit 1 both sides as `__main__`.
     MATCH: `test_iter` 57; `test_with` 54; `test_listcomps` 66;
