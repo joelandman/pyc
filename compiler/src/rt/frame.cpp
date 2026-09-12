@@ -31,6 +31,7 @@ static_assert(FRAME_SPECIALS_SIZE == 10,
 // (_PY_GIL_DROP_REQUEST_BIT). Unconditional SaveThread/RestoreThread
 // deadlocked test_logging; this is the request-only path.
 extern "C" int pyc_rt_handle_pending(void) {
+    pyc_rt_gil_ensure();
     return _Py_HandlePending(PyThreadState_Get());
 }
 
@@ -127,6 +128,7 @@ extern "C" void pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n)
 
 extern "C" void pyc_rt_set_lasti(int slot) {
     if (slot < 0) return;
+    pyc_rt_gil_ensure();
     PyThreadState* ts = PyThreadState_Get();
     _PyInterpreterFrame* f = ts->current_frame;
     if (!f) return;
@@ -150,6 +152,7 @@ extern "C" void pyc_rt_set_lineno(int line) {
 
 extern "C" void pyc_rt_set_location(int line, int col, int end_col) {
     if (line < 1) return;
+    pyc_rt_gil_ensure();
     PyThreadState* ts = PyThreadState_Get();
     _PyInterpreterFrame* f = ts->current_frame;
     if (!f) return;
@@ -181,8 +184,10 @@ extern "C" void pyc_rt_set_location(int line, int col, int end_col) {
 }
 
 extern "C" void pyc_rt_traceback_here(void) {
+    pyc_rt_gil_ensure();
     PyObject *t = nullptr, *v = nullptr, *tb = nullptr;
     PyErr_Fetch(&t, &v, &tb);
+    if (!t) return;
     PyThreadState* ts = PyThreadState_Get();
     _PyInterpreterFrame* f = ts->current_frame;
     while (f && _PyFrame_IsIncomplete(f)) f = f->previous;
