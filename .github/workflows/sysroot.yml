@@ -1,0 +1,78 @@
+# S2: publish a prebuilt Tier-1 sysroot tarball so developers do not compile
+# CPython. The producer remains tools/build-python-sysroot.sh (via setup-pyc).
+# Not the PR gate — packing is nightly / manual.
+name: sysroot
+
+on:
+  schedule:
+    - cron: "30 6 * * *"     # after metric.yml (00:00/06:00 UTC)
+  workflow_dispatch:
+
+concurrency:
+  group: sysroot
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  pack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: devel
+
+      - name: Set up pyc
+        uses: ./.github/actions/setup-pyc
+        with:
+          pgo: "true"
+          wheel-check: "require"
+
+      - name: Pack sysroot
+        id: pack
+        run: |
+          set -euo pipefail
+          tmp="$RUNNER_TEMP/packed.tar.xz"
+          ./tools/pack-sysroot.sh --prefix "$SYSROOT" -o "$tmp"
+          name="$(python3 -c 'import json,os; print(json.load(open(os.environ["SYSROOT"]+"/pyc-sysroot.json"))["archive_name"])')"
+          out="$RUNNER_TEMP/$name"
+          mv "$tmp" "$out"
+          echo "archive=$out" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          python3 -c 'import json,os; d=json.load(open(os.environ["SYSROOT"]+"/pyc-sysroot.json"));
+print("abi", d["abi"]); print("version", d["version"]); print("machine", d["machine"]); print("glibc", d.get("glibc"))'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.pack.outputs.name }}
+          path: ${{ steps.pack.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.pack.outputs.archive }}
+          NAME: ${{ steps.pack.outputs.name }}
+        run: |
+          set -euo pipefail
+          tag=sysroot-cp314-linux-x86_64
+          notes="$(python3 -c 'import json,os; d=json.load(open(os.environ["SYSROOT"]+"/pyc-sysroot.json"));
+print("Prebuilt pyc CPython sysroot (S2). Do not compile CPython to use pycc.\n")
+print("- abi:", d["abi"])
+print("- version:", d["version"])
+print("- tier:", d["tier"])
+print("- machine:", d["machine"])
+print("- glibc:", d.get("glibc") or "unknown")
+print("\nInstall:\n")
+print("  ./tools/install-sysroot.sh --archive %s --prefix \"$HOME/opt/py-sysroots/cp314-3.14.7-tier1\"" % os.environ["NAME"])
+print("  export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1")
+')"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$ARCHIVE" --clobber
+            gh release edit "$tag" --notes "$notes"
+          else
+            gh release create "$tag" "$ARCHIVE" --title "sysroot cp314 linux x86_64" --notes "$notes"
+          fi

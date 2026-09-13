@@ -303,7 +303,7 @@ write_manifest() {
   (( DRY_RUN )) && return 0
 
   "$py" - "$manifest" "$ABI" "$TIER" "$VERSION" "$WHEEL_VERIFIED" <<'PYEOF'
-import json, sys, sysconfig, os
+import json, sys, sysconfig, os, platform
 manifest, abi, tier, version = sys.argv[1:5]
 # Recompute from the interpreter so the manifest cannot disagree with reality.
 abi = "cp%d%d" % sys.version_info[:2]
@@ -314,11 +314,22 @@ libpl = sysconfig.get_config_var('LIBPL')
 libdir = sysconfig.get_config_var('LIBDIR')
 static = os.path.join(libpl, sysconfig.get_config_var('LIBRARY'))
 shared = os.path.join(libdir, sysconfig.get_config_var('LDLIBRARY'))
+machine = platform.machine() or "unknown"
+glibc = None
+try:
+    glibc = os.confstr("CS_GNU_LIBC_VERSION") or None
+except (ValueError, OSError, AttributeError):
+    name, ver = platform.libc_ver()
+    if name:
+        glibc = (name + " " + ver).strip()
 ptd = {
     "version":        version,
     "xy":             '.'.join(map(str, sys.version_info[:2])),
     "abi":            abi,
     "tier":           int(tier),
+    "machine":        machine,
+    "glibc":          glibc,
+    "archive_name":   "%s-%s-tier%s-%s.tar.xz" % (abi, version, tier, machine),
     "free_threaded":  bool(sysconfig.get_config_var('Py_GIL_DISABLED')),
     "debug":          hasattr(sys, "gettotalrefcount"),
     "abiflags":       getattr(sys, "abiflags", ""),

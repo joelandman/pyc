@@ -30,11 +30,42 @@ Current state, MVP checklist, and sysroot-independence plan:
 ## Build
 
 Needs clang++/LLVM 22 and a CPython **sysroot** (Tier 1: static libpython,
-dynamic libc, `-rdynamic`).
+dynamic libc, `-rdynamic`). Prefer a prebuilt tarball (S2). Compiling
+CPython is how the tarball is *produced*, not how you onboard.
+
+On a new machine, from a clone:
+
+```bash
+./tools/setup-machine.sh
+# or, if the GitHub Release asset is not up yet:
+./tools/setup-machine.sh --build-sysroot
+```
+
+That downloads (or builds) the sysroot, unpacks it, builds `pyc_lower`, and
+smokes `print(2**10)`. Then:
+
+```bash
+export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
+export PYC_LOWER=/tmp/pyc_lower
+```
+
+Manual equivalent:
+
+```bash
+# 1. Sysroot — download cp314-3.14.7-tier1-x86_64.tar.xz from
+#    https://github.com/joelandman/pyc/releases/tag/sysroot-cp314-linux-x86_64
+./tools/install-sysroot.sh --archive cp314-3.14.7-tier1-x86_64.tar.xz \
+  --prefix "$HOME/opt/py-sysroots/cp314-3.14.7-tier1"
+export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
+
+# 2. Compiler
+make -C compiler                          # writes /tmp/pyc_lower
+```
+
+If no release asset exists yet, or you are changing A2 headers:
 
 ```bash
 ./tools/build-python-sysroot.sh --version 3.14.7 --jobs "$(nproc)"
-make -C compiler                          # writes /tmp/pyc_lower
 export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
 ```
 
