@@ -2059,8 +2059,66 @@ extern "C" int pyc_rt_set_handled(PyObject* exc) {
 
 // except*: split `exc` into (match, rest). Non-groups are wrapped when they
 // match, so the handler always sees an ExceptionGroup (PEP 654).
+static int except_star_type_ok(PyObject* type) {
+    PyObject* b = PyEval_GetBuiltins();
+    PyObject* eg = b ? PyDict_GetItemString(b, "ExceptionGroup") : nullptr;
+    auto bad_eg = [eg](PyObject* t) {
+        return eg && t == eg;
+    };
+    auto fail_eg = []() {
+        PyErr_SetString(PyExc_TypeError,
+            "catching ExceptionGroup with except* is not allowed. Use except instead.");
+        return 0;
+    };
+    auto fail_cls = []() {
+        PyErr_SetString(PyExc_TypeError,
+            "catching classes that do not inherit from BaseException is not allowed");
+        return 0;
+    };
+    if (PyTuple_Check(type)) {
+        Py_ssize_t n = PyTuple_GET_SIZE(type);
+        for (Py_ssize_t i = 0; i < n; i++) {
+            PyObject* t = PyTuple_GET_ITEM(type, i);
+            if (bad_eg(t)) return fail_eg();
+            if (!PyExceptionClass_Check(t)) return fail_cls();
+        }
+        return 1;
+    }
+    if (bad_eg(type)) return fail_eg();
+    if (!PyExceptionClass_Check(type)) return fail_cls();
+    return 1;
+}
+
+extern "C" int pyc_rt_except_star_note(PyObject* contribs) {
+    if (!contribs) { PyErr_BadInternalCall(); return -1; }
+    PyObject* e = PyErr_GetRaisedException();
+    if (!e) e = Py_NewRef(Py_None);
+    int r = PyList_Append(contribs, e);
+    Py_DECREF(e);
+    return r;
+}
+
+extern "C" PyObject* pyc_rt_except_star_finish(PyObject* orig, PyObject* contribs,
+                                               PyObject* rest) {
+    if (!orig || !contribs) { PyErr_BadInternalCall(); return nullptr; }
+    PyObject* tb = PyException_GetTraceback(orig);
+    if (tb) Py_DECREF(tb);
+    else {
+        Py_INCREF(orig);
+        PyErr_SetRaisedException(orig);
+        pyc_rt_traceback_here();
+        orig = PyErr_GetRaisedException();
+        if (!orig) return nullptr;
+    }
+    if (rest && rest != Py_None) {
+        if (PyList_Append(contribs, rest) < 0) return nullptr;
+    }
+    return PyUnstable_Exc_PrepReraiseStar(orig, contribs);
+}
+
 extern "C" PyObject* pyc_rt_except_star_split(PyObject* exc, PyObject* type) {
     if (!exc || !type) { PyErr_BadInternalCall(); return nullptr; }
+    if (!except_star_type_ok(type)) return nullptr;
     PyObject* splitf = PyObject_GetAttrString(exc, "split");
     if (splitf) {
         PyObject* pair = PyObject_CallOneArg(splitf, type);

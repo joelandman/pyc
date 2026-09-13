@@ -864,6 +864,8 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"pyc_rt_annotate_check_format", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_unpack_ex", Ownership::Owned, true, 3, {}, false, "", false, "", "oii"},
     {"pyc_rt_except_star_split", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
+    {"pyc_rt_except_star_note", Ownership::NotAnObject, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_except_star_finish", Ownership::Owned, true, 3, {}, false, "", false, "", "ooo"},
     {"pyc_rt_newref", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_type_param", Ownership::Owned, true, 4, {}, false, "", false, "", "oooo"},
     {"pyc_rt_del_if_same", Ownership::NotAnObject, true, 3, {}, false, "", false, "", "ooo"},

@@ -214,6 +214,9 @@ PyObject* pyc_rt_push_handled(PyObject* exc);
 int pyc_rt_pop_handled(PyObject* prev);
 int pyc_rt_set_handled(PyObject* exc);
 PyObject* pyc_rt_except_star_split(PyObject* exc, PyObject* type);
+int pyc_rt_except_star_note(PyObject* contribs);
+PyObject* pyc_rt_except_star_finish(PyObject* orig, PyObject* contribs,
+                                    PyObject* rest);
 PyObject* pyc_rt_newref(PyObject* o);
 PyObject* pyc_rt_type_param(PyObject* kind, PyObject* name, PyObject* bound,
                             PyObject* deflt);

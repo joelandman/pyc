@@ -3433,6 +3433,13 @@ private:
         frame_owned_.push_back(prev_handled);
 
         ir::Value remaining = exc;
+        ir::Value contribs{};
+        if (star) {
+            contribs = call_capi_imm("PyList_New", {}, 0, 0, n.loc, &ok);
+            if (!ok) return false;
+            mark_owned(contribs);
+            handled_stack_.push_back({prev_handled, try_stack_.size()});
+        }
         for (const excepthandler& h : n.handlers) {
             const ExceptHandler& eh = std::get<ExceptHandler>(h.v);
             std::uint32_t body_b = new_block("except.body");
@@ -3502,20 +3509,41 @@ private:
                 call_capi("pyc_rt_set_handled", {bound}, n.loc, &ok);
                 if (!ok) return false;
                 emit_decref(bound, n.loc);
-                mark_owned(rest);           // return from the handler releases it
+                mark_owned(rest);
+            } else {
+                handled_stack_.push_back({prev_handled, try_stack_.size()});
             }
-            // Open for the duration of the handler body, so a return, break or
-            // continue out of it pops before leaving.
-            handled_stack_.push_back({prev_handled, try_stack_.size()});
-            for (const stmt& s2 : eh.body)
-                if (!lower_stmt(s2)) { handled_stack_.pop_back(); return false; }
-            handled_stack_.pop_back();
-            if (terminated()) { set_block(next_b); continue; }
+            std::uint32_t hcatch = 0;
             if (star) {
-                forget(rest);
+                hcatch = new_block("exceptstar.raised");
+                try_stack_.push_back(hcatch);
+            }
+            for (const stmt& s2 : eh.body)
+                if (!lower_stmt(s2)) {
+                    if (star) try_stack_.pop_back();
+                    else handled_stack_.pop_back();
+                    return false;
+                }
+            if (star) try_stack_.pop_back();
+            else handled_stack_.pop_back();
+            if (star) {
+                if (!terminated()) {
+                    call_capi("pyc_rt_except_star_note", {contribs}, n.loc, &ok);
+                    if (!ok) return false;
+                    forget(rest);
+                    remaining = rest;
+                    emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                                   "", next_b, 0, n.loc, std::nullopt});
+                }
+                set_block(hcatch);
+                call_capi("pyc_rt_except_star_note", {contribs}, n.loc, &ok);
+                if (!ok) return false;
                 remaining = rest;
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                "", next_b, 0, n.loc, std::nullopt});
+            } else if (terminated()) {
+                set_block(next_b);
+                continue;
             } else {
                 call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
                 if (!ok) return false;
@@ -3525,22 +3553,25 @@ private:
             set_block(next_b);
         }
 
-        // No handler matched (or except* leftover): put the exception back
-        // and propagate. SetRaisedException STEALS.
+        if (star) handled_stack_.pop_back();
         call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
         if (!ok) return false;
-        frame_owned_.pop_back();          // prev_handled
+        frame_owned_.pop_back();
         emit_decref(prev_handled, n.loc);
-        frame_owned_.pop_back();          // exc
-        if (star) emit_decref(exc, n.loc);  // remaining is a split rest, not exc
-        ir::Value reraised = star ? remaining : exc;
+        frame_owned_.pop_back();
         if (star) {
+            ir::Value result = call_capi("pyc_rt_except_star_finish",
+                                         {exc, contribs, remaining}, n.loc, &ok,
+                                         {contribs, remaining});
+            if (!ok) return false;
+            mark_owned(result);
+            emit_decref(exc, n.loc);
             ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
                            0, 0, n.loc, std::nullopt});
             mark_owned(nn);
             ir::Value isnone = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
-            emit(ir::Instr{ir::Op::Is, {remaining, nn}, isnone, Ownership::NotAnObject,
+            emit(ir::Instr{ir::Op::Is, {result, nn}, isnone, Ownership::NotAnObject,
                            "", 0, 0, n.loc, std::nullopt});
             release(nn, n.loc);
             std::uint32_t reraise_b = new_block("exceptstar.reraise");
@@ -3549,15 +3580,18 @@ private:
                            Ownership::NotAnObject, "", done_b, reraise_b,
                            n.loc, std::nullopt});
             set_block(done_b);
-            emit_decref(remaining, n.loc);
+            emit_decref(result, n.loc);
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                            "", after, 0, n.loc, std::nullopt});
             set_block(reraise_b);
+            call_capi("PyErr_SetRaisedException", {result}, n.loc, &ok);
+            if (!ok) return false;
+            forget(result);
+        } else {
+            call_capi("PyErr_SetRaisedException", {exc}, n.loc, &ok);
+            if (!ok) return false;
+            forget(exc);
         }
-        call_capi("PyErr_SetRaisedException", {reraised}, n.loc, &ok);
-        if (!ok) return false;
-        forget(reraised);
-        if (!star) forget(exc);
         std::uint32_t pad = make_landing_pad(n.loc);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", pad, 0, n.loc, std::nullopt});
