@@ -479,6 +479,7 @@ std::set<std::string> int_locals(const std::vector<std::string>& params,
 namespace {
 struct NestedReads {
     std::set<std::string>& out;
+    bool enter_class_body = true;
 
     void anns(const arguments& a, const std::optional<Box<expr>>& returns, bool inside) {
         auto arg_ann = [&](const arg& p) {
@@ -566,7 +567,9 @@ struct NestedReads {
                 for (const expr& d : n.decorator_list) expr_(d, inside);
                 anns(*n.args, n.returns, inside);
             },
-            [&](const ClassDef& n){ for (const stmt& y : n.body) stmt_(y, true);
+            [&](const ClassDef& n){
+                                    if (enter_class_body)
+                                        for (const stmt& y : n.body) stmt_(y, true);
                                     for (const expr& b : n.bases) expr_(b, inside);
                                     for (const keyword& k : n.keywords) expr_(*k.value, inside);
                                     for (const expr& d : n.decorator_list) expr_(d, inside); },
@@ -653,6 +656,13 @@ struct NestedReads {
 std::set<std::string> all_reads(const std::vector<stmt>& body) {
     std::set<std::string> out;
     NestedReads nr{out};
+    for (const stmt& s : body) nr.stmt_(s, true);
+    return out;
+}
+
+std::set<std::string> classcell_reads(const std::vector<stmt>& body) {
+    std::set<std::string> out;
+    NestedReads nr{out, false};
     for (const stmt& s : body) nr.stmt_(s, true);
     return out;
 }

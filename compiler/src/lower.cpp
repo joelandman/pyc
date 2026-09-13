@@ -42,6 +42,7 @@ std::set<std::string> nested_reads(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> declared_nonlocals(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> declared_globals(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> all_reads(const std::vector<pyc::ast::stmt>&);
+std::set<std::string> classcell_reads(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> all_writes(const std::vector<pyc::ast::stmt>&);
 std::set<std::string> nested_reads_expr(const pyc::ast::expr&);
 std::set<std::string> walrus_writes(const pyc::ast::expr&);
@@ -1602,10 +1603,11 @@ private:
             // A `nonlocal` name is free even if it is only ever written.
             std::set<std::string> nl = declared_nonlocals(n.body);
             reads.insert(nl.begin(), nl.end());
+            reads.erase("__class__");
             // Mentioning super or __class__ inside a class body captures the
             // implicit __class__ cell, exactly as CPython's symtable does.
             if (!class_cells_.empty()) {
-                std::set<std::string> all = all_reads(n.body);
+                std::set<std::string> all = classcell_reads(n.body);
                 if (all.count("super") || all.count("__class__")) {
                     reads.insert("__class__");
                     if (!class_cell_used_.empty()) class_cell_used_.back() = 1;
@@ -4128,9 +4130,11 @@ private:
         class_ns_.push_back(ns);
         class_globals_.push_back(declared_globals(n.body));
         class_nonlocals_.push_back(declared_nonlocals(n.body));
-        const std::string qn_str =
-            (!func_globals_.empty() && func_globals_.back().count(n.name))
-                ? n.name : qualname(n.name);
+        const bool global_cls =
+            !func_globals_.empty() && func_globals_.back().count(n.name);
+        std::vector<std::string> saved_qual;
+        if (global_cls) { saved_qual = qual_; qual_.clear(); }
+        const std::string qn_str = qualname(n.name);
         qual_.push_back(n.name);
         {
             ir::Value qn = const_str(qn_str, n.loc);
@@ -4145,6 +4149,13 @@ private:
         if (!n.type_params.empty()) {
             for (auto& [nm, tv] : class_tps)
                 store_name_keep(nm, tv, n.loc);
+        }
+        {
+            ir::Value ln = call_capi_imm("PyLong_FromLong", {},
+                                         (std::int64_t)n.loc.line, 0, n.loc, &ok);
+            if (!ok) return false;
+            mark_owned(ln);
+            store_name("__firstlineno__", ln, n.loc);
         }
         // A class body is not a call, so C1a's function trampoline never runs.
         // Push a frame whose f_locals is the namespace; locals() then sees
@@ -4218,6 +4229,7 @@ private:
         class_globals_.pop_back();
         class_nonlocals_.pop_back();
         qual_.pop_back();
+        if (global_cls) qual_ = std::move(saved_qual);
         class_cells_.pop_back();
         class_cell_used_.pop_back();
         class_dict_cells_.pop_back();

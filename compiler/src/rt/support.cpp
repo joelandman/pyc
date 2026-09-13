@@ -1234,13 +1234,19 @@ extern "C" PyObject* pyc_rt_class_meta(PyObject* bases, PyObject* kwds) {
             meta = explicit_meta;                        // owned
         }
     }
-    if (!meta) meta = Py_NewRef(reinterpret_cast<PyObject*>(&PyType_Type));
+    Py_ssize_t n = (bases && PyTuple_Check(bases)) ? PyTuple_GET_SIZE(bases) : 0;
+    if (!meta) {
+        if (n == 0)
+            meta = Py_NewRef(reinterpret_cast<PyObject*>(&PyType_Type));
+        else {
+            PyObject* b0 = PyTuple_GET_ITEM(bases, 0);
+            meta = Py_NewRef(reinterpret_cast<PyObject*>(Py_TYPE(b0)));
+        }
+    }
 
     // An explicit metaclass that is not a type at all is legal: CPython calls
     // it directly and skips the derivation entirely.
     if (!PyType_Check(meta)) return meta;
-
-    Py_ssize_t n = PyTuple_GET_SIZE(bases);
     for (Py_ssize_t i = 0; i < n; ++i) {
         PyObject* b = PyTuple_GET_ITEM(bases, i);        // borrowed
         PyObject* bt = reinterpret_cast<PyObject*>(Py_TYPE(b));
@@ -1470,6 +1476,8 @@ PyObject* type_lookup(PyObject* mgr, const char* name) {
     PyObject* t = reinterpret_cast<PyObject*>(Py_TYPE(mgr));
     PyObject* f = PyObject_GetAttrString(t, name);
     if (!f) {
+        if (!PyErr_ExceptionMatches(PyExc_AttributeError))
+            return nullptr;
         PyErr_Clear();
         PyObject* ae = PyObject_GetAttrString(t, "__aenter__");
         PyObject* ax = PyObject_GetAttrString(t, "__aexit__");
@@ -1498,15 +1506,26 @@ PyObject* type_lookup(PyObject* mgr, const char* name) {
 extern "C" PyObject* pyc_rt_cm_exit(PyObject* mgr) {
     PyObject* f = type_lookup(mgr, "__exit__");
     if (!f) return nullptr;
-    PyObject* bound = PyMethod_Check(f) ? f : PyObject_GetAttrString(mgr, "__exit__");
-    if (bound != f) { Py_DECREF(f); if (!bound) return nullptr; }
-    return bound;
+    descrgetfunc get = Py_TYPE(f)->tp_descr_get;
+    if (get) {
+        PyObject* bound = get(f, mgr, reinterpret_cast<PyObject*>(Py_TYPE(mgr)));
+        Py_DECREF(f);
+        return bound;
+    }
+    return f;
 }
 
 extern "C" PyObject* pyc_rt_cm_enter(PyObject* mgr) {
     PyObject* f = type_lookup(mgr, "__enter__");
     if (!f) return nullptr;
-    PyObject* r = PyObject_CallOneArg(f, mgr);
+    descrgetfunc get = Py_TYPE(f)->tp_descr_get;
+    if (get) {
+        PyObject* bound = get(f, mgr, reinterpret_cast<PyObject*>(Py_TYPE(mgr)));
+        Py_DECREF(f);
+        f = bound;
+        if (!f) return nullptr;
+    }
+    PyObject* r = PyObject_CallNoArgs(f);
     Py_DECREF(f);
     return r;
 }
