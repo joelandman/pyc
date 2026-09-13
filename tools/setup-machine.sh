@@ -6,6 +6,7 @@
 # build pyc_lower → smoke. Does not install LLVM; does not sudo.
 #
 #   ./tools/setup-machine.sh
+#   ./tools/setup-machine.sh --beside
 #   ./tools/setup-machine.sh --build-sysroot
 #   ./tools/setup-machine.sh --github-repo joelandman/pyc
 #
@@ -21,6 +22,7 @@ TAG="sysroot-cp314-linux-x86_64"
 ASSET="cp314-3.14.7-tier1-x86_64.tar.xz"
 BUILD_SYSROOT=0
 SKIP_COMPILER=0
+BESIDE=0
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 
 usage() { sed -n '2,/^set -euo/p' "$0" | sed 's/^# \{0,1\}//;$d'; exit 0; }
@@ -31,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --github-repo) GH_REPO="${2:?}"; shift 2;;
     --tag) TAG="${2:?}"; shift 2;;
     --asset) ASSET="${2:?}"; shift 2;;
+    --beside) BESIDE=1; shift;;
     --build-sysroot) BUILD_SYSROOT=1; shift;;
     --skip-compiler) SKIP_COMPILER=1; shift;;
     --jobs|-j) JOBS="${2:?}"; shift 2;;
@@ -40,6 +43,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 cd "$REPO"
+if (( BESIDE )); then
+  PREFIX="$REPO/compiler/tools/sysroot"
+fi
 
 pick_cxx() {
   local c
@@ -84,6 +90,14 @@ step_sysroot() {
     "$REPO/tools/install-sysroot.sh" --prefix "$PREFIX" --verify-only
     return 0
   fi
+  local home_default="$HOME/opt/py-sysroots/cp314-3.14.7-tier1"
+  if (( BESIDE )) && [[ -x "$home_default/bin/python3.14" || -x "$home_default/bin/python3" ]]; then
+    info "linking $PREFIX -> $home_default"
+    mkdir -p "$(dirname "$PREFIX")"
+    ln -sfn "$home_default" "$PREFIX"
+    "$REPO/tools/install-sysroot.sh" --prefix "$PREFIX" --verify-only
+    return 0
+  fi
   if (( BUILD_SYSROOT )); then
     "$REPO/tools/build-python-sysroot.sh" --version 3.14.7 --jobs "$JOBS" --prefix "$PREFIX"
     return 0
@@ -103,6 +117,11 @@ step_compiler() {
     return 0
   fi
   make -C "$REPO/compiler" CXX="$CXX"
+  if (( BESIDE )); then
+    cp -f /tmp/pyc_lower "$REPO/compiler/tools/pyc_lower"
+    chmod +x "$REPO/compiler/tools/pyc_lower"
+    info "copied pyc_lower next to pycc"
+  fi
 }
 
 step_smoke() {
@@ -111,11 +130,18 @@ step_smoke() {
     info "skipped"
     return 0
   fi
-  [[ -x /tmp/pyc_lower ]] || die "pyc_lower missing at /tmp/pyc_lower"
+  local lower=/tmp/pyc_lower
+  (( BESIDE )) && lower="$REPO/compiler/tools/pyc_lower"
+  [[ -x "$lower" ]] || die "pyc_lower missing at $lower"
   local src="/tmp/pyc-setup-machine-smoke.py"
   printf 'print(2 ** 10)\n' > "$src"
-  export PYC_SYSROOT="$PREFIX" PYC_LOWER=/tmp/pyc_lower
-  "$REPO/compiler/tools/pycc" "$src" -o /tmp/pyc-setup-smoke -O0
+  if (( BESIDE )); then
+    env -u PYC_SYSROOT -u PYC_LOWER \
+      "$REPO/compiler/tools/pycc" "$src" -o /tmp/pyc-setup-smoke -O0
+  else
+    PYC_SYSROOT="$PREFIX" PYC_LOWER=/tmp/pyc_lower \
+      "$REPO/compiler/tools/pycc" "$src" -o /tmp/pyc-setup-smoke -O0
+  fi
   local got
   got="$(PYTHONHOME="$PREFIX" /tmp/pyc-setup-smoke)"
   rm -f "$src" /tmp/pyc-setup-smoke
@@ -128,10 +154,19 @@ step_sysroot
 step_compiler
 step_smoke
 
-cat <<EOF
+if (( BESIDE )); then
+  cat <<EOF
+
+Ready. Sysroot and pyc_lower sit next to pycc; no env needed.
+  $REPO/compiler/tools/pycc prog.py -o prog -O0
+  # override: PYC_SYSROOT=... PYC_LOWER=...
+EOF
+else
+  cat <<EOF
 
 Ready.
   export PYC_SYSROOT=$PREFIX
   export PYC_LOWER=/tmp/pyc_lower
   $REPO/compiler/tools/pycc prog.py -o prog -O0
 EOF
+fi

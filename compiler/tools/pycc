@@ -3,6 +3,12 @@
 #
 #   pycc prog.py -o prog [--python=X.Y] [-std=pyX.Y] [--python-sysroot DIR]
 #
+# Sysroot search (S3): --python-sysroot, then $PYC_SYSROOT, then sysroot/
+# next to this script, then ../sysroot, then
+# $HOME/opt/py-sysroots/cp314-3.14.7-tier1. A directory counts if it has
+# pyc-sysroot.json or bin/python3*.
+# pyc_lower: $PYC_LOWER, then next to this script, then /tmp/pyc_lower.
+#
 # Tier 1 by construction: static libpython plus -rdynamic, so the binary has no
 # libpython dependency yet can still dlopen extension modules and wheels.
 # --whole-archive pulls every libpython object: without it, unused internals
@@ -10,9 +16,9 @@
 # _testinternalcapi fails with an undefined symbol.
 set -euo pipefail
 
-SYSROOT="${PYC_SYSROOT:-$HOME/opt/py-sysroots/cp314-3.14.7-tier1}"
-LOWER="${PYC_LOWER:-/tmp/pyc_lower}"
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PYCC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$PYCC_DIR/../.." && pwd)"
+FLAG_SYSROOT=""
 SRC=""; OUT="a.out"; KEEP=0; EMIT_LLVM=0; OPT="-O1"
 PYTHON_VER="${PYC_PYTHON:-}"
 STD_VER=""
@@ -25,8 +31,8 @@ LIST_TARGETS=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -o) OUT="$2"; shift 2;;
-    --sysroot|--python-sysroot) SYSROOT="$2"; shift 2;;
-    --sysroot=*|--python-sysroot=*) SYSROOT="${1#*=}"; shift;;
+    --sysroot|--python-sysroot) FLAG_SYSROOT="$2"; shift 2;;
+    --sysroot=*|--python-sysroot=*) FLAG_SYSROOT="${1#*=}"; shift;;
     --python) PYTHON_VER="$2"; shift 2;;
     --python=*) PYTHON_VER="${1#*=}"; shift;;
     --python-abi) PYTHON_ABI="$2"; shift 2;;
@@ -79,6 +85,84 @@ find_interpreter() {
   return 1
 }
 
+is_sysroot() {
+  local d="$1"
+  [[ -d "$d" ]] || return 1
+  [[ -f "$d/pyc-sysroot.json" ]] && return 0
+  [[ -x "$d/bin/python3" ]] && return 0
+  compgen -G "$d/bin/python3.[0-9]*" >/dev/null || return 1
+}
+
+abs_dir() {
+  (cd "$1" 2>/dev/null && pwd) || printf '%s' "$1"
+}
+
+resolve_sysroot() {
+  local c tried=()
+  if [[ -n "$FLAG_SYSROOT" ]]; then
+    c="$(abs_dir "$FLAG_SYSROOT")"
+    is_sysroot "$c" || {
+      echo "pycc: --python-sysroot is not a sysroot: $c" >&2
+      echo "  need pyc-sysroot.json or bin/python3*" >&2
+      exit 2
+    }
+    printf '%s' "$c"
+    return 0
+  fi
+  if [[ -n "${PYC_SYSROOT:-}" ]]; then
+    c="$(abs_dir "$PYC_SYSROOT")"
+    is_sysroot "$c" || {
+      echo "pycc: PYC_SYSROOT is not a sysroot: $c" >&2
+      echo "  need pyc-sysroot.json or bin/python3*" >&2
+      exit 2
+    }
+    printf '%s' "$c"
+    return 0
+  fi
+  for c in "$PYCC_DIR/sysroot" "$PYCC_DIR/../sysroot" \
+           "$HOME/opt/py-sysroots/cp314-3.14.7-tier1"; do
+    c="$(abs_dir "$c")"
+    tried+=("$c")
+    if is_sysroot "$c"; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  echo "pycc: no sysroot (need pyc-sysroot.json or bin/python3*)" >&2
+  echo "  tried:" >&2
+  local t
+  for t in "${tried[@]}"; do echo "    $t" >&2; done
+  echo "  set --python-sysroot DIR or PYC_SYSROOT, or put sysroot/ next to pycc" >&2
+  exit 2
+}
+
+SYSROOT="$(resolve_sysroot)"
+
+resolve_lower() {
+  local c tried=()
+  if [[ -n "${PYC_LOWER:-}" ]]; then
+    [[ -x "$PYC_LOWER" ]] || {
+      echo "pycc: PYC_LOWER is not executable: $PYC_LOWER" >&2
+      exit 2
+    }
+    printf '%s' "$PYC_LOWER"
+    return 0
+  fi
+  for c in "$PYCC_DIR/pyc_lower" /tmp/pyc_lower; do
+    tried+=("$c")
+    if [[ -x "$c" ]]; then
+      printf '%s' "$c"
+      return 0
+    fi
+  done
+  echo "pycc: no pyc_lower" >&2
+  echo "  tried:" >&2
+  local t
+  for t in "${tried[@]}"; do echo "    $t" >&2; done
+  echo "  set PYC_LOWER or put pyc_lower next to pycc (make -C compiler OUT=...)" >&2
+  exit 2
+}
+
 PY="$(find_interpreter "$SYSROOT" "${PYTHON_VER:-}" || true)"
 if [[ -z "$PY" ]]; then
   echo "pycc: no interpreter in sysroot $SYSROOT" >&2
@@ -109,6 +193,8 @@ if [[ $LIST_TARGETS -eq 1 ]]; then
   fi
   exit 0
 fi
+
+LOWER="$(resolve_lower)"
 
 [[ -n "$SRC" ]] || { echo "usage: pycc FILE [-o OUT] [--python=X.Y] [-std=pyX.Y] [--python-sysroot DIR]" >&2; exit 2; }
 
@@ -147,9 +233,20 @@ TMP="$(mktemp -d)"; trap '[[ $KEEP == 1 ]] || rm -rf "$TMP"' EXIT
 # exit, not as text on stderr. Exiting here on the status alone discarded it:
 # the user saw a bare exit 1 with no diagnostic. Hand the envelope to the
 # lowering stage, which renders it in the standard file:line:col form.
+PARSE_HOME=""
+if [[ -d "$PYCC_DIR/pyc_parse" ]]; then
+  PARSE_HOME="$PYCC_DIR"
+elif [[ -d "$PYCC_DIR/../pyc_parse" ]]; then
+  PARSE_HOME="$(cd "$PYCC_DIR/.." && pwd)"
+elif [[ -d "$REPO/compiler/pyc_parse" ]]; then
+  PARSE_HOME="$REPO/compiler"
+else
+  echo "pycc: no pyc_parse next to pycc or in compiler/" >&2
+  exit 2
+fi
 PARSE_ARGS=("$(realpath "$SRC")")
 if [[ -n "$STD_XY" ]]; then PARSE_ARGS+=(--feature-version "$STD_XY"); fi
-if ! PYTHONPATH="$REPO/compiler${PYTHONPATH:+:$PYTHONPATH}" \
+if ! PYTHONPATH="$PARSE_HOME${PYTHONPATH:+:$PYTHONPATH}" \
      "$PY" -m pyc_parse "${PARSE_ARGS[@]}" > "$TMP/ast.json" 2>"$TMP/parse.err"; then
   [[ -s "$TMP/parse.err" ]] && cat "$TMP/parse.err" >&2
   [[ -s "$TMP/ast.json" ]] && "$LOWER" "$TMP/ast.json" >/dev/null
@@ -211,9 +308,20 @@ esac
 # each Python call ~1.7KB of C stack and overflows 8MB at a few thousand
 # frames. Runtime objects are always -O2; generated IR keeps "$OPT".
 CXX="${PYC_CXX:-clang++}"
-INC_ALL="$INC -I $REPO/compiler/include"
+RT_HOME=""
+if [[ -d "$PYCC_DIR/include/pyc/rt" && -f "$PYCC_DIR/src/rt/entry.cpp" ]]; then
+  RT_HOME="$PYCC_DIR"
+elif [[ -d "$PYCC_DIR/../include/pyc/rt" && -f "$PYCC_DIR/../src/rt/entry.cpp" ]]; then
+  RT_HOME="$(cd "$PYCC_DIR/.." && pwd)"
+elif [[ -d "$REPO/compiler/include/pyc/rt" ]]; then
+  RT_HOME="$REPO/compiler"
+else
+  echo "pycc: no runtime sources (include/pyc/rt + src/rt) next to pycc or in compiler/" >&2
+  exit 2
+fi
+INC_ALL="$INC -I $RT_HOME/include"
 for rt in entry support frame; do
-  "$CXX" -std=c++20 -O2 $LTO $INC_ALL -c "$REPO/compiler/src/rt/${rt}.cpp" -o "$TMP/${rt}.o"
+  "$CXX" -std=c++20 -O2 $LTO $INC_ALL -c "$RT_HOME/src/rt/${rt}.cpp" -o "$TMP/${rt}.o"
 done
 "$CXX" -std=c++20 "$OPT" $LTO -rdynamic $INC_ALL \
   "$TMP/mod.ll" "$TMP/main.cpp" \

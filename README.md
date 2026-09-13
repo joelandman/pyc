@@ -36,15 +36,19 @@ CPython is how the tarball is *produced*, not how you onboard.
 On a new machine, from a clone:
 
 ```bash
-./tools/setup-machine.sh
+./tools/setup-machine.sh --beside
 # or, if the GitHub Release asset is not up yet:
-./tools/setup-machine.sh --build-sysroot
+./tools/setup-machine.sh --beside --build-sysroot
 ```
 
-That downloads (or builds) the sysroot, unpacks it, builds `pyc_lower`, and
-smokes `print(2**10)`. Then:
+That puts `sysroot/` and `pyc_lower` next to `compiler/tools/pycc`. No
+`PYC_SYSROOT` / `PYC_LOWER` needed (`--python-sysroot` and the env vars still
+override). Smoke is `print(2**10)`.
+
+To keep the sysroot under `$HOME/opt/...` instead:
 
 ```bash
+./tools/setup-machine.sh
 export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
 export PYC_LOWER=/tmp/pyc_lower
 ```

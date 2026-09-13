@@ -230,7 +230,7 @@ an independent runtime.
 | S0 now | Document (a)≠(b). Fix stale “frontend links libpython” CI comment. | Honest onboarding |
 | S1 done | `pycc` reads `pyc-sysroot.json`; `--python-sysroot`; no hardcoded `python3.14` | I8 locally |
 | S2 landing | Pack/install scripts + nightly `sysroot.yml` release `sysroot-cp314-linux-x86_64`. `build-python-sysroot.sh` remains the *producer*. | Developers do not compile CPython |
-| S3 later | Relocatable toolchain (`pycc` finds sysroot next to itself). Output `PyConfig.home` landed (PYTHONHOME, beside-exe, baked sysroot). | Download ≠ `$HOME/opt/...` |
+| S3 landing | `pycc` searches beside itself (`sysroot/`, `../sysroot`, `pyc_lower`). `setup-machine.sh --beside`. Output `PyConfig.home` already landed. | Download ≠ `$HOME/opt/...` |
 | S4 later | Casual `pycc file.py` uses bundled/downloaded sysroot. Missing target → compile error, not a wrong binary. Verify still uses that interpreter as oracle. PATH `python3` only for parse-only / `--emit-llvm` when `version_info[:2]` matches the PTD. | No local CPython install to compile a program |
 | S5 v1 | Release layout: `bin/pycc`, `lib/pyc/`, `sysroot/`. `--python=X.Y` is a second artifact, not a flag on one libpython. | VERSION_TARGETING as shipped |
 
