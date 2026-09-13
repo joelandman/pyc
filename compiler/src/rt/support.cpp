@@ -1951,13 +1951,18 @@ extern "C" int pyc_rt_del_global(const char* name) {
 }
 
 extern "C" PyObject* pyc_rt_star_annotation(PyObject* v) {
-    PyObject* typing = PyImport_ImportModule("typing");
-    if (!typing) return nullptr;
-    PyObject* unpack = PyObject_GetAttrString(typing, "Unpack");
-    Py_DECREF(typing);
-    if (!unpack) return nullptr;
-    PyObject* r = PyObject_GetItem(unpack, v);
-    Py_DECREF(unpack);
+    if (!v) { PyErr_BadInternalCall(); return nullptr; }
+    PyObject* t = PySequence_Tuple(v);
+    if (!t) return nullptr;
+    if (PyTuple_GET_SIZE(t) != 1) {
+        Py_DECREF(t);
+        PyErr_SetString(PyExc_TypeError,
+                        "starred annotation must unpack to one value");
+        return nullptr;
+    }
+    PyObject* r = PyTuple_GET_ITEM(t, 0);
+    Py_INCREF(r);
+    Py_DECREF(t);
     return r;
 }
 

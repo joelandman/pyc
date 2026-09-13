@@ -2678,11 +2678,12 @@ private:
     // a class made by type() with __annotate__ in its namespace, and a module
     // global of that name, both yield working __annotations__.
     //
-    // `format` is accepted and ignored. Measured: CPython's own generated
-    // annotate evaluates for format 1 (VALUE) and 2 (STRING) alike -- both
-    // raise NameError on an undefined annotation -- so matching that is what
-    // the evidence supports. If a test demands NotImplementedError for a
-    // format, the differential harness will say so.
+    // CPython's compiler-generated annotate accepts format 1 (VALUE) and 2
+    // (VALUE_WITH_FAKE_GLOBALS) and raises NotImplementedError otherwise.
+    // annotationlib rebinds __globals__ and calls format 2 to implement
+    // FORWARDREF and STRING. A class body stores the function as
+    // __annotate_func__; type's descriptor reads that. Storing __annotate__
+    // left a regular dict entry that shadowed TypedDict's wrapper.
     ir::Value make_annotate_fn(const AnnItems& items, const SourceLoc& loc,
                                bool class_scope, bool* ok) {
         ir::Value defaults;
@@ -2780,7 +2781,7 @@ private:
         bool ok = true;
         ir::Value fn = make_annotate_fn(keyed, loc, !class_ns_.empty(), &ok);
         if (!ok) return false;
-        store_name("__annotate__", fn, loc);
+        store_name(class_ns_.empty() ? "__annotate__" : "__annotate_func__", fn, loc);
         if (owns(fn)) release(fn, loc);
         return true;
     }
@@ -4127,7 +4128,9 @@ private:
         class_ns_.push_back(ns);
         class_globals_.push_back(declared_globals(n.body));
         class_nonlocals_.push_back(declared_nonlocals(n.body));
-        const std::string qn_str = qualname(n.name);
+        const std::string qn_str =
+            (!func_globals_.empty() && func_globals_.back().count(n.name))
+                ? n.name : qualname(n.name);
         qual_.push_back(n.name);
         {
             ir::Value qn = const_str(qn_str, n.loc);
@@ -5691,7 +5694,7 @@ private:
             return out;
         }
         auto it = locals_.find(n.id);
-        if (it != locals_.end()) {
+        if (it != locals_.end() && cit == cells_.end()) {
             // May raise UnboundLocalError: a local read before assignment is
             // an error, not a fallback to the global of the same name.
             emit(ir::Instr{ir::Op::LoadLocal, {}, out, Ownership::Owned,
