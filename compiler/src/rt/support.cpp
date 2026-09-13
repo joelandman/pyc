@@ -1442,29 +1442,29 @@ extern "C" int pyc_rt_exit_normal(PyObject* exitf) {
 extern "C" int pyc_rt_exit_exc(PyObject* exitf) {
     PyObject* exc = PyErr_GetRaisedException();          // clears the indicator
     if (!exc) return 0;
+    PyObject* prev_handled = PyErr_GetHandledException();
+    PyErr_SetHandledException(exc);
     PyObject* type = reinterpret_cast<PyObject*>(Py_TYPE(exc));
     PyObject* tb = PyException_GetTraceback(exc);
     PyObject* r = PyObject_CallFunctionObjArgs(exitf, type, exc,
                                                tb ? tb : Py_None, nullptr);
     Py_XDECREF(tb);
+    PyErr_SetHandledException(prev_handled);
+    Py_XDECREF(prev_handled);
     if (!r) {
         PyObject* raised = PyErr_GetRaisedException();
-        if (raised && raised != exc)
-            PyException_SetContext(raised, exc);
-        else
-            Py_DECREF(exc);
-        if (raised) PyErr_SetRaisedException(raised);
+        if (raised && raised != exc) Py_DECREF(exc);
+        else if (!raised) raised = exc;
+        PyErr_SetRaisedException(raised);
         return -1;
     }
     int suppress = PyObject_IsTrue(r);
     Py_DECREF(r);
     if (suppress < 0) {
         PyObject* raised = PyErr_GetRaisedException();
-        if (raised && raised != exc)
-            PyException_SetContext(raised, exc);
-        else
-            Py_DECREF(exc);
-        if (raised) PyErr_SetRaisedException(raised);
+        if (raised && raised != exc) Py_DECREF(exc);
+        else if (!raised) raised = exc;
+        PyErr_SetRaisedException(raised);
         return -1;
     }
     if (suppress) { Py_DECREF(exc); return 1; }
