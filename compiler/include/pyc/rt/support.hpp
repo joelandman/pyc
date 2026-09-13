@@ -77,6 +77,8 @@ PyObject* pyc_rt_build_class(const char* name, PyObject* bases, PyObject* ns,
 // and is REMOVED from kwds; otherwise the most derived among the bases' types.
 // A conflict is a TypeError, as in CPython, never a silently wrong type.
 PyObject* pyc_rt_expand_bases(PyObject* bases);
+PyObject* pyc_rt_pep695_orig_bases(PyObject* orig, PyObject* type_params);
+PyObject* pyc_rt_ns_or(PyObject* ns, PyObject* name, PyObject* fallback);
 int pyc_rt_set_orig_bases(PyObject* cls, PyObject* orig, PyObject* expanded);
 PyObject* pyc_rt_class_meta(PyObject* bases, PyObject* kwds);
 

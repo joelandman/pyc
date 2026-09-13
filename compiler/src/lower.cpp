@@ -1317,6 +1317,7 @@ private:
                 tp_cells[nm] = cell;
                 if (owns(tv)) release(tv, n.loc);
             }
+            type_param_env_.pop_back();
         }
         return lower_cpython_function(n.name, n.decorator_list, defaults, n.loc,
                                       kwdefaults, tp_cells, tp_tuple,
@@ -1492,6 +1493,7 @@ private:
                 tp_cells[nm] = cell;
                 if (owns(tv)) release(tv, n.loc);
             }
+            type_param_env_.pop_back();
         }
 
         // A def containing yield, and every async def, has its body compiled
@@ -4023,8 +4025,15 @@ private:
 
     bool lower_classdef(const ClassDef& n) {
         bool ok = true;
-        // Bases first: they are ordinary expressions evaluated in the
-        // ENCLOSING scope, before the body runs.
+        // PEP 695: type params exist before bases, so `class C[T](list[T])`
+        // and `class C[T, U: T]` see T. The overlay shadows enclosing locals
+        // of the same name for the rest of this statement.
+        std::vector<std::pair<std::string, ir::Value>> class_tps;
+        ir::Value class_tp_tuple;
+        if (!n.type_params.empty()) {
+            if (!emit_type_params(n.type_params, n.loc, &class_tp_tuple, &class_tps))
+                return false;
+        }
         ir::Value bases;
         bool star_base = false;
         for (const expr& b : n.bases)
@@ -4130,11 +4139,7 @@ private:
         if (!n.keywords.empty()) { forget(kwds); frame_owned_.push_back(kwds); }
         auto saved_locals = locals_;
         locals_.clear();                  // names in a class body are not fast locals
-        std::vector<std::pair<std::string, ir::Value>> class_tps;
-        ir::Value class_tp_tuple;
         if (!n.type_params.empty()) {
-            if (!emit_type_params(n.type_params, n.loc, &class_tp_tuple, &class_tps))
-                return false;
             for (auto& [nm, tv] : class_tps)
                 store_name_keep(nm, tv, n.loc);
         }
@@ -4235,6 +4240,21 @@ private:
         frame_owned_.pop_back();                            // bases
         frame_owned_.pop_back();                            // ns
 
+        if (class_tp_tuple.valid()) {
+            ir::Value new_orig = call_capi("pyc_rt_pep695_orig_bases",
+                                           {orig_bases, class_tp_tuple}, n.loc, &ok);
+            if (!ok) return false;
+            mark_owned(new_orig);
+            if (owns(orig_bases)) release(orig_bases, n.loc);
+            orig_bases = new_orig;
+            ir::Value new_bases = call_capi("pyc_rt_expand_bases", {orig_bases},
+                                            n.loc, &ok);
+            if (!ok) return false;
+            mark_owned(new_bases);
+            emit_decref(bases, n.loc);
+            bases = new_bases;
+        }
+
         call_capi("pyc_rt_set_orig_bases", {ns, orig_bases, bases}, n.loc, &ok,
                  {orig_bases});
         if (!ok) return false;
@@ -4261,6 +4281,7 @@ private:
             if (owns(class_tp_tuple)) release(class_tp_tuple, n.loc);
             for (auto& [nm, tv] : class_tps)
                 if (owns(tv)) release(tv, n.loc);
+            type_param_env_.pop_back();
         }
         frame_owned_.pop_back();                            // ccell
         emit_decref(ccell, n.loc);
@@ -5640,6 +5661,16 @@ private:
         ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         const std::string id = (locals_.count(n.id) || cells_.count(n.id))
                                    ? n.id : mangle_ident(n.id);
+        ir::Value tp_val;
+        for (auto eit = type_param_env_.rbegin(); eit != type_param_env_.rend(); ++eit) {
+            auto fit = eit->find(n.id);
+            if (fit != eit->end()) { tp_val = fit->second; break; }
+        }
+        if (tp_val.valid() && class_ns_.empty()) {
+            out = call_capi("pyc_rt_newref", {tp_val}, n.loc, ok);
+            if (*ok) mark_owned(out);
+            return out;
+        }
         auto cit = cells_.find(n.id);
         if (cit != cells_.end() && class_ns_.empty()) {
             ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
@@ -5666,6 +5697,13 @@ private:
             emit(ir::Instr{ir::Op::LoadLocal, {}, out, Ownership::Owned,
                            n.id, it->second, 0, n.loc, make_landing_pad(n.loc)});
         } else if (!class_ns_.empty()) {
+            if (tp_val.valid()) {
+                ir::Value key = const_str(id, n.loc);
+                out = call_capi("pyc_rt_ns_or", {class_ns_.back(), key, tp_val},
+                                n.loc, ok, {key});
+                if (*ok) mark_owned(out);
+                return out;
+            }
             if (!class_nonlocals_.empty() && class_nonlocals_.back().count(n.id)
                 && cit != cells_.end()) {
                 ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
@@ -5708,13 +5746,6 @@ private:
             *ok = true;
             return out;
         } else {
-            for (auto eit = type_param_env_.rbegin(); eit != type_param_env_.rend(); ++eit) {
-                auto fit = eit->find(n.id);
-                if (fit == eit->end()) continue;
-                out = call_capi("pyc_rt_newref", {fit->second}, n.loc, ok);
-                if (*ok) mark_owned(out);
-                return out;
-            }
             emit(ir::Instr{ir::Op::LoadGlobal, {}, out, Ownership::Owned,
                            id, 0, 0, n.loc, make_landing_pad(n.loc)});
         }
@@ -6469,8 +6500,9 @@ private:
                           ir::Value* tup,
                           std::vector<std::pair<std::string, ir::Value>>* binds) {
         bool ok = true;
+        type_param_env_.emplace_back();
         *tup = call_capi_imm("PyTuple_New", {}, (std::int64_t)tps.size(), 0, loc, &ok);
-        if (!ok) return false;
+        if (!ok) { type_param_env_.pop_back(); return false; }
         mark_owned(*tup);
         for (std::size_t i = 0; i < tps.size(); ++i) {
             std::string nm;
@@ -6500,7 +6532,7 @@ private:
             ir::Value b, d;
             if (bound) {
                 b = lower_expr(*bound, &ok);
-                if (!ok) return false;
+                if (!ok) { type_param_env_.pop_back(); return false; }
             } else {
                 b = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
                 emit(ir::Instr{ir::Op::ConstNone, {}, b, Ownership::Owned, "",
@@ -6509,7 +6541,7 @@ private:
             }
             if (deflt) {
                 d = lower_expr(*deflt, &ok);
-                if (!ok) return false;
+                if (!ok) { type_param_env_.pop_back(); return false; }
             } else {
                 d = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
                 emit(ir::Instr{ir::Op::ConstNone, {}, d, Ownership::Owned, "",
@@ -6518,13 +6550,14 @@ private:
             }
             ir::Value tv = call_capi("pyc_rt_type_param", {kn, namestr, b, d},
                                      loc, &ok, {kn, namestr, b, d});
-            if (!ok) return false;
+            if (!ok) { type_param_env_.pop_back(); return false; }
             mark_owned(tv);
             emit(ir::Instr{ir::Op::IncRef, {tv}, std::nullopt,
                            Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
             call_capi_imm("PyTuple_SetItem", {*tup, tv}, (std::int64_t)i, 1, loc, &ok);
-            if (!ok) return false;
+            if (!ok) { type_param_env_.pop_back(); return false; }
             binds->push_back({nm, tv});
+            type_param_env_.back()[nm] = tv;
         }
         return true;
     }
@@ -6547,10 +6580,6 @@ private:
                 return false;
             if (in_class) {
                 for (auto& [k, v] : bindings) store_name_keep(k, v, n.loc);
-            } else {
-                std::map<std::string, ir::Value> env;
-                for (auto& [k, v] : bindings) env[k] = v;
-                type_param_env_.push_back(std::move(env));
             }
         }
         ir::Value val = lower_expr(*n.value, &ok);
@@ -6562,9 +6591,8 @@ private:
                               n.loc, &ok, {key});
                     if (!ok) return false;
                 }
-            } else {
-                type_param_env_.pop_back();
             }
+            type_param_env_.pop_back();
         }
         if (!ok) return false;
         ir::Value ta = call_capi("pyc_rt_type_alias", {namestr, val, params},

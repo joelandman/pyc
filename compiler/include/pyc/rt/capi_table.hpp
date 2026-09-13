@@ -829,6 +829,8 @@ inline constexpr CApiSymbol kCApiSymbols[] = {
     {"pyc_rt_gil_acquire", Ownership::NotAnObject, false, 0, {}, false, "", false, "", ""},
     {"pyc_rt_bind_method", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
     {"pyc_rt_expand_bases", Ownership::Owned, true, 1, {}, false, "", false, "", "o"},
+    {"pyc_rt_pep695_orig_bases", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
+    {"pyc_rt_ns_or", Ownership::Owned, true, 3, {}, false, "", false, "", "ooo"},
     {"pyc_rt_set_orig_bases", Ownership::NotAnObject, true, 3, {}, false, "", false, "", "ooo"},
     {"pyc_rt_class_meta", Ownership::Owned, true, 2, {}, false, "", false, "", "oo"},
     {"pyc_rt_class_prepare", Ownership::Owned, true, 4, {}, false, "", false, "", "oooo"},

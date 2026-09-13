@@ -1131,6 +1131,85 @@ fail:
     return nullptr;
 }
 
+// `class C[T]:` is `class C(Generic[T])` with T in __type_params__. CPython
+// appends Generic[*type_params] to the original bases (Unpack wrapping a
+// TypeVarTuple) so __mro_entries__ yields Generic and C[int] is a GenericAlias.
+extern "C" PyObject* pyc_rt_pep695_orig_bases(PyObject* orig, PyObject* type_params) {
+    if (!orig || !PyTuple_Check(orig) || !type_params || !PyTuple_Check(type_params)) {
+        PyErr_SetString(PyExc_TypeError, "PEP 695 bases require tuples");
+        return nullptr;
+    }
+    Py_ssize_t pn = PyTuple_GET_SIZE(type_params);
+    if (pn == 0) {
+        Py_INCREF(orig);
+        return orig;
+    }
+    PyObject* typing = PyImport_ImportModule("typing");
+    if (!typing) return nullptr;
+    PyObject* generic = PyObject_GetAttrString(typing, "Generic");
+    PyObject* unpack = PyObject_GetAttrString(typing, "Unpack");
+    PyObject* tvt = PyObject_GetAttrString(typing, "TypeVarTuple");
+    Py_DECREF(typing);
+    if (!generic || !unpack || !tvt) {
+        Py_XDECREF(generic); Py_XDECREF(unpack); Py_XDECREF(tvt);
+        return nullptr;
+    }
+    PyObject* items = PyTuple_New(pn);
+    if (!items) {
+        Py_DECREF(generic); Py_DECREF(unpack); Py_DECREF(tvt);
+        return nullptr;
+    }
+    for (Py_ssize_t i = 0; i < pn; ++i) {
+        PyObject* p = PyTuple_GET_ITEM(type_params, i);
+        int is_tvt = PyObject_IsInstance(p, tvt);
+        if (is_tvt < 0) {
+            Py_DECREF(items); Py_DECREF(generic); Py_DECREF(unpack); Py_DECREF(tvt);
+            return nullptr;
+        }
+        PyObject* item;
+        if (is_tvt) {
+            item = PyObject_GetItem(unpack, p);
+            if (!item) {
+                Py_DECREF(items); Py_DECREF(generic); Py_DECREF(unpack); Py_DECREF(tvt);
+                return nullptr;
+            }
+        } else {
+            item = Py_NewRef(p);
+        }
+        PyTuple_SET_ITEM(items, i, item);
+    }
+    Py_DECREF(tvt);
+    Py_DECREF(unpack);
+    PyObject* key = pn == 1 ? PyTuple_GET_ITEM(items, 0) : items;
+    PyObject* ga = PyObject_GetItem(generic, key);
+    Py_DECREF(generic);
+    Py_DECREF(items);
+    if (!ga) return nullptr;
+    Py_ssize_t n = PyTuple_GET_SIZE(orig);
+    PyObject* out = PyTuple_New(n + 1);
+    if (!out) { Py_DECREF(ga); return nullptr; }
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* b = PyTuple_GET_ITEM(orig, i);
+        Py_INCREF(b);
+        PyTuple_SET_ITEM(out, i, b);
+    }
+    PyTuple_SET_ITEM(out, n, ga);
+    return out;
+}
+
+extern "C" PyObject* pyc_rt_ns_or(PyObject* ns, PyObject* name, PyObject* fallback) {
+    if (!ns || !name || !fallback) { PyErr_BadInternalCall(); return nullptr; }
+    PyObject* v = PyObject_GetItem(ns, name);
+    if (v) return v;
+    if (!PyErr_Occurred()) return Py_NewRef(fallback);
+    if (PyErr_ExceptionMatches(PyExc_KeyError)
+        || PyErr_ExceptionMatches(PyExc_AttributeError)) {
+        PyErr_Clear();
+        return Py_NewRef(fallback);
+    }
+    return nullptr;
+}
+
 extern "C" int pyc_rt_set_orig_bases(PyObject* ns, PyObject* orig,
                                      PyObject* expanded) {
     if (!ns || orig == expanded) return 0;
