@@ -1348,6 +1348,15 @@ private:
                     cell = eit->second;
                     emit(ir::Instr{ir::Op::IncRef, {cell}, std::nullopt,
                                    Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+                } else if (fv2 == "__class__" && !class_cells_.empty()) {
+                    cell = class_cells_.back();
+                    emit(ir::Instr{ir::Op::IncRef, {cell}, std::nullopt,
+                                   Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
+                    if (!class_cell_used_.empty()) class_cell_used_.back() = 1;
+                } else if (fv2 == "__classdict__" && !class_dict_cells_.empty()) {
+                    cell = class_dict_cells_.back();
+                    emit(ir::Instr{ir::Op::IncRef, {cell}, std::nullopt,
+                                   Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
                 } else {
                     auto cit = cells_.find(fv2);
                     if (cit == cells_.end())
