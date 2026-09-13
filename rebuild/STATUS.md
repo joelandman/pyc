@@ -13,7 +13,7 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
 I6. Language + gaps + concurrency is **788/788** impactful. `Lib/test` is
-**272/389 = 69.92%** (`-O0`, sysroot 3.14.7, `--stdlib`). C1 (frames) and
+**339/389 = 87.15%** (`-O0`, sysroot 3.14.7, `--stdlib`). C1 (frames) and
 C2 (periodic GIL) are closed. The remaining product gap is not a new
 runtime: it is well-formed IR on every accepted program, named refusals
 instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and a developer
@@ -24,8 +24,8 @@ toolchain that still requires a purpose-built 3.14.7 sysroot.
 | Check | Result |
 |---|---|
 | language + gaps + concurrency | 788/788 impactful |
-| `Lib/test` (I6) | 272/389 (69.92%) |
-| I6 composition | 254 clean + 18 `STDERR_DIFFERS`-only = 272 pass |
+| `Lib/test` (I6) | 339/389 (87.15%) |
+| I6 composition | 331 clean + 8 `STDERR_DIFFERS`-only = 339 pass |
 | `DID_NOT_COMPILE` | 0 |
 | `EXIT_DIFFERS` | 98 |
 | `STDOUT_DIFFERS` | 10 |
@@ -124,7 +124,7 @@ Probes: `verify/corpus/language/getframemodulename.py`,
 ### P2 — product / process
 
 9. **I6 republished 2026-09-12.** `compiler/baseline-libtest.json` is
-    272/389 vs sysroot 3.14.7, `jobs=8`, `-O0`. `DID_NOT_COMPILE` is 0.
+    339/389 vs sysroot 3.14.7, `jobs=8`, `-O0`. `DID_NOT_COMPILE` is 0.
 10. **Developer sysroot.** LLVM 22 + hand-built 3.14.7 tree +
     `PYC_LOWER=/tmp/pyc_lower`. See workstream S below.
 11. **Output home.** `PyConfig.home` is set from `PYTHONHOME`, then
@@ -155,7 +155,7 @@ works), and completeness is measured and not gamed. Not: C speed, two
 | M2 | `make -C verify fast` | `--fail-on-silent-wrong` |
 | M3 | CI `ldd` smoke | no `libpython` `DT_NEEDED` |
 | M4 | CI wheel step | NumPy import+run in that binary |
-| M5 | I6 vs README | **246/389 (63.24%)**, no regress |
+| M5 | I6 vs README | **339/389 (87.15%)**, no regress |
 | M6 | remaining compile fails | construct + line + reason — **not** invalid LLVM IR |
 
 **Not MVP gates:** unittest metric; `--python=3.13`; ELF `-static`; unboxing
