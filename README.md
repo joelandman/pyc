@@ -33,44 +33,30 @@ Needs clang++/LLVM 22 and a CPython **sysroot** (Tier 1: static libpython,
 dynamic libc, `-rdynamic`). Prefer a prebuilt tarball (S2). Compiling
 CPython is how the tarball is *produced*, not how you onboard.
 
-On a new machine, from a clone:
+On a new machine, from a clone (LLVM 22 + `make -C compiler`):
+
+```bash
+./compiler/tools/pycc --fetch-sysroot
+./compiler/tools/pycc hello.py -o hello
+```
+
+`--fetch-sysroot` installs the S2 tarball next to `pycc`. After that, no
+`PYC_SYSROOT` is required (`--python-sysroot` and the env var still override).
+Missing sysroot is a compile error, not a fallback to PATH `python3`.
+`PYC_FETCH=1` fetches on first compile.
+
+All-in-one (sysroot + `pyc_lower` beside `pycc` + smoke):
 
 ```bash
 ./tools/setup-machine.sh --beside
-# or, if the GitHub Release asset is not up yet:
-./tools/setup-machine.sh --beside --build-sysroot
 ```
 
-That puts `sysroot/` and `pyc_lower` next to `compiler/tools/pycc`. No
-`PYC_SYSROOT` / `PYC_LOWER` needed (`--python-sysroot` and the env vars still
-override). Smoke is `print(2**10)`.
-
-To keep the sysroot under `$HOME/opt/...` instead:
-
-```bash
-./tools/setup-machine.sh
-export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
-export PYC_LOWER=/tmp/pyc_lower
-```
-
-Manual equivalent:
-
-```bash
-# 1. Sysroot — download cp314-3.14.7-tier1-x86_64.tar.xz from
-#    https://github.com/joelandman/pyc/releases/tag/sysroot-cp314-linux-x86_64
-./tools/install-sysroot.sh --archive cp314-3.14.7-tier1-x86_64.tar.xz \
-  --prefix "$HOME/opt/py-sysroots/cp314-3.14.7-tier1"
-export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
-
-# 2. Compiler
-make -C compiler                          # writes /tmp/pyc_lower
-```
-
-If no release asset exists yet, or you are changing A2 headers:
+If the GitHub Release asset is missing, or you are changing A2 headers,
+`build-python-sysroot.sh` is how the tarball is *produced*:
 
 ```bash
 ./tools/build-python-sysroot.sh --version 3.14.7 --jobs "$(nproc)"
-export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
+# or: ./tools/setup-machine.sh --beside --build-sysroot
 ```
 
 ## Usage

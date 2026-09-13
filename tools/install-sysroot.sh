@@ -89,7 +89,23 @@ verify_sysroot() {
   local got want="15511210043330985984000000"
   got="$("${py_clean[@]}" -c 'import math;print(math.factorial(25))')"
   [[ "$got" == "$want" ]] || die "factorial(25)=$got (want $want) — CHARTER I2"
-  info "verify ok  $py  factorial(25) matches"
+  local ident
+  ident="$("${py_clean[@]}" - "$root/pyc-sysroot.json" <<'PY'
+import json, os, platform, sys
+path = sys.argv[1]
+host = platform.machine() or "unknown"
+data = {}
+if os.path.isfile(path):
+    data = json.load(open(path))
+arch = data.get("machine") or ""
+glibc = data.get("glibc") or "unknown"
+if arch and host and arch != host:
+    sys.stderr.write("machine mismatch: archive %s host %s\n" % (arch, host))
+    sys.exit(2)
+print("machine %s  glibc %s" % (host, glibc))
+PY
+  )" || die "sysroot identity check failed"
+  info "verify ok  $py  factorial(25) matches  $ident"
 }
 
 if (( VERIFY_ONLY )); then

@@ -2,6 +2,7 @@
 # Compile a Python file to a native executable (INTERFACES.md §5).
 #
 #   pycc prog.py -o prog [--python=X.Y] [-std=pyX.Y] [--python-sysroot DIR]
+#   pycc --fetch-sysroot
 #
 # Sysroot search (S3): --python-sysroot, then $PYC_SYSROOT, then sysroot/
 # next to this script, then ../sysroot, then
@@ -19,6 +20,7 @@ set -euo pipefail
 PYCC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$PYCC_DIR/../.." && pwd)"
 FLAG_SYSROOT=""
+FETCH_SYSROOT=0
 SRC=""; OUT="a.out"; KEEP=0; EMIT_LLVM=0; OPT="-O1"
 PYTHON_VER="${PYC_PYTHON:-}"
 STD_VER=""
@@ -39,6 +41,7 @@ while [[ $# -gt 0 ]]; do
     --python-abi=*) PYTHON_ABI="${1#*=}"; shift;;
     -std) STD_VER="$2"; shift 2;;
     -std=*) STD_VER="${1#*=}"; shift;;
+    --fetch-sysroot) FETCH_SYSROOT=1; shift;;
     --list-python-targets) LIST_TARGETS=1; shift;;
     --keep) KEEP=1; shift;;
     --emit-llvm) EMIT_LLVM=1; shift;;
@@ -106,7 +109,7 @@ resolve_sysroot() {
       echo "  need pyc-sysroot.json or bin/python3*" >&2
       exit 2
     }
-    printf '%s' "$c"
+    SYSROOT="$c"
     return 0
   fi
   if [[ -n "${PYC_SYSROOT:-}" ]]; then
@@ -116,7 +119,7 @@ resolve_sysroot() {
       echo "  need pyc-sysroot.json or bin/python3*" >&2
       exit 2
     }
-    printf '%s' "$c"
+    SYSROOT="$c"
     return 0
   fi
   for c in "$PYCC_DIR/sysroot" "$PYCC_DIR/../sysroot" \
@@ -124,19 +127,87 @@ resolve_sysroot() {
     c="$(abs_dir "$c")"
     tried+=("$c")
     if is_sysroot "$c"; then
-      printf '%s' "$c"
+      SYSROOT="$c"
       return 0
     fi
   done
+  _SYSROOT_TRIED=("${tried[@]}")
+  SYSROOT=""
+  return 1
+}
+
+print_sysroot_miss() {
   echo "pycc: no sysroot (need pyc-sysroot.json or bin/python3*)" >&2
   echo "  tried:" >&2
   local t
-  for t in "${tried[@]}"; do echo "    $t" >&2; done
-  echo "  set --python-sysroot DIR or PYC_SYSROOT, or put sysroot/ next to pycc" >&2
-  exit 2
+  for t in "${_SYSROOT_TRIED[@]+"${_SYSROOT_TRIED[@]}"}"; do echo "    $t" >&2; done
+  echo "  pycc --fetch-sysroot" >&2
+  echo "  # or: PYC_FETCH=1 pycc file.py" >&2
+  echo "  # or: ./tools/setup-machine.sh --beside" >&2
+  echo "  # or: --python-sysroot DIR / PYC_SYSROOT" >&2
 }
 
-SYSROOT="$(resolve_sysroot)"
+find_install_sysroot() {
+  local c
+  for c in "$PYCC_DIR/install-sysroot.sh" \
+           "$PYCC_DIR/../../tools/install-sysroot.sh" \
+           "$REPO/tools/install-sysroot.sh"; do
+    [[ -f "$c" ]] || continue
+    printf '%s' "$(cd "$(dirname "$c")" && pwd)/$(basename "$c")"
+    return 0
+  done
+  return 1
+}
+
+fetch_sysroot() {
+  local dest="$PYCC_DIR/sysroot"
+  local tag="${PYC_SYSROOT_TAG:-sysroot-cp314-linux-x86_64}"
+  local asset="${PYC_SYSROOT_ASSET:-cp314-3.14.7-tier1-x86_64.tar.xz}"
+  local gh="${PYC_GITHUB_REPO:-joelandman/pyc}"
+  local inst archive url
+  inst="$(find_install_sysroot)" || {
+    echo "pycc: --fetch-sysroot needs tools/install-sysroot.sh" >&2
+    exit 2
+  }
+  if is_sysroot "$dest"; then
+    echo "pycc: sysroot already at $dest" >&2
+    "$inst" --prefix "$dest" --verify-only
+    return 0
+  fi
+  command -v curl >/dev/null 2>&1 || { echo "pycc: curl required for --fetch-sysroot" >&2; exit 2; }
+  archive="$(mktemp "${TMPDIR:-/tmp}/pyc-sysroot.XXXXXX.tar.xz")"
+  url="https://github.com/${gh}/releases/download/${tag}/${asset}"
+  echo "pycc: downloading $url" >&2
+  if ! curl -fL --retry 3 -o "$archive" "$url"; then
+    rm -f "$archive"
+    echo "pycc: download failed" >&2
+    echo "  $url" >&2
+    exit 2
+  fi
+  "$inst" --archive "$archive" --prefix "$dest"
+  rm -f "$archive"
+  echo "pycc: sysroot installed at $dest" >&2
+}
+
+if [[ $FETCH_SYSROOT -eq 1 ]]; then
+  fetch_sysroot
+  [[ -n "$SRC" || $LIST_TARGETS -eq 1 ]] || exit 0
+fi
+
+_SYSROOT_TRIED=()
+SYSROOT=""
+if ! resolve_sysroot; then
+  if [[ "${PYC_FETCH:-0}" == "1" && $FETCH_SYSROOT -eq 0
+        && -z "$FLAG_SYSROOT" && -z "${PYC_SYSROOT:-}" ]]; then
+    echo "pycc: PYC_FETCH=1, fetching sysroot" >&2
+    fetch_sysroot
+    resolve_sysroot || true
+  fi
+fi
+if [[ -z "${SYSROOT:-}" ]]; then
+  print_sysroot_miss
+  exit 2
+fi
 
 resolve_lower() {
   local c tried=()
@@ -259,9 +330,25 @@ if [[ -x "${PY}-config" ]]; then CFG="${PY}-config"
 elif [[ -x "$SYSROOT/bin/python3-config" ]]; then CFG="$SYSROOT/bin/python3-config"
 else echo "pycc: no python-config next to $PY" >&2; exit 2
 fi
-INC="$("$CFG" --includes)"
-LIBPL="$($PY -c 'import sysconfig;print(sysconfig.get_config_var("LIBPL"))')"
-LIB="$LIBPL/$($PY -c 'import sysconfig;print(sysconfig.get_config_var("LIBRARY"))')"
+INC=""
+LIB=""
+if [[ -f "$SYSROOT/pyc-sysroot.json" ]]; then
+  INC_DIR="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("include") or "")' "$SYSROOT/pyc-sysroot.json")"
+  LIB="$("$PY" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("libpython_static") or "")' "$SYSROOT/pyc-sysroot.json")"
+  [[ -d "$INC_DIR" ]] && INC="-I$INC_DIR"
+  [[ -f "$LIB" ]] || LIB=""
+fi
+if [[ -z "$INC" ]]; then INC="$("$CFG" --includes)"; fi
+if [[ -z "$LIB" ]]; then
+  LIBPL="$($PY -c 'import sysconfig;print(sysconfig.get_config_var("LIBPL") or "")')"
+  LIBNAME="$($PY -c 'import sysconfig;print(sysconfig.get_config_var("LIBRARY") or "")')"
+  if [[ -n "$LIBPL" && -n "$LIBNAME" && -f "$LIBPL/$LIBNAME" ]]; then
+    LIB="$LIBPL/$LIBNAME"
+  else
+    LIB="$(compgen -G "$SYSROOT/lib/python$XY/config-*/libpython*.a" | head -1 || true)"
+  fi
+fi
+[[ -f "$LIB" ]] || { echo "pycc: no libpython.a under $SYSROOT" >&2; exit 2; }
 
 FILE_C="$("$PY" -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(realpath "$SRC")")"
 HOME_C="$("$PY" -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(realpath "$SYSROOT")")"

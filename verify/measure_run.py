@@ -105,8 +105,11 @@ def main() -> int:
     if pyc is None:
         print("error: no pyc binary (--pyc or $PYC_BINARY)", file=sys.stderr)
         return 2
-    oracle = (args.oracle or corpus_mod.resolve_sysroot_oracle(args.sysroot)
-              or Path(sys.executable))
+    oracle = args.oracle or corpus_mod.resolve_sysroot_oracle(args.sysroot)
+    if oracle is None:
+        print("error: no oracle (--oracle or --sysroot); "
+              "PATH python3 is not the sysroot (CHARTER I5)", file=sys.stderr)
+        return 2
 
     cases: list[Case] = []
     for d in args.corpus:
