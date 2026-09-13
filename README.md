@@ -33,38 +33,48 @@ Needs clang++/LLVM 22 and a CPython **sysroot** (Tier 1: static libpython,
 dynamic libc, `-rdynamic`). Prefer a prebuilt tarball (S2). Compiling
 CPython is how the tarball is *produced*, not how you onboard.
 
-On a new machine, from a clone (LLVM 22 + `make -C compiler`):
+Install prefix (no clone on `PATH`):
+
+```bash
+./tools/install-pyc.sh --prefix "$HOME/opt/pyc"
+export PATH="$HOME/opt/pyc/bin:$PATH"
+pycc --fetch-sysroot          # into prefix/sysroots/cp314-3.14.7-tier1
+pycc hello.py -o hello
+pycc --python=3.14 hello.py -o hello   # selects that sysroot artifact
+pycc --list-python-targets
+```
+
+Layout: `bin/pycc`, `bin/pyc_lower`, `lib/pyc/`, `sysroots/<abi>-<version>-tier1/`.
+`--python=X.Y` picks a tree under `sysroots/`; a missing version is an error,
+not a silent fallback. A second CPython is another directory there, not a
+second compiler.
+
+From a clone (how `pycc` is **built**):
 
 ```bash
 ./compiler/tools/pycc --fetch-sysroot
 ./compiler/tools/pycc hello.py -o hello
+# or: ./tools/setup-machine.sh --beside
 ```
 
 `--fetch-sysroot` installs the S2 tarball next to `pycc`. After that, no
 `PYC_SYSROOT` is required (`--python-sysroot` and the env var still override).
-Missing sysroot is a compile error, not a fallback to PATH `python3`.
-`PYC_FETCH=1` fetches on first compile.
-
-All-in-one (sysroot + `pyc_lower` beside `pycc` + smoke):
-
-```bash
-./tools/setup-machine.sh --beside
-```
+Missing sysroot is a compile error, not PATH `python3`. `PYC_FETCH=1` fetches
+on first compile.
 
 If the GitHub Release asset is missing, or you are changing A2 headers,
 `build-python-sysroot.sh` is how the tarball is *produced*:
 
 ```bash
 ./tools/build-python-sysroot.sh --version 3.14.7 --jobs "$(nproc)"
-# or: ./tools/setup-machine.sh --beside --build-sysroot
 ```
 
 ## Usage
 
 ```bash
-./compiler/tools/pycc hello.py -o hello          # default -O1 (LLVM backend)
-./compiler/tools/pycc hello.py -o hello -O0
-./compiler/tools/pycc hello.py --emit-llvm -o hello.ll
+pycc hello.py -o hello          # default -O1 (LLVM backend)
+pycc hello.py -o hello -O0
+pycc hello.py --emit-llvm -o hello.ll
 ./hello
 ```
 
