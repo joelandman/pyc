@@ -3500,6 +3500,7 @@ private:
                                n.loc, std::nullopt});
                 set_block(nomatch_b);
                 emit_decref(bound, n.loc);
+                if (remaining.id != exc.id) emit_decref(remaining, n.loc);
                 remaining = rest;
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                "", next_b, 0, n.loc, std::nullopt});
@@ -3545,6 +3546,7 @@ private:
                     call_capi("pyc_rt_except_star_note", {contribs}, n.loc, &ok);
                     if (!ok) return false;
                     forget(rest);
+                    if (remaining.id != exc.id) emit_decref(remaining, n.loc);
                     remaining = rest;
                     emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                    "", next_b, 0, n.loc, std::nullopt});
@@ -3552,6 +3554,7 @@ private:
                 set_block(hcatch);
                 call_capi("pyc_rt_except_star_note", {contribs}, n.loc, &ok);
                 if (!ok) return false;
+                if (remaining.id != exc.id) emit_decref(remaining, n.loc);
                 remaining = rest;
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                "", next_b, 0, n.loc, std::nullopt});
@@ -3576,9 +3579,10 @@ private:
         if (star) {
             ir::Value result = call_capi("pyc_rt_except_star_finish",
                                          {exc, contribs, remaining}, n.loc, &ok,
-                                         {contribs, remaining});
+                                         {contribs});
             if (!ok) return false;
             mark_owned(result);
+            if (remaining.id != exc.id) emit_decref(remaining, n.loc);
             emit_decref(exc, n.loc);
             ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
@@ -4516,7 +4520,7 @@ private:
             std::string old;
             ~CtrScope() { slot = std::move(old); }
         } ctr_scope{range_ctr_, range_ctr_};
-        if (boxed) range_ctr_ = tn.id;
+        if (boxed && rc.args.size() <= 2) range_ctr_ = tn.id;
         std::uint32_t pre = (std::uint32_t)blk_;
         std::uint32_t head = new_block("for.head");
         std::uint32_t nat_next = new_block("range.next");
@@ -4543,16 +4547,17 @@ private:
 
         set_block(nat_next);
         ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
-        ir::Value ctr;
-        if (auto cit = live_i64_.find(tn.id); cit != live_i64_.end())
-            ctr = cit->second;
-        ir::Instr nxt{ir::Op::RangeNext, {stop, ctr}, iv, Ownership::NotAnObject,
+        ir::Instr nxt{ir::Op::RangeNext, {stop}, iv, Ownership::NotAnObject,
                       "", body_n, done, n.loc, std::nullopt};
         nxt.has_imm = true;
         nxt.imm = (std::int64_t)rid;
         {
             const Call& rc = std::get<Call>(n.iter->v);
-            if (rc.args.size() <= 2) nxt.text = "1";
+            if (rc.args.size() <= 2) {
+                nxt.text = "1";
+                if (auto cit = live_i64_.find(tn.id); cit != live_i64_.end())
+                    nxt.args.push_back(cit->second);
+            }
         }
         emit(std::move(nxt));
         set_block(body_n);
@@ -6597,7 +6602,70 @@ private:
                 for (auto& [k, v] : bindings) store_name_keep(k, v, n.loc);
             }
         }
+        std::map<std::string, ir::Value> tp_cells;
+        for (auto& [k, v] : bindings) {
+            ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::CellNew, {}, cell, Ownership::Owned, k,
+                           0, 0, n.loc, make_landing_pad(n.loc)});
+            mark_owned(cell);
+            emit(ir::Instr{ir::Op::CellSet, {cell, v}, std::nullopt,
+                           Ownership::NotAnObject, k, 0, 0, n.loc, std::nullopt});
+            tp_cells[k] = cell;
+        }
+        std::set<std::string> reads = nested_reads_expr(*n.value);
+        std::vector<std::string> freevars;
+        std::vector<ir::Value> closure_cells;
+        auto add_free = [&](const std::string& r, ir::Value cell, bool incref) {
+            for (const std::string& f2 : freevars) if (f2 == r) return;
+            freevars.push_back(r);
+            if (incref)
+                emit(ir::Instr{ir::Op::IncRef, {cell}, std::nullopt,
+                               Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+            closure_cells.push_back(cell);
+        };
+        for (auto& [k, cell] : tp_cells) add_free(k, cell, true);
+        if (!class_dict_cells_.empty())
+            add_free("__classdict__", class_dict_cells_.back(), true);
+        for (const std::string& r : reads) {
+            if (tp_cells.count(r) || r == "__classdict__") continue;
+            auto cit = cells_.find(r);
+            if (cit == cells_.end()) continue;
+            ir::Value c = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, c, Ownership::Owned, r,
+                           cit->second, 0, n.loc, make_landing_pad(n.loc)});
+            mark_owned(c);
+            add_free(r, c, false);
+        }
+        std::vector<std::string> thunk_locals = freevars;
+        FnScope sc = begin_function(nm->id, {}, thunk_locals);
+        cur()->freevars = freevars;
+        for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
+        ir::Value classdict;
+        if (cells_.count("__classdict__")) {
+            ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned,
+                           "__classdict__", cells_["__classdict__"], 0, n.loc,
+                           make_landing_pad(n.loc)});
+            mark_owned(cell);
+            classdict = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            ir::Instr cg{ir::Op::CellGet, {cell}, classdict, Ownership::Owned,
+                         "__classdict__", 0, 0, n.loc, make_landing_pad(n.loc)};
+            cg.imm = 1;
+            cg.has_imm = true;
+            emit(std::move(cg));
+            release(cell, n.loc);
+            mark_owned(classdict);
+            class_ns_.push_back(classdict);
+        }
         ir::Value val = lower_expr(*n.value, &ok);
+        if (classdict.valid()) {
+            class_ns_.pop_back();
+            if (owns(classdict)) release(classdict, n.loc);
+        }
+        if (ok)
+            emit(ir::Instr{ir::Op::Return, {val}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+        std::size_t idx = end_function(sc);
         if (!n.type_params.empty()) {
             if (in_class) {
                 for (auto& [k, v] : bindings) {
@@ -6610,11 +6678,14 @@ private:
             type_param_env_.pop_back();
         }
         if (!ok) return false;
-        ir::Value ta = call_capi("pyc_rt_type_alias", {namestr, val, params},
-                                 n.loc, &ok, {namestr, val, params});
+        ir::Value thunk = make_function_value(idx, nm->id, n.loc, closure_cells);
+        for (const ir::Value& c : closure_cells) if (owns(c)) release(c, n.loc);
+        ir::Value ta = call_capi("pyc_rt_type_alias", {namestr, thunk, params},
+                                 n.loc, &ok, {namestr, thunk, params});
         if (!ok) return false;
         mark_owned(ta);
         store_name(nm->id, ta, n.loc);
+        for (auto& [k, v] : tp_cells) if (owns(v)) release(v, n.loc);
         for (auto& [k, v] : bindings) if (owns(v)) release(v, n.loc);
         return true;
     }

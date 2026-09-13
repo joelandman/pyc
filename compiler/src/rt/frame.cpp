@@ -89,6 +89,20 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
         f->f_funcobj = PyStackRef_FromPyObjectNew(fn);
     }
     ts->current_frame = f;
+    // CPython's eval loop counts Python frames via py_recursion_remaining
+    // (_Py_EnterRecursivePy). Py_EnterRecursiveCall only checks C stack, so
+    // sys.setrecursionlimit was a no-op for compiled calls.
+    if (ts->py_recursion_remaining-- <= 0) {
+        ts->py_recursion_remaining++;
+        PyErr_SetString(PyExc_RecursionError,
+                        "maximum recursion depth exceeded");
+        ts->current_frame = f->previous;
+        if (locals) Py_DECREF(locals);
+        PyStackRef_CLOSE(f->f_funcobj);
+        PyStackRef_CLOSE(f->f_executable);
+        _PyThreadState_PopFrame(ts, f);
+        return nullptr;
+    }
     return f;
 }
 
@@ -246,6 +260,7 @@ extern "C" void pyc_rt_interp_leave(void* frame) {
     if (!frame) return;
     auto* f = static_cast<_PyInterpreterFrame*>(frame);
     PyThreadState* ts = PyThreadState_Get();
+    ts->py_recursion_remaining++;
     if (ts->current_frame == f) ts->current_frame = f->previous;
     if (f->frame_obj)
         snapshot_newlocals_into_fast(f);

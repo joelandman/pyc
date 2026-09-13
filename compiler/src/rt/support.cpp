@@ -2327,6 +2327,21 @@ extern "C" int pyc_rt_del_if_same(PyObject* ns, PyObject* name, PyObject* tv) {
 
 extern "C" PyObject* pyc_rt_type_alias(PyObject* name, PyObject* value,
                                        PyObject* params) {
+    // A function value is CPython's compute_value thunk (INTRINSIC_TYPEALIAS).
+    // The public TypeAliasType constructor stores value eagerly, which makes
+    // `type T = dict[str, T]` a NameError and `type X = 1/0` raise at the
+    // statement rather than on __value__.
+    if (value && PyFunction_Check(value)) {
+        typedef PyObject* (*intrinsic1)(PyThreadState*, PyObject*);
+        struct intrinsic1_info { intrinsic1 func; const char* name; };
+        extern const intrinsic1_info _PyIntrinsics_UnaryFunctions[];
+        PyObject* args = PyTuple_Pack(3, name, params ? params : Py_None, value);
+        if (!args) return nullptr;
+        PyObject* r = _PyIntrinsics_UnaryFunctions[11].func(
+            PyThreadState_Get(), args);
+        Py_DECREF(args);
+        return r;
+    }
     PyObject* typing = PyImport_ImportModule("typing");
     if (!typing) return nullptr;
     PyObject* cls = PyObject_GetAttrString(typing, "TypeAliasType");

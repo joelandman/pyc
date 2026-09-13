@@ -643,7 +643,9 @@ struct NestedReads {
                     for (const std::string& x : n.names) out.insert(x);
             },
             [&](const Pass&){}, [&](const Break&){},
-            [&](const Continue&){}, [&](const TypeAlias&){},
+            [&](const Continue&){},
+            // The value is a nested scope (lazy thunk), like a lambda.
+            [&](const TypeAlias& n){ if (n.value) expr_(*n.value, true); },
         }, s.v);
     }
 };

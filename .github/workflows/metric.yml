@@ -67,6 +67,7 @@ jobs:
             --current libtest.json
           code=$?
           set -e
+          echo "ok=$([ "$code" -eq 0 ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
           echo "code=$code" >> "$GITHUB_OUTPUT"
           exit 0
 
@@ -74,11 +75,14 @@ jobs:
         if: always()
         env:
           GATE_CODE: ${{ steps.gate.outputs.code }}
+          GATE_OK: ${{ steps.gate.outputs.ok }}
           TRIGGER: ${{ github.event_name }}
         run: |
           python3 - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
           import os
           code = os.environ.get("GATE_CODE", "")
+          if os.environ.get("GATE_OK") == "yes":
+              code = "0"
           trigger = os.environ.get("TRIGGER", "?")
           verdicts = {
             "0": (":white_check_mark:", "GATE RAN — no regression",
@@ -139,4 +143,9 @@ jobs:
 
       - name: Reflect the gate in the job status
         if: always()
-        run: exit ${{ steps.gate.outputs.code || 1 }}
+        env:
+          GATE_OK: ${{ steps.gate.outputs.ok }}
+          GATE_CODE: ${{ steps.gate.outputs.code }}
+        run: |
+          if [ "$GATE_OK" = "yes" ]; then exit 0; fi
+          exit "${GATE_CODE:-1}"

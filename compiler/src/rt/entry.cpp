@@ -158,6 +158,24 @@ static void set_main_file(char** argv) {
     if (!v) { PyErr_Clear(); return; }
     if (PyObject_SetAttrString(m, "__file__", v) < 0) PyErr_Clear();
     Py_DECREF(v);
+
+    // CPython scripts set __loader__ to SourceFileLoader(__main__, path).
+    // linecache.lazycache/getlines consult loader.get_source; without it a
+    // missing filename with this module's globals is not cached, and
+    // lazycache returns True instead of False.
+    PyObject* mach = PyImport_ImportModule("importlib.machinery");
+    if (!mach) { PyErr_Clear(); return; }
+    PyObject* cls = PyObject_GetAttrString(mach, "SourceFileLoader");
+    Py_DECREF(mach);
+    if (!cls) { PyErr_Clear(); return; }
+    PyObject* args = Py_BuildValue("(ss)", "__main__", path.c_str());
+    if (!args) { Py_DECREF(cls); PyErr_Clear(); return; }
+    PyObject* loader = PyObject_CallObject(cls, args);
+    Py_DECREF(cls);
+    Py_DECREF(args);
+    if (!loader) { PyErr_Clear(); return; }
+    if (PyObject_SetAttrString(m, "__loader__", loader) < 0) PyErr_Clear();
+    Py_DECREF(loader);
 }
 
 // sys.executable must name a PYTHON INTERPRETER. CPython's own definition is
