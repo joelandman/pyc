@@ -33,7 +33,24 @@ Needs clang++/LLVM 22 and a CPython **sysroot** (Tier 1: static libpython,
 dynamic libc, `-rdynamic`). Prefer a prebuilt tarball (S2). Compiling
 CPython is how the tarball is *produced*, not how you onboard.
 
-Install prefix (no clone on `PATH`):
+Two published tarballs (linux x86_64):
+
+| Asset | Tag | What |
+|---|---|---|
+| `pyc-linux-x86_64.tar.xz` | `pyc-linux-x86_64` | `pycc`, `pyc_lower`, `lib/pyc` |
+| `cp314-3.14.7-tier1-x86_64.tar.xz` | `sysroot-cp314-linux-x86_64` | CPython sysroot |
+
+The machine that *runs* `pycc` still needs clang++/LLVM 22 (it links the user program). The sysroot is not inside the compiler tarball.
+
+```bash
+mkdir -p "$HOME/opt/pyc"
+tar -C "$HOME/opt/pyc" -xJf pyc-linux-x86_64.tar.xz
+export PATH="$HOME/opt/pyc/bin:$PATH"
+pycc --fetch-sysroot
+pycc hello.py -o hello
+```
+
+From a clone:
 
 ```bash
 ./tools/install-pyc.sh --prefix "$HOME/opt/pyc"
@@ -42,6 +59,7 @@ pycc --fetch-sysroot          # into prefix/sysroots/cp314-3.14.7-tier1
 pycc hello.py -o hello
 pycc --python=3.14 hello.py -o hello   # selects that sysroot artifact
 pycc --list-python-targets
+./tools/pack-pyc.sh -o /tmp/pyc-linux-x86_64.tar.xz
 ```
 
 Layout: `bin/pycc`, `bin/pyc_lower`, `lib/pyc/`, `sysroots/<abi>-<version>-tier1/`.
@@ -49,7 +67,7 @@ Layout: `bin/pycc`, `bin/pyc_lower`, `lib/pyc/`, `sysroots/<abi>-<version>-tier1
 not a silent fallback. A second CPython is another directory there, not a
 second compiler.
 
-From a clone (how `pycc` is **built**):
+From a clone (how `pycc` is **built** without a prefix):
 
 ```bash
 ./compiler/tools/pycc --fetch-sysroot

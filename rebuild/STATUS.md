@@ -232,7 +232,7 @@ an independent runtime.
 | S2 landing | Pack/install scripts + nightly `sysroot.yml` release `sysroot-cp314-linux-x86_64`. `build-python-sysroot.sh` remains the *producer*. | Developers do not compile CPython |
 | S3 landing | `pycc` searches beside itself (`sysroot/`, `../sysroot`, `pyc_lower`). `setup-machine.sh --beside`. Output `PyConfig.home` already landed. | Download ≠ `$HOME/opt/...` |
 | S4 landing | `pycc --fetch-sysroot` / `PYC_FETCH=1`. Miss is exit 2, not PATH python3. Verify requires `--sysroot`/`--oracle`. | No local CPython install to compile a program |
-| S5 landing | `install-pyc.sh` prefix: `bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`. `--python=X.Y` selects a tree; missing X.Y is exit 2. One 3.14 artifact is enough. | VERSION_TARGETING as shipped |
+| S5 landing | `install-pyc.sh` prefix: `bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`. `--python=X.Y` selects a tree; missing X.Y is exit 2. One 3.14 artifact is enough. `pack-pyc.sh` / `pack-pyc.yml` publish `pyc-linux-x86_64.tar.xz` (compiler only; sysroot stays S2). | VERSION_TARGETING as shipped |
 
 S2 is the first phase that removes “build this specific Python on your
 machine.” S4 is when the *compiler user* no longer needs a local copy.

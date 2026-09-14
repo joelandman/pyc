@@ -1,0 +1,76 @@
+# Publish a relocatable compiler prefix (pycc + pyc_lower + lib/pyc).
+# Sysroot is a separate asset (sysroot.yml). Host still needs LLVM 22 to link.
+name: pack-pyc
+
+on:
+  schedule:
+    - cron: "45 6 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: pack-pyc
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  pack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: devel
+          fetch-depth: 0
+
+      - name: LLVM 22
+        run: |
+          set -euxo pipefail
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          echo "PYC_CXX=clang++-22" >> "$GITHUB_ENV"
+
+      - name: Pack prefix
+        id: pack
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pyc-linux-x86_64.tar.xz"
+          ./tools/pack-pyc.sh -o "$out"
+          echo "archive=$out" >> "$GITHUB_OUTPUT"
+          echo "name=pyc-linux-x86_64.tar.xz" >> "$GITHUB_OUTPUT"
+          tar -tJf "$out" | head
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pyc-linux-x86_64.tar.xz
+          path: ${{ steps.pack.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE: ${{ steps.pack.outputs.archive }}
+        run: |
+          set -euo pipefail
+          tag=pyc-linux-x86_64
+          notes="$(python3 - <<'PY'
+          print("Prebuilt pyc compiler prefix. Sysroot is a separate asset.")
+          print()
+          print("  mkdir -p \"$HOME/opt/pyc\"")
+          print("  tar -C \"$HOME/opt/pyc\" -xJf pyc-linux-x86_64.tar.xz")
+          print("  export PATH=\"$HOME/opt/pyc/bin:$PATH\"")
+          print("  pycc --fetch-sysroot")
+          print("  pycc hello.py -o hello")
+          print()
+          print("Needs clang++/LLVM 22 and ld.lld on the machine that runs pycc.")
+          PY
+          )"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$ARCHIVE" --clobber
+            gh release edit "$tag" --notes "$notes"
+          else
+            gh release create "$tag" "$ARCHIVE" --title "pyc linux x86_64" --notes "$notes"
+          fi
