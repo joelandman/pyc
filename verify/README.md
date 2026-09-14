@@ -170,7 +170,7 @@ Refresh deliberately, after checking what moved:
 A program run at two different times, under two different loads, at two
 different heap layouts, **must** print a different elapsed time, a different
 clock reading and a different address. Comparing those bytes measures the clock
-and the allocator, not the compiler. Six patterns are collapsed before
+and the allocator, not the compiler. Patterns are collapsed before
 comparison — including the oracle-against-oracle one — but they are **not all
 applied to every case**:
 
@@ -178,6 +178,8 @@ applied to every case**:
 |---|---|---|---|
 | `elapsed` | `in 0.001s` (unittest's trailer) | `in <ELAPSED>s` | always |
 | `heap_address` | `0x7f3c605a4c20` **only after `" at "`** | `0xADDR` | always |
+| `harness_tmpdir` | `pyc-measure-` + 8 tempfile chars | `pyc-measure-<TMP>` | always |
+| `stdlib_tmpdir` | `/tmp/tmp` + 8 tempfile chars | `/tmp/tmp<TMP>` | always |
 | `asctime` | `Wed Aug 26 13:14:57 2026` | `<ASCTIME>` | on demand |
 | `iso_datetime` | `2026-08-26T13:14:57.123` | `<ISOTIME>` | on demand |
 | `clock_time` | `13:14:57` | `<TIME>` | on demand |
@@ -232,6 +234,13 @@ hand-written normalizers mask real divergences — is sound and is why the list
 is six anchored patterns rather than a free hand to rewrite output. But the
 rule as written made the instrument compare the clock against itself and
 report the result as a compiler property, which is worse.
+
+### Lib/test longrunning group
+
+Ten `Lib/test` files do not finish in 30s + a 60s retry (often CPython itself).
+They stay in the I6 denominator. `verify/longrunning.py` names them; `--libtest`
+runs that group **after** the rest, at **600s** with **no 2× retry**, one worker
+per core (`--longrunning-jobs 0`). `--no-longrunning` keeps the default budget.
 
 ### Timeouts get a second attempt at double the limit
 

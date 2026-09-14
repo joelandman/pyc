@@ -98,6 +98,9 @@ VOLATILE: tuple[tuple[str, re.Pattern[str], str], ...] = (
     # "<foo object at 0x7f3c605a4c20>", "<memory at 0x...>". Anchored on " at "
     # so a bare hex number in a program's output is not touched.
     ("heap_address", re.compile(r"(?<= at )0x[0-9a-fA-F]+"), "0xADDR"),
+    # tempfile.TemporaryDirectory(prefix="pyc-measure-") / mkdtemp 8-char suffix.
+    ("harness_tmpdir", re.compile(r"pyc-measure-[a-z0-9_]{8}"), "pyc-measure-<TMP>"),
+    ("stdlib_tmpdir", re.compile(r"/tmp/tmp[a-z0-9_]{8}"), "/tmp/tmp<TMP>"),
     # time.asctime / ctime: "Wed Aug 26 13:14:57 2026"
     ("asctime", re.compile(
         rf"\b(?:{_DAY}) (?:{_MONTH}) [ \d]\d \d{{2}}:\d{{2}}:\d{{2}} \d{{4}}\b"),
@@ -111,7 +114,7 @@ VOLATILE: tuple[tuple[str, re.Pattern[str], str], ...] = (
 )
 
 
-UNCONDITIONAL = frozenset({"elapsed", "heap_address"})
+UNCONDITIONAL = frozenset({"elapsed", "heap_address", "harness_tmpdir", "stdlib_tmpdir"})
 ON_DEMAND = frozenset({"asctime", "iso_datetime", "clock_time", "iso_date"})
 
 
@@ -184,6 +187,8 @@ class Case:
     argv: tuple[str, ...] = ()
     stdin: str = ""
     name: str = ""
+    run_timeout: float | None = None
+    run_retries: int | None = None
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -290,6 +295,12 @@ def child_env() -> dict[str, str]:
     return env
 
 
+def sandbox_env(cwd: Path) -> dict[str, str]:
+    env = child_env()
+    env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(cwd)
+    return env
+
+
 class Compiler:
     """Isolates how pyc is invoked, so this survives changes to its CLI."""
 
@@ -310,28 +321,40 @@ class Measurer:
         self.run_timeout = run_timeout
         self.compile_timeout = compile_timeout
 
+    def _case_timeout(self, case: Case) -> float:
+        return self.run_timeout if case.run_timeout is None else case.run_timeout
+
+    def _case_retries(self, case: Case) -> int:
+        return 1 if case.run_retries is None else case.run_retries
+
     def _run_oracle(self, case: Case, cwd: Path) -> Run:
         return _exec([str(self.oracle), str(case.path), *case.argv],
-                     cwd=cwd, stdin=case.stdin, timeout=self.run_timeout,
-                     env=child_env())
+                     cwd=cwd, stdin=case.stdin, timeout=self._case_timeout(case),
+                     env=sandbox_env(cwd), retries=self._case_retries(case))
 
     def measure(self, case: Case) -> Measurement:
         m = Measurement(case=case)
         with tempfile.TemporaryDirectory(prefix="pyc-measure-") as td:
             cwd = Path(td)
-            local = cwd / case.path.name
-            shutil.copy2(case.path, local)
-            # Siblings come too, so a program that imports the module next to it
-            # resolves the same way it would in its own directory.
-            for sib in case.path.parent.glob("*.py"):
-                if sib != case.path and not (cwd / sib.name).exists():
-                    shutil.copy2(sib, cwd / sib.name)
-            local_case = dataclasses.replace(case, path=local)
+            # Lib/test is a package. Copying test___all__.py into /tmp/pyc-measure-XXXX
+            # makes dirname(dirname(__file__)) == /tmp, so the test walks every
+            # concurrent job's temp dir as a module named that random suffix.
+            # Run packaged tests from the original path (repeatable names).
+            if (case.path.parent / "__init__.py").is_file():
+                src = case.path
+                run_case = case
+            else:
+                src = cwd / case.path.name
+                shutil.copy2(case.path, src)
+                for sib in case.path.parent.glob("*.py"):
+                    if sib != case.path and not (cwd / sib.name).exists():
+                        shutil.copy2(sib, cwd / sib.name)
+                run_case = dataclasses.replace(case, path=src)
 
-            m.oracle = self._run_oracle(local_case, cwd)
+            m.oracle = self._run_oracle(run_case, cwd)
 
             binary = cwd / (case.path.stem + ".pycbin")
-            comp = self.compiler.compile(local, binary, cwd=cwd,
+            comp = self.compiler.compile(src, binary, cwd=cwd,
                                          timeout=self.compile_timeout)
             m.compiled = comp.exit == 0 and binary.exists() and not comp.timed_out
             if not m.compiled:
@@ -341,13 +364,15 @@ class Measurer:
                 m.flags.append(Flag.DID_NOT_COMPILE)
             else:
                 m.subject = _exec([str(binary), *case.argv], cwd=cwd,
-                                  stdin=case.stdin, timeout=self.run_timeout,
-                                  env=child_env())
+                                  stdin=case.stdin,
+                                  timeout=self._case_timeout(case),
+                                  env=sandbox_env(cwd),
+                                  retries=self._case_retries(case))
 
             # Second oracle run, AFTER the subject. The gap spans compilation,
             # which is where a program that reads the clock diverges from
             # itself; two adjacent runs would agree and hide it.
-            m.oracle_again = self._run_oracle(local_case, cwd)
+            m.oracle_again = self._run_oracle(run_case, cwd)
 
         # Which rules apply is itself a measurement. If the two oracle runs
         # disagree once durations and addresses are out of the way, this

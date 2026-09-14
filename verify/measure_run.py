@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import os
 import sys
 import platform
 import sysconfig
@@ -24,6 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from verify import corpus as corpus_mod            # noqa: E402
+from verify import longrunning as longrunning_mod  # noqa: E402
 from verify.measure import (                       # noqa: E402
     SCHEMA, Case, Compiler, Flag, Measurement, Measurer,
 )
@@ -91,6 +93,12 @@ def main() -> int:
     ap.add_argument("--jobs", "-j", type=int, default=4)
     ap.add_argument("--run-timeout", type=float, default=30.0)
     ap.add_argument("--compile-timeout", type=float, default=180.0)
+    ap.add_argument("--longrunning-timeout", type=float,
+                    default=longrunning_mod.TIMEOUT)
+    ap.add_argument("--longrunning-jobs", type=int, default=0,
+                    help="workers for verify/longrunning.py (0 = one per core)")
+    ap.add_argument("--no-longrunning", action="store_true",
+                    help="do not apply the 600s budget; every case uses --run-timeout")
     ap.add_argument("--json", type=Path, default=None)
     ap.add_argument("--show", type=int, default=10,
                     help="how many flagged cases to show evidence for")
@@ -137,25 +145,58 @@ def main() -> int:
     m = Measurer(oracle=oracle, compiler=Compiler(pyc, tuple(args.pyc_flag)),
                  run_timeout=args.run_timeout, compile_timeout=args.compile_timeout)
 
+    long_cases: list[Case] = []
+    short_cases: list[Case] = []
+    if args.no_longrunning:
+        short_cases = cases
+    else:
+        for c in cases:
+            if c.path.name in longrunning_mod.FILES:
+                c.run_timeout = args.longrunning_timeout
+                c.run_retries = 0
+                long_cases.append(c)
+            else:
+                short_cases.append(c)
+    long_jobs = args.longrunning_jobs or (os.cpu_count() or args.jobs)
+
     if not args.quiet:
         print(f"{BOLD}pyc differential measurement{RST}")
-        print(f"  subject {pyc}\n  oracle  {oracle}\n  cases   {len(cases)}\n")
+        print(f"  subject {pyc}\n  oracle  {oracle}\n  cases   {len(cases)}")
+        if long_cases:
+            print(f"  longrunning {len(long_cases)}  timeout {args.longrunning_timeout:g}s  "
+                  f"jobs {long_jobs} (1/core)\n")
+        else:
+            print()
 
     t0 = time.time()
     out: list[Measurement] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as ex:
-        futs = {ex.submit(m.measure, c): c for c in cases}
-        done = 0
-        for fut in concurrent.futures.as_completed(futs):
-            r = fut.result()
-            out.append(r)
-            done += 1
-            if not args.quiet:
-                tag = ",".join(r.flags) if r.flags else "ok"
-                col = GRN if not r.flags else COLOUR.get(r.flags[0], DIM)
-                print(f"  {done:>4}/{len(cases)}  {col}{tag:<38}{RST} {r.case.name}")
+    done = 0
+    total = len(cases)
+
+    def pump(batch: list[Case], jobs: int) -> None:
+        nonlocal done
+        if not batch:
+            return
+        workers = max(1, min(jobs, len(batch)))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(m.measure, c): c for c in batch}
+            for fut in concurrent.futures.as_completed(futs):
+                r = fut.result()
+                out.append(r)
+                done += 1
+                if not args.quiet:
+                    tag = ",".join(r.flags) if r.flags else "ok"
+                    col = GRN if not r.flags else COLOUR.get(r.flags[0], DIM)
+                    print(f"  {done:>4}/{total}  {col}{tag:<38}{RST} {r.case.name}")
+
+    pump(short_cases, args.jobs)
+    if long_cases and not args.quiet:
+        print(f"{DIM}  --- longrunning ---{RST}")
+    pump(long_cases, long_jobs)
     elapsed = time.time() - t0
     out.sort(key=lambda r: (not r.impactful, r.case.name))
+    args.longrunning_files = [c.path.name for c in long_cases]
+    args.longrunning_jobs_used = long_jobs if long_cases else 0
     return report(out, args, elapsed, pyc, oracle)
 
 
@@ -216,6 +257,11 @@ def report(out: list[Measurement], args, elapsed: float,
         args.json.write_text(json.dumps({
             "schema": SCHEMA,
             "jobs": args.jobs,
+            "longrunning": {
+                "timeout": args.longrunning_timeout,
+                "jobs": getattr(args, "longrunning_jobs_used", 0),
+                "cases": getattr(args, "longrunning_files", []),
+            },
             "oracle": oracle_identity(oracle),
             "subject": {"pyc": str(pyc), "pyc_flags": list(args.pyc_flag)},
             "total": total, "passing": passing, "clean": clean,
