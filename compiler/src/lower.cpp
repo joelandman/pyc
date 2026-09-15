@@ -3115,6 +3115,106 @@ private:
         return v;
     }
 
+    bool raise_bad_except_type(const SourceLoc& loc) {
+        bool ok = true;
+        ir::Value te = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::LoadGlobal, {}, te, Ownership::Owned, "TypeError",
+                       0, 0, loc, make_landing_pad(loc)});
+        mark_owned(te);
+        ir::Value msg = const_str(
+            "catching classes that do not inherit from BaseException is not allowed",
+            loc);
+        ir::Value inst = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        std::vector<ir::Value> args{te, msg};
+        emit(ir::Instr{ir::Op::CallObject, args, inst, Ownership::Owned, "",
+                       0, 0, loc, make_landing_pad(loc)});
+        if (owns(te)) release(te, loc);
+        if (owns(msg)) release(msg, loc);
+        mark_owned(inst);
+        chain_handled_as_raised(loc);
+        std::uint32_t pad = make_landing_pad(loc);
+        forget(inst);
+        emit(ir::Instr{ir::Op::Raise, {inst}, std::nullopt,
+                       Ownership::NotAnObject, "", 0, 0, loc, pad});
+        return ok;
+    }
+
+    bool check_except_class(const ir::Value& x, const SourceLoc& loc,
+                            std::uint32_t ok_b) {
+        bool ok = true;
+        ir::Value type_t = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::LoadGlobal, {}, type_t, Ownership::Owned, "type",
+                       0, 0, loc, make_landing_pad(loc)});
+        mark_owned(type_t);
+        ir::Value is_t = call_capi("PyObject_IsInstance", {x, type_t}, loc, &ok,
+                                   {type_t});
+        if (!ok) return false;
+        std::uint32_t sub_b = new_block("except.issubclass");
+        std::uint32_t bad_b = new_block("except.badtype");
+        emit(ir::Instr{ir::Op::CondBr, {is_t}, std::nullopt,
+                       Ownership::NotAnObject, "", sub_b, bad_b, loc,
+                       std::nullopt});
+        set_block(sub_b);
+        ir::Value be = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::LoadGlobal, {}, be, Ownership::Owned,
+                       "BaseException", 0, 0, loc, make_landing_pad(loc)});
+        mark_owned(be);
+        ir::Value sub = call_capi("PyObject_IsSubclass", {x, be}, loc, &ok, {be});
+        if (!ok) return false;
+        emit(ir::Instr{ir::Op::CondBr, {sub}, std::nullopt,
+                       Ownership::NotAnObject, "", ok_b, bad_b, loc,
+                       std::nullopt});
+        set_block(bad_b);
+        return raise_bad_except_type(loc);
+    }
+
+    bool check_except_type(const ir::Value& ty, const SourceLoc& loc,
+                           std::uint32_t ok_b) {
+        auto saved = owned_;
+        bool ok = true;
+        ir::Value tup = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::LoadGlobal, {}, tup, Ownership::Owned, "tuple",
+                       0, 0, loc, make_landing_pad(loc)});
+        mark_owned(tup);
+        ir::Value is_tup = call_capi("PyObject_IsInstance", {ty, tup}, loc, &ok,
+                                     {tup});
+        if (!ok) return false;
+        std::uint32_t tup_b = new_block("except.istuple");
+        std::uint32_t one_b = new_block("except.isone");
+        emit(ir::Instr{ir::Op::CondBr, {is_tup}, std::nullopt,
+                       Ownership::NotAnObject, "", tup_b, one_b, loc,
+                       std::nullopt});
+        set_block(one_b);
+        if (!check_except_class(ty, loc, ok_b)) return false;
+        set_block(tup_b);
+        ir::Value it = call_capi("PyObject_GetIter", {ty}, loc, &ok);
+        if (!ok) return false;
+        mark_owned(it);
+        std::uint32_t head = new_block("except.tuphead");
+        std::uint32_t body = new_block("except.tupitem");
+        std::uint32_t done = new_block("except.tupdone");
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", head, 0, loc, std::nullopt});
+        set_block(head);
+        ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::IterNext, {it}, item, Ownership::Owned, "",
+                       body, done, loc, make_landing_pad(loc)});
+        set_block(body);
+        mark_owned(item);
+        std::uint32_t item_ok = new_block("except.itemok");
+        if (!check_except_class(item, loc, item_ok)) return false;
+        set_block(item_ok);
+        if (owns(item)) release(item, loc);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", head, 0, loc, std::nullopt});
+        set_block(done);
+        if (owns(it)) release(it, loc);
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", ok_b, 0, loc, std::nullopt});
+        owned_ = saved;
+        return true;
+    }
+
     bool lower_try(const Try& n) {
         if (n.finalbody.empty()) return lower_try_except(n, false);
         return lower_try_finally(n, false);
@@ -3520,6 +3620,9 @@ private:
             } else if (eh.type) {
                 ir::Value ty = lower_expr(**eh.type, &ok);
                 if (!ok) return false;
+                std::uint32_t type_ok = new_block("except.typeok");
+                if (!check_except_type(ty, n.loc, type_ok)) return false;
+                set_block(type_ok);
                 ir::Value m = call_capi("PyErr_GivenExceptionMatches", {exc, ty},
                                         n.loc, &ok, {ty});
                 if (!ok) return false;
