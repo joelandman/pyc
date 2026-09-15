@@ -348,6 +348,7 @@ extern "C" int pyc_rt_gil_acquire(void) {
 }
 
 thread_local PyObject* tls_frame_locals = nullptr;
+thread_local PyObject** tls_frame_vals = nullptr;
 thread_local const char* const* tls_frame_names = nullptr;
 thread_local int tls_frame_nnames = 0;
 
@@ -378,6 +379,7 @@ int pyc_rt_del_local(PyObject** locals, int slot, const char* name) {
     }
     locals[slot] = nullptr;       // clear BEFORE the decref: __del__ may run
     Py_DECREF(old);               // and must not observe a dangling slot
+    pyc_rt_frame_set_fast(slot, nullptr);
     if (tls_frame_locals && slot >= 0 && slot < tls_frame_nnames
         && tls_frame_names && tls_frame_names[slot]
         && PyDict_DelItemString(tls_frame_locals, tls_frame_names[slot]) < 0)
@@ -390,6 +392,7 @@ void pyc_rt_store_local(PyObject** locals, int slot, PyObject* v) {
     Py_XINCREF(v);
     locals[slot] = v;
     Py_XDECREF(old);          // after the store: a self-assignment must not free
+    pyc_rt_frame_set_fast(slot, v);
     if (tls_frame_locals && slot >= 0 && slot < tls_frame_nnames
         && tls_frame_names && tls_frame_names[slot]) {
         PyObject* shown = v;
@@ -579,7 +582,7 @@ PyCodeObject* make_func_code(Bound* b) {
         Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
         return nullptr;
     }
-    int flags = CO_NEWLOCALS;
+    int flags = CO_OPTIMIZED | CO_NEWLOCALS;
     if (b->vararg >= 0) flags |= CO_VARARGS;
     if (b->kwarg >= 0) flags |= CO_VARKEYWORDS;
     PyCodeObject* co = PyUnstable_Code_NewWithPosOnlyArgs(
@@ -595,13 +598,13 @@ PyCodeObject* make_func_code(Bound* b) {
     return co;
 }
 
-PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
+PyObject* trampoline(PyObject* func, PyObject* const* args, Py_ssize_t npos,
+                     PyObject* kwargs, PyObject* kwnames) {
     Bound* b = bound_from_func(func);
     if (!b) return nullptr;
     PyObject* defaults = PyFunction_GET_DEFAULTS(func);
     PyObject* kwdefaults = PyFunction_GET_KW_DEFAULTS(func);
     PyObject* closure = PyFunction_GET_CLOSURE(func);
-    Py_ssize_t npos = PyTuple_GET_SIZE(args);
     const char* nm = b->name ? b->name : "<fn>";
     if (func) {
         PyObject* nobj = reinterpret_cast<PyFunctionObject*>(func)->func_qualname;
@@ -615,10 +618,24 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
         // bound differ: "takes from 1 to 2 positional arguments".
         Py_ssize_t ndef0 = defaults ? PyTuple_GET_SIZE(defaults) : 0;
         int nkwonly_given = 0;
-        if (kwargs && b->nkwonly > 0 && b->argnames) {
-            for (int i = b->nargs; i < b->nargs + b->nkwonly; ++i) {
-                if (b->argnames[i] && PyDict_GetItemString(kwargs, b->argnames[i]))
-                    nkwonly_given++;
+        if (b->nkwonly > 0 && b->argnames) {
+            if (kwargs) {
+                for (int i = b->nargs; i < b->nargs + b->nkwonly; ++i) {
+                    if (b->argnames[i] && PyDict_GetItemString(kwargs, b->argnames[i]))
+                        nkwonly_given++;
+                }
+            } else if (kwnames) {
+                Py_ssize_t nk = PyTuple_GET_SIZE(kwnames);
+                for (Py_ssize_t j = 0; j < nk; ++j) {
+                    const char* ks = PyUnicode_AsUTF8(PyTuple_GET_ITEM(kwnames, j));
+                    if (!ks) continue;
+                    for (int i = b->nargs; i < b->nargs + b->nkwonly; ++i) {
+                        if (b->argnames[i] && std::strcmp(ks, b->argnames[i]) == 0) {
+                            nkwonly_given++;
+                            break;
+                        }
+                    }
+                }
             }
         }
         if (nkwonly_given > 0 && ndef0 == 0)
@@ -651,57 +668,21 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
     PyObject** locals = new (std::nothrow) PyObject*[b->nlocals ? b->nlocals : 1];
     if (!locals) return PyErr_NoMemory();
     for (int i = 0; i < b->nlocals; ++i) locals[i] = nullptr;
-    Py_ssize_t nnamed = npos < b->nargs ? npos : b->nargs;
-    for (Py_ssize_t i = 0; i < nnamed; ++i) {
-        PyObject* a = PyTuple_GET_ITEM(args, i);    // borrowed
-        Py_INCREF(a);
-        locals[i] = a;
-    }
-    if (b->vararg >= 0) {
-        PyObject* extra = PyTuple_GetSlice(args, nnamed, npos);
-        if (!extra) goto fail;
-        locals[b->vararg] = extra;                  // owned
-    }
-    if (b->kwarg >= 0) {
-        locals[b->kwarg] = PyDict_New();
-        if (!locals[b->kwarg]) goto fail;
-    }
-    // Free variables occupy the LAST nfree slots, holding the cells
-    // themselves so writes through them are visible to the enclosing scope.
-    for (int i = 0; i < b->nfree; ++i) {
-        PyObject* cell = PyTuple_GET_ITEM(closure, i);
-        Py_INCREF(cell);
-        locals[b->nlocals - b->nfree + i] = cell;
-    }
-    // Bind keywords by parameter name, rejecting duplicates and unknowns the
-    // way CPython does rather than silently ignoring them.
-    if (kwargs) {
-        PyObject *k, *val;
-        Py_ssize_t pos = 0;
-        while (PyDict_Next(kwargs, &pos, &k, &val)) {
+    auto bind_kw = [&](PyObject* k, PyObject* val) -> int {
             const char* ks = PyUnicode_AsUTF8(k);
-            if (!ks) goto fail;
+            if (!ks) return -1;
             int slot = -1;
-            // Starts at nposonly: a positional-only parameter is NOT bindable
-            // by keyword, which is the whole point of the `/` marker. Ends at
-            // nargs + nkwonly because a keyword-only parameter is bindable by
-            // keyword, which is the whole point of `*`.
             for (int i = b->nposonly; i < b->nargs + b->nkwonly; ++i)
                 if (std::strcmp(ks, b->argnames[i]) == 0) { slot = i; break; }
             if (slot < 0) {
-                // Unmatched keywords go to **kwargs when the function has one.
-                // This is checked BEFORE the positional-only diagnosis, and
-                // the order is observable: `def g(a, /, **kw)` called as
-                // `g(1, a=2)` binds a=1 positionally and puts {'a': 2} in kw,
-                // rather than complaining that `a` was passed by keyword.
                 if (b->kwarg >= 0) {
-                    if (PyDict_SetItem(locals[b->kwarg], k, val) < 0) goto fail;
-                    continue;
+                    if (PyDict_SetItem(locals[b->kwarg], k, val) < 0) return -1;
+                    return 0;
                 }
                 bool posonly_name = false;
                 for (int i = 0; i < b->nposonly; ++i)
                     if (std::strcmp(ks, b->argnames[i]) == 0) { posonly_name = true; break; }
-                if (posonly_name) { posonly_kw.push_back(ks); continue; }
+                if (posonly_name) { posonly_kw.push_back(ks); return 0; }
                 {
                     const char* sug = nullptr;
                     if (b->argnames) {
@@ -723,7 +704,7 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
                                         nm, ks, sug ? sug : "");
                                     Py_DECREF(s);
                                     Py_DECREF(kn); Py_DECREF(cands);
-                                    goto fail;
+                                    return -1;
                                 }
                                 Py_DECREF(kn);
                             }
@@ -734,16 +715,57 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
                                  "%s() got an unexpected keyword argument '%s'",
                                  nm, ks);
                 }
-                goto fail;
+                return -1;
             }
             if (locals[slot]) {
                 PyErr_Format(PyExc_TypeError,
                              "%s() got multiple values for argument '%s'",
                              nm, ks);
-                goto fail;
+                return -1;
             }
             Py_INCREF(val);
             locals[slot] = val;
+            return 0;
+    };
+    Py_ssize_t nnamed = npos < b->nargs ? npos : b->nargs;
+    for (Py_ssize_t i = 0; i < nnamed; ++i) {
+        PyObject* a = args[i];
+        Py_INCREF(a);
+        locals[i] = a;
+    }
+    if (b->vararg >= 0) {
+        Py_ssize_t nextra = npos > nnamed ? npos - nnamed : 0;
+        PyObject* extra = PyTuple_New(nextra);
+        if (!extra) goto fail;
+        for (Py_ssize_t i = 0; i < nextra; ++i) {
+            PyObject* a = args[nnamed + i];
+            Py_INCREF(a);
+            PyTuple_SET_ITEM(extra, i, a);
+        }
+        locals[b->vararg] = extra;
+    }
+    if (b->kwarg >= 0) {
+        locals[b->kwarg] = PyDict_New();
+        if (!locals[b->kwarg]) goto fail;
+    }
+    // Free variables occupy the LAST nfree slots, holding the cells
+    // themselves so writes through them are visible to the enclosing scope.
+    for (int i = 0; i < b->nfree; ++i) {
+        PyObject* cell = PyTuple_GET_ITEM(closure, i);
+        Py_INCREF(cell);
+        locals[b->nlocals - b->nfree + i] = cell;
+    }
+    if (kwargs) {
+        PyObject *k, *val;
+        Py_ssize_t pos = 0;
+        while (PyDict_Next(kwargs, &pos, &k, &val)) {
+            if (bind_kw(k, val) < 0) goto fail;
+        }
+    } else if (kwnames) {
+        Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
+        for (Py_ssize_t i = 0; i < nkw; ++i) {
+            if (bind_kw(PyTuple_GET_ITEM(kwnames, i), args[npos + i]) < 0)
+                goto fail;
         }
     }
     if (!posonly_kw.empty()) {
@@ -817,50 +839,36 @@ PyObject* trampoline(PyObject* func, PyObject* args, PyObject* kwargs) {
         }
     }
     {
-        // C1a: a Python frame so locals()/globals()/eval see this call.
-        PyObject* fdict = PyDict_New();
-        if (!fdict) goto fail;
-        if (b->argnames) {
-            for (int i = 0; i < b->nlocals; ++i) {
-                if (!locals[i] || !b->argnames[i] || !b->argnames[i][0]) continue;
-                PyObject* v = locals[i];
-                if (PyCell_Check(v)) {
-                    v = PyCell_GET(v);
-                    if (!v) continue;
-                }
-                if (PyDict_SetItemString(fdict, b->argnames[i], v) < 0) {
-                    Py_DECREF(fdict); goto fail;
-                }
-            }
-        }
         PyObject* g = PyFunction_GET_GLOBALS(func);
         if (!g) g = globals_dict();
         auto* co = reinterpret_cast<PyCodeObject*>(PyFunction_GET_CODE(func));
-        void* fr = (g && co) ? pyc_rt_interp_enter(co, g, fdict, func)
+        void* fr = (g && co) ? pyc_rt_interp_enter(co, g, nullptr, func)
                              : nullptr;
-        if (!fr) { Py_DECREF(fdict); goto fail; }
+        if (!fr) goto fail;
         pyc_rt_interp_fill_locals(fr, locals, b->nlocals);
         PyObject* prev_tls = tls_frame_locals;
+        PyObject** prev_vals = tls_frame_vals;
         const char* const* prev_names = tls_frame_names;
         int prev_n = tls_frame_nnames;
-        tls_frame_locals = fdict;
+        tls_frame_locals = nullptr;
+        tls_frame_vals = locals;
         tls_frame_names = b->argnames;
         tls_frame_nnames = b->nlocals;
         if (Py_EnterRecursiveCall("")) {
             tls_frame_locals = prev_tls;
+            tls_frame_vals = prev_vals;
             tls_frame_names = prev_names;
             tls_frame_nnames = prev_n;
             pyc_rt_interp_leave(fr);
-            Py_DECREF(fdict);
             goto fail;
         }
         PyObject* r = b->impl(locals);
         Py_LeaveRecursiveCall();
         tls_frame_locals = prev_tls;
+        tls_frame_vals = prev_vals;
         tls_frame_names = prev_names;
         tls_frame_nnames = prev_n;
         pyc_rt_interp_leave(fr);
-        Py_DECREF(fdict);
         for (int i = 0; i < b->nlocals; ++i) Py_XDECREF(locals[i]);
         delete[] locals;
         return r;
@@ -873,29 +881,7 @@ fail:
 
 PyObject* func_vectorcall(PyObject* callable, PyObject* const* args,
                           size_t nargsf, PyObject* kwnames) {
-    Py_ssize_t nargs = PyVectorcall_NARGS(nargsf);
-    PyObject* tup = PyTuple_New(nargs);
-    if (!tup) return nullptr;
-    for (Py_ssize_t i = 0; i < nargs; ++i) {
-        PyObject* a = args[i];
-        Py_INCREF(a);
-        PyTuple_SET_ITEM(tup, i, a);
-    }
-    PyObject* kw = nullptr;
-    if (kwnames) {
-        Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
-        kw = PyDict_New();
-        if (!kw) { Py_DECREF(tup); return nullptr; }
-        for (Py_ssize_t i = 0; i < nkw; ++i) {
-            if (PyDict_SetItem(kw, PyTuple_GET_ITEM(kwnames, i), args[nargs + i]) < 0) {
-                Py_DECREF(kw); Py_DECREF(tup); return nullptr;
-            }
-        }
-    }
-    PyObject* r = trampoline(callable, tup, kw);
-    Py_DECREF(tup);
-    Py_XDECREF(kw);
-    return r;
+    return trampoline(callable, args, PyVectorcall_NARGS(nargsf), nullptr, kwnames);
 }
 
 int pyc_func_watch(PyFunction_WatchEvent ev, PyFunctionObject* func, PyObject* new_value) {
@@ -1905,9 +1891,8 @@ extern "C" PyObject* pyc_rt_match_class(PyObject* subj, PyObject* cls,
 }
 
 extern "C" int pyc_rt_super_fail(int has_args) {
-    if (has_args && tls_frame_locals && tls_frame_names && tls_frame_nnames > 0
-        && tls_frame_names[0]
-        && !PyDict_GetItemString(tls_frame_locals, tls_frame_names[0])) {
+    if (has_args && tls_frame_vals && tls_frame_nnames > 0
+        && !tls_frame_vals[0]) {
         PyErr_SetString(PyExc_RuntimeError, "super(): arg[0] deleted");
         return -1;
     }

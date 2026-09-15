@@ -112,6 +112,20 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
 #define CO_FAST_FREE  0x80
 #endif
 
+extern "C" void pyc_rt_frame_set_fast(int slot, PyObject* v) {
+    if (slot < 0) return;
+    PyThreadState* ts = PyThreadState_Get();
+    if (!ts) return;
+    _PyInterpreterFrame* f = ts->current_frame;
+    if (!f) return;
+    PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
+        PyStackRef_AsPyObjectBorrow(f->f_executable));
+    if (!co || slot >= co->co_nlocalsplus) return;
+    if (!PyStackRef_IsNull(f->localsplus[slot]))
+        PyStackRef_CLOSE(f->localsplus[slot]);
+    f->localsplus[slot] = v ? PyStackRef_FromPyObjectNew(v) : PyStackRef_NULL;
+}
+
 extern "C" void pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n) {
     if (!frame || !locals || n <= 0) return;
     auto* f = static_cast<_PyInterpreterFrame*>(frame);
