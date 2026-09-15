@@ -3515,7 +3515,6 @@ private:
                 set_block(nomatch_b);
                 emit_decref(bound, n.loc);
                 if (remaining.id != exc.id) emit_decref(remaining, n.loc);
-                remaining = rest;
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                "", next_b, 0, n.loc, std::nullopt});
             } else if (eh.type) {
@@ -3561,7 +3560,6 @@ private:
                     if (!ok) return false;
                     forget(rest);
                     if (remaining.id != exc.id) emit_decref(remaining, n.loc);
-                    remaining = rest;
                     emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                    "", next_b, 0, n.loc, std::nullopt});
                 }
@@ -3569,7 +3567,6 @@ private:
                 call_capi("pyc_rt_except_star_note", {contribs}, n.loc, &ok);
                 if (!ok) return false;
                 if (remaining.id != exc.id) emit_decref(remaining, n.loc);
-                remaining = rest;
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                "", next_b, 0, n.loc, std::nullopt});
             } else if (terminated()) {
@@ -3582,6 +3579,7 @@ private:
                                "", after, 0, n.loc, std::nullopt});
             }
             set_block(next_b);
+            if (star) remaining = rest;
         }
 
         if (star) handled_stack_.pop_back();
