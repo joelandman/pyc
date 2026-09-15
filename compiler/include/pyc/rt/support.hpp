@@ -149,14 +149,14 @@ PyObject* pyc_rt_bind_method(PyObject* v);
 // Context-manager protocol. __enter__ and __exit__ are looked up on the TYPE,
 // not the instance, which is what the language specifies and what makes the
 // protocol work for classes that define them.
-PyObject* pyc_rt_cm_exit(PyObject* mgr);       // the bound __exit__
+PyObject* pyc_rt_cm_exit(PyObject* mgr);       // unbound __exit__
 PyObject* pyc_rt_cm_enter(PyObject* mgr);      // result of __enter__
-int pyc_rt_exit_normal(PyObject* exitf);       // exit(None, None, None)
+int pyc_rt_exit_normal(PyObject* exitf, PyObject* mgr);
 // Calls exit(type, value, tb) with the exception currently set.
 //   1  suppressed -- the error is cleared and execution continues
 //   0  not suppressed -- the exception is restored for propagation
 //  -1  __exit__ itself failed
-int pyc_rt_exit_exc(PyObject* exitf);
+int pyc_rt_exit_exc(PyObject* exitf, PyObject* mgr);
 
 // Append every item of `iterable` to `list`. Used for `*x` in a call or a
 // literal, where the star's contents are spliced rather than nested.

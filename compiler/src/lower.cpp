@@ -2854,7 +2854,14 @@ private:
         if (!ok) return false;
         mark_owned(exitf); forget(exitf);
         frame_owned_.push_back(exitf);
-        ir::Value entered = call_capi("pyc_rt_cm_enter", {mgr}, wloc, &ok, {mgr});
+        if (!owns(mgr)) {
+            emit(ir::Instr{ir::Op::IncRef, {mgr}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, wloc, std::nullopt});
+            mark_owned(mgr);
+        }
+        forget(mgr);
+        frame_owned_.push_back(mgr);
+        ir::Value entered = call_capi("pyc_rt_cm_enter", {mgr}, wloc, &ok);
         if (!ok) return false;
         mark_owned(entered);
         if (w.optional_vars) { if (!store_target(**w.optional_vars, entered, n.loc)) return false; }
@@ -2912,7 +2919,7 @@ private:
         // value has to be frame-owned across it or a landing pad leaks it.
         forget(p_ret);
         frame_owned_.push_back(p_ret);
-        call_capi("pyc_rt_exit_normal", {exitf}, wloc, &ok);
+        call_capi("pyc_rt_exit_normal", {exitf, mgr}, wloc, &ok);
         frame_owned_.pop_back();
         if (!ok) return false;
 
@@ -2932,6 +2939,7 @@ private:
         // so every path through the region drops exactly one reference.
         set_block(ret_b);
         emit_decref(exitf, n.loc);
+        emit_decref(mgr, n.loc);
         mark_owned(p_ret);
         if (!finish_return(p_ret, n.loc)) return false;
 
@@ -2959,6 +2967,7 @@ private:
                            n.loc, std::nullopt});
             set_block(brk_b);
             emit_decref(exitf, n.loc);
+            emit_decref(mgr, n.loc);
             reload_live_i64_from_slots(live_in, n.loc);
             if (!finish_jump(true, n.loc)) return false;
 
@@ -2969,27 +2978,32 @@ private:
                            n.loc, std::nullopt});
             set_block(cont_b);
             emit_decref(exitf, n.loc);
+            emit_decref(mgr, n.loc);
             reload_live_i64_from_slots(live_in, n.loc);
             if (!finish_jump(false, n.loc)) return false;
         }
         }
 
         set_block(dispatch);
-        ir::Value sup = call_capi("pyc_rt_exit_exc", {exitf}, wloc, &ok);
+        ir::Value sup = call_capi("pyc_rt_exit_exc", {exitf, mgr}, wloc, &ok);
         if (!ok) return false;
         std::uint32_t reraise = new_block("with.reraise");
         emit(ir::Instr{ir::Op::CondBr, {sup}, std::nullopt, Ownership::NotAnObject,
                        "", after, reraise, n.loc, std::nullopt});
         set_block(reraise);
         frame_owned_.pop_back();
+        frame_owned_.pop_back();
         std::uint32_t pad = make_landing_pad(wloc);
         frame_owned_.push_back(exitf);
+        frame_owned_.push_back(mgr);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", pad, 0, n.loc, std::nullopt});
 
         set_block(after);
         frame_owned_.pop_back();
+        frame_owned_.pop_back();
         emit_decref(exitf, n.loc);
+        emit_decref(mgr, n.loc);
         reload_live_i64_from_slots(live_in, n.loc);
         return true;
     }

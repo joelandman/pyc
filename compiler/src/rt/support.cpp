@@ -34,6 +34,10 @@ extern "C" {
 // been created yet is not something to guess at.
 static PyObject* g_globals_cache = nullptr;
 static std::vector<PyObject*> g_extra_consts;
+static PyObject* g_id_enter = nullptr;
+static PyObject* g_id_exit = nullptr;
+static PyObject* g_id_aenter = nullptr;
+static PyObject* g_id_aexit = nullptr;
 
 extern "C" int pyc_rt_stash_marshal(const char* p, Py_ssize_t n) {
     PyObject* o = PyMarshal_ReadObjectFromString(const_cast<char*>(p), n);
@@ -45,6 +49,10 @@ extern "C" int pyc_rt_stash_marshal(const char* p, Py_ssize_t n) {
 extern "C" void pyc_rt_globals_init(void) {
     PyObject* m = PyImport_AddModule("__main__");   // borrowed
     g_globals_cache = m ? PyModule_GetDict(m) : nullptr;   // borrowed
+    g_id_enter = PyUnicode_InternFromString("__enter__");
+    g_id_exit = PyUnicode_InternFromString("__exit__");
+    g_id_aenter = PyUnicode_InternFromString("__aenter__");
+    g_id_aexit = PyUnicode_InternFromString("__aexit__");
 }
 
 static PyObject* globals_dict() {
@@ -1471,81 +1479,86 @@ extern "C" PyObject* pyc_rt_bind_method(PyObject* v) {
 }
 
 namespace {
-PyObject* type_lookup(PyObject* mgr, const char* name) {
-    // Special-method lookup skips the instance dict, as the language requires.
-    PyObject* t = reinterpret_cast<PyObject*>(Py_TYPE(mgr));
-    PyObject* f = PyObject_GetAttrString(t, name);
-    if (!f) {
-        if (!PyErr_ExceptionMatches(PyExc_AttributeError))
-            return nullptr;
-        PyErr_Clear();
-        PyObject* ae = PyObject_GetAttrString(t, "__aenter__");
-        PyObject* ax = PyObject_GetAttrString(t, "__aexit__");
-        PyErr_Clear();
-        const bool async_cm = ae && ax;
-        Py_XDECREF(ae);
-        Py_XDECREF(ax);
-        if (async_cm) {
-            PyErr_Format(PyExc_TypeError,
-                         "'%s' object does not support the context manager protocol "
-                         "(missed %s method) but it supports the asynchronous "
-                         "context manager protocol. Did you mean to use 'async with'?",
-                         Py_TYPE(mgr)->tp_name, name);
-        } else {
-            PyErr_Format(PyExc_TypeError,
-                         "'%s' object does not support the context manager protocol "
-                         "(missed %s method)",
-                         Py_TYPE(mgr)->tp_name, name);
-        }
-        return nullptr;
+PyObject* mro_lookup(PyObject* mgr, PyObject* name) {
+    if (!name) return nullptr;
+    PyTypeObject* tp = Py_TYPE(mgr);
+    PyObject* mro = tp->tp_mro;
+    if (!mro || !PyTuple_Check(mro)) return nullptr;
+    Py_ssize_t n = PyTuple_GET_SIZE(mro);
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* base = PyTuple_GET_ITEM(mro, i);
+        if (!PyType_Check(base)) continue;
+        PyObject* dict = reinterpret_cast<PyTypeObject*>(base)->tp_dict;
+        if (!dict) continue;
+        PyObject* v = nullptr;
+        if (PyDict_GetItemRef(dict, name, &v) < 0) return nullptr;
+        if (v) return v;
     }
-    return f;
+    return nullptr;
+}
+
+PyObject* type_lookup(PyObject* mgr, PyObject* name, const char* cname) {
+    PyObject* f = mro_lookup(mgr, name);
+    if (f) return f;
+    if (PyErr_Occurred()) return nullptr;
+    PyObject* ae = mro_lookup(mgr, g_id_aenter);
+    PyObject* ax = mro_lookup(mgr, g_id_aexit);
+    const bool async_cm = ae && ax;
+    Py_XDECREF(ae);
+    Py_XDECREF(ax);
+    if (async_cm) {
+        PyErr_Format(PyExc_TypeError,
+                     "'%s' object does not support the context manager protocol "
+                     "(missed %s method) but it supports the asynchronous "
+                     "context manager protocol. Did you mean to use 'async with'?",
+                     Py_TYPE(mgr)->tp_name, cname);
+    } else {
+        PyErr_Format(PyExc_TypeError,
+                     "'%s' object does not support the context manager protocol "
+                     "(missed %s method)",
+                     Py_TYPE(mgr)->tp_name, cname);
+    }
+    return nullptr;
+}
+
+PyObject* call_unbound(PyObject* f, PyObject* self, PyObject* const* extra,
+                       Py_ssize_t nextra) {
+    PyObject* stack[4];
+    stack[0] = self;
+    for (Py_ssize_t i = 0; i < nextra; ++i) stack[1 + i] = extra[i];
+    return PyObject_Vectorcall(f, stack, 1 + nextra, nullptr);
 }
 }  // namespace
 
 extern "C" PyObject* pyc_rt_cm_exit(PyObject* mgr) {
-    PyObject* f = type_lookup(mgr, "__exit__");
-    if (!f) return nullptr;
-    descrgetfunc get = Py_TYPE(f)->tp_descr_get;
-    if (get) {
-        PyObject* bound = get(f, mgr, reinterpret_cast<PyObject*>(Py_TYPE(mgr)));
-        Py_DECREF(f);
-        return bound;
-    }
-    return f;
+    return type_lookup(mgr, g_id_exit, "__exit__");
 }
 
 extern "C" PyObject* pyc_rt_cm_enter(PyObject* mgr) {
-    PyObject* f = type_lookup(mgr, "__enter__");
+    PyObject* f = type_lookup(mgr, g_id_enter, "__enter__");
     if (!f) return nullptr;
-    descrgetfunc get = Py_TYPE(f)->tp_descr_get;
-    if (get) {
-        PyObject* bound = get(f, mgr, reinterpret_cast<PyObject*>(Py_TYPE(mgr)));
-        Py_DECREF(f);
-        f = bound;
-        if (!f) return nullptr;
-    }
-    PyObject* r = PyObject_CallNoArgs(f);
+    PyObject* r = call_unbound(f, mgr, nullptr, 0);
     Py_DECREF(f);
     return r;
 }
 
-extern "C" int pyc_rt_exit_normal(PyObject* exitf) {
-    PyObject* r = PyObject_CallFunctionObjArgs(exitf, Py_None, Py_None, Py_None, nullptr);
+extern "C" int pyc_rt_exit_normal(PyObject* exitf, PyObject* mgr) {
+    PyObject* extra[3] = {Py_None, Py_None, Py_None};
+    PyObject* r = call_unbound(exitf, mgr, extra, 3);
     if (!r) return -1;
     Py_DECREF(r);
     return 0;
 }
 
-extern "C" int pyc_rt_exit_exc(PyObject* exitf) {
+extern "C" int pyc_rt_exit_exc(PyObject* exitf, PyObject* mgr) {
     PyObject* exc = PyErr_GetRaisedException();          // clears the indicator
     if (!exc) return 0;
     PyObject* prev_handled = PyErr_GetHandledException();
     PyErr_SetHandledException(exc);
     PyObject* type = reinterpret_cast<PyObject*>(Py_TYPE(exc));
     PyObject* tb = PyException_GetTraceback(exc);
-    PyObject* r = PyObject_CallFunctionObjArgs(exitf, type, exc,
-                                               tb ? tb : Py_None, nullptr);
+    PyObject* extra[3] = {type, exc, tb ? tb : Py_None};
+    PyObject* r = call_unbound(exitf, mgr, extra, 3);
     Py_XDECREF(tb);
     PyErr_SetHandledException(prev_handled);
     Py_XDECREF(prev_handled);
