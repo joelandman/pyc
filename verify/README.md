@@ -181,6 +181,8 @@ applied to every case**:
 | `harness_tmpdir` | `pyc-measure-` + 8 tempfile chars | `pyc-measure-<TMP>` | always |
 | `stdlib_tmpdir` | `/tmp/tmp` + 8 tempfile chars | `/tmp/tmp<TMP>` | always |
 | `ephem_ipv4` | `('127.0.0.1', N)` optional `:N` | `('127.0.0.1', <PORT>)` | always |
+| `ephem_hostport` | `localhost:N` | `localhost:<PORT>` | always |
+| `ephem_ipv4_colon` | `127.0.0.1:N` | `127.0.0.1:<PORT>` | always |
 | `asctime` | `Wed Aug 26 13:14:57 2026` | `<ASCTIME>` | on demand |
 | `iso_datetime` | `2026-08-26T13:14:57.123` | `<ISOTIME>` | on demand |
 | `clock_time` | `13:14:57` | `<TIME>` | on demand |
@@ -260,6 +262,10 @@ failed. The case still counts against the pass rate — nothing was scored — b
 blaming the compiler for it would be false, exactly as with `ORACLE_UNSTABLE`.
 Each record carries `oracle_timed_out` so the comparator can tell the two
 apart.
+
+`test_ssl.py` as `__main__` is the worked example: two CPython runs both exit 0
+and disagree on verbose server logs (`verify/notes/test_ssl_verbose.md`). `-q`
+does not help. Leave it `ORACLE_UNSTABLE`.
 
 ### An unstable oracle is reported, never dropped
 

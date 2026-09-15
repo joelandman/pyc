@@ -103,6 +103,8 @@ VOLATILE: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("stdlib_tmpdir", re.compile(r"/tmp/tmp[a-z0-9_]{8}"), "/tmp/tmp<TMP>"),
     ("ephem_ipv4", re.compile(r"\('127\.0\.0\.1', \d+\)(?::\d+)?"),
      "('127.0.0.1', <PORT>)"),
+    ("ephem_hostport", re.compile(r"localhost:\d+"), "localhost:<PORT>"),
+    ("ephem_ipv4_colon", re.compile(r"127\.0\.0\.1:\d+"), "127.0.0.1:<PORT>"),
     # time.asctime / ctime: "Wed Aug 26 13:14:57 2026"
     ("asctime", re.compile(
         rf"\b(?:{_DAY}) (?:{_MONTH}) [ \d]\d \d{{2}}:\d{{2}}:\d{{2}} \d{{4}}\b"),
@@ -117,7 +119,8 @@ VOLATILE: tuple[tuple[str, re.Pattern[str], str], ...] = (
 
 
 UNCONDITIONAL = frozenset({"elapsed", "heap_address", "harness_tmpdir",
-                             "stdlib_tmpdir", "ephem_ipv4"})
+                             "stdlib_tmpdir", "ephem_ipv4", "ephem_hostport",
+                             "ephem_ipv4_colon"})
 ON_DEMAND = frozenset({"asctime", "iso_datetime", "clock_time", "iso_date"})
 
 
