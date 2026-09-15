@@ -165,6 +165,21 @@ extern "C" void pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n)
     }
 }
 
+static void maybe_line_trace(_PyInterpreterFrame* f, int line) {
+    PyThreadState* ts = PyThreadState_Get();
+    if (!ts || ts->tracing || !ts->c_tracefunc) return;
+    while (f && _PyFrame_IsIncomplete(f)) f = f->previous;
+    if (!f) return;
+    PyFrameObject* fo = _PyFrame_GetFrameObject(f);
+    if (!fo) { PyErr_Clear(); return; }
+    if (!fo->f_trace_lines) return;
+    if (line > 0) fo->f_lineno = line;
+    ts->tracing++;
+    int r = ts->c_tracefunc(ts->c_traceobj, fo, PyTrace_LINE, Py_None);
+    ts->tracing--;
+    if (r < 0) return;
+}
+
 extern "C" void pyc_rt_set_lasti(int slot) {
     if (slot < 0) return;
     pyc_rt_gil_ensure();
@@ -183,6 +198,7 @@ extern "C" void pyc_rt_set_lasti(int slot) {
     if (off >= nunits) off = nunits > 0 ? (int)nunits - 1 : 0;
     f->instr_ptr = _PyCode_CODE(co) + off;
     if (f->frame_obj) f->frame_obj->f_lineno = 0;
+    maybe_line_trace(f, 0);
 }
 
 extern "C" void pyc_rt_set_lineno(int line) {
@@ -220,6 +236,7 @@ extern "C" void pyc_rt_set_location(int line, int col, int end_col) {
             p[at + 2] = (char)e;
         }
     }
+    maybe_line_trace(f, line);
 }
 
 extern "C" void pyc_rt_traceback_here(void) {
