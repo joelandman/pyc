@@ -124,6 +124,17 @@ extern "C" void pyc_rt_frame_set_fast(int slot, PyObject* v) {
     if (!PyStackRef_IsNull(f->localsplus[slot]))
         PyStackRef_CLOSE(f->localsplus[slot]);
     f->localsplus[slot] = v ? PyStackRef_FromPyObjectNew(v) : PyStackRef_NULL;
+    if (v && PyCell_Check(v) && co->co_localspluskinds
+        && PyBytes_Check(co->co_localspluskinds)) {
+        char* kinds = PyBytes_AS_STRING(co->co_localspluskinds);
+        Py_ssize_t nk = PyBytes_GET_SIZE(co->co_localspluskinds);
+        if (slot < nk) {
+            int nfast = co->co_nlocals;
+            kinds[slot] = (slot >= nfast)
+                ? (char)CO_FAST_FREE
+                : (char)(CO_FAST_LOCAL | CO_FAST_CELL);
+        }
+    }
 }
 
 extern "C" void pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n) {
