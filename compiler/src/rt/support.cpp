@@ -210,10 +210,14 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable,
         for (int i = 16; i + 1 < kLineSlots * 2; i += 2)
             codebuf[static_cast<std::size_t>(i)] = static_cast<char>(kNop);
         std::vector<char> lines;
-        lines.reserve(static_cast<std::size_t>(kLineSlots) * 3);
-        lines.push_back(static_cast<char>(128 | (10 << 3)));
-        lines.push_back(0);
-        lines.push_back(0);
+        lines.reserve(static_cast<std::size_t>(kLineSlots) * 6);
+        // lasti=0 is RESUME: CPython reports (firstlineno, firstlineno, 0, 0)
+        // so traceback prints the def line plus a blank caret line.
+        lines.push_back(static_cast<char>(128 | (14 << 3)));
+        append_svarint(lines, 0);
+        append_varint(lines, 0);
+        append_varint(lines, 1);
+        append_varint(lines, 1);
         for (int i = 1; i < kLineSlots; ++i) {
             lines.push_back(static_cast<char>(128 | (11 << 3)));
             lines.push_back(0);
@@ -229,7 +233,11 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable,
     for (int i = 16; i + 1 < nunits * 2; i += 2)
         codebuf[static_cast<std::size_t>(i)] = static_cast<char>(kNop);
     std::vector<char> lines;
-    lines.push_back(static_cast<char>(128 | (15 << 3) | 7));
+    lines.push_back(static_cast<char>(128 | (14 << 3) | 7));
+    append_svarint(lines, 0);
+    append_varint(lines, 0);
+    append_varint(lines, 1);
+    append_varint(lines, 1);
     int prev = firstlineno > 0 ? firstlineno : 1;
     for (int i = 0; i < nlocs; ++i) {
         int line = locs[i * 3];

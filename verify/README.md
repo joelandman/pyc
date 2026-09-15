@@ -180,6 +180,7 @@ applied to every case**:
 | `heap_address` | `0x7f3c605a4c20` **only after `" at "`** | `0xADDR` | always |
 | `harness_tmpdir` | `pyc-measure-` + 8 tempfile chars | `pyc-measure-<TMP>` | always |
 | `stdlib_tmpdir` | `/tmp/tmp` + 8 tempfile chars | `/tmp/tmp<TMP>` | always |
+| `ephem_ipv4` | `('127.0.0.1', N)` optional `:N` | `('127.0.0.1', <PORT>)` | always |
 | `asctime` | `Wed Aug 26 13:14:57 2026` | `<ASCTIME>` | on demand |
 | `iso_datetime` | `2026-08-26T13:14:57.123` | `<ISOTIME>` | on demand |
 | `clock_time` | `13:14:57` | `<TIME>` | on demand |
