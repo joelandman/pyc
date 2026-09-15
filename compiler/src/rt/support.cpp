@@ -1487,6 +1487,13 @@ PyObject* type_lookup(PyObject* mgr, PyObject* name, const char* cname) {
     PyObject* f = mro_lookup(mgr, name);
     if (f) return f;
     if (PyErr_Occurred()) return nullptr;
+    // C types often keep __enter__/__exit__ in tp_methods, not tp_dict.
+    if (name) {
+        int r = PyObject_GetOptionalAttr(reinterpret_cast<PyObject*>(Py_TYPE(mgr)),
+                                         name, &f);
+        if (r < 0) return nullptr;
+        if (r > 0) return f;
+    }
     PyObject* ae = mro_lookup(mgr, g_id_aenter);
     PyObject* ax = mro_lookup(mgr, g_id_aexit);
     const bool async_cm = ae && ax;
