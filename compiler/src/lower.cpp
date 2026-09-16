@@ -3669,6 +3669,7 @@ private:
                 set_block(hcatch);
                 call_capi("pyc_rt_except_star_note", {contribs}, n.loc, &ok);
                 if (!ok) return false;
+                forget(rest);
                 if (remaining.id != exc.id) emit_decref(remaining, n.loc);
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                "", next_b, 0, n.loc, std::nullopt});
