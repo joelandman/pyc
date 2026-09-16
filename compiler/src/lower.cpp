@@ -602,6 +602,7 @@ private:
     struct HandledEntry {
         ir::Value prev;
         std::size_t try_depth;
+        ir::Value held{};
     };
 
     // Saved lowering state while a nested function is built.
@@ -2355,6 +2356,19 @@ private:
         if (owns(v)) release(v, loc);
     }
 
+    bool except_unbind_name(const std::optional<std::string>& name,
+                            const SourceLoc& loc) {
+        if (!name) return true;
+        ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
+                       0, 0, loc, std::nullopt});
+        mark_owned(nn);
+        store_name(*name, nn, loc);
+        expr t;
+        t.v = Name{*name, expr_context{Del{}}, loc};
+        return lower_delete(Delete{{std::move(t)}, loc});
+    }
+
     bool lower_stmt_list(const std::vector<stmt>& body) {
         body_stk_.push_back(&body);
         stmt_idx_.push_back(0);
@@ -3062,6 +3076,16 @@ private:
         }
     }
 
+    void drop_open_handled_exc(const SourceLoc& loc) {
+        std::size_t depth = try_stack_.size();
+        for (auto it = handled_stack_.rbegin(); it != handled_stack_.rend(); ++it) {
+            if (it->try_depth < depth) continue;
+            if (!it->held.valid()) continue;
+            emit_decref(it->held, loc);
+            emit_decref(it->held, loc);
+        }
+    }
+
     // NULL means nothing is being handled, not failure. call_capi would treat
     // that NULL as an error edge.
     ir::Value emit_get_handled(const SourceLoc& loc) {
@@ -3473,6 +3497,7 @@ private:
             if (!gok) return false;
         }
         pop_open_handlers(loc);
+        drop_open_handled_exc(loc);
         if (!fin_stack_.empty() && loops_.size() <= fin_loop_depth_) {
             FinallyCtx* f = fin_stack_.back();
             f->any_jump = true;
@@ -3508,6 +3533,7 @@ private:
             if (!gok) return false;
         }
         pop_open_handlers(loc);
+        drop_open_handled_exc(loc);
         // The returned reference is handed on, so it must NOT be released --
         // but every other live temporary must be, or an early return leaks
         // exactly what a landing pad would have freed.
@@ -3553,6 +3579,7 @@ private:
         if (!ok) return false;
         mark_owned(exc); forget(exc);
         frame_owned_.push_back(exc);
+        if (!star) frame_owned_.push_back(exc);
         // Record what is being handled, so a bare `raise` inside the handler
         // has something to re-raise.
         ir::Value prev_handled = call_capi("pyc_rt_push_handled", {exc}, n.loc, &ok);
@@ -3642,7 +3669,7 @@ private:
                 emit_decref(bound, n.loc);
                 mark_owned(rest);
             } else {
-                handled_stack_.push_back({prev_handled, try_stack_.size()});
+                handled_stack_.push_back({prev_handled, try_stack_.size(), exc});
             }
             std::uint32_t hcatch = 0;
             if (star) {
@@ -3659,6 +3686,7 @@ private:
             else handled_stack_.pop_back();
             if (star) {
                 if (!terminated()) {
+                    if (!except_unbind_name(eh.name, n.loc)) return false;
                     call_capi("pyc_rt_except_star_note", {contribs}, n.loc, &ok);
                     if (!ok) return false;
                     forget(rest);
@@ -3667,6 +3695,7 @@ private:
                                    "", next_b, 0, n.loc, std::nullopt});
                 }
                 set_block(hcatch);
+                if (!except_unbind_name(eh.name, n.loc)) return false;
                 call_capi("pyc_rt_except_star_note", {contribs}, n.loc, &ok);
                 if (!ok) return false;
                 forget(rest);
@@ -3679,6 +3708,10 @@ private:
             } else {
                 call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
                 if (!ok) return false;
+                if (!except_unbind_name(eh.name, n.loc)) return false;
+                emit_decref(prev_handled, n.loc);
+                emit_decref(exc, n.loc);
+                emit_decref(exc, n.loc);
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                "", after, 0, n.loc, std::nullopt});
             }
@@ -3692,6 +3725,7 @@ private:
         frame_owned_.pop_back();
         emit_decref(prev_handled, n.loc);
         frame_owned_.pop_back();
+        if (!star) frame_owned_.pop_back();
         if (star) {
             ir::Value result = call_capi("pyc_rt_except_star_finish",
                                          {exc, contribs, remaining}, n.loc, &ok,
@@ -3726,7 +3760,9 @@ private:
             if (!ok) return false;
             forget(exc);
         }
-        std::uint32_t pad = make_landing_pad(n.loc);
+        const ExceptHandler& last_h =
+            std::get<ExceptHandler>(n.handlers.back().v);
+        std::uint32_t pad = make_landing_pad(last_h.loc);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", pad, 0, n.loc, std::nullopt});
 
