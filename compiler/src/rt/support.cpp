@@ -76,6 +76,14 @@ static PyObject* mapping_get(PyObject* map, PyObject* key) {
     return nullptr;
 }
 
+static void raise_name_not_defined(PyObject* name) {
+    PyErr_Format(PyExc_NameError, "name '%U' is not defined", name);
+    PyObject* exc = PyErr_GetRaisedException();
+    if (!exc) return;
+    if (PyObject_SetAttrString(exc, "name", name) < 0) PyErr_Clear();
+    PyErr_SetRaisedException(exc);
+}
+
 // Name lookup inside a CLASS BODY. CPython compiles these to LOAD_NAME:
 // the class namespace first, then globals, then builtins. Going straight to
 // the global path makes a class-level name invisible to anything else in the
@@ -127,7 +135,7 @@ extern "C" PyObject* pyc_rt_load_global_obj(PyObject* name) {
     v = mapping_get(b, name);
     if (v) return v;
     if (PyErr_Occurred()) return nullptr;
-    PyErr_Format(PyExc_NameError, "name '%U' is not defined", name);
+    raise_name_not_defined(name);
     return nullptr;
 }
 
@@ -161,7 +169,7 @@ PyObject* pyc_rt_load_global(const char* name) {
     if (v) { Py_DECREF(key); return v; }
     if (PyErr_Occurred()) { Py_DECREF(key); return nullptr; }
 
-    PyErr_Format(PyExc_NameError, "name '%s' is not defined", name);
+    raise_name_not_defined(key);
     Py_DECREF(key);
     return nullptr;
 }
@@ -1976,7 +1984,10 @@ extern "C" int pyc_rt_del_global(const char* name) {
     if (PyDict_DelItemString(g, name) < 0) {
         // CPython reports a missing global as NameError, not KeyError.
         PyErr_Clear();
-        PyErr_Format(PyExc_NameError, "name '%s' is not defined", name);
+        PyObject* key = PyUnicode_FromString(name);
+        if (!key) return -1;
+        raise_name_not_defined(key);
+        Py_DECREF(key);
         return -1;
     }
     return 0;
