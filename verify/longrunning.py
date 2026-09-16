@@ -12,6 +12,7 @@ FILES = frozenset({
     "test_exceptions.py",
     "test_ftplib.py",
     "test_httpservers.py",
+    "test_math.py",
     "test_runpy.py",
     "test_sys_settrace.py",
     "test_zipfile64.py",

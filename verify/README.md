@@ -240,7 +240,7 @@ report the result as a compiler property, which is worse.
 
 ### Lib/test longrunning group
 
-Ten `Lib/test` files do not finish in 30s + a 60s retry (often CPython itself).
+Eleven `Lib/test` files do not finish in 30s + a 60s retry (often CPython itself).
 They stay in the I6 denominator. `verify/longrunning.py` names them; `--libtest`
 runs that group **after** the rest, at **600s** with **no 2× retry**, one worker
 per core (`--longrunning-jobs 0`). `--no-longrunning` keeps the default budget.
