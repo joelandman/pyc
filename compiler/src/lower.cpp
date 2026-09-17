@@ -417,6 +417,7 @@ private:
         // it, that pad popped handlers, and the compiler recursed until it
         // hung -- diagnosing nothing at all.
         pop_open_handlers(loc);
+        if (!try_stack_.empty()) drop_open_handled_exc(loc);
         // Record this frame on every unwind, including a local except.
         // CPython still puts the current frame on e.__traceback__ when
         // `try: raise E except E as e` catches in the same function;
@@ -603,6 +604,7 @@ private:
         ir::Value prev;
         std::size_t try_depth;
         ir::Value held{};
+        int drops = 2;
     };
 
     // Saved lowering state while a nested function is built.
@@ -2999,19 +3001,25 @@ private:
         }
 
         set_block(dispatch);
-        ir::Value sup = call_capi("pyc_rt_exit_exc", {exitf, mgr}, wloc, &ok);
-        if (!ok) return false;
+        SourceLoc keep = wloc;
+        keep.line = 0;
+        ir::Value sup = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        {
+            ir::Instr in{ir::Op::CallCApi, {exitf, mgr}, sup, Ownership::NotAnObject,
+                         "pyc_rt_exit_exc", 0, 0, keep, make_landing_pad(wloc)};
+            emit(std::move(in));
+        }
         std::uint32_t reraise = new_block("with.reraise");
         emit(ir::Instr{ir::Op::CondBr, {sup}, std::nullopt, Ownership::NotAnObject,
-                       "", after, reraise, n.loc, std::nullopt});
+                       "", after, reraise, keep, std::nullopt});
         set_block(reraise);
         frame_owned_.pop_back();
         frame_owned_.pop_back();
-        std::uint32_t pad = make_landing_pad(wloc);
+        std::uint32_t pad = make_landing_pad(keep);
         frame_owned_.push_back(exitf);
         frame_owned_.push_back(mgr);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", pad, 0, n.loc, std::nullopt});
+                       "", pad, 0, keep, std::nullopt});
 
         set_block(after);
         frame_owned_.pop_back();
@@ -3080,9 +3088,9 @@ private:
         std::size_t depth = try_stack_.size();
         for (auto it = handled_stack_.rbegin(); it != handled_stack_.rend(); ++it) {
             if (it->try_depth < depth) continue;
+            emit_decref(it->prev, loc);
             if (!it->held.valid()) continue;
-            emit_decref(it->held, loc);
-            emit_decref(it->held, loc);
+            for (int i = 0; i < it->drops; ++i) emit_decref(it->held, loc);
         }
     }
 
@@ -3308,6 +3316,21 @@ private:
         ir::Value exc = call_capi("PyErr_GetRaisedException", {}, n.loc, &ok);
         if (!ok) return false;
         mark_owned(exc);
+        if (!handled_stack_.empty() && handled_stack_.back().held.valid()) {
+            ir::Value outer = handled_stack_.back().held;
+            ir::Value same = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            emit(ir::Instr{ir::Op::Is, {exc, outer}, same, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+            std::uint32_t drop_b = new_block("finally.reraise_dup");
+            std::uint32_t keep_b = new_block("finally.owned");
+            emit(ir::Instr{ir::Op::CondBr, {same}, std::nullopt, Ownership::NotAnObject,
+                           "", drop_b, keep_b, n.loc, std::nullopt});
+            set_block(drop_b);
+            emit_decref(exc, n.loc);
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", keep_b, 0, n.loc, std::nullopt});
+            set_block(keep_b);
+        }
         fin.edge((std::uint32_t)blk_, exc, const_null(n.loc),
                  const_null(n.loc), const_null(n.loc));
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
@@ -3384,7 +3407,7 @@ private:
                                     {push_b, none_b, some_b}, n.loc);
         forget(prev_h);
         frame_owned_.push_back(prev_h);
-        handled_stack_.push_back({prev_h, try_stack_.size()});
+        handled_stack_.push_back({prev_h, try_stack_.size(), p_exc, 2});
 
         reload_live_i64_from_slots(live_in, n.loc);
         for (const stmt& s2 : n.finalbody) if (!lower_stmt(s2)) return false;
@@ -3420,10 +3443,11 @@ private:
         if (!ok) return false;
         forget(p_exc);
         {
-            // Propagate outward on whatever encloses THIS try.
-            std::uint32_t pad = make_landing_pad(n.loc);
+            SourceLoc fl = n.loc;
+            if (n.loc.end_line > 0) fl.line = n.loc.end_line;
+            std::uint32_t pad = make_landing_pad(fl);
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                           "", pad, 0, n.loc, std::nullopt});
+                           "", pad, 0, fl, std::nullopt});
         }
 
         set_block(noexc_b);
@@ -3573,15 +3597,26 @@ private:
                        "", after, 0, n.loc, std::nullopt});
 
         set_block(dispatch);
-        // Takes the exception and CLEARS the error indicator, so the handler
-        // runs with no exception set -- as CPython does.
         ir::Value exc = call_capi("PyErr_GetRaisedException", {}, n.loc, &ok);
         if (!ok) return false;
         mark_owned(exc); forget(exc);
         frame_owned_.push_back(exc);
         if (!star) frame_owned_.push_back(exc);
-        // Record what is being handled, so a bare `raise` inside the handler
-        // has something to re-raise.
+        if (!star && !handled_stack_.empty() && handled_stack_.back().held.valid()) {
+            ir::Value outer = handled_stack_.back().held;
+            ir::Value same = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+            emit(ir::Instr{ir::Op::Is, {exc, outer}, same, Ownership::NotAnObject,
+                           "", 0, 0, n.loc, std::nullopt});
+            std::uint32_t drop_b = new_block("except.reraise_dup");
+            std::uint32_t keep_b = new_block("except.owned");
+            emit(ir::Instr{ir::Op::CondBr, {same}, std::nullopt, Ownership::NotAnObject,
+                           "", drop_b, keep_b, n.loc, std::nullopt});
+            set_block(drop_b);
+            emit_decref(exc, n.loc);
+            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                           "", keep_b, 0, n.loc, std::nullopt});
+            set_block(keep_b);
+        }
         ir::Value prev_handled = call_capi("pyc_rt_push_handled", {exc}, n.loc, &ok);
         if (!ok) return false;
         mark_owned(prev_handled); forget(prev_handled);
