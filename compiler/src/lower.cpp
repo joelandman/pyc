@@ -6014,11 +6014,30 @@ private:
                 return {};
             }
         }
-        ir::Value fn = lower_expr(*c.func, ok);
-        if (!*ok) return {};
         bool starred = false;
         for (const expr& a : c.args)
             if (std::holds_alternative<Starred>(a.v)) starred = true;
+        const Attribute* meth = std::get_if<Attribute>(&c.func->v);
+        if (meth && !starred && c.keywords.empty()) {
+            ir::Value obj = lower_expr(*meth->value, ok);
+            if (!*ok) return {};
+            ir::Value name = const_str(mangle_ident(meth->attr), c.loc);
+            std::vector<ir::Value> args{obj, name};
+            for (const expr& a : c.args) {
+                ir::Value v = lower_expr(a, ok);
+                if (!*ok) return {};
+                args.push_back(v);
+            }
+            ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            std::vector<ir::Value> saved = args;
+            emit(ir::Instr{ir::Op::CallObject, std::move(args), out,
+                           Ownership::Owned, "m", 0, 0, c.loc, make_landing_pad(c.loc)});
+            for (const ir::Value& a : saved) if (owns(a)) release(a, c.loc);
+            mark_owned(out);
+            return out;
+        }
+        ir::Value fn = lower_expr(*c.func, ok);
+        if (!*ok) return {};
         if (starred) return lower_call_starred(c, fn, ok);
 
         std::vector<ir::Value> args{fn};
@@ -6032,7 +6051,6 @@ private:
         std::vector<ir::Value> saved = args;
         emit(ir::Instr{ir::Op::CallObject, std::move(args), out,
                        Ownership::Owned, "", 0, 0, c.loc, make_landing_pad(c.loc)});
-        // A Python-level call borrows its callable and arguments.
         for (const ir::Value& a : saved) if (owns(a)) release(a, c.loc);
         mark_owned(out);
         return out;

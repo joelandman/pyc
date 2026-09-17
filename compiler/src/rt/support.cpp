@@ -1038,6 +1038,22 @@ PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {
     return PyObject_Vectorcall(callable, args, (size_t)nargs, nullptr);
 }
 
+PyObject* pyc_rt_call_method(PyObject* self, PyObject* name, PyObject** args,
+                             Py_ssize_t nargs) {
+    PyObject* small[16];
+    Py_ssize_t n = nargs + 1;
+    PyObject** stack = small;
+    if (n > 16) {
+        stack = (PyObject**)PyMem_Malloc((size_t)n * sizeof(PyObject*));
+        if (!stack) return nullptr;
+    }
+    stack[0] = self;
+    for (Py_ssize_t i = 0; i < nargs; ++i) stack[i + 1] = args[i];
+    PyObject* r = PyObject_VectorcallMethod(name, stack, (size_t)n, nullptr);
+    if (stack != small) PyMem_Free(stack);
+    return r;
+}
+
 PyObject* pyc_rt_call_ex(PyObject* callable, PyObject* args, PyObject* kwargs) {
     PyObject* t = args;
     int own = 0;
