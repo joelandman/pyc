@@ -7070,13 +7070,32 @@ private:
 
     ir::Value lower_call_kw(const Call& c, const ir::Value& fn,
                             const std::vector<ir::Value>& all, bool* ok) {
-        std::size_t npos = all.size() - 1;              // all[0] is the callable
+        bool splat = false;
+        for (const keyword& k : c.keywords) if (!k.arg) splat = true;
+        if (!splat) {
+            std::string csv;
+            std::vector<ir::Value> args = all;
+            for (const keyword& k : c.keywords) {
+                if (!csv.empty()) csv += ',';
+                csv += *k.arg;
+                ir::Value v = lower_expr(*k.value, ok);
+                if (!*ok) return {};
+                args.push_back(v);
+            }
+            ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            std::vector<ir::Value> saved = args;
+            emit(ir::Instr{ir::Op::CallObject, std::move(args), out,
+                           Ownership::Owned, "kw:" + csv, 0, 0, c.loc,
+                           make_landing_pad(c.loc)});
+            for (const ir::Value& a : saved) if (owns(a)) release(a, c.loc);
+            mark_owned(out);
+            return out;
+        }
+        std::size_t npos = all.size() - 1;
         ir::Value tup = call_capi_imm("PyTuple_New", {}, (std::int64_t)npos, 0, c.loc, ok);
         if (!*ok) return {};
         mark_owned(tup);
         for (std::size_t i = 0; i < npos; ++i) {
-            // PyTuple_SetItem steals, so the positional value must NOT be
-            // released afterwards -- §4's table is what makes that automatic.
             call_capi_imm("PyTuple_SetItem", {tup, all[i + 1]},
                           (std::int64_t)i, 1, c.loc, ok);
             if (!*ok) return {};

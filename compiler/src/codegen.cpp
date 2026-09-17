@@ -141,6 +141,16 @@ private:
     }
     std::map<std::string, int> pyname_;
     std::vector<std::string> pyname_order_;
+    std::map<std::string, int> kw_slot_;
+    std::vector<std::string> kw_order_;
+    int intern_kw(const std::string& csv) {
+        auto it = kw_slot_.find(csv);
+        if (it != kw_slot_.end()) return it->second;
+        int slot = (int)kw_order_.size();
+        kw_slot_[csv] = slot;
+        kw_order_.push_back(csv);
+        return slot;
+    }
 
     std::string name_ptr(const std::string& text) {
         std::string p = fresh();
@@ -1089,6 +1099,31 @@ private:
     std::vector<std::pair<std::string, std::size_t>> allocas_;
 
     void emit_call(const ir::Instr& in) {
+        if (in.text.size() > 3 && in.text.compare(0, 3, "kw:") == 0) {
+            need("declare ptr @pyc_rt_call_kw(ptr, ptr, i64, ptr)");
+            std::string csv = in.text.substr(3);
+            int slot = intern_kw(csv);
+            std::size_t nkw = 1;
+            for (char ch : csv) if (ch == ',') nkw++;
+            std::size_t n = in.args.size() - 1;
+            std::size_t npos = n - nkw;
+            std::string arr = hoisted_alloca(n ? n : 1);
+            for (std::size_t i = 0; i < n; ++i) {
+                std::string p = fresh();
+                o_ << "  " << p << " = getelementptr [" << (n ? n : 1)
+                   << " x ptr], ptr " << arr << ", i64 0, i64 " << i << "\n";
+                o_ << "  store ptr " << v(in.args[i + 1]) << ", ptr " << p << "\n";
+            }
+            std::string kp = fresh(), kn = fresh();
+            o_ << "  " << kp << " = getelementptr inbounds ptr, ptr @.kwnames, i64 "
+               << slot << "\n";
+            o_ << "  " << kn << " = load ptr, ptr " << kp << "\n";
+            o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_call_kw(ptr "
+               << v(in.args[0]) << ", ptr " << arr << ", i64 " << npos
+               << ", ptr " << kn << ")\n";
+            check(in, v(*in.result), true);
+            return;
+        }
         if (in.text == "m") {
             need("declare ptr @pyc_rt_call_method(ptr, ptr, ptr, i64)");
             std::size_t n = in.args.size() > 2 ? in.args.size() - 2 : 0;
@@ -1183,9 +1218,12 @@ private:
     void emit_pyconsts() {
         std::size_t n = pyconst_order_.size() ? pyconst_order_.size() : 1;
         std::size_t nn = pyname_order_.size() ? pyname_order_.size() : 1;
+        std::size_t nk = kw_order_.size() ? kw_order_.size() : 1;
         o_ << "\n@.pyconsts = internal global [" << n
            << " x ptr] zeroinitializer\n";
         o_ << "@.pycnames = internal global [" << nn
+           << " x ptr] zeroinitializer\n";
+        o_ << "@.kwnames = internal global [" << nk
            << " x ptr] zeroinitializer\n\n";
         o_ << "define internal i32 @__pyc_init_consts() {\nentry:\n";
         for (std::size_t i = 0; i < pyconst_order_.size(); ++i) {
@@ -1237,6 +1275,21 @@ private:
             o_ << ok << ":\n";
             o_ << "  " << ptr << " = getelementptr inbounds ptr, ptr "
                << "@.pycnames, i64 " << i << "\n";
+            o_ << "  store ptr " << val << ", ptr " << ptr << "\n";
+        }
+        for (std::size_t i = 0; i < kw_order_.size(); ++i) {
+            need("declare ptr @pyc_rt_kwnames_from_csv(ptr)");
+            std::string val = "%k" + std::to_string(i);
+            std::string ptr = "%kp" + std::to_string(i);
+            std::string ok = "kok" + std::to_string(i);
+            std::string isnull = "%kn" + std::to_string(i);
+            o_ << "  " << val << " = call ptr @pyc_rt_kwnames_from_csv(ptr "
+               << cstr(kw_order_[i]) << ")\n";
+            o_ << "  " << isnull << " = icmp eq ptr " << val << ", null\n";
+            o_ << "  br i1 " << isnull << ", label %fail, label %" << ok << "\n";
+            o_ << ok << ":\n";
+            o_ << "  " << ptr << " = getelementptr inbounds ptr, ptr "
+               << "@.kwnames, i64 " << i << "\n";
             o_ << "  store ptr " << val << ", ptr " << ptr << "\n";
         }
         o_ << "  ret i32 0\nfail:\n  ret i32 -1\n}\n";

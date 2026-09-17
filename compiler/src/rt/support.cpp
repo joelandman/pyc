@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <new>
+#include <unordered_map>
 
 extern "C" {
 
@@ -205,17 +206,14 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable,
                           int firstlineno = 1, int helper_idx = 2) {
     char kEvalCode[] = {
         '\x80', '\x00',
-        'R', '\x02',
-        '\x21', '\x00',
-        '\x34', '\x00',
-        '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
+        'R', '\x00',
         '#', '\x00'
     };
-    kEvalCode[3] = static_cast<char>(helper_idx);
+    (void)helper_idx;
     if (!locs || nlocs <= 0) {
         std::vector<char> codebuf(kLineSlots * 2, 0);
-        std::memcpy(codebuf.data(), kEvalCode, 16);
-        for (int i = 16; i + 1 < kLineSlots * 2; i += 2)
+        std::memcpy(codebuf.data(), kEvalCode, sizeof kEvalCode);
+        for (int i = (int)sizeof kEvalCode; i + 1 < kLineSlots * 2; i += 2)
             codebuf[static_cast<std::size_t>(i)] = static_cast<char>(kNop);
         std::vector<char> lines;
         lines.reserve(static_cast<std::size_t>(kLineSlots) * 6);
@@ -237,8 +235,8 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable,
     }
     int nunits = kStubUnits + nlocs;
     std::vector<char> codebuf(nunits * 2, 0);
-    std::memcpy(codebuf.data(), kEvalCode, 16);
-    for (int i = 16; i + 1 < nunits * 2; i += 2)
+    std::memcpy(codebuf.data(), kEvalCode, sizeof kEvalCode);
+    for (int i = (int)sizeof kEvalCode; i + 1 < nunits * 2; i += 2)
         codebuf[static_cast<std::size_t>(i)] = static_cast<char>(kNop);
     std::vector<char> lines;
     lines.push_back(static_cast<char>(128 | (14 << 3) | 7));
@@ -435,6 +433,7 @@ struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
                int vararg; int kwarg; int nfree; int firstlineno;
                const int* locs; int nlocs; };
+std::unordered_map<PyObject*, Bound*> g_func_bound;
 
 constexpr int kMoveCost = 2;
 constexpr int kCaseCost = 1;
@@ -504,6 +503,19 @@ PyObject* keyword_suggestion(PyObject* dir, PyObject* name) {
     return best;
 }
 
+void bound_extra_free(void* p) {
+    Bound* b = static_cast<Bound*>(p);
+    if (!b) return;
+    std::free(b->name);
+    delete b;
+}
+
+Py_ssize_t bound_extra_index() {
+    static Py_ssize_t idx = -1;
+    if (idx < 0) idx = PyUnstable_Eval_RequestCodeExtraIndex(bound_extra_free);
+    return idx;
+}
+
 void bound_capsule_dtor(PyObject* cap) {
     Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(cap, "pyc.Bound"));
     if (!b) { PyErr_Clear(); return; }
@@ -513,6 +525,14 @@ void bound_capsule_dtor(PyObject* cap) {
 
 Bound* bound_from_code(PyObject* code) {
     if (!code || !PyCode_Check(code)) return nullptr;
+    Py_ssize_t idx = bound_extra_index();
+    if (idx < 0) return nullptr;
+    void* extra = nullptr;
+    if (PyUnstable_Code_GetExtra(code, idx, &extra) < 0) {
+        PyErr_Clear();
+        return nullptr;
+    }
+    if (extra) return static_cast<Bound*>(extra);
     auto* co = reinterpret_cast<PyCodeObject*>(code);
     if (!co->co_consts) return nullptr;
     Py_ssize_t n = PyTuple_GET_SIZE(co->co_consts);
@@ -526,6 +546,8 @@ Bound* bound_from_code(PyObject* code) {
 
 Bound* bound_from_func(PyObject* func) {
     if (!func || !PyFunction_Check(func)) return nullptr;
+    auto it = g_func_bound.find(func);
+    if (it != g_func_bound.end()) return it->second;
     return bound_from_code(PyFunction_GET_CODE(func));
 }
 
@@ -552,36 +574,21 @@ PyCodeObject* make_func_code(Bound* b) {
         if (!u) { Py_DECREF(varnames); Py_DECREF(freevars); std::free(b->name); delete b; return nullptr; }
         PyTuple_SET_ITEM(freevars, i, u);
     }
-    PyObject* cap = PyCapsule_New(b, "pyc.Bound", bound_capsule_dtor);
-    if (!cap) { Py_DECREF(varnames); Py_DECREF(freevars); std::free(b->name); delete b; return nullptr; }
-    static PyMethodDef run_md = {"__pyc_eval__", pyc_rt_run_from_frame, METH_NOARGS, nullptr};
-    static PyObject* run_helper = nullptr;
-    if (!run_helper) {
-        run_helper = PyCFunction_New(&run_md, nullptr);
-        if (!run_helper) {
-            Py_DECREF(cap); Py_DECREF(varnames); Py_DECREF(freevars); return nullptr;
-        }
-    }
-    // Nested marshalled code objects first (CPython puts nested codes at
-    // the front of co_consts), then None, Bound capsule, eval helper.
     const int nextra = (int)g_extra_consts.size();
-    const int helper_idx = nextra + 2;
-    PyObject* consts = PyTuple_New(nextra + 3);
+    PyObject* consts = PyTuple_New(nextra + 1);
     if (consts) {
         for (int i = 0; i < nextra; ++i)
             PyTuple_SET_ITEM(consts, i, g_extra_consts[static_cast<size_t>(i)]);
         g_extra_consts.clear();
         Py_INCREF(Py_None); PyTuple_SET_ITEM(consts, nextra, Py_None);
-        Py_INCREF(cap); PyTuple_SET_ITEM(consts, nextra + 1, cap);
-        Py_INCREF(run_helper); PyTuple_SET_ITEM(consts, nextra + 2, run_helper);
     }
-    Py_DECREF(cap);
-    if (!consts) { Py_DECREF(varnames); Py_DECREF(freevars); return nullptr; }
+    if (!consts) { Py_DECREF(varnames); Py_DECREF(freevars); std::free(b->name); delete b; return nullptr; }
     PyObject *bytecode = nullptr, *linetable = nullptr;
     if (!build_linemap(&bytecode, &linetable, b->locs, b->nlocs, b->firstlineno,
-                       helper_idx)) {
+                       0)) {
         Py_XDECREF(bytecode); Py_XDECREF(linetable);
         Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
+        std::free(b->name); delete b;
         return nullptr;
     }
     PyObject* empty_bytes = PyBytes_FromStringAndSize("", 0);
@@ -596,6 +603,7 @@ PyCodeObject* make_func_code(Bound* b) {
         Py_XDECREF(bytecode); Py_XDECREF(linetable); Py_XDECREF(empty_bytes);
         Py_XDECREF(empty_tuple); Py_XDECREF(filename); Py_XDECREF(name); Py_XDECREF(qual);
         Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
+        std::free(b->name); delete b;
         return nullptr;
     }
     int flags = CO_OPTIMIZED | CO_NEWLOCALS;
@@ -611,6 +619,13 @@ PyCodeObject* make_func_code(Bound* b) {
     Py_DECREF(empty_tuple);
     Py_DECREF(filename); Py_DECREF(name); Py_DECREF(qual);
     Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
+    if (!co) { std::free(b->name); delete b; return nullptr; }
+    Py_ssize_t idx = bound_extra_index();
+    if (idx < 0 || PyUnstable_Code_SetExtra(reinterpret_cast<PyObject*>(co), idx, b) < 0) {
+        std::free(b->name); delete b;
+        Py_DECREF(co);
+        return nullptr;
+    }
     return co;
 }
 
@@ -905,8 +920,11 @@ int pyc_func_watch(PyFunction_WatchEvent ev, PyFunctionObject* func, PyObject* n
         if (bound_from_func(reinterpret_cast<PyObject*>(func)))
             PyFunction_SetVectorcall(func, func_vectorcall);
     } else if (ev == PyFunction_EVENT_MODIFY_CODE && new_value) {
-        if (bound_from_code(new_value))
+        if (g_func_bound.count(reinterpret_cast<PyObject*>(func))
+            || bound_from_code(new_value))
             PyFunction_SetVectorcall(func, func_vectorcall);
+    } else if (ev == PyFunction_EVENT_DESTROY) {
+        g_func_bound.erase(reinterpret_cast<PyObject*>(func));
     }
     return 0;
 }
@@ -971,6 +989,7 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
         if (rc < 0) { Py_DECREF(fn); return nullptr; }
     }
     PyFunction_SetVectorcall(reinterpret_cast<PyFunctionObject*>(fn), func_vectorcall);
+    g_func_bound[fn] = b;
     return fn;
 }
 
@@ -1036,6 +1055,30 @@ extern "C" int pyc_rt_periodic(void) {
 
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {
     return PyObject_Vectorcall(callable, args, (size_t)nargs, nullptr);
+}
+
+PyObject* pyc_rt_call_kw(PyObject* callable, PyObject** args, Py_ssize_t npos,
+                         PyObject* kwnames) {
+    return PyObject_Vectorcall(callable, args, (size_t)npos, kwnames);
+}
+
+PyObject* pyc_rt_kwnames_from_csv(const char* csv) {
+    if (!csv || !csv[0]) return PyTuple_New(0);
+    Py_ssize_t n = 1;
+    for (const char* p = csv; *p; ++p) if (*p == ',') n++;
+    PyObject* t = PyTuple_New(n);
+    if (!t) return nullptr;
+    const char* p = csv;
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        const char* e = p;
+        while (*e && *e != ',') e++;
+        PyObject* s = PyUnicode_FromStringAndSize(p, e - p);
+        if (!s) { Py_DECREF(t); return nullptr; }
+        PyUnicode_InternInPlace(&s);
+        PyTuple_SET_ITEM(t, i, s);
+        p = *e ? e + 1 : e;
+    }
+    return t;
 }
 
 PyObject* pyc_rt_call_method(PyObject* self, PyObject* name, PyObject** args,
