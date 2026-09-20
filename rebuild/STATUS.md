@@ -1,8 +1,9 @@
 # pyc — current state and MVP
 
-**Date:** 2026-09-12. Numbers from `compiler/baseline-libtest.json` and
-`compiler/baseline-language.json` unless marked unknown. CHARTER remains
-binding; this file is the dashboard, not an amendment.
+**Date:** 2026-09-20. Language numbers are re-measured from
+`compiler/baseline-language.json`; the `Lib/test` row remains the 2026-09-12
+I6 record. CHARTER remains binding; this file is the dashboard, not an
+amendment.
 
 Roles that produced this: Architect (`agents/architect.md`), PM
 (`agents/pm.md`), SWE-compiler (`agents/swe-compiler.md`), SWE-runtime
@@ -12,7 +13,7 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
-I6. Language + gaps + concurrency is **788/788** impactful. `Lib/test` is
+I6. Language + gaps + concurrency is **878/878** impactful. `Lib/test` is
 **339/389 = 87.15%** (`-O0`, sysroot 3.14.7, `--stdlib`). C1 (frames) and
 C2 (periodic GIL) are closed. The remaining product gap is not a new
 runtime: it is well-formed IR on every accepted program, named refusals
@@ -23,7 +24,7 @@ toolchain that still requires a purpose-built 3.14.7 sysroot.
 
 | Check | Result |
 |---|---|
-| language + gaps + concurrency | 788/788 impactful |
+| language + gaps + concurrency | 878/878 impactful |
 | `Lib/test` (I6) | 339/389 (87.15%) |
 | I6 composition | 331 clean + 8 `STDERR_DIFFERS`-only = 339 pass |
 | `DID_NOT_COMPILE` | 0 |
@@ -108,12 +109,12 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    `inspect.signature`, `__closure__`, `__annotate__`, `__name__`/`__qualname__`
    all MATCH. `type(f)(f.__code__, ns)` reuses the trampoline via a function
    watcher. Empty cellvar is UnboundLocalError; empty freevar is NameError.
-   `exec(f.__code__, closure=...)` runs the native body via a stub bytecode
-    helper that reads the eval frame's function closure. LoadGlobal uses the
-    current frame's globals (and mapping `__getitem__`), so FORWARDREF
-    annotate reconstruction works. Nested `__annotate__` code objects from
-    CPython's compile sit in the outer `co_consts`. Unexpected keywords
-    offer a "Did you mean" suggestion.
+   `exec(f.__code__, closure=...)` runs the native body through the
+   `__pyc_eval__` stub-bytecode helper installed into builtins. LoadGlobal
+   uses the current frame's globals (and mapping `__getitem__`), so
+   FORWARDREF annotate reconstruction works. Nested `__annotate__` code objects from
+   CPython's compile sit in the outer `co_consts`. Unexpected keywords
+   offer a "Did you mean" suggestion.
 7. **I8 CLI (S1).** `pycc` finds the sysroot interpreter (manifest or
    `bin/python3`), `--python-sysroot` aliases `--sysroot`, `--python`/`-std`/
    `--python-abi`/`--list-python-targets` work. `-std` is `--feature-version`.
@@ -151,7 +152,7 @@ works), and completeness is measured and not gamed. Not: C speed, two
 
 | # | Check | Bar |
 |---|---|---|
-| M1 | `make -C verify verify` | 788/788 impactful; no new silent-wrong |
+| M1 | `make -C verify verify` | 878/878 impactful; no new silent-wrong |
 | M2 | `make -C verify fast` | `--fail-on-silent-wrong` |
 | M3 | CI `ldd` smoke | no `libpython` `DT_NEEDED` |
 | M4 | CI wheel step | NumPy import+run in that binary |
