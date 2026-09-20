@@ -53,9 +53,7 @@ PyObject* pyc_rt_run_from_frame(PyObject* self, PyObject* args);
 // Vectorcall over an argument array.
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs);
 PyObject* pyc_rt_call_kw(PyObject* callable, PyObject** args, Py_ssize_t npos,
-                         PyObject* kwnames);
-PyObject* pyc_rt_call_method(PyObject* self, PyObject* name, PyObject** args,
-                             Py_ssize_t nargs);
+                          PyObject* kwnames);
 PyObject* pyc_rt_call_ex(PyObject* callable, PyObject* args, PyObject* kwargs);
 PyObject* pyc_rt_kwnames_from_csv(const char* csv);
 
@@ -124,6 +122,7 @@ void pyc_rt_decref(PyObject* o);
 // Resolve __main__'s dict once, at startup. Without it every global read and
 // write called PyImport_AddModule("__main__") first.
 void pyc_rt_globals_init(void);
+int pyc_rt_install_helpers(void);
 
 // Raise. Accepts a class or an instance, as `raise` does, and always returns
 // -1 so the caller's error edge is taken.

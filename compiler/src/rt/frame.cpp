@@ -206,6 +206,8 @@ extern "C" void pyc_rt_set_lineno(int line) {
 }
 
 extern "C" void pyc_rt_set_location(int line, int col, int end_col) {
+    (void)col;
+    (void)end_col;
     if (line < 1) return;
     pyc_rt_gil_ensure();
     PyThreadState* ts = PyThreadState_Get();
@@ -225,17 +227,6 @@ extern "C" void pyc_rt_set_location(int line, int col, int end_col) {
     if (off >= nunits) off = (int)nunits - 1;
     f->instr_ptr = _PyCode_CODE(co) + off;
     if (f->frame_obj) f->frame_obj->f_lineno = line;
-    if (col >= 0 && co->co_linetable && PyBytes_Check(co->co_linetable)) {
-        Py_ssize_t nlt = PyBytes_GET_SIZE(co->co_linetable);
-        Py_ssize_t at = (Py_ssize_t)off * 3;
-        if (at + 2 < nlt) {
-            char* p = PyBytes_AS_STRING(co->co_linetable);
-            int c = col > 127 ? 127 : col;
-            int e = end_col < c ? c : (end_col > 127 ? 127 : end_col);
-            p[at + 1] = (char)c;
-            p[at + 2] = (char)e;
-        }
-    }
     maybe_line_trace(f, line);
 }
 

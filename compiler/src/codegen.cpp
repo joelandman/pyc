@@ -1124,22 +1124,10 @@ private:
             check(in, v(*in.result), true);
             return;
         }
-        if (in.text == "m") {
-            need("declare ptr @pyc_rt_call_method(ptr, ptr, ptr, i64)");
-            std::size_t n = in.args.size() > 2 ? in.args.size() - 2 : 0;
-            std::string arr = hoisted_alloca(n ? n : 1);
-            for (std::size_t i = 0; i < n; ++i) {
-                std::string p = fresh();
-                o_ << "  " << p << " = getelementptr [" << (n ? n : 1)
-                   << " x ptr], ptr " << arr << ", i64 0, i64 " << i << "\n";
-                o_ << "  store ptr " << v(in.args[i + 2]) << ", ptr " << p << "\n";
-            }
-            o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_call_method(ptr "
-               << v(in.args[0]) << ", ptr " << v(in.args[1]) << ", ptr " << arr
-               << ", i64 " << n << ")\n";
-            check(in, v(*in.result), true);
-            return;
-        }
+        // A CallObject carries the callable in args[0]. (The former "m"
+        // VectorcallMethod form was removed: it deferred the attribute lookup
+        // past the argument evaluation, a silent wrong answer -- see
+        // verify/corpus/language/deco_eval_order.py.)
         need("declare ptr @pyc_rt_call(ptr, ptr, i64)");
         std::size_t n = in.args.size() - 1;
         std::string arr = hoisted_alloca(n ? n : 1);

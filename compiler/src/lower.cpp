@@ -6017,25 +6017,15 @@ private:
         bool starred = false;
         for (const expr& a : c.args)
             if (std::holds_alternative<Starred>(a.v)) starred = true;
-        const Attribute* meth = std::get_if<Attribute>(&c.func->v);
-        if (meth && !starred && c.keywords.empty()) {
-            ir::Value obj = lower_expr(*meth->value, ok);
-            if (!*ok) return {};
-            ir::Value name = const_str(mangle_ident(meth->attr), c.loc);
-            std::vector<ir::Value> args{obj, name};
-            for (const expr& a : c.args) {
-                ir::Value v = lower_expr(a, ok);
-                if (!*ok) return {};
-                args.push_back(v);
-            }
-            ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-            std::vector<ir::Value> saved = args;
-            emit(ir::Instr{ir::Op::CallObject, std::move(args), out,
-                           Ownership::Owned, "m", 0, 0, c.loc, make_landing_pad(c.loc)});
-            for (const ir::Value& a : saved) if (owns(a)) release(a, c.loc);
-            mark_owned(out);
-            return out;
-        }
+        // The callee (for a method call, the attribute lookup) MUST be
+        // evaluated before the arguments: CPython runs LOAD_ATTR before the
+        // argument expressions, so a __getattr__ or a property with side
+        // effects fires in that order. A fast path that deferred the lookup
+        // to call time (VectorcallMethod) reversed the observable order and
+        // was a silent wrong answer (verify/corpus/language/deco_eval_order.py,
+        // Lib/test/test_decorators.py test_eval_order). The bound-method
+        // temporary that costs us in test_gc.test_heap_size is CPython's
+        // LOAD_ATTR method-optimisation gap, not a reason to diverge (I2).
         ir::Value fn = lower_expr(*c.func, ok);
         if (!*ok) return {};
         if (starred) return lower_call_starred(c, fn, ok);

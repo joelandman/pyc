@@ -230,6 +230,11 @@ int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
     int rc = configure(argc, argv);
     if (rc != 0) return rc < 0 ? 1 : rc;
     pyc_rt_globals_init();
+    if (pyc_rt_install_helpers() < 0) {
+        PyErr_Print();
+        Py_FinalizeEx();
+        return 1;
+    }
     set_executable();
     set_main_file(argv);
 

@@ -2,6 +2,7 @@
 
 #include <marshal.h>      // PyMarshal_ReadObjectFromString
 #include <frameobject.h>   // PyFrame_New, for synthesised tracebacks
+#include <methodobject.h>
 
 #include <cstdlib>
 #include <cstddef>
@@ -206,8 +207,11 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable,
                           int firstlineno = 1, int helper_idx = 2) {
     char kEvalCode[] = {
         '\x80', '\x00',
-        'R', '\x00',
-        '#', '\x00'
+        '\x5c', '\x01',
+        0, 0, 0, 0, 0, 0, 0, 0,
+        '\x34', '\x00',
+        0, 0, 0, 0, 0, 0,
+        '\x23', '\x00'
     };
     (void)helper_idx;
     if (!locs || nlocs <= 0) {
@@ -234,6 +238,7 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable,
         return *bytecode && *linetable;
     }
     int nunits = kStubUnits + nlocs;
+    if (nunits < 11) nunits = 11;
     std::vector<char> codebuf(nunits * 2, 0);
     std::memcpy(codebuf.data(), kEvalCode, sizeof kEvalCode);
     for (int i = (int)sizeof kEvalCode; i + 1 < nunits * 2; i += 2)
@@ -278,6 +283,31 @@ void pyc_rt_set_source_file(const char* file) {
     }
 }
 
+static PyObject* pyc_eval_names(void) {
+    PyObject* name = PyUnicode_InternFromString("__pyc_eval__");
+    if (!name) return nullptr;
+    PyObject* names = PyTuple_Pack(1, name);
+    Py_DECREF(name);
+    return names;
+}
+
+static PyMethodDef pyc_eval_method = {
+    "__pyc_eval__",
+    (PyCFunction)pyc_rt_run_from_frame,
+    METH_NOARGS,
+    nullptr
+};
+
+extern "C" int pyc_rt_install_helpers(void) {
+    PyObject* builtins = PyEval_GetBuiltins();
+    if (!builtins) return -1;
+    PyObject* fn = PyCFunction_New(&pyc_eval_method, nullptr);
+    if (!fn) return -1;
+    int rc = PyDict_SetItemString(builtins, "__pyc_eval__", fn);
+    Py_DECREF(fn);
+    return rc;
+}
+
 int pyc_rt_push_module_frame(void) {
     PyObject* g = globals_dict();
     if (!g) return -1;
@@ -287,22 +317,25 @@ int pyc_rt_push_module_frame(void) {
     }
     PyObject* empty_bytes = PyBytes_FromStringAndSize("", 0);
     PyObject* empty_tuple = PyTuple_New(0);
+    PyObject* names = pyc_eval_names();
     PyObject* filename = PyUnicode_FromString(g_source_file);
     PyObject* name = PyUnicode_FromString("<module>");
     PyObject* consts = PyTuple_Pack(1, Py_None);
-    if (!empty_bytes || !empty_tuple || !filename || !name || !consts) {
+    if (!empty_bytes || !empty_tuple || !names || !filename || !name || !consts) {
         Py_XDECREF(bytecode); Py_XDECREF(linetable); Py_XDECREF(empty_bytes);
-        Py_XDECREF(empty_tuple); Py_XDECREF(filename); Py_XDECREF(name);
+        Py_XDECREF(empty_tuple); Py_XDECREF(names);
+        Py_XDECREF(filename); Py_XDECREF(name);
         Py_XDECREF(consts);
         return -1;
     }
     PyCodeObject* co = PyUnstable_Code_NewWithPosOnlyArgs(
         0, 0, 0, 0, 1, 0,
-        bytecode, consts, empty_tuple, empty_tuple,
+        bytecode, consts, names, empty_tuple,
         empty_tuple, empty_tuple, filename, name, name, 1,
         linetable, empty_bytes);
     Py_DECREF(bytecode); Py_DECREF(linetable); Py_DECREF(empty_bytes);
-    Py_DECREF(empty_tuple); Py_DECREF(filename); Py_DECREF(name); Py_DECREF(consts);
+    Py_DECREF(empty_tuple); Py_DECREF(names);
+    Py_DECREF(filename); Py_DECREF(name); Py_DECREF(consts);
     if (!co) return -1;
     void* f = pyc_rt_interp_enter(co, g, g, nullptr);
     if (!f) { Py_DECREF(co); return -1; }
@@ -593,15 +626,18 @@ PyCodeObject* make_func_code(Bound* b) {
     }
     PyObject* empty_bytes = PyBytes_FromStringAndSize("", 0);
     PyObject* empty_tuple = PyTuple_New(0);
+    PyObject* names = pyc_eval_names();
     PyObject* filename = PyUnicode_FromString(g_source_file);
     const char* full = b->name ? b->name : "<fn>";
     const char* shortn = full;
     if (const char* dot = std::strrchr(full, '.')) shortn = dot + 1;
     PyObject* name = PyUnicode_FromString(shortn);
     PyObject* qual = PyUnicode_FromString(full);
-    if (!bytecode || !linetable || !empty_bytes || !empty_tuple || !filename || !name || !qual) {
+    if (!bytecode || !linetable || !empty_bytes || !empty_tuple || !names ||
+        !filename || !name || !qual) {
         Py_XDECREF(bytecode); Py_XDECREF(linetable); Py_XDECREF(empty_bytes);
-        Py_XDECREF(empty_tuple); Py_XDECREF(filename); Py_XDECREF(name); Py_XDECREF(qual);
+        Py_XDECREF(empty_tuple); Py_XDECREF(names);
+        Py_XDECREF(filename); Py_XDECREF(name); Py_XDECREF(qual);
         Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
         std::free(b->name); delete b;
         return nullptr;
@@ -611,12 +647,12 @@ PyCodeObject* make_func_code(Bound* b) {
     if (b->kwarg >= 0) flags |= CO_VARKEYWORDS;
     PyCodeObject* co = PyUnstable_Code_NewWithPosOnlyArgs(
         b->nargs, b->nposonly, b->nkwonly, nfast, 2, flags,
-        bytecode, consts, empty_tuple, varnames,
+        bytecode, consts, names, varnames,
         freevars, empty_tuple, filename, name, qual,
         b->firstlineno > 0 ? b->firstlineno : 1,
         linetable, empty_bytes);
     Py_DECREF(bytecode); Py_DECREF(linetable); Py_DECREF(empty_bytes);
-    Py_DECREF(empty_tuple);
+    Py_DECREF(empty_tuple); Py_DECREF(names);
     Py_DECREF(filename); Py_DECREF(name); Py_DECREF(qual);
     Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
     if (!co) { std::free(b->name); delete b; return nullptr; }
@@ -1079,22 +1115,6 @@ PyObject* pyc_rt_kwnames_from_csv(const char* csv) {
         p = *e ? e + 1 : e;
     }
     return t;
-}
-
-PyObject* pyc_rt_call_method(PyObject* self, PyObject* name, PyObject** args,
-                             Py_ssize_t nargs) {
-    PyObject* small[16];
-    Py_ssize_t n = nargs + 1;
-    PyObject** stack = small;
-    if (n > 16) {
-        stack = (PyObject**)PyMem_Malloc((size_t)n * sizeof(PyObject*));
-        if (!stack) return nullptr;
-    }
-    stack[0] = self;
-    for (Py_ssize_t i = 0; i < nargs; ++i) stack[i + 1] = args[i];
-    PyObject* r = PyObject_VectorcallMethod(name, stack, (size_t)n, nullptr);
-    if (stack != small) PyMem_Free(stack);
-    return r;
 }
 
 PyObject* pyc_rt_call_ex(PyObject* callable, PyObject* args, PyObject* kwargs) {
