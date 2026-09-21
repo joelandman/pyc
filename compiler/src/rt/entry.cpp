@@ -157,6 +157,18 @@ static void set_main_file(char** argv) {
     PyObject* v = PyUnicode_FromString(path.c_str());
     if (!v) { PyErr_Clear(); return; }
     if (PyObject_SetAttrString(m, "__file__", v) < 0) PyErr_Clear();
+
+    PyObject* argv_list = PySys_GetObject("argv");
+    if (argv_list && PyList_Check(argv_list) &&
+        PyList_GET_SIZE(argv_list) > 0) {
+        PyObject* old0 = PyList_GET_ITEM(argv_list, 0);
+        PyObject* new0 = PyUnicode_FromString(path.c_str());
+        if (new0) {
+            PyList_SET_ITEM(argv_list, 0, new0);
+            Py_DECREF(old0);
+        }
+    }
+
     Py_DECREF(v);
 
     // CPython scripts set __loader__ to SourceFileLoader(__main__, path).
@@ -202,9 +214,9 @@ static void set_main_file(char** argv) {
 // it then fails loudly rather than silently running the wrong thing.
 //
 // Note this does NOT make the binary an interpreter: config.parse_argv stays
-// 0, so the program's own argv is still its own. Programs wanting their own
-// path should use sys.argv[0] or __main__.__file__, both of which still name
-// the binary.
+// 0, so the program's own argv is still its own. sys.argv[0] and
+// __main__.__file__ name the original source file when that path is still
+// available, and fall back to the binary itself when it is not.
 static void set_executable(void) {
     PyObject* prefix = PySys_GetObject("prefix");            // borrowed
     if (!prefix || !PyUnicode_Check(prefix)) return;

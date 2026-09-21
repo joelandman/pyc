@@ -15,6 +15,13 @@
 
 extern "C" {
 
+// CPython's ordinary PyFunction dispatcher, used when a pyc-managed function
+// is given a code object that this compiler did not produce.
+extern "C" PyObject* _PyFunction_Vectorcall(PyObject* func,
+                                            PyObject* const* stack,
+                                            size_t nargsf,
+                                            PyObject* kwnames);
+
 // The module dict of __main__, resolved ONCE.
 //
 // This used to call PyImport_AddModule("__main__") on every global access --
@@ -668,7 +675,11 @@ PyCodeObject* make_func_code(Bound* b) {
 PyObject* trampoline(PyObject* func, PyObject* const* args, Py_ssize_t npos,
                      PyObject* kwargs, PyObject* kwnames) {
     Bound* b = bound_from_func(func);
-    if (!b) return nullptr;
+    if (!b) {
+        PyErr_Format(PyExc_SystemError,
+                     "pyc callable lost its native implementation");
+        return nullptr;
+    }
     PyObject* defaults = PyFunction_GET_DEFAULTS(func);
     PyObject* kwdefaults = PyFunction_GET_KW_DEFAULTS(func);
     PyObject* closure = PyFunction_GET_CLOSURE(func);
@@ -952,15 +963,23 @@ PyObject* func_vectorcall(PyObject* callable, PyObject* const* args,
 }
 
 int pyc_func_watch(PyFunction_WatchEvent ev, PyFunctionObject* func, PyObject* new_value) {
+    PyObject* fn = reinterpret_cast<PyObject*>(func);
     if (ev == PyFunction_EVENT_CREATE) {
-        if (bound_from_func(reinterpret_cast<PyObject*>(func)))
+        Bound* b = bound_from_func(fn);
+        if (b) {
+            g_func_bound[fn] = b;
             PyFunction_SetVectorcall(func, func_vectorcall);
+        }
     } else if (ev == PyFunction_EVENT_MODIFY_CODE && new_value) {
-        if (g_func_bound.count(reinterpret_cast<PyObject*>(func))
-            || bound_from_code(new_value))
+        Bound* nb = bound_from_code(new_value);
+        if (nb) {
+            g_func_bound[fn] = nb;
             PyFunction_SetVectorcall(func, func_vectorcall);
+        } else if (g_func_bound.erase(fn) > 0) {
+            PyFunction_SetVectorcall(func, _PyFunction_Vectorcall);
+        }
     } else if (ev == PyFunction_EVENT_DESTROY) {
-        g_func_bound.erase(reinterpret_cast<PyObject*>(func));
+        g_func_bound.erase(fn);
     }
     return 0;
 }
