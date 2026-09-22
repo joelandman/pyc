@@ -4470,7 +4470,7 @@ private:
                        make_landing_pad(n.loc)});
         mark_owned(cls);
         if (!n.keywords.empty()) emit_decref(kwds, n.loc);
-        emit_decref(bases, n.loc);
+        release(bases, n.loc);
         emit_decref(ns, n.loc);
         // type.__new__ fills the cell from ns['__classcell__']. Filling it
         // here skipped that, so metaclasses that drop or swap the cell never
