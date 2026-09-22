@@ -263,9 +263,12 @@ blaming the compiler for it would be false, exactly as with `ORACLE_UNSTABLE`.
 Each record carries `oracle_timed_out` so the comparator can tell the two
 apart.
 
-`test_ssl.py` as `__main__` is the worked example: two CPython runs both exit 0
-and disagree on verbose server logs (`verify/notes/test_ssl_verbose.md`). `-q`
-does not help. Leave it `ORACLE_UNSTABLE`.
+`test_ssl.py` as `__main__` is the worked example for OS/scheduler-shaped
+stdout: raw CPython runs disagree on ports, timeouts, threaded client/server
+chatter and retry counts (`verify/notes/test_ssl_verbose.md`). The harness
+collapses that shape before the oracle-stability check, so a remaining
+difference is compared against a stable oracle instead of being quarantined as
+`ORACLE_UNSTABLE`.
 
 ### An unstable oracle is reported, never dropped
 

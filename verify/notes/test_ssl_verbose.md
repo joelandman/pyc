@@ -1,7 +1,15 @@
-# `test_ssl.py` as `__main__`: nondeterministic stdout
+# `test_ssl.py` as `__main__`: OS/scheduler-shaped stdout
 
-I6 flags this file `ORACLE_UNSTABLE`. Two runs of the **same** sysroot
-CPython, both **exit 0**, print different stdout. pyc is not involved.
+Two runs of the **same** sysroot CPython, both **exit 0**, print different
+raw stdout. pyc is not involved. The harness now treats that raw variation as
+OS/scheduler shape, not oracle instability, by collapsing these lines in
+`verify/measure.py`:
+
+- ephemeral ports and socket `fd` values,
+- `Needed <COUNT> calls to ...` counts,
+- `connection timeout TimeoutError('timed out')`,
+- threaded ` client:` / ` server:` chatter and `Connection reset by peer`,
+- random channel-binding bytes and optional `raddr` values.
 
 ## Reproduce
 
@@ -56,5 +64,7 @@ stable script:
 Possible fixes on their side (not ours): default verbose 0 for `__main__`, skip
 the timeout print, or not print ephemeral ports / retry counts unless `-v`.
 
-pyc will not edit CPython’s test. I6 keeps the file in the denominator as
-`ORACLE_UNSTABLE`.
+pyc will not edit CPython’s test. I6 keeps the file in the denominator. With
+the shape rules above, the oracle side is stable; a remaining `STDOUT_DIFFERS`
+is a measured difference against that stable oracle, not an `ORACLE_UNSTABLE`
+quarantine.

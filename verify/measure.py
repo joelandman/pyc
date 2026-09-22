@@ -105,6 +105,30 @@ VOLATILE: tuple[tuple[str, re.Pattern[str], str], ...] = (
      "('127.0.0.1', <PORT>)"),
     ("ephem_hostport", re.compile(r"localhost:\d+"), "localhost:<PORT>"),
     ("ephem_ipv4_colon", re.compile(r"127\.0\.0\.1:\d+"), "127.0.0.1:<PORT>"),
+    # test_ssl's verbose server log is an OS/scheduler trace, not the test's
+    # answer. Ports are collapsed above; these collapse the remaining shape
+    # that the kernel and scheduling decide.
+    ("ssl_optional_raddr",
+     re.compile(r", raddr=\('127\.0\.0\.1', (?:\d+|<PORT>)\)"), ""),
+    ("ssl_socket_fd", re.compile(r"fd=\d+"), "fd=<FD>"),
+    ("ssl_channel_binding",
+     re.compile(r"(got (?:another )?channel binding data: )b'(?:[^'\\]|\\.)*'"),
+     r"\1b'<CHANNEL_BINDING>'"),
+    ("ssl_handshake_count_complete",
+     re.compile(r"Needed \d+ calls to complete (\w+)\(\)"),
+     r"Needed <COUNT> calls to complete \1()"),
+    ("ssl_handshake_count_do_handshake",
+     re.compile(r"Needed \d+ calls to do_handshake\(\) to establish session\."),
+     "Needed <COUNT> calls to do_handshake() to establish session."),
+    ("ssl_connection_timeout",
+     re.compile(r"^[ \t]*connection timeout TimeoutError\('timed out'\)\n?",
+                re.M), ""),
+    # The client and server threads write this chatter independently, so the
+    # line order is a scheduling trace, not a property of the program.
+    ("ssl_client_log", re.compile(r"^[ \t]*client:.*\n?", re.M), ""),
+    ("ssl_server_log", re.compile(r"^[ \t]*server:.*\n?", re.M), ""),
+    ("ssl_server_reset",
+     re.compile(r"^[ \t]*Connection reset by peer: .*\n?", re.M), ""),
     # time.asctime / ctime: "Wed Aug 26 13:14:57 2026"
     ("asctime", re.compile(
         rf"\b(?:{_DAY}) (?:{_MONTH}) [ \d]\d \d{{2}}:\d{{2}}:\d{{2}} \d{{4}}\b"),
@@ -118,9 +142,14 @@ VOLATILE: tuple[tuple[str, re.Pattern[str], str], ...] = (
 )
 
 
-UNCONDITIONAL = frozenset({"elapsed", "heap_address", "harness_tmpdir",
-                             "stdlib_tmpdir", "ephem_ipv4", "ephem_hostport",
-                             "ephem_ipv4_colon"})
+UNCONDITIONAL = frozenset({
+    "elapsed", "heap_address", "harness_tmpdir", "stdlib_tmpdir",
+    "ephem_ipv4", "ephem_hostport", "ephem_ipv4_colon",
+    "ssl_optional_raddr", "ssl_socket_fd", "ssl_channel_binding",
+    "ssl_handshake_count_complete", "ssl_handshake_count_do_handshake",
+    "ssl_connection_timeout", "ssl_client_log", "ssl_server_log",
+    "ssl_server_reset",
+})
 ON_DEMAND = frozenset({"asctime", "iso_datetime", "clock_time", "iso_date"})
 
 
