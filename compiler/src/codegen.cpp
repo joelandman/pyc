@@ -87,8 +87,10 @@ private:
     std::size_t cur_block_ = 0;
     int last_line_ = 0;
     int last_col_ = -1;
+    int last_end_line_ = -1;
     int last_end_col_ = -1;
     std::size_t cur_fn_ = 0;
+    int main_loc_count_ = 0;
     std::vector<std::vector<int>> fn_locs_;
     std::vector<std::string> loc_defs_;
     std::map<std::size_t, std::string> locnames_;
@@ -213,6 +215,7 @@ private:
         o_.swap(discard);
         emit_blocks(f, idx, is_main);
         o_.swap(discard);
+        if (is_main) main_loc_count_ = (int)fn_locs_[idx].size() / 4;
         fn_locs_[idx].clear();
         auto hoisted = allocas_;
         allocas_.clear();
@@ -259,6 +262,7 @@ private:
         (void)idx;
         last_line_ = 0;
         last_col_ = -1;
+        last_end_line_ = -1;
         last_end_col_ = -1;
         for (std::size_t b = 0; b < f.blocks.size(); ++b) {
             o_ << "bb" << b << ":\n";
@@ -272,6 +276,18 @@ private:
                 need("declare void @pyc_rt_set_source_file(ptr)");
                 o_ << "  call void @pyc_rt_set_source_file(ptr "
                    << cstr(m_.source_file) << ")\n";
+                need("declare i32 @pyc_rt_push_module_frame(ptr, i32)");
+                std::string mrc = fresh(), mbad = fresh();
+                o_ << "  " << mrc << " = call i32 @pyc_rt_push_module_frame(ptr "
+                   << (main_loc_count_ > 0 ? ("@.locs" + std::to_string(idx))
+                                           : "null")
+                   << ", i32 " << main_loc_count_ << ")\n";
+                o_ << "  " << mbad << " = icmp slt i32 " << mrc << ", 0\n";
+                std::string mcont = "cont" + std::to_string(tmp_++);
+                o_ << "  br i1 " << mbad << ", label %modfail, label %"
+                   << mcont << "\n";
+                o_ << "modfail:\n  ret i32 1\n";
+                o_ << mcont << ":\n";
                 std::string rc = fresh(), bad = fresh();
                 o_ << "  " << rc << " = call i32 @__pyc_init_consts()\n";
                 o_ << "  " << bad << " = icmp slt i32 " << rc << ", 0\n";
@@ -317,21 +333,18 @@ private:
     void emit_instr(const ir::Function& f, const ir::Instr& in, bool is_main) {
         using ir::Op;
         if (in.op != ir::Op::Phi && in.loc.line > 0 &&
-            (in.loc.line != last_line_ || in.loc.col != last_col_ ||
-             in.loc.end_col != last_end_col_)) {
-            if (is_main) {
-                need("declare void @pyc_rt_set_location(i32, i32, i32)");
-                o_ << "  call void @pyc_rt_set_location(i32 " << in.loc.line
-                   << ", i32 " << in.loc.col << ", i32 " << in.loc.end_col << ")\n";
-            } else {
-                need("declare void @pyc_rt_set_lasti(i32)");
-                int slot = (int)fn_locs_[cur_fn_].size() / 3;
-                fn_locs_[cur_fn_].push_back(in.loc.line);
-                fn_locs_[cur_fn_].push_back(in.loc.col);
-                fn_locs_[cur_fn_].push_back(in.loc.end_col);
-                o_ << "  call void @pyc_rt_set_lasti(i32 " << slot << ")\n";
-            }
+            (in.loc.line != last_line_ || in.loc.end_line != last_end_line_ ||
+             in.loc.col != last_col_ || in.loc.end_col != last_end_col_)) {
+            need("declare void @pyc_rt_set_lasti(i32)");
+            int end_line = in.loc.end_line > 0 ? in.loc.end_line : in.loc.line;
+            int slot = (int)fn_locs_[cur_fn_].size() / 4;
+            fn_locs_[cur_fn_].push_back(in.loc.line);
+            fn_locs_[cur_fn_].push_back(end_line);
+            fn_locs_[cur_fn_].push_back(in.loc.col);
+            fn_locs_[cur_fn_].push_back(in.loc.end_col);
+            o_ << "  call void @pyc_rt_set_lasti(i32 " << slot << ")\n";
             last_line_ = in.loc.line;
+            last_end_line_ = end_line;
             last_col_ = in.loc.col;
             last_end_col_ = in.loc.end_col;
         }
@@ -647,7 +660,7 @@ private:
                     << ", i32 " << (t ? (int)t->freevars.size() : 0)
                     << ", i32 " << (in.loc.line > 0 ? in.loc.line : 1)
                     << ", ptr " << (valid ? loc_global(ti) : "null")
-                    << ", i32 " << (valid ? (int)fn_locs_[ti].size() / 3 : 0) << ")\n";
+                    << ", i32 " << (valid ? (int)fn_locs_[ti].size() / 4 : 0) << ")\n";
                 check(in, v(*in.result), true);
                 break;
             }

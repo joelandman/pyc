@@ -1872,14 +1872,15 @@ private:
             if (!*ok) return fv;
             ds.push_back(v);
         }
-        for (auto it = ds.rbegin(); it != ds.rend(); ++it) {
-            ir::Value d = *it;
+        for (int i = (int)ds.size() - 1; i >= 0; --i) {
+            ir::Value d = ds[static_cast<std::size_t>(i)];
+            const SourceLoc dloc = expr_loc(decos[static_cast<std::size_t>(i)]);
             ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             std::vector<ir::Value> args{d, fv};
             emit(ir::Instr{ir::Op::CallObject, args, out, Ownership::Owned, "",
-                           0, 0, loc, make_landing_pad(loc)});
-            if (owns(d)) release(d, loc);
-            if (owns(fv)) release(fv, loc);
+                           0, 0, dloc, make_landing_pad(dloc)});
+            if (owns(d)) release(d, dloc);
+            if (owns(fv)) release(fv, dloc);
             mark_owned(out);
             fv = out;
         }
@@ -6052,8 +6053,20 @@ private:
     ir::Value lower_attribute(const Attribute& n, bool* ok) {
         ir::Value obj = lower_expr(*n.value, ok);
         if (!*ok) return {};
-        ir::Value name = const_str(mangle_ident(n.attr), n.loc);
-        ir::Value out = call_capi("PyObject_GetAttr", {obj, name}, n.loc, ok, {obj, name});
+        SourceLoc attr_loc = n.loc;
+        SourceLoc value_loc = expr_loc(*n.value);
+        bool single_line = n.loc.line > 0 && n.loc.line == n.loc.end_line &&
+                           value_loc.line == n.loc.line &&
+                           value_loc.end_line == n.loc.line;
+        if (!single_line && attr_loc.end_line > 0) {
+            attr_loc.line = attr_loc.end_line;
+            attr_loc.end_line = attr_loc.line;
+            attr_loc.col = attr_loc.end_col - (int)n.attr.size();
+            if (attr_loc.col < 0) attr_loc.col = 0;
+            attr_loc.end_col = n.loc.end_col;
+        }
+        ir::Value name = const_str(mangle_ident(n.attr), attr_loc);
+        ir::Value out = call_capi("PyObject_GetAttr", {obj, name}, attr_loc, ok, {obj, name});
         if (*ok) mark_owned(out);
         return out;
     }

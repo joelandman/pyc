@@ -245,7 +245,7 @@ void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals, PyObject* local
 void  pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n);
 void  pyc_rt_frame_set_fast(int slot, PyObject* v);
 void  pyc_rt_interp_leave(void* frame);
-int pyc_rt_push_module_frame(void);
+int pyc_rt_push_module_frame(const int* locs, int nlocs);
 void pyc_rt_pop_module_frame(void);
 PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals);
 void pyc_rt_set_source_file(const char* file);

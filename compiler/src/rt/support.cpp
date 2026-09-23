@@ -258,15 +258,18 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable,
     append_varint(lines, 1);
     int prev = firstlineno > 0 ? firstlineno : 1;
     for (int i = 0; i < nlocs; ++i) {
-        int line = locs[i * 3];
-        int col = locs[i * 3 + 1];
-        int end_col = locs[i * 3 + 2];
+        int line = locs[i * 4];
+        int end_line = locs[i * 4 + 1];
+        int col = locs[i * 4 + 2];
+        int end_col = locs[i * 4 + 3];
         if (line < 1) line = prev;
+        if (end_line < line) end_line = line;
         if (col < 0) col = 0;
-        if (end_col < col) end_col = col;
+        if (end_col < 0) end_col = 0;
+        if (end_line == line && end_col < col) end_col = col;
         lines.push_back(static_cast<char>(128 | (14 << 3)));
         append_svarint(lines, line - prev);
-        append_varint(lines, 0);
+        append_varint(lines, (unsigned)(end_line - line));
         append_varint(lines, (unsigned)col + 1);
         append_varint(lines, (unsigned)end_col + 1);
         prev = line;
@@ -315,11 +318,11 @@ extern "C" int pyc_rt_install_helpers(void) {
     return rc;
 }
 
-int pyc_rt_push_module_frame(void) {
+int pyc_rt_push_module_frame(const int* locs, int nlocs) {
     PyObject* g = globals_dict();
     if (!g) return -1;
     PyObject *bytecode = nullptr, *linetable = nullptr;
-    if (!build_linemap(&bytecode, &linetable)) {
+    if (!build_linemap(&bytecode, &linetable, locs, nlocs)) {
         Py_XDECREF(bytecode); Py_XDECREF(linetable); return -1;
     }
     PyObject* empty_bytes = PyBytes_FromStringAndSize("", 0);
