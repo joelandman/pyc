@@ -1,6 +1,6 @@
 {
   "schema": 4,
-  "jobs": 64,
+  "jobs": 16,
   "longrunning": {
     "timeout": 600.0,
     "jobs": 0,
@@ -18,12 +18,12 @@
       "-O0"
     ]
   },
-  "total": 878,
-  "passing": 878,
-  "clean": 871,
+  "total": 879,
+  "passing": 879,
+  "clean": 877,
   "pass_rate": 100.0,
   "counts": {
-    "STDERR_DIFFERS": 7
+    "STDERR_DIFFERS": 2
   },
   "results": [
     {
@@ -3703,9 +3703,7 @@
     {
       "case": "case_273.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/case_273.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "harness_tmpdir"
@@ -3720,9 +3718,7 @@
     {
       "case": "case_274.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/case_274.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "harness_tmpdir"
@@ -3737,9 +3733,7 @@
     {
       "case": "case_275.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/case_275.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "harness_tmpdir"
@@ -6757,9 +6751,7 @@
     {
       "case": "case_507.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/case_507.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "harness_tmpdir",
@@ -6996,9 +6988,7 @@
     {
       "case": "case_525.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/case_525.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "harness_tmpdir"
@@ -10242,6 +10232,21 @@
       "flags": [],
       "diagnostic": "",
       "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "frame_lineno_and_traceback.py",
+      "path": "/home/joe/work/pc/pyc/verify/corpus/language/frame_lineno_and_traceback.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [
+        "harness_tmpdir"
+      ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {

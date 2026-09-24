@@ -86,9 +86,6 @@ private:
     std::map<std::size_t, std::string> tail_label_;
     std::size_t cur_block_ = 0;
     int last_line_ = 0;
-    int last_col_ = -1;
-    int last_end_line_ = -1;
-    int last_end_col_ = -1;
     std::size_t cur_fn_ = 0;
     int main_loc_count_ = 0;
     std::vector<std::vector<int>> fn_locs_;
@@ -222,7 +219,7 @@ private:
         tmp_ = saved_tmp;
 
         o_ << (is_main ? "define i32 " : "define ptr ") << fname(idx)
-           << "(ptr %locals) {\n";
+            << "(ptr %frame) {\n";
         bool ints = !f.int_locals.empty();
         int nrange = 0;
         for (const ir::Block& b : f.blocks)
@@ -261,9 +258,6 @@ private:
     void emit_blocks(const ir::Function& f, std::size_t idx, bool is_main) {
         (void)idx;
         last_line_ = 0;
-        last_col_ = -1;
-        last_end_line_ = -1;
-        last_end_col_ = -1;
         for (std::size_t b = 0; b < f.blocks.size(); ++b) {
             o_ << "bb" << b << ":\n";
             cur_block_ = b;
@@ -305,6 +299,7 @@ private:
     void emit_block(const ir::Function& f, const ir::Block& b,
                     std::size_t idx, bool is_main) {
         (void)idx;
+        last_line_ = 0;
         for (const ir::Instr& in : b.instrs)
             if (in.op == ir::Op::Phi) emit_instr(f, in, is_main);
         for (const ir::Instr& in : b.instrs)
@@ -330,24 +325,29 @@ private:
         tail_label_[cur_block_] = cont;   // this is now the block's exit label
     }
 
+    void emit_location(const ir::Instr& in) {
+        need("declare void @pyc_rt_set_lasti(i32, i32)");
+        int end_line = in.loc.end_line > 0 ? in.loc.end_line : in.loc.line;
+        int slot = (int)fn_locs_[cur_fn_].size() / 4;
+        fn_locs_[cur_fn_].push_back(in.loc.line);
+        fn_locs_[cur_fn_].push_back(end_line);
+        fn_locs_[cur_fn_].push_back(in.loc.col);
+        fn_locs_[cur_fn_].push_back(in.loc.end_col);
+        o_ << "  call void @pyc_rt_set_lasti(i32 " << slot
+           << ", i32 " << in.loc.line << ")\n";
+        last_line_ = in.loc.line;
+    }
+
     void emit_instr(const ir::Function& f, const ir::Instr& in, bool is_main) {
         using ir::Op;
+        bool location_emitted = false;
         if (in.op != ir::Op::Phi && in.loc.line > 0 &&
-            (in.loc.line != last_line_ || in.loc.end_line != last_end_line_ ||
-             in.loc.col != last_col_ || in.loc.end_col != last_end_col_)) {
-            need("declare void @pyc_rt_set_lasti(i32)");
-            int end_line = in.loc.end_line > 0 ? in.loc.end_line : in.loc.line;
-            int slot = (int)fn_locs_[cur_fn_].size() / 4;
-            fn_locs_[cur_fn_].push_back(in.loc.line);
-            fn_locs_[cur_fn_].push_back(end_line);
-            fn_locs_[cur_fn_].push_back(in.loc.col);
-            fn_locs_[cur_fn_].push_back(in.loc.end_col);
-            o_ << "  call void @pyc_rt_set_lasti(i32 " << slot << ")\n";
-            last_line_ = in.loc.line;
-            last_end_line_ = end_line;
-            last_col_ = in.loc.col;
-            last_end_col_ = in.loc.end_col;
+            in.loc.line != last_line_) {
+            emit_location(in);
+            location_emitted = true;
         }
+        if (in.op == Op::AddTraceback && in.loc.line > 0 && !location_emitted)
+            emit_location(in);
         switch (in.op) {
             case Op::ConstInt:  emit_const_use(in, 'i'); break;
             case Op::ConstStr:  emit_const_use(in, 's'); break;
@@ -444,14 +444,14 @@ private:
                     break;
                 }
                 need("declare ptr @pyc_rt_load_local(ptr, i32, ptr)");
-                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_load_local(ptr %locals, i32 "
+                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_load_local(ptr %frame, i32 "
                    << in.target << ", ptr " << cstr(in.text) << ")\n";
                 check(in, v(*in.result), true);
                 break;
             case Op::DelLocal: {
                 need("declare i32 @pyc_rt_del_local(ptr, i32, ptr)");
                 std::string r = fresh();
-                o_ << "  " << r << " = call i32 @pyc_rt_del_local(ptr %locals, i32 "
+                o_ << "  " << r << " = call i32 @pyc_rt_del_local(ptr %frame, i32 "
                    << in.target << ", ptr " << cstr(in.text) << ")\n";
                 check(in, r, false);   // int: negative is failure
                 break;
@@ -463,7 +463,7 @@ private:
                     break;
                 }
                 need("declare void @pyc_rt_store_local(ptr, i32, ptr)");
-                o_ << "  call void @pyc_rt_store_local(ptr %locals, i32 " << in.target
+                o_ << "  call void @pyc_rt_store_local(ptr %frame, i32 " << in.target
                    << ", ptr " << v(in.args[0]) << ")\n";
                 break;
             case Op::IncRef:
@@ -811,7 +811,7 @@ private:
 
     void emit_frame_store_boxed(std::uint32_t slot, const std::string& obj) {
         need("declare void @pyc_rt_store_local(ptr, i32, ptr)");
-        o_ << "  call void @pyc_rt_store_local(ptr %locals, i32 " << slot
+        o_ << "  call void @pyc_rt_store_local(ptr %frame, i32 " << slot
            << ", ptr " << obj << ")\n";
     }
 

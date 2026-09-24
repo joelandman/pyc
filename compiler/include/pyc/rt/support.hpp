@@ -11,9 +11,9 @@
 extern "C" {
 #endif
 
-// A lowered Python function: takes its fast-locals array, returns a new
-// reference or NULL with an exception set.
-typedef PyObject* (*PycImpl)(PyObject** locals);
+// A lowered Python function: takes the owning interpreter frame, returns a
+// new reference or NULL with an exception set.
+typedef PyObject* (*PycImpl)(void* frame);
 
 // Namespace access. Globals fall back to builtins, then raise NameError --
 // which is why `print` needs no special case anywhere in lowering.
@@ -22,8 +22,9 @@ int       pyc_rt_store_global(const char* name, PyObject* v);
 
 // A local read before assignment is UnboundLocalError, not a fallback to a
 // global of the same name (the distinction scope.cpp exists to preserve).
-PyObject* pyc_rt_load_local(PyObject** locals, int slot, const char* name);
-void      pyc_rt_store_local(PyObject** locals, int slot, PyObject* v);
+PyObject* pyc_rt_load_local(void* frame, int slot, const char* name);
+void      pyc_rt_store_local(void* frame, int slot, PyObject* v);
+int       pyc_rt_del_local(void* frame, int slot, const char* name);
 
 // Wrap a lowered function as a Python callable.
 // `argnames` is the parameter list, needed so the callee can bind keyword
@@ -46,8 +47,8 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                const int* locs, int nlocs);
 
 // Run a compiled function body from the current eval frame (exec/eval of
-// f.__code__). locals are borrowed from the iframe.
-PyObject* pyc_rt_invoke_code(PyObject* code, PyObject** locals);
+// f.__code__). frame is the current interpreter frame.
+PyObject* pyc_rt_invoke_code(PyObject* code, void* frame);
 PyObject* pyc_rt_run_from_frame(PyObject* self, PyObject* args);
 
 // Vectorcall over an argument array.
@@ -242,8 +243,9 @@ PyObject* pyc_rt_unpack_ex(PyObject* value, Py_ssize_t nbefore, Py_ssize_t nafte
 // C1b: interpreter frame on the thread datastack. locals is borrowed.
 void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals, PyObject* locals,
                           PyObject* func);
-void  pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n);
-void  pyc_rt_frame_set_fast(int slot, PyObject* v);
+PyObject* pyc_rt_frame_local_borrow(void* frame, int slot);
+void  pyc_rt_frame_local_set(void* frame, int slot, PyObject* v);
+int   pyc_rt_frame_local_is_null(int slot);
 void  pyc_rt_interp_leave(void* frame);
 int pyc_rt_push_module_frame(const int* locs, int nlocs);
 void pyc_rt_pop_module_frame(void);
@@ -252,7 +254,7 @@ void pyc_rt_set_source_file(const char* file);
 const char* pyc_rt_source_file(void);
 void pyc_rt_set_lineno(int line);
 void pyc_rt_set_location(int line, int col, int end_col);
-void pyc_rt_set_lasti(int slot);
+void pyc_rt_set_lasti(int slot, int line);
 void pyc_rt_traceback_here(void);
 int pyc_rt_tuple_maybe_untrack(PyObject* t);
 

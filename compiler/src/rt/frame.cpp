@@ -112,61 +112,59 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
 #define CO_FAST_FREE  0x80
 #endif
 
-extern "C" void pyc_rt_frame_set_fast(int slot, PyObject* v) {
-    if (slot < 0) return;
+static _PyInterpreterFrame* frame_from_arg_or_current(void* vp) {
+    if (vp) return static_cast<_PyInterpreterFrame*>(vp);
     PyThreadState* ts = PyThreadState_Get();
-    if (!ts) return;
-    _PyInterpreterFrame* f = ts->current_frame;
-    if (!f) return;
-    PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
-        PyStackRef_AsPyObjectBorrow(f->f_executable));
-    if (!co || slot >= co->co_nlocalsplus) return;
-    if (!PyStackRef_IsNull(f->localsplus[slot]))
-        PyStackRef_CLOSE(f->localsplus[slot]);
-    f->localsplus[slot] = v ? PyStackRef_FromPyObjectNew(v) : PyStackRef_NULL;
-    if (v && PyCell_Check(v) && co->co_localspluskinds
-        && PyBytes_Check(co->co_localspluskinds)) {
-        char* kinds = PyBytes_AS_STRING(co->co_localspluskinds);
-        Py_ssize_t nk = PyBytes_GET_SIZE(co->co_localspluskinds);
-        if (slot < nk) {
-            int nfast = co->co_nlocals;
-            kinds[slot] = (slot >= nfast)
-                ? (char)CO_FAST_FREE
-                : (char)(CO_FAST_LOCAL | CO_FAST_CELL);
-        }
-    }
+    return ts ? ts->current_frame : nullptr;
 }
 
-extern "C" void pyc_rt_interp_fill_locals(void* frame, PyObject** locals, int n) {
-    if (!frame || !locals || n <= 0) return;
-    auto* f = static_cast<_PyInterpreterFrame*>(frame);
+static void mark_cell_kind(_PyInterpreterFrame* f, int slot) {
+    PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
+        PyStackRef_AsPyObjectBorrow(f->f_executable));
+    if (!co || slot < 0 || slot >= co->co_nlocalsplus) return;
+    if (!co->co_localspluskinds || !PyBytes_Check(co->co_localspluskinds)) return;
+    char* kinds = PyBytes_AS_STRING(co->co_localspluskinds);
+    if (slot >= PyBytes_GET_SIZE(co->co_localspluskinds)) return;
+    int nfast = co->co_nlocals;
+    kinds[slot] = (slot >= nfast)
+        ? (char)CO_FAST_FREE
+        : (char)(CO_FAST_LOCAL | CO_FAST_CELL);
+}
+
+extern "C" PyObject* pyc_rt_frame_local_borrow(void* vp, int slot) {
+    _PyInterpreterFrame* f = frame_from_arg_or_current(vp);
+    if (!f || slot < 0) return nullptr;
     PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
         PyStackRef_AsPyObjectBorrow(f->f_executable));
     int nplus = co ? co->co_nlocalsplus : 0;
-    int nfast = co ? co->co_nlocals : 0;
-    int m = n < nplus ? n : nplus;
-    char* kinds = nullptr;
-    Py_ssize_t nk = 0;
-    if (co && co->co_localspluskinds && PyBytes_Check(co->co_localspluskinds)) {
-        kinds = PyBytes_AS_STRING(co->co_localspluskinds);
-        nk = PyBytes_GET_SIZE(co->co_localspluskinds);
-    }
-    for (int i = 0; i < m; ++i) {
-        if (locals[i])
-            f->localsplus[i] = PyStackRef_FromPyObjectNew(locals[i]);
-        else
-            f->localsplus[i] = PyStackRef_NULL;
-        if (kinds && i < nk) {
-            if (locals[i] && PyCell_Check(locals[i]))
-                kinds[i] = (i >= nfast) ? (char)CO_FAST_FREE : (char)CO_FAST_CELL;
-            else
-                kinds[i] = (char)CO_FAST_LOCAL;
-        }
-    }
+    if (nplus < 0 || slot >= nplus) return nullptr;
+    return PyStackRef_AsPyObjectBorrow(f->localsplus[slot]);
 }
 
-static void maybe_line_trace(_PyInterpreterFrame* f, int line) {
-    PyThreadState* ts = PyThreadState_Get();
+extern "C" void pyc_rt_frame_local_set(void* vp, int slot, PyObject* v) {
+    _PyInterpreterFrame* f = frame_from_arg_or_current(vp);
+    if (!f || slot < 0) { Py_XINCREF(v); return; }
+    PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
+        PyStackRef_AsPyObjectBorrow(f->f_executable));
+    int nplus = co ? co->co_nlocalsplus : 0;
+    if (nplus < 0 || slot >= nplus) { Py_XINCREF(v); return; }
+    _PyStackRef old = f->localsplus[slot];
+    f->localsplus[slot] = v ? PyStackRef_FromPyObjectNew(v) : PyStackRef_NULL;
+    PyStackRef_XCLOSE(old);
+    if (v && PyCell_Check(v)) mark_cell_kind(f, slot);
+}
+
+extern "C" int pyc_rt_frame_local_is_null(int slot) {
+    _PyInterpreterFrame* f = frame_from_arg_or_current(nullptr);
+    if (!f || slot < 0) return -1;
+    PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
+        PyStackRef_AsPyObjectBorrow(f->f_executable));
+    int nplus = co ? co->co_nlocalsplus : 0;
+    if (nplus < 0 || slot >= nplus) return -1;
+    return PyStackRef_IsNull(f->localsplus[slot]) ? 1 : 0;
+}
+
+static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line) {
     if (!ts || ts->tracing || !ts->c_tracefunc) return;
     while (f && _PyFrame_IsIncomplete(f)) f = f->previous;
     if (!f) return;
@@ -180,7 +178,7 @@ static void maybe_line_trace(_PyInterpreterFrame* f, int line) {
     if (r < 0) return;
 }
 
-extern "C" void pyc_rt_set_lasti(int slot) {
+extern "C" void pyc_rt_set_lasti(int slot, int line) {
     if (slot < 0) return;
     pyc_rt_gil_ensure();
     PyThreadState* ts = PyThreadState_Get();
@@ -189,16 +187,21 @@ extern "C" void pyc_rt_set_lasti(int slot) {
     PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
         PyStackRef_AsPyObjectBorrow(f->f_executable));
     if (!co) return;
-    PyObject* raw = PyCode_GetCode(co);
-    if (!raw) { PyErr_Clear(); return; }
-    Py_ssize_t nunits = PyBytes_GET_SIZE(raw) / (Py_ssize_t)sizeof(_Py_CODEUNIT);
-    Py_DECREF(raw);
     int off = 8 + slot;
     if (off < co->_co_firsttraceable) off = co->_co_firsttraceable;
-    if (off >= nunits) off = nunits > 0 ? (int)nunits - 1 : 0;
+#ifdef Py_DEBUG
+    PyObject* raw = PyCode_GetCode(co);
+    if (raw) {
+        Py_ssize_t nunits = PyBytes_GET_SIZE(raw) / (Py_ssize_t)sizeof(_Py_CODEUNIT);
+        if (off >= nunits) off = nunits > 0 ? (int)nunits - 1 : 0;
+        Py_DECREF(raw);
+    } else {
+        PyErr_Clear();
+    }
+#endif
     f->instr_ptr = _PyCode_CODE(co) + off;
-    if (f->frame_obj) f->frame_obj->f_lineno = 0;
-    maybe_line_trace(f, 0);
+    if (f->frame_obj && line > 0) f->frame_obj->f_lineno = line;
+    if (ts->c_tracefunc) maybe_line_trace(f, ts, line);
 }
 
 extern "C" void pyc_rt_set_lineno(int line) {
@@ -227,7 +230,7 @@ extern "C" void pyc_rt_set_location(int line, int col, int end_col) {
     if (off >= nunits) off = (int)nunits - 1;
     f->instr_ptr = _PyCode_CODE(co) + off;
     if (f->frame_obj) f->frame_obj->f_lineno = line;
-    maybe_line_trace(f, line);
+    if (ts->c_tracefunc) maybe_line_trace(f, ts, line);
 }
 
 extern "C" void pyc_rt_traceback_here(void) {
@@ -342,44 +345,26 @@ extern "C" PyObject* pyc_rt_run_from_frame(PyObject*, PyObject*) {
         return nullptr;
     }
     PyObject* code = PyStackRef_AsPyObjectBorrow(f->f_executable);
+    if (!code) {
+        PyErr_SetString(PyExc_RuntimeError, "pyc eval without a code object");
+        return nullptr;
+    }
     auto* co = reinterpret_cast<PyCodeObject*>(code);
-    int nfast = co->co_nlocals;
     int nfree = (int)PyCode_GetNumFree(co);
-    int n = nfast + nfree;
-    if (n < 0) n = 0;
-    _PyStackRef* arr = _PyFrame_GetLocalsArray(f);
-    PyObject** locals = new (std::nothrow) PyObject*[n ? n : 1];
-    if (!locals) return PyErr_NoMemory();
-    for (int i = 0; i < n; ++i) locals[i] = nullptr;
-    for (int i = 0; i < nfast && i < co->co_nlocalsplus; ++i) {
-        if (PyStackRef_IsNull(arr[i])) continue;
-        PyObject* o = PyStackRef_AsPyObjectBorrow(arr[i]);
-        locals[i] = o;
-        Py_XINCREF(o);
-    }
-    PyObject* clo = nullptr;
-    if (!PyStackRef_IsNull(f->f_funcobj)) {
+    if (nfree > 0 && !PyStackRef_IsNull(f->f_funcobj)) {
         PyObject* func = PyStackRef_AsPyObjectBorrow(f->f_funcobj);
-        if (func && PyFunction_Check(func)) clo = PyFunction_GET_CLOSURE(func);
-    }
-    if (clo && PyTuple_Check(clo)) {
-        Py_ssize_t cn = PyTuple_GET_SIZE(clo);
-        for (int i = 0; i < nfree && i < cn; ++i) {
-            PyObject* cell = PyTuple_GET_ITEM(clo, i);
-            Py_INCREF(cell);
-            locals[nfast + i] = cell;
-        }
-    } else {
-        int base = nfast;
-        for (int i = 0; i < nfree && base + i < co->co_nlocalsplus; ++i) {
-            if (PyStackRef_IsNull(arr[base + i])) continue;
-            PyObject* o = PyStackRef_AsPyObjectBorrow(arr[base + i]);
-            locals[nfast + i] = o;
-            Py_XINCREF(o);
+        if (func && PyFunction_Check(func)) {
+            PyObject* clo = PyFunction_GET_CLOSURE(func);
+            if (clo && PyTuple_Check(clo)) {
+                Py_ssize_t cn = PyTuple_GET_SIZE(clo);
+                int base = PyUnstable_Code_GetFirstFree(co);
+                for (int i = 0; i < nfree && i < cn; ++i) {
+                    PyObject* cell = PyTuple_GET_ITEM(clo, i);
+                    if (PyCell_Check(cell))
+                        pyc_rt_frame_local_set(f, base + i, cell);
+                }
+            }
         }
     }
-    PyObject* r = pyc_rt_invoke_code(code, locals);
-    for (int i = 0; i < n; ++i) Py_XDECREF(locals[i]);
-    delete[] locals;
-    return r;
+    return pyc_rt_invoke_code(code, f);
 }

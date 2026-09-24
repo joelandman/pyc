@@ -405,12 +405,11 @@ extern "C" int pyc_rt_gil_acquire(void) {
 }
 
 thread_local PyObject* tls_frame_locals = nullptr;
-thread_local PyObject** tls_frame_vals = nullptr;
 thread_local const char* const* tls_frame_names = nullptr;
 thread_local int tls_frame_nnames = 0;
 
-PyObject* pyc_rt_load_local(PyObject** locals, int slot, const char* name) {
-    PyObject* v = locals[slot];
+PyObject* pyc_rt_load_local(void* frame, int slot, const char* name) {
+    PyObject* v = pyc_rt_frame_local_borrow(frame, slot);
     if (!v) {
         PyErr_Format(PyExc_UnboundLocalError,
                      "cannot access local variable '%s' where it is not "
@@ -426,17 +425,15 @@ PyObject* pyc_rt_load_local(PyObject** locals, int slot, const char* name) {
 // the slot must raise too -- which pyc_rt_load_local already does, since it
 // treats NULL as unbound. So deleting is clearing the slot, not storing None:
 // storing None would make the name still bound, to the wrong value.
-int pyc_rt_del_local(PyObject** locals, int slot, const char* name) {
-    PyObject* old = locals[slot];
+int pyc_rt_del_local(void* frame, int slot, const char* name) {
+    PyObject* old = pyc_rt_frame_local_borrow(frame, slot);
     if (!old) {
         PyErr_Format(PyExc_UnboundLocalError,
                      "cannot access local variable '%s' where it is not "
                      "associated with a value", name);
         return -1;
     }
-    locals[slot] = nullptr;       // clear BEFORE the decref: __del__ may run
-    Py_DECREF(old);               // and must not observe a dangling slot
-    pyc_rt_frame_set_fast(slot, nullptr);
+    pyc_rt_frame_local_set(frame, slot, nullptr);
     if (tls_frame_locals && slot >= 0 && slot < tls_frame_nnames
         && tls_frame_names && tls_frame_names[slot]
         && PyDict_DelItemString(tls_frame_locals, tls_frame_names[slot]) < 0)
@@ -444,12 +441,8 @@ int pyc_rt_del_local(PyObject** locals, int slot, const char* name) {
     return 0;
 }
 
-void pyc_rt_store_local(PyObject** locals, int slot, PyObject* v) {
-    PyObject* old = locals[slot];
-    Py_XINCREF(v);
-    locals[slot] = v;
-    Py_XDECREF(old);          // after the store: a self-assignment must not free
-    pyc_rt_frame_set_fast(slot, v);
+void pyc_rt_store_local(void* frame, int slot, PyObject* v) {
+    pyc_rt_frame_local_set(frame, slot, v);
     if (tls_frame_locals && slot >= 0 && slot < tls_frame_nnames
         && tls_frame_names && tls_frame_names[slot]) {
         PyObject* shown = v;
@@ -746,218 +739,213 @@ PyObject* trampoline(PyObject* func, PyObject* const* args, Py_ssize_t npos,
     // reported on sight, because CPython names them all in one message:
     // "got some positional-only arguments passed as keyword arguments: 'a, b'".
     std::vector<const char*> posonly_kw;
-    PyObject** locals = new (std::nothrow) PyObject*[b->nlocals ? b->nlocals : 1];
-    if (!locals) return PyErr_NoMemory();
-    for (int i = 0; i < b->nlocals; ++i) locals[i] = nullptr;
-    auto bind_kw = [&](PyObject* k, PyObject* val) -> int {
-            const char* ks = PyUnicode_AsUTF8(k);
-            if (!ks) return -1;
-            int slot = -1;
-            for (int i = b->nposonly; i < b->nargs + b->nkwonly; ++i)
-                if (std::strcmp(ks, b->argnames[i]) == 0) { slot = i; break; }
-            if (slot < 0) {
-                if (b->kwarg >= 0) {
-                    if (PyDict_SetItem(locals[b->kwarg], k, val) < 0) return -1;
-                    return 0;
-                }
-                bool posonly_name = false;
-                for (int i = 0; i < b->nposonly; ++i)
-                    if (std::strcmp(ks, b->argnames[i]) == 0) { posonly_name = true; break; }
-                if (posonly_name) { posonly_kw.push_back(ks); return 0; }
-                {
-                    const char* sug = nullptr;
-                    if (b->argnames) {
-                        PyObject* cands = PyList_New(0);
-                        if (cands) {
-                            for (int i = b->nposonly; i < b->nargs + b->nkwonly; ++i) {
-                                if (!b->argnames[i] || !b->argnames[i][0]) continue;
-                                PyObject* u = PyUnicode_FromString(b->argnames[i]);
-                                if (!u || PyList_Append(cands, u) < 0) { Py_XDECREF(u); break; }
-                                Py_DECREF(u);
-                            }
-                            PyObject* kn = PyUnicode_FromString(ks);
-                            if (kn) {
-                                PyObject* s = keyword_suggestion(cands, kn);
-                                if (s) {
-                                    sug = PyUnicode_AsUTF8(s);
-                                    PyErr_Format(PyExc_TypeError,
-                                        "%s() got an unexpected keyword argument '%s'. Did you mean '%s'?",
-                                        nm, ks, sug ? sug : "");
-                                    Py_DECREF(s);
-                                    Py_DECREF(kn); Py_DECREF(cands);
-                                    return -1;
-                                }
-                                Py_DECREF(kn);
-                            }
-                            Py_DECREF(cands);
-                        }
-                    }
-                    PyErr_Format(PyExc_TypeError,
-                                 "%s() got an unexpected keyword argument '%s'",
-                                 nm, ks);
-                }
-                return -1;
-            }
-            if (locals[slot]) {
-                PyErr_Format(PyExc_TypeError,
-                             "%s() got multiple values for argument '%s'",
-                             nm, ks);
-                return -1;
-            }
-            Py_INCREF(val);
-            locals[slot] = val;
-            return 0;
-    };
-    Py_ssize_t nnamed = npos < b->nargs ? npos : b->nargs;
-    for (Py_ssize_t i = 0; i < nnamed; ++i) {
-        PyObject* a = args[i];
-        Py_INCREF(a);
-        locals[i] = a;
-    }
-    if (b->vararg >= 0) {
-        Py_ssize_t nextra = npos > nnamed ? npos - nnamed : 0;
-        PyObject* extra = PyTuple_New(nextra);
-        if (!extra) goto fail;
-        for (Py_ssize_t i = 0; i < nextra; ++i) {
-            PyObject* a = args[nnamed + i];
-            Py_INCREF(a);
-            PyTuple_SET_ITEM(extra, i, a);
-        }
-        locals[b->vararg] = extra;
-    }
-    if (b->kwarg >= 0) {
-        locals[b->kwarg] = PyDict_New();
-        if (!locals[b->kwarg]) goto fail;
-    }
-    // Free variables occupy the LAST nfree slots, holding the cells
-    // themselves so writes through them are visible to the enclosing scope.
-    for (int i = 0; i < b->nfree; ++i) {
-        PyObject* cell = PyTuple_GET_ITEM(closure, i);
-        Py_INCREF(cell);
-        locals[b->nlocals - b->nfree + i] = cell;
-    }
-    if (kwargs) {
-        PyObject *k, *val;
-        Py_ssize_t pos = 0;
-        while (PyDict_Next(kwargs, &pos, &k, &val)) {
-            if (bind_kw(k, val) < 0) goto fail;
-        }
-    } else if (kwnames) {
-        Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
-        for (Py_ssize_t i = 0; i < nkw; ++i) {
-            if (bind_kw(PyTuple_GET_ITEM(kwnames, i), args[npos + i]) < 0)
-                goto fail;
-        }
-    }
-    if (!posonly_kw.empty()) {
-        // Reported before missing-argument analysis: CPython complains about
-        // the keyword misuse itself, not about the positional slot it left
-        // unfilled.
-        std::string names;
-        for (std::size_t i = 0; i < posonly_kw.size(); ++i) {
-            if (i) names += ", ";
-            names += posonly_kw[i];
-        }
-        PyErr_Format(PyExc_TypeError,
-                     "%s() got some positional-only arguments passed as "
-                     "keyword arguments: '%s'", nm, names.c_str());
-        goto fail;
-    }
-    {
-        // Defaults cover the LAST k parameters, so parameter i takes
-        // defaults[i - (nargs - k)].
-        Py_ssize_t ndef = defaults ? PyTuple_GET_SIZE(defaults) : 0;
-        Py_ssize_t first_def = b->nargs - ndef;
-        for (int i = 0; i < b->nargs; ++i) {
-            if (locals[i]) continue;
-            if (ndef && i >= first_def) {
-                PyObject* d = PyTuple_GET_ITEM(defaults, i - first_def);
-                Py_INCREF(d);
-                locals[i] = d;
-                continue;
-            }
-            missing.push_back(b->argnames[i]);
-        }
-        // Keyword-only parameters are reported SEPARATELY by CPython:
-        // "missing 1 required keyword-only argument: 'b'". Collected apart so
-        // the message says which kind, rather than lumping them in with
-        // positional and being wrong about it.
-        for (int i = b->nargs; i < b->nargs + b->nkwonly; ++i) {
-            if (locals[i]) continue;
-            PyObject* d = kwdefaults
-                ? PyDict_GetItemString(kwdefaults, b->argnames[i]) : nullptr;
-            if (d) { Py_INCREF(d); locals[i] = d; continue; }
-            missing_kwonly.push_back(b->argnames[i]);
-        }
-        // CPython reports ALL missing parameters in one message, counted and
-        // joined: "missing 2 required positional arguments: 'a' and 'b'"; three
-        // or more use an Oxford comma. Positional and keyword-only get separate
-        // messages, and positional is reported first when both are missing.
-        auto join = [](const std::vector<const char*>& v) {
-            std::string names;
-            for (std::size_t k2 = 0; k2 < v.size(); ++k2) {
-                if (k2) names += (v.size() == 2) ? " and "
-                               : (k2 + 1 == v.size() ? ", and " : ", ");
-                names += "'"; names += v[k2]; names += "'";
-            }
-            return names;
-        };
-        if (!missing.empty()) {
-            std::string names = join(missing);
-            PyErr_Format(PyExc_TypeError,
-                         "%s() missing %zd required positional argument%s: %s",
-                         nm, (Py_ssize_t)missing.size(),
-                         missing.size() == 1 ? "" : "s", names.c_str());
-            goto fail;
-        }
-        if (!missing_kwonly.empty()) {
-            std::string names = join(missing_kwonly);
-            PyErr_Format(PyExc_TypeError,
-                         "%s() missing %zd required keyword-only argument%s: %s",
-                         nm, (Py_ssize_t)missing_kwonly.size(),
-                         missing_kwonly.size() == 1 ? "" : "s", names.c_str());
-            goto fail;
-        }
-    }
     {
         PyObject* g = PyFunction_GET_GLOBALS(func);
         if (!g) g = globals_dict();
         auto* co = reinterpret_cast<PyCodeObject*>(PyFunction_GET_CODE(func));
-        void* fr = (g && co) ? pyc_rt_interp_enter(co, g, nullptr, func)
-                             : nullptr;
-        if (!fr) goto fail;
-        pyc_rt_interp_fill_locals(fr, locals, b->nlocals);
+        if (!g || !co) {
+            PyErr_SetString(PyExc_SystemError, "pyc function has no code or globals");
+            return nullptr;
+        }
+        void* fr = pyc_rt_interp_enter(co, g, nullptr, func);
+        if (!fr) return nullptr;
         PyObject* prev_tls = tls_frame_locals;
-        PyObject** prev_vals = tls_frame_vals;
         const char* const* prev_names = tls_frame_names;
         int prev_n = tls_frame_nnames;
         tls_frame_locals = nullptr;
-        tls_frame_vals = locals;
         tls_frame_names = b->argnames;
         tls_frame_nnames = b->nlocals;
-        if (Py_EnterRecursiveCall("")) {
+        auto fail_frame_cleanup = [&]() -> PyObject* {
             tls_frame_locals = prev_tls;
-            tls_frame_vals = prev_vals;
             tls_frame_names = prev_names;
             tls_frame_nnames = prev_n;
             pyc_rt_interp_leave(fr);
-            goto fail;
+            return nullptr;
+        };
+        auto bind_kw = [&](PyObject* k, PyObject* val) -> int {
+                const char* ks = PyUnicode_AsUTF8(k);
+                if (!ks) return -1;
+                int slot = -1;
+                for (int i = b->nposonly; i < b->nargs + b->nkwonly; ++i)
+                    if (std::strcmp(ks, b->argnames[i]) == 0) { slot = i; break; }
+                if (slot < 0) {
+                    if (b->kwarg >= 0) {
+                        PyObject* d = pyc_rt_frame_local_borrow(fr, b->kwarg);
+                        if (!d) { PyErr_BadInternalCall(); return -1; }
+                        if (PyDict_SetItem(d, k, val) < 0) return -1;
+                        return 0;
+                    }
+                    bool posonly_name = false;
+                    for (int i = 0; i < b->nposonly; ++i)
+                        if (std::strcmp(ks, b->argnames[i]) == 0) { posonly_name = true; break; }
+                    if (posonly_name) { posonly_kw.push_back(ks); return 0; }
+                    {
+                        const char* sug = nullptr;
+                        if (b->argnames) {
+                            PyObject* cands = PyList_New(0);
+                            if (cands) {
+                                for (int i = b->nposonly; i < b->nargs + b->nkwonly; ++i) {
+                                    if (!b->argnames[i] || !b->argnames[i][0]) continue;
+                                    PyObject* u = PyUnicode_FromString(b->argnames[i]);
+                                    if (!u || PyList_Append(cands, u) < 0) { Py_XDECREF(u); break; }
+                                    Py_DECREF(u);
+                                }
+                                PyObject* kn = PyUnicode_FromString(ks);
+                                if (kn) {
+                                    PyObject* s = keyword_suggestion(cands, kn);
+                                    if (s) {
+                                        sug = PyUnicode_AsUTF8(s);
+                                        PyErr_Format(PyExc_TypeError,
+                                            "%s() got an unexpected keyword argument '%s'. Did you mean '%s'?",
+                                            nm, ks, sug ? sug : "");
+                                        Py_DECREF(s);
+                                        Py_DECREF(kn); Py_DECREF(cands);
+                                        return -1;
+                                    }
+                                    Py_DECREF(kn);
+                                }
+                                Py_DECREF(cands);
+                            }
+                        }
+                        PyErr_Format(PyExc_TypeError,
+                                     "%s() got an unexpected keyword argument '%s'",
+                                     nm, ks);
+                    }
+                    return -1;
+                }
+                if (pyc_rt_frame_local_borrow(fr, slot)) {
+                    PyErr_Format(PyExc_TypeError,
+                                 "%s() got multiple values for argument '%s'",
+                                 nm, ks);
+                    return -1;
+                }
+                pyc_rt_store_local(fr, slot, val);
+                return 0;
+        };
+        Py_ssize_t nnamed = npos < b->nargs ? npos : b->nargs;
+        for (Py_ssize_t i = 0; i < nnamed; ++i)
+            pyc_rt_store_local(fr, static_cast<int>(i), args[i]);
+        if (b->vararg >= 0) {
+            Py_ssize_t nextra = npos > nnamed ? npos - nnamed : 0;
+            PyObject* extra = PyTuple_New(nextra);
+            if (!extra) return fail_frame_cleanup();
+            for (Py_ssize_t i = 0; i < nextra; ++i) {
+                PyObject* a = args[nnamed + i];
+                Py_INCREF(a);
+                PyTuple_SET_ITEM(extra, i, a);
+            }
+            pyc_rt_store_local(fr, b->vararg, extra);
+            Py_DECREF(extra);
         }
-        PyObject* r = b->impl(locals);
+        if (b->kwarg >= 0) {
+            PyObject* d = PyDict_New();
+            if (!d) return fail_frame_cleanup();
+            pyc_rt_store_local(fr, b->kwarg, d);
+            Py_DECREF(d);
+        }
+        // Free variables occupy the LAST nfree slots, holding the cells
+        // themselves so writes through them are visible to the enclosing scope.
+        if (b->nfree > 0) {
+            if (!closure || !PyTuple_Check(closure)) {
+                PyErr_SetString(PyExc_SystemError, "pyc function has no closure");
+                return fail_frame_cleanup();
+            }
+            for (int i = 0; i < b->nfree; ++i) {
+                PyObject* cell = PyTuple_GET_ITEM(closure, i);
+                pyc_rt_store_local(fr, b->nlocals - b->nfree + i, cell);
+            }
+        }
+        if (kwargs) {
+            PyObject *k, *val;
+            Py_ssize_t pos = 0;
+            while (PyDict_Next(kwargs, &pos, &k, &val)) {
+                if (bind_kw(k, val) < 0) return fail_frame_cleanup();
+            }
+        } else if (kwnames) {
+            Py_ssize_t nkw = PyTuple_GET_SIZE(kwnames);
+            for (Py_ssize_t i = 0; i < nkw; ++i) {
+                if (bind_kw(PyTuple_GET_ITEM(kwnames, i), args[npos + i]) < 0)
+                    return fail_frame_cleanup();
+            }
+        }
+        if (!posonly_kw.empty()) {
+            // Reported before missing-argument analysis: CPython complains about
+            // the keyword misuse itself, not about the positional slot it left
+            // unfilled.
+            std::string names;
+            for (std::size_t i = 0; i < posonly_kw.size(); ++i) {
+                if (i) names += ", ";
+                names += posonly_kw[i];
+            }
+            PyErr_Format(PyExc_TypeError,
+                         "%s() got some positional-only arguments passed as "
+                         "keyword arguments: '%s'", nm, names.c_str());
+            return fail_frame_cleanup();
+        }
+        {
+            // Defaults cover the LAST k parameters, so parameter i takes
+            // defaults[i - (nargs - k)].
+            Py_ssize_t ndef = defaults ? PyTuple_GET_SIZE(defaults) : 0;
+            Py_ssize_t first_def = b->nargs - ndef;
+            for (int i = 0; i < b->nargs; ++i) {
+                if (pyc_rt_frame_local_borrow(fr, i)) continue;
+                if (ndef && i >= first_def) {
+                    PyObject* d = PyTuple_GET_ITEM(defaults, i - first_def);
+                    pyc_rt_store_local(fr, i, d);
+                    continue;
+                }
+                missing.push_back(b->argnames[i]);
+            }
+            // Keyword-only parameters are reported SEPARATELY by CPython:
+            // "missing 1 required keyword-only argument: 'b'". Collected apart so
+            // the message says which kind, rather than lumping them in with
+            // positional and being wrong about it.
+            for (int i = b->nargs; i < b->nargs + b->nkwonly; ++i) {
+                if (pyc_rt_frame_local_borrow(fr, i)) continue;
+                PyObject* d = kwdefaults
+                    ? PyDict_GetItemString(kwdefaults, b->argnames[i]) : nullptr;
+                if (d) { pyc_rt_store_local(fr, i, d); continue; }
+                missing_kwonly.push_back(b->argnames[i]);
+            }
+            // CPython reports ALL missing parameters in one message, counted and
+            // joined: "missing 2 required positional arguments: 'a' and 'b'"; three
+            // or more use an Oxford comma. Positional and keyword-only get separate
+            // messages, and positional is reported first when both are missing.
+            auto join = [](const std::vector<const char*>& v) {
+                std::string names;
+                for (std::size_t k2 = 0; k2 < v.size(); ++k2) {
+                    if (k2) names += (v.size() == 2) ? " and "
+                                   : (k2 + 1 == v.size() ? ", and " : ", ");
+                    names += "'"; names += v[k2]; names += "'";
+                }
+                return names;
+            };
+            if (!missing.empty()) {
+                std::string names = join(missing);
+                PyErr_Format(PyExc_TypeError,
+                             "%s() missing %zd required positional argument%s: %s",
+                             nm, (Py_ssize_t)missing.size(),
+                             missing.size() == 1 ? "" : "s", names.c_str());
+                return fail_frame_cleanup();
+            }
+            if (!missing_kwonly.empty()) {
+                std::string names = join(missing_kwonly);
+                PyErr_Format(PyExc_TypeError,
+                             "%s() missing %zd required keyword-only argument%s: %s",
+                             nm, (Py_ssize_t)missing_kwonly.size(),
+                             missing_kwonly.size() == 1 ? "" : "s", names.c_str());
+                return fail_frame_cleanup();
+            }
+        }
+        if (Py_EnterRecursiveCall("")) return fail_frame_cleanup();
+        PyObject* r = b->impl(fr);
         Py_LeaveRecursiveCall();
         tls_frame_locals = prev_tls;
-        tls_frame_vals = prev_vals;
         tls_frame_names = prev_names;
         tls_frame_nnames = prev_n;
         pyc_rt_interp_leave(fr);
-        for (int i = 0; i < b->nlocals; ++i) Py_XDECREF(locals[i]);
-        delete[] locals;
         return r;
     }
-fail:
-    for (int i = 0; i < b->nlocals; ++i) Py_XDECREF(locals[i]);
-    delete[] locals;
-    return nullptr;
 }
 
 PyObject* func_vectorcall(PyObject* callable, PyObject* const* args,
@@ -996,14 +984,14 @@ void ensure_func_watch() {
 
 }  // namespace
 
-PyObject* pyc_rt_invoke_code(PyObject* code, PyObject** locals) {
+PyObject* pyc_rt_invoke_code(PyObject* code, void* frame) {
     Bound* b = bound_from_code(code);
     if (!b) {
         PyErr_SetString(PyExc_SystemError, "pyc eval of non-pyc code");
         return nullptr;
     }
     if (Py_EnterRecursiveCall("")) return nullptr;
-    PyObject* r = b->impl(locals);
+    PyObject* r = b->impl(frame);
     Py_LeaveRecursiveCall();
     return r;
 }
@@ -2015,8 +2003,7 @@ extern "C" PyObject* pyc_rt_match_class(PyObject* subj, PyObject* cls,
 }
 
 extern "C" int pyc_rt_super_fail(int has_args) {
-    if (has_args && tls_frame_vals && tls_frame_nnames > 0
-        && !tls_frame_vals[0]) {
+    if (has_args && pyc_rt_frame_local_is_null(0) == 1) {
         PyErr_SetString(PyExc_RuntimeError, "super(): arg[0] deleted");
         return -1;
     }

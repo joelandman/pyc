@@ -36,7 +36,7 @@ SaveThread/RestoreThread was the deadlock: it dropped the GIL on every
 
 ## C3 — remaining language diffs that are not C1/C2
 
-**Status: residual.** Gate corpus **878/878** impactful. `STDERR_DIFFERS`
+**Status: residual.** Gate corpus **879/879** impactful. `STDERR_DIFFERS`
 (traceback carets) do not count against the rate.
 
 Do not start "drive `Lib/test` under unittest" here. That is a completeness
