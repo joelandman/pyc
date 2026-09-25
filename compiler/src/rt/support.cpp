@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include <new>
+#include <set>
 #include <unordered_map>
 
 extern "C" {
@@ -468,8 +469,24 @@ namespace {
 struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
                int vararg; int kwarg; int nfree; int firstlineno;
-               const int* locs; int nlocs; };
+               const int* locs; int nlocs; PyObject* code; };
 std::unordered_map<PyObject*, Bound*> g_func_bound;
+std::unordered_map<PyObject*, Bound*> g_code_bound;
+std::unordered_map<PyObject*, Bound*> g_weakref_bound;
+std::set<PyObject*> g_weakrefs;
+PyObject* g_bound_wr_cb = nullptr;
+
+void pyc_rt_shutdown(void) {
+    if (g_bound_wr_cb) {
+        Py_DECREF(g_bound_wr_cb);
+        g_bound_wr_cb = nullptr;
+    }
+    for (PyObject* wr : g_weakrefs)
+        Py_DECREF(wr);
+    g_weakrefs.clear();
+    g_weakref_bound.clear();
+    g_code_bound.clear();
+}
 
 constexpr int kMoveCost = 2;
 constexpr int kCaseCost = 1;
@@ -539,44 +556,67 @@ PyObject* keyword_suggestion(PyObject* dir, PyObject* name) {
     return best;
 }
 
-void bound_extra_free(void* p) {
-    Bound* b = static_cast<Bound*>(p);
-    if (!b) return;
+static void pyc_bound_free(Bound* b) {
     std::free(b->name);
     delete b;
 }
 
-Py_ssize_t bound_extra_index() {
-    static Py_ssize_t idx = -1;
-    if (idx < 0) idx = PyUnstable_Eval_RequestCodeExtraIndex(bound_extra_free);
-    return idx;
+static void pyc_bound_wr_cleanup(PyObject* wr) {
+    auto itw = g_weakref_bound.find(wr);
+    if (itw == g_weakref_bound.end()) return;
+    Bound* b = itw->second;
+    g_weakref_bound.erase(itw);
+    auto itr = g_weakrefs.find(wr);
+    if (itr != g_weakrefs.end()) {
+        g_weakrefs.erase(itr);
+        Py_DECREF(wr);
+    }
+    if (b->code) {
+        auto itc = g_code_bound.find(b->code);
+        if (itc != g_code_bound.end() && itc->second == b)
+            g_code_bound.erase(itc);
+    }
+    pyc_bound_free(b);
 }
 
-void bound_capsule_dtor(PyObject* cap) {
-    Bound* b = static_cast<Bound*>(PyCapsule_GetPointer(cap, "pyc.Bound"));
-    if (!b) { PyErr_Clear(); return; }
-    std::free(b->name);
-    delete b;
+static PyObject* pyc_bound_wr_cb(PyObject*, PyObject* wr) {
+    pyc_bound_wr_cleanup(wr);
+    return Py_NewRef(Py_None);
+}
+
+static PyMethodDef pyc_bound_wr_def = {
+    "pyc_bound_weakref_callback", (PyCFunction)pyc_bound_wr_cb, METH_O, nullptr};
+
+static PyObject* pyc_bound_wr_callback_obj() {
+    if (!g_bound_wr_cb)
+        g_bound_wr_cb = PyCFunction_New(&pyc_bound_wr_def, nullptr);
+    return g_bound_wr_cb;
+}
+
+static bool pyc_bound_attach(Bound* b, PyObject* code) {
+    b->code = code;
+    g_code_bound[code] = b;
+    PyObject* cb = pyc_bound_wr_callback_obj();
+    if (!cb) {
+        g_code_bound.erase(code);
+        pyc_bound_free(b);
+        return false;
+    }
+    PyObject* wr = PyWeakref_NewRef(code, cb);
+    if (!wr) {
+        g_code_bound.erase(code);
+        pyc_bound_free(b);
+        return false;
+    }
+    g_weakref_bound[wr] = b;
+    g_weakrefs.insert(wr);
+    return true;
 }
 
 Bound* bound_from_code(PyObject* code) {
     if (!code || !PyCode_Check(code)) return nullptr;
-    Py_ssize_t idx = bound_extra_index();
-    if (idx < 0) return nullptr;
-    void* extra = nullptr;
-    if (PyUnstable_Code_GetExtra(code, idx, &extra) < 0) {
-        PyErr_Clear();
-        return nullptr;
-    }
-    if (extra) return static_cast<Bound*>(extra);
-    auto* co = reinterpret_cast<PyCodeObject*>(code);
-    if (!co->co_consts) return nullptr;
-    Py_ssize_t n = PyTuple_GET_SIZE(co->co_consts);
-    for (Py_ssize_t i = 0; i < n; ++i) {
-        PyObject* x = PyTuple_GET_ITEM(co->co_consts, i);
-        if (PyCapsule_IsValid(x, "pyc.Bound"))
-            return static_cast<Bound*>(PyCapsule_GetPointer(x, "pyc.Bound"));
-    }
+    auto it = g_code_bound.find(code);
+    if (it != g_code_bound.end()) return it->second;
     return nullptr;
 }
 
@@ -659,9 +699,7 @@ PyCodeObject* make_func_code(Bound* b) {
     Py_DECREF(filename); Py_DECREF(name); Py_DECREF(qual);
     Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
     if (!co) { std::free(b->name); delete b; return nullptr; }
-    Py_ssize_t idx = bound_extra_index();
-    if (idx < 0 || PyUnstable_Code_SetExtra(reinterpret_cast<PyObject*>(co), idx, b) < 0) {
-        std::free(b->name); delete b;
+    if (!pyc_bound_attach(b, reinterpret_cast<PyObject*>(co))) {
         Py_DECREF(co);
         return nullptr;
     }
@@ -1009,7 +1047,7 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nposonly, nlocals, owned,
                                         argnames, vararg_slot, kwarg_slot, nfree,
                                         firstlineno > 0 ? firstlineno : 1,
-                                        locs, nlocs};
+                                        locs, nlocs, nullptr};
     if (!b) { std::free(owned); return PyErr_NoMemory(); }
     PyCodeObject* co = make_func_code(b);
     if (!co) return nullptr;

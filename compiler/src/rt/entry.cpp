@@ -275,6 +275,7 @@ int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
         }
     }
     pyc_rt_pop_module_frame();
+    pyc_rt_shutdown();
 
     if (Py_FinalizeEx() < 0) {
         // Finalisation failure is reported, never swallowed: it usually means
