@@ -1,7 +1,7 @@
 # pyc — current state and MVP
 
-**Date:** 2026-09-24. Language numbers are re-measured from
-`compiler/baseline-language.json`; the `Lib/test` row remains the 2026-09-12
+**Date:** 2026-09-26. Language numbers are re-measured from
+`compiler/baseline-language.json`; the `Lib/test` row is the 2026-09-26
 I6 record. CHARTER remains binding; this file is the dashboard, not an
 amendment.
 
@@ -14,7 +14,7 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
 I6. Language + gaps + concurrency is **879/879** impactful. `Lib/test` is
-**339/389 = 87.15%** (`-O0`, sysroot 3.14.7, `--stdlib`). C1 (frames) and
+**355/389 = 91.26%** (`-O0`, sysroot 3.14.7, `--stdlib`). C1 (frames) and
 C2 (periodic GIL) are closed. The remaining product gap is not a new
 runtime: it is well-formed IR on every accepted program, named refusals
 instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and a developer
@@ -25,12 +25,12 @@ toolchain that still requires a purpose-built 3.14.7 sysroot.
 | Check | Result |
 |---|---|
 | language + gaps + concurrency | 879/879 impactful |
-| `Lib/test` (I6) | 339/389 (87.15%) |
-| I6 composition | 331 clean + 8 `STDERR_DIFFERS`-only = 339 pass |
+| `Lib/test` (I6) | 355/389 (91.26%) |
+| I6 composition | 327 clean + 28 `STDERR_DIFFERS`-only = 355 pass |
 | `DID_NOT_COMPILE` | 0 |
-| `EXIT_DIFFERS` | 98 |
+| `EXIT_DIFFERS` | 21 |
 | `STDOUT_DIFFERS` | 10 |
-| timeout | 11 |
+| timeout | 4 |
 | `ORACLE_UNSTABLE` | 11 |
 | A1 round-trip | 3.14.7 and 3.13.15 TOTAL (`compiler/README.md`) |
 | Tier-1 / NumPy | CI wheel smoke; `ldd` has no libpython `DT_NEEDED` |
@@ -124,8 +124,8 @@ Probes: `verify/corpus/language/getframemodulename.py`,
 
 ### P2 — product / process
 
-9. **I6 republished 2026-09-12.** `compiler/baseline-libtest.json` is
-    339/389 vs sysroot 3.14.7, `jobs=8`, `-O0`. `DID_NOT_COMPILE` is 0.
+9. **I6 republished 2026-09-26.** `compiler/baseline-libtest.json` is
+    355/389 vs sysroot 3.14.7, `jobs=16`, `-O0`. `DID_NOT_COMPILE` is 0.
 10. **Developer sysroot.** LLVM 22 + hand-built 3.14.7 tree +
     `PYC_LOWER=/tmp/pyc_lower`. See workstream S below.
 11. **Output home.** `PyConfig.home` is set from `PYTHONHOME`, then
@@ -156,7 +156,7 @@ works), and completeness is measured and not gamed. Not: C speed, two
 | M2 | `make -C verify fast` | `--fail-on-silent-wrong` |
 | M3 | CI `ldd` smoke | no `libpython` `DT_NEEDED` |
 | M4 | CI wheel step | NumPy import+run in that binary |
-| M5 | I6 vs README | **339/389 (87.15%)**, no regress |
+| M5 | I6 vs README | **355/389 (91.26%)**, no regress |
 | M6 | remaining compile fails | construct + line + reason — **not** invalid LLVM IR |
 
 **Not MVP gates:** unittest metric; `--python=3.13`; ELF `-static`; unboxing
@@ -167,10 +167,8 @@ vs C.
 **Now**
 
 - Keep M1–M5 green.
-- Dump stderr/IR for P0 (malformed IR, `test_unpack`, exit-5) and the 102
-  `EXIT_DIFFERS` before adding syntax.
-- Re-run `make -C verify metric` so baseline matches HEAD (t-strings /
-  `except*` / type aliases).
+- Dump stderr/IR for the 21 `EXIT_DIFFERS` before adding syntax.
+- Baseline updated to 2026-09-26 metric run (355/389).
 - This file is the dashboard. CHARTER frame-deferred text is stale; amend
   only with user sign-off.
 
