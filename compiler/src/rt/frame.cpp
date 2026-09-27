@@ -173,7 +173,7 @@ static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line
     if (!fo->f_trace_lines) return;
     if (line > 0) fo->f_lineno = line;
     ts->tracing++;
-    int r = ts->c_tracefunc(ts->c_traceobj, fo, PyTrace_LINE, Py_None);
+    int r = ts->c_tracefunc((PyObject*)ts, fo, PyTrace_LINE, Py_None);
     ts->tracing--;
     if (r < 0) return;
 }
