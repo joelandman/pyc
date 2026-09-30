@@ -232,6 +232,10 @@ struct Function {
     std::vector<std::string> cellvars;
     std::vector<std::string> freevars;
     std::vector<std::string> extra_marshal;
+    // Marshalled CPython code object. Empty: the runtime builds the eval stub.
+    // Set only when `locals` is that code object's localsplus order, so the
+    // frame slots and co_localsplusnames name the same cells.
+    std::string cpython_code;
     // Locals the scope analysis proved hold only Python ints. Codegen
     // keeps them in tagged i64 slots (rebuild/UNBOXING.md).
     std::set<std::string> int_locals;

@@ -327,7 +327,7 @@ private:
     }
 
     void emit_location(const ir::Instr& in) {
-        need("declare void @pyc_rt_set_lasti(i32, i32)");
+        need("declare void @pyc_rt_set_lasti(i32, i32, i32, i32)");
         int end_line = in.loc.end_line > 0 ? in.loc.end_line : in.loc.line;
         int slot = (int)fn_locs_[cur_fn_].size() / 4;
         fn_locs_[cur_fn_].push_back(in.loc.line);
@@ -335,7 +335,9 @@ private:
         fn_locs_[cur_fn_].push_back(in.loc.col);
         fn_locs_[cur_fn_].push_back(in.loc.end_col);
         o_ << "  call void @pyc_rt_set_lasti(i32 " << slot
-           << ", i32 " << in.loc.line << ")\n";
+           << ", i32 " << in.loc.line
+           << ", i32 " << in.loc.col
+           << ", i32 " << in.loc.end_col << ")\n";
         last_line_ = in.loc.line;
     }
 
@@ -638,6 +640,12 @@ private:
                     for (const std::string& blob : t->extra_marshal) {
                         o_ << "  " << fresh() << " = call i32 @pyc_rt_stash_marshal(ptr "
                            << cstr(blob) << ", i64 " << blob.size() << ")\n";
+                    }
+                    if (!t->cpython_code.empty()) {
+                        need("declare i32 @pyc_rt_stash_code(ptr, i64)");
+                        o_ << "  " << fresh() << " = call i32 @pyc_rt_stash_code(ptr "
+                           << cstr(t->cpython_code) << ", i64 "
+                           << t->cpython_code.size() << ")\n";
                     }
                 }
                 // The parameter-name table lets the callee bind keywords.

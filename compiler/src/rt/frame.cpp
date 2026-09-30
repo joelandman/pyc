@@ -144,10 +144,17 @@ static void mark_cell_kind(_PyInterpreterFrame* f, int slot) {
     if (!co->co_localspluskinds || !PyBytes_Check(co->co_localspluskinds)) return;
     char* kinds = PyBytes_AS_STRING(co->co_localspluskinds);
     if (slot >= PyBytes_GET_SIZE(co->co_localspluskinds)) return;
+    // A code object compiled by CPython already carries cell and free bits,
+    // including argument flags on the same byte. Replacing the byte drops
+    // those flags. The stub's cells are still plain CO_FAST_LOCAL until the
+    // prologue stores a cell, which is the only case that needs a write.
+    unsigned char cur = (unsigned char)kinds[slot];
+    if (cur & (CO_FAST_CELL | CO_FAST_FREE)) return;
     int nfast = co->co_nlocals;
-    kinds[slot] = (slot >= nfast)
-        ? (char)CO_FAST_FREE
-        : (char)(CO_FAST_LOCAL | CO_FAST_CELL);
+    if (slot >= nfast)
+        kinds[slot] = (char)CO_FAST_FREE;
+    else
+        kinds[slot] = (char)(cur | CO_FAST_LOCAL | CO_FAST_CELL);
 }
 
 extern "C" PyObject* pyc_rt_frame_local_borrow(void* vp, int slot) {
@@ -183,6 +190,103 @@ extern "C" int pyc_rt_frame_local_is_null(int slot) {
     return PyStackRef_IsNull(f->localsplus[slot]) ? 1 : 0;
 }
 
+// CPython's super_init_without_args: the class cell is whatever free
+// variable of the executing frame is named __class__, not a slot chosen
+// when the function was compiled.
+extern "C" PyObject* pyc_rt_super_from_frame(void) {
+    PyThreadState* ts = PyThreadState_Get();
+    _PyInterpreterFrame* f = ts ? ts->current_frame : nullptr;
+    PyCodeObject* co = nullptr;
+    if (f)
+        co = reinterpret_cast<PyCodeObject*>(
+            PyStackRef_AsPyObjectBorrow(f->f_executable));
+    if (!co || !PyCode_Check(co) || co->co_argcount == 0) {
+        PyErr_SetString(PyExc_RuntimeError, "super(): no arguments");
+        return nullptr;
+    }
+    if (co->co_nlocalsplus < 1 || PyStackRef_IsNull(f->localsplus[0])) {
+        PyErr_SetString(PyExc_RuntimeError, "super(): arg[0] deleted");
+        return nullptr;
+    }
+    PyObject* firstarg = PyStackRef_AsPyObjectBorrow(f->localsplus[0]);
+    if (co->co_localspluskinds && PyBytes_Check(co->co_localspluskinds)
+        && PyBytes_GET_SIZE(co->co_localspluskinds) > 0
+        && ((unsigned char)PyBytes_AS_STRING(co->co_localspluskinds)[0] & CO_FAST_CELL)) {
+        if (!firstarg || !PyCell_Check(firstarg)) {
+            PyErr_SetString(PyExc_RuntimeError, "super(): arg[0] deleted");
+            return nullptr;
+        }
+        firstarg = PyCell_Get(firstarg);
+        if (!firstarg) {
+            if (!PyErr_Occurred())
+                PyErr_SetString(PyExc_RuntimeError, "super(): arg[0] deleted");
+            return nullptr;
+        }
+    } else {
+        Py_INCREF(firstarg);
+    }
+
+    static PyObject* klass_name = nullptr;
+    if (!klass_name) {
+        klass_name = PyUnicode_InternFromString("__class__");
+        if (!klass_name) { Py_DECREF(firstarg); return nullptr; }
+    }
+    PyObject* type = nullptr;
+    PyObject* names = co->co_localsplusnames;
+    int first_free = PyUnstable_Code_GetFirstFree(co);
+    for (int i = first_free; i < co->co_nlocalsplus; ++i) {
+        PyObject* name = PyTuple_GET_ITEM(names, i);
+        int eq = PyObject_RichCompareBool(name, klass_name, Py_EQ);
+        if (eq < 0) { Py_DECREF(firstarg); return nullptr; }
+        if (!eq) continue;
+        if (PyStackRef_IsNull(f->localsplus[i])) {
+            PyErr_SetString(PyExc_RuntimeError, "super(): bad __class__ cell");
+            Py_DECREF(firstarg);
+            return nullptr;
+        }
+        PyObject* cell = PyStackRef_AsPyObjectBorrow(f->localsplus[i]);
+        if (!cell || !PyCell_Check(cell)) {
+            PyErr_SetString(PyExc_RuntimeError, "super(): bad __class__ cell");
+            Py_DECREF(firstarg);
+            return nullptr;
+        }
+        type = PyCell_Get(cell);
+        if (!type) {
+            if (!PyErr_Occurred())
+                PyErr_SetString(PyExc_RuntimeError, "super(): empty __class__ cell");
+            Py_DECREF(firstarg);
+            return nullptr;
+        }
+        if (!PyType_Check(type)) {
+            PyErr_Format(PyExc_RuntimeError,
+                         "super(): __class__ is not a type (%s)",
+                         Py_TYPE(type)->tp_name);
+            Py_DECREF(type);
+            Py_DECREF(firstarg);
+            return nullptr;
+        }
+        break;
+    }
+    if (!type) {
+        PyErr_SetString(PyExc_RuntimeError, "super(): __class__ cell not found");
+        Py_DECREF(firstarg);
+        return nullptr;
+    }
+    PyObject* builtins = PyEval_GetBuiltins();
+    PyObject* fn = builtins ? PyDict_GetItemString(builtins, "super") : nullptr;
+    if (!fn) {
+        PyErr_SetString(PyExc_SystemError, "super(): builtin missing");
+        Py_DECREF(type);
+        Py_DECREF(firstarg);
+        return nullptr;
+    }
+    PyObject* args[2] = {type, firstarg};
+    PyObject* out = PyObject_Vectorcall(fn, args, 2, nullptr);
+    Py_DECREF(type);
+    Py_DECREF(firstarg);
+    return out;
+}
+
 static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line) {
     if (!ts || ts->tracing || !ts->c_tracefunc) return;
     while (f && _PyFrame_IsIncomplete(f)) f = f->previous;
@@ -197,8 +301,38 @@ static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line
     if (r < 0) return;
 }
 
-extern "C" void pyc_rt_set_lasti(int slot, int line) {
-    if (slot < 0) return;
+// Byte offset of a code unit whose location is this source line. The eval
+// stub parked the instruction pointer at a fixed slot in its padding; a
+// CPython code object has to be searched, or f_lineno and traceback carets
+// name whatever opcode happens to sit at that slot.
+static int unit_for_source(PyCodeObject* co, int line, int col, int end_col,
+                           int legacy) {
+    PyObject* raw = PyCode_GetCode(co);
+    if (!raw) {
+        PyErr_Clear();
+        return legacy;
+    }
+    Py_ssize_t nbytes = PyBytes_GET_SIZE(raw);
+    Py_DECREF(raw);
+    int exact = -1, start_only = -1, first = -1;
+    for (int addr = 0; addr + 1 < nbytes; addr += (int)sizeof(_Py_CODEUNIT)) {
+        int sl = 0, el = 0, sc = -1, ec = -1;
+        if (!PyCode_Addr2Location(co, addr, &sl, &sc, &el, &ec)) continue;
+        if (sl != line) continue;
+        int unit = addr / (int)sizeof(_Py_CODEUNIT);
+        if (first < 0) first = unit;
+        if (col >= 0 && sc == col && start_only < 0) start_only = unit;
+        if (col >= 0 && end_col >= 0 && sc == col && ec == end_col && exact < 0)
+            exact = unit;
+    }
+    if (exact >= 0) return exact;
+    if (start_only >= 0) return start_only;
+    if (first >= 0) return first;
+    return legacy;
+}
+
+extern "C" void pyc_rt_set_lasti(int slot, int line, int col, int end_col) {
+    if (slot < 0 || line < 1) return;
     pyc_rt_gil_ensure();
     PyThreadState* ts = PyThreadState_Get();
     _PyInterpreterFrame* f = ts->current_frame;
@@ -206,18 +340,25 @@ extern "C" void pyc_rt_set_lasti(int slot, int line) {
     PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
         PyStackRef_AsPyObjectBorrow(f->f_executable));
     if (!co) return;
-    int off = 8 + slot;
-    if (off < co->_co_firsttraceable) off = co->_co_firsttraceable;
-#ifdef Py_DEBUG
     PyObject* raw = PyCode_GetCode(co);
-    if (raw) {
-        Py_ssize_t nunits = PyBytes_GET_SIZE(raw) / (Py_ssize_t)sizeof(_Py_CODEUNIT);
-        if (off >= nunits) off = nunits > 0 ? (int)nunits - 1 : 0;
-        Py_DECREF(raw);
+    if (!raw) { PyErr_Clear(); return; }
+    Py_ssize_t nunits = PyBytes_GET_SIZE(raw) / (Py_ssize_t)sizeof(_Py_CODEUNIT);
+    Py_DECREF(raw);
+    if (nunits <= 0) return;
+    int legacy = 8 + slot;
+    if (legacy < co->_co_firsttraceable) legacy = co->_co_firsttraceable;
+    if (legacy >= nunits) legacy = (int)nunits - 1;
+    int off = legacy;
+    int sl = 0, sc = -1, el = 0, ec = -1;
+    int legacy_addr = legacy * (int)sizeof(_Py_CODEUNIT);
+    if (PyCode_Addr2Location(co, legacy_addr, &sl, &sc, &el, &ec) && sl == line
+        && (col < 0 || sc == col)) {
+        off = legacy;
     } else {
-        PyErr_Clear();
+        off = unit_for_source(co, line, col, end_col, legacy);
+        if (off < 0) off = legacy;
+        if (off >= nunits) off = (int)nunits - 1;
     }
-#endif
     f->instr_ptr = _PyCode_CODE(co) + off;
     if (f->frame_obj && line > 0) f->frame_obj->f_lineno = line;
     if (ts->c_tracefunc) maybe_line_trace(f, ts, line);

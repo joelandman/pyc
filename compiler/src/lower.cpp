@@ -57,8 +57,9 @@ using pyc::rt::Ownership;
 class Lowerer {
 public:
     Lowerer(ir::Module& m, DiagnosticSink& d,
-            const std::vector<GenexpEntry>& gx)
-        : mod_(m), diags_(d), genexps_(gx) {}
+            const std::vector<GenexpEntry>& gx,
+            const std::vector<FuncCodeEntry>& fc)
+        : mod_(m), diags_(d), genexps_(gx), func_codes_(fc) {}
 
     // Generator expressions carry a code object CPython compiled at build
     // time, keyed by source position (rebuild/GENERATORS.md).
@@ -67,6 +68,88 @@ public:
         for (const GenexpEntry& g : genexps_)
             if (g.line == loc.line && g.col == loc.col) return &g;
         return nullptr;
+    }
+
+    // Ordinary functions: CPython's code object, keyed by qualname and
+    // position. The native body still runs. The code object is installed
+    // only when its localsplus names are the same set as ours, and then the
+    // slots are renumbered into that order so f_code and the frame agree.
+    const std::vector<FuncCodeEntry>& func_codes_;
+    struct FuncKey {
+        std::string qual;
+        int line = 0;
+        int end_col = 0;
+        bool operator<(const FuncKey& o) const {
+            if (qual != o.qual) return qual < o.qual;
+            if (line != o.line) return line < o.line;
+            return end_col < o.end_col;
+        }
+    };
+    std::map<FuncKey, std::vector<std::size_t>> func_ix_;
+    bool func_ix_ready_ = false;
+
+    void prep_func_ix() {
+        if (func_ix_ready_) return;
+        func_ix_ready_ = true;
+        for (std::size_t i = 0; i < func_codes_.size(); ++i) {
+            const FuncCodeEntry& e = func_codes_[i];
+            func_ix_[FuncKey{e.qual, e.line, e.end_col}].push_back(i);
+        }
+    }
+
+    static bool same_names(std::vector<std::string> a, std::vector<std::string> b) {
+        if (a.size() != b.size()) return false;
+        std::sort(a.begin(), a.end());
+        std::sort(b.begin(), b.end());
+        return a == b;
+    }
+
+    static bool layout_ok(const FuncCodeEntry& fc,
+                          const std::vector<std::string>& pyc_locals,
+                          const std::vector<std::string>& freevars,
+                          const std::vector<std::string>& params) {
+        if (!same_names(pyc_locals, fc.locals) || !same_names(freevars, fc.freevars))
+            return false;
+        if (fc.freevars.size() > fc.locals.size() || fc.locals.size() < params.size())
+            return false;
+        for (std::size_t i = 0; i < params.size(); ++i)
+            if (fc.locals[i] != params[i]) return false;
+        std::size_t base = fc.locals.size() - fc.freevars.size();
+        for (std::size_t i = 0; i < fc.freevars.size(); ++i)
+            if (fc.locals[base + i] != fc.freevars[i]) return false;
+        return true;
+    }
+
+    // Pops the next code object for this function. An exact (qual, line,
+    // end_col) hit wins. Otherwise a sole remaining entry for that qualname
+    // and line is used, so an end-column mismatch does not keep the stub
+    // when the function is unambiguous.
+    const FuncCodeEntry* take_func_code(const std::string& qual, int line, int end_col) {
+        prep_func_ix();
+        auto pop = [&](const FuncKey& k) -> const FuncCodeEntry* {
+            auto it = func_ix_.find(k);
+            if (it == func_ix_.end() || it->second.empty()) return nullptr;
+            std::size_t i = it->second.front();
+            it->second.erase(it->second.begin());
+            return &func_codes_[i];
+        };
+        if (const FuncCodeEntry* e = pop(FuncKey{qual, line, end_col})) return e;
+        const FuncKey* only = nullptr;
+        int n = 0;
+        for (const auto& kv : func_ix_) {
+            if (kv.second.empty() || kv.first.qual != qual || kv.first.line != line)
+                continue;
+            only = &kv.first;
+            n++;
+        }
+        if (n == 1) return pop(*only);
+        return nullptr;
+    }
+
+    static int slot_named(const std::vector<std::string>& names, const std::string& want) {
+        for (std::size_t i = 0; i < names.size(); ++i)
+            if (names[i] == want) return (int)i;
+        return -1;
     }
 
     void nested_scope_ranges(const std::vector<stmt>& body,
@@ -899,12 +982,37 @@ private:
         }
         std::vector<std::string> lam_locals = slotnames;
         for (const std::string& f2 : freevars) lam_locals.push_back(f2);
+        std::string adopted_code;
+        if (const FuncCodeEntry* fc = take_func_code(qualname("<lambda>"),
+                                                     n.loc.line, n.loc.end_col)) {
+            if (layout_ok(*fc, lam_locals, freevars, params)) {
+                std::vector<ir::Value> ordered;
+                ordered.reserve(fc->freevars.size());
+                for (const std::string& name : fc->freevars) {
+                    for (std::size_t i = 0; i < freevars.size(); ++i) {
+                        if (freevars[i] == name) {
+                            ordered.push_back(closure_cells[i]);
+                            break;
+                        }
+                    }
+                }
+                if (ordered.size() == closure_cells.size()) {
+                    closure_cells = std::move(ordered);
+                    freevars = fc->freevars;
+                    lam_locals = fc->locals;
+                    adopted_code = fc->code;
+                }
+            }
+        }
+        if (a.vararg) vararg_slot = slot_named(lam_locals, (*a.vararg)->arg);
+        if (a.kwarg) kwarg_slot = slot_named(lam_locals, (*a.kwarg)->arg);
 
         FnScope sc = begin_function("<lambda>", params, lam_locals);
         cur()->nposonly = (int)a.posonlyargs.size();
         cur()->nkwonly = nkwonly;
         cur()->cellvars = cellvars;
         cur()->freevars = freevars;
+        cur()->cpython_code = std::move(adopted_code);
         for (const std::string& c : cellvars) cells_[c] = locals_[c];
         for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
         for (const std::string& c : cellvars) {
@@ -1653,6 +1761,21 @@ private:
             for (const std::string& f2 : freevars) if (f2 == nm) { have = true; break; }
             if (!have) freevars.push_back(nm);
         }
+        std::vector<std::string> all_locals = own_locals;
+        for (const std::string& fv2 : freevars) all_locals.push_back(fv2);
+        std::string adopted_code;
+        if (const FuncCodeEntry* fc = take_func_code(fn_qualname, n.loc.line, n.loc.end_col)) {
+            if (layout_ok(*fc, all_locals, freevars, params)) {
+                freevars = fc->freevars;
+                all_locals = fc->locals;
+                adopted_code = fc->code;
+            }
+        }
+        if (a.vararg) vararg_slot = slot_named(all_locals, (*a.vararg)->arg);
+        if (a.kwarg) kwarg_slot = slot_named(all_locals, (*a.kwarg)->arg);
+        // Closure cells for the nested function come from THIS function's
+        // slots, so they must be read before the scope switches. Free-var
+        // order is the adopted code object's order when one was installed.
         std::vector<ir::Value> closure_cells;
         for (const std::string& fv2 : freevars) {
             if (auto tit = tp_cells.find(fv2); tit != tp_cells.end()) {
@@ -1685,9 +1808,6 @@ private:
             closure_cells.push_back(c);
         }
 
-        std::vector<std::string> all_locals = own_locals;
-        for (const std::string& fv2 : freevars) all_locals.push_back(fv2);
-
         mod_.functions.push_back(ir::Function{
             .name=n.name, .params=params, .nkwonly=nkwonly,
             .nposonly=nposonly, .next_value=1});
@@ -1696,6 +1816,7 @@ private:
         cur()->locals = all_locals;
         cur()->cellvars = cellvars;
         cur()->freevars = freevars;
+        cur()->cpython_code = std::move(adopted_code);
         std::vector<std::pair<int, int>> nested;
         nested_scope_ranges(n.body, nested);
         int fn_end = n.loc.end_line ? n.loc.end_line : n.loc.line;
@@ -5999,11 +6120,11 @@ private:
     }
 
     ir::Value lower_call(const Call& c, bool* ok) {
-        // Zero-argument super() is not a plain call: CPython's super() reads
-        // the calling FRAME for the class cell and the first argument. pyc has
-        // no Python frames, so it raises "super(): no current frame". Supply
-        // both operands explicitly -- super(__class__, self) -- which is what
-        // the zero-argument form means.
+        // Zero-argument super() reads the calling frame for the class cell
+        // and the first argument. A method compiled inside a class has that
+        // cell at a known slot. A function that does not is still super():
+        // code.replace can add the cell later, and CPython finds it on the
+        // frame that is running.
         if (std::holds_alternative<Name>(c.func->v)
             && std::get<Name>(c.func->v).id == "super"
             && c.args.empty() && c.keywords.empty()
@@ -6013,15 +6134,11 @@ private:
                 ir::Value out = lower_super_zero(c, ok);
                 if (out.valid() || !*ok) return out;
             }
-            // Not resolvable: CPython raises at run time, and which message it
-            // uses depends on whether the frame has arguments at all.
             if (class_ns_.empty() && fn_idx_ != 0) {
-                bool sok = true;
-                call_capi_imm("pyc_rt_super_fail", {},
-                              (std::int64_t)(cur()->params.empty() ? 0 : 1), 0,
-                              c.loc, &sok);
-                *ok = sok;
-                return {};
+                ir::Value out = call_capi("pyc_rt_super_from_frame", {}, c.loc, ok);
+                if (!*ok) return {};
+                mark_owned(out);
+                return out;
             }
         }
         bool starred = false;
@@ -7162,9 +7279,10 @@ private:
 
 bool lower_to_ir(const ast::mod& tree, const std::string& file,
                  ir::Module& out, DiagnosticSink& diags,
-                 const std::vector<GenexpEntry>& genexps) {
+                 const std::vector<GenexpEntry>& genexps,
+                 const std::vector<FuncCodeEntry>& func_codes) {
     out.source_file = file;
-    Lowerer l(out, diags, genexps);
+    Lowerer l(out, diags, genexps, func_codes);
     return l.lower_module(tree);
 }
 

@@ -22,6 +22,75 @@ import types
 from .genexp import (collect as collect_genexps, collect_genfuncs,
                      GenexpError)
 
+# Comprehension and generator bodies are their own code objects. pyc either
+# lowers those itself or already marshals them through the genexp table.
+# Recording them here would pair a native def with the wrong code object.
+_SKIP_CO_NAMES = {
+    "<module>", "<listcomp>", "<setcomp>", "<dictcomp>", "<genexpr>",
+}
+_CO_OPTIMIZED = 0x0001
+_CO_NEWLOCALS = 0x0002
+_CO_GENERATOR = 0x0020
+_CO_COROUTINE = 0x0080
+_CO_ASYNC_GENERATOR = 0x0200
+
+
+def _localsplus(co):
+    """Slot order of co_localsplusnames, from the public name tuples.
+
+    co_varnames is the CO_FAST_LOCAL prefix. Cell names absent from that
+    prefix are the pure cells. Free vars are the tail. That is the inverse
+    of the code constructor in Objects/codeobject.c.
+    """
+    names = list(co.co_varnames)
+    have = set(names)
+    for name in co.co_cellvars:
+        if name not in have:
+            names.append(name)
+            have.add(name)
+    names.extend(co.co_freevars)
+    return names
+
+
+def _code_end_col(co):
+    last = 0
+    for pos in co.co_positions():
+        ecol = pos[3]
+        if ecol is not None:
+            last = ecol
+    return last
+
+
+def collect_func_codes(code):
+    """Every ordinary function code object compile() produced.
+
+    The native body keeps running. This object is installed as the
+    function's __code__ so co_code, consts, names, the line table, and the
+    exception table are the ones CPython's compiler emitted.
+    """
+    out = []
+
+    def walk(co):
+        flags = co.co_flags
+        suspended = flags & (_CO_GENERATOR | _CO_COROUTINE | _CO_ASYNC_GENERATOR)
+        if (co.co_name not in _SKIP_CO_NAMES and not suspended
+                and (flags & _CO_OPTIMIZED) and (flags & _CO_NEWLOCALS)):
+            out.append({
+                "qual": co.co_qualname,
+                "line": co.co_firstlineno,
+                "end_col": _code_end_col(co),
+                "locals": _localsplus(co),
+                "freevars": list(co.co_freevars),
+                "code": base64.b64encode(marshal.dumps(co)).decode("ascii"),
+            })
+        for c in co.co_consts:
+            if isinstance(c, types.CodeType):
+                walk(c)
+
+    walk(code)
+    return out
+
+
 def collect_annotate_consts(code):
     out = []
     def walk(co):
@@ -128,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         "feature_version": list(fv) if fv else None,
         "file": args.file,
         "genexps": genexps,
+        "func_codes": collect_func_codes(compiled),
         "ast": encode_node(tree),
     }, sys.stdout, indent=args.indent)
     sys.stdout.write("\n")

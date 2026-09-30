@@ -38,6 +38,10 @@ int       pyc_rt_del_local(void* frame, int slot, const char* name);
 // behaviour behind the mutable-default surprise -- so they are built by the
 // caller, not here.
 int pyc_rt_stash_marshal(const char* p, Py_ssize_t n);
+// The next pyc_rt_make_function uses this marshalled code object as
+// func.__code__ instead of the eval stub. One pending object; the make
+// consumes it.
+int pyc_rt_stash_code(const char* p, Py_ssize_t n);
 PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                int nargs, int nkwonly, int nposonly, int nlocals,
                                const char* const* argnames,
@@ -187,6 +191,10 @@ PyObject* pyc_rt_load_classname(PyObject* ns, const char* name, PyObject* cell);
 
 // Unresolvable zero-argument super(); raises the RuntimeError CPython raises.
 int pyc_rt_super_fail(int has_args);
+// Zero-argument super() with no compile-time __class__ cell. Reads the
+// current frame the way CPython's super() does, so a cell injected by
+// code.replace is visible.
+PyObject* pyc_rt_super_from_frame(void);
 PyObject* pyc_rt_call_super0(PyObject* fn, PyObject* klass, PyObject* self);
 PyObject* pyc_rt_super_classcell(PyObject* cell);
 int pyc_rt_check_classcell(PyObject* cell, PyObject* cls, PyObject* name);
@@ -269,7 +277,7 @@ const char* pyc_rt_source_file(void);
 void pyc_rt_shutdown(void);
 void pyc_rt_set_lineno(int line);
 void pyc_rt_set_location(int line, int col, int end_col);
-void pyc_rt_set_lasti(int slot, int line);
+void pyc_rt_set_lasti(int slot, int line, int col, int end_col);
 void pyc_rt_traceback_here(void);
 int pyc_rt_tuple_maybe_untrack(PyObject* t);
 

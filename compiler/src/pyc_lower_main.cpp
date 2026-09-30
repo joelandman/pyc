@@ -9,7 +9,7 @@
 
 namespace pyc {
 bool lower_to_ir(const ast::mod&, const std::string&, ir::Module&, DiagnosticSink&,
-                 const std::vector<GenexpEntry>&);
+                 const std::vector<GenexpEntry>&, const std::vector<FuncCodeEntry>&);
 std::string codegen_llvm(const ir::Module&);
 }
 using namespace pyc;
@@ -80,8 +80,29 @@ int main(int argc, char** argv) {
         }
     }
 
+    std::vector<FuncCodeEntry> func_codes;
+    if (const json::Value* fvcs = doc.find(doc.root(), "func_codes")) {
+        for (std::uint32_t i = 0; i < fvcs->count; ++i) {
+            const json::Value& e = doc.elem(*fvcs, i);
+            FuncCodeEntry fc;
+            if (const json::Value* x = doc.find(e, "qual")) fc.qual = std::string(doc.str_of(*x));
+            if (const json::Value* x = doc.find(e, "line")) fc.line = (int)x->number;
+            if (const json::Value* x = doc.find(e, "end_col")) fc.end_col = (int)x->number;
+            if (const json::Value* x = doc.find(e, "code")) fc.code = b64_decode(doc.str_of(*x));
+            auto names = [&](const char* key, std::vector<std::string>& dst) {
+                const json::Value* x = doc.find(e, key);
+                if (!x) return;
+                for (std::uint32_t k = 0; k < x->count; ++k)
+                    dst.push_back(std::string(doc.str_of(doc.elem(*x, k))));
+            };
+            names("locals", fc.locals);
+            names("freevars", fc.freevars);
+            func_codes.push_back(std::move(fc));
+        }
+    }
+
     ir::Module m;
-    if (!lower_to_ir(tree, file, m, sink, genexps)) {
+    if (!lower_to_ir(tree, file, m, sink, genexps, func_codes)) {
         for (const auto& d : sink.items) {
             if (d.severity != Diagnostic::Severity::Error) continue;
             std::fprintf(stderr, "%s:%d:%d: error: %s [%s]\n",

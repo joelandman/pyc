@@ -24,4 +24,17 @@ struct GenexpEntry {
     std::vector<std::string> freevars;   // in co_freevars order
 };
 
+// One ordinary function's code object, compiled by the target interpreter.
+// The native body still runs; this object is what `func.__code__` and the
+// frame's f_code must be. `locals` is localsplus order (varnames, then cell
+// names that are not locals, then free vars).
+struct FuncCodeEntry {
+    std::string qual;
+    int line = 0;
+    int end_col = 0;
+    std::string code;
+    std::vector<std::string> locals;
+    std::vector<std::string> freevars;
+};
+
 }  // namespace pyc

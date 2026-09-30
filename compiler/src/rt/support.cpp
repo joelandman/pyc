@@ -56,6 +56,24 @@ extern "C" int pyc_rt_stash_marshal(const char* p, Py_ssize_t n) {
     return 0;
 }
 
+static PyObject* g_adopted_code = nullptr;
+
+extern "C" int pyc_rt_stash_code(const char* p, Py_ssize_t n) {
+    if (g_adopted_code) {
+        Py_DECREF(g_adopted_code);
+        g_adopted_code = nullptr;
+    }
+    PyObject* o = PyMarshal_ReadObjectFromString(const_cast<char*>(p), n);
+    if (!o) return -1;
+    if (!PyCode_Check(o)) {
+        Py_DECREF(o);
+        PyErr_SetString(PyExc_SystemError, "pyc stashed function code is not a code object");
+        return -1;
+    }
+    g_adopted_code = o;
+    return 0;
+}
+
 extern "C" void pyc_rt_globals_init(void) {
     PyObject* m = PyImport_AddModule("__main__");   // borrowed
     g_globals_cache = m ? PyModule_GetDict(m) : nullptr;   // borrowed
@@ -620,6 +638,75 @@ Bound* bound_from_code(PyObject* code) {
     return nullptr;
 }
 
+static bool same_obj(PyObject* a, PyObject* b, bool* err) {
+    if (a == b) return true;
+    if (!a || !b) return false;
+    int eq = PyObject_RichCompareBool(a, b, Py_EQ);
+    if (eq < 0) { *err = true; return false; }
+    return eq == 1;
+}
+
+// code.replace() builds a new code object and does not copy co_extra, so the
+// native body is not keyed by the object now executing. The closure-injection
+// test keeps every field except co_freevars and co_code, and co_code is the
+// original stub with a prefix. Stubs are not unique, so a match also requires
+// the fields replace leaves alone. Two registered bodies that still match is
+// a refusal, not a guess.
+Bound* bound_from_replaced(PyObject* code, bool* err) {
+    *err = false;
+    if (!code || !PyCode_Check(code)) return nullptr;
+    auto* e = reinterpret_cast<PyCodeObject*>(code);
+    PyObject* eb = PyCode_GetCode(e);
+    if (!eb) { *err = true; return nullptr; }
+    Py_ssize_t en = PyBytes_GET_SIZE(eb);
+    const char* ep = PyBytes_AS_STRING(eb);
+    Bound* found = nullptr;
+    int nfound = 0;
+    for (const auto& kv : g_code_bound) {
+        if (!kv.first || !PyCode_Check(kv.first) || kv.first == code) continue;
+        auto* r = reinterpret_cast<PyCodeObject*>(kv.first);
+        if (e->co_firstlineno != r->co_firstlineno) continue;
+        if (!same_obj(e->co_filename, r->co_filename, err)) {
+            if (*err) break;
+            continue;
+        }
+        if (!same_obj(e->co_name, r->co_name, err)) {
+            if (*err) break;
+            continue;
+        }
+        if (!same_obj(e->co_qualname, r->co_qualname, err)) {
+            if (*err) break;
+            continue;
+        }
+        if (!same_obj(e->co_consts, r->co_consts, err)) {
+            if (*err) break;
+            continue;
+        }
+        if (!same_obj(e->co_names, r->co_names, err)) {
+            if (*err) break;
+            continue;
+        }
+        if (!same_obj(e->co_linetable, r->co_linetable, err)) {
+            if (*err) break;
+            continue;
+        }
+        PyObject* rb = PyCode_GetCode(r);
+        if (!rb) { *err = true; break; }
+        Py_ssize_t rn = PyBytes_GET_SIZE(rb);
+        bool suffix = rn >= 22 && en >= rn && ((en - rn) % 2) == 0
+            && std::memcmp(ep + (en - rn), PyBytes_AS_STRING(rb), (size_t)rn) == 0;
+        Py_DECREF(rb);
+        if (!suffix) continue;
+        found = kv.second;
+        nfound++;
+        if (nfound > 1) break;
+    }
+    Py_DECREF(eb);
+    if (*err) return nullptr;
+    if (nfound == 1) return found;
+    return nullptr;
+}
+
 Bound* bound_from_func(PyObject* func) {
     if (!func || !PyFunction_Check(func)) return nullptr;
     auto it = g_func_bound.find(func);
@@ -628,6 +715,28 @@ Bound* bound_from_func(PyObject* func) {
 }
 
 PyCodeObject* make_func_code(Bound* b) {
+    PyObject* adopted = g_adopted_code;
+    g_adopted_code = nullptr;
+    if (adopted) {
+        // Nested generator consts already live inside the adopted code object.
+        // The stash queue would otherwise leak into the next function.
+        for (PyObject* c : g_extra_consts) Py_DECREF(c);
+        g_extra_consts.clear();
+        auto* co = reinterpret_cast<PyCodeObject*>(adopted);
+        if (co->co_nlocalsplus != b->nlocals) {
+            Py_DECREF(adopted);
+            PyErr_SetString(PyExc_SystemError,
+                            "pyc local layout does not match code object");
+            std::free(b->name);
+            delete b;
+            return nullptr;
+        }
+        if (!pyc_bound_attach(b, adopted)) {
+            Py_DECREF(adopted);
+            return nullptr;
+        }
+        return co;
+    }
     int nfree = b->nfree > 0 ? b->nfree : 0;
     int nfast = b->nlocals - nfree;
     if (nfast < 0) nfast = 0;
@@ -1034,6 +1143,11 @@ void ensure_func_watch() {
 
 PyObject* pyc_rt_invoke_code(PyObject* code, void* frame) {
     Bound* b = bound_from_code(code);
+    if (!b) {
+        bool err = false;
+        b = bound_from_replaced(code, &err);
+        if (err) return nullptr;
+    }
     if (!b) {
         PyErr_SetString(PyExc_SystemError, "pyc eval of non-pyc code");
         return nullptr;

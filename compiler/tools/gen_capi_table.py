@@ -205,6 +205,7 @@ _PYC_RUNTIME = {
     "pyc_rt_del_global":   ("int", "", ["const char*"]),
     "pyc_rt_reraise":      ("int", "", []),
     "pyc_rt_super_fail":   ("int", "", ["int"]),
+    "pyc_rt_super_from_frame": ("PyObject*", "+1", []),
     "pyc_rt_match_sequence": ("PyObject*", "+1",
                               ["PyObject*", "Py_ssize_t", "Py_ssize_t", "int"]),
     "pyc_rt_match_mapping":  ("PyObject*", "+1", ["PyObject*", "PyObject*", "int"]),
