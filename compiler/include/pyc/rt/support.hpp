@@ -251,6 +251,13 @@ void  pyc_rt_interp_leave(void* frame);
 // `retval` NULL means the function failed (PY_UNWIND); a value is PY_RETURN.
 int pyc_rt_profile_enter(void* frame);
 int pyc_rt_profile_return(void* frame, PyObject* retval);
+// Python-level call. arg0 is borrowed; NULL is the missing-arg sentinel.
+// ccall returns 1 if a profiler was already active (the caller must emit
+// creturn/craise), 0 if it was not, -1 with an exception set.
+// A call that itself installs the profiler must not emit a return event.
+int pyc_rt_profile_ccall(PyObject* callable, PyObject* arg0);
+int pyc_rt_profile_creturn(PyObject* callable, PyObject* arg0);
+int pyc_rt_profile_craise(PyObject* callable, PyObject* arg0);
 int pyc_rt_push_module_frame(const int* locs, int nlocs);
 void pyc_rt_pop_module_frame(void);
 PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals);

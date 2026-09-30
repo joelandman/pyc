@@ -7066,7 +7066,7 @@ private:
         }
         std::vector<ir::Value> consume{fn, tup};
         if (kw.valid()) consume.push_back(kw);
-        ir::Value out = call_capi("PyObject_Call", {fn, tup, kw}, c.loc, ok, consume);
+        ir::Value out = call_capi("pyc_rt_call_ex", {fn, tup, kw}, c.loc, ok, consume);
         if (*ok) mark_owned(out);
         return out;
     }
@@ -7105,7 +7105,7 @@ private:
         }
         ir::Value kw = build_kwargs(c.keywords, c.loc, ok);
         if (!*ok) return {};
-        ir::Value out = call_capi("PyObject_Call", {fn, tup, kw}, c.loc, ok,
+        ir::Value out = call_capi("pyc_rt_call_ex", {fn, tup, kw}, c.loc, ok,
                                   {fn, tup, kw});
         if (*ok) mark_owned(out);
         return out;

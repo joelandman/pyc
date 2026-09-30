@@ -1147,13 +1147,63 @@ extern "C" int pyc_rt_periodic(void) {
     return pyc_rt_handle_pending();
 }
 
+// ceval expands a bound method before CALL, then emits C_RETURN for whatever
+// was actually called. CALL_FUNCTION_EX does not expand, and it skips
+// C_RETURN when the callable is a Python function or a bound method
+// (test_sys_setprofile.test_method_with_c_function).
+static PyObject* finish_profiled_call(PyObject* reported, PyObject* arg0,
+                                      PyObject* result, int skip_cret) {
+    if (skip_cret) return result;
+    if (!result) {
+        if (pyc_rt_profile_craise(reported, arg0) < 0) return nullptr;
+        return nullptr;
+    }
+    if (pyc_rt_profile_creturn(reported, arg0) < 0) {
+        Py_DECREF(result);
+        return nullptr;
+    }
+    return result;
+}
+
+static void profile_call_target(PyObject* callable, PyObject* const* args,
+                                Py_ssize_t nargs, int expand_method,
+                                PyObject** reported, PyObject** arg0,
+                                int* skip_cret) {
+    *skip_cret = 0;
+    *arg0 = nullptr;
+    *reported = callable;
+    if (expand_method && callable && PyMethod_Check(callable)) {
+        *reported = PyMethod_GET_FUNCTION(callable);
+        *arg0 = PyMethod_GET_SELF(callable);
+        return;
+    }
+    if (nargs > 0 && args) *arg0 = args[0];
+    if (!expand_method && callable &&
+        (PyFunction_Check(callable) || PyMethod_Check(callable)))
+        *skip_cret = 1;
+}
+
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {
-    return PyObject_Vectorcall(callable, args, (size_t)nargs, nullptr);
+    PyObject *reported, *arg0;
+    int skip = 0;
+    profile_call_target(callable, args, nargs, 1, &reported, &arg0, &skip);
+    int armed = pyc_rt_profile_ccall(reported, arg0);
+    if (armed < 0) return nullptr;
+    PyObject* r = PyObject_Vectorcall(callable, args, (size_t)nargs, nullptr);
+    if (!armed) return r;
+    return finish_profiled_call(reported, arg0, r, skip);
 }
 
 PyObject* pyc_rt_call_kw(PyObject* callable, PyObject** args, Py_ssize_t npos,
                          PyObject* kwnames) {
-    return PyObject_Vectorcall(callable, args, (size_t)npos, kwnames);
+    PyObject *reported, *arg0;
+    int skip = 0;
+    profile_call_target(callable, args, npos, 1, &reported, &arg0, &skip);
+    int armed = pyc_rt_profile_ccall(reported, arg0);
+    if (armed < 0) return nullptr;
+    PyObject* r = PyObject_Vectorcall(callable, args, (size_t)npos, kwnames);
+    if (!armed) return r;
+    return finish_profiled_call(reported, arg0, r, skip);
 }
 
 PyObject* pyc_rt_kwnames_from_csv(const char* csv) {
@@ -1187,7 +1237,21 @@ PyObject* pyc_rt_call_ex(PyObject* callable, PyObject* args, PyObject* kwargs) {
         if (!t) return nullptr;
         own = 1;
     }
+    PyObject* arg0 = nullptr;
+    if (t && PyTuple_Check(t) && PyTuple_GET_SIZE(t) > 0)
+        arg0 = PyTuple_GET_ITEM(t, 0);
+    PyObject *reported, *ignored;
+    int skip = 0;
+    profile_call_target(callable, nullptr, 0, 0, &reported, &ignored, &skip);
+    (void)ignored;
+    int armed = pyc_rt_profile_ccall(callable, arg0);
+    if (armed < 0) {
+        if (own) Py_DECREF(t);
+        return nullptr;
+    }
     PyObject* r = PyObject_Call(callable, t, kwargs);
+    // arg0 is borrowed from t. Finish the event before dropping the tuple.
+    if (armed) r = finish_profiled_call(callable, arg0, r, skip);
     if (own) Py_DECREF(t);
     return r;
 }

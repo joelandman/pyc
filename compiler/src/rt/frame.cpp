@@ -301,21 +301,45 @@ static int monitor_msb(uint8_t bits) {
     return tool;
 }
 
+static const char* monitor_event_name(int event) {
+    switch (event) {
+    case PY_MONITORING_EVENT_PY_UNWIND: return "PY_UNWIND";
+    case PY_MONITORING_EVENT_CALL: return "CALL";
+    case PY_MONITORING_EVENT_C_RETURN: return "C_RETURN";
+    case PY_MONITORING_EVENT_C_RAISE: return "C_RAISE";
+    default: return "monitoring";
+    }
+}
+
+// C_RETURN and C_RAISE are ancillary: the tool bit lives on CALL, and the
+// callable is stored under the ancillary event id.
+static int monitor_tool_event(int event) {
+    if (event == PY_MONITORING_EVENT_C_RETURN ||
+        event == PY_MONITORING_EVENT_C_RAISE)
+        return PY_MONITORING_EVENT_CALL;
+    return event;
+}
+
 // Compiled calls never enter ceval, and stub code objects have no per-code
 // monitors, so _Py_call_instrumentation would see an empty tool set.
 // sys.setprofile and cProfile both register on the interpreter-global bits.
 // tstate->tracing is held across each callback; without that the callback
 // (itself a compiled function) re-enters this helper forever.
-static int fire_monitor(_PyInterpreterFrame* f, int event, PyObject* extra) {
+// `extras` is borrowed. nextra 0 is PY_START; 1 is a return value or
+// exception; 2 is (callable, arg0) for CALL / C_RETURN / C_RAISE.
+static int fire_monitor(_PyInterpreterFrame* f, int event,
+                        PyObject* const* extras, int nextra) {
     if (!f) return 0;
     PyThreadState* ts = PyThreadState_Get();
     if (!ts || ts->tracing) return 0;
     PyCodeObject* code = reinterpret_cast<PyCodeObject*>(
         PyStackRef_AsPyObjectBorrow(f->f_executable));
     if (!code || (code->co_flags & CO_NO_MONITORING_EVENTS)) return 0;
-    if (event < 0 || event >= _PY_MONITORING_UNGROUPED_EVENTS) return 0;
+    int tool_event = monitor_tool_event(event);
+    if (tool_event < 0 || tool_event >= _PY_MONITORING_UNGROUPED_EVENTS) return 0;
+    if (event < 0 || event >= _PY_MONITORING_EVENTS) return 0;
     PyInterpreterState* interp = ts->interp;
-    uint8_t tools = interp->monitors.tools[event];
+    uint8_t tools = interp->monitors.tools[tool_event];
     if (!tools) return 0;
 
     _Py_CODEUNIT* base = _PyCode_CODE(code);
@@ -325,8 +349,9 @@ static int fire_monitor(_PyInterpreterFrame* f, int event, PyObject* extra) {
     PyObject* off = PyLong_FromLong(units * (long)sizeof(_Py_CODEUNIT));
     if (!off) return -1;
 
-    int nargs = extra ? 3 : 2;
-    PyObject* slot[4] = {nullptr, reinterpret_cast<PyObject*>(code), off, extra};
+    int nargs = 2 + nextra;
+    PyObject* slot[5] = {nullptr, reinterpret_cast<PyObject*>(code), off, nullptr, nullptr};
+    for (int i = 0; i < nextra && i < 2; ++i) slot[3 + i] = extras[i];
     size_t nargsf = (size_t)nargs | PY_VECTORCALL_ARGUMENTS_OFFSET;
     PyObject** callargs = &slot[1];
     int err = 0;
@@ -351,8 +376,7 @@ static int fire_monitor(_PyInterpreterFrame* f, int event, PyObject* extra) {
         if (PY_MONITORING_IS_INSTRUMENTED_EVENT(event)) continue;
         PyErr_Format(PyExc_ValueError,
                      "Cannot disable %s events. Callback removed.",
-                     event == PY_MONITORING_EVENT_PY_UNWIND ? "PY_UNWIND"
-                                                           : "monitoring");
+                     monitor_event_name(event));
         Py_CLEAR(interp->monitoring_callables[tool][event]);
         err = -1;
         break;
@@ -361,20 +385,60 @@ static int fire_monitor(_PyInterpreterFrame* f, int event, PyObject* extra) {
     return err;
 }
 
+static _PyInterpreterFrame* caller_frame() {
+    PyThreadState* ts = PyThreadState_Get();
+    return ts ? ts->current_frame : nullptr;
+}
+
 extern "C" int pyc_rt_profile_enter(void* frame) {
     return fire_monitor(static_cast<_PyInterpreterFrame*>(frame),
-                        PY_MONITORING_EVENT_PY_START, nullptr);
+                        PY_MONITORING_EVENT_PY_START, nullptr, 0);
 }
 
 extern "C" int pyc_rt_profile_return(void* frame, PyObject* retval) {
     auto* f = static_cast<_PyInterpreterFrame*>(frame);
     if (retval)
-        return fire_monitor(f, PY_MONITORING_EVENT_PY_RETURN, retval);
+        return fire_monitor(f, PY_MONITORING_EVENT_PY_RETURN, &retval, 1);
     // A NULL return with no exception is an internal failure, not an unwind.
     if (!PyErr_Occurred()) return 0;
     PyObject* exc = PyErr_GetRaisedException();
     if (!exc) return 0;
-    int err = fire_monitor(f, PY_MONITORING_EVENT_PY_UNWIND, exc);
+    int err = fire_monitor(f, PY_MONITORING_EVENT_PY_UNWIND, &exc, 1);
+    if (err == 0) PyErr_SetRaisedException(exc);
+    else Py_DECREF(exc);
+    return err;
+}
+
+// CALL / C_RETURN / C_RAISE for a Python-level call. arg0 NULL means the
+// instrumentation missing-arg sentinel (no positional argument).
+static PyObject* profile_arg0(PyObject* arg0) {
+    return arg0 ? arg0 : &_PyInstrumentation_MISSING;
+}
+
+extern "C" int pyc_rt_profile_ccall(PyObject* callable, PyObject* arg0) {
+    PyThreadState* ts = PyThreadState_Get();
+    if (!ts || ts->tracing || !ts->current_frame) return 0;
+    if (!ts->interp->monitors.tools[PY_MONITORING_EVENT_CALL]) return 0;
+    PyObject* extras[2] = {callable, profile_arg0(arg0)};
+    if (fire_monitor(ts->current_frame, PY_MONITORING_EVENT_CALL, extras, 2) < 0)
+        return -1;
+    return 1;
+}
+
+extern "C" int pyc_rt_profile_creturn(PyObject* callable, PyObject* arg0) {
+    PyObject* extras[2] = {callable, profile_arg0(arg0)};
+    return fire_monitor(caller_frame(), PY_MONITORING_EVENT_C_RETURN, extras, 2);
+}
+
+extern "C" int pyc_rt_profile_craise(PyObject* callable, PyObject* arg0) {
+    PyThreadState* ts = PyThreadState_Get();
+    if (!ts || ts->tracing) return 0;
+    if (!ts->interp->monitors.tools[PY_MONITORING_EVENT_CALL]) return 0;
+    PyObject* exc = PyErr_GetRaisedException();
+    if (!exc) return 0;
+    PyObject* extras[2] = {callable, profile_arg0(arg0)};
+    int err = fire_monitor(ts->current_frame, PY_MONITORING_EVENT_C_RAISE,
+                           extras, 2);
     if (err == 0) PyErr_SetRaisedException(exc);
     else Py_DECREF(exc);
     return err;
