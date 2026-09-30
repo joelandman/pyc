@@ -4953,11 +4953,20 @@ private:
                        "", body, done, n.loc, std::nullopt});
         auto live_at_pred = live_i64_;
         set_block(body);
+        // GIL-free body (step 11): provably heap-free, so it may run without
+        // the GIL -- but only when a thread actually wants it. An
+        // unconditional per-iteration SaveThread/RestoreThread is the full
+        // 3.14 GIL handoff (~54 ns/pair, measured), while CPython's own eval
+        // loop releases on request only. maybe_release is that request check
+        // (relaxed atomic load of the eval breaker); the reacquire below and
+        // in finish_jump/finish_return/deopt are no-ops when nothing was
+        // dropped. The loop head's pyc_rt_periodic covers signals and the
+        // 2048-iteration offer for everything else.
         bool gil_free = boxed && !stmts_have_nested_loop(n.body)
                      && stmts_gil_free(n.body);
         if (gil_free) {
             bool gok = true;
-            call_capi("pyc_rt_gil_release", {}, n.loc, &gok);
+            call_capi("pyc_rt_gil_maybe_release", {}, n.loc, &gok);
             if (!gok) return false;
         }
         for (std::size_t i = 0; i < n.body.size(); ++i) {

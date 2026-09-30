@@ -37,6 +37,23 @@ extern "C" int pyc_rt_handle_pending(void) {
     return _Py_HandlePending(PyThreadState_Get());
 }
 
+// GIL-free phi-while (unboxing step 11): the body is provably heap-free, so
+// it MAY run without the GIL. But 3.14's SaveThread/RestoreThread is a full
+// stop-the-world-aware GIL handoff (~54 ns/pair, measured), and CPython's
+// own eval loop releases only when another thread set the drop-request bit.
+// This is that request, checked per iteration with one relaxed atomic load:
+// nobody waiting keeps the GIL held at ~zero cost, and a waiting thread gets
+// the per-iteration preemption the unconditional drop used to give. Returns
+// 1 if the GIL was dropped (the existing pyc_rt_gil_acquire sites must run),
+// 0 if it stayed held.
+extern "C" int pyc_rt_gil_maybe_release(void) {
+    if (!_Py_eval_breaker_bit_is_set(PyThreadState_Get(),
+                                     _PY_GIL_DROP_REQUEST_BIT))
+        return 0;
+    pyc_rt_gil_release();
+    return 1;
+}
+
 extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
                                      PyObject* locals, PyObject* func) {
     if (!code || !globals) return nullptr;
