@@ -18,9 +18,9 @@
       "-O0"
     ]
   },
-  "total": 879,
-  "passing": 879,
-  "clean": 877,
+  "total": 880,
+  "passing": 880,
+  "clean": 878,
   "pass_rate": 100.0,
   "counts": {
     "STDERR_DIFFERS": 2
@@ -11063,6 +11063,19 @@
     {
       "case": "starcall_identity.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/starcall_identity.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "str_const_intern.py",
+      "path": "/home/joe/work/pc/pyc/verify/corpus/language/str_const_intern.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],

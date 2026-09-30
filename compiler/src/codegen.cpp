@@ -127,9 +127,10 @@ private:
     std::map<std::string, int> pyconst_;
     std::vector<std::pair<char, std::string>> pyconst_order_;
 
-    // Global NAMES live in their own table, interned. Separate from the
-    // literal table on purpose: interning changes object identity, and a str
-    // literal's identity is observable where a global's name is not.
+    // Global NAMES live in their own table, always interned. Literals are
+    // a different table: pyc_rt_str interns only the ASCII [A-Za-z0-9_]*
+    // subset CPython interns as co_consts. A space or a non-ASCII literal
+    // keeps its own identity.
     int name_slot(const std::string& text) {
         auto it = pyname_.find(text);
         if (it != pyname_.end()) return it->second;

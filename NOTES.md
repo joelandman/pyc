@@ -6,7 +6,7 @@
   `make -C verify fast` attempt exceeded 5 minutes on this machine, so the local
   inner loop is not a reliable timing signal here.
 - Watch CI for:
-  - language + known-gaps + concurrency gate at `879/879`
+  - language + known-gaps + concurrency gate at `880/880`
   - no new `DID_NOT_COMPILE`
   - no new silent-wrong answers
   - no `libpython` `DT_NEEDED` in the smoke binary

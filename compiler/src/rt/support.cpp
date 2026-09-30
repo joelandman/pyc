@@ -1186,7 +1186,19 @@ PyObject* pyc_rt_int_from_text(const char* digits) {
     return PyLong_FromString(digits, nullptr, 10);
 }
 PyObject* pyc_rt_str(const char* utf8, Py_ssize_t len) {
-    return PyUnicode_DecodeUTF8(utf8, len, "surrogatepass");
+    PyObject* s = PyUnicode_DecodeUTF8(utf8, len, "surrogatepass");
+    if (!s || len < 0) return s;
+    // CPython interns a co_const whose text is ASCII [A-Za-z0-9_]*
+    // (Objects/codeobject.c should_intern_string). The default and the
+    // value of `return "str_value"` are that object, so intern identity
+    // is observable. A space, a NUL, or a non-ASCII byte stays fresh.
+    int intern = 1;
+    for (Py_ssize_t i = 0; i < len; ++i) {
+        unsigned char c = static_cast<unsigned char>(utf8[i]);
+        if (c >= 0x80 || (!Py_ISALNUM(c) && c != '_')) { intern = 0; break; }
+    }
+    if (intern) PyUnicode_InternInPlace(&s);
+    return s;
 }
 PyObject* pyc_rt_bytes(const char* data, Py_ssize_t len) {
     return PyBytes_FromStringAndSize(data, len);
