@@ -1,9 +1,11 @@
 # pyc — current state and MVP
 
-**Date:** 2026-09-26. Language numbers are re-measured from
-`compiler/baseline-language.json`; the `Lib/test` row is the 2026-09-26
-I6 record. CHARTER remains binding; this file is the dashboard, not an
-amendment.
+**Date:** 2026-09-30. Language numbers are the recorded
+`compiler/baseline-language.json` gate (881/881). The `Lib/test` row is
+still the 2026-09-26 I6 record: it has not been re-run after string
+interning, profile events, or request-only GIL release. CHARTER remains
+binding. The frames section there was corrected to C1b on this date;
+§4 product rules were not changed.
 
 Roles that produced this: Architect (`agents/architect.md`), PM
 (`agents/pm.md`), SWE-compiler (`agents/swe-compiler.md`), SWE-runtime
@@ -14,18 +16,19 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
 I6. Language + gaps + concurrency is **881/881** impactful. `Lib/test` is
-**355/389 = 91.26%** (`-O0`, sysroot 3.14.7, `--stdlib`). C1 (frames) and
-C2 (periodic GIL) are closed. The remaining product gap is not a new
-runtime: it is well-formed IR on every accepted program, named refusals
-instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and a developer
-toolchain that still requires a purpose-built 3.14.7 sysroot.
+**355/389 = 91.26%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
+2026-09-26. C1 (frames) and C2 (periodic GIL) are closed. A proved
+heap-free loop drops the GIL only when another thread requests it
+([GIL.md](GIL.md)). The remaining product gap is stub code objects,
+named refusals instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and
+getting the nightly Lib/test job to finish so this row can move.
 
 ## Measured now
 
 | Check | Result |
 |---|---|
 | language + gaps + concurrency | 881/881 impactful |
-| `Lib/test` (I6) | 355/389 (91.26%) |
+| `Lib/test` (I6) | 355/389 (91.26%), measured 2026-09-26 |
 | I6 composition | 327 clean + 28 `STDERR_DIFFERS`-only = 355 pass |
 | `DID_NOT_COMPILE` | 0 |
 | `EXIT_DIFFERS` | 21 |
@@ -166,31 +169,39 @@ vs C.
 
 **Now**
 
-- Keep M1–M5 green.
-- Dump stderr/IR for the 21 `EXIT_DIFFERS` before adding syntax.
-- Baseline updated to 2026-09-26 metric run (355/389).
-- This file is the dashboard. CHARTER frame-deferred text is stale; amend
-  only with user sign-off.
+- Keep M1–M4 on `verify.yml`. The last green run on `origin/devel` is
+  `47ceb38` (frames). Local `devel` is ahead of that; GitHub does not
+  see unpushed commits.
+- Leave M5 at **355/389** until `make -C verify metric`. Do not edit
+  `compiler/baseline-libtest.json` by hand. That record still has
+  `test_sys_setprofile.py`, `test_cprofile.py`, and `test_pstats.py` as
+  `EXIT_DIFFERS` (subject exit 1) and `test_code.py` as subject exit -11.
+  Script runs named in [CORRECTNESS.md](CORRECTNESS.md) are not this row.
+- Morning failures are two scheduled workflows, not the language gate.
+  `pack-pyc.yml` packed the tarball and then died on `tar | head` under
+  `pipefail`. `metric.yml` has been shut down (exit 143) at
+  `--- longrunning ---` since 2026-09-25, before the compare step.
+  Both workflows are adjusted in tree; they take effect on the next
+  run of the commit that contains them.
+- `sysroot.yml` has been succeeding. `verify.yml` is the push gate and
+  was green at `47ceb38`.
 
 **Next (MVP completeness)**
 
-1. Turn LLVM verifier failures into fixes or I1 diagnostics (M6).
-2. I1a: star-as-annotation is Unpack; format>2 is NotImplementedError.
-   Async comprehensions remain.
-3. Function-object protocol: real `PyFunction` + vectorcall trampoline.
-   `exec(f.__code__, closure=)` runs the native body.
-4. Module/class `__annotate__` exists; function param/return `__annotate__`
-   landed (format 1), including nested capture of enclosing locals via cells.
-5. Workstream S phases 0–2 (sysroot as data + prebuilt artifact).
+1. Re-run I6 before publishing any Lib/test fraction other than 355/389.
+   Expect the three profiler scripts above to move if the script checks
+   hold under the harness; that is a hypothesis until the metric says so.
+2. Dump the remaining `EXIT_DIFFERS` before adding syntax. The cluster
+   that is already named: stub `co_code` / `co_consts` / linetable
+   (`test_dis`, `test_compile`, `test_peepholer`, `test_opcache`),
+   `test_sys_settrace` (600s timeout), `test_code`.
+3. M6: a refusal names the construct, the line, and the reason.
 
 **Later (v1 / CHARTER §4)**
 
-I8 two targets from one binary; more Lib/test; unittest-driven metric;
-native generators; traceback carets; Tier 2; unboxing remainder.
-
-Suggested compiler order (SWE-compiler): I1a probes → function protocol →
-`__annotate__` → comprehension `for` targets → leave async-in-native alone
-→ grow Lib/test by fixing loud failures → unboxing/carets last.
+I8 two targets from one binary; unittest-driven metric; native
+generators; traceback carets; Tier 2; unboxing remainder. Star-as-
+annotation, `PyFunction`, and `__annotate__` have landed (see P1 above).
 
 ## Workstream S — stop requiring a local CPython *build*
 
@@ -226,22 +237,26 @@ an independent runtime.
 
 | Phase | What | Unlocks |
 |---|---|---|
-| S0 now | Document (a)≠(b). Fix stale “frontend links libpython” CI comment. | Honest onboarding |
+| S0 done | Document (a)≠(b). | Honest onboarding |
 | S1 done | `pycc` reads `pyc-sysroot.json`; `--python-sysroot`; no hardcoded `python3.14` | I8 locally |
-| S2 landing | Pack/install scripts + nightly `sysroot.yml` release `sysroot-cp314-linux-x86_64`. `build-python-sysroot.sh` remains the *producer*. | Developers do not compile CPython |
-| S3 landing | `pycc` searches beside itself (`sysroot/`, `../sysroot`, `pyc_lower`). `setup-machine.sh --beside`. Output `PyConfig.home` already landed. | Download ≠ `$HOME/opt/...` |
-| S4 landing | `pycc --fetch-sysroot` / `PYC_FETCH=1`. Miss is exit 2, not PATH python3. Verify requires `--sysroot`/`--oracle`. | No local CPython install to compile a program |
-| S5 landing | `install-pyc.sh` prefix: `bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`. `--python=X.Y` selects a tree; missing X.Y is exit 2. One 3.14 artifact is enough. `pack-pyc.sh` / `pack-pyc.yml` publish `pyc-linux-x86_64.tar.xz` (compiler only; sysroot stays S2). | VERSION_TARGETING as shipped |
+| S2 done | `sysroot.yml` publishes `sysroot-cp314-linux-x86_64`. `build-python-sysroot.sh` remains the producer. The nightly has been succeeding. | Developers do not compile CPython |
+| S3 done | `pycc` searches beside itself (`sysroot/`, `../sysroot`, `pyc_lower`). `setup-machine.sh --beside`. `PyConfig.home` is set from the prefix. | Download ≠ `$HOME/opt/...` |
+| S4 done | `pycc --fetch-sysroot` / `PYC_FETCH=1`. A missing sysroot is exit 2. Verify still requires `--sysroot` / `--oracle`. | No local CPython install to compile a program |
+| S5 done | `install-pyc.sh` prefix: `bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`. `--python=X.Y` selects a tree; a missing version is exit 2. One 3.14 artifact is enough. `pack-pyc.sh` writes the compiler tarball. The nightly publish step has been failing after a successful pack (see Next steps). | VERSION_TARGETING as shipped |
 
-S2 is the first phase that removes “build this specific Python on your
-machine.” S4 is when the *compiler user* no longer needs a local copy.
-S5 is a prefix (`bin/pycc`) plus `--python=X.Y` as a sysroot artifact.
-Contributors changing A2 still rebuild the sysroot when headers change.
+S2 is what removes “build this specific Python on your machine,” and
+the sysroot release is the one that has been publishing. S4 is when the
+compiler user no longer needs a local copy. S5 is the prefix. A
+contributor changing A2 still rebuilds the sysroot when headers change.
 
 ## Doc debt (do not confuse with compiler bugs)
 
-Stale vs executable: CHARTER still says frames are deferred; INTERFACES §5
-CLI is unimplemented; VERSION_TARGETING / CHARTER §6 still mention
-`/home/joe/local`; `compiler/README.md` still lists some refusals that have
-landed; GENERATORS/GIL/UNBOXING status lines lag the code. Trust `pycc` and
-`verify/` over those sentences. CHARTER edits need explicit sign-off.
+Still historical, not a description of the current tree:
+[INTERFACES.md](INTERFACES.md) §5 spells the driver as `pyc`; the binary
+is `pycc` (that file is frozen and needs A0 sign-off to rename).
+[VERSION_TARGETING.md](VERSION_TARGETING.md) still calls
+`/home/joe/local` the ready stock build; the live sysroot is named in
+CHARTER §6. `compiler/README.md` totality figures are the 2026-08-22
+round-trip. Trust `pycc` and `verify/` over those sentences. CHARTER
+product rules still need explicit sign-off; a factual correction is not
+a rule change.

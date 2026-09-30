@@ -317,45 +317,27 @@ record — 48 phantom regressions, a phantom P0, 23 phantom leaks, a 3.6-point
 "regression" that was parallelism, a mis-attributed quarantine bucket — was a
 claim made from an observation with no test that could have falsified it.
 
-### Deferred: per-function Python frames (decided 2026-08-25)
+### Per-function Python frames (C1b, landed)
 
-Compiled functions push no Python frame, so `sys._getframe(N)` does not track
-Python call depth. `sys._getframe` itself raises rather than lying, so this is
-I1-clean at the boundary — but stdlib CALLERS degrade quietly around it, and one
-is already a measured P0 (issue #9): `doctest._normalize_module` walks up one
-frame too few, resolves the wrong module, and returns an empty test suite, so a
-compiled `Lib/test/test_unpack.py` reports OK while running half its tests.
-`logging.findCaller`, `warnings` `stacklevel`, and `dataclasses`/`namedtuple`
-module resolution are affected by the same gap.
+The 2026-08-25 deferral is superseded. Compiled functions, the module body,
+and class bodies push `_PyInterpreterFrame` on the thread datastack.
+`PyFrameObject` is created only when something asks (`sys._getframe`).
+Frames are not opt-in: under I2 a default build that diverges from a
+`--frames` build is forbidden. Probes and the push/lazy-object split are
+in [CORRECTNESS.md](CORRECTNESS.md) (C1).
 
-**Deferred deliberately, not overlooked.** The cost is understood and the fix is
-affordable whenever it is taken on:
+What that deferral got right, and what shipped instead:
 
-| approach | per call | vs CPython |
-|---|---|---|
-| today, no frame | 3.42 ns | 7.2x faster |
-| eager `PyFrameObject` | 59.88 ns | **2.43x slower** — non-starter |
-| `_PyInterpreterFrame`, lazy object | ~8-12 ns (est.) | ~2-3x faster |
-| pyc-owned shadow stack | +0.21 ns | free, but invisible to `sys._getframe` |
-
-Eagerly materialising `PyFrameObject` per call would make compiled code slower
-than the interpreter it replaces. CPython avoids exactly this: its own 24.68 ns
-call already includes a frame, because `_PyInterpreterFrame` is cheap and the
-expensive `PyFrameObject` is materialised lazily. So frames do NOT force
-anything non-optimizable — they trade some margin, not the win.
-
-The real cost is coupling: `_PyInterpreterFrame` is internal API
-(`Py_BUILD_CORE`) whose layout varies with `Py_GIL_DISABLED`, i.e. differs
-between the `cp314` and `cp314t` targets I8 treats as separate. Taking it on
-requires a layout-conformance check that fails loudly when it shifts.
-
-Frames may NOT be made opt-in: under I2 a default build that diverges
-semantically from a `--frames` build is exactly the trade this charter forbids.
-
-A module-level-only trampoline was implemented and reverted (ce52560, reverted):
-it fixed `_getframe(0)` but not the depth shift, and it made the doctest failure
-*quieter* — turning a raised `ValueError` into a silently empty suite, which
-under I1 is the wrong direction.
+- Eager `PyFrameObject` per call was measured at 59.88 ns, 2.43× slower
+  than CPython, and rejected.
+- A pyc-owned shadow stack would be invisible to `sys._getframe`. That
+  was the `locals()` failure mode and is not the implementation.
+- A module-level-only trampoline was implemented and reverted (`ce52560`):
+  it fixed `_getframe(0)` but not the depth shift, and it turned a raised
+  `ValueError` into a silently empty doctest suite.
+- `_PyInterpreterFrame` is internal API (`Py_BUILD_CORE`). Its layout
+  varies with `Py_GIL_DISABLED`, so `cp314` and `cp314t` stay separate
+  targets (I8). A layout shift must fail loudly.
 
 ## 4. Definition of done for v1
 
@@ -385,7 +367,15 @@ Port these as *design input*, not as code:
   This was the previous tree's best decision and it survives unchanged.
 - CLI shape, opt levels, `--emit-llvm`, `-g`/DWARF.
 
-## 6. Environment (verified 2026-08-22)
+## 6. Environment
+
+The primary oracle and link sysroot is
+`$HOME/opt/py-sysroots/cp314-3.14.7-tier1` (CPython 3.14.7, Tier 1).
+Toolchain is clang++/LLVM 22. `tools/build-python-sysroot.sh` produces
+that tree; `pycc --fetch-sysroot` installs a published tarball of it.
+
+The 2026-08-22 check below is a machine path from that day, not the
+current tree:
 
 - clang/LLVM **22.1.8**.
 - CPython **3.14.7** at `/home/joe/local` (`--enable-optimizations

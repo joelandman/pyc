@@ -4,7 +4,7 @@ Contracts in `../rebuild/INTERFACES.md`, invariants in
 `../rebuild/CHARTER.md`. Why the previous runtime was discarded:
 `../rebuild/ARCHITECTURE_REVIEW.md`.
 
-## A1 — frontend (in progress)
+## A1 — frontend
 
 ```
 pyc_parse/            run BY THE TARGET INTERPRETER (INTERFACES §2.1)
@@ -132,27 +132,35 @@ is empirical (a scan of all 14,641 files found exactly two fields);
 `_OBJECT_FIELDS` is enforced — an unlisted `object` field makes `gen_ast.py`
 refuse to generate rather than guess.
 
-## A2 — C-API binding (in progress)
+## A2 — C-API binding
 
 ```
 include/pyc/rt/capi.hpp         CApiSymbol (INTERFACES §4)
-include/pyc/rt/capi_table.hpp   GENERATED — 813 symbols
-src/capi.cpp                    lookup()
+include/pyc/rt/capi_table.hpp   GENERATED — kCApiSymbolCount
+src/capi.cpp                    lookup(); reserve(kCApiSymbolCount * 2)
 tools/gen_capi_table.py         refcounts.dat -> the table
 ```
 
 Derived from CPython's own `Doc/data/refcounts.dat`, not hand-written.
-Maintaining refcount contracts for 800+ functions by hand is the bookkeeping
-that produces leaks, and CPython already ships the answer.
+Maintaining refcount contracts by hand is the bookkeeping that produces
+leaks, and CPython already ships the answer. `kCApiSymbolCount` is only
+the `unordered_map` reserve; lookup is by name.
+
+Counted from `capi_table.hpp` on 2026-09-30 (`kCApiSymbolCount` is 1088):
 
 | | count |
 |---|---|
-| symbols | 813 |
-| returns a new reference (`Owned`) | 312 |
-| returns a borrowed reference | 52 |
-| always returns NULL | 16 |
-| steal-annotated | 6 |
-| banned | 1 |
+| symbols | 1088 |
+| `Ownership::Owned` | 343 |
+| `Ownership::Borrowed` | 52 |
+| `Ownership::AlwaysNull` | 16 |
+| `Ownership::NotAnObject` | 454 |
+| `Ownership::Unknown` | 223 |
+
+`PyModule_AddObject` stays banned in that table: it steals only on
+success, so one static contract cannot describe the cleanup. The
+2026-08-22 merge notes further down (1,039-symbol union, 225 unknown)
+are that day's extract, not a second count of the live header.
 
 ### What that file is and is not authoritative for
 

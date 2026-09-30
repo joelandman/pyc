@@ -14,10 +14,12 @@ compared at run time; no expected output is stored ([CHARTER I5](rebuild/CHARTER
 
 | Corpus | Pass rate | |
 |---|---|---|
-| CPython `Lib/test/` | **91.26%** | 355/389 files |
+| CPython `Lib/test/` | **91.26%** | 355/389 files, measured 2026-09-26 |
 | language + gaps + concurrency | **100%** | 881/881 cases |
 
 `Lib/test` is the north-star metric (CHARTER I6). It may not regress.
+The fraction above is the last `make -C verify metric` record. Commits
+after 2026-09-26 are not in it until that command is run again.
 
 Python frames (C1b): compiled functions, the module body, and class bodies
 push `_PyInterpreterFrame` on the thread datastack, so `locals()` /

@@ -43,12 +43,20 @@ jobs:
           if [ -n "${{ inputs.libtest_limit }}" ]; then
             LIMIT="--libtest-limit ${{ inputs.libtest_limit }}"
           fi
+          # The 11 files in verify/longrunning.py stay in the I6 denominator.
+          # Default longrunning workers are one per core. On this 4-core
+          # runner that starts test_zipfile64 beside three other 600s
+          # files; every scheduled run since 2026-09-25 has died with
+          # exit 143 (runner shutdown) at "--- longrunning ---", before
+          # the monotonicity step. One worker keeps the files and the
+          # 600s budget. Do not drop a file to make the job green.
           ./verify/measure_run.py --libtest $LIMIT \
             --pyc "$PWD/compiler/tools/pycc" \
             --pyc-flag=-O0 \
             --sysroot "$SYSROOT" \
             --stdlib "$SYSROOT/lib/python3.14" \
             --jobs 4 \
+            --longrunning-jobs 1 \
             --run-timeout 30 --compile-timeout 120 \
             --show 20 \
             --json libtest.json

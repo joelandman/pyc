@@ -189,9 +189,9 @@ Tier 1**, and no rebuild is needed for it.
 
 A sysroot is keyed by **(version, ABI, link tier)**:
 
-- **`cp314` stock** — the existing `/home/joe/local` build. Serves the dynamic
-  binary *and* Tier-1 static-libpython (`-rdynamic`), and loads `cp314` wheels.
-  Ready now.
+- **`cp314` stock** — written against `/home/joe/local` on 2026-08-22.
+  The live Tier-1 tree is `$HOME/opt/py-sysroots/cp314-3.14.7-tier1`
+  (same link story: static `libpython`, `-rdynamic`, `cp314` wheels).
 - **`cp314` fully-static** — a *separate* build required for Tier 2, configured
   `--disable-shared` with stdlib extensions moved into `Modules/Setup.local` as
   builtins. Without it, a `-static` binary cannot `import math` (77 of the

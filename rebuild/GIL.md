@@ -28,7 +28,8 @@ loop that still logically owns the listener's protocol produced one thread,
 pyc 0.84s (`cp314`) vs 1.05s (`cp314t`); CPython 0.13s vs 0.21s. PEP 703's
 trade, not a reason to make free-threading the default.
 
-Gate corpus after C2: **788/788** impactful.
+The language gate when C2 landed was **788/788** impactful. It is
+**881/881** now (`compiler/baseline-language.json`).
 
 ## What the GIL actually serialises
 
@@ -137,8 +138,9 @@ than in BLAS? Unknown. Not a GIL-policy change until measured.
 
 ## Suggested order when we pick this up
 
-1. Finish unboxing steps 2–3 (`UNBOXING.md`). Until then there is no
-   region that is *proved* GIL-free.
+1. The rest of unboxing steps 2–3 (`UNBOXING.md`). One proved GIL-free
+   region already exists; it is described below. Do not widen it
+   without the same proof.
 2. Measure a nested `i*j` loop with GIL held vs a hand-written nogil
    C equivalent of the unboxed IR (the 0.136s vs 0.001s bar is still
    the right one).
@@ -148,12 +150,22 @@ than in BLAS? Unknown. Not a GIL-policy change until measured.
    calls — and only with a race test that fails if a decref happens
    detached.
 
-Until (1), C2 is the whole GIL policy: hold it like CPython, drop it
-when asked.
+Step 11 of unboxing is the one GIL-free region that has landed: an
+innermost phi-`while` with no Call, attribute, `try`, `with`, or `for`
+in the body. `pyc_rt_periodic` still runs at the head while the GIL is
+held. Object ops (`incref` / `decref` / `unbox`) call `pyc_gil_ensure`
+so a deopt cannot decref detached.
 
-Step 11 of unboxing landed a first GIL-free region: innermost phi-`while`
-with no Call/attribute/`try`/`with`/`for` in the body. Periodic still runs at the head with
-the GIL held. Object ops (`incref`/`decref`/`unbox`) call `pyc_gil_ensure`
-so a deopt cannot decref detached. `thread_starvation.py` and
-`loop_periodic.py` stay green. Single-thread nested `i*j` is not expected
-to match C: the residue is overflow `jo`, not the GIL.
+That body used to call `pyc_rt_gil_release` on every iteration.
+Unconditional `SaveThread` there is the same schedule that deadlocked
+`test_logging`. It now calls `pyc_rt_gil_maybe_release`: a relaxed load
+of `_PY_GIL_DROP_REQUEST_BIT`, and only then the existing release.
+Lowering ignores the return value. The acquire sites (end of the
+GIL-free body, `finish_jump`, `finish_return`, deopt back to the boxed
+loop) are unchanged, and a depth-0 acquire is a no-op when nothing was
+dropped. `thread_starvation.py` and `loop_periodic.py` stay in the
+language corpus. A single-thread nested `i*j` is not expected to match
+C: the residue is the overflow check, not the GIL.
+
+Outside that proved region, C2 is still the policy: hold the GIL the
+way CPython does, and drop it when another thread asks.

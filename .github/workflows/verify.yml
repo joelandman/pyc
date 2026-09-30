@@ -93,9 +93,9 @@ jobs:
 
       - name: Differential run
         run: |
-          # known-gaps is gated deliberately. Remaining open probes (C2 GIL)
-          # stay in the published number. A baselined failure does not fail
-          # the gate; a NEW silent wrong answer does. The count can only go down.
+          # known-gaps is gated deliberately. C1 (frames) and C2 (GIL) are
+          # closed; residual probes stay in the published number. A baselined
+          # failure does not fail the gate; a NEW silent wrong answer does.
           PYC_LOWER="$RUNNER_TEMP/pyc_lower" ./verify/measure_run.py \
             --corpus verify/corpus/language \
             --corpus verify/corpus/known-gaps \

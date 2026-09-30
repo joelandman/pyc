@@ -38,6 +38,13 @@
   if we want the record to be less local.
 - Local wheel/NumPy smoke is not reliable here because the sysroot currently
   lacks `numpy`. Use the CI wheel step for that gate.
+- Scheduled CI on `origin/devel` is not the same tree as a local `devel`
+  that has unpushed commits. `pack-pyc.yml` must not list the archive
+  with `tar | head` under `pipefail`. `metric.yml` runs
+  `verify/longrunning.py` at `--longrunning-jobs 1` so `test_zipfile64`
+  is not one of four concurrent 600s processes on the 4-core runner.
+  Those files stay in the I6 denominator. A runner shutdown (exit 143)
+  is not a compiler regression; the compare step never ran.
 - Do not stage the existing untracked junk in the repo root (`.claude/`,
   `a.out_b7_modules.c`, `build.sh`, `junk95142.zip`, `prompt.txt`,
   `ziptestmodule`, `@test_*_tmp*`) with future commits.
