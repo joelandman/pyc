@@ -976,7 +976,17 @@ PyObject* trampoline(PyObject* func, PyObject* const* args, Py_ssize_t npos,
             }
         }
         if (Py_EnterRecursiveCall("")) return fail_frame_cleanup();
+        // Call after a successful bind. A signature TypeError has no events.
+        if (pyc_rt_profile_enter(fr) < 0) {
+            Py_LeaveRecursiveCall();
+            return fail_frame_cleanup();
+        }
         PyObject* r = b->impl(fr);
+        // Return / unwind while this frame is still current.
+        if (pyc_rt_profile_return(fr, r) < 0) {
+            Py_XDECREF(r);
+            r = nullptr;
+        }
         Py_LeaveRecursiveCall();
         tls_frame_locals = prev_tls;
         tls_frame_names = prev_names;

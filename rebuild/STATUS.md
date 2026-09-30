@@ -13,7 +13,7 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
-I6. Language + gaps + concurrency is **880/880** impactful. `Lib/test` is
+I6. Language + gaps + concurrency is **881/881** impactful. `Lib/test` is
 **355/389 = 91.26%** (`-O0`, sysroot 3.14.7, `--stdlib`). C1 (frames) and
 C2 (periodic GIL) are closed. The remaining product gap is not a new
 runtime: it is well-formed IR on every accepted program, named refusals
@@ -24,7 +24,7 @@ toolchain that still requires a purpose-built 3.14.7 sysroot.
 
 | Check | Result |
 |---|---|
-| language + gaps + concurrency | 880/880 impactful |
+| language + gaps + concurrency | 881/881 impactful |
 | `Lib/test` (I6) | 355/389 (91.26%) |
 | I6 composition | 327 clean + 28 `STDERR_DIFFERS`-only = 355 pass |
 | `DID_NOT_COMPILE` | 0 |
@@ -152,7 +152,7 @@ works), and completeness is measured and not gamed. Not: C speed, two
 
 | # | Check | Bar |
 |---|---|---|
-| M1 | `make -C verify verify` | 880/880 impactful; no new silent-wrong |
+| M1 | `make -C verify verify` | 881/881 impactful; no new silent-wrong |
 | M2 | `make -C verify fast` | `--fail-on-silent-wrong` |
 | M3 | CI `ldd` smoke | no `libpython` `DT_NEEDED` |
 | M4 | CI wheel step | NumPy import+run in that binary |

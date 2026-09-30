@@ -7,6 +7,8 @@
 #include "internal/pycore_code.h"
 #include "internal/pycore_ceval.h"
 #include "internal/pycore_frame.h"
+#include "internal/pycore_instruments.h"
+#include "internal/pycore_call.h"
 
 // C1b: an interpreter frame on CPython's datastack, not a PyFrameObject.
 //
@@ -290,6 +292,92 @@ static void snapshot_newlocals_into_fast(_PyInterpreterFrame* f) {
     }
     Py_CLEAR(f->f_locals);
     PyErr_Restore(et, ev, tb);
+}
+
+// Highest set tool id in a monitoring bitset. `bits` is never zero.
+static int monitor_msb(uint8_t bits) {
+    int tool = 7;
+    while ((bits & (uint8_t)(1u << tool)) == 0) --tool;
+    return tool;
+}
+
+// Compiled calls never enter ceval, and stub code objects have no per-code
+// monitors, so _Py_call_instrumentation would see an empty tool set.
+// sys.setprofile and cProfile both register on the interpreter-global bits.
+// tstate->tracing is held across each callback; without that the callback
+// (itself a compiled function) re-enters this helper forever.
+static int fire_monitor(_PyInterpreterFrame* f, int event, PyObject* extra) {
+    if (!f) return 0;
+    PyThreadState* ts = PyThreadState_Get();
+    if (!ts || ts->tracing) return 0;
+    PyCodeObject* code = reinterpret_cast<PyCodeObject*>(
+        PyStackRef_AsPyObjectBorrow(f->f_executable));
+    if (!code || (code->co_flags & CO_NO_MONITORING_EVENTS)) return 0;
+    if (event < 0 || event >= _PY_MONITORING_UNGROUPED_EVENTS) return 0;
+    PyInterpreterState* interp = ts->interp;
+    uint8_t tools = interp->monitors.tools[event];
+    if (!tools) return 0;
+
+    _Py_CODEUNIT* base = _PyCode_CODE(code);
+    long units = 0;
+    if (f->instr_ptr && base && f->instr_ptr >= base)
+        units = (long)(f->instr_ptr - base);
+    PyObject* off = PyLong_FromLong(units * (long)sizeof(_Py_CODEUNIT));
+    if (!off) return -1;
+
+    int nargs = extra ? 3 : 2;
+    PyObject* slot[4] = {nullptr, reinterpret_cast<PyObject*>(code), off, extra};
+    size_t nargsf = (size_t)nargs | PY_VECTORCALL_ARGUMENTS_OFFSET;
+    PyObject** callargs = &slot[1];
+    int err = 0;
+    while (tools) {
+        int tool = monitor_msb(tools);
+        tools = (uint8_t)(tools & ~(uint8_t)(1u << tool));
+        PyObject* instrument = interp->monitoring_callables[tool][event];
+        if (!instrument) continue;
+        int old_what = ts->what_event;
+        ts->what_event = event;
+        ts->tracing++;
+        PyObject* res = _PyObject_VectorcallTstate(
+            ts, instrument, callargs, nargsf, nullptr);
+        ts->tracing--;
+        ts->what_event = old_what;
+        if (!res) { err = -1; break; }
+        int disabled = res == &_PyInstrumentation_DISABLE;
+        Py_DECREF(res);
+        if (!disabled) continue;
+        // Local events: removing a tool rewrites bytecode we do not run.
+        // PEP 669 allows a spurious event after DISABLE.
+        if (PY_MONITORING_IS_INSTRUMENTED_EVENT(event)) continue;
+        PyErr_Format(PyExc_ValueError,
+                     "Cannot disable %s events. Callback removed.",
+                     event == PY_MONITORING_EVENT_PY_UNWIND ? "PY_UNWIND"
+                                                           : "monitoring");
+        Py_CLEAR(interp->monitoring_callables[tool][event]);
+        err = -1;
+        break;
+    }
+    Py_DECREF(off);
+    return err;
+}
+
+extern "C" int pyc_rt_profile_enter(void* frame) {
+    return fire_monitor(static_cast<_PyInterpreterFrame*>(frame),
+                        PY_MONITORING_EVENT_PY_START, nullptr);
+}
+
+extern "C" int pyc_rt_profile_return(void* frame, PyObject* retval) {
+    auto* f = static_cast<_PyInterpreterFrame*>(frame);
+    if (retval)
+        return fire_monitor(f, PY_MONITORING_EVENT_PY_RETURN, retval);
+    // A NULL return with no exception is an internal failure, not an unwind.
+    if (!PyErr_Occurred()) return 0;
+    PyObject* exc = PyErr_GetRaisedException();
+    if (!exc) return 0;
+    int err = fire_monitor(f, PY_MONITORING_EVENT_PY_UNWIND, exc);
+    if (err == 0) PyErr_SetRaisedException(exc);
+    else Py_DECREF(exc);
+    return err;
 }
 
 extern "C" void pyc_rt_interp_leave(void* frame) {

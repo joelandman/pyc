@@ -247,6 +247,10 @@ PyObject* pyc_rt_frame_local_borrow(void* frame, int slot);
 void  pyc_rt_frame_local_set(void* frame, int slot, PyObject* v);
 int   pyc_rt_frame_local_is_null(int slot);
 void  pyc_rt_interp_leave(void* frame);
+// PEP 669 call/return for a compiled function. 0 ok, -1 with an exception set.
+// `retval` NULL means the function failed (PY_UNWIND); a value is PY_RETURN.
+int pyc_rt_profile_enter(void* frame);
+int pyc_rt_profile_return(void* frame, PyObject* retval);
 int pyc_rt_push_module_frame(const int* locs, int nlocs);
 void pyc_rt_pop_module_frame(void);
 PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals);

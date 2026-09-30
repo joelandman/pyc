@@ -36,8 +36,12 @@ SaveThread/RestoreThread was the deadlock: it dropped the GIL on every
 
 ## C3 — remaining language diffs that are not C1/C2
 
-**Status: residual.** Gate corpus **880/880** impactful. `STDERR_DIFFERS`
-(traceback carets) do not count against the rate.
+**Status: residual.** Gate corpus **881/881** impactful. `STDERR_DIFFERS`
+(traceback carets) do not count against the rate. Compiled functions fire
+PEP 669 `PY_START` / `PY_RETURN` / `PY_UNWIND` from the trampoline
+(`profile_call_return.py`). `test_pstats` matches. `test_sys_setprofile`
+still misses `c_call` / `c_return`. `test_cprofile` still misses generator
+`throw` and one unraisable during profiler deallocation.
 
 Do not start "drive `Lib/test` under unittest" here. That is a completeness
 increment and **will lower** the published I6 number; it is not a

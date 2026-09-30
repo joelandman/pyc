@@ -18,9 +18,9 @@
       "-O0"
     ]
   },
-  "total": 880,
-  "passing": 880,
-  "clean": 878,
+  "total": 881,
+  "passing": 881,
+  "clean": 879,
   "pass_rate": 100.0,
   "counts": {
     "STDERR_DIFFERS": 2
@@ -10894,6 +10894,19 @@
     {
       "case": "posonly_params.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/posonly_params.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "profile_call_return.py",
+      "path": "/home/joe/work/pc/pyc/verify/corpus/language/profile_call_return.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],
