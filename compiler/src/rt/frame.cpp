@@ -1,7 +1,10 @@
 #define Py_BUILD_CORE 1
 #include <Python.h>
 #include "pyc/rt/support.hpp"
+#include <cstdint>
 #include <new>
+#include <unordered_map>
+#include <unordered_set>
 #include "cpython/funcobject.h"
 #include "internal/pycore_interpframe.h"
 #include "internal/pycore_code.h"
@@ -301,10 +304,131 @@ static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line
     if (r < 0) return;
 }
 
-// Byte offset of a code unit whose location is this source line. The eval
-// stub parked the instruction pointer at a fixed slot in its padding; a
-// CPython code object has to be searched, or f_lineno and traceback carets
-// name whatever opcode happens to sit at that slot.
+// instr_ptr has to sit on a unit whose location is this source line: traceback
+// carets read tb_lasti back through the line table. The eval stub's padding
+// makes unit (8 + slot) that instruction. A real code object does not, and
+// walking PyCode_Addr2Location once per unit restarts the line table each
+// time. The index is one co_positions() pass, then a lookup.
+struct LocKey {
+    int line = 0;
+    int col = 0;
+    int end_col = 0;
+    bool operator==(const LocKey& o) const {
+        return line == o.line && col == o.col && end_col == o.end_col;
+    }
+};
+struct LocKeyHash {
+    size_t operator()(const LocKey& k) const {
+        size_t h = (size_t)k.line * 1315423911u;
+        h ^= (size_t)k.col + 0x9e3779b9u + (h << 6) + (h >> 2);
+        h ^= (size_t)k.end_col + 0x9e3779b9u + (h << 6) + (h >> 2);
+        return h;
+    }
+};
+struct LocIndex {
+    std::unordered_map<LocKey, int, LocKeyHash> exact;
+    std::unordered_map<LocKey, int, LocKeyHash> start_col;
+    std::unordered_map<int, int> line_only;
+};
+
+static std::unordered_map<PyCodeObject*, LocIndex*> g_loc_index;
+static std::unordered_set<int64_t> g_loc_watched;
+static thread_local int g_loc_building = 0;
+
+static int loc_as_int(PyObject* item, int index) {
+    PyObject* v = PyTuple_GetItem(item, index);
+    if (!v || v == Py_None) return -1;
+    long n = PyLong_AsLong(v);
+    if (n == -1 && PyErr_Occurred()) {
+        PyErr_Clear();
+        return -1;
+    }
+    return (int)n;
+}
+
+static int loc_watch(PyCodeEvent event, PyCodeObject* co) {
+    if (event != PY_CODE_EVENT_DESTROY || !co) return 0;
+    auto it = g_loc_index.find(co);
+    if (it == g_loc_index.end()) return 0;
+    delete it->second;
+    g_loc_index.erase(it);
+    return 0;
+}
+
+// Per interpreter. An interpreter id is not reused, so a destroyed
+// interpreter cannot make the next one skip registration.
+static bool ensure_loc_watch() {
+    PyInterpreterState* interp = PyInterpreterState_Get();
+    int64_t id = PyInterpreterState_GetID(interp);
+    if (id < 0) {
+        PyErr_Clear();
+        return false;
+    }
+    if (!g_loc_watched.insert(id).second) return true;
+    if (PyCode_AddWatcher(loc_watch) < 0) {
+        PyErr_Clear();
+        g_loc_watched.erase(id);
+        return false;
+    }
+    return true;
+}
+
+static int lookup_loc(const LocIndex* idx, int line, int col, int end_col) {
+    if (col >= 0 && end_col >= 0) {
+        auto it = idx->exact.find(LocKey{line, col, end_col});
+        if (it != idx->exact.end()) return it->second;
+    }
+    if (col >= 0) {
+        auto it = idx->start_col.find(LocKey{line, col, 0});
+        if (it != idx->start_col.end()) return it->second;
+    }
+    auto it = idx->line_only.find(line);
+    if (it != idx->line_only.end()) return it->second;
+    return -1;
+}
+
+static LocIndex* build_loc_index(PyCodeObject* co) {
+    if (!ensure_loc_watch()) return nullptr;
+    auto* idx = new LocIndex;
+    PyObject* saved = PyErr_GetRaisedException();
+    PyObject* it = PyObject_CallMethod(
+        reinterpret_cast<PyObject*>(co), "co_positions", nullptr);
+    if (!it) {
+        PyErr_Clear();
+        delete idx;
+        PyErr_SetRaisedException(saved);
+        return nullptr;
+    }
+    int unit = 0;
+    for (;;) {
+        PyObject* item = PyIter_Next(it);
+        if (!item) {
+            if (PyErr_Occurred()) PyErr_Clear();
+            break;
+        }
+        if (PyTuple_Check(item) && PyTuple_GET_SIZE(item) >= 4) {
+            int line = loc_as_int(item, 0);
+            int col = loc_as_int(item, 2);
+            int end_col = loc_as_int(item, 3);
+            if (line > 0) {
+                if (col >= 0 && end_col >= 0)
+                    idx->exact.try_emplace(LocKey{line, col, end_col}, unit);
+                if (col >= 0)
+                    idx->start_col.try_emplace(LocKey{line, col, 0}, unit);
+                idx->line_only.try_emplace(line, unit);
+            }
+        }
+        Py_DECREF(item);
+        unit++;
+    }
+    Py_DECREF(it);
+    PyErr_SetRaisedException(saved);
+    g_loc_index[co] = idx;
+    return idx;
+}
+
+// One PyCode_Addr2Location per unit. Used only when the index cannot be
+// built; the indexed path is the one that runs.
 static int unit_for_source(PyCodeObject* co, int line, int col, int end_col,
                            int legacy) {
     PyObject* raw = PyCode_GetCode(co);
@@ -348,17 +472,29 @@ extern "C" void pyc_rt_set_lasti(int slot, int line, int col, int end_col) {
     int legacy = 8 + slot;
     if (legacy < co->_co_firsttraceable) legacy = co->_co_firsttraceable;
     if (legacy >= nunits) legacy = (int)nunits - 1;
-    int off = legacy;
-    int sl = 0, sc = -1, el = 0, ec = -1;
-    int legacy_addr = legacy * (int)sizeof(_Py_CODEUNIT);
-    if (PyCode_Addr2Location(co, legacy_addr, &sl, &sc, &el, &ec) && sl == line
-        && (col < 0 || sc == col)) {
-        off = legacy;
-    } else {
+
+    int off = -1;
+    auto have = g_loc_index.find(co);
+    if (have != g_loc_index.end()) {
+        off = lookup_loc(have->second, line, col, end_col);
+    } else if (g_loc_building) {
         off = unit_for_source(co, line, col, end_col, legacy);
-        if (off < 0) off = legacy;
-        if (off >= nunits) off = (int)nunits - 1;
+    } else {
+        int sl = 0, sc = -1, el = 0, ec = -1;
+        int legacy_addr = legacy * (int)sizeof(_Py_CODEUNIT);
+        if (PyCode_Addr2Location(co, legacy_addr, &sl, &sc, &el, &ec) &&
+            sl == line && (col < 0 || sc == col)) {
+            off = legacy;
+        } else {
+            g_loc_building++;
+            LocIndex* idx = build_loc_index(co);
+            g_loc_building--;
+            off = idx ? lookup_loc(idx, line, col, end_col)
+                      : unit_for_source(co, line, col, end_col, legacy);
+        }
     }
+    if (off < 0) off = legacy;
+    if (off >= nunits) off = (int)nunits - 1;
     f->instr_ptr = _PyCode_CODE(co) + off;
     if (f->frame_obj && line > 0) f->frame_obj->f_lineno = line;
     if (ts->c_tracefunc) maybe_line_trace(f, ts, line);
