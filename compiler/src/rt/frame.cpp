@@ -5,6 +5,7 @@
 #include <new>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 #include "cpython/funcobject.h"
 #include "internal/pycore_interpframe.h"
 #include "internal/pycore_code.h"
@@ -305,10 +306,11 @@ static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line
 }
 
 // instr_ptr has to sit on a unit whose location is this source line: traceback
-// carets read tb_lasti back through the line table. The eval stub's padding
-// makes unit (8 + slot) that instruction. A real code object does not, and
-// walking PyCode_Addr2Location once per unit restarts the line table each
-// time. The index is one co_positions() pass, then a lookup.
+// carets read tb_lasti back through the line table. The compiler passes a
+// dense slot (0..n-1) for each site. by_slot[slot] is that unit after the
+// first visit; the coordinate maps exist only to fill a slot once. The eval
+// stub's padding makes unit (8 + slot) that instruction, so a stub records
+// the slot directly and never builds the maps.
 struct LocKey {
     int line = 0;
     int col = 0;
@@ -326,6 +328,9 @@ struct LocKeyHash {
     }
 };
 struct LocIndex {
+    // -1: this slot has not been resolved yet. A resolved unit is >= 0.
+    std::vector<int> by_slot;
+    bool direct = false;
     std::unordered_map<LocKey, int, LocKeyHash> exact;
     std::unordered_map<LocKey, int, LocKeyHash> start_col;
     std::unordered_map<int, int> line_only;
@@ -334,6 +339,15 @@ struct LocIndex {
 static std::unordered_map<PyCodeObject*, LocIndex*> g_loc_index;
 static std::unordered_set<int64_t> g_loc_watched;
 static thread_local int g_loc_building = 0;
+// Bumped before an index is freed, so a thread-local pointer cannot be used
+// after the code object that owned it is destroyed.
+static uint64_t g_loc_epoch = 1;
+struct LocHot {
+    PyCodeObject* co = nullptr;
+    LocIndex* idx = nullptr;
+    uint64_t epoch = 0;
+};
+static thread_local LocHot g_loc_hot;
 
 static int loc_as_int(PyObject* item, int index) {
     PyObject* v = PyTuple_GetItem(item, index);
@@ -350,6 +364,7 @@ static int loc_watch(PyCodeEvent event, PyCodeObject* co) {
     if (event != PY_CODE_EVENT_DESTROY || !co) return 0;
     auto it = g_loc_index.find(co);
     if (it == g_loc_index.end()) return 0;
+    g_loc_epoch++;
     delete it->second;
     g_loc_index.erase(it);
     return 0;
@@ -373,6 +388,22 @@ static bool ensure_loc_watch() {
     return true;
 }
 
+// The eval stub's linetable is built so unit (8 + slot) has this location.
+// A real code object can have some other instruction at that unit with the
+// same start column and a shorter span; accepting it drops the end column
+// (test_with.NestedWith.testExceptionLocation reported self.InitRaises
+// without the call parentheses).
+static bool is_eval_stub(PyCodeObject* co) {
+    PyObject* names = co->co_names;
+    if (!names || !PyTuple_Check(names) || PyTuple_GET_SIZE(names) != 1)
+        return false;
+    PyObject* n = PyTuple_GET_ITEM(names, 0);
+    if (!PyUnicode_Check(n)) return false;
+    int cmp = PyUnicode_CompareWithASCIIString(n, "__pyc_eval__");
+    if (cmp == -1 && PyErr_Occurred()) PyErr_Clear();
+    return cmp == 0;
+}
+
 static int lookup_loc(const LocIndex* idx, int line, int col, int end_col) {
     if (col >= 0 && end_col >= 0) {
         auto it = idx->exact.find(LocKey{line, col, end_col});
@@ -385,6 +416,31 @@ static int lookup_loc(const LocIndex* idx, int line, int col, int end_col) {
     auto it = idx->line_only.find(line);
     if (it != idx->line_only.end()) return it->second;
     return -1;
+}
+
+static LocIndex* loc_hot_get(PyCodeObject* co) {
+    if (g_loc_hot.co == co && g_loc_hot.epoch == g_loc_epoch)
+        return g_loc_hot.idx;
+    return nullptr;
+}
+
+static void loc_hot_set(PyCodeObject* co, LocIndex* idx) {
+    g_loc_hot.co = co;
+    g_loc_hot.idx = idx;
+    g_loc_hot.epoch = g_loc_epoch;
+}
+
+// -1 if this slot has not been resolved. The stored value is the unit.
+static int slot_cached(const LocIndex* idx, int slot) {
+    if (slot < 0 || (std::size_t)slot >= idx->by_slot.size()) return -1;
+    return idx->by_slot[(std::size_t)slot];
+}
+
+static void slot_store(LocIndex* idx, int slot, int off) {
+    if (slot < 0 || off < 0) return;
+    if ((std::size_t)slot >= idx->by_slot.size())
+        idx->by_slot.resize((std::size_t)slot + 1, -1);
+    idx->by_slot[(std::size_t)slot] = off;
 }
 
 static LocIndex* build_loc_index(PyCodeObject* co) {
@@ -431,13 +487,7 @@ static LocIndex* build_loc_index(PyCodeObject* co) {
 // built; the indexed path is the one that runs.
 static int unit_for_source(PyCodeObject* co, int line, int col, int end_col,
                            int legacy) {
-    PyObject* raw = PyCode_GetCode(co);
-    if (!raw) {
-        PyErr_Clear();
-        return legacy;
-    }
-    Py_ssize_t nbytes = PyBytes_GET_SIZE(raw);
-    Py_DECREF(raw);
+    Py_ssize_t nbytes = _PyCode_NBYTES(co);
     int exact = -1, start_only = -1, first = -1;
     for (int addr = 0; addr + 1 < nbytes; addr += (int)sizeof(_Py_CODEUNIT)) {
         int sl = 0, el = 0, sc = -1, ec = -1;
@@ -464,37 +514,54 @@ extern "C" void pyc_rt_set_lasti(int slot, int line, int col, int end_col) {
     PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
         PyStackRef_AsPyObjectBorrow(f->f_executable));
     if (!co) return;
-    PyObject* raw = PyCode_GetCode(co);
-    if (!raw) { PyErr_Clear(); return; }
-    Py_ssize_t nunits = PyBytes_GET_SIZE(raw) / (Py_ssize_t)sizeof(_Py_CODEUNIT);
-    Py_DECREF(raw);
+    // Py_SIZE is the code-unit count. PyCode_GetCode copies the bytecode
+    // into a cached bytes object on first use and takes a reference after
+    // that; neither is needed to clamp the unit.
+    Py_ssize_t nunits = Py_SIZE(co);
     if (nunits <= 0) return;
     int legacy = 8 + slot;
     if (legacy < co->_co_firsttraceable) legacy = co->_co_firsttraceable;
     if (legacy >= nunits) legacy = (int)nunits - 1;
 
-    int off = -1;
-    auto have = g_loc_index.find(co);
-    if (have != g_loc_index.end()) {
-        off = lookup_loc(have->second, line, col, end_col);
-    } else if (g_loc_building) {
-        off = unit_for_source(co, line, col, end_col, legacy);
-    } else {
-        int sl = 0, sc = -1, el = 0, ec = -1;
-        int legacy_addr = legacy * (int)sizeof(_Py_CODEUNIT);
-        if (PyCode_Addr2Location(co, legacy_addr, &sl, &sc, &el, &ec) &&
-            sl == line && (col < 0 || sc == col)) {
+    LocIndex* idx = loc_hot_get(co);
+    if (!idx) {
+        auto have = g_loc_index.find(co);
+        if (have != g_loc_index.end()) {
+            idx = have->second;
+            loc_hot_set(co, idx);
+        }
+    }
+    int off = idx ? slot_cached(idx, slot) : -1;
+    if (off < 0 && !g_loc_building) {
+        if (!idx && is_eval_stub(co)) {
+            // build_linemap wrote this location at unit (8 + slot).
+            // The watcher frees the index; skip caching if it cannot be
+            // registered, and recompute the unit on the next call.
+            if (ensure_loc_watch()) {
+                idx = new LocIndex;
+                idx->direct = true;
+                g_loc_index[co] = idx;
+                loc_hot_set(co, idx);
+            }
             off = legacy;
-        } else {
+        } else if (!idx) {
             g_loc_building++;
-            LocIndex* idx = build_loc_index(co);
+            idx = build_loc_index(co);
             g_loc_building--;
+            if (idx) loc_hot_set(co, idx);
             off = idx ? lookup_loc(idx, line, col, end_col)
                       : unit_for_source(co, line, col, end_col, legacy);
+        } else if (idx->direct) {
+            off = legacy;
+        } else {
+            off = lookup_loc(idx, line, col, end_col);
         }
+    } else if (off < 0) {
+        off = unit_for_source(co, line, col, end_col, legacy);
     }
     if (off < 0) off = legacy;
     if (off >= nunits) off = (int)nunits - 1;
+    if (idx) slot_store(idx, slot, off);
     f->instr_ptr = _PyCode_CODE(co) + off;
     if (f->frame_obj && line > 0) f->frame_obj->f_lineno = line;
     if (ts->c_tracefunc) maybe_line_trace(f, ts, line);
