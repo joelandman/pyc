@@ -517,6 +517,19 @@ extern "C" void pyc_rt_set_lasti(int slot, int line, int col, int end_col) {
     // Py_SIZE is the code-unit count. PyCode_GetCode copies the bytecode
     // into a cached bytes object on first use and takes a reference after
     // that; neither is needed to clamp the unit.
+    // No tracer, and this slot's unit is already known. f_lineno and a
+    // traceback both read instr_ptr, so the steady state still stores it.
+    // The coordinate lookup and the line-table walk run on the first visit
+    // of the slot, and maybe_line_trace runs only while c_tracefunc is set.
+    if (!ts->c_tracefunc) {
+        LocIndex* hot = loc_hot_get(co);
+        int hit = hot ? slot_cached(hot, slot) : -1;
+        if (hit >= 0) {
+            f->instr_ptr = _PyCode_CODE(co) + hit;
+            if (f->frame_obj) f->frame_obj->f_lineno = line;
+            return;
+        }
+    }
     Py_ssize_t nunits = Py_SIZE(co);
     if (nunits <= 0) return;
     int legacy = 8 + slot;
