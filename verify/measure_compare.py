@@ -14,9 +14,11 @@ Two things fail the gate, and both are measured rather than judged:
 A case that newly lost its GROUND TRUTH is reported but does not fail. Two
 ways that happens, and pyc is not involved in either: the oracle disagreed with
 itself across the two runs (ORACLE_UNSTABLE), or CPython did not finish even at
-double the limit (TIMEOUT with the oracle dead). Both still count against the
-pass rate -- the case genuinely cannot be scored -- but neither is a compiler
-regression, and reporting one as such would be false.
+double the limit (TIMEOUT with the oracle dead). A stdout or exit difference
+recorded beside ORACLE_UNSTABLE is the comparison against one of those two
+disagreeing runs, so it is not a ground truth either. Both still count against
+the pass rate -- the case genuinely cannot be scored -- but neither is a
+compiler regression, and reporting one as such would be false.
 
 Everything else is reported as CHANGED and fails nothing. A case that used to
 be refused by the compiler and now runs and crashes has swapped one loud
@@ -165,14 +167,15 @@ def main() -> int:
             # is not what failed. test_zipfile64 builds multi-gigabyte archives
             # and takes 107s under CPython here, against a 30s limit and a 60s
             # retry -- a statement about the limit, not the compiler.
-            if gained == {UNSTABLE} or (gained == {TIMEOUT} and cdead.get(case)):
-                # The compiler cannot cause this: ORACLE_UNSTABLE is computed
-                # from two CPython runs with pyc nowhere in the picture. It
-                # still counts against the pass rate -- the case has no ground
-                # truth, and the rate should say so -- but failing the gate on
-                # it would be reporting a property of the corpus as a compiler
-                # regression. Measured on Lib/test, 9 of 14 lost matches in one
-                # nightly were exactly this.
+            if UNSTABLE in gained or (gained == {TIMEOUT} and cdead.get(case)):
+                # The compiler cannot cause ORACLE_UNSTABLE: it is computed
+                # from two CPython runs with pyc nowhere in the picture.
+                # STDOUT_DIFFERS or EXIT_DIFFERS beside it is the comparison
+                # against one of those two disagreeing runs, not a ground
+                # truth. It still counts against the pass rate. Failing the
+                # gate on it reports a property of the corpus as a compiler
+                # regression. The nightly of 2026-10-02 did that for every
+                # test that prints a pythontest.net fetch line.
                 unstable.append(case)
             else:
                 regressed.append((case, sorted(gained)))

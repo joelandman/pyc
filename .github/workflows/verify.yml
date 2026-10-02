@@ -18,7 +18,10 @@ on:
 
 concurrency:
   group: verify-${{ github.ref }}
-  cancel-in-progress: true
+  # A second push must not cancel the run already in progress. A cancelled
+  # verify is the red mark on that commit, and it is how a one-line follow-up
+  # turned a green push into a failed check.
+  cancel-in-progress: false
 
 jobs:
   differential:

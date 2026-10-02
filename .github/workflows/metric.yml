@@ -37,6 +37,51 @@ jobs:
           pgo: "true"              # nightly can afford it
           wheel-check: "require"   # CHARTER I7 as a daily hard gate
 
+      - name: Match the baseline's interpreter set
+        run: |
+          set -euxo pipefail
+          # test_xpickle spawns pythonX.Y for every older minor it finds on
+          # PATH (python2.7 and python3.2 .. python3.13 when the subject is
+          # 3.14). The published baseline was measured with only the sysroot
+          # 3.14, so those bodies were skipped. ubuntu-24.04 has python3.12
+          # on PATH; the nightly runs that body and the compiled side exits 1.
+          # That failure is on every morning run and is not a new commit.
+          #
+          # The harness is #!/usr/bin/env python3, and on this image python3
+          # is Python 3.12. xpickle looks up the versioned name, not python3.
+          # Keep that interpreter under a name xpickle does not search, then
+          # remove every versioned binary from PATH. python3.14 stays: it is
+          # this metric's oracle minor, and xpickle does not spawn current.
+          # A copy left anywhere on PATH still counts, including the tool
+          # cache, so this walks PATH rather than only /usr/bin.
+          py3="$(readlink -f "$(command -v python3)")"
+          sudo cp -a "$py3" /usr/bin/python3.metric-keep
+          sudo ln -sfn /usr/bin/python3.metric-keep /usr/bin/python3
+          hide_versioned() {
+            local d b base
+            shopt -s nullglob
+            IFS=':' read -r -a _pyc_path_dirs <<< "$PATH"
+            for d in "${_pyc_path_dirs[@]}"; do
+              [ -d "$d" ] || continue
+              for b in "$d"/python[0-9].[0-9]* "$d"/python[0-9][0-9].[0-9]*; do
+                base="$(basename "$b")"
+                case "$base" in
+                  python3.14|python3.14-config) ;;
+                  *) "$@" "$b" ;;
+                esac
+              done
+            done
+          }
+          hide_versioned sudo rm -f
+          # Fail here, before an hour of Lib/test, if a versioned interpreter
+          # is still executable. Otherwise the miss comes back as a fake
+          # regression on test_xpickle.py.
+          leftover=0
+          mark_leftover() { echo "still on PATH: $1"; leftover=1; }
+          hide_versioned mark_leftover
+          [ "$leftover" -eq 0 ]
+          python3 -c 'import sys; print("harness python", sys.version)'
+
       - name: Lib/test metric
         run: |
           LIMIT=""
