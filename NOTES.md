@@ -2,7 +2,7 @@
 
 ## Immediate
 
-- `origin/devel` is `adc0c4e`. Treat the CI `verify.yml` run as the
+- The location-slot commit is `adc0c4e`. Treat the CI `verify.yml` run as the
   authoritative gate for a push. A local language fast gate on this tree
   finished in 547s: 860/860 impactful, 858 byte-identical.
 - Watch CI for:

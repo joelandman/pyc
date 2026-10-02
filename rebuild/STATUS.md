@@ -178,7 +178,7 @@ vs C.
 
 **Now**
 
-- `origin/devel` is `adc0c4e` (pushed 2026-10-02). The language-only
+- The location-slot commit is `adc0c4e`. The language-only
   fast gate on that tree was 860/860 impactful, 858 byte-identical,
   547s. The two stderr-only rows were `case_208.py` and `case_209.py`.
   The 881 gate (language + gaps + concurrency) was not re-run.
