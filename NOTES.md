@@ -2,9 +2,9 @@
 
 ## Immediate
 
-- Treat the CI `verify.yml` run as the authoritative gate for this push. A local
-  `make -C verify fast` attempt exceeded 5 minutes on this machine, so the local
-  inner loop is not a reliable timing signal here.
+- `origin/devel` is `adc0c4e`. Treat the CI `verify.yml` run as the
+  authoritative gate for a push. A local language fast gate on this tree
+  finished in 547s: 860/860 impactful, 858 byte-identical.
 - Watch CI for:
   - language + known-gaps + concurrency gate at `881/881`
   - no new `DID_NOT_COMPILE`
@@ -38,8 +38,7 @@
   if we want the record to be less local.
 - Local wheel/NumPy smoke is not reliable here because the sysroot currently
   lacks `numpy`. Use the CI wheel step for that gate.
-- Scheduled CI on `origin/devel` is not the same tree as a local `devel`
-  that has unpushed commits. `pack-pyc.yml` must not list the archive
+- `pack-pyc.yml` must not list the archive
   with `tar | head` under `pipefail`. `metric.yml` runs
   `verify/longrunning.py` at `--longrunning-jobs 1` so `test_zipfile64`
   is not one of four concurrent 600s processes on the 4-core runner.

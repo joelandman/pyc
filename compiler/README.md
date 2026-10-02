@@ -146,12 +146,13 @@ Maintaining refcount contracts by hand is the bookkeeping that produces
 leaks, and CPython already ships the answer. `kCApiSymbolCount` is only
 the `unordered_map` reserve; lookup is by name.
 
-Counted from `capi_table.hpp` on 2026-09-30 (`kCApiSymbolCount` is 1088):
+Counted from `capi_table.hpp` on 2026-10-02 (`kCApiSymbolCount` is 1089;
+`pyc_rt_super_from_frame` is the symbol added since the 1088 count):
 
 | | count |
 |---|---|
-| symbols | 1088 |
-| `Ownership::Owned` | 343 |
+| symbols | 1089 |
+| `Ownership::Owned` | 344 |
 | `Ownership::Borrowed` | 52 |
 | `Ownership::AlwaysNull` | 16 |
 | `Ownership::NotAnObject` | 454 |
@@ -326,6 +327,12 @@ caret/tilde annotation line (`~~~~~^^^`) inside a traceback. pyc emits the
 frame, the file, the line number and the source text; it does not emit the
 column ranges, which are reconstructed from bytecode positions that a compiled
 binary does not have.
+
+That caret sentence is the 2026-08-23 tree. As of `adc0c4e`,
+`pyc_rt_set_lasti` stores a real code unit and traceback columns are
+read back through `co_positions`. `test_with.py` and
+`frame_lineno_and_traceback.py` match the sysroot. The table above is
+unchanged history.
 
 Constructs still **refused** (loudly, with a line and a construct name — a
 diagnostic, not a metric):

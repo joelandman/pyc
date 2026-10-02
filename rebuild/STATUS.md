@@ -1,11 +1,10 @@
 # pyc — current state and MVP
 
-**Date:** 2026-09-30. Language numbers are the recorded
-`compiler/baseline-language.json` gate (881/881). The `Lib/test` row is
-still the 2026-09-26 I6 record: it has not been re-run after string
-interning, profile events, or request-only GIL release. CHARTER remains
-binding. The frames section there was corrected to C1b on this date;
-§4 product rules were not changed.
+**Date:** 2026-10-02. Language numbers in the table below are the recorded
+`compiler/baseline-language.json` gate (881/881). A language-only fast
+gate on this date was 860/860 impactful (858 byte-identical); the 881
+gate was not re-run. The `Lib/test` row is still the 2026-09-26 I6
+record. CHARTER remains binding. §4 product rules were not changed.
 
 Roles that produced this: Architect (`agents/architect.md`), PM
 (`agents/pm.md`), SWE-compiler (`agents/swe-compiler.md`), SWE-runtime
@@ -22,6 +21,10 @@ heap-free loop drops the GIL only when another thread requests it
 ([GIL.md](GIL.md)). The remaining product gap is stub code objects,
 named refusals instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and
 getting the nightly Lib/test job to finish so this row can move.
+Ordinary functions carry CPython's code object when the local layout
+matches (`df32461`); the native body still runs. The eval stub remains
+for the module frame, class bodies, comprehensions, and any function
+whose locals do not match.
 
 ## Measured now
 
@@ -113,7 +116,13 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    all MATCH. `type(f)(f.__code__, ns)` reuses the trampoline via a function
    watcher. Empty cellvar is UnboundLocalError; empty freevar is NameError.
    `exec(f.__code__, closure=...)` runs the native body through the
-   `__pyc_eval__` stub-bytecode helper installed into builtins. LoadGlobal
+   `__pyc_eval__` stub-bytecode helper installed into builtins. When the
+   local layout matches, the function's own CPython code object is
+   installed instead of that stub (`df32461`); `exec` of a replaced
+   closure still finds the native body by the code-object tail.
+   `pyc_rt_set_lasti` stores the code unit for the current source span
+   so traceback carets read `tb_lasti` back through `co_positions`
+   (`17270a0`, `adc0c4e`). LoadGlobal
    uses the current frame's globals (and mapping `__getitem__`), so
    FORWARDREF annotate reconstruction works. Nested `__annotate__` code objects from
    CPython's compile sit in the outer `co_consts`. Unexpected keywords
@@ -169,39 +178,58 @@ vs C.
 
 **Now**
 
-- Keep M1–M4 on `verify.yml`. The last green run on `origin/devel` is
-  `47ceb38` (frames). Local `devel` is ahead of that; GitHub does not
-  see unpushed commits.
+- `origin/devel` is `adc0c4e` (pushed 2026-10-02). The language-only
+  fast gate on that tree was 860/860 impactful, 858 byte-identical,
+  547s. The two stderr-only rows were `case_208.py` and `case_209.py`.
+  The 881 gate (language + gaps + concurrency) was not re-run.
 - Leave M5 at **355/389** until `make -C verify metric`. Do not edit
-  `compiler/baseline-libtest.json` by hand. That record still has
-  `test_sys_setprofile.py`, `test_cprofile.py`, and `test_pstats.py` as
-  `EXIT_DIFFERS` (subject exit 1) and `test_code.py` as subject exit -11.
-  Script runs named in [CORRECTNESS.md](CORRECTNESS.md) are not this row.
-- Morning failures are two scheduled workflows, not the language gate.
-  `pack-pyc.yml` packed the tarball and then died on `tar | head` under
-  `pipefail`. `metric.yml` has been shut down (exit 143) at
-  `--- longrunning ---` since 2026-09-25, before the compare step.
-  Both workflows are adjusted in tree; they take effect on the next
-  run of the commit that contains them.
-- `sysroot.yml` has been succeeding. `verify.yml` is the push gate and
-  was green at `47ceb38`.
+  `compiler/baseline-libtest.json` by hand. A local 389-file run on
+  intermediate commit `17270a0` printed 358/389 and is not this row:
+  it predates the slot cache, and it was not adopted. Script runs
+  named in [CORRECTNESS.md](CORRECTNESS.md) are not this row either.
+- `pack-pyc.yml` and `metric.yml` were adjusted in `249eb81`, which is
+  on `origin/devel`. Whether a scheduled run has since finished is not
+  claimed here.
+- `sysroot.yml` has been succeeding. `verify.yml` is the push gate.
 
 **Next (MVP completeness)**
 
 1. Re-run I6 before publishing any Lib/test fraction other than 355/389.
-   Expect the three profiler scripts above to move if the script checks
-   hold under the harness; that is a hypothesis until the metric says so.
+   The unpublished `17270a0` run is not a substitute for that.
 2. Dump the remaining `EXIT_DIFFERS` before adding syntax. The cluster
    that is already named: stub `co_code` / `co_consts` / linetable
-   (`test_dis`, `test_compile`, `test_peepholer`, `test_opcache`),
-   `test_sys_settrace` (600s timeout), `test_code`.
+   (`test_dis`, `test_compile`, `test_peepholer`, `test_opcache`) and
+   `test_sys_settrace` (600s timeout).
 3. M6: a refusal names the construct, the line, and the reason.
+
+**Speed, measured 2026-10-02** (`adc0c4e`, sysroot 3.14.7, all exit 0).
+`-O2` is the generated IR only; the runtime is already `-O2`.
+
+| Test | CPython | `-O0` | `-O2` |
+|---|---:|---:|---:|
+| `test_buffer.py` | 6.61s | 14.81s | 14.23s |
+| `test_decimal.py` | 8.91s | 18.42s | 17.96s |
+| `test_long.py` | 2.32s | 2.65s | 2.68s |
+| `test_unicodedata.py` | 25.28s | 40.37s | 38.62s |
+
+`-O2` saved a few percent. The cycles are in libpython calls the native
+body makes, plus work the eval loop does not do as its own call.
+`pyc_rt_set_lasti` is still the hottest symbol on `test_unicodedata.py`
+(9.3%): each source line stores `instr_ptr`, and the slot array only
+removed the hash. The interpreter is still 6–12% (stubs). Attribute
+load is `PyObject_GetAttr`, so a method call allocates a temporary and
+then vectorcalls it. On these four files the C work (Unicode, buffer,
+decimal, long arithmetic) is the program. Removing the eval loop
+entirely would beat CPython by a small factor. A 5–10× figure needs
+different programs: pure Python, values kept in SSA between calls, and
+method calls that do not allocate.
 
 **Later (v1 / CHARTER §4)**
 
 I8 two targets from one binary; unittest-driven metric; native
-generators; traceback carets; Tier 2; unboxing remainder. Star-as-
-annotation, `PyFunction`, and `__annotate__` have landed (see P1 above).
+generators; Tier 2; unboxing remainder. Column carets for an adopted
+code object come from `pyc_rt_set_lasti`. Star-as-annotation,
+`PyFunction`, and `__annotate__` have landed (see P1 above).
 
 ## Workstream S — stop requiring a local CPython *build*
 

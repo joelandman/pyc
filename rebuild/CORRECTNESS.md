@@ -40,7 +40,11 @@ SaveThread/RestoreThread was the deadlock: it dropped the GIL on every
 ## C3 — remaining language diffs that are not C1/C2
 
 **Status: residual.** Gate corpus **881/881** impactful. `STDERR_DIFFERS`
-(traceback carets) do not count against the rate. Compiled functions fire PEP 669 `PY_START` / `PY_RETURN` / `PY_UNWIND`
+does not count against the rate. `frame_lineno_and_traceback.py` and
+`test_with.py` match the sysroot, including caret columns
+(`adc0c4e`). Two language-corpus stderr rows (`case_208.py`,
+`case_209.py`) were not impactful on the 2026-10-02 fast gate and were
+not re-diagnosed. Compiled functions fire PEP 669 `PY_START` / `PY_RETURN` / `PY_UNWIND`
 from the trampoline, and Python-level calls fire `CALL` / `C_RETURN` /
 `C_RAISE` (`profile_call_return.py`). `test_sys_setprofile`, `test_cprofile`,
 and `test_pstats` match the sysroot when run as scripts.
@@ -52,3 +56,14 @@ correctness fix.
 ## Order
 
 C1 and C2 closed. Unboxing may proceed.
+
+## Locations — `instr_ptr` for traceback carets
+
+**Status: closed for the probes that failed.** `pyc_rt_set_lasti` points
+`instr_ptr` at a code unit whose line table contains the source span.
+The compiler passes a dense slot. The first visit resolves the unit
+(exact column span, then start column, then line) and stores it; later
+visits are an array load (`adc0c4e`). Eval stubs store unit `8 + slot`
+and do not build that map. The per-line call is still there, which is
+why it remains visible in profiles. Not calling it unless a tracer is
+installed, or an exception pad is recording a traceback, is open.
