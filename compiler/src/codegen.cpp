@@ -210,6 +210,7 @@ private:
         int saved_tmp = tmp_;
         std::ostringstream discard;
         allocas_.clear();
+        method_slot_.clear();
         o_.swap(discard);
         emit_blocks(f, idx, is_main);
         o_.swap(discard);
@@ -478,6 +479,7 @@ private:
                 o_ << "  call void @pyc_rt_decref(ptr " << v(in.args[0]) << ")\n";
                 break;
             case Op::CallCApi: emit_capi(in); break;
+            case Op::LookupMethod: emit_lookup_method(in); break;
             case Op::CallObject: emit_call(in); break;
             case Op::IsTrue: {
                 need("declare i32 @PyObject_IsTrue(ptr)");
@@ -1119,11 +1121,48 @@ private:
         return name;
     }
     std::vector<std::pair<std::string, std::size_t>> allocas_;
+    // LookupMethod result id -> hoisted `[1 x ptr]` that holds the borrowed
+    // self (or null). Filled while emitting the lookup, read by the call.
+    std::map<std::uint32_t, std::string> method_slot_;
+
+    std::string method_self_elem(std::uint32_t callable) {
+        auto it = method_slot_.find(callable);
+        if (it == method_slot_.end()) return {};
+        std::string p = fresh();
+        o_ << "  " << p << " = getelementptr [1 x ptr], ptr " << it->second
+           << ", i64 0, i64 0\n";
+        return p;
+    }
+
+    void emit_lookup_method(const ir::Instr& in) {
+        need("declare ptr @pyc_rt_lookup_method(ptr, ptr, ptr)");
+        std::string arr = hoisted_alloca(1);
+        method_slot_[in.result->id] = arr;
+        std::string p = fresh();
+        o_ << "  " << p << " = getelementptr [1 x ptr], ptr " << arr
+           << ", i64 0, i64 0\n";
+        o_ << "  store ptr null, ptr " << p << "\n";
+        o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_lookup_method(ptr "
+           << v(in.args[0]) << ", ptr " << v(in.args[1]) << ", ptr " << p
+           << ")\n";
+        check(in, v(*in.result), true);
+    }
 
     void emit_call(const ir::Instr& in) {
-        if (in.text.size() > 3 && in.text.compare(0, 3, "kw:") == 0) {
+        // "meth" / "methkw:" is a call whose callee was LookupMethod. The
+        // self slot is null when the attribute was not an unbound method.
+        bool method = false;
+        std::string text = in.text;
+        if (text == "meth") {
+            method = true;
+            text.clear();
+        } else if (text.compare(0, 7, "methkw:") == 0) {
+            method = true;
+            text = "kw:" + text.substr(7);
+        }
+        if (text.size() > 3 && text.compare(0, 3, "kw:") == 0) {
             need("declare ptr @pyc_rt_call_kw(ptr, ptr, i64, ptr)");
-            std::string csv = in.text.substr(3);
+            std::string csv = text.substr(3);
             int slot = intern_kw(csv);
             std::size_t nkw = 1;
             for (char ch : csv) if (ch == ',') nkw++;
@@ -1140,17 +1179,29 @@ private:
             o_ << "  " << kp << " = getelementptr inbounds ptr, ptr @.kwnames, i64 "
                << slot << "\n";
             o_ << "  " << kn << " = load ptr, ptr " << kp << "\n";
-            o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_call_kw(ptr "
-               << v(in.args[0]) << ", ptr " << arr << ", i64 " << npos
-               << ", ptr " << kn << ")\n";
+            if (method) {
+                need("declare ptr @pyc_rt_call_bound_kw(ptr, ptr, ptr, i64, ptr)");
+                std::string selfp = method_self_elem(in.args[0].id);
+                std::string self = fresh();
+                o_ << "  " << self << " = load ptr, ptr " << selfp << "\n";
+                o_ << "  " << v(*in.result)
+                   << " = call ptr @pyc_rt_call_bound_kw(ptr "
+                   << v(in.args[0]) << ", ptr " << self << ", ptr " << arr
+                   << ", i64 " << npos << ", ptr " << kn << ")\n";
+            } else {
+                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_call_kw(ptr "
+                   << v(in.args[0]) << ", ptr " << arr << ", i64 " << npos
+                   << ", ptr " << kn << ")\n";
+            }
             check(in, v(*in.result), true);
             return;
         }
         // A CallObject carries the callable in args[0]. (The former "m"
         // VectorcallMethod form was removed: it deferred the attribute lookup
         // past the argument evaluation, a silent wrong answer -- see
-        // verify/corpus/language/deco_eval_order.py.)
-        need("declare ptr @pyc_rt_call(ptr, ptr, i64)");
+        // verify/corpus/language/deco_eval_order.py.) "meth" looks the name
+        // up first (LookupMethod) and prepends self only when that lookup
+        // returned an unbound descriptor.
         std::size_t n = in.args.size() - 1;
         std::string arr = hoisted_alloca(n ? n : 1);
         for (std::size_t i = 0; i < n; ++i) {
@@ -1159,8 +1210,19 @@ private:
                << " x ptr], ptr " << arr << ", i64 0, i64 " << i << "\n";
             o_ << "  store ptr " << v(in.args[i + 1]) << ", ptr " << p << "\n";
         }
-        o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_call(ptr "
-           << v(in.args[0]) << ", ptr " << arr << ", i64 " << n << ")\n";
+        if (method) {
+            need("declare ptr @pyc_rt_call_bound(ptr, ptr, ptr, i64)");
+            std::string selfp = method_self_elem(in.args[0].id);
+            std::string self = fresh();
+            o_ << "  " << self << " = load ptr, ptr " << selfp << "\n";
+            o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_call_bound(ptr "
+               << v(in.args[0]) << ", ptr " << self << ", ptr " << arr
+               << ", i64 " << n << ")\n";
+        } else {
+            need("declare ptr @pyc_rt_call(ptr, ptr, i64)");
+            o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_call(ptr "
+               << v(in.args[0]) << ", ptr " << arr << ", i64 " << n << ")\n";
+        }
         check(in, v(*in.result), true);
     }
 

@@ -60,6 +60,20 @@ PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs);
 PyObject* pyc_rt_call_kw(PyObject* callable, PyObject** args, Py_ssize_t npos,
                           PyObject* kwnames);
 PyObject* pyc_rt_call_ex(PyObject* callable, PyObject* args, PyObject* kwargs);
+
+// LOAD_ATTR's method form. On success `callable` is a new reference and
+// *self_slot is either a borrowed `obj` (unbound method: the caller prepends
+// it) or NULL (the callable is already bound, or it is not a method).
+// Lookup runs before argument evaluation. It does not build a bound method
+// for a function or a method descriptor; classmethod and a custom
+// __getattribute__ still go through the ordinary attribute path.
+PyObject* pyc_rt_lookup_method(PyObject* obj, PyObject* name, PyObject** self_slot);
+// `self` NULL means call `callable` on `args` unchanged.
+PyObject* pyc_rt_call_bound(PyObject* callable, PyObject* self,
+                            PyObject** args, Py_ssize_t nargs);
+PyObject* pyc_rt_call_bound_kw(PyObject* callable, PyObject* self,
+                               PyObject** args, Py_ssize_t npos,
+                               PyObject* kwnames);
 PyObject* pyc_rt_kwnames_from_csv(const char* csv);
 
 // Literals. The integer literal arrives as DECIMAL TEXT and is parsed by

@@ -21,6 +21,7 @@ const char* op_name(Op op) {
         case Op::StoreLocal:  return "store.local";
         case Op::CallCApi:    return "call.capi";
         case Op::CallObject:  return "call.object";
+        case Op::LookupMethod: return "lookup.method";
         case Op::IncRef:      return "incref";
         case Op::DecRef:      return "decref";
         case Op::Br:          return "br";

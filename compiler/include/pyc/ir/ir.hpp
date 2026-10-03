@@ -53,6 +53,12 @@ enum class Op {
     // calls
     CallCApi,        // symbol from §4's table, with its ownership contract
     CallObject,      // PyObject_Vectorcall on a runtime callable
+    // Attribute load used only as the callee of a call. args are (obj, name).
+    // The result is the callable. Codegen also fills a self slot: the object
+    // when the callable is an unbound method descriptor, otherwise null.
+    // Mirrors CPython LOAD_ATTR's NULL|self form. A bare attribute load stays
+    // CallCApi PyObject_GetAttr, which does allocate the bound method.
+    LookupMethod,
     // refcounting, explicit and verifiable
     IncRef, DecRef,
     // control flow

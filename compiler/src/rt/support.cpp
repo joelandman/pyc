@@ -23,6 +23,11 @@ extern "C" PyObject* _PyFunction_Vectorcall(PyObject* func,
                                             size_t nargsf,
                                             PyObject* kwnames);
 
+// ceval's LOAD_ATTR method form. Declared here so this file does not need
+// Py_BUILD_CORE; the symbol is exported from libpython.
+extern "C" int _PyObject_GetMethod(PyObject* obj, PyObject* name,
+                                   PyObject** method);
+
 // The module dict of __main__, resolved ONCE.
 //
 // This used to call PyImport_AddModule("__main__") on every global access --
@@ -1295,6 +1300,86 @@ static void profile_call_target(PyObject* callable, PyObject* const* args,
     if (!expand_method && callable &&
         (PyFunction_Check(callable) || PyMethod_Check(callable)))
         *skip_cret = 1;
+}
+
+PyObject* pyc_rt_lookup_method(PyObject* obj, PyObject* name,
+                               PyObject** self_slot) {
+    if (!self_slot) {
+        PyErr_SetString(PyExc_SystemError, "pyc method lookup missing self slot");
+        return nullptr;
+    }
+    *self_slot = nullptr;
+    if (!obj || !name) {
+        PyErr_SetString(PyExc_SystemError, "pyc method lookup missing object");
+        return nullptr;
+    }
+    // *method must be NULL on entry. Return 1: caller owns `method` and must
+    // pass `obj` as the first argument. Return 0: caller owns `method` and
+    // calls it as-is (GetAttr fallback, instance override, data descriptor).
+    PyObject* method = nullptr;
+    int unbound = _PyObject_GetMethod(obj, name, &method);
+    if (!method) return nullptr;
+    if (unbound) *self_slot = obj;
+    return method;
+}
+
+// Prepend a borrowed self when the lookup said the callable is unbound.
+// A null self is the ordinary call. The argument vector is borrowed either
+// way; nothing here is a bound-method object.
+static PyObject* vectorcall_prepend(PyObject* callable, PyObject* self,
+                                    PyObject** args, Py_ssize_t nargs,
+                                    PyObject* kwnames) {
+    PyObject** buf = args;
+    Py_ssize_t total = nargs;
+    PyObject* heap = nullptr;
+    PyObject* stack_buf[16];
+    if (self) {
+        // args is positional values followed by keyword values. The vectorcall
+        // positional count grows by one (self); the keyword values have to
+        // move with it or the callee reads them off the end of this buffer.
+        Py_ssize_t nkw = (kwnames && PyTuple_Check(kwnames))
+                             ? PyTuple_GET_SIZE(kwnames) : 0;
+        Py_ssize_t ncopy = nargs + nkw;
+        total = nargs + 1;
+        Py_ssize_t nbuf = total + nkw;
+        buf = stack_buf;
+        if (nbuf > 16) {
+            heap = static_cast<PyObject*>(
+                PyMem_Malloc(static_cast<size_t>(nbuf) * sizeof(PyObject*)));
+            if (!heap) {
+                PyErr_NoMemory();
+                return nullptr;
+            }
+            buf = reinterpret_cast<PyObject**>(heap);
+        }
+        buf[0] = self;
+        if (ncopy > 0 && args)
+            memcpy(buf + 1, args, static_cast<size_t>(ncopy) * sizeof(PyObject*));
+    }
+    PyObject *reported, *arg0;
+    int skip = 0;
+    profile_call_target(callable, buf, total, 1, &reported, &arg0, &skip);
+    int armed = pyc_rt_profile_ccall(reported, arg0);
+    if (armed < 0) {
+        PyMem_Free(heap);
+        return nullptr;
+    }
+    PyObject* r = PyObject_Vectorcall(callable, buf, static_cast<size_t>(total),
+                                      kwnames);
+    if (armed) r = finish_profiled_call(reported, arg0, r, skip);
+    PyMem_Free(heap);
+    return r;
+}
+
+PyObject* pyc_rt_call_bound(PyObject* callable, PyObject* self,
+                            PyObject** args, Py_ssize_t nargs) {
+    return vectorcall_prepend(callable, self, args, nargs, nullptr);
+}
+
+PyObject* pyc_rt_call_bound_kw(PyObject* callable, PyObject* self,
+                               PyObject** args, Py_ssize_t npos,
+                               PyObject* kwnames) {
+    return vectorcall_prepend(callable, self, args, npos, kwnames);
 }
 
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {

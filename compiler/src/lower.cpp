@@ -6150,9 +6150,22 @@ private:
         // effects fires in that order. A fast path that deferred the lookup
         // to call time (VectorcallMethod) reversed the observable order and
         // was a silent wrong answer (verify/corpus/language/deco_eval_order.py,
-        // Lib/test/test_decorators.py test_eval_order). The bound-method
-        // temporary that costs us in test_gc.test_heap_size is CPython's
-        // LOAD_ATTR method-optimisation gap, not a reason to diverge (I2).
+        // Lib/test/test_decorators.py test_eval_order).
+        //
+        // A direct call `obj.meth(args)` or `obj.meth(args, k=v)` is CPython's
+        // LOAD_ATTR NULL|self form: the lookup happens now, and a function or
+        // method descriptor is called with self prepended instead of via a
+        // bound method. `obj.meth` as a value, and any `*` / `**` call, still
+        // go through PyObject_GetAttr — that is the bytecode CPython emits
+        // for those shapes (CALL_FUNCTION_EX), and `f(*xs)` must keep the
+        // tuple identity.
+        bool kw_splat = false;
+        for (const keyword& k : c.keywords)
+            if (!k.arg) kw_splat = true;
+        if (!starred && !kw_splat) {
+            if (const Attribute* attr = std::get_if<Attribute>(&c.func->v))
+                return lower_method_call(c, *attr, ok);
+        }
         ir::Value fn = lower_expr(*c.func, ok);
         if (!*ok) return {};
         if (starred) return lower_call_starred(c, fn, ok);
@@ -6176,9 +6189,7 @@ private:
     // Attribute and subscript go through the object PROTOCOL -- GetAttr and
     // GetItem -- never a type test. That is what makes them work identically
     // on a dict, a list, a numpy array and a user class with __getitem__ (I3).
-    ir::Value lower_attribute(const Attribute& n, bool* ok) {
-        ir::Value obj = lower_expr(*n.value, ok);
-        if (!*ok) return {};
+    SourceLoc attribute_loc(const Attribute& n) {
         SourceLoc attr_loc = n.loc;
         SourceLoc value_loc = expr_loc(*n.value);
         bool single_line = n.loc.line > 0 && n.loc.line == n.loc.end_line &&
@@ -6191,6 +6202,55 @@ private:
             if (attr_loc.col < 0) attr_loc.col = 0;
             attr_loc.end_col = n.loc.end_col;
         }
+        return attr_loc;
+    }
+
+    // obj.meth(args) / obj.meth(k=v). Lookup before the arguments. The runtime
+    // prepends obj only when the attribute is an unbound method descriptor.
+    ir::Value lower_method_call(const Call& c, const Attribute& attr, bool* ok) {
+        ir::Value obj = lower_expr(*attr.value, ok);
+        if (!*ok) return {};
+        SourceLoc attr_loc = attribute_loc(attr);
+        ir::Value name = const_str(mangle_ident(attr.attr), attr_loc);
+        ir::Value callable = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::LookupMethod, {obj, name}, callable,
+                       Ownership::Owned, "", 0, 0, attr_loc,
+                       make_landing_pad(attr_loc)});
+        mark_owned(callable);
+        if (owns(name)) release(name, attr_loc);
+
+        if (!c.keywords.empty()) {
+            std::vector<ir::Value> args{callable};
+            for (const expr& a : c.args) {
+                ir::Value v = lower_expr(a, ok);
+                if (!*ok) return {};
+                args.push_back(v);
+            }
+            ir::Value out = lower_call_kw(c, callable, args, ok, true);
+            if (*ok && owns(obj)) release(obj, c.loc);
+            return out;
+        }
+        std::vector<ir::Value> args{callable};
+        for (const expr& a : c.args) {
+            ir::Value v = lower_expr(a, ok);
+            if (!*ok) return {};
+            args.push_back(v);
+        }
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        std::vector<ir::Value> saved = args;
+        emit(ir::Instr{ir::Op::CallObject, std::move(args), out,
+                       Ownership::Owned, "meth", 0, 0, c.loc,
+                       make_landing_pad(c.loc)});
+        for (const ir::Value& a : saved) if (owns(a)) release(a, c.loc);
+        if (owns(obj)) release(obj, c.loc);
+        mark_owned(out);
+        return out;
+    }
+
+    ir::Value lower_attribute(const Attribute& n, bool* ok) {
+        ir::Value obj = lower_expr(*n.value, ok);
+        if (!*ok) return {};
+        SourceLoc attr_loc = attribute_loc(n);
         ir::Value name = const_str(mangle_ident(n.attr), attr_loc);
         ir::Value out = call_capi("PyObject_GetAttr", {obj, name}, attr_loc, ok, {obj, name});
         if (*ok) mark_owned(out);
@@ -7198,7 +7258,8 @@ private:
     }
 
     ir::Value lower_call_kw(const Call& c, const ir::Value& fn,
-                            const std::vector<ir::Value>& all, bool* ok) {
+                            const std::vector<ir::Value>& all, bool* ok,
+                            bool method_form = false) {
         bool splat = false;
         for (const keyword& k : c.keywords) if (!k.arg) splat = true;
         if (!splat) {
@@ -7213,8 +7274,9 @@ private:
             }
             ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             std::vector<ir::Value> saved = args;
+            std::string tag = (method_form ? "methkw:" : "kw:") + csv;
             emit(ir::Instr{ir::Op::CallObject, std::move(args), out,
-                           Ownership::Owned, "kw:" + csv, 0, 0, c.loc,
+                           Ownership::Owned, std::move(tag), 0, 0, c.loc,
                            make_landing_pad(c.loc)});
             for (const ir::Value& a : saved) if (owns(a)) release(a, c.loc);
             mark_owned(out);
