@@ -93,8 +93,10 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     Former I6 `DID_NOT_COMPILE` (24 files) all **compile on HEAD** (t-strings,
     `except*`, type aliases, kw-only lambdas, genexp/genfunc marshal).
     leftovers: `test_super_deep` (~464 B/C-frame, 90k needs ~42MB);
-    `test_compile` native `__code__` bytecode (A); `test_dis` Bound at
-    `co_consts[1]`;     `test_raise` **37/37**; `test_gc` get_objects/heap_size;
+    `test_compile` native `__code__` bytecode (A); `test_dis` is a
+    `dis`/`disasm` rendering gap (flags + `FOR_ITER_RANGE`), not a
+    `co_consts` issue — see Next steps.
+    `test_raise` **37/37**; `test_gc` get_objects/heap_size;
     `test_str` nomemory vs `with`
     GetAttr. `test_unpack`/`extcall` exit 1 both sides as `__main__`.
     MATCH: `test_iter` 57; `test_with` 54; `test_listcomps` 66;
@@ -200,6 +202,16 @@ vs C.
    that is already named: stub `co_code` / `co_consts` / linetable
    (`test_dis`, `test_compile`, `test_peepholer`, `test_opcache`) and
    `test_sys_settrace` (600s timeout).
+
+   - `test_dis` dis-rendering gap (open, unqueued). 16 cases fail on
+     `be1b7f3` (measured 2026-10-05, sysroot 3.14.7). Cause is `dis`
+     *output*, not the free-variable/cells bug fixed in `be1b7f3`: the
+     identical 16 fail before and after that commit, and runtime values
+     MATCH. Two gaps: (a) the `Flags` line — pyc emits `NESTED`/`0x1000000`
+     where CPython 3.14 `dis` omits them; (b) extended opcodes — CPython
+     prints `FOR_ITER_RANGE` for a range-loop iteration, pyc prints bare
+     `FOR_ITER`. These are `dis`/`disasm` rendering gaps, not silent wrong
+     answers (I1). Worth an I6 run before and after to bound the count.
 3. M6: a refusal names the construct, the line, and the reason.
 
 **Speed, measured 2026-10-02** (`adc0c4e`, sysroot 3.14.7, all exit 0).
