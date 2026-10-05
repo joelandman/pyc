@@ -1764,7 +1764,7 @@ private:
         std::vector<std::string> all_locals = own_locals;
         for (const std::string& fv2 : freevars) all_locals.push_back(fv2);
         std::string adopted_code;
-        if (const FuncCodeEntry* fc = take_func_code(fn_qualname, n.loc.line, n.loc.end_col)) {
+        if (const FuncCodeEntry* fc = take_func_code(fn_qualname, n.decorator_list.empty() ? n.loc.line : expr_loc(n.decorator_list.front()).line, n.loc.end_col)) {
             if (layout_ok(*fc, all_locals, freevars, params)) {
                 freevars = fc->freevars;
                 all_locals = fc->locals;
