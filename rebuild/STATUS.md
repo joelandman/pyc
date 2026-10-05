@@ -94,8 +94,8 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     `except*`, type aliases, kw-only lambdas, genexp/genfunc marshal).
     leftovers: `test_super_deep` (~464 B/C-frame, 90k needs ~42MB);
     `test_compile` native `__code__` bytecode (A); `test_dis` is a
-    `dis`/`disasm` rendering gap (flags + `FOR_ITER_RANGE`), not a
-    `co_consts` issue — see Next steps.
+    `dis`/`disasm` rendering gap (flags, cells, quickened opcodes),
+    not a `co_consts` issue — see Next steps.
     `test_raise` **37/37**; `test_gc` get_objects/heap_size;
     `test_str` nomemory vs `with`
     GetAttr. `test_unpack`/`extcall` exit 1 both sides as `__main__`.
@@ -203,15 +203,26 @@ vs C.
    (`test_dis`, `test_compile`, `test_peepholer`, `test_opcache`) and
    `test_sys_settrace` (600s timeout).
 
-   - `test_dis` dis-rendering gap (open, unqueued). 16 cases fail on
-     `be1b7f3` (measured 2026-10-05, sysroot 3.14.7). Cause is `dis`
-     *output*, not the free-variable/cells bug fixed in `be1b7f3`: the
-     identical 16 fail before and after that commit, and runtime values
-     MATCH. Two gaps: (a) the `Flags` line — pyc emits `NESTED`/`0x1000000`
-     where CPython 3.14 `dis` omits them; (b) extended opcodes — CPython
-     prints `FOR_ITER_RANGE` for a range-loop iteration, pyc prints bare
-     `FOR_ITER`. These are `dis`/`disasm` rendering gaps, not silent wrong
-     answers (I1). Worth an I6 run before and after to bound the count.
+    - `test_dis` dis-rendering gap (open, unqueued). Baseline was 16
+      failures on `be1b7f3` (sysroot 3.14.7, 2026-10-05). The co_firstline
+      stub fix `3c03bff` (in `lower.cpp`) resolves the 6
+      `disassemble_*` stub cases (`test_disassemble_class`/`_method`/
+      `_static_method` × `DisTests`+`DisWithFileTests`) and leaves **10**.
+      All 10 are `dis` *output* — runtime bytes MATCH CPython; none is a
+      wrong value. Three rendering groups: (a) `tricky` in
+      `test_info`/`test_code_info`/`test_show_code` — pyc emits
+      `NESTED`/`0x1000000` on the `Flags` line and lists cells per-name
+      where CPython groups them `[abedfxyz]`; (b) quickened/specialized
+      opcodes in the ×2 `test_loop_quicken`, ×2
+      `test_loop_with_conditional_at_end_is_quickened`, ×2
+      `test_super_instructions` — pyc's baseline bytecode prints `RESUME`
+      where CPython quickened bytecode prints `RESUME_CHECK` (and
+      `FOR_ITER` vs `FOR_ITER_RANGE`, `JUMP_BACKWARD_NO_JIT`,
+      `LOAD_GLOBAL` vs `LOAD_GLOBAL_MODULE`, `CALL` vs `CALL_PY_GENERAL`,
+      `LOAD_CONST` vs `LOAD_CONST_MORTAL`); (c) `test_nested` differs only
+      in the embedded code-object pointer (cross-process address, not an
+      opcode). These are `dis`/`disasm` rendering gaps, not silent wrong
+      answers (I1). Bound the count with an I6 run before/after.
 3. M6: a refusal names the construct, the line, and the reason.
 
 **Speed, measured 2026-10-02** (`adc0c4e`, sysroot 3.14.7, all exit 0).
