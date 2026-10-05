@@ -481,6 +481,40 @@ struct NestedReads {
     std::set<std::string>& out;
     bool enter_class_body = true;
 
+    // Names bound by the innermost enclosing scope's parameters / comprehension
+    // loop variables. A read of one of these resolves to THAT binding, never to
+    // a variable in an enclosing function -- but only when the scope actually
+    // declares the name. Without this, a nested parameter silently shadowing an
+    // outer name (e.g. `def inner(f=6)` inside a function `f`) was collected as
+    // a free variable of the outer function, which is exactly the wrong answer
+    // I1 exists to forbid: it made the shadowed name a closure cell where
+    // CPython has none, so `f` inside `inner` read outer's `f` instead of its
+    // own parameter. Over-approximation protects against MISSING a cell; a
+    // wrong shadow is no more wrong than the unsound default, but the rule
+    // below is itself sound, so keeping it is strictly more precise.
+    std::vector<std::set<std::string>> shadow_params;
+
+    bool in_shadow(const std::string& id) const {
+        for (const std::set<std::string>& names : shadow_params)
+            if (names.count(id)) return true;
+        return false;
+    }
+
+    void push_shadow(std::set<std::string> names) {
+        shadow_params.push_back(std::move(names));
+    }
+    void pop_shadow() { shadow_params.pop_back(); }
+
+    // The plain names a scope binds as parameters. *args/**kwargs are tuples,
+    // so they never shadow a single Name read, and are omitted here.
+    std::set<std::string> param_names(const arguments& a) {
+        std::set<std::string> names;
+        for (const arg& p : a.posonlyargs) names.insert(p.arg);
+        for (const arg& p : a.args) names.insert(p.arg);
+        for (const arg& p : a.kwonlyargs) names.insert(p.arg);
+        return names;
+    }
+
     void anns(const arguments& a, const std::optional<Box<expr>>& returns, bool inside) {
         auto arg_ann = [&](const arg& p) {
             if (p.annotation) expr_(**p.annotation, true);
@@ -498,8 +532,12 @@ struct NestedReads {
 
     void expr_(const expr& e, bool inside) {
         std::visit(ov{
-            [&](const Name& n){ if (inside) out.insert(n.id); },
-            [&](const Lambda& n){ expr_(*n.body, true); },
+            [&](const Name& n){ if (inside && !in_shadow(n.id)) out.insert(n.id); },
+            [&](const Lambda& n){
+                push_shadow(param_names(*n.args));
+                expr_(*n.body, true);
+                pop_shadow();
+            },
             [&](const ListComp& n){ comp(n.generators, &*n.elt, nullptr); },
             [&](const SetComp& n){ comp(n.generators, &*n.elt, nullptr); },
             [&](const DictComp& n){ comp(n.generators, &*n.value, &*n.key); },
@@ -546,24 +584,41 @@ struct NestedReads {
     }
 
     void comp(const std::vector<comprehension>& gens, const expr* elt, const expr* key) {
+        // A comprehension's loop variables are bound inside the comprehension and
+        // shadow any same name in an enclosing function. They leak into the
+        // enclosing scope's locals (see function_locals), but a read of one of
+        // them here is the loop variable, not a free variable of that scope.
+        std::set<std::string> loopvars;
+        for (const comprehension& g : gens)
+            if (const Name* t = std::get_if<Name>(&g.target->v)) loopvars.insert(t->id);
+        push_shadow(std::move(loopvars));
         if (elt) expr_(*elt, true);
         if (key) expr_(*key, true);
         for (const comprehension& g : gens) {
             expr_(*g.iter, true);
             for (const expr& c : g.ifs) expr_(c, true);
         }
+        pop_shadow();
     }
 
     void stmt_(const stmt& s, bool inside) {
         std::visit(ov{
             // Entering a nested function: everything below is "inside".
+            // Its parameters (and, for a comprehension, its loop variables)
+            // shadow any same name in an enclosing function -- a read of one of
+            // them inside the body binds to this scope, so it is not a free
+            // variable of the function we are analysing.
             [&](const FunctionDef& n){
+                push_shadow(param_names(*n.args));
                 for (const stmt& y : n.body) stmt_(y, true);
+                pop_shadow();
                 for (const expr& d : n.decorator_list) expr_(d, inside);
                 anns(*n.args, n.returns, inside);
             },
             [&](const AsyncFunctionDef& n){
+                push_shadow(param_names(*n.args));
                 for (const stmt& y : n.body) stmt_(y, true);
+                pop_shadow();
                 for (const expr& d : n.decorator_list) expr_(d, inside);
                 anns(*n.args, n.returns, inside);
             },
