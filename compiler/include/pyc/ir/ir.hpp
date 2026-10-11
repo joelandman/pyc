@@ -152,6 +152,10 @@ enum class Op {
     // Load start/stop/step written by RangeGuard. `imm` is the range-id;
     // `text` is "i" / "e" / "p". Not a terminator.
     RangeBound,
+    // No machine effect. Exists so a statement that CPython still gives a
+    // line number (`pass`) records that line. The implicit return must not
+    // move f_lineno, and without this marker the line stays on the `if`.
+    Nop,
 };
 
 const char* op_name(Op op);

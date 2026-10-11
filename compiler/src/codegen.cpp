@@ -733,6 +733,8 @@ private:
                 o_ << "  " << v(*in.result) << " = load i64, ptr %rg"
                    << (int)in.imm << "." << in.text << "\n";
                 break;
+            case Op::Nop:
+                break;
         }
     }
 

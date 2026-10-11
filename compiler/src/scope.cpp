@@ -30,12 +30,23 @@ struct Collector {
     std::set<std::string> bound;      // assigned somewhere in this scope
     std::set<std::string> declared_global;
     std::set<std::string> declared_nonlocal;
+    // A valueless `a: int` marks the name local in the symbol table, but
+    // CPython allocates no fast local unless the name is referenced. real_bound
+    // is every binding that does allocate; ann_only is the rest.
+    std::set<std::string> real_bound;
+    std::set<std::string> ann_only;
+
+    void bind_real(const std::string& id) {
+        bound.insert(id);
+        real_bound.insert(id);
+        ann_only.erase(id);
+    }
 
     // Only a bare Name binds. `a.b = 1` and `a[0] = 1` mutate an object; they
     // do not create a local.
     void target(const expr& e) {
         std::visit(ov{
-            [&](const Name& n)    { bound.insert(n.id); },
+            [&](const Name& n)    { bind_real(n.id); },
             [&](const Tuple& t)   { for (const expr& x : t.elts) target(x); },
             [&](const List& l)    { for (const expr& x : l.elts) target(x); },
             [&](const Starred& s) { if (s.value) target(*s.value); },
@@ -124,7 +135,19 @@ struct Collector {
             [&](const AugAssign& n) { if (n.target) target(*n.target);
                                       walrus(*n.value); },
             [&](const AnnAssign& n) {
-                if (n.target && n.simple) target(*n.target);
+                // `a: int = 1` stores. `a: int` does not, and the annotation
+                // expression itself is not a use (`a: a` allocates nothing).
+                if (n.target && n.simple) {
+                    if (const Name* nm = std::get_if<Name>(&n.target->v)) {
+                        if (n.value) bind_real(nm->id);
+                        else if (!real_bound.count(nm->id)) {
+                            bound.insert(nm->id);
+                            ann_only.insert(nm->id);
+                        }
+                    } else {
+                        target(*n.target);
+                    }
+                }
                 if (n.value) walrus(**n.value);
             },
             [&](const For& n)       { if (n.target) target(*n.target);
@@ -149,14 +172,14 @@ struct Collector {
             [&](const Match& n)     { for (const match_case& c : n.cases) block(c.body); },
             // A def or class binds ITS OWN NAME here, but its body is a
             // separate scope and must not be descended into.
-            [&](const FunctionDef& n)      { bound.insert(n.name); },
-            [&](const AsyncFunctionDef& n) { bound.insert(n.name); },
-            [&](const ClassDef& n)         { bound.insert(n.name); },
+            [&](const FunctionDef& n)      { bind_real(n.name); },
+            [&](const AsyncFunctionDef& n) { bind_real(n.name); },
+            [&](const ClassDef& n)         { bind_real(n.name); },
             [&](const Import& n)      { for (const alias& a : n.names)
-                                            bound.insert(a.asname ? *a.asname
-                                                                  : a.name.substr(0, a.name.find('.'))); },
+                                            bind_real(a.asname ? *a.asname
+                                                              : a.name.substr(0, a.name.find('.'))); },
             [&](const ImportFrom& n)  { for (const alias& a : n.names)
-                                            bound.insert(a.asname ? *a.asname : a.name); },
+                                            bind_real(a.asname ? *a.asname : a.name); },
             [&](const Global& n)      { for (const std::string& x : n.names) declared_global.insert(x); },
             [&](const Nonlocal& n)    { for (const std::string& x : n.names) declared_nonlocal.insert(x); },
             [&](const TypeAlias& n)   { if (n.name) target(*n.name); },
@@ -172,7 +195,7 @@ struct Collector {
     void handler(const excepthandler& h) {
         std::visit(ov{
             [&](const ExceptHandler& eh) {
-                if (eh.name) bound.insert(*eh.name);
+                if (eh.name) bind_real(*eh.name);
                 block(eh.body);
             },
         }, h.v);
@@ -181,12 +204,24 @@ struct Collector {
 
 }  // namespace
 
+// Names a function body references, for the annotation-only filter below.
+// Defined after this declaration; it calls function_locals on nested bodies.
+std::set<std::string> annotation_uses(const std::vector<stmt>& body);
+std::set<std::string> all_writes(const std::vector<stmt>& body);
+
 // Locals = everything bound in the body, plus the parameters, minus anything
-// explicitly declared global or nonlocal.
+// explicitly declared global or nonlocal. A valueless annotation whose name
+// nothing reads is not a slot: CPython's symbol table marks it local and
+// then the compiler drops it (`def f(): a: int` has empty co_varnames).
 std::vector<std::string> function_locals(const std::vector<std::string>& params,
                                          const std::vector<stmt>& body) {
     Collector c;
     c.block(body);
+    if (!c.ann_only.empty()) {
+        std::set<std::string> uses = annotation_uses(body);
+        for (const std::string& n : c.ann_only)
+            if (!uses.count(n)) c.bound.erase(n);
+    }
     std::vector<std::string> out = params;
     for (const std::string& n : c.bound) {
         if (c.declared_global.count(n) || c.declared_nonlocal.count(n)) continue;
@@ -195,6 +230,388 @@ std::vector<std::string> function_locals(const std::vector<std::string>& params,
         if (!dup) out.push_back(n);
     }
     return out;
+}
+
+// References that force CPython to keep a slot for an annotation-only name.
+// The function's own `a: int` annotation is not one (`a: a` allocates nothing);
+// a nested parameter annotation, a class body, a lambda, and a comprehension
+// are. Nested locals shadow. This is not NestedReads: that walker feeds
+// closure analysis and deliberately counts annotation targets.
+namespace {
+
+struct AnnUses {
+    std::set<std::string> out;
+    std::vector<std::set<std::string>> shadow;
+    std::set<std::string> class_shadow;
+    bool use_class_shadow = false;
+    // Comprehension targets and match bindings leak into THIS function only.
+    // Inside a nested function or a class they belong to that scope.
+    bool leak_bindings = true;
+
+    bool hidden(const std::string& id) const {
+        if (use_class_shadow && class_shadow.count(id)) return true;
+        for (const std::set<std::string>& s : shadow)
+            if (s.count(id)) return true;
+        return false;
+    }
+
+    void use(const std::string& id) {
+        if (!hidden(id)) out.insert(id);
+    }
+
+    void note(const Name& n) {
+        if (std::holds_alternative<Load>(n.ctx.v) || std::holds_alternative<Del>(n.ctx.v))
+            use(n.id);
+    }
+
+    std::set<std::string> param_names(const arguments& a) const {
+        std::set<std::string> names;
+        for (const arg& p : a.posonlyargs) names.insert(p.arg);
+        for (const arg& p : a.args) names.insert(p.arg);
+        for (const arg& p : a.kwonlyargs) names.insert(p.arg);
+        if (a.vararg) names.insert((*a.vararg)->arg);
+        if (a.kwarg) names.insert((*a.kwarg)->arg);
+        return names;
+    }
+
+    void binding_names(const expr& e, std::set<std::string>& names) {
+        std::visit(ov{
+            [&](const Name& n)    { names.insert(n.id); },
+            [&](const Tuple& t)   { for (const expr& x : t.elts) binding_names(x, names); },
+            [&](const List& t)    { for (const expr& x : t.elts) binding_names(x, names); },
+            [&](const Starred& s) { if (s.value) binding_names(*s.value, names); },
+            [&](const Attribute&) {}, [&](const Subscript&) {},
+            [&](const BinOp&) {}, [&](const BoolOp&) {}, [&](const NamedExpr&) {},
+            [&](const UnaryOp&) {}, [&](const Lambda&) {}, [&](const IfExp&) {},
+            [&](const Dict&) {}, [&](const Set&) {}, [&](const ListComp&) {},
+            [&](const SetComp&) {}, [&](const DictComp&) {}, [&](const GeneratorExp&) {},
+            [&](const Await&) {}, [&](const Yield&) {}, [&](const YieldFrom&) {},
+            [&](const Compare&) {}, [&](const Call&) {}, [&](const FormattedValue&) {},
+            [&](const JoinedStr&) {}, [&](const TemplateStr&) {}, [&](const Interpolation&) {},
+            [&](const Constant&) {}, [&](const Slice&) {},
+        }, e.v);
+    }
+
+    void expr_(const expr& e) {
+        std::visit(ov{
+            [&](const Name& n) { note(n); },
+            [&](const Lambda& n) { walk_lambda(n); },
+            [&](const ListComp& n) { comp(n.generators, &*n.elt, nullptr); },
+            [&](const SetComp& n) { comp(n.generators, &*n.elt, nullptr); },
+            [&](const DictComp& n) { comp(n.generators, &*n.value, &*n.key); },
+            [&](const GeneratorExp& n) { comp(n.generators, &*n.elt, nullptr); },
+            [&](const BinOp& n) { expr_(*n.left); expr_(*n.right); },
+            [&](const BoolOp& n) { for (const expr& v : n.values) expr_(v); },
+            [&](const UnaryOp& n) { expr_(*n.operand); },
+            [&](const Compare& n) { expr_(*n.left);
+                                    for (const expr& v : n.comparators) expr_(v); },
+            [&](const Call& n) { expr_(*n.func);
+                                 for (const expr& v : n.args) expr_(v);
+                                 for (const keyword& k : n.keywords) expr_(*k.value); },
+            [&](const Attribute& n) { expr_(*n.value); },
+            [&](const Subscript& n) { expr_(*n.value); expr_(*n.slice); },
+            [&](const IfExp& n) { expr_(*n.test); expr_(*n.body); expr_(*n.orelse); },
+            [&](const Tuple& n) { for (const expr& v : n.elts) expr_(v); },
+            [&](const List& n) { for (const expr& v : n.elts) expr_(v); },
+            [&](const Set& n) { for (const expr& v : n.elts) expr_(v); },
+            [&](const Dict& n) { for (const auto& k : n.keys) if (k && *k) expr_(**k);
+                                 for (const expr& v : n.values) expr_(v); },
+            [&](const Starred& n) { expr_(*n.value); },
+            [&](const Slice& n) { if (n.lower && *n.lower) expr_(**n.lower);
+                                  if (n.upper && *n.upper) expr_(**n.upper);
+                                  if (n.step && *n.step) expr_(**n.step); },
+            [&](const NamedExpr& n) { expr_(*n.value);
+                                      if (n.target) expr_(*n.target); },
+            [&](const Await& n) { expr_(*n.value); },
+            [&](const Yield& n) { if (n.value) expr_(**n.value); },
+            [&](const YieldFrom& n) { expr_(*n.value); },
+            [&](const FormattedValue& n) { expr_(*n.value);
+                                           if (n.format_spec && *n.format_spec)
+                                               expr_(**n.format_spec); },
+            [&](const JoinedStr& n) { for (const expr& v : n.values) expr_(v); },
+            [&](const TemplateStr& n) { for (const expr& v : n.values) expr_(v); },
+            [&](const Interpolation& n) { expr_(*n.value);
+                                          if (n.format_spec && *n.format_spec)
+                                              expr_(**n.format_spec); },
+            [&](const Constant&) {},
+        }, e.v);
+    }
+
+    void comp(const std::vector<comprehension>& gens, const expr* elt, const expr* key) {
+        if (!gens.empty()) expr_(*gens[0].iter);
+        std::set<std::string> loops;
+        for (const comprehension& g : gens) binding_names(*g.target, loops);
+        if (leak_bindings)
+            for (const std::string& id : loops) use(id);
+        shadow.push_back(std::move(loops));
+        if (elt) expr_(*elt);
+        if (key) expr_(*key);
+        for (const comprehension& g : gens) {
+            expr_(*g.target);
+            for (const expr& c : g.ifs) expr_(c);
+        }
+        for (std::size_t i = 1; i < gens.size(); ++i) expr_(*gens[i].iter);
+        shadow.pop_back();
+    }
+
+    void annotate_arg(const arg& p) {
+        if (p.annotation) expr_(**p.annotation);
+    }
+
+    void annotate_args(const arguments& a, const std::optional<Box<expr>>& returns) {
+        for (const arg& p : a.posonlyargs) annotate_arg(p);
+        for (const arg& p : a.args) annotate_arg(p);
+        if (a.vararg) annotate_arg(**a.vararg);
+        for (const arg& p : a.kwonlyargs) annotate_arg(p);
+        if (a.kwarg) annotate_arg(**a.kwarg);
+        if (returns && *returns) expr_(**returns);
+    }
+
+    std::set<std::string> type_param_names(const std::vector<type_param>& tps) const {
+        std::set<std::string> names;
+        for (const type_param& tp : tps) {
+            std::visit(ov{
+                [&](const TypeVar& t) { names.insert(t.name); },
+                [&](const ParamSpec& t) { names.insert(t.name); },
+                [&](const TypeVarTuple& t) { names.insert(t.name); },
+            }, tp.v);
+        }
+        return names;
+    }
+
+    void type_param_exprs(const std::vector<type_param>& tps) {
+        // Bounds and defaults see the type parameters (`def g[a: a]` does not
+        // close over an outer `a`). Parameter defaults do not: those are
+        // walked by the caller, outside this shadow.
+        std::set<std::string> names = type_param_names(tps);
+        shadow.push_back(names);
+        for (const type_param& tp : tps) {
+            std::visit(ov{
+                [&](const TypeVar& t) {
+                    if (t.bound) expr_(**t.bound);
+                    if (t.default_value) expr_(**t.default_value);
+                },
+                [&](const ParamSpec& t) {
+                    if (t.default_value) expr_(**t.default_value);
+                },
+                [&](const TypeVarTuple& t) {
+                    if (t.default_value) expr_(**t.default_value);
+                },
+            }, tp.v);
+        }
+        shadow.pop_back();
+    }
+
+    template <class Fn>
+    void walk_func(const Fn& n) {
+        bool saved_leak = leak_bindings;
+        bool saved_class = use_class_shadow;
+        leak_bindings = false;
+        use_class_shadow = false;
+        for (const expr& d : n.decorator_list) expr_(d);
+        for (const expr& d : n.args->defaults) expr_(d);
+        for (const auto& kd : n.args->kw_defaults)
+            if (kd && *kd) expr_(**kd);
+        type_param_exprs(n.type_params);
+        // Parameter annotations are not shadowed by the parameters
+        // (`def g(a: a)` reads the outer `a`) but type parameters are.
+        shadow.push_back(type_param_names(n.type_params));
+        annotate_args(*n.args, n.returns);
+        std::set<std::string> sh = param_names(*n.args);
+        for (const std::string& loc : function_locals({}, n.body)) sh.insert(loc);
+        shadow.push_back(std::move(sh));
+        for (const stmt& y : n.body) stmt_(y, true);
+        shadow.pop_back();
+        shadow.pop_back();
+        leak_bindings = saved_leak;
+        use_class_shadow = saved_class;
+    }
+
+    void walk_lambda(const Lambda& n) {
+        bool saved_leak = leak_bindings;
+        bool saved_class = use_class_shadow;
+        leak_bindings = false;
+        use_class_shadow = false;
+        for (const expr& d : n.args->defaults) expr_(d);
+        for (const auto& kd : n.args->kw_defaults)
+            if (kd && *kd) expr_(**kd);
+        shadow.push_back(param_names(*n.args));
+        annotate_args(*n.args, std::nullopt);
+        expr_(*n.body);
+        shadow.pop_back();
+        leak_bindings = saved_leak;
+        use_class_shadow = saved_class;
+    }
+
+    void walk_class(const ClassDef& n) {
+        for (const expr& d : n.decorator_list) expr_(d);
+        for (const expr& b : n.bases) expr_(b);
+        for (const keyword& k : n.keywords) expr_(*k.value);
+        type_param_exprs(n.type_params);
+        std::set<std::string> saved_shadow = class_shadow;
+        bool saved_use = use_class_shadow;
+        bool saved_leak = leak_bindings;
+        class_shadow = all_writes(n.body);
+        use_class_shadow = true;
+        leak_bindings = false;
+        for (const stmt& y : n.body) stmt_(y, false);
+        class_shadow = std::move(saved_shadow);
+        use_class_shadow = saved_use;
+        leak_bindings = saved_leak;
+    }
+
+    void pattern_names(const pattern& p, std::set<std::string>& names) {
+        std::visit(ov{
+            [&](const MatchAs& m) {
+                if (m.name) names.insert(*m.name);
+                if (m.pattern) pattern_names(**m.pattern, names);
+            },
+            [&](const MatchStar& m) { if (m.name) names.insert(*m.name); },
+            [&](const MatchMapping& m) {
+                if (m.rest) names.insert(*m.rest);
+                for (const pattern& x : m.patterns) pattern_names(x, names);
+            },
+            [&](const MatchClass& m) {
+                for (const pattern& x : m.patterns) pattern_names(x, names);
+                for (const pattern& x : m.kwd_patterns) pattern_names(x, names);
+            },
+            [&](const MatchSequence& m) {
+                for (const pattern& x : m.patterns) pattern_names(x, names);
+            },
+            [&](const MatchOr& m) {
+                for (const pattern& x : m.patterns) pattern_names(x, names);
+            },
+            [&](const MatchValue&) {},
+            [&](const MatchSingleton&) {},
+        }, p.v);
+    }
+
+    void pattern_loads(const pattern& p) {
+        std::visit(ov{
+            [&](const MatchAs& m) { if (m.pattern) pattern_loads(**m.pattern); },
+            [&](const MatchClass& m) {
+                expr_(*m.cls);
+                for (const pattern& x : m.patterns) pattern_loads(x);
+                for (const pattern& x : m.kwd_patterns) pattern_loads(x);
+            },
+            [&](const MatchMapping& m) {
+                for (const expr& k : m.keys) pattern_loads_key(k);
+                for (const pattern& x : m.patterns) pattern_loads(x);
+            },
+            [&](const MatchSequence& m) {
+                for (const pattern& x : m.patterns) pattern_loads(x);
+            },
+            [&](const MatchOr& m) {
+                for (const pattern& x : m.patterns) pattern_loads(x);
+            },
+            [&](const MatchValue& m) { expr_(*m.value); },
+            [&](const MatchStar&) {},
+            [&](const MatchSingleton&) {},
+        }, p.v);
+    }
+
+    void pattern_loads_key(const expr& k) { expr_(k); }
+
+    void walk_match(const Match& n, bool skip_ann) {
+        expr_(*n.subject);
+        for (const match_case& c : n.cases) {
+            std::set<std::string> bound;
+            pattern_names(*c.pattern, bound);
+            pattern_loads(*c.pattern);
+            if (leak_bindings)
+                for (const std::string& id : bound) use(id);
+            shadow.push_back(std::move(bound));
+            if (c.guard) expr_(**c.guard);
+            for (const stmt& y : c.body) stmt_(y, skip_ann);
+            shadow.pop_back();
+        }
+    }
+
+    // skip_ann: a function body's `b: a` does not read `a`. A class body's does.
+    void stmt_(const stmt& s, bool skip_ann) {
+        std::visit(ov{
+            [&](const FunctionDef& n) { walk_func(n); },
+            [&](const AsyncFunctionDef& n) { walk_func(n); },
+            [&](const ClassDef& n) { walk_class(n); },
+            [&](const Expr& n) { expr_(*n.value); },
+            [&](const Return& n) { if (n.value) expr_(**n.value); },
+            [&](const Assign& n) { expr_(*n.value);
+                                   for (const expr& t : n.targets) expr_(t); },
+            [&](const AugAssign& n) { expr_(*n.value); expr_(*n.target); },
+            [&](const AnnAssign& n) {
+                if (n.value) expr_(**n.value);
+                expr_(*n.target);
+                if (!skip_ann) expr_(*n.annotation);
+            },
+            [&](const If& n) { expr_(*n.test);
+                               for (const stmt& y : n.body) stmt_(y, skip_ann);
+                               for (const stmt& y : n.orelse) stmt_(y, skip_ann); },
+            [&](const While& n) { expr_(*n.test);
+                                  for (const stmt& y : n.body) stmt_(y, skip_ann);
+                                  for (const stmt& y : n.orelse) stmt_(y, skip_ann); },
+            [&](const For& n) { expr_(*n.iter); expr_(*n.target);
+                                for (const stmt& y : n.body) stmt_(y, skip_ann);
+                                for (const stmt& y : n.orelse) stmt_(y, skip_ann); },
+            [&](const AsyncFor& n) { expr_(*n.iter); expr_(*n.target);
+                                     for (const stmt& y : n.body) stmt_(y, skip_ann);
+                                     for (const stmt& y : n.orelse) stmt_(y, skip_ann); },
+            [&](const With& n) {
+                for (const withitem& w : n.items) {
+                    expr_(*w.context_expr);
+                    if (w.optional_vars) expr_(**w.optional_vars);
+                }
+                for (const stmt& y : n.body) stmt_(y, skip_ann);
+            },
+            [&](const AsyncWith& n) {
+                for (const withitem& w : n.items) {
+                    expr_(*w.context_expr);
+                    if (w.optional_vars) expr_(**w.optional_vars);
+                }
+                for (const stmt& y : n.body) stmt_(y, skip_ann);
+            },
+            [&](const Try& n) { try_(n.body, n.orelse, n.finalbody, n.handlers, skip_ann); },
+            [&](const TryStar& n) { try_(n.body, n.orelse, n.finalbody, n.handlers, skip_ann); },
+            [&](const Match& n) { walk_match(n, skip_ann); },
+            [&](const Raise& n) { if (n.exc) expr_(**n.exc);
+                                  if (n.cause) expr_(**n.cause); },
+            [&](const Assert& n) { expr_(*n.test);
+                                   if (n.msg) expr_(**n.msg); },
+            [&](const Delete& n) { for (const expr& t : n.targets) expr_(t); },
+            [&](const Import&) {},
+            [&](const ImportFrom&) {},
+            [&](const Global&) {},
+            [&](const Nonlocal& n) {
+                // Inside a nested function this names the enclosing binding.
+                if (!leak_bindings)
+                    for (const std::string& x : n.names) use(x);
+            },
+            [&](const Pass&) {},
+            [&](const Break&) {},
+            [&](const Continue&) {},
+            [&](const TypeAlias& n) { if (n.value) expr_(*n.value); },
+        }, s.v);
+    }
+
+    void try_(const std::vector<stmt>& body, const std::vector<stmt>& orelse,
+              const std::vector<stmt>& finalbody, const std::vector<excepthandler>& handlers,
+              bool skip_ann) {
+        for (const stmt& y : body) stmt_(y, skip_ann);
+        for (const stmt& y : orelse) stmt_(y, skip_ann);
+        for (const stmt& y : finalbody) stmt_(y, skip_ann);
+        for (const excepthandler& h : handlers) {
+            const ExceptHandler& eh = std::get<ExceptHandler>(h.v);
+            if (eh.type) expr_(**eh.type);
+            for (const stmt& y : eh.body) stmt_(y, skip_ann);
+        }
+    }
+};
+
+}  // namespace
+
+std::set<std::string> annotation_uses(const std::vector<stmt>& body) {
+    AnnUses u;
+    for (const stmt& s : body) u.stmt_(s, true);
+    return u.out;
 }
 
 // Names this body explicitly declares `nonlocal`. These are free by

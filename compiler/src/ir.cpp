@@ -61,6 +61,7 @@ const char* op_name(Op op) {
         case Op::RangeGuard:  return "range.guard";
         case Op::RangeNext:   return "range.next";
         case Op::RangeBound:  return "range.bound";
+        case Op::Nop:         return "nop";
     }
     return "?";
 }

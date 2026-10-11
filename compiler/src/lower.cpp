@@ -559,7 +559,14 @@ private:
         std::visit(ov{
             [&](const Expr& e)   { ok = lower_expr_stmt(e); },
             [&](const Assign& a) { ok = lower_assign(a); },
-            [&](const Pass&)     { /* nothing to emit */ },
+            [&](const Pass& n)   {
+                // CPython attributes the fall-through return to this line.
+                // A branch or epilogue must not move the line afterwards.
+                if (n.loc.line > 0)
+                    emit(ir::Instr{ir::Op::Nop, {}, std::nullopt,
+                                   Ownership::NotAnObject, "", 0, 0, n.loc,
+                                   std::nullopt});
+            },
             // Everything else is a diagnostic, one arm each. No generic arm:
             // a node kind added upstream must break this build (I4).
             [&](const FunctionDef& n)      { ok = lower_functiondef(n); },
@@ -665,6 +672,15 @@ private:
     }
 
     ir::Value lower_predicate_boxed(const expr& e, bool* ok) {
+        // `if a and b` must not call __bool__ on `a` twice. A BoolOp used as
+        // a condition is lowered straight to the branch; the value form below
+        // would hand back an object whose truth was already decided.
+        if (const BoolOp* b = std::get_if<BoolOp>(&e.v))
+            return lower_boolop_predicate(*b, ok);
+        // `if not (a or b)` inverts the jump. Materialising `not` and testing
+        // the result would call __bool__ on `a` a second time.
+        ir::Value inv;
+        if (pred_inverted_boolop(e, &inv, ok)) return inv;
         ir::Value v = lower_expr(e, ok);
         if (!*ok) return {};
         ir::Value t = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
@@ -1761,18 +1777,65 @@ private:
             for (const std::string& f2 : freevars) if (f2 == nm) { have = true; break; }
             if (!have) freevars.push_back(nm);
         }
-        std::vector<std::string> all_locals = own_locals;
-        for (const std::string& fv2 : freevars) all_locals.push_back(fv2);
+        // CPython mangles a class-body local before it allocates the slot.
+        // The body still spells the name the way it was written, so each raw
+        // name is aliased onto the mangled slot below. The published names
+        // are the mangled ones: that is co_varnames, and it is what makes
+        // the adopted code object's localsplus set match.
+        std::vector<std::string> raw_all = own_locals;
+        for (const std::string& fv2 : freevars) raw_all.push_back(fv2);
+        std::vector<std::string> man_all;
+        man_all.reserve(raw_all.size());
+        for (const std::string& s : raw_all) man_all.push_back(mangle_ident(s));
+        std::vector<std::string> man_free;
+        man_free.reserve(freevars.size());
+        for (const std::string& s : freevars) man_free.push_back(mangle_ident(s));
+        std::vector<std::string> man_params;
+        man_params.reserve(params.size());
+        for (const std::string& s : params) man_params.push_back(mangle_ident(s));
+        std::vector<std::string> alias_raw = raw_all;
         std::string adopted_code;
         if (const FuncCodeEntry* fc = take_func_code(fn_qualname, n.decorator_list.empty() ? n.loc.line : expr_loc(n.decorator_list.front()).line, n.loc.end_col)) {
-            if (layout_ok(*fc, all_locals, freevars, params)) {
-                freevars = fc->freevars;
-                all_locals = fc->locals;
-                adopted_code = fc->code;
+            if (layout_ok(*fc, man_all, man_free, man_params)) {
+                std::map<std::string, std::string> to_raw;
+                bool clash = false;
+                for (std::size_t i = 0; i < raw_all.size(); ++i) {
+                    auto it = to_raw.find(man_all[i]);
+                    if (it != to_raw.end() && it->second != raw_all[i]) {
+                        clash = true;
+                        break;
+                    }
+                    to_raw.emplace(man_all[i], raw_all[i]);
+                }
+                std::vector<std::string> ordered_raw;
+                std::vector<std::string> ordered_free;
+                bool map_ok = !clash && fc->locals.size() == raw_all.size();
+                if (map_ok) {
+                    for (const std::string& m : fc->locals) {
+                        auto it = to_raw.find(m);
+                        if (it == to_raw.end()) { map_ok = false; break; }
+                        ordered_raw.push_back(it->second);
+                    }
+                }
+                if (map_ok) {
+                    for (const std::string& m : fc->freevars) {
+                        auto it = to_raw.find(m);
+                        if (it == to_raw.end()) { map_ok = false; break; }
+                        ordered_free.push_back(it->second);
+                    }
+                }
+                if (map_ok && ordered_raw.size() == fc->locals.size()
+                    && ordered_free.size() == fc->freevars.size()) {
+                    man_all = fc->locals;
+                    alias_raw = std::move(ordered_raw);
+                    freevars = std::move(ordered_free);
+                    adopted_code = fc->code;
+                }
             }
         }
-        if (a.vararg) vararg_slot = slot_named(all_locals, (*a.vararg)->arg);
-        if (a.kwarg) kwarg_slot = slot_named(all_locals, (*a.kwarg)->arg);
+        std::vector<std::string> all_locals = std::move(man_all);
+        if (a.vararg) vararg_slot = slot_named(all_locals, mangle_ident((*a.vararg)->arg));
+        if (a.kwarg) kwarg_slot = slot_named(all_locals, mangle_ident((*a.kwarg)->arg));
         // Closure cells for the nested function come from THIS function's
         // slots, so they must be read before the scope switches. Free-var
         // order is the adopted code object's order when one was installed.
@@ -1832,8 +1895,17 @@ private:
                 if (g.line >= a && g.line <= b) { inner = true; break; }
             if (!inner) cur()->extra_marshal.push_back(g.code);
         }
-        cur()->int_locals = int_locals(slotnames, n.body, inner);
-        int_locals_ = cur()->int_locals;
+        // The body spells the name as written. Codegen allocates the int slot
+        // under the published (possibly mangled) local name, so the set on the
+        // function has to use that spelling or the slot is never created.
+        {
+            std::set<std::string> raw_ints = int_locals(slotnames, n.body, inner);
+            int_locals_ = raw_ints;
+            std::set<std::string> published;
+            for (std::size_t i = 0; i < all_locals.size() && i < alias_raw.size(); ++i)
+                if (raw_ints.count(alias_raw[i])) published.insert(all_locals[i]);
+            cur()->int_locals = std::move(published);
+        }
         live_i64_.clear();
         int_bounds_.clear();
         loop_trips_.clear();
@@ -1842,6 +1914,10 @@ private:
         locals_.clear();
         for (std::uint32_t i = 0; i < all_locals.size(); ++i)
             locals_[all_locals[i]] = i;
+        // The body names the local as written. The slot was allocated under
+        // the mangled spelling so the adopted code object matches.
+        for (std::size_t i = 0; i < alias_raw.size() && i < all_locals.size(); ++i)
+            locals_[alias_raw[i]] = static_cast<std::uint32_t>(i);
         enclosing_cells_.push_back(cells_);
         cells_.clear();
         for (const std::string& c : cellvars) cells_[c] = locals_[c];
@@ -1900,12 +1976,15 @@ private:
         for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
         func_globals_.pop_back();
         if (ok) {
-            // Falling off the end returns None, always.
+            // Falling off the end returns None. The line stays where the
+            // last executed statement put it: CPython's implicit RETURN is
+            // on that statement, and a def-line return reports f_lineno 0.
+            SourceLoc no_line{};
             ir::Value none = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             emit(ir::Instr{ir::Op::ConstNone, {}, none, Ownership::Owned, "",
-                           0, 0, n.loc, std::nullopt});
+                           0, 0, no_line, std::nullopt});
             emit(ir::Instr{ir::Op::Return, {none}, std::nullopt,
-                           Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+                           Ownership::NotAnObject, "", 0, 0, no_line, std::nullopt});
         }
 
         fn_idx_ = outer_fn; blk_ = outer_blk; locals_ = outer_locals;
@@ -2548,8 +2627,10 @@ private:
         bool then_ok = !terminated();
         std::uint32_t then_end = (std::uint32_t)blk_;
         auto live_then = live_i64_;
+        // A line here would clobber `pass` (or the last statement) back to
+        // the `if` line before the implicit return is observed.
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", join_b, 0, n.loc, std::nullopt});
+                       "", join_b, 0, SourceLoc{}, std::nullopt});
         live_i64_ = live_in;
         set_block(else_b);
         if (!lower_stmt_list(n.orelse)) return false;
@@ -2557,7 +2638,7 @@ private:
         std::uint32_t else_end = (std::uint32_t)blk_;
         auto live_else = live_i64_;
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", join_b, 0, n.loc, std::nullopt});
+                       "", join_b, 0, SourceLoc{}, std::nullopt});
         set_block(join_b);
         if (then_ok && else_ok)
             merge_live_i64(live_then, then_end, live_else, else_end, n.loc);
@@ -6458,37 +6539,302 @@ private:
     // `a and b` yields a if a is falsy, else b -- the VALUE, not a bool, and
     // b is not evaluated when a decides the answer. Both are observable, so
     // neither can be approximated with PyObject_IsTrue on the result.
+    //
+    // Mixed chains share one truth test (gh-124285). `(a and b) or c` with
+    // a falsy must call __bool__ on a once: that test already proved the
+    // `and` result is falsy, so the `or` continues to c without asking
+    // again. Lowering each BoolOp on its own, then testing the phi, asks
+    // twice. Same-operator nesting (`(a and b) and c`) keeps the deciding
+    // value; opposite-operator nesting drops it and continues.
+    struct BoolIn {
+        std::vector<ir::Value> vals;
+        std::vector<std::uint32_t> froms;
+        void add(const ir::Value& v, std::uint32_t b) {
+            vals.push_back(v);
+            froms.push_back(b);
+        }
+    };
+
+    void emit_br(std::uint32_t target, const SourceLoc& loc) {
+        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                       "", target, 0, loc, std::nullopt});
+    }
+
+    void emit_condbr(const ir::Value& t, std::uint32_t if_true, std::uint32_t if_false,
+                     const SourceLoc& loc) {
+        emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
+                       "", if_true, if_false, loc, std::nullopt});
+    }
+
+    // IsTrue while v is still owned, so a raising __bool__ releases it.
+    // Forget afterwards: the drop edges decref, a kept edge transfers the
+    // reference to the result phi. owned_ is not per-path, so the decrefs
+    // are emitted explicitly and the forget happens once.
+    ir::Value truth_test(const ir::Value& v, const SourceLoc& loc) {
+        ir::Value t = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        emit(ir::Instr{ir::Op::IsTrue, {v}, t, Ownership::NotAnObject,
+                       "PyObject_IsTrue", 0, 0, loc, make_landing_pad(loc)});
+        return t;
+    }
+
+    void drop_edge(const ir::Value& v, bool owned, std::uint32_t target,
+                   const SourceLoc& loc) {
+        if (owned) emit_decref(v, loc);
+        emit_br(target, loc);
+    }
+
+    // Test v once for operator is_and.
+    // Deciding edge (and+falsy, or+truthy): keep v into `done`, or drop it
+    // and go to `on_decide` when keep is false.
+    // Continuing edge: always drop v and go to `on_cont`.
+    //
+    // The edge that reaches `done` is its own block with nothing but a
+    // branch. The join is allocated before these blocks, and codegen resolves
+    // a phi predecessor through tail_label_, which a split block only gets
+    // once that block has been emitted. IsTrue splits its block, so naming
+    // the test block itself would record bbN while the branch leaves the
+    // continuation. A block that does not raise is not split, and bbN is the
+    // predecessor either way.
+    void split_truth(const ir::Value& v, bool is_and, bool keep, BoolIn* in,
+                     std::uint32_t done, std::uint32_t on_decide, std::uint32_t on_cont,
+                     const SourceLoc& loc) {
+        ir::Value t = truth_test(v, loc);
+        std::uint32_t cont_b = new_block(is_and ? "and.cont" : "or.cont");
+        std::uint32_t decide_b = new_block(keep ? "bool.keep" : "bool.drop");
+        if (is_and) emit_condbr(t, cont_b, decide_b, loc);
+        else        emit_condbr(t, decide_b, cont_b, loc);
+        bool owned = owns(v);
+        if (owned) forget(v);
+        set_block(cont_b);
+        drop_edge(v, owned, on_cont, loc);
+        set_block(decide_b);
+        if (keep) {
+            in->add(v, decide_b);
+            emit_br(done, loc);
+        } else {
+            drop_edge(v, owned, on_decide, loc);
+        }
+    }
+
+    void emit_chain_result(const BoolOp& n, BoolIn* in, std::uint32_t done, bool* ok) {
+        if (n.values.size() < 2) {
+            *ok = err("degenerate boolean operator", "BoolOp", n.loc);
+            return;
+        }
+        bool is_and = std::holds_alternative<And>(n.op.v);
+        for (std::size_t i = 0; i + 1 < n.values.size(); ++i) {
+            if (!*ok) return;
+            std::uint32_t cont = new_block(is_and ? "and.rhs" : "or.rhs");
+            emit_bool_tested(n.values[i], is_and, true, in, done, 0, cont, ok);
+            set_block(cont);
+        }
+        if (*ok) emit_bool_result(n.values.back(), in, done, ok);
+    }
+
+    void emit_bool_result(const expr& e, BoolIn* in, std::uint32_t done, bool* ok) {
+        if (const BoolOp* inner = std::get_if<BoolOp>(&e.v)) {
+            emit_chain_result(*inner, in, done, ok);
+            return;
+        }
+        ir::Value v = lower_expr(e, ok);
+        if (!*ok) return;
+        // Same constraint as split_truth: the yield block must not be one
+        // codegen splits, or the phi names the wrong predecessor.
+        std::uint32_t edge = new_block("bool.yield");
+        emit_br(edge, expr_loc(e));
+        in->add(v, edge);
+        set_block(edge);
+        emit_br(done, expr_loc(e));
+    }
+
+    void emit_bool_tested(const expr& e, bool is_and, bool keep, BoolIn* in,
+                          std::uint32_t done, std::uint32_t on_decide,
+                          std::uint32_t on_cont, bool* ok) {
+        if (const BoolOp* inner = std::get_if<BoolOp>(&e.v)) {
+            if (inner->values.size() < 2) {
+                *ok = err("degenerate boolean operator", "BoolOp", inner->loc);
+                return;
+            }
+            bool inner_and = std::holds_alternative<And>(inner->op.v);
+            if (inner_and == is_and) {
+                for (std::size_t i = 0; i + 1 < inner->values.size(); ++i) {
+                    if (!*ok) return;
+                    std::uint32_t nxt = new_block(is_and ? "and.rhs" : "or.rhs");
+                    emit_bool_tested(inner->values[i], is_and, keep, in, done,
+                                     on_decide, nxt, ok);
+                    set_block(nxt);
+                }
+                if (*ok)
+                    emit_bool_tested(inner->values.back(), is_and, keep, in, done,
+                                     on_decide, on_cont, ok);
+                return;
+            }
+            // Opposite operator: a short-circuit already has the truth value
+            // that makes the outer operator CONTINUE, so drop it and go to
+            // the outer continuation. Do not test that object again.
+            for (std::size_t i = 0; i + 1 < inner->values.size(); ++i) {
+                if (!*ok) return;
+                std::uint32_t nxt = new_block(inner_and ? "and.rhs" : "or.rhs");
+                emit_bool_tested(inner->values[i], inner_and, false, in, 0,
+                                 on_cont, nxt, ok);
+                set_block(nxt);
+            }
+            if (*ok)
+                emit_bool_tested(inner->values.back(), is_and, keep, in, done,
+                                 on_decide, on_cont, ok);
+            return;
+        }
+        ir::Value v = lower_expr(e, ok);
+        if (!*ok) return;
+        split_truth(v, is_and, keep, in, done, on_decide, on_cont, expr_loc(e));
+    }
+
     ir::Value lower_boolop(const BoolOp& n, bool* ok) {
         if (n.values.size() < 2) { *ok = err("degenerate boolean operator", "BoolOp", n.loc); return {}; }
-        bool is_and = std::holds_alternative<And>(n.op.v);
-
-        ir::Value acc = lower_expr(n.values[0], ok);
+        BoolIn in;
+        std::uint32_t done = new_block("bool.join");
+        emit_chain_result(n, &in, done, ok);
         if (!*ok) return {};
-        for (std::size_t i = 1; i < n.values.size(); ++i) {
-            ir::Value t = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
-            emit(ir::Instr{ir::Op::IsTrue, {acc}, t, Ownership::NotAnObject,
-                           "PyObject_IsTrue", 0, 0, n.loc, make_landing_pad(n.loc)});
-            std::uint32_t rhs_b = new_block(is_and ? "and.rhs" : "or.rhs");
-            std::uint32_t join  = new_block(is_and ? "and.join" : "or.join");
-            std::uint32_t pred  = (std::uint32_t)blk_;
-            // and: evaluate rhs when truthy. or: evaluate rhs when falsy.
-            emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
-                           "", is_and ? rhs_b : join, is_and ? join : rhs_b,
-                           n.loc, std::nullopt});
-            set_block(rhs_b);
-            // The short-circuit value is dead on this path; the rhs value
-            // becomes the result. Release exactly one of them per path.
-            if (owns(acc)) emit_decref(acc, n.loc);
-            ir::Value rhs = lower_expr(n.values[i], ok);
-            if (!*ok) return {};
-            std::uint32_t rhs_end = (std::uint32_t)blk_;
-            emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                           "", join, 0, n.loc, std::nullopt});
-            set_block(join);
-            forget(acc); forget(rhs);
-            acc = emit_phi({acc, rhs}, {pred, rhs_end}, n.loc);
+        if (in.vals.empty()) {
+            *ok = err("boolean operator produced no value", "BoolOp", n.loc);
+            return {};
         }
-        return acc;
+        set_block(done);
+        for (const ir::Value& v : in.vals) forget(v);
+        return emit_phi(in.vals, in.froms, n.loc);
+    }
+
+    // `not` wrapped around a BoolOp, in a condition. Zero `not`s is not this
+    // helper: the caller already dispatched a bare BoolOp. Value position is
+    // not this helper either: `x = not (a or b)` goes through PyObject_Not,
+    // and that second test is what CPython does.
+    bool pred_inverted_boolop(const expr& e, ir::Value* out, bool* ok) {
+        int flips = 0;
+        const expr* cur = &e;
+        while (const UnaryOp* u = std::get_if<UnaryOp>(&cur->v)) {
+            if (!std::holds_alternative<Not>(u->op.v)) break;
+            ++flips;
+            cur = &(*u->operand);
+        }
+        if (flips == 0) return false;
+        const BoolOp* b = std::get_if<BoolOp>(&cur->v);
+        if (!b) return false;
+        ir::Value t = lower_boolop_predicate(*b, ok);
+        if (!*ok) return true;
+        if (flips % 2) t = int_not(t, expr_loc(e));
+        *out = t;
+        return true;
+    }
+
+    // Predicate form of the same chain. The deciding edge jumps to then/else
+    // with the truth already known; only a value that has not been tested
+    // (the tail of the chain) calls __bool__.
+    void branch_pred_value(const ir::Value& v, std::uint32_t if_true,
+                           std::uint32_t if_false, const SourceLoc& loc) {
+        ir::Value t = truth_test(v, loc);
+        bool owned = owns(v);
+        if (owned) forget(v);
+        std::uint32_t tb = new_block("pred.true");
+        std::uint32_t fb = new_block("pred.false");
+        emit_condbr(t, tb, fb, loc);
+        set_block(tb);
+        drop_edge(v, owned, if_true, loc);
+        set_block(fb);
+        drop_edge(v, owned, if_false, loc);
+    }
+
+    void emit_pred_chain(const BoolOp& n, std::uint32_t then_b, std::uint32_t else_b,
+                         bool* ok) {
+        if (n.values.size() < 2) {
+            *ok = err("degenerate boolean operator", "BoolOp", n.loc);
+            return;
+        }
+        bool is_and = std::holds_alternative<And>(n.op.v);
+        std::uint32_t decide = is_and ? else_b : then_b;
+        for (std::size_t i = 0; i + 1 < n.values.size(); ++i) {
+            if (!*ok) return;
+            std::uint32_t cont = new_block(is_and ? "and.rhs" : "or.rhs");
+            emit_pred_operand(n.values[i], is_and, decide, cont, ok);
+            set_block(cont);
+        }
+        if (*ok) emit_pred_result(n.values.back(), then_b, else_b, ok);
+    }
+
+    void emit_pred_result(const expr& e, std::uint32_t then_b, std::uint32_t else_b,
+                          bool* ok) {
+        ir::Value inv;
+        if (pred_inverted_boolop(e, &inv, ok)) {
+            if (*ok) emit_condbr(inv, then_b, else_b, expr_loc(e));
+            return;
+        }
+        if (const BoolOp* inner = std::get_if<BoolOp>(&e.v)) {
+            emit_pred_chain(*inner, then_b, else_b, ok);
+            return;
+        }
+        ir::Value v = lower_expr(e, ok);
+        if (!*ok) return;
+        branch_pred_value(v, then_b, else_b, expr_loc(e));
+    }
+
+    void emit_pred_operand(const expr& e, bool is_and, std::uint32_t on_decide,
+                           std::uint32_t on_cont, bool* ok) {
+        ir::Value inv;
+        if (pred_inverted_boolop(e, &inv, ok)) {
+            if (!*ok) return;
+            if (is_and) emit_condbr(inv, on_cont, on_decide, expr_loc(e));
+            else        emit_condbr(inv, on_decide, on_cont, expr_loc(e));
+            return;
+        }
+        if (const BoolOp* inner = std::get_if<BoolOp>(&e.v)) {
+            if (inner->values.size() < 2) {
+                *ok = err("degenerate boolean operator", "BoolOp", inner->loc);
+                return;
+            }
+            bool inner_and = std::holds_alternative<And>(inner->op.v);
+            if (inner_and == is_and) {
+                for (std::size_t i = 0; i + 1 < inner->values.size(); ++i) {
+                    if (!*ok) return;
+                    std::uint32_t nxt = new_block(is_and ? "and.rhs" : "or.rhs");
+                    emit_pred_operand(inner->values[i], is_and, on_decide, nxt, ok);
+                    set_block(nxt);
+                }
+                if (*ok) emit_pred_operand(inner->values.back(), is_and, on_decide, on_cont, ok);
+                return;
+            }
+            for (std::size_t i = 0; i + 1 < inner->values.size(); ++i) {
+                if (!*ok) return;
+                std::uint32_t nxt = new_block(inner_and ? "and.rhs" : "or.rhs");
+                emit_pred_operand(inner->values[i], inner_and, on_cont, nxt, ok);
+                set_block(nxt);
+            }
+            if (*ok) emit_pred_operand(inner->values.back(), is_and, on_decide, on_cont, ok);
+            return;
+        }
+        ir::Value v = lower_expr(e, ok);
+        if (!*ok) return;
+        split_truth(v, is_and, false, nullptr, 0, on_decide, on_cont, expr_loc(e));
+    }
+
+    ir::Value lower_boolop_predicate(const BoolOp& n, bool* ok) {
+        std::uint32_t then_b = new_block("pred.then");
+        std::uint32_t else_b = new_block("pred.else");
+        std::uint32_t join = new_block("pred.join");
+        emit_pred_chain(n, then_b, else_b, ok);
+        if (!*ok) return {};
+        set_block(then_b);
+        ir::Value one = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        emit(ir::Instr{ir::Op::IntConst, {}, one, Ownership::NotAnObject,
+                       "1", 0, 0, n.loc, std::nullopt});
+        std::uint32_t tb = (std::uint32_t)blk_;
+        emit_br(join, n.loc);
+        set_block(else_b);
+        ir::Value zero = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        emit(ir::Instr{ir::Op::IntConst, {}, zero, Ownership::NotAnObject,
+                       "0", 0, 0, n.loc, std::nullopt});
+        std::uint32_t fb = (std::uint32_t)blk_;
+        emit_br(join, n.loc);
+        set_block(join);
+        return emit_bool_phi({one, zero}, {tb, fb}, n.loc);
     }
 
     // A generator expression. pyc evaluates the outer iterable eagerly -- as

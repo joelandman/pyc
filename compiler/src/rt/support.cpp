@@ -3,6 +3,8 @@
 #include <marshal.h>      // PyMarshal_ReadObjectFromString
 #include <frameobject.h>   // PyFrame_New, for synthesised tracebacks
 #include <methodobject.h>
+// _PyCode_ConstantKey and PyDict_SetDefaultRef come in through Python.h.
+// cpython/dictobject.h refuses a direct include.
 
 #include <cstdlib>
 #include <cstddef>
@@ -63,6 +65,120 @@ extern "C" int pyc_rt_stash_marshal(const char* p, Py_ssize_t n) {
 
 static PyObject* g_adopted_code = nullptr;
 
+// One compiled program is one compilation unit. CPython merges equal constants
+// and equal co_linetable bytes across the code objects of that unit
+// (test_compile.TestCompile.test_merge_constants / test_merge_code_attrs).
+// Each function is marshalled on its own, so the objects arrive distinct;
+// this cache is what puts them back together. It must not collapse True with
+// 1, or one code object with another: _PyCode_ConstantKey is what draws those
+// lines, and code objects are updated in place rather than replaced.
+static PyObject* g_const_cache = nullptr;
+
+static PyObject* const_cache() {
+    if (!g_const_cache) g_const_cache = PyDict_New();
+    return g_const_cache;
+}
+
+static PyObject* object_from_key(PyObject* key) {
+    if (PyTuple_CheckExact(key) && PyTuple_GET_SIZE(key) >= 2)
+        return Py_NewRef(PyTuple_GET_ITEM(key, 1));
+    return Py_NewRef(key);
+}
+
+static PyObject* cache_put(PyObject* o) {
+    if (o == Py_None || o == Py_Ellipsis) return Py_NewRef(o);
+    PyObject* cache = const_cache();
+    if (!cache) return nullptr;
+    PyObject* key = _PyCode_ConstantKey(o);
+    if (!key) return nullptr;
+    PyObject* found = nullptr;
+    int res = PyDict_SetDefaultRef(cache, key, key, &found);
+    Py_DECREF(key);
+    if (res < 0) return nullptr;
+    PyObject* canon = object_from_key(found);
+    Py_DECREF(found);
+    return canon;
+}
+
+static PyObject* intern_const(PyObject* o);
+
+static int intern_code_fields(PyCodeObject* co) {
+    PyObject* consts = intern_const(co->co_consts);
+    if (!consts) return -1;
+    if (consts != co->co_consts) Py_SETREF(co->co_consts, consts);
+    else Py_DECREF(consts);
+    PyObject* lines = intern_const(co->co_linetable);
+    if (!lines) return -1;
+    if (lines != co->co_linetable) Py_SETREF(co->co_linetable, lines);
+    else Py_DECREF(lines);
+    return 0;
+}
+
+static PyObject* intern_tuple(PyObject* o) {
+    Py_ssize_t n = PyTuple_GET_SIZE(o);
+    PyObject* rebuilt = PyTuple_New(n);
+    if (!rebuilt) return nullptr;
+    int changed = 0;
+    for (Py_ssize_t i = 0; i < n; ++i) {
+        PyObject* item = PyTuple_GET_ITEM(o, i);
+        PyObject* u = intern_const(item);
+        if (!u) { Py_DECREF(rebuilt); return nullptr; }
+        if (u != item) changed = 1;
+        PyTuple_SET_ITEM(rebuilt, i, u);
+    }
+    if (!changed) {
+        Py_DECREF(rebuilt);
+        return cache_put(o);
+    }
+    PyObject* canon = cache_put(rebuilt);
+    Py_DECREF(rebuilt);
+    return canon;
+}
+
+static PyObject* intern_frozenset(PyObject* o) {
+    if (PySet_Size(o) == 0) return cache_put(o);
+    PyObject* it = PyObject_GetIter(o);
+    if (!it) return nullptr;
+    PyObject* items = PyList_New(0);
+    if (!items) { Py_DECREF(it); return nullptr; }
+    int changed = 0;
+    PyObject* item;
+    while ((item = PyIter_Next(it)) != nullptr) {
+        PyObject* u = intern_const(item);
+        int diff = u != item;
+        Py_DECREF(item);
+        if (!u) { Py_DECREF(it); Py_DECREF(items); return nullptr; }
+        if (diff) changed = 1;
+        int app = PyList_Append(items, u);
+        Py_DECREF(u);
+        if (app < 0) { Py_DECREF(it); Py_DECREF(items); return nullptr; }
+    }
+    Py_DECREF(it);
+    if (PyErr_Occurred()) { Py_DECREF(items); return nullptr; }
+    if (!changed) {
+        Py_DECREF(items);
+        return cache_put(o);
+    }
+    PyObject* neu = PyFrozenSet_New(items);
+    Py_DECREF(items);
+    if (!neu) return nullptr;
+    PyObject* canon = cache_put(neu);
+    Py_DECREF(neu);
+    return canon;
+}
+
+static PyObject* intern_const(PyObject* o) {
+    if (!o) return nullptr;
+    if (o == Py_None || o == Py_Ellipsis) return Py_NewRef(o);
+    if (PyCode_Check(o)) {
+        if (intern_code_fields(reinterpret_cast<PyCodeObject*>(o)) < 0) return nullptr;
+        return Py_NewRef(o);
+    }
+    if (PyTuple_CheckExact(o)) return intern_tuple(o);
+    if (PyFrozenSet_CheckExact(o)) return intern_frozenset(o);
+    return cache_put(o);
+}
+
 extern "C" int pyc_rt_stash_code(const char* p, Py_ssize_t n) {
     if (g_adopted_code) {
         Py_DECREF(g_adopted_code);
@@ -73,6 +189,10 @@ extern "C" int pyc_rt_stash_code(const char* p, Py_ssize_t n) {
     if (!PyCode_Check(o)) {
         Py_DECREF(o);
         PyErr_SetString(PyExc_SystemError, "pyc stashed function code is not a code object");
+        return -1;
+    }
+    if (intern_code_fields(reinterpret_cast<PyCodeObject*>(o)) < 0) {
+        Py_DECREF(o);
         return -1;
     }
     g_adopted_code = o;
