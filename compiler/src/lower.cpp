@@ -2198,8 +2198,15 @@ private:
                                            n2.id, 0, 0, n.loc, make_landing_pad(n.loc)});
                             return;
                         }
-                        ir::Value key = const_str(n2.id, n.loc);
-                        call_capi("PyObject_DelItem", {class_ns_.back(), key}, n.loc, &ok, {key});
+                        // Same spelling store_name wrote. CPython 3.14 DELETE_NAME
+                        // deletes only from this namespace; a miss is NameError,
+                        // and a global of the same name is left in place.
+                        const std::string id =
+                            (locals_.count(n2.id) || cells_.count(n2.id))
+                                ? n2.id : mangle_ident(n2.id);
+                        ir::Value key = const_str(id, n.loc);
+                        call_capi("pyc_rt_del_classname", {class_ns_.back(), key},
+                                  n.loc, &ok, {key});
                         return;
                     }
                     auto cit = cells_.find(n2.id);

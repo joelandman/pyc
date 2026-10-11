@@ -2509,6 +2509,18 @@ extern "C" int pyc_rt_assert_fail(PyObject* msg) {
     return -1;
 }
 
+// CPython 3.14 DELETE_NAME deletes from the class namespace only. Any
+// failure from the mapping, including a missing key, becomes
+// "name '…' is not defined" with the previous exception cleared. A global
+// of the same spelling is not touched.
+extern "C" int pyc_rt_del_classname(PyObject* ns, PyObject* name) {
+    if (!ns || !name) { PyErr_BadInternalCall(); return -1; }
+    if (PyObject_DelItem(ns, name) == 0) return 0;
+    PyErr_Clear();
+    raise_name_not_defined(name);
+    return -1;
+}
+
 extern "C" int pyc_rt_del_global(const char* name) {
     PyObject* g = globals_dict();
     if (!g) return -1;

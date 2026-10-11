@@ -192,6 +192,8 @@ int pyc_rt_extend(PyObject* list, PyObject* iterable);
 int pyc_rt_assert_fail(PyObject* msg);
 // `del name` at module scope.
 int pyc_rt_del_global(const char* name);
+// `del name` in a class body (DELETE_NAME). Misses are NameError.
+int pyc_rt_del_classname(PyObject* ns, PyObject* name);
 
 // Read a cell. An empty cellvar is UnboundLocalError; an empty freevar is
 // NameError. PyCell_Get returns NULL with no exception set.

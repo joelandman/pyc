@@ -203,6 +203,7 @@ _PYC_RUNTIME = {
     "pyc_rt_extend":       ("int", "", ["PyObject*", "PyObject*"]),
     "pyc_rt_assert_fail":  ("int", "", ["PyObject*"]),
     "pyc_rt_del_global":   ("int", "", ["const char*"]),
+    "pyc_rt_del_classname": ("int", "", ["PyObject*", "PyObject*"]),
     "pyc_rt_reraise":      ("int", "", []),
     "pyc_rt_super_fail":   ("int", "", ["int"]),
     "pyc_rt_super_from_frame": ("PyObject*", "+1", []),
