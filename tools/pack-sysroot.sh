@@ -54,7 +54,17 @@ if sysconfig.get_config_var("Py_GIL_DISABLED"):
     abi += "t"
 if hasattr(sys, "gettotalrefcount"):
     abi += "d"
-version = data.get("version") or "%d.%d.%d" % sys.version_info[:3]
+version = "%d.%d.%d" % sys.version_info[:3]
+claimed = data.get("version")
+if claimed and claimed != version:
+    # The manifest records which CPython this prefix IS. If it claims a
+    # version the interpreter does not have, the prefix was stamped against
+    # a different build and packing it would publish a false identity.
+    sys.stderr.write(
+        "interpreter is %s but %s claims %s — refusing to pack a sysroot "
+        "whose manifest does not match its interpreter (CHARTER I1)\n"
+        % (version, path, claimed))
+    sys.exit(2)
 tier = int(data.get("tier") or 1)
 machine = platform.machine() or "unknown"
 glibc = None

@@ -304,9 +304,19 @@ write_manifest() {
 
   "$py" - "$manifest" "$ABI" "$TIER" "$VERSION" "$WHEEL_VERIFIED" <<'PYEOF'
 import json, sys, sysconfig, os, platform
-manifest, abi, tier, version = sys.argv[1:5]
+manifest, abi, tier, requested = sys.argv[1:5]
 # Recompute from the interpreter so the manifest cannot disagree with reality.
 abi = "cp%d%d" % sys.version_info[:2]
+version = "%d.%d.%d" % sys.version_info[:3]
+if requested and requested != version:
+    # A manifest that claims a version the interpreter does not have would
+    # poison every consumer: pycc, install-sysroot.sh, and CI would all
+    # believe a sysroot is the CPython the program links against.
+    sys.stderr.write(
+        "interpreter is %s, build was requested as %s — refusing to stamp a "
+        "manifest the interpreter does not satisfy (CHARTER I1)\n"
+        % (version, requested))
+    sys.exit(2)
 if sysconfig.get_config_var("Py_GIL_DISABLED"): abi += "t"
 if hasattr(sys, "gettotalrefcount"): abi += "d"
 wheel_verified = sys.argv[5] if len(sys.argv) > 5 else ''

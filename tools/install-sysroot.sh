@@ -102,7 +102,18 @@ glibc = data.get("glibc") or "unknown"
 if arch and host and arch != host:
     sys.stderr.write("machine mismatch: archive %s host %s\n" % (arch, host))
     sys.exit(2)
-print("machine %s  glibc %s" % (host, glibc))
+ver = "%d.%d.%d" % sys.version_info[:3]
+claimed = data.get("version") or ""
+if claimed and claimed != ver:
+    # The one check the published 3.14.5-in-a-3.14.7-manifest release
+    # slipped through: a sysroot whose interpreter does not match its
+    # manifest is not a sysroot, whatever else it contains.
+    sys.stderr.write(
+        "version mismatch: manifest claims %s, interpreter is %s — this "
+        "sysroot was stamped against a different CPython build\n"
+        % (claimed, ver))
+    sys.exit(3)
+print("machine %s  glibc %s  version %s" % (host, glibc, ver))
 PY
   )" || die "sysroot identity check failed"
   info "verify ok  $py  factorial(25) matches  $ident"
