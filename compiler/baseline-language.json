@@ -1,6 +1,6 @@
 {
   "schema": 4,
-  "jobs": 16,
+  "jobs": 32,
   "longrunning": {
     "timeout": 600.0,
     "jobs": 0,
@@ -9,7 +9,7 @@
   "oracle": {
     "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14",
     "version": "3.14.7",
-    "banner": "3.14.7 (main, Sep 10 2026, 02:28:45) [GCC 15.2.0]",
+    "banner": "3.14.7 (main, Oct 28 2026, 10:24:26) [GCC 15.2.0]",
     "machine": "x86_64"
   },
   "subject": {
@@ -18,9 +18,9 @@
       "-O0"
     ]
   },
-  "total": 881,
-  "passing": 881,
-  "clean": 879,
+  "total": 886,
+  "passing": 886,
+  "clean": 884,
   "pass_rate": 100.0,
   "counts": {
     "STDERR_DIFFERS": 2
@@ -146,6 +146,32 @@
     {
       "case": "augassign_suppressed.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/augassign_suppressed.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "boolop_once.py",
+      "path": "/home/joe/work/pc/pyc/verify/corpus/language/boolop_once.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "c_trace_contract.py",
+      "path": "/home/joe/work/pc/pyc/verify/corpus/language/c_trace_contract.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],
@@ -9653,6 +9679,19 @@
       }
     },
     {
+      "case": "class_del_name.py",
+      "path": "/home/joe/work/pc/pyc/verify/corpus/language/class_del_name.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
       "case": "class_doc.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/class_doc.py",
       "flags": [],
@@ -10723,6 +10762,19 @@
       }
     },
     {
+      "case": "mangled_kwonly_defaults.py",
+      "path": "/home/joe/work/pc/pyc/verify/corpus/language/mangled_kwonly_defaults.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
       "case": "meta_nottype_bases.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/meta_nottype_bases.py",
       "flags": [],
@@ -11128,6 +11180,19 @@
     {
       "case": "super_async_nested.py",
       "path": "/home/joe/work/pc/pyc/verify/corpus/language/super_async_nested.py",
+      "flags": [],
+      "diagnostic": "",
+      "normalizers": [],
+      "oracle_varied": false,
+      "oracle_timed_out": false,
+      "exit": {
+        "oracle": 0,
+        "subject": 0
+      }
+    },
+    {
+      "case": "super_closure_inject.py",
+      "path": "/home/joe/work/pc/pyc/verify/corpus/language/super_closure_inject.py",
       "flags": [],
       "diagnostic": "",
       "normalizers": [],

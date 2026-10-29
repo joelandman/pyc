@@ -1,10 +1,9 @@
 # pyc — current state and MVP
 
-**Date:** 2026-10-02. Language numbers in the table below are the recorded
-`compiler/baseline-language.json` gate (881/881). A language-only fast
-gate on this date was 860/860 impactful (858 byte-identical); the 881
-gate was not re-run. The `Lib/test` row is still the 2026-09-26 I6
-record. CHARTER remains binding. §4 product rules were not changed.
+**Date:** 2026-10-28. Language numbers in the table below are the recorded
+`compiler/baseline-language.json` gate (886/886). The `Lib/test` row is the
+2026-10-28 I6 record (367/389, `-O0`, sysroot 3.14.7, `--stdlib`).
+CHARTER remains binding. §4 product rules were not changed.
 
 Roles that produced this: Architect (`agents/architect.md`), PM
 (`agents/pm.md`), SWE-compiler (`agents/swe-compiler.md`), SWE-runtime
@@ -14,9 +13,9 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
-I6. Language + gaps + concurrency is **881/881** impactful. `Lib/test` is
-**355/389 = 91.26%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
-2026-09-26. C1 (frames) and C2 (periodic GIL) are closed. A proved
+I6. Language + gaps + concurrency is **886/886** impactful. `Lib/test` is
+**367/389 = 94.34%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
+2026-10-28. C1 (frames) and C2 (periodic GIL) are closed. A proved
 heap-free loop drops the GIL only when another thread requests it
 ([GIL.md](GIL.md)). The remaining product gap is stub code objects,
 named refusals instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and
@@ -30,14 +29,14 @@ whose locals do not match.
 
 | Check | Result |
 |---|---|
-| language + gaps + concurrency | 881/881 impactful |
-| `Lib/test` (I6) | 355/389 (91.26%), measured 2026-09-26 |
-| I6 composition | 327 clean + 28 `STDERR_DIFFERS`-only = 355 pass |
+| language + gaps + concurrency | 886/886 impactful |
+| `Lib/test` (I6) | 367/389 (94.34%), measured 2026-10-28 |
+| I6 composition | 365 clean + 2 `STDERR_DIFFERS`-only = 367 pass |
 | `DID_NOT_COMPILE` | 0 |
-| `EXIT_DIFFERS` | 21 |
-| `STDOUT_DIFFERS` | 10 |
-| timeout | 4 |
-| `ORACLE_UNSTABLE` | 11 |
+| `EXIT_DIFFERS` | 14 |
+| `STDOUT_DIFFERS` | 9 |
+| timeout | 1 |
+| `ORACLE_UNSTABLE` | 8 |
 | A1 round-trip | 3.14.7 and 3.13.15 TOTAL (`compiler/README.md`) |
 | Tier-1 / NumPy | CI wheel smoke; `ldd` has no libpython `DT_NEEDED` |
 | C1b / C2 | closed; probes in `language/` |
@@ -145,8 +144,12 @@ Probes: `verify/corpus/language/getframemodulename.py`,
 11. **Output home.** `PyConfig.home` is set from `PYTHONHOME`, then
      `lib/pythonX.Y` next to (or above) the executable, then the compile-time
      sysroot. Prefix is no longer implicit-only.
-12. **A2 leak bar** (`Py_REF_DEBUG` slope on the corpus) not measured on the
-    metric sysroot.
+12. **A2 leak bar.** Measured nightly (2026-10-28): the `leak` job in
+    `metric.yml` builds a cp314d (`Py_REF_DEBUG`) sysroot and runs
+    `make -C compiler refcount-probe`; the workloads are flat per
+    iteration and the negative-control `leak` workload leaks exactly
+    +1/iter, which proves the harness can fail. A release sysroot exits
+    2 with a diagnostic instead of passing silently.
 
 ### Closed — do not re-open
 
@@ -166,11 +169,11 @@ works), and completeness is measured and not gamed. Not: C speed, two
 
 | # | Check | Bar |
 |---|---|---|
-| M1 | `make -C verify verify` | 881/881 impactful; no new silent-wrong |
+| M1 | `make -C verify verify` | 886/886 impactful; no new silent-wrong |
 | M2 | `make -C verify fast` | `--fail-on-silent-wrong` |
 | M3 | CI `ldd` smoke | no `libpython` `DT_NEEDED` |
 | M4 | CI wheel step | NumPy import+run in that binary |
-| M5 | I6 vs README | **355/389 (91.26%)**, no regress |
+| M5 | I6 vs README | **367/389 (94.34%)**, no regress |
 | M6 | remaining compile fails | construct + line + reason — **not** invalid LLVM IR |
 
 **Not MVP gates:** unittest metric; `--python=3.13`; ELF `-static`; unboxing
@@ -180,13 +183,28 @@ vs C.
 
 **Now**
 
+- 2026-10-28 blocker pass (B1–B8), all measured: B1 mangled
+  kwonly-default keys (`TypeError` on a defaulted kwarg fixed, probe
+  `mangled_kwonly_defaults.py`); B2 build/pack/install now refuse a
+  sysroot whose interpreter does not match its manifest (the published
+  3.14.5-in-a-3.14.7-manifest release); B3 `LD_LIBRARY_PATH` scrubbed
+  from every oracle spawn (the gate now measures the right CPython
+  from a polluted shell); B4 deploy: stdlib search is verified per
+  candidate and a miss names what it searched; B5 C-trace contract
+  (`c_traceobj` argument, callee `co_firstlineno` on CALL, quiet line
+  updates) — `test_sys_settrace` no longer segfaults, remaining
+  event-stream divergence is the B7 line-attribution tail; B6 the
+  Tier-1 verify probe pins `PYTHONHOME` (it used to measure the host's
+  stdlib on hosts that ship python3.14); B8 nightly leak bar (cp314d
+  sysroot, workloads flat, negative control leaks +1/iter). Gates on
+  this tree: 886/886 language, 367/389 `Lib/test`, no regressions.
 - The location-slot commit is `adc0c4e`. The language-only
   fast gate on that tree was 860/860 impactful, 858 byte-identical,
   547s. The two stderr-only rows were `case_208.py` and `case_209.py`.
-  The 881 gate (language + gaps + concurrency) was not re-run.
-- Leave M5 at **355/389** until `make -C verify metric`. Do not edit
+- M5 was held at **355/389** until `make -C verify metric`; that ran
+  2026-10-28 and the row is now 367/389. Do not edit
   `compiler/baseline-libtest.json` by hand. A local 389-file run on
-  intermediate commit `17270a0` printed 358/389 and is not this row:
+  intermediate commit `17270a0` printed 358/389 and was never this row:
   it predates the slot cache, and it was not adopted. Script runs
   named in [CORRECTNESS.md](CORRECTNESS.md) are not this row either.
 - `pack-pyc.yml` and `metric.yml` were adjusted in `249eb81`, which is
@@ -196,8 +214,14 @@ vs C.
 
 **Next (MVP completeness)**
 
-1. Re-run I6 before publishing any Lib/test fraction other than 355/389.
-   The unpublished `17270a0` run is not a substitute for that.
+1. I6 re-run 2026-10-28: **367/389 (94.34%)**, adopted as
+   `compiler/baseline-libtest.json`; the 2026-09-26 355/389 record is
+   superseded. The unpublished `17270a0` run was never a substitute for
+   this. B2's replacement of the mislabeled published release is staged
+   at `~/opt/py-sysroots/cp314-3.14.7-tier1-x86_64.tar.xz`; republishing
+   needs a GitHub token (this machine has none): delete the stale asset
+   on the `sysroot-cp314-linux-x86_64` release and upload it. The
+   tooling will not let the mismatch happen again.
 2. Dump the remaining `EXIT_DIFFERS` before adding syntax. The cluster
    that is already named: stub `co_code` / `co_consts` / linetable
    (`test_dis`, `test_compile`, `test_peepholer`, `test_opcache`) and

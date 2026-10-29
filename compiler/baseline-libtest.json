@@ -1,9 +1,9 @@
 {
   "schema": 4,
-  "jobs": 16,
+  "jobs": 32,
   "longrunning": {
     "timeout": 600.0,
-    "jobs": 64,
+    "jobs": 32,
     "cases": [
       "test_cmd_line.py",
       "test_compileall.py",
@@ -21,7 +21,7 @@
   "oracle": {
     "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14",
     "version": "3.14.7",
-    "banner": "3.14.7 (main, Sep 10 2026, 02:28:45) [GCC 15.2.0]",
+    "banner": "3.14.7 (main, Oct 28 2026, 10:24:26) [GCC 15.2.0]",
     "machine": "x86_64"
   },
   "subject": {
@@ -31,15 +31,15 @@
     ]
   },
   "total": 389,
-  "passing": 355,
-  "clean": 327,
-  "pass_rate": 91.25964010282776,
+  "passing": 367,
+  "clean": 365,
+  "pass_rate": 94.34447300771208,
   "counts": {
-    "ORACLE_UNSTABLE": 11,
-    "TIMEOUT": 4,
-    "STDOUT_DIFFERS": 10,
-    "EXIT_DIFFERS": 21,
-    "STDERR_DIFFERS": 50
+    "ORACLE_UNSTABLE": 8,
+    "TIMEOUT": 1,
+    "STDOUT_DIFFERS": 9,
+    "EXIT_DIFFERS": 14,
+    "STDERR_DIFFERS": 17
   },
   "results": [
     {
@@ -90,10 +90,7 @@
     {
       "case": "Lib/test/test__interpreters.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test__interpreters.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -102,7 +99,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -183,9 +180,7 @@
     {
       "case": "Lib/test/test_android.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_android.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -211,9 +206,7 @@
     {
       "case": "Lib/test/test_apple.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_apple.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -256,9 +249,7 @@
     {
       "case": "Lib/test/test_asdl_parser.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_asdl_parser.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -306,7 +297,8 @@
       "normalizers": [
         "elapsed",
         "ephem_ipv4",
-        "heap_address"
+        "heap_address",
+        "ssl_socket_fd"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -369,7 +361,8 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed"
+        "elapsed",
+        "heap_address"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -501,9 +494,7 @@
     {
       "case": "Lib/test/test_build_details.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_build_details.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -546,16 +537,16 @@
     {
       "case": "Lib/test/test_bz2.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bz2.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
-      "normalizers": [],
+      "normalizers": [
+        "elapsed"
+      ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
-        "oracle": 1,
-        "subject": 1
+        "oracle": 0,
+        "subject": 0
       }
     },
     {
@@ -639,9 +630,7 @@
     {
       "case": "Lib/test/test_clinic.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_clinic.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -714,20 +703,16 @@
     {
       "case": "Lib/test/test_code.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_code.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": -11
+        "subject": 0
       }
     },
     {
@@ -1003,20 +988,16 @@
     {
       "case": "Lib/test/test_compile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_compile.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -1198,10 +1179,7 @@
     {
       "case": "Lib/test/test_cprofile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_cprofile.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -1210,15 +1188,13 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_crossinterp.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_crossinterp.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -1306,24 +1282,22 @@
     {
       "case": "Lib/test/test_dbm_gnu.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_gnu.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
-      "normalizers": [],
+      "normalizers": [
+        "elapsed"
+      ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
-        "oracle": 1,
-        "subject": 1
+        "oracle": 0,
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_dbm_ndbm.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_ndbm.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -1336,16 +1310,16 @@
     {
       "case": "Lib/test/test_dbm_sqlite3.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dbm_sqlite3.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
-      "normalizers": [],
+      "normalizers": [
+        "elapsed"
+      ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
-        "oracle": 1,
-        "subject": 1
+        "oracle": 0,
+        "subject": 0
       }
     },
     {
@@ -1443,9 +1417,7 @@
     {
       "case": "Lib/test/test_devpoll.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_devpoll.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -1524,7 +1496,8 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed"
+        "elapsed",
+        "heap_address"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -1551,9 +1524,7 @@
     {
       "case": "Lib/test/test_dtrace.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dtrace.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -1989,14 +1960,12 @@
     {
       "case": "Lib/test/test_fork1.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fork1.py",
-      "flags": [
-        "ORACLE_UNSTABLE"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": true,
+      "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
@@ -2042,8 +2011,7 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -2130,10 +2098,7 @@
     {
       "case": "Lib/test/test_gc.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_gc.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -2142,15 +2107,13 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_generated_cases.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_generated_cases.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -2752,9 +2715,7 @@
     {
       "case": "Lib/test/test_kqueue.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_kqueue.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -2782,9 +2743,7 @@
     {
       "case": "Lib/test/test_launcher.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_launcher.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -3108,9 +3067,7 @@
     {
       "case": "Lib/test/test_msvcrt.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_msvcrt.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -3231,10 +3188,7 @@
     {
       "case": "Lib/test/test_opcodes.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_opcodes.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3243,7 +3197,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3354,9 +3308,7 @@
     {
       "case": "Lib/test/test_patma.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_patma.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -3390,8 +3342,7 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -3716,10 +3667,7 @@
     {
       "case": "Lib/test/test_pstats.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_pstats.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3728,7 +3676,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3740,7 +3688,8 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed"
+        "elapsed",
+        "ssl_socket_fd"
       ],
       "oracle_varied": true,
       "oracle_timed_out": false,
@@ -3917,16 +3866,16 @@
     {
       "case": "Lib/test/test_readline.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_readline.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
-      "normalizers": [],
+      "normalizers": [
+        "elapsed"
+      ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
-        "oracle": 1,
-        "subject": 1
+        "oracle": 0,
+        "subject": 0
       }
     },
     {
@@ -4250,7 +4199,6 @@
       "case": "Lib/test/test_signal.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_signal.py",
       "flags": [
-        "ORACLE_UNSTABLE",
         "STDOUT_DIFFERS",
         "EXIT_DIFFERS",
         "STDERR_DIFFERS"
@@ -4259,7 +4207,7 @@
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": true,
+      "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
@@ -4314,17 +4262,15 @@
     {
       "case": "Lib/test/test_socket.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_socket.py",
-      "flags": [
-        "TIMEOUT"
-      ],
-      "diagnostic": "CPython did not finish within 60s",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "oracle_timed_out": true,
+      "oracle_timed_out": false,
       "exit": {
-        "oracle": -1,
+        "oracle": 0,
         "subject": 0
       }
     },
@@ -4394,7 +4340,16 @@
         "elapsed",
         "ephem_hostport",
         "ephem_ipv4",
-        "ephem_ipv4_colon"
+        "ephem_ipv4_colon",
+        "ssl_channel_binding",
+        "ssl_client_log",
+        "ssl_connection_timeout",
+        "ssl_handshake_count_complete",
+        "ssl_handshake_count_do_handshake",
+        "ssl_optional_raddr",
+        "ssl_server_log",
+        "ssl_server_reset",
+        "ssl_socket_fd"
       ],
       "oracle_varied": true,
       "oracle_timed_out": false,
@@ -4419,9 +4374,7 @@
     {
       "case": "Lib/test/test_startfile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_startfile.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -4693,10 +4646,7 @@
     {
       "case": "Lib/test/test_sys_setprofile.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sys_setprofile.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4705,24 +4655,26 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
       "case": "Lib/test/test_sys_settrace.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sys_settrace.py",
       "flags": [
-        "TIMEOUT"
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
       ],
-      "diagnostic": "the binary did not finish within 600s",
+      "diagnostic": "",
       "normalizers": [
-        "elapsed"
+        "elapsed",
+        "heap_address"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": -1
+        "subject": 1
       }
     },
     {
@@ -4771,16 +4723,16 @@
     {
       "case": "Lib/test/test_tcl.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tcl.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
-      "normalizers": [],
+      "normalizers": [
+        "elapsed"
+      ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
-        "oracle": 1,
-        "subject": 1
+        "oracle": 0,
+        "subject": 0
       }
     },
     {
@@ -5626,26 +5578,22 @@
     {
       "case": "Lib/test/test_webbrowser.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_webbrowser.py",
-      "flags": [
-        "TIMEOUT"
-      ],
-      "diagnostic": "CPython did not finish within 60s",
+      "flags": [],
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
       "oracle_varied": false,
-      "oracle_timed_out": true,
+      "oracle_timed_out": false,
       "exit": {
-        "oracle": -1,
+        "oracle": 0,
         "subject": 0
       }
     },
     {
       "case": "Lib/test/test_winapi.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_winapi.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -5658,9 +5606,7 @@
     {
       "case": "Lib/test/test_winconsoleio.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_winconsoleio.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -5673,9 +5619,7 @@
     {
       "case": "Lib/test/test_winreg.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_winreg.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -5688,9 +5632,7 @@
     {
       "case": "Lib/test/test_winsound.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_winsound.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -5718,9 +5660,7 @@
     {
       "case": "Lib/test/test_wmi.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_wmi.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [],
       "oracle_varied": false,
@@ -5894,15 +5834,12 @@
     {
       "case": "Lib/test/test_zipfile64.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zipfile64.py",
-      "flags": [
-        "ORACLE_UNSTABLE",
-        "STDOUT_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": true,
+      "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
@@ -5962,16 +5899,16 @@
     {
       "case": "Lib/test/test_zstd.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_zstd.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
-      "normalizers": [],
+      "normalizers": [
+        "elapsed"
+      ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
-        "oracle": 1,
-        "subject": 1
+        "oracle": 0,
+        "subject": 0
       }
     }
   ]
