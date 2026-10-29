@@ -8,8 +8,6 @@
 // The first iterations are discarded: interned strings, cached small ints and
 // lazily-imported modules legitimately raise the total once and never again.
 // Counting warm-up as a leak would make every correct program look broken.
-#include "pyc/rt/entry.hpp"
-
 #include <Python.h>
 
 #include <cstdio>
@@ -17,6 +15,20 @@
 #include <string>
 
 namespace {
+
+// The harness is self-contained on purpose: the only runtime fact it needs
+// is the global reference total, and linking the real runtime (entry.cpp)
+// would drag in support.cpp/frame.cpp and their whole dependency set, so the
+// probe measured the link in addition to the workloads. Under a release
+// build this returns -1 and main() fails loudly -- a release build must not
+// look leak-free, it simply is not counting.
+long long total_refs() {
+#ifdef Py_REF_DEBUG
+    return static_cast<long long>(_Py_GetGlobalRefTotal());
+#else
+    return -1;
+#endif
+}
 
 struct Workload { const char* name; int (*run)(); };
 
@@ -98,12 +110,25 @@ int main(int argc, char** argv) {
     PyConfig config;
     PyConfig_InitPythonConfig(&config);
     config.parse_argv = 0;
+#ifdef PYC_PROBE_SYSROOT
+    // Pin the prefix to the sysroot this binary was linked against (the
+    // Makefile bakes it in). A bare init computes the prefix from the
+    // program's location and the built-in candidates, which on a host that
+    // also ships python3.14 resolves to the HOST's tree. That is not
+    // Py_REF_DEBUG, so the probe would die with "not a debug build" against
+    // a perfectly good debug sysroot -- the same non-hermetic probe defect
+    // the Tier-1 verify in build-python-sysroot.sh had.
+    if (PyStatus_Exception(
+            PyConfig_SetBytesString(&config, &config.home, PYC_PROBE_SYSROOT))) {
+        std::fprintf(stderr, "init failed\n"); return 2;
+    }
+#endif
     if (PyStatus_Exception(Py_InitializeFromConfig(&config))) {
         std::fprintf(stderr, "init failed\n"); return 2;
     }
     PyConfig_Clear(&config);
 
-    if (pyc_rt_total_refcount() < 0) {
+    if (total_refs() < 0) {
         std::fprintf(stderr,
             "refcount_probe: interpreter is not a Py_REF_DEBUG build.\n"
             "  Build a sysroot with --debug; a release build would report\n"
@@ -117,9 +142,9 @@ int main(int argc, char** argv) {
         if (only && std::strcmp(only, w.name) != 0) continue;
 
         for (int i = 0; i < 200; ++i) if (w.run() != 0) { PyErr_Clear(); }
-        long long before = pyc_rt_total_refcount();
+        long long before = total_refs();
         for (int i = 0; i < iters; ++i) if (w.run() != 0) { PyErr_Clear(); }
-        long long after = pyc_rt_total_refcount();
+        long long after = total_refs();
 
         double per_iter = double(after - before) / iters;
         bool expected_leak = std::strcmp(w.name, "leak") == 0;

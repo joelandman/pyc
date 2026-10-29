@@ -21,6 +21,12 @@ concurrency:
   group: metric
   cancel-in-progress: false
 
+env:
+  # One place for the version both jobs build against. setup-pyc's own
+  # default used to be the only copy, and drift between the two consumers
+  # is how this workflow already bit the project once.
+  CPYTHON_VERSION: "3.14.7"
+
 jobs:
   libtest:
     runs-on: ubuntu-24.04
@@ -34,6 +40,7 @@ jobs:
       - name: Set up pyc
         uses: ./.github/actions/setup-pyc
         with:
+          cpython-version: ${{ env.CPYTHON_VERSION }}
           pgo: "true"              # nightly can afford it
           wheel-check: "require"   # CHARTER I7 as a daily hard gate
 
@@ -202,3 +209,89 @@ jobs:
         run: |
           if [ "$GATE_OK" = "yes" ]; then exit 0; fi
           exit "${GATE_CODE:-1}"
+
+  # Leak bar (B8): the runtime C code that Lib/test cannot reach. CPython's
+  # suite exercises the interpreter, not pyc's trampolines; a refcount leak
+  # in the trampoline surfaces nowhere else. The harness runs workloads
+  # against a Py_REF_DEBUG sysroot and requires a flat per-iteration slope,
+  # EXCEPT the `leak` workload, which must leak -- the negative control that
+  # proves the harness can fail. A leak-detector that never detected a leak
+  # is not evidence of anything.
+  #
+  # The debug sysroot (cp314d) is a distinct ABI and distinct data from
+  # libtest's release sysroot, so it gets its own cache key. Same
+  # split-restore/save as setup-pyc: a cache/save bound to job-end would
+  # discard the ~10 min build on every red run.
+  leak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: devel
+
+      - name: Install toolchain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 22
+          sudo apt-get install -y --no-install-recommends \
+            zlib1g-dev libssl-dev libffi-dev libbz2-dev liblzma-dev \
+            libsqlite3-dev libreadline-dev libncurses-dev uuid-dev
+
+      - name: Restore debug sysroot
+        id: dbg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/opt/py-sysroots
+          key: sysroot-cp314d-${{ env.CPYTHON_VERSION }}-tier1-nopgo-${{ hashFiles('tools/build-python-sysroot.sh') }}
+
+      - name: Build debug sysroot
+        if: steps.dbg-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          ./tools/build-python-sysroot.sh \
+            --version '${{ env.CPYTHON_VERSION }}' --debug --no-pgo \
+            --no-wheel-check --jobs "$(nproc)"
+
+      - name: Save debug sysroot
+        if: steps.dbg-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/opt/py-sysroots
+          key: sysroot-cp314d-${{ env.CPYTHON_VERSION }}-tier1-nopgo-${{ hashFiles('tools/build-python-sysroot.sh') }}
+
+      - name: Build the leak probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          make -C compiler refcount-probe \
+            CXX=clang++-22 \
+            DBG_SYSROOT="$HOME/opt/py-sysroots/cp314d-${{ env.CPYTHON_VERSION }}-tier1" \
+            PROBE_OUT="$RUNNER_TEMP/pyc_refcount_probe"
+
+      - name: Run the leak bar
+        id: bar
+        shell: bash
+        run: |
+          set -euxo pipefail
+          # exit 0 = workloads flat AND the negative control leaked
+          # exit 1 = a workload moved, or the control did not leak
+          # exit 2 = not a Py_REF_DEBUG build (wrong sysroot)
+          "$RUNNER_TEMP/pyc_refcount_probe"
+
+      - name: Verdict
+        if: always()
+        shell: bash
+        run: |
+          # tee, not >>: tools/check-nightly.sh reads this banner back from
+          # the run log, and the log does not carry the step summary.
+          case "${{ steps.bar.outcome }}" in
+            success) echo "LEAK BAR: PASS — workloads flat, negative control detected" ;;
+            failure) echo "LEAK BAR: FAIL — a workload moved, or the negative control did not leak" ;;
+            *)       echo "LEAK BAR: NOT RUN — an earlier step failed" ;;
+          esac | tee -a "$GITHUB_STEP_SUMMARY"

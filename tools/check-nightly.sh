@@ -87,6 +87,9 @@ print(f\"{d['pass_rate']:.2f}%  ({d['passing']}/{t} files)  [from artifact]\")" 
 fi
 [ -n "$rate" ] && echo "published  $rate"
 
+leak="$(grep -oE 'LEAK BAR: (PASS|FAIL|NOT RUN)' <<<"$log" | head -1)"
+[ -n "$leak" ] && echo "leak bar   $leak"
+
 grep -q 'BASELINE IS BEHIND' <<<"$log" && \
   echo "note       BASELINE IS BEHIND — this run beat its baseline; refresh it"
 
@@ -100,8 +103,16 @@ fi
 
 echo
 case "$verdict" in
-  "GATE RAN"*)          echo "OK — the gate ran and nothing regressed."; exit 0 ;;
   "REGRESSION"*)        echo "REAL FINDING — something the compiler does got worse."; exit 1 ;;
   "GATE DID NOT RUN"*)  echo "NOTHING WAS VERIFIED — not a regression. The metric is unguarded."; exit 1 ;;
+esac
+# The leak job lives in the same run. Without this, a run whose libtest gate
+# was green but whose leak job failed would read "OK" from the verdict alone.
+case "$leak" in
+  "LEAK BAR: FAIL"*)    echo "LEAK BAR FAILED — a runtime refcount workload moved."; exit 1 ;;
+  "LEAK BAR: NOT RUN"*) echo "LEAK BAR DID NOT RUN — the nightly is partially unguarded."; exit 1 ;;
+esac
+case "$verdict" in
+  "GATE RAN"*)          echo "OK — the gate ran and nothing regressed."; exit 0 ;;
   *)                    [ "$conclusion" = success ] && exit 0 || exit 1 ;;
 esac
