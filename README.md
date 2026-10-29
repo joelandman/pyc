@@ -101,6 +101,27 @@ pycc hello.py --emit-llvm -o hello.ll
 `pycc` produces a Tier-1 binary: no libpython `DT_NEEDED` entry, `dlopen` still
 works, so NumPy/PyTorch wheels load. Fully static (Tier 2) is deferred.
 
+### Deploying a binary
+
+The binary embeds the absolute path of the sysroot it was compiled against.
+It finds its standard library in this order:
+
+1. `PYTHONHOME`, if set;
+2. `lib/python3.14` next to the executable (or its parent directory);
+3. the compile-time sysroot.
+
+A portable deployment is the binary plus that folder:
+
+```
+app/
+  myprog                # compiled binary
+  lib/python3.14/       # from the sysroot
+```
+
+On a machine where none of the three exists the binary exits with a
+diagnostic naming what it searched and the fix, rather than CPython's bare
+`Failed to import encodings module`.
+
 ## Test
 
 ```bash

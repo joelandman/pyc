@@ -61,9 +61,29 @@ static int add_program_dir_to_path(void) {
     return 0;
 }
 
-static std::string resolve_home() {
-    if (const char* e = std::getenv("PYTHONHOME")) {
-        if (e[0]) return e;
+// A prefix only counts as a home if it actually carries the stdlib. CPython's
+// failure when it does not is a path dump ending in "Failed to import
+// encodings module" -- correct, and useless to a deployer.
+static bool has_stdlib(const std::string& home) {
+    char probe[4096];
+    std::snprintf(probe, sizeof probe, "%s/lib/python%d.%d",
+                  home.c_str(), PY_MAJOR_VERSION, PY_MINOR_VERSION);
+    return ::access(probe, R_OK) == 0;
+}
+
+// Find a prefix whose lib/pythonX.Y is present. Search order:
+//   1. PYTHONHOME -- the user's explicit choice, honoured even when it
+//      differs from the sysroot the binary was built against.
+//   2. next to the executable (then its parent) -- the co-located layout,
+//      which is what makes a lone binary portable.
+//   3. the compile-time sysroot -- where the binary was built.
+// Returns how the home was found; the empty string means nothing on the
+// search path carries a stdlib, and `home` is then unspecified.
+static std::string resolve_home(std::string* home) {
+    const char* e = std::getenv("PYTHONHOME");
+    if (e && e[0]) {
+        if (has_stdlib(e)) { *home = e; return "PYTHONHOME"; }
+        return "";
     }
     char exe[4096];
     ssize_t n = ::readlink("/proc/self/exe", exe, sizeof exe - 1);
@@ -72,20 +92,20 @@ static std::string resolve_home() {
         std::string dir(exe);
         auto slash = dir.find_last_of('/');
         if (slash != std::string::npos) dir.resize(slash);
-        char probe[4096];
-        std::snprintf(probe, sizeof probe, "%s/lib/python%d.%d",
-                      dir.c_str(), PY_MAJOR_VERSION, PY_MINOR_VERSION);
-        if (::access(probe, R_OK) == 0) return dir;
-        slash = dir.find_last_of('/');
+        if (has_stdlib(dir)) { *home = dir; return "next to the executable"; }
         if (slash != std::string::npos) {
             std::string parent = dir.substr(0, slash);
-            std::snprintf(probe, sizeof probe, "%s/lib/python%d.%d",
-                          parent.c_str(), PY_MAJOR_VERSION, PY_MINOR_VERSION);
-            if (::access(probe, R_OK) == 0) return parent;
+            if (has_stdlib(parent)) {
+                *home = parent;
+                return "next to the executable (parent directory)";
+            }
         }
     }
-    if (g_python_home && g_python_home[0]) return g_python_home;
-    return {};
+    if (g_python_home && g_python_home[0] && has_stdlib(g_python_home)) {
+        *home = g_python_home;
+        return "the compile-time sysroot";
+    }
+    return "";
 }
 
 static int configure(int argc, char** argv) {
@@ -102,12 +122,35 @@ static int configure(int argc, char** argv) {
     // often not permitted.
     config.write_bytecode = 0;
 
-    std::string home = resolve_home();
+    std::string home, how;
+    how = resolve_home(&home);
     PyStatus status;
-    if (!home.empty()) {
-        status = PyConfig_SetBytesString(&config, &config.home, home.c_str());
-        if (PyStatus_Exception(status)) goto fail;
+    if (how.empty()) {
+        // Nothing on the search path carries the stdlib. Without this the
+        // deployer sees CPython's "Failed to import encodings module" and has
+        // to discover, by trial, that the binary needs its stdlib beside it.
+        const char* e = std::getenv("PYTHONHOME");
+        std::fprintf(stderr,
+            "pyc: no Python %d.%d standard library found for this binary.\n",
+            PY_MAJOR_VERSION, PY_MINOR_VERSION);
+        if (e && e[0])
+            std::fprintf(stderr,
+                "  PYTHONHOME=%s has no lib/python%d.%d\n"
+                "  fix: point PYTHONHOME at a prefix that contains it, "
+                "or unset it\n",
+                e, PY_MAJOR_VERSION, PY_MINOR_VERSION);
+        else
+            std::fprintf(stderr,
+                "  searched: next to the executable, then the compile-time "
+                "sysroot %s\n"
+                "  fix: copy the sysroot's lib/python%d.%d next to the "
+                "binary, or set PYTHONHOME to a prefix that contains it\n",
+                g_python_home ? g_python_home : "(none baked in)",
+                PY_MAJOR_VERSION, PY_MINOR_VERSION);
+        return -1;
     }
+    status = PyConfig_SetBytesString(&config, &config.home, home.c_str());
+    if (PyStatus_Exception(status)) goto fail;
 
     status = PyConfig_SetBytesArgv(&config, argc, argv);
     if (PyStatus_Exception(status)) goto fail;
