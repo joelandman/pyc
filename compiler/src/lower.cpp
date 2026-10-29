@@ -914,7 +914,10 @@ private:
                     if (!a.kw_defaults[i].has_value()) continue;
                     ir::Value d = lower_expr(*a.kw_defaults[i].value(), ok);
                     if (!*ok) return {};
-                    ir::Value k = const_str(a.kwonlyargs[i].arg, n.loc);
+                    // Same published-spelling rule as the def path: a lambda
+                    // in a class body is mangled by CPython, so the dict key
+                    // must be the mangled name or the default is dropped.
+                    ir::Value k = const_str(mangle_ident(a.kwonlyargs[i].arg), n.loc);
                     call_capi("PyDict_SetItem", {lam_kwdefaults, k, d}, n.loc, ok, {k, d});
                     if (!*ok) return {};
                 }
@@ -996,12 +999,28 @@ private:
             mark_owned(c);
             closure_cells.push_back(c);
         }
-        std::vector<std::string> lam_locals = slotnames;
-        for (const std::string& f2 : freevars) lam_locals.push_back(f2);
+        // CPython mangles a class-body lambda's names before compiling it:
+        // co_varnames and co_kwonlydefaults carry the mangled spellings.
+        // Mangle the native name lists so every table (locals, cells,
+        // freevars) uses the PUBLISHED spelling; the body still spells names
+        // raw, and lower_name/store_name resolve them through the same
+        // fallback. The closure cells above were collected in raw order, so
+        // mangling the lists keeps them positionally aligned.
+        for (std::string& s : cellvars) s = mangle_ident(s);
+        for (std::string& s : freevars) s = mangle_ident(s);
+        std::vector<std::string> lam_locals;
+        lam_locals.reserve(slotnames.size() + freevars.size());
+        for (const std::string& s : slotnames) lam_locals.push_back(mangle_ident(s));
+        for (const std::string& s : freevars) lam_locals.push_back(s);
+        std::vector<std::string> man_params;
+        man_params.reserve(params.size());
+        for (const std::string& s : params) man_params.push_back(mangle_ident(s));
         std::string adopted_code;
         if (const FuncCodeEntry* fc = take_func_code(qualname("<lambda>"),
                                                      n.loc.line, n.loc.end_col)) {
-            if (layout_ok(*fc, lam_locals, freevars, params)) {
+            if (layout_ok(*fc, lam_locals, freevars, man_params)) {
+                // fc's freevars are mangled; they match our mangled list, so
+                // the closure cells keep their positions.
                 std::vector<ir::Value> ordered;
                 ordered.reserve(fc->freevars.size());
                 for (const std::string& name : fc->freevars) {
@@ -1020,8 +1039,8 @@ private:
                 }
             }
         }
-        if (a.vararg) vararg_slot = slot_named(lam_locals, (*a.vararg)->arg);
-        if (a.kwarg) kwarg_slot = slot_named(lam_locals, (*a.kwarg)->arg);
+        if (a.vararg) vararg_slot = slot_named(lam_locals, mangle_ident((*a.vararg)->arg));
+        if (a.kwarg) kwarg_slot = slot_named(lam_locals, mangle_ident((*a.kwarg)->arg));
 
         FnScope sc = begin_function("<lambda>", params, lam_locals);
         cur()->nposonly = (int)a.posonlyargs.size();
@@ -1592,7 +1611,14 @@ private:
                     if (!a.kw_defaults[i].has_value()) continue;   // required
                     ir::Value d = lower_expr(*a.kw_defaults[i].value(), &dok);
                     if (!dok) return false;
-                    ir::Value k = const_str(a.kwonlyargs[i].arg, n.loc);
+                    // The key must be the PUBLISHED spelling: the trampoline
+                    // and the adopted code object both see the mangled name
+                    // (CPython mangles a class-body parameter before it
+                    // compiles it, so co_kwonlydefaults carries "_X__a").
+                    // Keying by the raw "__a" makes the lookup miss and the
+                    // default is silently dropped -- the caller then gets a
+                    // TypeError for an argument that has a default.
+                    ir::Value k = const_str(mangle_ident(a.kwonlyargs[i].arg), n.loc);
                     call_capi("PyDict_SetItem", {kwdefaults, k, d}, n.loc, &dok, {k, d});
                     if (!dok) return false;
                 }
@@ -6097,16 +6123,20 @@ private:
             if (*ok) mark_owned(out);
             return out;
         }
-        auto cit = cells_.find(n.id);
+        auto cit = cells_.find(id);
         if (cit != cells_.end() && class_ns_.empty()) {
             ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
-            emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, n.id,
+            emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, id,
                            cit->second, 0, n.loc, make_landing_pad(n.loc)});
             mark_owned(cell);
+            // Compare against the RESOLVED spelling: the freevar table carries
+            // the published (possibly mangled) name, and the body spells the
+            // raw one. Comparing raw against mangled read the cell without
+            // dereferencing it -- the raw cell leaked to the caller.
             bool is_free = false;
             for (const std::string& fv : cur()->freevars)
-                if (fv == n.id) { is_free = true; break; }
-            ir::Instr cg{ir::Op::CellGet, {cell}, out, Ownership::Owned, n.id,
+                if (fv == id) { is_free = true; break; }
+            ir::Instr cg{ir::Op::CellGet, {cell}, out, Ownership::Owned, id,
                          0, 0, n.loc, make_landing_pad(n.loc)};
             cg.imm = is_free ? 1 : 0;
             cg.has_imm = true;
@@ -6116,12 +6146,12 @@ private:
             *ok = true;
             return out;
         }
-        auto it = locals_.find(n.id);
+        auto it = locals_.find(id);
         if (it != locals_.end() && cit == cells_.end()) {
             // May raise UnboundLocalError: a local read before assignment is
             // an error, not a fallback to the global of the same name.
             emit(ir::Instr{ir::Op::LoadLocal, {}, out, Ownership::Owned,
-                           n.id, it->second, 0, n.loc, make_landing_pad(n.loc)});
+                           id, it->second, 0, n.loc, make_landing_pad(n.loc)});
         } else if (!class_ns_.empty()) {
             if (tp_val.valid()) {
                 ir::Value key = const_str(id, n.loc);
