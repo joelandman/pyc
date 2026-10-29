@@ -14,7 +14,7 @@ import subprocess
 from pathlib import Path
 from typing import Iterator
 
-from verify.measure import Case
+from verify.measure import Case, child_env
 
 # CPython's own suite includes files that are not standalone programs, or that
 # exist to exercise the interpreter's own internals rather than the language.
@@ -77,9 +77,13 @@ def _parseable(oracle: Path, paths: list[Path]) -> set[Path]:
     for i in range(0, len(paths), 150):
         chunk = paths[i:i + 150]
         try:
+            # child_env: parse with the target under the same loader
+            # environment the cases run in, or a shadowed libpython on
+            # LD_LIBRARY_PATH selects a corpus a different CPython sees.
             r = subprocess.run([str(oracle), "-c", _PARSE_PROBE,
                                 *(str(x) for x in chunk)],
-                               capture_output=True, text=True, timeout=120)
+                               capture_output=True, text=True, timeout=120,
+                               env=child_env())
         except (OSError, subprocess.TimeoutExpired):
             # Refuse to guess: if the target cannot be consulted, keep the
             # files rather than silently shrinking the corpus.

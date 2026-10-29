@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from verify import corpus as corpus_mod            # noqa: E402
 from verify import longrunning as longrunning_mod  # noqa: E402
 from verify.measure import (                       # noqa: E402
-    SCHEMA, Case, Compiler, Flag, Measurement, Measurer,
+    SCHEMA, Case, Compiler, Flag, Measurement, Measurer, child_env,
 )
 
 BOLD, DIM, RED, YEL, GRN, RST = (
@@ -64,11 +64,14 @@ def oracle_identity(oracle: Path) -> dict:
     ident = {"path": str(oracle), "version": "", "banner": "",
              "machine": platform.machine()}
     try:
+        # child_env: the identity probe must run under the SAME loader
+        # environment as the measured runs, or it can record a CPython the
+        # cases never ran under (a shadowed libpython on LD_LIBRARY_PATH).
         r = subprocess.run(
             [str(oracle), "-c",
              "import sys,platform;print(platform.python_version());"
              "print(sys.version.replace(chr(10),' '))"],
-            capture_output=True, text=True, timeout=30)
+            capture_output=True, text=True, timeout=30, env=child_env())
         if r.returncode == 0:
             lines = r.stdout.splitlines()
             ident["version"] = lines[0].strip() if lines else ""
@@ -131,7 +134,7 @@ def main() -> int:
             r = subprocess.run(
                 [str(oracle), "-c",
                  "import sysconfig;print(sysconfig.get_paths()['stdlib'])"],
-                capture_output=True, text=True, timeout=30)
+                capture_output=True, text=True, timeout=30, env=child_env())
             if r.returncode == 0 and r.stdout.strip():
                 stdlib = Path(r.stdout.strip())
         if stdlib is None:

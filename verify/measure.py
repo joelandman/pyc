@@ -320,8 +320,19 @@ def child_env() -> dict[str, str]:
     affects set and dict iteration order on both sides, since the compiled
     binary embeds CPython too; the colour variables decide whether tracebacks
     carry ANSI escapes, which otherwise depends on the invoking shell.
+
+    LD_LIBRARY_PATH is STRIPPED, on both sides: the oracle is a thin launcher
+    over the sysroot's libpython3.14.so.1.0, and a caller's LD_LIBRARY_PATH
+    (conda, /home/.../local, a distro python) outranks its RUNPATH and
+    silently swaps in a different libpython. The run would then measure a
+    CPython the subject does not embed -- I5's core rule -- while the
+    comparator sees only a version-string mismatch, or nothing at all when
+    the shadowed build is the same version. Stripping is symmetric: the
+    compiled binary links libpython statically and finds extensions via
+    sys.path, so it needs the variable no more than the oracle does.
     """
     env = dict(os.environ)
+    env.pop("LD_LIBRARY_PATH", None)
     env["PYTHONHASHSEED"] = "0"
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHON_COLORS"] = "0"
@@ -344,8 +355,11 @@ class Compiler:
         self.flags = flags
 
     def compile(self, src: Path, out: Path, *, cwd: Path, timeout: float) -> Run:
+        # child_env: pycc spawns the TARGET interpreter to parse, and a
+        # shadowed libpython on the caller's LD_LIBRARY_PATH would make that
+        # parse run under a CPython the program is about to link against.
         return _exec([str(self.binary), str(src), "-o", str(out), *self.flags],
-                     cwd=cwd, stdin="", timeout=timeout)
+                     cwd=cwd, stdin="", timeout=timeout, env=child_env())
 
 
 class Measurer:

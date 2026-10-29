@@ -364,7 +364,14 @@ else
 fi
 PARSE_ARGS=("$(realpath "$SRC")")
 if [[ -n "$STD_XY" ]]; then PARSE_ARGS+=(--feature-version "$STD_XY"); fi
-if ! PYTHONPATH="$PARSE_HOME${PYTHONPATH:+:$PYTHONPATH}" \
+# -u LD_LIBRARY_PATH: the target interpreter is a thin launcher over the
+# sysroot's libpython3.14.so.1.0, and a caller's LD_LIBRARY_PATH (conda,
+# /home/.../local, a distro python) outranks its RUNPATH and silently swaps
+# in a DIFFERENT libpython -- so the parse step would run under a CPython the
+# program is about to link against. The sysroot's own RUNPATH finds the
+# correct library with the variable absent.
+if ! env -u LD_LIBRARY_PATH \
+     PYTHONPATH="$PARSE_HOME${PYTHONPATH:+:$PYTHONPATH}" \
      "$PY" -m pyc_parse "${PARSE_ARGS[@]}" > "$TMP/ast.json" 2>"$TMP/parse.err"; then
   [[ -s "$TMP/parse.err" ]] && cat "$TMP/parse.err" >&2
   [[ -s "$TMP/ast.json" ]] && "$LOWER" "$TMP/ast.json" >/dev/null
