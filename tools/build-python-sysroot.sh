@@ -422,6 +422,14 @@ verify() {
   # 3. the tier's link mode actually produces a working binary. This is the
   #    check that matters — file existence proves nothing.
   local probe="$SCRATCH/verify"; mkdir -p "$probe"
+  # The probe runs with PYTHONHOME pinned to $PREFIX: a bare Py_Initialize()
+  # computes the prefix from the program location and, failing that, from
+  # built-in candidates -- which on a host that also has python3.14 in /usr
+  # can resolve to /usr. The debug build's extensions carry the 'd' ABI tag,
+  # so /usr/lib/python3.14/lib-dynload has no match and `import math` fails
+  # even though the sysroot itself is fine. A non-debug build fails the other
+  # way: it PASSES against the host's stdlib, which is not what was built.
+  # Either way the probe would be measuring the wrong tree.
   cat > "$probe/emb.c" <<'CEOF'
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
@@ -438,7 +446,7 @@ CEOF
     info "linking Tier-1 probe (static libpython, -rdynamic)"
     gcc -rdynamic $inc "$probe/emb.c" "$static_lib" $libs -o "$probe/emb" \
       || die "Tier-1 link failed"
-    "$probe/emb" | grep -q 'embed OK' || die "Tier-1 probe ran but produced no output"
+    PYTHONHOME="$PREFIX" "$probe/emb" | grep -q 'embed OK' || die "Tier-1 probe ran but produced no output"
     ldd "$probe/emb" | grep -qi 'libpython' \
       && die "Tier-1 probe still has a libpython dynamic dependency" \
       || info "Tier-1 verified: no libpython dependency, extensions importable"
@@ -447,7 +455,7 @@ CEOF
     gcc -static $inc "$probe/emb.c" "$static_lib" $libs -o "$probe/emb" 2>/dev/null \
       || die "Tier-2 link failed"
     file "$probe/emb" | grep -q 'statically linked' || die "Tier-2 probe is not static"
-    "$probe/emb" | grep -q 'embed OK' \
+    PYTHONHOME="$PREFIX" "$probe/emb" | grep -q 'embed OK' \
       || die "Tier-2 probe cannot import stdlib extensions — MODULE_BUILDTYPE=static did not take"
     info "Tier-2 verified: fully static, stdlib extensions builtin"
     warn "Tier-2 binaries can NEVER load C-extension wheels (CHARTER I7)"
