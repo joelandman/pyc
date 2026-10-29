@@ -78,7 +78,12 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
     f->f_locals = locals;
     if (locals) Py_INCREF(locals);
     f->frame_obj = nullptr;
-    f->instr_ptr = _PyCode_CODE(code) + code->_co_firsttraceable + 1;
+    // A CPython frame starts AT the RESUME instruction: PyFrame_GetLineNumber
+    // on a fresh frame resolves to co_firstlineno, which is exactly what the
+    // PyTrace_CALL event must report (the callee's def line, not the first
+    // body line). Starting one unit past RESUME made call events report the
+    // line of the first real instruction.
+    f->instr_ptr = _PyCode_CODE(code) + code->_co_firsttraceable;
     {
         int nplus = code->co_nlocalsplus;
         if (nplus < 0) nplus = 0;
@@ -300,7 +305,12 @@ static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line
     if (!fo->f_trace_lines) return;
     if (line > 0) fo->f_lineno = line;
     ts->tracing++;
-    int r = ts->c_tracefunc((PyObject*)ts, fo, PyTrace_LINE, Py_None);
+    // CPython's contract: the first argument is c_traceobj, the object the
+    // user paired with the trace function (settrace_to_record pairs the
+    // recording list). Passing the thread state -- which on the main thread
+    // lives inside _PyRuntime -- made any C tracer that dereferences its
+    // "object" argument read garbage and segfault.
+    int r = ts->c_tracefunc(ts->c_traceobj, fo, PyTrace_LINE, Py_None);
     ts->tracing--;
     if (r < 0) return;
 }
@@ -505,7 +515,7 @@ static int unit_for_source(PyCodeObject* co, int line, int col, int end_col,
     return legacy;
 }
 
-extern "C" void pyc_rt_set_lasti(int slot, int line, int col, int end_col) {
+static void set_lasti_impl(int slot, int line, int col, int end_col, bool fire) {
     if (slot < 0 || line < 1) return;
     pyc_rt_gil_ensure();
     PyThreadState* ts = PyThreadState_Get();
@@ -577,7 +587,19 @@ extern "C" void pyc_rt_set_lasti(int slot, int line, int col, int end_col) {
     if (idx) slot_store(idx, slot, off);
     f->instr_ptr = _PyCode_CODE(co) + off;
     if (f->frame_obj && line > 0) f->frame_obj->f_lineno = line;
-    if (ts->c_tracefunc) maybe_line_trace(f, ts, line);
+    // fire=false is the quiet variant: the location update is for the
+    // traceback caret (the AddTraceback path), not a line event. CPython
+    // fires a line event only when the line CHANGES; the compiler decides
+    // that statically, because it sees every slot in code order.
+    if (fire && ts->c_tracefunc) maybe_line_trace(f, ts, line);
+}
+
+extern "C" void pyc_rt_set_lasti(int slot, int line, int col, int end_col) {
+    set_lasti_impl(slot, line, col, end_col, true);
+}
+
+extern "C" void pyc_rt_set_lasti_q(int slot, int line, int col, int end_col) {
+    set_lasti_impl(slot, line, col, end_col, false);
 }
 
 extern "C" void pyc_rt_set_lineno(int line) {

@@ -327,15 +327,18 @@ private:
         tail_label_[cur_block_] = cont;   // this is now the block's exit label
     }
 
-    void emit_location(const ir::Instr& in) {
-        need("declare void @pyc_rt_set_lasti(i32, i32, i32, i32)");
+    void emit_location(const ir::Instr& in, bool quiet) {
+        need(quiet
+             ? "declare void @pyc_rt_set_lasti_q(i32, i32, i32, i32)"
+             : "declare void @pyc_rt_set_lasti(i32, i32, i32, i32)");
         int end_line = in.loc.end_line > 0 ? in.loc.end_line : in.loc.line;
         int slot = (int)fn_locs_[cur_fn_].size() / 4;
         fn_locs_[cur_fn_].push_back(in.loc.line);
         fn_locs_[cur_fn_].push_back(end_line);
         fn_locs_[cur_fn_].push_back(in.loc.col);
         fn_locs_[cur_fn_].push_back(in.loc.end_col);
-        o_ << "  call void @pyc_rt_set_lasti(i32 " << slot
+        o_ << "  call void @pyc_rt_set_lasti" << (quiet ? "_q" : "")
+           << "(i32 " << slot
            << ", i32 " << in.loc.line
            << ", i32 " << in.loc.col
            << ", i32 " << in.loc.end_col << ")\n";
@@ -347,11 +350,18 @@ private:
         bool location_emitted = false;
         if (in.op != ir::Op::Phi && in.loc.line > 0 &&
             in.loc.line != last_line_) {
-            emit_location(in);
+            // CPython's line-event rule is static: a unit fires only when its
+            // line differs from the previous unit's. The frame enters at
+            // RESUME, which carries the def line, so a body that starts on
+            // the def line fires nothing until the line changes.
+            bool quiet = last_line_ == 0 && f.firstlineno > 0 &&
+                         in.loc.line == f.firstlineno;
+            emit_location(in, quiet);
             location_emitted = true;
         }
         if (in.op == Op::AddTraceback && in.loc.line > 0 && !location_emitted)
-            emit_location(in);
+            // The line is unchanged: keep the caret position, drop the event.
+            emit_location(in, true);
         switch (in.op) {
             case Op::ConstInt:  emit_const_use(in, 'i'); break;
             case Op::ConstStr:  emit_const_use(in, 's'); break;

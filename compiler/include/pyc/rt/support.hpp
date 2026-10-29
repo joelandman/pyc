@@ -294,6 +294,10 @@ void pyc_rt_shutdown(void);
 void pyc_rt_set_lineno(int line);
 void pyc_rt_set_location(int line, int col, int end_col);
 void pyc_rt_set_lasti(int slot, int line, int col, int end_col);
+// Quiet variant: same location update (traceback caret) but never fires a
+// PyTrace_LINE event. Used when the compiler knows the line did not change,
+// which is CPython's rule for suppressing line events.
+void pyc_rt_set_lasti_q(int slot, int line, int col, int end_col);
 void pyc_rt_traceback_here(void);
 int pyc_rt_tuple_maybe_untrack(PyObject* t);
 

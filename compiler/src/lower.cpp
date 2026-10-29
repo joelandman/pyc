@@ -219,7 +219,10 @@ public:
     bool lower_module(const ast::mod& node) {
         const Module* mm = std::get_if<Module>(&node.v);
         if (!mm) return err("only a module can be compiled", "mod", {});
-        mod_.functions.push_back(ir::Function{.name="__main__", .next_value=1});
+        // A module's co_firstlineno is 1 in CPython, so the same "first unit
+        // on the def line fires nothing" rule applies from line 1.
+        mod_.functions.push_back(ir::Function{.name="__main__", .firstlineno=1,
+                                              .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
@@ -730,7 +733,8 @@ private:
 
     FnScope begin_function(const std::string& name,
                            const std::vector<std::string>& params,
-                           const std::vector<std::string>& locals) {
+                           const std::vector<std::string>& locals,
+                           int firstlineno = 0) {
         FnScope sc{fn_idx_, blk_, locals_, owned_, frame_owned_, class_ns_,
                    class_cells_, class_dict_cells_,
                    loops_, try_stack_, cells_, enclosing_cells_,
@@ -739,7 +743,8 @@ private:
         sc.type_param_env = type_param_env_;
         type_param_env_.clear();
         mod_.functions.push_back(
-            ir::Function{.name=name, .params=params, .next_value=1});
+            ir::Function{.name=name, .params=params, .firstlineno=firstlineno,
+                         .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
         cur()->locals = locals;
         locals_.clear();
@@ -1042,7 +1047,7 @@ private:
         if (a.vararg) vararg_slot = slot_named(lam_locals, mangle_ident((*a.vararg)->arg));
         if (a.kwarg) kwarg_slot = slot_named(lam_locals, mangle_ident((*a.kwarg)->arg));
 
-        FnScope sc = begin_function("<lambda>", params, lam_locals);
+        FnScope sc = begin_function("<lambda>", params, lam_locals, n.loc.line);
         cur()->nposonly = (int)a.posonlyargs.size();
         cur()->nkwonly = nkwonly;
         cur()->cellvars = cellvars;
@@ -1203,7 +1208,7 @@ private:
         locals.push_back(".acc");
 
         std::string fname = std::string("<") + kind + "comp>";
-        FnScope sc = begin_function(fname, params, locals);
+        FnScope sc = begin_function(fname, params, locals, loc.line);
         // begin_function clears cells_; re-declare the captured cells so
         // lower_name emits cell.get for them rather than a raw load.
         for (const std::string& c : cell_caps) cells_[c] = locals_[c];
@@ -1899,7 +1904,7 @@ private:
 
         mod_.functions.push_back(ir::Function{
             .name=n.name, .params=params, .nkwonly=nkwonly,
-            .nposonly=nposonly, .next_value=1});
+            .nposonly=nposonly, .firstlineno=n.loc.line, .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
         const std::size_t fn_index = fn_idx_;
         cur()->locals = all_locals;
@@ -2975,7 +2980,7 @@ private:
         if (class_scope) { params.push_back(".ns"); locals.push_back(".ns"); }
         for (const std::string& f2 : freevars) locals.push_back(f2);
 
-        FnScope sc = begin_function("__annotate__", params, locals);
+        FnScope sc = begin_function("__annotate__", params, locals, loc.line);
         cur()->freevars = freevars;
         for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
         {
@@ -7414,7 +7419,7 @@ private:
             add_free(r, c, false);
         }
         std::vector<std::string> thunk_locals = freevars;
-        FnScope sc = begin_function(nm->id, {}, thunk_locals);
+        FnScope sc = begin_function(nm->id, {}, thunk_locals, n.loc.line);
         cur()->freevars = freevars;
         for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
         ir::Value classdict;

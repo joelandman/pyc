@@ -232,6 +232,11 @@ struct Function {
     // Fast locals, CPython-style: a name assigned anywhere in the body is
     // local throughout, so the slot set is fixed before lowering begins.
     std::vector<std::string> locals;
+    // The def line. Line events fire when the line CHANGES (CPython's rule is
+    // static: a unit fires only when its line differs from the previous
+    // unit's). The first unit of a body whose line equals the def line
+    // therefore fires nothing, and codegen needs this to decide that.
+    int firstlineno = 0;
     std::vector<Block> blocks;
     std::uint32_t next_value = 1;    // 0 reserved for "no value"
 
