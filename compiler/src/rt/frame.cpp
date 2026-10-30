@@ -303,16 +303,33 @@ static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line
     PyFrameObject* fo = _PyFrame_GetFrameObject(f);
     if (!fo) { PyErr_Clear(); return; }
     if (!fo->f_trace_lines) return;
-    if (line > 0) fo->f_lineno = line;
+    // Mirror CPython's sys.settrace fast path (instrumentation.c, the
+    // PY_MONITORING_SYS_TRACE_ID special case) exactly:
+    //  * what_event is LINE for the call's duration. The f_lineno setter
+    //    (frameobject.c) rejects debugger jumps when what_event < 0 and its
+    //    allowed-event switch keys off it -- without this, every
+    //    `frame.f_lineno = N` inside a trace function raised ValueError.
+    //  * f_lineno is a cache (-1 uncomputed, 0 invalid, >0 cached): set it
+    //    for the call, reset to 0 afterwards so the next read recomputes
+    //    from instr_ptr, which a debugger jump may have moved.
+    //  * fo is a borrowed reference; the trace function may clear or free
+    //    the frame object, so hold a reference across the call.
+    //  * The first argument is c_traceobj, the object the user paired with
+    //    the trace function (settrace_to_record pairs the recording list).
+    //    Passing the thread state -- which on the main thread lives inside
+    //    _PyRuntime -- made any C tracer that dereferences its "object"
+    //    argument read garbage and segfault.
+    int old_what = ts->what_event;
+    ts->what_event = PY_MONITORING_EVENT_LINE;
     ts->tracing++;
-    // CPython's contract: the first argument is c_traceobj, the object the
-    // user paired with the trace function (settrace_to_record pairs the
-    // recording list). Passing the thread state -- which on the main thread
-    // lives inside _PyRuntime -- made any C tracer that dereferences its
-    // "object" argument read garbage and segfault.
+    Py_INCREF(fo);
+    fo->f_lineno = line;
     int r = ts->c_tracefunc(ts->c_traceobj, fo, PyTrace_LINE, Py_None);
+    fo->f_lineno = 0;
+    Py_DECREF(fo);
     ts->tracing--;
-    if (r < 0) return;
+    ts->what_event = old_what;
+    (void)r;
 }
 
 // instr_ptr has to sit on a unit whose location is this source line: traceback
