@@ -1,8 +1,8 @@
 # pyc — current state and MVP
 
-**Date:** 2026-10-28. Language numbers in the table below are the recorded
-`compiler/baseline-language.json` gate (886/886). The `Lib/test` row is the
-2026-10-28 I6 record (367/389, `-O0`, sysroot 3.14.7, `--stdlib`).
+**Date:** 2026-10-29. Language numbers in the table below are the recorded
+`compiler/baseline-language.json` gate (887/887). The `Lib/test` row is the
+2026-10-29 I6 record (368/389, `-O0`, sysroot 3.14.7, `--stdlib`).
 CHARTER remains binding. §4 product rules were not changed.
 
 Roles that produced this: Architect (`agents/architect.md`), PM
@@ -13,9 +13,9 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
-I6. Language + gaps + concurrency is **886/886** impactful. `Lib/test` is
-**367/389 = 94.34%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
-2026-10-28. C1 (frames) and C2 (periodic GIL) are closed. A proved
+I6. Language + gaps + concurrency is **887/887** impactful. `Lib/test` is
+**368/389 = 94.60%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
+2026-10-29. C1 (frames) and C2 (periodic GIL) are closed. A proved
 heap-free loop drops the GIL only when another thread requests it
 ([GIL.md](GIL.md)). The remaining product gap is stub code objects,
 named refusals instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and
@@ -29,11 +29,11 @@ whose locals do not match.
 
 | Check | Result |
 |---|---|
-| language + gaps + concurrency | 886/886 impactful |
-| `Lib/test` (I6) | 367/389 (94.34%), measured 2026-10-28 |
-| I6 composition | 365 clean + 2 `STDERR_DIFFERS`-only = 367 pass |
+| language + gaps + concurrency | 887/887 impactful |
+| `Lib/test` (I6) | 368/389 (94.60%), measured 2026-10-29 |
+| I6 composition | 366 clean + 2 `STDERR_DIFFERS`-only = 368 pass |
 | `DID_NOT_COMPILE` | 0 |
-| `EXIT_DIFFERS` | 14 |
+| `EXIT_DIFFERS` | 13 |
 | `STDOUT_DIFFERS` | 9 |
 | timeout | 1 |
 | `ORACLE_UNSTABLE` | 8 |
@@ -169,11 +169,11 @@ works), and completeness is measured and not gamed. Not: C speed, two
 
 | # | Check | Bar |
 |---|---|---|
-| M1 | `make -C verify verify` | 886/886 impactful; no new silent-wrong |
+| M1 | `make -C verify verify` | 887/887 impactful; no new silent-wrong |
 | M2 | `make -C verify fast` | `--fail-on-silent-wrong` |
 | M3 | CI `ldd` smoke | no `libpython` `DT_NEEDED` |
 | M4 | CI wheel step | NumPy import+run in that binary |
-| M5 | I6 vs README | **367/389 (94.34%)**, no regress |
+| M5 | I6 vs README | **368/389 (94.60%)**, no regress |
 | M6 | remaining compile fails | construct + line + reason — **not** invalid LLVM IR |
 
 **Not MVP gates:** unittest metric; `--python=3.13`; ELF `-static`; unboxing
@@ -192,17 +192,20 @@ vs C.
   from a polluted shell); B4 deploy: stdlib search is verified per
   candidate and a miss names what it searched; B5 C-trace contract
   (`c_traceobj` argument, callee `co_firstlineno` on CALL, quiet line
-  updates) — `test_sys_settrace` no longer segfaults, remaining
-  event-stream divergence is the B7 line-attribution tail; B6 the
+  updates) — `test_sys_settrace` no longer segfaults; B7 the line-event
+  stream for desugared loops (runtime fire rule, back-edge force-fire on
+  same-line jumps, for/while re-stamping, quiet cell prologue) —
+  `loop_line_events.py` is byte-identical to the oracle and `test_trace.py`
+  passes; B6 the
   Tier-1 verify probe pins `PYTHONHOME` (it used to measure the host's
   stdlib on hosts that ship python3.14); B8 nightly leak bar (cp314d
   sysroot, workloads flat, negative control leaks +1/iter). Gates on
-  this tree: 886/886 language, 367/389 `Lib/test`, no regressions.
+  this tree: 887/887 language, 368/389 `Lib/test`, no regressions.
 - The location-slot commit is `adc0c4e`. The language-only
   fast gate on that tree was 860/860 impactful, 858 byte-identical,
   547s. The two stderr-only rows were `case_208.py` and `case_209.py`.
 - M5 was held at **355/389** until `make -C verify metric`; that ran
-  2026-10-28 and the row is now 367/389. Do not edit
+  2026-10-29 and the row is now 368/389. Do not edit
   `compiler/baseline-libtest.json` by hand. A local 389-file run on
   intermediate commit `17270a0` printed 358/389 and was never this row:
   it predates the slot cache, and it was not adopted. Script runs
@@ -214,7 +217,7 @@ vs C.
 
 **Next (MVP completeness)**
 
-1. I6 re-run 2026-10-28: **367/389 (94.34%)**, adopted as
+1. I6 re-run 2026-10-29: **368/389 (94.60%)**, adopted as
    `compiler/baseline-libtest.json`; the 2026-09-26 355/389 record is
    superseded. The unpublished `17270a0` run was never a substitute for
    this. B2's replacement of the mislabeled published release is staged
