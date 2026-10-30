@@ -397,7 +397,8 @@ private:
     ir::Value call_capi(const char* symbol, std::vector<ir::Value> args,
                         const SourceLoc& loc, bool* ok,
                         std::vector<ir::Value> consume = {},
-                        std::int64_t imm = 0, int imm_pos = -1) {
+                        std::int64_t imm = 0, int imm_pos = -1,
+                        bool pad = true) {
         const rt::CApiSymbol* sym = rt::lookup(symbol);
         if (!sym) {
             *ok = err(std::string("no C-API contract recorded for '") + symbol
@@ -434,7 +435,11 @@ private:
             int cp = (imm_pos >= 0 && (int)i >= imm_pos) ? (int)i + 1 : (int)i;
             if (sym->steals_param(cp)) in.stolen.push_back(args[i].id);
         }
-        if (sym->may_raise) in.on_error = make_landing_pad(loc);
+        // pad = false is for cleanup sequences that must run from INSIDE a
+        // landing pad (the except-name unbind): a pad would re-run
+        // pop_open_handlers for the entry being cleaned and recurse. Call
+        // sites that pass false are op-by-op failure-free by construction.
+        if (sym->may_raise && pad) in.on_error = make_landing_pad(loc);
         emit(std::move(in));
 
         // A stolen reference now belongs to the callee: drop it from the live
@@ -516,7 +521,9 @@ private:
         // While it was marked as raising, call_capi built a landing pad for
         // it, that pad popped handlers, and the compiler recursed until it
         // hung -- diagnosing nothing at all.
-        pop_open_handlers(loc);
+        // A failing unbind cannot be reported from a pad (it returns a
+        // block, not a status); same convention as the (void)ok above.
+        (void)pop_open_handlers(loc);
         if (!try_stack_.empty()) drop_open_handled_exc(loc);
         // Record this frame on every unwind, including a local except.
         // CPython still puts the current frame on e.__traceback__ when
@@ -721,6 +728,10 @@ private:
         std::size_t try_depth;
         ir::Value held{};
         int drops = 2;
+        // The handler's `as` name, when the dispatch pushes a matched
+        // handler. The finally-suite and except* dispatch entries have
+        // none, so their unwind unbinds nothing.
+        std::optional<std::string> name;
     };
 
     // Saved lowering state while a nested function is built.
@@ -2658,17 +2669,103 @@ private:
         if (owns(v)) release(v, loc);
     }
 
+    // CPython's implicit handler cleanup, `e = None; del e`, emitted on
+    // every exit from an `except ... as e` suite. Normal fall-through emits
+    // it inline in lower_try_except; the return/break/continue and unwind
+    // exits emit it from pop_open_handlers, which runs INSIDE a landing
+    // pad -- so this sequence must be pad-free. A pad here would recurse
+    // forever: the pad re-runs pop_open_handlers for the very entry being
+    // cleaned (the dispatch removes entries, the pop does not). Every op is
+    // preceded in the same sequence by the store that makes it succeed --
+    // the slot, global, cell, or namespace entry was bound when the handler
+    // matched -- so none can fail; the ops below are the same ones
+    // store_name and lower_delete emit, minus the error edges.
     bool except_unbind_name(const std::optional<std::string>& name,
                             const SourceLoc& loc) {
         if (!name) return true;
+        const std::string nm =
+            (locals_.count(*name) || cells_.count(*name))
+                ? *name : mangle_ident(*name);
         ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
                        0, 0, loc, std::nullopt});
         mark_owned(nn);
-        store_name(*name, nn, loc);
-        expr t;
-        t.v = Name{*name, expr_context{Del{}}, loc};
-        return lower_delete(Delete{{std::move(t)}, loc});
+        auto load_cell = [&](int slot) {
+            ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, nm,
+                           slot, 0, loc, std::nullopt});
+            mark_owned(cell);
+            return cell;
+        };
+        auto cell_bind = [&](int slot) {
+            ir::Value cell = load_cell(slot);
+            emit(ir::Instr{ir::Op::CellSet, {cell, nn}, std::nullopt,
+                           Ownership::NotAnObject, nm, 0, 0, loc,
+                           std::nullopt});
+            release(cell, loc);
+            release(nn, loc);   // the cell holds its own reference now
+        };
+        auto cell_clear = [&](int slot) {
+            ir::Value cell = load_cell(slot);
+            emit(ir::Instr{ir::Op::CellSet, {cell, ir::Value{}}, std::nullopt,
+                           Ownership::NotAnObject, nm, 0, 0, loc,
+                           std::nullopt});
+            release(cell, loc);
+        };
+        auto cit = cells_.find(nm);
+        if (cit != cells_.end() && class_ns_.empty()) {
+            cell_bind(cit->second);
+            cell_clear(cit->second);
+            return true;
+        }
+        if (!class_ns_.empty()) {
+            if (!class_globals_.empty() && class_globals_.back().count(nm)) {
+                emit(ir::Instr{ir::Op::StoreGlobal, {nn}, std::nullopt,
+                               Ownership::NotAnObject, nm, 0, 0, loc,
+                               std::nullopt});
+                release(nn, loc);
+                ir::Value r = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+                emit(ir::Instr{ir::Op::DelGlobal, {}, r, Ownership::NotAnObject,
+                               nm, 0, 0, loc, std::nullopt});
+                return true;
+            }
+            if (!class_nonlocals_.empty() && class_nonlocals_.back().count(nm)) {
+                auto ncit = cells_.find(nm);
+                if (ncit != cells_.end()) {
+                    cell_bind(ncit->second);
+                    cell_clear(ncit->second);
+                    return true;
+                }
+            }
+            bool ok = true;
+            ir::Value key = const_str(nm, loc);
+            call_capi("PyObject_SetItem", {class_ns_.back(), key, nn}, loc,
+                      &ok, {key}, 0, -1, /*pad=*/false);
+            if (!ok) return false;
+            release(nn, loc);
+            key = const_str(nm, loc);
+            call_capi("pyc_rt_del_classname", {class_ns_.back(), key}, loc,
+                      &ok, {key}, 0, -1, /*pad=*/false);
+            return ok;
+        }
+        auto lit = locals_.find(nm);
+        if (lit != locals_.end()) {
+            emit(ir::Instr{ir::Op::StoreLocal, {nn}, std::nullopt,
+                           Ownership::NotAnObject, nm, lit->second, 0, loc,
+                           std::nullopt});
+            release(nn, loc);
+            emit(ir::Instr{ir::Op::DelLocal, {}, std::nullopt,
+                           Ownership::NotAnObject, nm, lit->second, 0, loc,
+                           std::nullopt});
+            return true;
+        }
+        emit(ir::Instr{ir::Op::StoreGlobal, {nn}, std::nullopt,
+                       Ownership::NotAnObject, nm, 0, 0, loc, std::nullopt});
+        release(nn, loc);
+        ir::Value r = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+        emit(ir::Instr{ir::Op::DelGlobal, {}, r, Ownership::NotAnObject,
+                       nm, 0, 0, loc, std::nullopt});
+        return true;
     }
 
     bool lower_stmt_list(const std::vector<stmt>& body) {
@@ -3376,14 +3473,26 @@ private:
     //
     // report "No active exception to reraise" — the KeyError's pad had
     // already restored the TypeError off the stack.
-    void pop_open_handlers(const SourceLoc& loc) {
+    bool pop_open_handlers(const SourceLoc& loc) {
         std::size_t depth = try_stack_.size();
         for (auto it = handled_stack_.rbegin(); it != handled_stack_.rend(); ++it) {
             if (it->try_depth < depth) continue;
             bool ok = true;
             call_capi("pyc_rt_pop_handled", {it->prev}, loc, &ok);
             (void)ok;
+            // CPython's handler cleanup is POP_EXCEPT and
+            // `e = None; del e` as ONE unit, and it runs on every way out
+            // of a handler suite: normal fall-through (inline in
+            // lower_try_except), return/break/continue (finish_return /
+            // finish_jump, here), and an exception unwinding out (the
+            // landing pad, also here). Skipping the unbind on the
+            // terminator paths left `e` bound in the dead frame, which
+            // shows up in traceback locals (test_print). An entry exists
+            // only after the handler matched, so the name is bound
+            // whenever this fires.
+            if (it->name && !except_unbind_name(it->name, loc)) return false;
         }
+        return true;
     }
 
     void drop_open_handled_exc(const SourceLoc& loc) {
@@ -3822,7 +3931,7 @@ private:
             call_capi("pyc_rt_gil_acquire", {}, loc, &gok);
             if (!gok) return false;
         }
-        pop_open_handlers(loc);
+        if (!pop_open_handlers(loc)) return false;
         drop_open_handled_exc(loc);
         if (!fin_stack_.empty() && loops_.size() <= fin_loop_depth_) {
             FinallyCtx* f = fin_stack_.back();
@@ -3858,7 +3967,7 @@ private:
             call_capi("pyc_rt_gil_acquire", {}, loc, &gok);
             if (!gok) return false;
         }
-        pop_open_handlers(loc);
+        if (!pop_open_handlers(loc)) return false;
         drop_open_handled_exc(loc);
         // The returned reference is handed on, so it must NOT be released --
         // but every other live temporary must be, or an early return leaks
@@ -4006,7 +4115,8 @@ private:
                 emit_decref(bound, n.loc);
                 mark_owned(rest);
             } else {
-                handled_stack_.push_back({prev_handled, try_stack_.size(), exc});
+                handled_stack_.push_back(
+                    {prev_handled, try_stack_.size(), exc, 2, eh.name});
             }
             std::uint32_t hcatch = 0;
             if (star) {
