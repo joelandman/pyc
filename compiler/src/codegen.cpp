@@ -85,7 +85,6 @@ private:
     std::ostringstream pre_;      // instructions that must precede a call
     std::map<std::size_t, std::string> tail_label_;
     std::size_t cur_block_ = 0;
-    int last_line_ = 0;
     std::size_t cur_fn_ = 0;
     int main_loc_count_ = 0;
     std::vector<std::vector<int>> fn_locs_;
@@ -259,7 +258,6 @@ private:
 
     void emit_blocks(const ir::Function& f, std::size_t idx, bool is_main) {
         (void)idx;
-        last_line_ = 0;
         for (std::size_t b = 0; b < f.blocks.size(); ++b) {
             o_ << "bb" << b << ":\n";
             cur_block_ = b;
@@ -301,7 +299,6 @@ private:
     void emit_block(const ir::Function& f, const ir::Block& b,
                     std::size_t idx, bool is_main) {
         (void)idx;
-        last_line_ = 0;
         for (const ir::Instr& in : b.instrs)
             if (in.op == ir::Op::Phi) emit_instr(f, in, is_main);
         for (const ir::Instr& in : b.instrs)
@@ -328,40 +325,40 @@ private:
     }
 
     void emit_location(const ir::Instr& in, bool quiet) {
-        need(quiet
-             ? "declare void @pyc_rt_set_lasti_q(i32, i32, i32, i32)"
-             : "declare void @pyc_rt_set_lasti(i32, i32, i32, i32)");
+        bool be = !quiet && in.backedge;
+        need(be
+                 ? "declare void @pyc_rt_set_lasti_be(i32, i32, i32, i32)"
+             : quiet
+                 ? "declare void @pyc_rt_set_lasti_q(i32, i32, i32, i32)"
+                 : "declare void @pyc_rt_set_lasti(i32, i32, i32, i32)");
         int end_line = in.loc.end_line > 0 ? in.loc.end_line : in.loc.line;
         int slot = (int)fn_locs_[cur_fn_].size() / 4;
         fn_locs_[cur_fn_].push_back(in.loc.line);
         fn_locs_[cur_fn_].push_back(end_line);
         fn_locs_[cur_fn_].push_back(in.loc.col);
         fn_locs_[cur_fn_].push_back(in.loc.end_col);
-        o_ << "  call void @pyc_rt_set_lasti" << (quiet ? "_q" : "")
+        o_ << "  call void @pyc_rt_set_lasti" << (be ? "_be" : quiet ? "_q" : "")
            << "(i32 " << slot
            << ", i32 " << in.loc.line
            << ", i32 " << in.loc.col
            << ", i32 " << in.loc.end_col << ")\n";
-        last_line_ = in.loc.line;
     }
 
     void emit_instr(const ir::Function& f, const ir::Instr& in, bool is_main) {
         using ir::Op;
-        bool location_emitted = false;
-        if (in.op != ir::Op::Phi && in.loc.line > 0 &&
-            in.loc.line != last_line_) {
-            // CPython's line-event rule is static: a unit fires only when its
-            // line differs from the previous unit's. The frame enters at
-            // RESUME, which carries the def line, so a body that starts on
-            // the def line fires nothing until the line changes.
-            bool quiet = last_line_ == 0 && f.firstlineno > 0 &&
-                         in.loc.line == f.firstlineno;
-            emit_location(in, quiet);
-            location_emitted = true;
+        if (in.op != ir::Op::Phi && in.loc.line > 0) {
+            // Every slot updates the frame's location; whether a LINE event
+            // FIRES is decided at runtime against the unit the frame is
+            // leaving (CPython's rule: a unit fires only when its line differs
+            // from the previous unit's). The compiler cannot make that call:
+            // a loop's back edge re-enters an earlier unit, and the blocks
+            // run in an order this emission order does not see, so a static
+            // per-block dedup re-fired the same line at every block boundary.
+            // AddTraceback is the caret-only variant: unwinding is not a
+            // line change, so it never fires. quiet_loc is the same, for
+            // slots with no oracle counterpart (comprehension entry).
+            emit_location(in, in.op == Op::AddTraceback || in.quiet_loc);
         }
-        if (in.op == Op::AddTraceback && in.loc.line > 0 && !location_emitted)
-            // The line is unchanged: keep the caret position, drop the event.
-            emit_location(in, true);
         switch (in.op) {
             case Op::ConstInt:  emit_const_use(in, 'i'); break;
             case Op::ConstStr:  emit_const_use(in, 's'); break;

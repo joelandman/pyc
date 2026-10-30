@@ -298,6 +298,11 @@ void pyc_rt_set_lasti(int slot, int line, int col, int end_col);
 // PyTrace_LINE event. Used when the compiler knows the line did not change,
 // which is CPython's rule for suppressing line events.
 void pyc_rt_set_lasti_q(int slot, int line, int col, int end_col);
+
+// Back-edge variant: a loop back edge always produces one LINE event
+// for the re-entered line (CPython fires it at the JUMP when the line is
+// unchanged, at the target's line event when it changes).
+void pyc_rt_set_lasti_be(int slot, int line, int col, int end_col);
 void pyc_rt_traceback_here(void);
 int pyc_rt_tuple_maybe_untrack(PyObject* t);
 

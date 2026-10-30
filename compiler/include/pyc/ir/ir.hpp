@@ -209,6 +209,21 @@ struct Instr {
     // or index 0 of a container -- prints as absent, so `a < b` and a call
     // with no immediate look identical in the IR dump.
     bool has_imm = false;
+    // Br: this branch is a LOOP BACK EDGE (target = the loop head). CPython
+    // fires exactly one LINE event for the re-entered check line on every
+    // back edge -- even when the line does not change (a backward jump to a
+    // unit on the same line still fires; the legacy jump handler does it) --
+    // so codegen emits the force-fire location update for it
+    // (pyc_rt_set_lasti_be).
+    bool backedge = false;
+    // The location update happens (traceback caret) but never fires a LINE
+    // event. For the entry machinery of a comprehension's synthetic frame:
+    // CPython 3.14 inlines comprehensions (PEP 709), so that frame does not
+    // exist in the oracle and its entry must contribute no line event -- the
+    // caller already fired the comprehension's line when it evaluated the
+    // iterable. Without this the fresh-frame fire (below, frame.cpp) would
+    // add an event the oracle never has.
+    bool quiet_loc = false;
 };
 
 struct Block {
@@ -232,11 +247,6 @@ struct Function {
     // Fast locals, CPython-style: a name assigned anywhere in the body is
     // local throughout, so the slot set is fixed before lowering begins.
     std::vector<std::string> locals;
-    // The def line. Line events fire when the line CHANGES (CPython's rule is
-    // static: a unit fires only when its line differs from the previous
-    // unit's). The first unit of a body whose line equals the def line
-    // therefore fires nothing, and codegen needs this to decide that.
-    int firstlineno = 0;
     std::vector<Block> blocks;
     std::uint32_t next_value = 1;    // 0 reserved for "no value"
 

@@ -515,7 +515,8 @@ static int unit_for_source(PyCodeObject* co, int line, int col, int end_col,
     return legacy;
 }
 
-static void set_lasti_impl(int slot, int line, int col, int end_col, bool fire) {
+static void set_lasti_impl(int slot, int line, int col, int end_col, bool fire,
+                           bool force) {
     if (slot < 0 || line < 1) return;
     pyc_rt_gil_ensure();
     PyThreadState* ts = PyThreadState_Get();
@@ -585,21 +586,74 @@ static void set_lasti_impl(int slot, int line, int col, int end_col, bool fire) 
     if (off < 0) off = legacy;
     if (off >= nunits) off = (int)nunits - 1;
     if (idx) slot_store(idx, slot, off);
-    f->instr_ptr = _PyCode_CODE(co) + off;
-    if (f->frame_obj && line > 0) f->frame_obj->f_lineno = line;
     // fire=false is the quiet variant: the location update is for the
-    // traceback caret (the AddTraceback path), not a line event. CPython
-    // fires a line event only when the line CHANGES; the compiler decides
-    // that statically, because it sees every slot in code order.
-    if (fire && ts->c_tracefunc) maybe_line_trace(f, ts, line);
+    // traceback caret (the AddTraceback path and quiet_loc slots), not a
+    // line event.
+    //
+    // Whether a loud update FIRES is CPython's unit rule, decided here
+    // rather than at compile time: a LINE event fires when the line of the
+    // unit being entered differs from the line of the unit the frame is
+    // currently on. A loop's back edge re-enters an earlier unit, so the
+    // same slot can be entered from a different line on every pass, and no
+    // emission order the compiler sees can decide that. The frame's current
+    // unit is the only record of which line was left.
+    //
+    // A frame is FRESH until its first location update moves instr_ptr off
+    // the RESUME unit. CPython fires the first marked unit after RESUME
+    // even when its line equals co_firstlineno (the prev_opcode == RESUME
+    // case in _Py_call_instrumentation_line), so a fresh frame's first
+    // loud update always fires -- this is what makes `def f(): pass` (body
+    // on the def line) report a line event.
+    //
+    // force is the back-edge variant (pyc_rt_set_lasti_be). CPython fires a
+    // backward jump's line event in exactly two complementary cases, and this
+    // slot is the half the re-entered check slot does NOT cover:
+    //   line changed -> the re-entered check slot fires it (normal rule),
+    //                    so this back edge must stay silent, or it doubles;
+    //   same line    -> no unit on the way in changes line, so nothing would
+    //                    fire; the legacy jump handler fires the unchanged
+    //                    line for same-line BACKWARD jumps (this is why a
+    //                    one-line list comp fires per iteration).
+    // Net: one event per back edge, in both cases, attributed to the check
+    // line.
+    //
+    // The back edge is stamped with the CHECK line. When it does not fire
+    // (the line-changing case) it must NOT move instr_ptr to the check line:
+    // the re-entered check slot then compares against the BODY unit it came
+    // from, sees a line change, and fires. Storing the check line here would
+    // make that re-entry look same-line and swallow the event.
+    const bool fresh =
+        f->instr_ptr == _PyCode_CODE(co) + co->_co_firsttraceable;
+    bool do_fire = fire;
+    bool keep_instr = false;
+    if (do_fire && ts->c_tracefunc && f->instr_ptr && !fresh) {
+        int prev = (int)(f->instr_ptr - _PyCode_CODE(co));
+        if (prev < 0) prev = 0;
+        if (prev >= nunits) prev = (int)nunits - 1;
+        int pl = 0, pc = 0, pel = 0, pec = 0;
+        bool same = PyCode_Addr2Location(co, prev * (int)sizeof(_Py_CODEUNIT),
+                                         &pl, &pc, &pel, &pec) && pl == line;
+        do_fire = force ? same : !same;
+        if (force && !do_fire) keep_instr = true;
+    }
+    if (!keep_instr) {
+        f->instr_ptr = _PyCode_CODE(co) + off;
+        if (f->frame_obj && line > 0) f->frame_obj->f_lineno = line;
+    }
+    if (do_fire && ts->c_tracefunc) maybe_line_trace(f, ts, line);
 }
 
 extern "C" void pyc_rt_set_lasti(int slot, int line, int col, int end_col) {
-    set_lasti_impl(slot, line, col, end_col, true);
+    set_lasti_impl(slot, line, col, end_col, true, false);
 }
 
 extern "C" void pyc_rt_set_lasti_q(int slot, int line, int col, int end_col) {
-    set_lasti_impl(slot, line, col, end_col, false);
+    set_lasti_impl(slot, line, col, end_col, false, false);
+}
+
+// Loop back edge: see the force note in set_lasti_impl.
+extern "C" void pyc_rt_set_lasti_be(int slot, int line, int col, int end_col) {
+    set_lasti_impl(slot, line, col, end_col, true, true);
 }
 
 extern "C" void pyc_rt_set_lineno(int line) {

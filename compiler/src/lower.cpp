@@ -219,10 +219,7 @@ public:
     bool lower_module(const ast::mod& node) {
         const Module* mm = std::get_if<Module>(&node.v);
         if (!mm) return err("only a module can be compiled", "mod", {});
-        // A module's co_firstlineno is 1 in CPython, so the same "first unit
-        // on the def line fires nothing" rule applies from line 1.
-        mod_.functions.push_back(ir::Function{.name="__main__", .firstlineno=1,
-                                              .next_value=1});
+        mod_.functions.push_back(ir::Function{.name="__main__", .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
@@ -307,6 +304,11 @@ private:
     std::vector<I64Phi> i64_phis_;
     std::uint32_t range_n_ = 0;
     std::string range_ctr_;
+    // While set, every emitted instruction updates the frame's location
+    // quietly (traceback caret, no LINE event). See quiet_loc in ir.hpp:
+    // the comprehension's entry machinery has no counterpart in CPython 3.14
+    // (PEP 709 inlines the loop into the caller).
+    bool quiet_locs_ = false;
     // Names in THIS function whose slot holds a cell: either a local something
     // nested reads (a cellvar) or a name inherited from an enclosing function
     // (a freevar). Both are read with cell.get rather than load.local.
@@ -367,7 +369,19 @@ private:
     // then tries to branch out of.
     void emit(ir::Instr i) {
         if (terminated()) return;
+        if (quiet_locs_) i.quiet_loc = true;
         cur()->blocks[blk_].instrs.push_back(std::move(i));
+    }
+
+    // Loop back edge: a branch back to the loop head. CPython fires one LINE
+    // event for the re-entered line on every backward edge -- same line or
+    // not (the legacy jump handler fires the unchanged line) -- so the
+    // runtime force-fires this location update (pyc_rt_set_lasti_be).
+    void emit_backedge(std::uint32_t head, const SourceLoc& loc) {
+        ir::Instr b{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                    "", head, 0, loc, std::nullopt};
+        b.backedge = true;
+        emit(std::move(b));
     }
 
     // Every call goes through §4's table, so ownership is never guessed.
@@ -733,8 +747,7 @@ private:
 
     FnScope begin_function(const std::string& name,
                            const std::vector<std::string>& params,
-                           const std::vector<std::string>& locals,
-                           int firstlineno = 0) {
+                           const std::vector<std::string>& locals) {
         FnScope sc{fn_idx_, blk_, locals_, owned_, frame_owned_, class_ns_,
                    class_cells_, class_dict_cells_,
                    loops_, try_stack_, cells_, enclosing_cells_,
@@ -743,8 +756,7 @@ private:
         sc.type_param_env = type_param_env_;
         type_param_env_.clear();
         mod_.functions.push_back(
-            ir::Function{.name=name, .params=params, .firstlineno=firstlineno,
-                         .next_value=1});
+            ir::Function{.name=name, .params=params, .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
         cur()->locals = locals;
         locals_.clear();
@@ -1047,7 +1059,7 @@ private:
         if (a.vararg) vararg_slot = slot_named(lam_locals, mangle_ident((*a.vararg)->arg));
         if (a.kwarg) kwarg_slot = slot_named(lam_locals, mangle_ident((*a.kwarg)->arg));
 
-        FnScope sc = begin_function("<lambda>", params, lam_locals, n.loc.line);
+        FnScope sc = begin_function("<lambda>", params, lam_locals);
         cur()->nposonly = (int)a.posonlyargs.size();
         cur()->nkwonly = nkwonly;
         cur()->cellvars = cellvars;
@@ -1208,7 +1220,13 @@ private:
         locals.push_back(".acc");
 
         std::string fname = std::string("<") + kind + "comp>";
-        FnScope sc = begin_function(fname, params, locals, loc.line);
+        FnScope sc = begin_function(fname, params, locals);
+        // CPython 3.14 inlines comprehensions (PEP 709): this synthetic
+        // frame's ENTRY machinery has no oracle counterpart, so it updates the
+        // caret quietly (the caller already fired the comprehension's line when
+        // it evaluated the iterable). The LOOP still fires: its back edge is
+        // CPython's per-iteration line event.
+        quiet_locs_ = true;
         // begin_function clears cells_; re-declare the captured cells so
         // lower_name emits cell.get for them rather than a raw load.
         for (const std::string& c : cell_caps) cells_[c] = locals_[c];
@@ -1259,6 +1277,9 @@ private:
             // it exactly once (issue #9).
             mark_owned(it0); forget(it0);
             frame_owned_.push_back(it0);
+            // Entry machinery done: the loop's checks and back edge fire as
+            // ordinary (force-fire) line events again.
+            quiet_locs_ = false;
 
             // Nest the generators: each one is a loop whose body is the
             // next, and the innermost body accumulates. Written recursively
@@ -1271,6 +1292,11 @@ private:
                     (void)0;
                     std::uint32_t body = new_block("comp.body");
                     std::uint32_t done = new_block("comp.done");
+                    // CPython's JUMP_BACKWARD sits at the end of the body and
+                    // fires the comprehension's line on every pass; the `if`
+                    // skip edge lands on it too. Both edges therefore share
+                    // this one force-fire slot.
+                    std::uint32_t back = new_block("comp.back");
                     emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                                    "", head, 0, loc, std::nullopt});
                     set_block(head);
@@ -1288,7 +1314,7 @@ private:
                         if (!bk) return false;
                         std::uint32_t keep = new_block("comp.keep");
                         emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt,
-                                       Ownership::NotAnObject, "", keep, head, loc,
+                                       Ownership::NotAnObject, "", keep, back, loc,
                                        std::nullopt});
                         set_block(keep);
                     }
@@ -1326,7 +1352,9 @@ private:
                         if (!bk) return false;
                     }
                     emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                                   "", head, 0, loc, std::nullopt});
+                                   "", back, 0, loc, std::nullopt});
+                    set_block(back);
+                    emit_backedge(head, loc);
                     set_block(done);
                     return true;
                 };
@@ -1525,6 +1553,14 @@ private:
                 if (!cok) return false;
             }
         }
+        // Decorators are evaluated BEFORE the function object exists
+        // (CPython's bytecode order); see evaluate_decorators.
+        std::vector<ir::Value> dvals;
+        if (!decorators.empty()) {
+            bool dek = true;
+            dvals = evaluate_decorators(decorators, &dek);
+            if (!dek) return false;
+        }
         ir::Value fv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::MakeGenFunc,
                        {closure.valid() ? closure : ir::Value{},
@@ -1551,7 +1587,7 @@ private:
                 return false;
         }
         bool okd = true;
-        fv = apply_decorators(decorators, fv, loc, &okd);
+        fv = apply_decorators(decorators, dvals, fv, loc, &okd);
         if (!okd) return false;
         if (!class_ns_.empty()) {
             ir::Value m = call_capi("pyc_rt_bind_method", {fv}, loc, &okd, {fv});
@@ -1904,7 +1940,7 @@ private:
 
         mod_.functions.push_back(ir::Function{
             .name=n.name, .params=params, .nkwonly=nkwonly,
-            .nposonly=nposonly, .firstlineno=n.loc.line, .next_value=1});
+            .nposonly=nposonly, .next_value=1});
         fn_idx_ = mod_.functions.size() - 1;
         const std::size_t fn_index = fn_idx_;
         cur()->locals = all_locals;
@@ -1977,6 +2013,11 @@ private:
         // Prologue: give each cell variable a cell. A parameter arrives as a
         // plain value, so its cell must be seeded with it and the slot
         // overwritten -- otherwise the nested function sees an empty cell.
+        // These are not source statements: CPython's MAKE_CELL units carry the
+        // def line but are never line-event marks, so a fresh frame must not
+        // fire them. Lower them quietly so the first REAL statement owns the
+        // fresh-frame line event.
+        quiet_locs_ = true;
         for (const std::string& c : cellvars) {
             std::uint32_t slot = locals_[c];
             bool is_param = slot < params.size()
@@ -2001,6 +2042,7 @@ private:
                            Ownership::NotAnObject, c, slot, 0, n.loc, std::nullopt});
             release(cell, n.loc);
         }
+        quiet_locs_ = false;
 
         bool ok = true;
         func_globals_.push_back(glob_all);
@@ -2046,6 +2088,14 @@ private:
         std::vector<ir::Value> mkargs{defaults.valid() ? defaults : ir::Value{},
                                       kwdefaults.valid() ? kwdefaults : ir::Value{}};
         for (const ir::Value& c : closure_cells) mkargs.push_back(c);
+        // Decorators are evaluated BEFORE the function object exists
+        // (CPython's bytecode order); see evaluate_decorators.
+        std::vector<ir::Value> dvals;
+        if (!n.decorator_list.empty()) {
+            bool dek = true;
+            dvals = evaluate_decorators(n.decorator_list, &dek);
+            if (!dek) return false;
+        }
         ir::Instr mk{ir::Op::MakeFunction, mkargs,
                      fv, Ownership::Owned, fn_qualname,
                      (std::uint32_t)(vararg_slot + 1),
@@ -2078,7 +2128,7 @@ private:
         // the class path has one place to change if that stops being true.
         if (!class_ns_.empty()) {
             bool okm = true;
-            fv = apply_decorators(n.decorator_list, fv, n.loc, &okm);
+            fv = apply_decorators(n.decorator_list, dvals, fv, n.loc, &okm);
             if (!okm) return false;
             ir::Value m = call_capi("pyc_rt_bind_method", {fv}, n.loc, &okm, {fv});
             if (!okm) return false;
@@ -2086,23 +2136,34 @@ private:
             store_name(n.name, m, n.loc);
             return true;
         }
-        fv = apply_decorators(n.decorator_list, fv, n.loc, &ok);
+        fv = apply_decorators(n.decorator_list, dvals, fv, n.loc, &ok);
         if (!ok) return false;
         store_name(n.name, fv, n.loc);
         return true;
     }
 
-    // Evaluate decorator expressions top-down (source order), then apply
-    // bottom-up: @a @b def f  ->  f = a(b(f)).
-    ir::Value apply_decorators(const std::vector<expr>& decos,
-                               ir::Value fv, const SourceLoc& loc, bool* ok) {
+    // CPython evaluates the decorator expressions BEFORE the function object
+    // exists (the MAKE_FUNCTION unit comes after the decorator CALLs in the
+    // bytecode), then applies them bottom-up, each on its decorator's line:
+    // @a @b def f  ->  f = a(b(f)). Keeping the two phases separate in that
+    // order is what makes the LINE stream identical: the frame sits on the
+    // innermost decorator's line when the make runs, so the first
+    // application is a line change and fires, exactly like the oracle.
+    std::vector<ir::Value> evaluate_decorators(const std::vector<expr>& decos,
+                                               bool* ok) {
         std::vector<ir::Value> ds;
         ds.reserve(decos.size());
         for (const auto& d : decos) {
             ir::Value v = lower_expr(d, ok);
-            if (!*ok) return fv;
+            if (!*ok) return {};
             ds.push_back(v);
         }
+        return ds;
+    }
+
+    ir::Value apply_decorators(const std::vector<expr>& decos,
+                               const std::vector<ir::Value>& ds,
+                               ir::Value fv, const SourceLoc& loc, bool* ok) {
         for (int i = (int)ds.size() - 1; i >= 0; --i) {
             ir::Value d = ds[static_cast<std::size_t>(i)];
             const SourceLoc dloc = expr_loc(decos[static_cast<std::size_t>(i)]);
@@ -2980,7 +3041,7 @@ private:
         if (class_scope) { params.push_back(".ns"); locals.push_back(".ns"); }
         for (const std::string& f2 : freevars) locals.push_back(f2);
 
-        FnScope sc = begin_function("__annotate__", params, locals, loc.line);
+        FnScope sc = begin_function("__annotate__", params, locals);
         cur()->freevars = freevars;
         for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
         {
@@ -4469,6 +4530,15 @@ private:
             if (!emit_type_params(n.type_params, n.loc, &class_tp_tuple, &class_tps))
                 return false;
         }
+        // CPython evaluates the decorator expressions BEFORE the bases and
+        // the class body (measured order: decorator calls, bases, body, then
+        // the bottom-up application), each on its decorator's line.
+        std::vector<ir::Value> dvals;
+        if (!n.decorator_list.empty()) {
+            bool dek = true;
+            dvals = evaluate_decorators(n.decorator_list, &dek);
+            if (!dek) return false;
+        }
         ir::Value bases;
         bool star_base = false;
         for (const expr& b : n.bases)
@@ -4734,7 +4804,7 @@ private:
         emit_decref(ccell, n.loc);
         frame_owned_.pop_back();                            // meta
         emit_decref(meta, n.loc);
-        cls = apply_decorators(n.decorator_list, cls, n.loc, &ok);
+        cls = apply_decorators(n.decorator_list, dvals, cls, n.loc, &ok);
         if (!ok) return false;
         store_name(n.name, cls, n.loc);
         return true;
@@ -4842,7 +4912,7 @@ private:
         std::uint32_t rid = range_n_++;
         ir::Value g = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
         ir::Instr rg{ir::Op::RangeGuard, args, g, Ownership::NotAnObject,
-                     "", rid, 0, n.loc, std::nullopt};
+                     "", rid, 0, c.loc, std::nullopt};
         rg.has_imm = true;
         rg.imm = (std::int64_t)c.args.size();
         emit(std::move(rg));
@@ -4851,47 +4921,47 @@ private:
         std::uint32_t boxed_e = new_block("range.boxed");
         std::uint32_t join = new_block("range.join");
         emit(ir::Instr{ir::Op::CondBr, {g}, std::nullopt, Ownership::NotAnObject,
-                       "", native_e, boxed_e, n.loc, std::nullopt});
+                       "", native_e, boxed_e, c.loc, std::nullopt});
 
         set_block(native_e);
-        for (const ir::Value& a : args) if (owns(a)) emit_decref(a, n.loc);
+        for (const ir::Value& a : args) if (owns(a)) emit_decref(a, c.loc);
         ir::Value it_n = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::ConstNull, {}, it_n, Ownership::AlwaysNull, "",
-                       0, 0, n.loc, std::nullopt});
+                       0, 0, c.loc, std::nullopt});
         ir::Value stop_n = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
         ir::Instr rb{ir::Op::RangeBound, {}, stop_n, Ownership::NotAnObject,
-                     "e", 0, 0, n.loc, std::nullopt};
+                     "e", 0, 0, c.loc, std::nullopt};
         rb.has_imm = true;
         rb.imm = (std::int64_t)rid;
         emit(std::move(rb));
         ir::Value start_n = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
         ir::Instr rbi{ir::Op::RangeBound, {}, start_n, Ownership::NotAnObject,
-                      "i", 0, 0, n.loc, std::nullopt};
+                      "i", 0, 0, c.loc, std::nullopt};
         rbi.has_imm = true;
         rbi.imm = (std::int64_t)rid;
         emit(std::move(rbi));
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", join, 0, n.loc, std::nullopt});
+                       "", join, 0, c.loc, std::nullopt});
         std::uint32_t native_end = (std::uint32_t)blk_;
 
         set_block(boxed_e);
         ir::Value seq = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         std::vector<ir::Value> call_args = args;
         emit(ir::Instr{ir::Op::CallObject, std::move(call_args), seq,
-                       Ownership::Owned, "", 0, 0, n.loc, make_landing_pad(n.loc)});
+                       Ownership::Owned, "", 0, 0, c.loc, make_landing_pad(c.loc)});
         mark_owned(seq);
-        for (const ir::Value& a : args) if (owns(a)) emit_decref(a, n.loc);
-        ir::Value it_b = call_capi("PyObject_GetIter", {seq}, n.loc, &ok, {seq});
+        for (const ir::Value& a : args) if (owns(a)) emit_decref(a, c.loc);
+        ir::Value it_b = call_capi("PyObject_GetIter", {seq}, c.loc, &ok, {seq});
         if (!ok) return false;
         mark_owned(it_b);
         ir::Value stop_b = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
         emit(ir::Instr{ir::Op::I64Const, {}, stop_b, Ownership::NotAnObject,
-                       "0", 0, 0, n.loc, std::nullopt});
+                       "0", 0, 0, c.loc, std::nullopt});
         ir::Value start_b = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
         emit(ir::Instr{ir::Op::I64Const, {}, start_b, Ownership::NotAnObject,
-                       "0", 0, 0, n.loc, std::nullopt});
+                       "0", 0, 0, c.loc, std::nullopt});
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", join, 0, n.loc, std::nullopt});
+                       "", join, 0, c.loc, std::nullopt});
         std::uint32_t boxed_end = (std::uint32_t)blk_;
 
         set_block(join);
@@ -4930,6 +5000,16 @@ private:
                              std::uint32_t rid, std::uint32_t after, bool clone,
                              ir::Value stop, ir::Value start = {}) {
         const Name& tn = std::get<Name>(n.target->v);
+        // CPython attributes the loop's check (FOR_ITER), its setup and its
+        // natural exit to the ITERABLE's line (LOC(iter)); the target store
+        // gets the for-statement line. A LINE event fires at runtime only
+        // when the line changes, so every slot on those paths carries the
+        // iterable's line. break/continue carry their own line (the GIL
+        // acquire in finish_jump is CPython's line-carrying NOP); the break
+        // block and the after-exit edges carry no line at all, so the frame
+        // keeps the line the path left it on -- CPython's inherited
+        // u_lineno, which is what the implicit return reports.
+        const SourceLoc iterloc = expr_loc(*n.iter);
         std::int64_t rlo = 0, rhi = 0, rtrip = 0;
         const Call& rc = std::get<Call>(n.iter->v);
         bool have_rb = const_range_bounds(rc, &rlo, &rhi, &rtrip);
@@ -4940,7 +5020,7 @@ private:
             live_i64_.clear();
             frame_owned_.push_back(it);
         } else {
-            boxed = prepare_i64_loop(n.body, n.loc, tn.id);
+            boxed = prepare_i64_loop(n.body, iterloc, tn.id);
         }
         if (boxed && start.valid()) live_i64_[tn.id] = start;
         struct CtrScope {
@@ -4959,24 +5039,24 @@ private:
         std::uint32_t done = new_block("for.done");
         std::uint32_t brk = new_block("for.break");
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", head, 0, n.loc, std::nullopt});
+                       "", head, 0, iterloc, std::nullopt});
 
         set_block(head);
-        if (boxed) begin_i64_loop(head, pre, brk, n.body, boxed, n.loc);
+        if (boxed) begin_i64_loop(head, pre, brk, n.body, boxed, iterloc);
         else {
             live_i64_.clear();
             loops_.push_back({head, brk});
         }
-        { bool pok = true; call_capi("pyc_rt_periodic", {}, n.loc, &pok);
+        { bool pok = true; call_capi("pyc_rt_periodic", {}, iterloc, &pok);
           if (!pok) return false; }
         emit(ir::Instr{ir::Op::CondBr, {g}, std::nullopt, Ownership::NotAnObject,
-                       "", nat_next, box_next, n.loc, std::nullopt});
+                       "", nat_next, box_next, iterloc, std::nullopt});
         auto live_at_pred = live_i64_;
 
         set_block(nat_next);
         ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
         ir::Instr nxt{ir::Op::RangeNext, {stop}, iv, Ownership::NotAnObject,
-                      "", body_n, done, n.loc, std::nullopt};
+                      "", body_n, done, iterloc, std::nullopt};
         nxt.has_imm = true;
         nxt.imm = (std::int64_t)rid;
         {
@@ -5000,7 +5080,7 @@ private:
         set_block(box_next);
         ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::IterNext, {it}, item, Ownership::Owned, "",
-                       body_b, done, n.loc, make_landing_pad(n.loc)});
+                       body_b, done, iterloc, make_landing_pad(iterloc)});
         set_block(body_b);
         mark_owned(item);
         if (!store_target(*n.target, item, n.loc)) return false;
@@ -5053,22 +5133,21 @@ private:
             for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
             loops_.pop_back();
         }
-        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", head, 0, n.loc, std::nullopt});
+        emit_backedge(head, iterloc);
 
         set_block(brk);
-        emit_decref(it, n.loc);
+        emit_decref(it, SourceLoc{});
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", after, 0, n.loc, std::nullopt});
+                       "", after, 0, SourceLoc{}, std::nullopt});
 
         set_block(done);
         if (!frame_owned_.empty()) frame_owned_.pop_back();
-        emit_decref(it, n.loc);
+        emit_decref(it, iterloc);
         live_i64_ = live_at_pred;
         for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
         if (!terminated())
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                           "", after, 0, n.loc, std::nullopt});
+                           "", after, 0, SourceLoc{}, std::nullopt});
 
         if (clone) return true;
         set_block(after);
@@ -5084,21 +5163,24 @@ private:
     bool lower_for_over_iter(ir::Value it, const For& n, std::uint32_t after) {
         const Name* tn = n.target ? std::get_if<Name>(&n.target->v) : nullptr;
         std::string skip = tn ? tn->id : std::string{};
-        std::uint32_t boxed = prepare_i64_loop(n.body, n.loc, skip);
+        // Same line attribution as the range path: check/setup/exit on the
+        // iterable's line, break and after-exit edges line-less.
+        const SourceLoc iterloc = expr_loc(*n.iter);
+        std::uint32_t boxed = prepare_i64_loop(n.body, iterloc, skip);
         std::uint32_t pre = (std::uint32_t)blk_;
         std::uint32_t head = new_block("for.head");
         std::uint32_t body = new_block("for.body");
         std::uint32_t done = new_block("for.done");
         std::uint32_t brk = new_block("for.break");
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", head, 0, n.loc, std::nullopt});
+                       "", head, 0, iterloc, std::nullopt});
         set_block(head);
-        if (boxed) begin_i64_loop(head, pre, brk, n.body, boxed, n.loc);
+        if (boxed) begin_i64_loop(head, pre, brk, n.body, boxed, iterloc);
         else {
             live_i64_.clear();
             loops_.push_back({head, brk});
         }
-        { bool pok = true; call_capi("pyc_rt_periodic", {}, n.loc, &pok);
+        { bool pok = true; call_capi("pyc_rt_periodic", {}, iterloc, &pok);
           if (!pok) return false; }
         ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::IterNext, {it}, item, Ownership::Owned, "",
@@ -5118,22 +5200,21 @@ private:
             for (const stmt& s2 : n.body) if (!lower_stmt(s2)) return false;
             loops_.pop_back();
         }
-        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", head, 0, n.loc, std::nullopt});
+        emit_backedge(head, iterloc);
 
         set_block(brk);
-        emit_decref(it, n.loc);
+        emit_decref(it, SourceLoc{});
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", after, 0, n.loc, std::nullopt});
+                       "", after, 0, SourceLoc{}, std::nullopt});
 
         set_block(done);
         if (!frame_owned_.empty()) frame_owned_.pop_back();
-        emit_decref(it, n.loc);
+        emit_decref(it, iterloc);
         live_i64_ = live_at_pred;
         for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
         if (!terminated())
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                           "", after, 0, n.loc, std::nullopt});
+                           "", after, 0, SourceLoc{}, std::nullopt});
         if (boxed) {
             set_block(after);
             if (!finish_boxed_clone(boxed, after, n.loc, [&]{
@@ -5172,7 +5253,12 @@ private:
         auto outer_live = live_i64_;
         std::set<std::string> test_reads = nested_reads_expr(*n.test);
         std::set<std::string> test_walrus = walrus_writes(*n.test);
-        std::uint32_t boxed = prepare_i64_loop(n.body, n.loc, {},
+        // CPython attributes the while's check and natural exit to the
+        // CONDITION's line; break/continue carry their own (finish_jump's
+        // GIL acquire is CPython's line-carrying NOP), the break and
+        // after-exit edges carry no line at all.
+        const SourceLoc testloc = expr_loc(*n.test);
+        std::uint32_t boxed = prepare_i64_loop(n.body, testloc, {},
                                               test_reads, test_walrus);
         std::uint32_t pre = (std::uint32_t)blk_;
         std::uint32_t head = new_block("while.head");
@@ -5181,16 +5267,16 @@ private:
         std::uint32_t brk   = new_block("while.break");
         std::uint32_t after = new_block("while.after");
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", head, 0, n.loc, std::nullopt});
+                       "", head, 0, testloc, std::nullopt});
         set_block(head);
-        begin_i64_loop(head, pre, brk, n.body, boxed, n.loc);
+        begin_i64_loop(head, pre, brk, n.body, boxed, testloc);
         bool ok = true;
-        call_capi("pyc_rt_periodic", {}, n.loc, &ok);
+        call_capi("pyc_rt_periodic", {}, testloc, &ok);
         if (!ok) return false;
         ir::Value t = lower_predicate(*n.test, &ok);
         if (!ok) return false;
         emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt, Ownership::NotAnObject,
-                       "", body, done, n.loc, std::nullopt});
+                       "", body, done, testloc, std::nullopt});
         auto live_at_pred = live_i64_;
         set_block(body);
         // GIL-free body (step 11): provably heap-free, so it may run without
@@ -5205,8 +5291,12 @@ private:
         bool gil_free = boxed && !stmts_have_nested_loop(n.body)
                      && stmts_gil_free(n.body);
         if (gil_free) {
+            // These GIL handoffs have no CPython unit: a traceback caret is
+            // fine, but they must not move the frame's line (the acquire sits
+            // after the body, and carrying the check line there would make the
+            // back edge look same-line and double the per-iteration event).
             bool gok = true;
-            call_capi("pyc_rt_gil_maybe_release", {}, n.loc, &gok);
+            call_capi("pyc_rt_gil_maybe_release", {}, SourceLoc{}, &gok);
             if (!gok) return false;
         }
         for (std::size_t i = 0; i < n.body.size(); ++i) {
@@ -5215,23 +5305,22 @@ private:
         }
         if (gil_free && !terminated()) {
             bool gok = true;
-            call_capi("pyc_rt_gil_acquire", {}, n.loc, &gok);
+            call_capi("pyc_rt_gil_acquire", {}, SourceLoc{}, &gok);
             if (!gok) return false;
         }
         finish_i64_loop_body(head);
-        emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", head, 0, n.loc, std::nullopt});
+        emit_backedge(head, testloc);
 
         set_block(brk);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", after, 0, n.loc, std::nullopt});
+                       "", after, 0, SourceLoc{}, std::nullopt});
 
         set_block(done);
         live_i64_ = live_at_pred;
         for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
         if (!terminated())
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                           "", after, 0, n.loc, std::nullopt});
+                           "", after, 0, SourceLoc{}, std::nullopt});
 
         set_block(after);
         if (!finish_boxed_clone(boxed, after, n.loc, [&]{ return lower_while(n); }))
@@ -7419,7 +7508,7 @@ private:
             add_free(r, c, false);
         }
         std::vector<std::string> thunk_locals = freevars;
-        FnScope sc = begin_function(nm->id, {}, thunk_locals, n.loc.line);
+        FnScope sc = begin_function(nm->id, {}, thunk_locals);
         cur()->freevars = freevars;
         for (const std::string& f2 : freevars) cells_[f2] = locals_[f2];
         ir::Value classdict;

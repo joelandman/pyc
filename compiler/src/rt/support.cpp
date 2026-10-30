@@ -1296,7 +1296,8 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     Bound* b = new (std::nothrow) Bound{impl, nargs, nkwonly, nposonly, nlocals, owned,
                                         argnames, vararg_slot, kwarg_slot, nfree,
                                         firstlineno > 0 ? firstlineno : 1,
-                                        locs, nlocs, nullptr};
+                                        locs, nlocs,
+                                        nullptr};
     if (!b) { std::free(owned); return PyErr_NoMemory(); }
     PyCodeObject* co = make_func_code(b);
     if (!co) return nullptr;
