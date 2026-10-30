@@ -364,15 +364,18 @@ static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line
 // the slot directly and never builds the maps.
 struct LocKey {
     int line = 0;
+    int end_line = 0;
     int col = 0;
     int end_col = 0;
     bool operator==(const LocKey& o) const {
-        return line == o.line && col == o.col && end_col == o.end_col;
+        return line == o.line && end_line == o.end_line &&
+               col == o.col && end_col == o.end_col;
     }
 };
 struct LocKeyHash {
     size_t operator()(const LocKey& k) const {
         size_t h = (size_t)k.line * 1315423911u;
+        h ^= (size_t)k.end_line + 0x9e3779b9u + (h << 6) + (h >> 2);
         h ^= (size_t)k.col + 0x9e3779b9u + (h << 6) + (h >> 2);
         h ^= (size_t)k.end_col + 0x9e3779b9u + (h << 6) + (h >> 2);
         return h;
@@ -455,13 +458,19 @@ static bool is_eval_stub(PyCodeObject* co) {
     return cmp == 0;
 }
 
-static int lookup_loc(const LocIndex* idx, int line, int col, int end_col) {
+// end_line is part of the key: CPython stamps a BINARY_OP with the whole
+// expression span, so `x += (` on line N (end N+3) and the LOAD of the
+// target `x` on line N share (line, col, end_col) and differ only in
+// end_line. Keying on three coordinates made the two units collide and the
+// caret render for the target instead of the multi-line expression.
+static int lookup_loc(const LocIndex* idx, int line, int end_line, int col,
+                      int end_col) {
     if (col >= 0 && end_col >= 0) {
-        auto it = idx->exact.find(LocKey{line, col, end_col});
+        auto it = idx->exact.find(LocKey{line, end_line, col, end_col});
         if (it != idx->exact.end()) return it->second;
     }
     if (col >= 0) {
-        auto it = idx->start_col.find(LocKey{line, col, 0});
+        auto it = idx->start_col.find(LocKey{line, 0, col, 0});
         if (it != idx->start_col.end()) return it->second;
     }
     auto it = idx->line_only.find(line);
@@ -515,13 +524,15 @@ static LocIndex* build_loc_index(PyCodeObject* co) {
         }
         if (PyTuple_Check(item) && PyTuple_GET_SIZE(item) >= 4) {
             int line = loc_as_int(item, 0);
+            int end_line = loc_as_int(item, 1);
             int col = loc_as_int(item, 2);
             int end_col = loc_as_int(item, 3);
             if (line > 0) {
+                if (end_line <= 0) end_line = line;
                 if (col >= 0 && end_col >= 0)
-                    idx->exact.try_emplace(LocKey{line, col, end_col}, unit);
+                    idx->exact.try_emplace(LocKey{line, end_line, col, end_col}, unit);
                 if (col >= 0)
-                    idx->start_col.try_emplace(LocKey{line, col, 0}, unit);
+                    idx->start_col.try_emplace(LocKey{line, 0, col, 0}, unit);
                 idx->line_only.try_emplace(line, unit);
             }
         }
@@ -536,14 +547,15 @@ static LocIndex* build_loc_index(PyCodeObject* co) {
 
 // One PyCode_Addr2Location per unit. Used only when the index cannot be
 // built; the indexed path is the one that runs.
-static int unit_for_source(PyCodeObject* co, int line, int col, int end_col,
-                           int legacy) {
+static int unit_for_source(PyCodeObject* co, int line, int end_line, int col,
+                           int end_col, int legacy) {
     Py_ssize_t nbytes = _PyCode_NBYTES(co);
     int exact = -1, start_only = -1, first = -1;
     for (int addr = 0; addr + 1 < nbytes; addr += (int)sizeof(_Py_CODEUNIT)) {
         int sl = 0, el = 0, sc = -1, ec = -1;
         if (!PyCode_Addr2Location(co, addr, &sl, &sc, &el, &ec)) continue;
         if (sl != line) continue;
+        if (end_line > 0 && el > 0 && el != end_line) continue;
         int unit = addr / (int)sizeof(_Py_CODEUNIT);
         if (first < 0) first = unit;
         if (col >= 0 && sc == col && start_only < 0) start_only = unit;
@@ -556,9 +568,10 @@ static int unit_for_source(PyCodeObject* co, int line, int col, int end_col,
     return legacy;
 }
 
-static void set_lasti_impl(int slot, int line, int col, int end_col, bool fire,
-                           bool force) {
+static void set_lasti_impl(int slot, int line, int end_line, int col,
+                           int end_col, bool fire, bool force) {
     if (slot < 0 || line < 1) return;
+    if (end_line <= 0) end_line = line;
     pyc_rt_gil_ensure();
     PyThreadState* ts = PyThreadState_Get();
     _PyInterpreterFrame* f = ts->current_frame;
@@ -614,15 +627,16 @@ static void set_lasti_impl(int slot, int line, int col, int end_col, bool fire,
             idx = build_loc_index(co);
             g_loc_building--;
             if (idx) loc_hot_set(co, idx);
-            off = idx ? lookup_loc(idx, line, col, end_col)
-                      : unit_for_source(co, line, col, end_col, legacy);
+            off = idx ? lookup_loc(idx, line, end_line, col, end_col)
+                      : unit_for_source(co, line, end_line, col, end_col,
+                                        legacy);
         } else if (idx->direct) {
             off = legacy;
         } else {
-            off = lookup_loc(idx, line, col, end_col);
+            off = lookup_loc(idx, line, end_line, col, end_col);
         }
     } else if (off < 0) {
-        off = unit_for_source(co, line, col, end_col, legacy);
+        off = unit_for_source(co, line, end_line, col, end_col, legacy);
     }
     if (off < 0) off = legacy;
     if (off >= nunits) off = (int)nunits - 1;
@@ -684,17 +698,20 @@ static void set_lasti_impl(int slot, int line, int col, int end_col, bool fire,
     if (do_fire && ts->c_tracefunc) maybe_line_trace(f, ts, line);
 }
 
-extern "C" void pyc_rt_set_lasti(int slot, int line, int col, int end_col) {
-    set_lasti_impl(slot, line, col, end_col, true, false);
+extern "C" void pyc_rt_set_lasti(int slot, int line, int end_line, int col,
+                                 int end_col) {
+    set_lasti_impl(slot, line, end_line, col, end_col, true, false);
 }
 
-extern "C" void pyc_rt_set_lasti_q(int slot, int line, int col, int end_col) {
-    set_lasti_impl(slot, line, col, end_col, false, false);
+extern "C" void pyc_rt_set_lasti_q(int slot, int line, int end_line, int col,
+                                   int end_col) {
+    set_lasti_impl(slot, line, end_line, col, end_col, false, false);
 }
 
 // Loop back edge: see the force note in set_lasti_impl.
-extern "C" void pyc_rt_set_lasti_be(int slot, int line, int col, int end_col) {
-    set_lasti_impl(slot, line, col, end_col, true, true);
+extern "C" void pyc_rt_set_lasti_be(int slot, int line, int end_line, int col,
+                                    int end_col) {
+    set_lasti_impl(slot, line, end_line, col, end_col, true, true);
 }
 
 extern "C" void pyc_rt_set_lineno(int line) {

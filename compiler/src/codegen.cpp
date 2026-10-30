@@ -327,10 +327,10 @@ private:
     void emit_location(const ir::Instr& in, bool quiet) {
         bool be = !quiet && in.backedge;
         need(be
-                 ? "declare void @pyc_rt_set_lasti_be(i32, i32, i32, i32)"
+                 ? "declare void @pyc_rt_set_lasti_be(i32, i32, i32, i32, i32)"
              : quiet
-                 ? "declare void @pyc_rt_set_lasti_q(i32, i32, i32, i32)"
-                 : "declare void @pyc_rt_set_lasti(i32, i32, i32, i32)");
+                 ? "declare void @pyc_rt_set_lasti_q(i32, i32, i32, i32, i32)"
+                 : "declare void @pyc_rt_set_lasti(i32, i32, i32, i32, i32)");
         int end_line = in.loc.end_line > 0 ? in.loc.end_line : in.loc.line;
         int slot = (int)fn_locs_[cur_fn_].size() / 4;
         fn_locs_[cur_fn_].push_back(in.loc.line);
@@ -340,6 +340,7 @@ private:
         o_ << "  call void @pyc_rt_set_lasti" << (be ? "_be" : quiet ? "_q" : "")
            << "(i32 " << slot
            << ", i32 " << in.loc.line
+           << ", i32 " << end_line
            << ", i32 " << in.loc.col
            << ", i32 " << in.loc.end_col << ")\n";
     }
