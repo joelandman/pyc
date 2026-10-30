@@ -42,12 +42,6 @@ if func_calls and func_calls[0] != start:
     raise AssertionError(f"call event line {func_calls[0]} != firstlineno {start}")
 
 # Python-level tracer: call events report the callee's first line.
-# (Known B7 gap, not asserted here: the LINE event stream for desugared
-# loops still diverges from CPython's per-instruction line table -- pyc
-# attributes the for-loop slots to different lines than CPython's compiler
-# does, which also leaves a duplicate line event on the loop back-edge.
-# Fixing that is per-construct line-attribution work, tracked under the
-# Lib/test tail, not under this crash fix.)
 seen = []
 
 
@@ -62,5 +56,15 @@ sys.settrace(None)
 py_call = [ln for (ev, ln, name) in seen if ev == "call" and name == "func"]
 if py_call and py_call[0] != start:
     raise AssertionError(f"python call line {py_call[0]} != firstlineno {start}")
+
+# The LINE stream must be duplicate-free within a frame: a line event fires
+# only when the line CHANGES (CPython's unit rule). A duplicate means a slot
+# re-stamped the line the frame already sits on -- the symptom of the B7
+# gap, where the loop's check and back-edge slots carried the for-statement
+# line and re-fired it on every iteration of the desugared loop above.
+lines = [ln for (ev, ln, name) in seen if ev == "line" and name == "func"]
+for a, b in zip(lines, lines[1:]):
+    if a == b:
+        raise AssertionError(f"duplicate line event {a} in {lines}")
 
 print("c-trace ok")

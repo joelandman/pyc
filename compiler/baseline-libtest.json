@@ -31,15 +31,15 @@
     ]
   },
   "total": 389,
-  "passing": 367,
-  "clean": 365,
-  "pass_rate": 94.34447300771208,
+  "passing": 368,
+  "clean": 366,
+  "pass_rate": 94.60154241645245,
   "counts": {
     "ORACLE_UNSTABLE": 8,
     "TIMEOUT": 1,
     "STDOUT_DIFFERS": 9,
-    "EXIT_DIFFERS": 14,
-    "STDERR_DIFFERS": 17
+    "EXIT_DIFFERS": 13,
+    "STDERR_DIFFERS": 16
   },
   "results": [
     {
@@ -4941,10 +4941,7 @@
     {
       "case": "Lib/test/test_trace.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_trace.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4953,7 +4950,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
