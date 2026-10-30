@@ -473,7 +473,14 @@ private:
     // function -- that is the whole difference between `try` and no `try`.
     std::vector<std::uint32_t> try_stack_;
 
-    std::uint32_t make_landing_pad(const SourceLoc& loc) {
+    // add_tb = false for pads that ROUTE an exception the frame already
+    // annotated: a successful bare re-raise, a with-cleanup that does not
+    // suppress, a finally that re-raises, or a dispatch no-match. CPython
+    // appends one traceback entry per frame at the error: label -- where
+    // the failure or the raise was detected in this frame -- and its
+    // exception_unwind (handler lookup) runs without a second pass. The
+    // error-edge pads keep the entry; these would duplicate it.
+    std::uint32_t make_landing_pad(const SourceLoc& loc, bool add_tb = true) {
         std::uint32_t here = blk_;
         std::uint32_t pad = new_block("unwind." + std::to_string(pad_n_++));
         set_block(pad);
@@ -530,10 +537,12 @@ private:
         // `try: raise E except E as e` catches in the same function;
         // previously we only annotated frames that left the function, so
         // dir(e.__traceback__) saw None.
-        emit(ir::Instr{ir::Op::AddTraceback, {}, std::nullopt,
-                       Ownership::NotAnObject,
-                       fn_idx_ == 0 ? "<module>" : cur()->name,
-                       0, 0, loc, std::nullopt});
+        if (add_tb) {
+            emit(ir::Instr{ir::Op::AddTraceback, {}, std::nullopt,
+                           Ownership::NotAnObject,
+                           fn_idx_ == 0 ? "<module>" : cur()->name,
+                           0, 0, loc, std::nullopt});
+        }
         if (try_stack_.empty()) {
             // Nothing catches here: release everything the frame holds and
             // propagate on the C-API convention.
@@ -610,11 +619,45 @@ private:
             [&](const Raise& n)            {
                 if (!n.exc) {
                     // Re-raise whatever is currently being handled.
-                    call_capi("pyc_rt_reraise", {}, n.loc, &ok);
+                    // CPython's do_raise (exc == NULL) branches on whether
+                    // a handled exception exists:
+                    //  * none: RuntimeError "No active exception to
+                    //    reraise" -- a real error that passes the error:
+                    //    label, with its traceback entry;
+                    //  * one: install it as currently-raised and jump
+                    //    straight to exception_unwind -- NO error: pass,
+                    //    so NO traceback entry; the exception keeps the
+                    //    entries from where it was actually raised.
+                    // The branch is made here (not on pyc_rt_reraise's
+                    // return), because that function reports the raised
+                    // exception as -1 too: by the C convention both
+                    // outcomes are "an error is set".
+                    ir::Value h = emit_get_handled(n.loc);
+                    ir::Value nn = const_null(n.loc);
+                    ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
+                    emit(ir::Instr{ir::Op::Is, {h, nn}, isnull, Ownership::NotAnObject,
+                                   "", 0, 0, n.loc, std::nullopt});
+                    std::uint32_t noactive_b = new_block("raise.noactive");
+                    std::uint32_t go_b = new_block("raise.go");
+                    emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
+                                   Ownership::NotAnObject, "", noactive_b, go_b,
+                                   n.loc, std::nullopt});
+                    set_block(go_b);
+                    // Steals h (the handled exception).
+                    call_capi("PyErr_SetRaisedException", {h}, n.loc, &ok);
                     if (!ok) return;
-                    std::uint32_t pad = make_landing_pad(n.loc);
+                    std::uint32_t pad = make_landing_pad(n.loc, /*add_tb=*/false);
                     emit(ir::Instr{ir::Op::Br, {}, std::nullopt,
                                    Ownership::NotAnObject, "", pad, 0, n.loc,
+                                   std::nullopt});
+                    set_block(noactive_b);
+                    // Sets the RuntimeError; its -1 return takes the error
+                    // edge, which is the error: pass and keeps the entry.
+                    call_capi("pyc_rt_reraise", {}, n.loc, &ok);
+                    if (!ok) return;
+                    std::uint32_t pad2 = make_landing_pad(n.loc);
+                    emit(ir::Instr{ir::Op::Br, {}, std::nullopt,
+                                   Ownership::NotAnObject, "", pad2, 0, n.loc,
                                    std::nullopt});
                     return;
                 }
@@ -3414,7 +3457,10 @@ private:
         set_block(reraise);
         frame_owned_.pop_back();
         frame_owned_.pop_back();
-        std::uint32_t pad = make_landing_pad(keep);
+        // __exit__ declined to suppress: the exception was already
+        // annotated at the site it was detected in this frame; CPython
+        // continues the unwind without a new error: pass.
+        std::uint32_t pad = make_landing_pad(keep, /*add_tb=*/false);
         frame_owned_.push_back(exitf);
         frame_owned_.push_back(mgr);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
@@ -3856,7 +3902,9 @@ private:
         {
             SourceLoc fl = n.loc;
             if (n.loc.end_line > 0) fl.line = n.loc.end_line;
-            std::uint32_t pad = make_landing_pad(fl);
+            // The pending exception was annotated where it was detected;
+            // the cleanup ran and now the unwind continues. No new entry.
+            std::uint32_t pad = make_landing_pad(fl, /*add_tb=*/false);
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                            "", pad, 0, fl, std::nullopt});
         }
@@ -4209,7 +4257,11 @@ private:
         }
         const ExceptHandler& last_h =
             std::get<ExceptHandler>(n.handlers.back().v);
-        std::uint32_t pad = make_landing_pad(last_h.loc);
+        // No handler matched: the exception was already annotated where it
+        // was detected in this frame. CPython's handler lookup runs inside
+        // exception_unwind without a second error: pass, so this pad must
+        // not append another entry for the same frame.
+        std::uint32_t pad = make_landing_pad(last_h.loc, /*add_tb=*/false);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                        "", pad, 0, n.loc, std::nullopt});
 

@@ -754,13 +754,13 @@ extern "C" void pyc_rt_traceback_here(void) {
     if (!f) { PyErr_Restore(t, v, tb); return; }
     PyFrameObject* fo = _PyFrame_GetFrameObject(f);
     if (!fo) { PyErr_Clear(); PyErr_Restore(t, v, tb); return; }
-    if (tb && PyTraceBack_Check(tb)) {
-        PyTracebackObject* tbo = reinterpret_cast<PyTracebackObject*>(tb);
-        if (tbo->tb_frame == fo) {
-            PyErr_Restore(t, v, tb);
-            return;
-        }
-    }
+    // No "is the top entry already this frame?" check: CPython's error:
+    // label calls PyTraceBack_Here unconditionally, and the same frame
+    // legitimately appears twice when an exception is re-raised in it
+    // (a bare re-raise appends nothing; an explicit `raise exc` appends).
+    // The entry COUNT is the contract: one per error: pass, and the
+    // re-route pads (re-raise, with/finally cleanup, dispatch no-match)
+    // no longer pass through here.
     PyErr_Restore(t, v, tb);
     PyTraceBack_Here(fo);
 }
