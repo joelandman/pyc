@@ -30,6 +30,11 @@ extern "C" PyObject* _PyFunction_Vectorcall(PyObject* func,
 extern "C" int _PyObject_GetMethod(PyObject* obj, PyObject* name,
                                    PyObject** method);
 
+// traceback.c: a fresh traceback entry for the current frame, used by
+// CPython's except* naked-exception wrap (_PyEval_ExceptionGroupMatch).
+extern "C" PyObject* _PyTraceBack_FromFrame(PyObject* tb_next,
+                                            PyFrameObject* frame);
+
 // The module dict of __main__, resolved ONCE.
 //
 // This used to call PyImport_AddModule("__main__") on every global access --
@@ -2826,6 +2831,23 @@ extern "C" PyObject* pyc_rt_except_star_split(PyObject* exc, PyObject* type) {
         match = eg ? PyObject_CallFunction(eg, "sO", "", lst) : nullptr;
         Py_DECREF(lst);
         if (!match) return nullptr;
+        // CPython's naked wrap (_PyEval_ExceptionGroupMatch) gives the NEW
+        // group a fresh traceback: one entry for the current frame at the
+        // except* dispatch, while the sub-exception keeps its own tb. The
+        // frame's instr_ptr is stamped at the handler span by the split
+        // call (lowering passes the ExceptHandler loc), so the entry lands
+        // where the oracle's does.
+        PyFrameObject* fo = PyThreadState_GetFrame(PyThreadState_Get());
+        if (fo) {
+            PyObject* tb = _PyTraceBack_FromFrame(nullptr, fo);
+            if (!tb) { Py_DECREF(fo); return nullptr; }
+            if (PyException_SetTraceback(match, tb) < 0) {
+                Py_DECREF(tb); Py_DECREF(fo); Py_DECREF(match);
+                return nullptr;
+            }
+            Py_DECREF(tb);
+            Py_DECREF(fo);
+        }
         rest = Py_NewRef(Py_None);
     } else {
         match = Py_NewRef(Py_None);

@@ -4100,7 +4100,7 @@ private:
                 ir::Value ty = lower_expr(**eh.type, &ok);
                 if (!ok) return false;
                 ir::Value pair = call_capi("pyc_rt_except_star_split",
-                                           {remaining, ty}, n.loc, &ok, {ty});
+                                           {remaining, ty}, eh.loc, &ok, {ty});
                 if (!ok) return false;
                 mark_owned(pair);
                 ir::Value i0 = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
