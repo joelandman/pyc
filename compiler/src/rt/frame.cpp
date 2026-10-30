@@ -87,8 +87,32 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
     {
         int nplus = code->co_nlocalsplus;
         if (nplus < 0) nplus = 0;
-        for (int i = 0; i < nplus; ++i) f->localsplus[i] = PyStackRef_NULL;
-        f->stackpointer = f->localsplus + nplus;
+        // The datastack region holds `size` pointer slots; the frame struct
+        // owns the first FRAME_SPECIALS_SIZE of them, the rest is
+        // localsplus (codeobject.c: co_framesize = nlocalsplus + stacksize
+        // + FRAME_SPECIALS_SIZE). Indexing with `size` here would walk 10
+        // slots past the region into the next frame's territory.
+        int nslots = size - FRAME_SPECIALS_SIZE;
+        if (nslots < 0) nslots = 0;
+        if (nplus > nslots) nplus = nslots;
+        // Zero the fast slots AND the whole eval-stack region. The compiled
+        // body keeps its expression temporaries in C++ registers; the
+        // frame's Python stack is never written. Uninitialized heap garbage
+        // in those slots only bites when CPython's f_lineno setter
+        // (frameobject.c) executes a debugger jump across a stack-depth
+        // change: its pop loop PyStackRef_CLOSEs the frame stack, and on
+        // garbage that is a segfault. With NULL slots every such pop is a
+        // no-op, which is exactly right -- there is nothing in the frame
+        // stack to release.
+        for (int i = 0; i < nslots; ++i) f->localsplus[i] = PyStackRef_NULL;
+        // CPython starts the stack pointer at nplus because its eval loop
+        // keeps it live as execution pushes. The compiled flow does not, so
+        // a stale depth-0 pointer would make the setter's pop loop read the
+        // live local slots first and then run off the end of the array.
+        // Pin it at the top of the valid region instead: every pop stays
+        // inside the NULL region (pop count <= stacksize = nslots - nplus)
+        // and the locals are never touched.
+        f->stackpointer = f->localsplus + nslots;
     }
 #ifdef Py_GIL_DISABLED
     f->tlbc_index = 0;
