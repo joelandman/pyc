@@ -454,7 +454,8 @@ private:
         // landing pad (the except-name unbind): a pad would re-run
         // pop_open_handlers for the entry being cleaned and recurse. Call
         // sites that pass false are op-by-op failure-free by construction.
-        if (sym->may_raise && pad) in.on_error = make_landing_pad(loc);
+        if (sym->may_raise && pad)
+            in.on_error = make_landing_pad(loc, /*add_tb=*/true, /*fire_exc=*/true);
         emit(std::move(in));
 
         // A stolen reference now belongs to the callee: drop it from the live
@@ -502,12 +503,26 @@ private:
     // the failure or the raise was detected in this frame -- and its
     // exception_unwind (handler lookup) runs without a second pass. The
     // error-edge pads keep the entry; these would duplicate it.
-    std::uint32_t make_landing_pad(const SourceLoc& loc, bool add_tb = true) {
+    // fire_exc: whether this pad fires the 'exception' trace event on entry.
+    // It defaults to add_tb, and for every pad the two are the same fact: a pad
+    // that ADDS a traceback entry is one where an exception is THROWN in this
+    // frame (a fresh raise, a failing op, or one arriving from a callee) --
+    // CPython's PY_MONITORING_EVENT_RAISE / STOP_ITERATION -> legacy
+    // PyTrace_EXCEPTION mapping fires exactly there. A pad that merely ROUTES
+    // an exception the frame already threw (a bare re-raise, a with-cleanup
+    // that does not suppress, a finally that re-raises, a dispatch no-match)
+    // adds no entry and fires no event: RERAISE is not mapped. Pass fire_exc
+    // explicitly only to override the add_tb rule.
+    std::uint32_t make_landing_pad(const SourceLoc& loc, bool add_tb = true,
+                                   std::optional<bool> fire_exc = std::nullopt) {
         std::uint32_t here = blk_;
         std::uint32_t pad = new_block("unwind." + std::to_string(pad_n_++));
         set_block(pad);
         bool saved_pad = in_pad_;
         in_pad_ = true;
+        if (fire_exc.value_or(add_tb))
+            emit(ir::Instr{ir::Op::FireException, {}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, loc, std::nullopt});
         // One decref per ENTRY, not per id. owned_ is a bag, not a set:
         // mark_owned is an unconditional push_back and forget erases the first
         // match and breaks, so two entries mean two references.
@@ -706,7 +721,8 @@ private:
                 chain_handled_as_raised(n.loc);
                 emit(ir::Instr{ir::Op::Raise, {e}, std::nullopt,
                                Ownership::NotAnObject, "", 0, 0, n.loc,
-                               make_landing_pad(n.loc)});
+                               make_landing_pad(n.loc, /*add_tb=*/true,
+                                                /*fire_exc=*/true)});
             },
             [&](const Try& n)              { ok = lower_try(n); },
             [&](const TryStar& n)          { ok = lower_trystar(n); },
@@ -5371,7 +5387,9 @@ private:
           if (!pok) return false; }
         ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::IterNext, {it}, item, Ownership::Owned, "",
-                       body, done, expr_loc(*n.iter), make_landing_pad(expr_loc(*n.iter))});
+                       body, done, expr_loc(*n.iter),
+                       make_landing_pad(expr_loc(*n.iter), /*add_tb=*/true,
+                                        /*fire_exc=*/true)});
         auto live_at_pred = live_i64_;
 
         set_block(body);

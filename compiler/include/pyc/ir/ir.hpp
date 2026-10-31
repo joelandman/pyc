@@ -104,6 +104,15 @@ enum class Op {
     // `text` is the function name, `loc` supplies the line, and the module
     // supplies the file. Emitted only on paths that actually propagate.
     AddTraceback,
+    // Fire the 'exception' trace event: an exception is THROWN in this frame
+    // (a fresh raise, or one arriving from a callee). CPython maps the legacy
+    // event to PY_MONITORING_EVENT_RAISE / STOP_ITERATION, so it fires per
+    // frame in the propagation chain -- here (the raising frame, at the raise)
+    // and in each caller (at the call that raised). A bare re-raise does not
+    // throw (RERAISE is not mapped), so its pad omits this. Emitted at the
+    // entry of the throwing landing pads; the runtime reports the in-flight
+    // exception as (type, value, traceback).
+    FireException,
     // Build a generator FUNCTION. `text` is the marshalled code object; args
     // are the closure tuple of cells and the defaults tuple, either of which
     // may be the null value.

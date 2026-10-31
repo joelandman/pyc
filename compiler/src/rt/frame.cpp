@@ -776,6 +776,56 @@ extern "C" int pyc_rt_set_lasti_be(int slot, int line, int end_line, int col,
     return set_lasti_impl(slot, line, end_line, col, end_col, true, true);
 }
 
+// The 'exception' trace event. CPython fires it (legacy
+// PY_MONITORING_EVENT_RAISE / STOP_ITERATION -> PyTrace_EXCEPTION) every time
+// an exception is THROWN in a frame: a fresh `raise`, and the moment an
+// exception arrives from a callee -- so once per frame in the propagation
+// chain. Unlike a LINE update it fires WITH the exception set: it REPORTS it,
+// as (type, value, traceback), the exception's current state.
+//
+// The in-flight exception is taken out of the thread state for the callback's
+// duration. That both lets the user's trace function run without it set and
+// makes the callback's own error the ONLY exception that can be set after the
+// call -- so we can tell it apart from the program's. On success the original
+// is restored; if the callback raised, its exception replaces the original and
+// stays in flight (CPython propagates the callback's error) and the original
+// is dropped.
+extern "C" int pyc_rt_trace_exception(void) {
+    pyc_rt_gil_ensure();
+    PyThreadState* ts = PyThreadState_Get();
+    if (!ts || ts->tracing || !ts->c_tracefunc) return 0;
+    PyObject* exc = PyErr_GetRaisedException();   // taken out; we own it
+    if (exc == NULL) return 0;
+    _PyInterpreterFrame* f = ts->current_frame;
+    while (f && _PyFrame_IsIncomplete(f)) f = f->previous;
+    PyFrameObject* fo = f ? _PyFrame_GetFrameObject(f) : NULL;
+    // No frame object to report on: cannot fire, but the exception must not
+    // be dropped -- put it back and carry on as if the event never happened.
+    if (!fo) { PyErr_SetRaisedException(exc); return 0; }
+    PyObject* type = (PyObject*)Py_TYPE(exc);
+    PyObject* tb = PyException_GetTraceback(exc); // new ref, or NULL
+    PyObject* tb_use = tb ? tb : Py_None;
+    PyObject* tuple = PyTuple_Pack(3, type, exc, tb_use);
+    if (tb) Py_DECREF(tb);
+    if (tuple == NULL) { Py_DECREF(exc); return -2; }
+    int old_what = ts->what_event;
+    ts->what_event = PY_MONITORING_EVENT_RAISE;
+    ts->tracing++;
+    Py_INCREF(fo);
+    ts->c_tracefunc(ts->c_traceobj, fo, PyTrace_EXCEPTION, tuple);
+    Py_DECREF(fo);
+    ts->tracing--;
+    ts->what_event = old_what;
+    Py_DECREF(tuple);
+    // Whatever is set now is the callback's own error, never the program's.
+    if (PyErr_Occurred() == NULL) {
+        PyErr_SetRaisedException(exc);            // restore; steals our ref
+        return 0;
+    }
+    Py_DECREF(exc);                               // callback's error is in flight
+    return -2;
+}
+
 extern "C" void pyc_rt_set_lineno(int line) {
     pyc_rt_set_location(line, -1, -1);
 }

@@ -311,6 +311,14 @@ void pyc_rt_set_lasti_q(int slot, int line, int end_line, int col, int end_col);
 // unchanged, at the target's line event when it changes). Same jump contract
 // as pyc_rt_set_lasti.
 int pyc_rt_set_lasti_be(int slot, int line, int end_line, int col, int end_col);
+// Fire the 'exception' trace event for the in-flight exception: a fresh raise
+// or an exception arriving from a callee (CPython's PY_MONITORING_EVENT_RAISE /
+// STOP_ITERATION -> legacy PyTrace_EXCEPTION mapping). Unlike a LINE update it
+// fires WITH the exception set -- it reports it, as (type, value, traceback).
+// If the user's trace function raises, that exception REPLACES the original
+// and stays in flight; otherwise the original is restored. Returns 0 when the
+// original was restored, -2 when a callback error took over.
+int pyc_rt_trace_exception(void);
 // Record the lines this code object's jump table can redirect to. Called from
 // the trampoline with the compiler's target-line list; the setter may accept
 // a jump codegen cannot land on, and those must not be reported as redirects.

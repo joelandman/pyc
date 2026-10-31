@@ -756,9 +756,13 @@ private:
             // run in an order this emission order does not see, so a static
             // per-block dedup re-fired the same line at every block boundary.
             // AddTraceback is the caret-only variant: unwinding is not a
-            // line change, so it never fires. quiet_loc is the same, for
-            // slots with no oracle counterpart (comprehension entry).
-            emit_location(in, in.op == Op::AddTraceback || in.quiet_loc);
+            // line change, so it never fires. FireException is the same: the
+            // throw's line already fired its LINE event when the raise/call
+            // ran, so the event itself must not re-stamp it. quiet_loc is the
+            // same, for slots with no oracle counterpart (comprehension entry).
+            emit_location(in, in.op == Op::AddTraceback
+                                 || in.op == Op::FireException
+                                 || in.quiet_loc);
         }
         switch (in.op) {
             case Op::ConstInt:  emit_const_use(in, 'i'); break;
@@ -774,6 +778,16 @@ private:
                    << ", ptr " << cstr(m_.source_file)
                    << ", ptr " << cstr(in.text)
                    << ", i32 " << in.loc.line << ")\n";
+                break;
+            }
+            case Op::FireException: {
+                // Fire the 'exception' trace event for the in-flight
+                // exception. The runtime restores the original exception (or
+                // leaves the callback's error in flight), so the return is
+                // only a diagnostic and needs no error edge -- this always
+                // runs inside a landing pad, which has no sub-pad of its own.
+                need("declare i32 @pyc_rt_trace_exception()");
+                o_ << "  call i32 @pyc_rt_trace_exception()\n";
                 break;
             }
             case Op::MakeGenFunc: {
