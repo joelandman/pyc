@@ -191,6 +191,15 @@ struct Instr {
     // check. Absent here means "provably cannot fail".
     std::optional<std::uint32_t> on_error;
 
+    // The location update's OWN error edge, separate from on_error. A loud
+    // location update reports -2 when the trace callback raised (or the
+    // f_lineno setter rejected a debugger jump); codegen branches that -2
+    // here. It must not share on_error: on_error keys the INSTRUCTION's result
+    // check, and a call may return NULL legitimately (GetHandledException).
+    // Set by lowering for every loud site (see lower.cpp emit); the pad
+    // releases the owned temporaries as if the statement failed there.
+    std::optional<std::uint32_t> loc_err;
+
     // An integer operand that is NOT a Python object: a container size, a
     // slot index. Kept separate from args so codegen never has to guess which
     // operands are PyObject* and which are machine integers. Last in the

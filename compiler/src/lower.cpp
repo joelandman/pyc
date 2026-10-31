@@ -370,6 +370,21 @@ private:
     void emit(ir::Instr i) {
         if (terminated()) return;
         if (quiet_locs_) i.quiet_loc = true;
+        // A loud location update (every non-phi instruction with a line, except
+        // AddTraceback and quiet_loc -- see codegen emit_location) can report
+        // -2: the trace callback RAISED, or the f_lineno setter rejected a
+        // debugger jump. CPython routes a trace-function error to the eval
+        // loop's error: label, so the update needs its OWN error edge. It must
+        // be separate from on_error: on_error keys the INSTRUCTION's result
+        // check, and some calls return NULL legitimately (PyErr_GetHandledException:
+        // nothing is being handled). Routing the -2 through on_error made
+        // codegen's check() misroute that valid NULL into a pad and silently
+        // drop the raise. Where an on_error pad already exists (a may_raise
+        // call, built at this same point in call_capi) it is reused: the owned
+        // set on a -2 (the call never ran) equals the set on its NULL return.
+        if (i.loc.line > 0 && i.op != ir::Op::Phi && !i.quiet_loc
+            && i.op != ir::Op::AddTraceback && !i.loc_err && !in_pad_)
+            i.loc_err = i.on_error.value_or(make_landing_pad(i.loc));
         cur()->blocks[blk_].instrs.push_back(std::move(i));
     }
 
@@ -472,6 +487,13 @@ private:
     // pad inside a try must reach the handler dispatch, not leave the
     // function -- that is the whole difference between `try` and no `try`.
     std::vector<std::uint32_t> try_stack_;
+    // True while make_landing_pad is building a pad. emit() gives every loud
+    // location-stamped instruction an error edge (a trace callback that
+    // raises must route to a pad, not fall through), and a pad must never
+    // build a pad for the instructions it emits: the pad's calls are
+    // pad=false by construction, and recursing re-runs pop_open_handlers on
+    // the entry being cleaned.
+    bool in_pad_ = false;
 
     // add_tb = false for pads that ROUTE an exception the frame already
     // annotated: a successful bare re-raise, a with-cleanup that does not
@@ -484,6 +506,8 @@ private:
         std::uint32_t here = blk_;
         std::uint32_t pad = new_block("unwind." + std::to_string(pad_n_++));
         set_block(pad);
+        bool saved_pad = in_pad_;
+        in_pad_ = true;
         // One decref per ENTRY, not per id. owned_ is a bag, not a set:
         // mark_owned is an unconditional push_back and forget erases the first
         // match and breaks, so two entries mean two references.
@@ -556,6 +580,7 @@ private:
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
                            "", try_stack_.back(), 0, loc, std::nullopt});
         }
+        in_pad_ = saved_pad;
         set_block(here);
         return pad;
     }

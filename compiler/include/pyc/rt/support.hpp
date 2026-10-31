@@ -48,7 +48,8 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                PyObject* defaults, PyObject* kwdefaults,
                                int vararg_slot, int kwarg_slot,
                                PyObject** closure, int nfree, int firstlineno,
-                               const int* locs, int nlocs);
+                               const int* locs, int nlocs,
+                               const int* jtl, int njtl);
 
 // Run a compiled function body from the current eval frame (exec/eval of
 // f.__code__). frame is the current interpreter frame.
@@ -285,7 +286,7 @@ int pyc_rt_profile_return(void* frame, PyObject* retval);
 int pyc_rt_profile_ccall(PyObject* callable, PyObject* arg0);
 int pyc_rt_profile_creturn(PyObject* callable, PyObject* arg0);
 int pyc_rt_profile_craise(PyObject* callable, PyObject* arg0);
-int pyc_rt_push_module_frame(const int* locs, int nlocs);
+int pyc_rt_push_module_frame(const int* locs, int nlocs, const int* jtl, int njtl);
 void pyc_rt_pop_module_frame(void);
 PyObject* pyc_rt_push_frame(PyObject* name, PyObject* locals);
 void pyc_rt_set_source_file(const char* file);
@@ -293,16 +294,27 @@ const char* pyc_rt_source_file(void);
 void pyc_rt_shutdown(void);
 void pyc_rt_set_lineno(int line);
 void pyc_rt_set_location(int line, int col, int end_col);
-void pyc_rt_set_lasti(int slot, int line, int end_line, int col, int end_col);
+// Returns the line a debugger jump redirected to (the trace callback set
+// frame.f_lineno and CPython's setter moved instr_ptr), or -1 when no jump
+// happened. A negative other than -1 is -2: the trace callback raised (the
+// setter rejected the jump, or the user trace function failed); the caller
+// must treat it as a failed call and take its error edge.
+int pyc_rt_set_lasti(int slot, int line, int end_line, int col, int end_col);
 // Quiet variant: same location update (traceback caret) but never fires a
 // PyTrace_LINE event. Used when the compiler knows the line did not change,
-// which is CPython's rule for suppressing line events.
+// which is CPython's rule for suppressing line events. Never jumps: no trace
+// call means nothing can assign f_lineno, so it stays void.
 void pyc_rt_set_lasti_q(int slot, int line, int end_line, int col, int end_col);
 
 // Back-edge variant: a loop back edge always produces one LINE event
 // for the re-entered line (CPython fires it at the JUMP when the line is
-// unchanged, at the target's line event when it changes).
-void pyc_rt_set_lasti_be(int slot, int line, int end_line, int col, int end_col);
+// unchanged, at the target's line event when it changes). Same jump contract
+// as pyc_rt_set_lasti.
+int pyc_rt_set_lasti_be(int slot, int line, int end_line, int col, int end_col);
+// Record the lines this code object's jump table can redirect to. Called from
+// the trampoline with the compiler's target-line list; the setter may accept
+// a jump codegen cannot land on, and those must not be reported as redirects.
+void pyc_rt_note_jump_lines(PyCodeObject* co, const int* lines, int nlines);
 void pyc_rt_traceback_here(void);
 int pyc_rt_tuple_maybe_untrack(PyObject* t);
 

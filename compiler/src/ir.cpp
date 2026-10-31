@@ -174,6 +174,8 @@ std::string to_string(const Module& m) {
                     if (*in.on_error == 0xFFFFFFFFu) o << "  ; may raise (error edge TODO)";
                     else o << "  ; on_error -> bb" << *in.on_error;
                 }
+                if (in.loc_err)
+                    o << "  ; loc_err -> bb" << *in.loc_err;
                 o << "\n";
             }
         }

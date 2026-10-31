@@ -467,7 +467,8 @@ extern "C" int pyc_rt_install_helpers(void) {
     return rc;
 }
 
-int pyc_rt_push_module_frame(const int* locs, int nlocs) {
+int pyc_rt_push_module_frame(const int* locs, int nlocs, const int* jtl,
+                             int njtl) {
     PyObject* g = globals_dict();
     if (!g) return -1;
     PyObject *bytecode = nullptr, *linetable = nullptr;
@@ -496,6 +497,7 @@ int pyc_rt_push_module_frame(const int* locs, int nlocs) {
     Py_DECREF(empty_tuple); Py_DECREF(names);
     Py_DECREF(filename); Py_DECREF(name); Py_DECREF(consts);
     if (!co) return -1;
+    pyc_rt_note_jump_lines(co, jtl, njtl);
     void* f = pyc_rt_interp_enter(co, g, g, nullptr);
     if (!f) { Py_DECREF(co); return -1; }
     tls_module_frame = f;
@@ -617,7 +619,8 @@ namespace {
 struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
                int vararg; int kwarg; int nfree; int firstlineno;
-               const int* locs; int nlocs; PyObject* code; };
+               const int* locs; int nlocs; const int* jtl; int njtl;
+               PyObject* code; };
 std::unordered_map<PyObject*, Bound*> g_func_bound;
 std::unordered_map<PyObject*, Bound*> g_code_bound;
 std::unordered_map<PyObject*, Bound*> g_weakref_bound;
@@ -938,6 +941,7 @@ PyCodeObject* make_func_code(Bound* b) {
     Py_DECREF(filename); Py_DECREF(name); Py_DECREF(qual);
     Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
     if (!co) { std::free(b->name); delete b; return nullptr; }
+    pyc_rt_note_jump_lines(co, b->jtl, b->njtl);
     if (!pyc_bound_attach(b, reinterpret_cast<PyObject*>(co))) {
         Py_DECREF(co);
         return nullptr;
@@ -1294,7 +1298,8 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                PyObject* defaults, PyObject* kwdefaults,
                                int vararg_slot, int kwarg_slot,
                                PyObject** closure, int nfree, int firstlineno,
-                               const int* locs, int nlocs) {
+                               const int* locs, int nlocs,
+                               const int* jtl, int njtl) {
     ensure_func_watch();
     char* owned = strdup(name);
     if (!owned) return PyErr_NoMemory();
@@ -1302,6 +1307,7 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
                                         argnames, vararg_slot, kwarg_slot, nfree,
                                         firstlineno > 0 ? firstlineno : 1,
                                         locs, nlocs,
+                                        jtl, njtl,
                                         nullptr};
     if (!b) { std::free(owned); return PyErr_NoMemory(); }
     PyCodeObject* co = make_func_code(b);

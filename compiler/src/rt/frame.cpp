@@ -320,13 +320,22 @@ extern "C" PyObject* pyc_rt_super_from_frame(void) {
     return out;
 }
 
-static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line) {
-    if (!ts || ts->tracing || !ts->c_tracefunc) return;
+static int maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line) {
+    if (!ts || ts->tracing || !ts->c_tracefunc) return 0;
+    // CPython invariant: a LINE event never fires while an exception is set.
+    // The eval loop's error path TAKES the exception out of the thread state
+    // (exception_unwind: _PyErr_GetRaisedException) before resuming at the
+    // handler, and the exception events isolate it the same way. Calling the
+    // user trace function with an exception set would trip the vectorcall
+    // result check (SystemError: "returned a result with an exception set")
+    // and destroy the program's own exception, so a location update that
+    // still sees an in-flight exception must stay silent rather than fire.
+    if (PyErr_Occurred()) return 0;
     while (f && _PyFrame_IsIncomplete(f)) f = f->previous;
-    if (!f) return;
+    if (!f) return 0;
     PyFrameObject* fo = _PyFrame_GetFrameObject(f);
-    if (!fo) { PyErr_Clear(); return; }
-    if (!fo->f_trace_lines) return;
+    if (!fo) { PyErr_Clear(); return 0; }
+    if (!fo->f_trace_lines) return 0;
     // Mirror CPython's sys.settrace fast path (instrumentation.c, the
     // PY_MONITORING_SYS_TRACE_ID special case) exactly:
     //  * what_event is LINE for the call's duration. The f_lineno setter
@@ -353,7 +362,14 @@ static void maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line
     Py_DECREF(fo);
     ts->tracing--;
     ts->what_event = old_what;
-    (void)r;
+    // The trampoline's return is the ONLY error signal: it is non-zero iff
+    // the user trace function's own call raised (sysmodule.c
+    // trace_trampoline: result == NULL). A program exception already in
+    // flight when the event fires is NOT an error -- CPython fires the line
+    // event with it set (handler-selection, unwind) and keeps propagating it;
+    // checking PyErr_Occurred() here would misroute the program's exception
+    // into the callback-raised error edge.
+    return r;
 }
 
 // instr_ptr has to sit on a unit whose location is this source line: traceback
@@ -391,6 +407,12 @@ struct LocIndex {
 };
 
 static std::unordered_map<PyCodeObject*, LocIndex*> g_loc_index;
+// Lines a debugger jump may REDIRECT to, per code object: the statement
+// line heads the compiler's codegen branches to in its jump table. The
+// f_lineno setter accepts any line with a unit (its stack analysis runs on
+// the synthetic bytecode), but the compiled flow can only land where codegen
+// put a branch target; a jump elsewhere must not be reported as a redirect.
+static std::unordered_map<PyCodeObject*, std::unordered_set<int>> g_jump_lines;
 static std::unordered_set<int64_t> g_loc_watched;
 static thread_local int g_loc_building = 0;
 // Bumped before an index is freed, so a thread-local pointer cannot be used
@@ -417,11 +439,20 @@ static int loc_as_int(PyObject* item, int index) {
 static int loc_watch(PyCodeEvent event, PyCodeObject* co) {
     if (event != PY_CODE_EVENT_DESTROY || !co) return 0;
     auto it = g_loc_index.find(co);
-    if (it == g_loc_index.end()) return 0;
-    g_loc_epoch++;
-    delete it->second;
-    g_loc_index.erase(it);
+    if (it != g_loc_index.end()) {
+        g_loc_epoch++;
+        delete it->second;
+        g_loc_index.erase(it);
+    }
+    g_jump_lines.erase(co);
     return 0;
+}
+
+extern "C" void pyc_rt_note_jump_lines(PyCodeObject* co, const int* lines,
+                                       int nlines) {
+    if (!co || !lines || nlines <= 0) return;
+    auto& set = g_jump_lines[co];
+    for (int i = 0; i < nlines; ++i) set.insert(lines[i]);
 }
 
 // Per interpreter. An interpreter id is not reused, so a destroyed
@@ -568,17 +599,17 @@ static int unit_for_source(PyCodeObject* co, int line, int end_line, int col,
     return legacy;
 }
 
-static void set_lasti_impl(int slot, int line, int end_line, int col,
-                           int end_col, bool fire, bool force) {
-    if (slot < 0 || line < 1) return;
+static int set_lasti_impl(int slot, int line, int end_line, int col,
+                          int end_col, bool fire, bool force) {
+    if (slot < 0 || line < 1) return -1;
     if (end_line <= 0) end_line = line;
     pyc_rt_gil_ensure();
     PyThreadState* ts = PyThreadState_Get();
     _PyInterpreterFrame* f = ts->current_frame;
-    if (!f) return;
+    if (!f) return -1;
     PyCodeObject* co = reinterpret_cast<PyCodeObject*>(
         PyStackRef_AsPyObjectBorrow(f->f_executable));
-    if (!co) return;
+    if (!co) return -1;
     // Py_SIZE is the code-unit count. PyCode_GetCode copies the bytecode
     // into a cached bytes object on first use and takes a reference after
     // that; neither is needed to clamp the unit.
@@ -592,11 +623,11 @@ static void set_lasti_impl(int slot, int line, int end_line, int col,
         if (hit >= 0) {
             f->instr_ptr = _PyCode_CODE(co) + hit;
             if (f->frame_obj) f->frame_obj->f_lineno = line;
-            return;
+            return -1;
         }
     }
     Py_ssize_t nunits = Py_SIZE(co);
-    if (nunits <= 0) return;
+    if (nunits <= 0) return -1;
     int legacy = 8 + slot;
     if (legacy < co->_co_firsttraceable) legacy = co->_co_firsttraceable;
     if (legacy >= nunits) legacy = (int)nunits - 1;
@@ -695,23 +726,54 @@ static void set_lasti_impl(int slot, int line, int end_line, int col,
         f->instr_ptr = _PyCode_CODE(co) + off;
         if (f->frame_obj && line > 0) f->frame_obj->f_lineno = line;
     }
-    if (do_fire && ts->c_tracefunc) maybe_line_trace(f, ts, line);
+    if (!do_fire || !ts->c_tracefunc) return -1;
+    // The line trace callback may redirect execution: a debugger assigns
+    // frame.f_lineno and the CPython setter (frameobject.c) rewrites
+    // instr_ptr. CPython's eval loop (INSTRUMENTED_LINE) picks up the
+    // rewritten pointer and dispatches straight to it, so this call reports
+    // the landing line and codegen branches the compiled flow to it. -2
+    // reports a callback that RAISED (the trampoline returning non-zero: the
+    // setter rejecting an illegal jump, or a failing user trace function):
+    // the exception is left set and the call site routes it to its error
+    // edge, exactly as CPython routes a trace-function error to the error:
+    // label. An exception already in flight is NOT reported this way (see
+    // maybe_line_trace).
+    _Py_CODEUNIT* before = f->instr_ptr;
+    if (maybe_line_trace(f, ts, line) != 0) return -2;
+    if (f->instr_ptr == before) return -1;
+    int newoff = (int)(f->instr_ptr - _PyCode_CODE(co));
+    if (newoff < 0) newoff = 0;
+    if (newoff >= nunits) newoff = (int)nunits - 1;
+    int nl = 0, nc = 0, nel = 0, nec = 0;
+    if (!PyCode_Addr2Location(co, newoff * (int)sizeof(_Py_CODEUNIT),
+                              &nl, &nc, &nel, &nec))
+        return -1;
+    // codegen's jump table branches only to the lines it marked redirectable
+    // (statement line heads whose block has no head phis). The setter accepts
+    // any line with a unit, so a line codegen cannot land on must not be
+    // reported: doing so would branch to a switch case that does not exist.
+    // A code object that was never noted (note_jump_lines not called) is
+    // treated as having no valid targets, so the jump is silently dropped
+    // rather than routed into an unhandled switch arm.
+    auto jt = g_jump_lines.find(co);
+    if (jt == g_jump_lines.end() || !jt->second.count(nl)) return -1;
+    return nl;
 }
 
-extern "C" void pyc_rt_set_lasti(int slot, int line, int end_line, int col,
-                                 int end_col) {
-    set_lasti_impl(slot, line, end_line, col, end_col, true, false);
+extern "C" int pyc_rt_set_lasti(int slot, int line, int end_line, int col,
+                                int end_col) {
+    return set_lasti_impl(slot, line, end_line, col, end_col, true, false);
 }
 
 extern "C" void pyc_rt_set_lasti_q(int slot, int line, int end_line, int col,
                                    int end_col) {
-    set_lasti_impl(slot, line, end_line, col, end_col, false, false);
+    (void)set_lasti_impl(slot, line, end_line, col, end_col, false, false);
 }
 
 // Loop back edge: see the force note in set_lasti_impl.
-extern "C" void pyc_rt_set_lasti_be(int slot, int line, int end_line, int col,
-                                    int end_col) {
-    set_lasti_impl(slot, line, end_line, col, end_col, true, true);
+extern "C" int pyc_rt_set_lasti_be(int slot, int line, int end_line, int col,
+                                   int end_col) {
+    return set_lasti_impl(slot, line, end_line, col, end_col, true, true);
 }
 
 extern "C" void pyc_rt_set_lineno(int line) {
