@@ -31,14 +31,14 @@
     ]
   },
   "total": 389,
-  "passing": 368,
+  "passing": 369,
   "clean": 366,
-  "pass_rate": 94.60154241645245,
+  "pass_rate": 94.8586118251928,
   "counts": {
     "ORACLE_UNSTABLE": 8,
     "TIMEOUT": 1,
     "STDOUT_DIFFERS": 9,
-    "EXIT_DIFFERS": 13,
+    "EXIT_DIFFERS": 12,
     "STDERR_DIFFERS": 16
   },
   "results": [
@@ -361,8 +361,7 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -1960,7 +1959,9 @@
     {
       "case": "Lib/test/test_fork1.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fork1.py",
-      "flags": [],
+      "flags": [
+        "STDERR_DIFFERS"
+      ],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4667,8 +4668,7 @@
       ],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
@@ -4956,20 +4956,16 @@
     {
       "case": "Lib/test/test_traceback.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_traceback.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {

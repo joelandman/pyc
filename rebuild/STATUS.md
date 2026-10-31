@@ -1,8 +1,8 @@
 # pyc — current state and MVP
 
-**Date:** 2026-10-29. Language numbers in the table below are the recorded
+**Date:** 2026-10-31. Language numbers in the table below are the recorded
 `compiler/baseline-language.json` gate (887/887). The `Lib/test` row is the
-2026-10-29 I6 record (368/389, `-O0`, sysroot 3.14.7, `--stdlib`).
+2026-10-31 I6 record (369/389, `-O0`, sysroot 3.14.7, `--stdlib`).
 CHARTER remains binding. §4 product rules were not changed.
 
 Roles that produced this: Architect (`agents/architect.md`), PM
@@ -14,8 +14,8 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
 I6. Language + gaps + concurrency is **887/887** impactful. `Lib/test` is
-**368/389 = 94.60%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
-2026-10-29. C1 (frames) and C2 (periodic GIL) are closed. A proved
+**369/389 = 94.86%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
+2026-10-31. C1 (frames) and C2 (periodic GIL) are closed. A proved
 heap-free loop drops the GIL only when another thread requests it
 ([GIL.md](GIL.md)). The remaining product gap is stub code objects,
 named refusals instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and
@@ -30,10 +30,10 @@ whose locals do not match.
 | Check | Result |
 |---|---|
 | language + gaps + concurrency | 887/887 impactful |
-| `Lib/test` (I6) | 368/389 (94.60%), measured 2026-10-29 |
-| I6 composition | 366 clean + 2 `STDERR_DIFFERS`-only = 368 pass |
+| `Lib/test` (I6) | 369/389 (94.86%), measured 2026-10-31 |
+| I6 composition | 366 clean + 3 `STDERR_DIFFERS`-only = 369 pass |
 | `DID_NOT_COMPILE` | 0 |
-| `EXIT_DIFFERS` | 13 |
+| `EXIT_DIFFERS` | 12 |
 | `STDOUT_DIFFERS` | 9 |
 | timeout | 1 |
 | `ORACLE_UNSTABLE` | 8 |
@@ -173,7 +173,7 @@ works), and completeness is measured and not gamed. Not: C speed, two
 | M2 | `make -C verify fast` | `--fail-on-silent-wrong` |
 | M3 | CI `ldd` smoke | no `libpython` `DT_NEEDED` |
 | M4 | CI wheel step | NumPy import+run in that binary |
-| M5 | I6 vs README | **368/389 (94.60%)**, no regress |
+| M5 | I6 vs README | **369/389 (94.86%)**, no regress |
 | M6 | remaining compile fails | construct + line + reason — **not** invalid LLVM IR |
 
 **Not MVP gates:** unittest metric; `--python=3.13`; ELF `-static`; unboxing
@@ -183,6 +183,18 @@ vs C.
 
 **Now**
 
+- 2026-10-31: debugger line-jump redirects (a trace callback sets
+  `frame.f_lineno`). A per-function jump table lands on the reported
+  line's block; target selection is the exact all-or-nothing test (a use
+  kills every candidate iff the reverse natural reach from its use block,
+  with its def block removed, holds a target) — test_io lower 245s -> 0.9s.
+  The location update gets its own `loc_err` edge (separate from
+  `on_error`), and the runtime stays silent while an exception is in
+  flight. `test_traceback` passes, so I6 moves 368 -> 369/389. The jump
+  checks and `loc_err` pads make the generated module ~4.6x larger; `pycc`
+  now skips LTO at `-O0` (nothing to inline when unoptimised), taking the
+  test_io final link 108s -> 9s and clearing the metric gate's compile
+  timeouts (`DID_NOT_COMPILE` back to 0).
 - 2026-10-28 blocker pass (B1–B8), all measured: B1 mangled
   kwonly-default keys (`TypeError` on a defaulted kwarg fixed, probe
   `mangled_kwonly_defaults.py`); B2 build/pack/install now refuse a
