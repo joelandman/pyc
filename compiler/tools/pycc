@@ -438,10 +438,21 @@ EOC
 # assume it -- see .github/actions/setup-pyc (a quiet downgrade would show up
 # as slower binaries and a still-green gate, which is the worst shape a
 # performance regression can take).
+# LTO in the gate's -O0 builds is pure cost: with no optimisation there is
+# nothing to inline across translation units, but the LTO machinery still runs
+# over the ENTIRE generated module (which the trace/jump mechanism makes
+# large), so the final link was 108s where a plain link was 9s (test_io,
+# measured). An unoptimised build has no business paying that, so auto mode
+# drops LTO at -O0. -O1 and up keep it (the 3.3x inlining win is real there),
+# and PYC_LTO=on/off still overrides either way. This is deliberate, not the
+# missing-lld fallback setup-pyc guards against: lld is present, we simply do
+# not want LTO when nothing is being optimised.
 case "${PYC_LTO:-auto}" in
   off)  LTO="" ;;
-  auto) LLD="$("${PYC_CXX:-clang++}" -print-prog-name=ld.lld 2>/dev/null)"
-        if [[ -x "$LLD" ]]; then LTO="-flto=thin -fuse-ld=lld"; else LTO=""; fi ;;
+  auto) if [[ "$OPT" == "-O0" ]]; then LTO=""
+        else LLD="$("${PYC_CXX:-clang++}" -print-prog-name=ld.lld 2>/dev/null)"
+             if [[ -x "$LLD" ]]; then LTO="-flto=thin -fuse-ld=lld"; else LTO=""; fi
+        fi ;;
   *)    LTO="$PYC_LTO" ;;
 esac
 
