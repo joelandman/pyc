@@ -4103,6 +4103,25 @@ private:
                        "", after, 0, n.loc, std::nullopt});
 
         set_block(dispatch);
+        // The handler lookup (PUSH_EXC_INFO -> CHECK_EXC_MATCH -> dispatch) is
+        // non-traceable in CPython: it runs on the exception path with no line
+        // event, and the line stays where the raise left it until the handler
+        // BODY's first statement. Lower the match logic and the handler-exit
+        // (pop/unbind/branch) quietly, and only the handler body itself loud --
+        // otherwise every unwind re-fires the `try:` line and the implicit
+        // return reports the `try:` line instead of the last body line.
+        bool saved_quiet = quiet_locs_;
+        quiet_locs_ = true;
+        // Bookkeeping CPython does with no source line of its own (the handler
+        // match, the `as e` binding, pop/unbind, refcount cleanup, and the
+        // branch into the continuation) must NOT move the frame's line. After
+        // a handler runs, lasti is the handler BODY's last line until the next
+        // real statement updates it; a line-0 location emits no location update
+        // at all (codegen emit_instr guards on loc.line > 0), so lasti is kept.
+        // Stamping these with n.loc (even quietly) would reset lasti to the
+        // `try:` line, and the implicit return would then report the `try:`
+        // line instead of the last body line.
+        const SourceLoc book = SourceLoc{};
         ir::Value exc = call_capi("PyErr_GetRaisedException", {}, n.loc, &ok);
         if (!ok) return false;
         mark_owned(exc); forget(exc);
@@ -4218,12 +4237,24 @@ private:
                 hcatch = new_block("exceptstar.raised");
                 try_stack_.push_back(hcatch);
             }
+            // The handler body is the first traceable thing after the
+            // non-traceable lookup. CPython's first handler instruction is a
+            // RESUME on the `except:` line, so the except line owns the first
+            // line event (the body's first statement is on its own line).
+            // Emit it as a SetLine (the except-line equivalent of the try
+            // header NOP), then the body loud. Everything else in the lookup
+            // (match, `as e` binding, pop/unbind/branch) stays quiet.
+            quiet_locs_ = false;
+            emit(ir::Instr{ir::Op::SetLine, {}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, eh.loc,
+                           std::nullopt});
             for (const stmt& s2 : eh.body)
                 if (!lower_stmt(s2)) {
                     if (star) try_stack_.pop_back();
                     else handled_stack_.pop_back();
                     return false;
                 }
+            quiet_locs_ = true;
             if (star) try_stack_.pop_back();
             else handled_stack_.pop_back();
             if (star) {
@@ -4248,14 +4279,16 @@ private:
                 set_block(next_b);
                 continue;
             } else {
-                call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
+                // Exit bookkeeping: no source line (see `book`). The handler
+                // body already set lasti to its last line; keep it.
+                call_capi("pyc_rt_pop_handled", {prev_handled}, book, &ok);
                 if (!ok) return false;
-                if (!except_unbind_name(eh.name, n.loc)) return false;
-                emit_decref(prev_handled, n.loc);
-                emit_decref(exc, n.loc);
-                emit_decref(exc, n.loc);
+                if (!except_unbind_name(eh.name, book)) return false;
+                emit_decref(prev_handled, book);
+                emit_decref(exc, book);
+                emit_decref(exc, book);
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                               "", after, 0, n.loc, std::nullopt});
+                               "", after, 0, book, std::nullopt});
             }
             set_block(next_b);
             if (star) remaining = rest;
@@ -4313,8 +4346,15 @@ private:
                        "", pad, 0, n.loc, std::nullopt});
 
         set_block(after);
-        if (owns(prev_handled)) release(prev_handled, n.loc);
-        reload_live_i64_from_slots(live_in, n.loc);
+        // Merge-point bookkeeping: no source line (see `book`). Reaching here
+        // from a handler, lasti is the handler body's last line; from the else
+        // body, the else's last line. Either way the next real statement sets
+        // its own line, so do not move lasti here.
+        if (owns(prev_handled)) release(prev_handled, book);
+        reload_live_i64_from_slots(live_in, book);
+        // The continuation after the try is ordinary code again: restore the
+        // caller's quiet state so its first statement fires its line event.
+        quiet_locs_ = saved_quiet;
         return true;
     }
 
