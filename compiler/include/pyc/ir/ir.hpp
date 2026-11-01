@@ -113,6 +113,14 @@ enum class Op {
     // entry of the throwing landing pads; the runtime reports the in-flight
     // exception as (type, value, traceback).
     FireException,
+    // A standalone location update: sets the frame's line to `loc` and fires
+    // the LINE event, with no other effect. This is CPython's NOP at a compound
+    // statement header (the `try:`/`except:`/`finally:` line): the eval loop
+    // reaches the NOP and the line changes, firing the event, even though no
+    // operation executes there. Emitted at compound-statement headers so their
+    // line fires in order, before the body. Loud like any line update (jump
+    // target + loc_err edge).
+    SetLine,
     // Build a generator FUNCTION. `text` is the marshalled code object; args
     // are the closure tuple of cells and the defaults tuple, either of which
     // may be the null value.

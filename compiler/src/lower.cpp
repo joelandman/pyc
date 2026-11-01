@@ -4086,6 +4086,12 @@ private:
         auto live_in = live_i64_;
 
         try_stack_.push_back(dispatch);
+        // CPython emits a NOP at the `try:` header (dis: a bare line before
+        // the body) so the header line fires its LINE event in order, before
+        // the body runs. Without it the header line fired late (after the
+        // body's first line), out of order.
+        emit(ir::Instr{ir::Op::SetLine, {}, std::nullopt,
+                       Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
         bool ok = true;
         for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
         try_stack_.pop_back();

@@ -43,6 +43,7 @@ const char* op_name(Op op) {
         case Op::DelGlobal:   return "del.global";
         case Op::AddTraceback: return "add.traceback";
         case Op::FireException: return "fire.exception";
+        case Op::SetLine: return "set.line";
         case Op::MakeGenFunc: return "make.genfunc";
         case Op::MakeGenexp:  return "make.genexp";
         case Op::CellNew:     return "cell.new";

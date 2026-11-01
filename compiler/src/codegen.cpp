@@ -790,6 +790,11 @@ private:
                 o_ << "  call i32 @pyc_rt_trace_exception()\n";
                 break;
             }
+            case Op::SetLine:
+                // The LINE event / location update is emitted above (emit_instr's
+                // loud path); there is no operation to emit. This is CPython's
+                // NOP at a compound-statement header.
+                break;
             case Op::MakeGenFunc: {
                 need("declare ptr @pyc_rt_make_genfunc(ptr, i64, ptr, ptr, ptr, ptr)");
                 std::string cache = "@.gfcache" + std::to_string(genexp_n_++);
