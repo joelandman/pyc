@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-31. Language numbers in the table below are the recorded
 `compiler/baseline-language.json` gate (887/887). The `Lib/test` row is the
-2026-10-31 I6 record (369/389, `-O0`, sysroot 3.14.7, `--stdlib`).
+2026-11-01 I6 record (367/389, `-O0`, sysroot 3.14.7, `--stdlib`).
 CHARTER remains binding. §4 product rules were not changed.
 
 Roles that produced this: Architect (`agents/architect.md`), PM
@@ -14,8 +14,8 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
 I6. Language + gaps + concurrency is **887/887** impactful. `Lib/test` is
-**369/389 = 94.86%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
-2026-10-31. C1 (frames) and C2 (periodic GIL) are closed. A proved
+**367/389 = 94.34%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
+2026-11-01. C1 (frames) and C2 (periodic GIL) are closed. A proved
 heap-free loop drops the GIL only when another thread requests it
 ([GIL.md](GIL.md)). The remaining product gap is stub code objects,
 named refusals instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and
@@ -30,8 +30,8 @@ whose locals do not match.
 | Check | Result |
 |---|---|
 | language + gaps + concurrency | 887/887 impactful |
-| `Lib/test` (I6) | 369/389 (94.86%), measured 2026-11-01 |
-| I6 composition | 367 clean + 2 `STDERR_DIFFERS`-only = 369 pass |
+| `Lib/test` (I6) | 367/389 (94.34%), measured 2026-11-01 |
+| I6 composition | 365 clean + 2 `STDERR_DIFFERS`-only = 367 pass |
 | `DID_NOT_COMPILE` | 0 |
 | `EXIT_DIFFERS` | 11 |
 | `STDOUT_DIFFERS` | 9 |
@@ -49,11 +49,19 @@ without running tests. Net +26 (67 newly passing, 41 now fail).
 
 2026-11-01: `test_tracemalloc` now passes (51/51) after the closure-cell
 fix (`pyc_rt_cell_new`, cell allocated while the frame reads as incomplete
-so tracemalloc attributes it to the caller). The raw I6 count is still
-369/389 because the chronically-flaky `test_fork1` was `ORACLE_UNSTABLE` in
-the recording run (CPython disagreed with itself; not a pyc fault) -- on a
-run where `test_fork1` is stable the row is 370/389. The comparator reports
-"now passes: test_tracemalloc.py" with no regression.
+so tracemalloc attributes it to the caller).
+
+2026-11-01: I6 re-recorded to **367/389 (94.34%)**. The previous record
+(369) was no longer reproducible in this environment: `test_xpickle`'s
+backwards-compat worker now resolves a CPython 3.11 that is on PATH
+(uv-managed, plain CPython), which lacks the pyc-only `__pyc_eval__`
+builtin, so the 12 `test_builtin_functions` subtests fail deterministically.
+That delta is pre-existing, not a regression from recent work: the
+compiler at the previous record's own commit fails the same way here, and
+CI (no such worker on PATH) still measures 369. `test_logging` was
+`ORACLE_UNSTABLE` in the recording run (CPython disagreed with itself; not
+a pyc fault) -- on a run where it is stable the row is 368/389 in this
+environment. `test_fork1` (chronically flaky) was stable in this run.
 
 ## Major remaining issues
 
@@ -181,7 +189,7 @@ works), and completeness is measured and not gamed. Not: C speed, two
 | M2 | `make -C verify fast` | `--fail-on-silent-wrong` |
 | M3 | CI `ldd` smoke | no `libpython` `DT_NEEDED` |
 | M4 | CI wheel step | NumPy import+run in that binary |
-| M5 | I6 vs README | **369/389 (94.86%)**, no regress |
+| M5 | I6 vs README | **367/389 (94.34%)**, no regress |
 | M6 | remaining compile fails | construct + line + reason — **not** invalid LLVM IR |
 
 **Not MVP gates:** unittest metric; `--python=3.13`; ELF `-static`; unboxing

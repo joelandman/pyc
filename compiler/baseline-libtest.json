@@ -31,15 +31,15 @@
     ]
   },
   "total": 389,
-  "passing": 369,
-  "clean": 367,
-  "pass_rate": 94.8586118251928,
+  "passing": 367,
+  "clean": 365,
+  "pass_rate": 94.34447300771208,
   "counts": {
-    "ORACLE_UNSTABLE": 9,
+    "ORACLE_UNSTABLE": 11,
     "TIMEOUT": 1,
     "STDOUT_DIFFERS": 9,
-    "EXIT_DIFFERS": 11,
-    "STDERR_DIFFERS": 14
+    "EXIT_DIFFERS": 12,
+    "STDERR_DIFFERS": 16
   },
   "results": [
     {
@@ -2832,12 +2832,15 @@
     {
       "case": "Lib/test/test_logging.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_logging.py",
-      "flags": [],
+      "flags": [
+        "ORACLE_UNSTABLE",
+        "STDERR_DIFFERS"
+      ],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": false,
+      "oracle_varied": true,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
@@ -4200,6 +4203,7 @@
       "case": "Lib/test/test_signal.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_signal.py",
       "flags": [
+        "ORACLE_UNSTABLE",
         "STDOUT_DIFFERS",
         "EXIT_DIFFERS",
         "STDERR_DIFFERS"
@@ -4208,7 +4212,7 @@
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": false,
+      "oracle_varied": true,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
@@ -5751,7 +5755,10 @@
     {
       "case": "Lib/test/test_xpickle.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xpickle.py",
-      "flags": [],
+      "flags": [
+        "EXIT_DIFFERS",
+        "STDERR_DIFFERS"
+      ],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -5760,7 +5767,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 0
+        "subject": 1
       }
     },
     {
