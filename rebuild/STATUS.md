@@ -191,6 +191,43 @@ vs C.
 
 **Now**
 
+- 2026-11-01: `test_sys_settrace` loop/finally/break tail worked to
+  completion. Unique failing cases 228 -> 118, each group root-caused and
+  oracle-differenced:
+  (1) Post-unwind completion and finally bookkeeping branched and built
+  pending-value `ConstNull`s stamped at the `try:`/`finally:` header line,
+  so the header re-fired after the guarded region completed (an extra LINE
+  after an `else` body; the implicit return reporting the header line).
+  Line-0 bookkeeping locations: no location update, `lasti` stays where the
+  real code left it.
+  (2) After a `break` out of a NESTED loop, `rejoin_outer_live` re-`IntLoad`s
+  the live i64s in the loop's after-exit block, stamped at the loop header
+  line -- the header re-fired after the break (CPython's break jumps past
+  the condition and never re-fires it). Line-0 location; the real line stays
+  on the unbound-error pad.
+  (3) CPython fires the `except:` line while INSPECTING each handler (the
+  clause's `LOAD_GLOBAL` + `CHECK_EXC_MATCH` sit on the except line), for
+  every handler it inspects -- matched or not. pyc ran the dispatch on the
+  try line and fired the except line only in a matched handler's body, so an
+  inner non-matching handler's line was missing when the exception unwound
+  outward. Fire it at the start of each handler's dispatch; the match logic,
+  body-entry bookkeeping and the branch run on the except line.
+  (4) When an exception unwinds into a `with`'s `__exit__`, CPython takes the
+  exception out of the raised state and fires the `with` line before the
+  `__exit__` call. pyc called `__exit__` with the exception still in flight,
+  and a LINE event never fires while an exception is set (the CPython
+  invariant that keeps the user trace function from running with the
+  program's exception set). `pyc_rt_exit_exc` now takes the with line, takes
+  the exception out, fires the line (new `pyc_rt_fire_line`: a line event
+  resolved from the source coordinates alone, no compiler-assigned slot) and
+  calls `__exit__`; a raising line-event callback routes through the same
+  error path as a raising `__exit__`.
+  The remaining 118 are all outside the tail's scope: `TraceOpcodesTestCase`
+  56 (opcode events need the synthetic code object to expose real opcodes),
+  `JumpTestCase` 50 (debugger line jumps across desugared constructs), and
+  12 class-creation cases -- pyc lowers the class body inline in the
+  enclosing function, so there is no class-body frame and no class-body
+  call/line/return events (the same fundamental gap as the first two).
 - 2026-10-31: `test_sys_settrace` event-stream gaps, two sub-fixes.
   (1) The legacy `'exception'` trace event: CPython fires it once per frame
   in the propagation chain (a fresh `raise`, a failing op, or the moment one
