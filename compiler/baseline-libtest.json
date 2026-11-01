@@ -32,14 +32,14 @@
   },
   "total": 389,
   "passing": 369,
-  "clean": 366,
+  "clean": 367,
   "pass_rate": 94.8586118251928,
   "counts": {
-    "ORACLE_UNSTABLE": 8,
+    "ORACLE_UNSTABLE": 9,
     "TIMEOUT": 1,
     "STDOUT_DIFFERS": 9,
-    "EXIT_DIFFERS": 12,
-    "STDERR_DIFFERS": 16
+    "EXIT_DIFFERS": 11,
+    "STDERR_DIFFERS": 14
   },
   "results": [
     {
@@ -1960,13 +1960,13 @@
       "case": "Lib/test/test_fork1.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fork1.py",
       "flags": [
-        "STDERR_DIFFERS"
+        "ORACLE_UNSTABLE"
       ],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": false,
+      "oracle_varied": true,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
@@ -4971,10 +4971,7 @@
     {
       "case": "Lib/test/test_tracemalloc.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_tracemalloc.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4983,7 +4980,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {

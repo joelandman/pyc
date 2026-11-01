@@ -30,13 +30,13 @@ whose locals do not match.
 | Check | Result |
 |---|---|
 | language + gaps + concurrency | 887/887 impactful |
-| `Lib/test` (I6) | 369/389 (94.86%), measured 2026-10-31 |
-| I6 composition | 366 clean + 3 `STDERR_DIFFERS`-only = 369 pass |
+| `Lib/test` (I6) | 369/389 (94.86%), measured 2026-11-01 |
+| I6 composition | 367 clean + 2 `STDERR_DIFFERS`-only = 369 pass |
 | `DID_NOT_COMPILE` | 0 |
-| `EXIT_DIFFERS` | 12 |
+| `EXIT_DIFFERS` | 11 |
 | `STDOUT_DIFFERS` | 9 |
 | timeout | 1 |
-| `ORACLE_UNSTABLE` | 8 |
+| `ORACLE_UNSTABLE` | 9 |
 | A1 round-trip | 3.14.7 and 3.13.15 TOTAL (`compiler/README.md`) |
 | Tier-1 / NumPy | CI wheel smoke; `ldd` has no libpython `DT_NEEDED` |
 | C1b / C2 | closed; probes in `language/` |
@@ -46,6 +46,14 @@ import `test.support`). Do not treat unittest MATCH on a single file as
 the I6 row. The 2026-08-27 snapshot (246/389, 24 DNC) is replaced:
 `--stdlib` was missing locally, so many files imported and exited 0
 without running tests. Net +26 (67 newly passing, 41 now fail).
+
+2026-11-01: `test_tracemalloc` now passes (51/51) after the closure-cell
+fix (`pyc_rt_cell_new`, cell allocated while the frame reads as incomplete
+so tracemalloc attributes it to the caller). The raw I6 count is still
+369/389 because the chronically-flaky `test_fork1` was `ORACLE_UNSTABLE` in
+the recording run (CPython disagreed with itself; not a pyc fault) -- on a
+run where `test_fork1` is stable the row is 370/389. The comparator reports
+"now passes: test_tracemalloc.py" with no regression.
 
 ## Major remaining issues
 
@@ -201,12 +209,17 @@ vs C.
   name. `test_sys_settrace` 113 -> 107 unique failing, zero new; fast gate
   865/865, verify 887/887. File-level `Lib/test` neutral (the settrace row was
   already failing), so I6 stays **369/389**.
-- 2026-10-31 known deltas, root-caused and decided (not regressions):
-  (c) `test_tracemalloc.test_no_incomplete_frames` — CPython's `MAKE_CELL`
-  sits BEFORE `RESUME` (frame "incomplete", `instr_ptr < firsttraceable`), so
-  tracemalloc skips it; pyc creates the cell at the def line after the frame
-  is already "complete", so tracemalloc records an extra frame. Fix = create
-  the cell before the frame becomes complete. (d) `test_sys`
+- 2026-11-01: (c) `test_tracemalloc.test_no_incomplete_frames` **fixed**
+  (was a known delta). Root cause: CPython's `MAKE_CELL` sits BEFORE `RESUME`
+  (frame "incomplete", `instr_ptr < firsttraceable`), so tracemalloc's
+  `_PyFrame_GetFirstComplete` skips it; pyc's synthetic code object has RESUME
+  at offset 0 (`_co_firsttraceable == 0`), so a pyc frame is never incomplete
+  and tracemalloc recorded an extra frame (the def line). Fix: `pyc_rt_cell_new`
+  allocates the cell while the current frame's `owner` is
+  `FRAME_OWNED_BY_INTERPRETER` (the first branch of `_PyFrame_IsIncomplete`),
+  restored immediately. `test_tracemalloc` 50/51 -> 51/51.
+- 2026-10-31 known delta, root-caused and decided (not a regression):
+  (d) `test_sys`
   `test_remote_exec_with_self_process` — `sys.remote_exec` on the *self*
   process needs a `*python*` section in `/proc/pid/maps`; pyc statically links
   libpython (deliberate Tier-1 self-contained binary) so there is none.
