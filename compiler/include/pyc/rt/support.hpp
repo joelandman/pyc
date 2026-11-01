@@ -200,6 +200,11 @@ int pyc_rt_del_classname(PyObject* ns, PyObject* name);
 // NameError. PyCell_Get returns NULL with no exception set.
 PyObject* pyc_rt_cell_get(PyObject* cell, const char* name, int is_free);
 int pyc_rt_cell_set(PyObject* cell, PyObject* v, const char* name);
+// Allocate a cell (PyCell_New) while the current frame reads as "incomplete",
+// so tracemalloc attributes it to the caller, not this frame (CPython's
+// MAKE_CELL sits before RESUME). `seed` is the initial value for a cellvar
+// that is a parameter, or NULL.
+PyObject* pyc_rt_cell_new(PyObject* seed);
 PyObject* pyc_rt_star_annotation(PyObject* v);
 PyObject* pyc_rt_annotate_check_format(PyObject* format);
 

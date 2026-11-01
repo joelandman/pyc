@@ -936,8 +936,13 @@ private:
                 break;
             }
             case Op::CellNew: {
-                need("declare ptr @PyCell_New(ptr)");
-                o_ << "  " << v(*in.result) << " = call ptr @PyCell_New(ptr "
+                // Wrap PyCell_New so the allocation happens while the current
+                // frame reads as "incomplete" (owner = INTERPRETER), matching
+                // CPython's MAKE_CELL-before-RESUME. tracemalloc then skips this
+                // frame and attributes the cell to the caller. See
+                // pyc_rt_cell_new in rt/frame.cpp.
+                need("declare ptr @pyc_rt_cell_new(ptr)");
+                o_ << "  " << v(*in.result) << " = call ptr @pyc_rt_cell_new(ptr "
                    << (in.args.empty() ? "null" : v(in.args[0])) << ")\n";
                 check(in, v(*in.result), true);
                 break;

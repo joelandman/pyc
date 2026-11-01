@@ -164,6 +164,33 @@ extern "C" void* pyc_rt_interp_enter(PyCodeObject* code, PyObject* globals,
 #define CO_FAST_FREE  0x80
 #endif
 
+// Allocate a closure cell while the current frame reads as "incomplete",
+// matching CPython. CPython allocates the cell in MAKE_CELL, which sits BEFORE
+// the RESUME (the first traceable instruction), so when the allocation runs
+// the frame is still incomplete. tracemalloc's frame domain starts its
+// backchain at the first COMPLETE frame (_PyFrame_GetFirstComplete), so an
+// incomplete frame is skipped and the cell is attributed to the CALLER, not
+// to this frame -- this is what test_no_incomplete_frames checks.
+//
+// pyc's synthetic code object has RESUME at offset 0 (_co_firsttraceable ==
+// 0), so a pyc frame can never be "incomplete" by the instr_ptr rule
+// (instr_ptr < bytecode + 0 is always false). The equivalent window is the
+// first branch of _PyFrame_IsIncomplete: owner >= FRAME_OWNED_BY_INTERPRETER.
+// Set it around the allocation and restore immediately. The window is a single
+// PyCell_New (no re-entrant C-API call inside it reads owner), cell creation
+// is rare, and the two byte stores are negligible, so the overhead is a
+// non-issue and it is safe when tracemalloc is off too (owner is restored
+// before anything else runs).
+extern "C" PyObject* pyc_rt_cell_new(PyObject* seed) {
+    PyThreadState* ts = PyThreadState_Get();
+    _PyInterpreterFrame* f = ts ? ts->current_frame : nullptr;
+    char saved = 0;
+    if (f) { saved = f->owner; f->owner = FRAME_OWNED_BY_INTERPRETER; }
+    PyObject* cell = PyCell_New(seed);
+    if (f) f->owner = saved;
+    return cell;
+}
+
 static _PyInterpreterFrame* frame_from_arg_or_current(void* vp) {
     if (vp) return static_cast<_PyInterpreterFrame*>(vp);
     PyThreadState* ts = PyThreadState_Get();
