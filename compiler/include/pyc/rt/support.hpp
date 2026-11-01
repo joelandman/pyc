@@ -6,6 +6,7 @@
 // with a decision in it lives here, in C++, where it can be read and tested;
 // the emitted IR stays a mechanical translation of pyc::ir.
 #include <Python.h>
+#include <cstdint>
 
 #ifdef __cplusplus
 extern "C" {
@@ -179,11 +180,14 @@ PyObject* pyc_rt_bind_method(PyObject* v);
 PyObject* pyc_rt_cm_exit(PyObject* mgr);       // unbound __exit__
 PyObject* pyc_rt_cm_enter(PyObject* mgr);      // result of __enter__
 int pyc_rt_exit_normal(PyObject* exitf, PyObject* mgr);
-// Calls exit(type, value, tb) with the exception currently set.
+// Calls exit(type, value, tb) with the exception currently set. `line` is
+// the `with` line: with the exception taken out of the raised state, it
+// fires the LINE event for it (CPython fires the with line on the way into
+// __exit__); 0 disables the fire.
 //   1  suppressed -- the error is cleared and execution continues
 //   0  not suppressed -- the exception is restored for propagation
-//  -1  __exit__ itself failed
-int pyc_rt_exit_exc(PyObject* exitf, PyObject* mgr);
+//  -1  __exit__ itself failed (or the with-line trace callback raised)
+int pyc_rt_exit_exc(PyObject* exitf, PyObject* mgr, std::int64_t line);
 
 // Append every item of `iterable` to `list`. Used for `*x` in a call or a
 // literal, where the star's contents are spliced rather than nested.
@@ -316,6 +320,13 @@ void pyc_rt_set_lasti_q(int slot, int line, int end_line, int col, int end_col);
 // unchanged, at the target's line event when it changes). Same jump contract
 // as pyc_rt_set_lasti.
 int pyc_rt_set_lasti_be(int slot, int line, int end_line, int col, int end_col);
+// Fire the LINE event for `line` without a compiler-assigned slot (the unit
+// is resolved from the source coordinates alone). For a point the compiler
+// cannot place a location update at: the `with` line during exception
+// dispatch, called by pyc_rt_exit_exc after the exception has been taken out
+// of the raised state. Same -1 / -2 / landing-line contract as
+// pyc_rt_set_lasti; a redirect (>0) takes effect at the next location update.
+int pyc_rt_fire_line(int line);
 // Fire the 'exception' trace event for the in-flight exception: a fresh raise
 // or an exception arriving from a callee (CPython's PY_MONITORING_EVENT_RAISE /
 // STOP_ITERATION -> legacy PyTrace_EXCEPTION mapping). Unlike a LINE update it

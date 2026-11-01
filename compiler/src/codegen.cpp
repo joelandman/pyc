@@ -1528,9 +1528,12 @@ private:
     // Lowering does not record imm_pos in the instruction, so recover it:
     // a size argument leads (PyList_New), an index sits at parameter 1
     // (PyList_SetItem), and a compare opid trails (PyObject_RichCompare).
+    // pyc_rt_exit_exc's `with` line also trails: the runtime fires it after
+    // taking the exception out, so it is the call's last parameter.
     static int imm_pos(const ir::Instr& in, std::size_t total) {
         if (in.args.empty()) return 0;
         if (in.text == "PyObject_RichCompare") return (int)total - 1;
+        if (in.text == "pyc_rt_exit_exc") return (int)total - 1;
         return 1;
     }
 

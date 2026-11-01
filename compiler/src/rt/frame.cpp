@@ -628,7 +628,11 @@ static int unit_for_source(PyCodeObject* co, int line, int end_line, int col,
 
 static int set_lasti_impl(int slot, int line, int end_line, int col,
                           int end_col, bool fire, bool force) {
-    if (slot < 0 || line < 1) return -1;
+    // slot -1 means "no compiler-assigned slot": the unit is resolved from the
+    // source coordinates alone (lookup_loc / unit_for_source) and nothing is
+    // cached by slot. Used by pyc_rt_fire_line, which fires a line event at a
+    // point the compiler cannot place a location update.
+    if (slot < -1 || line < 1) return -1;
     if (end_line <= 0) end_line = line;
     pyc_rt_gil_ensure();
     PyThreadState* ts = PyThreadState_Get();
@@ -655,7 +659,10 @@ static int set_lasti_impl(int slot, int line, int end_line, int col,
     }
     Py_ssize_t nunits = Py_SIZE(co);
     if (nunits <= 0) return -1;
-    int legacy = 8 + slot;
+    // The eval stub's linetable puts location `slot` at unit (8 + slot); a
+    // slot-less call (slot -1) has no such convention and falls back to the
+    // first traceable unit if the coordinate walk comes up empty.
+    int legacy = (slot >= 0) ? 8 + slot : co->_co_firsttraceable;
     if (legacy < co->_co_firsttraceable) legacy = co->_co_firsttraceable;
     if (legacy >= nunits) legacy = (int)nunits - 1;
 
@@ -801,6 +808,25 @@ extern "C" void pyc_rt_set_lasti_q(int slot, int line, int end_line, int col,
 extern "C" int pyc_rt_set_lasti_be(int slot, int line, int end_line, int col,
                                    int end_col) {
     return set_lasti_impl(slot, line, end_line, col, end_col, true, true);
+}
+
+// Fire the LINE event for `line` at a point the compiler cannot place a
+// location update: the `with` line during exception dispatch, where the
+// caller (pyc_rt_exit_exc) has just taken the in-flight exception OUT of the
+// raised state, so maybe_line_trace's invariant (no LINE event while an
+// exception is set) holds and the event may fire. The unit is resolved from
+// the source coordinates alone (slot -1: no compiler-assigned slot, nothing
+// cached), landing on the with line's first unit, as CPython's
+// WITH_EXCEPT_HANDLER lands on the with line. Same -1 / -2 / landing-line
+// return convention as pyc_rt_set_lasti: -1 no redirect, -2 the line-event
+// callback raised (its exception is left in the raised state), >0 the
+// debugger redirected to that line (instr_ptr already rewritten by the
+// f_lineno setter; the redirect takes effect at the next location update).
+extern "C" int pyc_rt_fire_line(int line) {
+    pyc_rt_gil_ensure();
+    PyThreadState* ts = PyThreadState_Get();
+    if (!ts || !ts->c_tracefunc) return -1;
+    return set_lasti_impl(-1, line, line, -1, -1, true, false);
 }
 
 // The 'exception' trace event. CPython fires it (legacy

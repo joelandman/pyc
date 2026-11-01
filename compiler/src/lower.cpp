@@ -3488,8 +3488,16 @@ private:
         keep.line = 0;
         ir::Value sup = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         {
+            // pyc_rt_exit_exc takes the in-flight exception out of the raised
+            // state and, with it out, fires the `with` line (CPython fires the
+            // with line on the way into __exit__), then calls __exit__. The
+            // line travels as the int64 imm because a LINE event may not fire
+            // while an exception is still set -- the fire has to happen inside
+            // the call, after the take.
             ir::Instr in{ir::Op::CallCApi, {exitf, mgr}, sup, Ownership::NotAnObject,
                          "pyc_rt_exit_exc", 0, 0, keep, make_landing_pad(wloc)};
+            in.imm = wloc.line;
+            in.has_imm = true;
             emit(std::move(in));
         }
         std::uint32_t reraise = new_block("with.reraise");

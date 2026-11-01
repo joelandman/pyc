@@ -2103,11 +2103,31 @@ extern "C" int pyc_rt_exit_normal(PyObject* exitf, PyObject* mgr) {
     return 0;
 }
 
-extern "C" int pyc_rt_exit_exc(PyObject* exitf, PyObject* mgr) {
+extern "C" int pyc_rt_exit_exc(PyObject* exitf, PyObject* mgr,
+                               std::int64_t line) {
     PyObject* exc = PyErr_GetRaisedException();          // clears the indicator
     if (!exc) return 0;
     PyObject* prev_handled = PyErr_GetHandledException();
     PyErr_SetHandledException(exc);
+    // CPython fires the `with` line when the exception unwinds into __exit__:
+    // the exception is already OUT of the raised state (taken above, held as
+    // the handled one), so the line event may fire, and the __exit__ call is
+    // attributed to the with line. The fire must happen here -- after the
+    // take, before the call -- because a LINE event never fires while an
+    // exception is still set (maybe_line_trace's CPython invariant), and the
+    // compiler cannot place an instruction between the two. -2 means the
+    // line-event callback raised: its exception propagates and the with's
+    // exception is dropped, exactly as the error paths below treat a raising
+    // __exit__. A debugger redirect (>0) rewrites instr_ptr and takes effect
+    // at the next location update.
+    if (line > 0 && pyc_rt_fire_line((int)line) == -2) {
+        PyObject* raised = PyErr_GetRaisedException();
+        if (raised && raised != exc) Py_DECREF(exc);
+        else if (!raised) PyErr_SetRaisedException(exc);
+        PyErr_SetHandledException(prev_handled);
+        Py_XDECREF(prev_handled);
+        return -1;
+    }
     PyObject* type = reinterpret_cast<PyObject*>(Py_TYPE(exc));
     PyObject* tb = PyException_GetTraceback(exc);
     PyObject* extra[3] = {type, exc, tb ? tb : Py_None};
