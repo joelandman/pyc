@@ -4206,6 +4206,17 @@ private:
             std::uint32_t next_b = new_block("except.next");
             ir::Value bound = exc;
             ir::Value rest;
+            // CPython fires the `except:` line when it evaluates the clause's
+            // type and checks the match (LOAD_GLOBAL + CHECK_EXC_MATCH are on
+            // the except line), for EVERY handler it inspects -- whether or not
+            // it ultimately matches. So fire it here, at the start of each
+            // handler's dispatch, not only in a matching handler's body. The
+            // match logic below then runs on the except line (loud), so lasti
+            // stays there until the body's first statement or the next handler.
+            quiet_locs_ = false;
+            emit(ir::Instr{ir::Op::SetLine, {}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, eh.loc,
+                           std::nullopt});
             if (star) {
                 if (!eh.type) return unsupported("bare except*", n.loc);
                 ir::Value ty = lower_expr(**eh.type, &ok);
@@ -4216,62 +4227,67 @@ private:
                 mark_owned(pair);
                 ir::Value i0 = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
                 emit(ir::Instr{ir::Op::ConstInt, {}, i0, Ownership::Owned, "0",
-                               0, 0, n.loc, std::nullopt});
+                               0, 0, eh.loc, std::nullopt});
                 mark_owned(i0);
                 ir::Value i1 = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
                 emit(ir::Instr{ir::Op::ConstInt, {}, i1, Ownership::Owned, "1",
-                               0, 0, n.loc, std::nullopt});
+                               0, 0, eh.loc, std::nullopt});
                 mark_owned(i1);
-                bound = call_capi("PyObject_GetItem", {pair, i0}, n.loc, &ok, {i0});
+                bound = call_capi("PyObject_GetItem", {pair, i0}, eh.loc, &ok, {i0});
                 if (!ok) return false;
                 mark_owned(bound);
-                rest = call_capi("PyObject_GetItem", {pair, i1}, n.loc, &ok, {i1});
+                rest = call_capi("PyObject_GetItem", {pair, i1}, eh.loc, &ok, {i1});
                 if (!ok) return false;
                 mark_owned(rest);
-                if (owns(pair)) release(pair, n.loc);
+                if (owns(pair)) release(pair, eh.loc);
                 // Pads after the try must not decref these: they are defined
                 // only on the exception path. Manual decref on each arm.
                 forget(bound); forget(rest);
                 ir::Value nn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
                 emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
-                               0, 0, n.loc, std::nullopt});
+                               0, 0, eh.loc, std::nullopt});
                 mark_owned(nn);
                 ir::Value isnone = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
                 emit(ir::Instr{ir::Op::Is, {bound, nn}, isnone, Ownership::NotAnObject,
-                               "", 0, 0, n.loc, std::nullopt});
-                release(nn, n.loc);
+                               "", 0, 0, eh.loc, std::nullopt});
+                release(nn, eh.loc);
                 std::uint32_t nomatch_b = new_block("exceptstar.nomatch");
                 emit(ir::Instr{ir::Op::CondBr, {isnone}, std::nullopt,
                                Ownership::NotAnObject, "", nomatch_b, body_b,
-                               n.loc, std::nullopt});
+                               eh.loc, std::nullopt});
                 set_block(nomatch_b);
-                emit_decref(bound, n.loc);
-                if (remaining.id != exc.id) emit_decref(remaining, n.loc);
+                emit_decref(bound, eh.loc);
+                if (remaining.id != exc.id) emit_decref(remaining, eh.loc);
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                               "", next_b, 0, n.loc, std::nullopt});
+                               "", next_b, 0, eh.loc, std::nullopt});
             } else if (eh.type) {
                 ir::Value ty = lower_expr(**eh.type, &ok);
                 if (!ok) return false;
                 std::uint32_t type_ok = new_block("except.typeok");
-                if (!check_except_type(ty, n.loc, type_ok)) return false;
+                if (!check_except_type(ty, eh.loc, type_ok)) return false;
                 set_block(type_ok);
                 ir::Value m = call_capi("PyErr_GivenExceptionMatches", {exc, ty},
-                                        n.loc, &ok, {ty});
+                                        eh.loc, &ok, {ty});
                 if (!ok) return false;
                 emit(ir::Instr{ir::Op::CondBr, {m}, std::nullopt,
                                Ownership::NotAnObject, "", body_b, next_b,
-                               n.loc, std::nullopt});
+                               eh.loc, std::nullopt});
             } else {
                 emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                               "", body_b, 0, n.loc, std::nullopt});
+                               "", body_b, 0, eh.loc, std::nullopt});
             }
             set_block(body_b);
-            reload_live_i64_from_slots(live_in, n.loc);
-            if (eh.name) store_name(*eh.name, bound, n.loc);   // INCREFs; bound stays ours
+            // The except line was already fired at the start of this handler's
+            // dispatch (CPython fires it while evaluating the clause). The body
+            // entry bookkeeping (i64 reload, `as e` binding, set_handled) runs
+            // on the except line: loud at eh.loc keeps lasti there and fires no
+            // new event.
+            reload_live_i64_from_slots(live_in, eh.loc);
+            if (eh.name) store_name(*eh.name, bound, eh.loc);   // INCREFs; bound stays ours
             if (star) {
-                call_capi("pyc_rt_set_handled", {bound}, n.loc, &ok);
+                call_capi("pyc_rt_set_handled", {bound}, eh.loc, &ok);
                 if (!ok) return false;
-                emit_decref(bound, n.loc);
+                emit_decref(bound, eh.loc);
                 mark_owned(rest);
             } else {
                 handled_stack_.push_back(
@@ -4282,17 +4298,10 @@ private:
                 hcatch = new_block("exceptstar.raised");
                 try_stack_.push_back(hcatch);
             }
-            // The handler body is the first traceable thing after the
-            // non-traceable lookup. CPython's first handler instruction is a
-            // RESUME on the `except:` line, so the except line owns the first
-            // line event (the body's first statement is on its own line).
-            // Emit it as a SetLine (the except-line equivalent of the try
-            // header NOP), then the body loud. Everything else in the lookup
-            // (match, `as e` binding, pop/unbind/branch) stays quiet.
-            quiet_locs_ = false;
-            emit(ir::Instr{ir::Op::SetLine, {}, std::nullopt,
-                           Ownership::NotAnObject, "", 0, 0, eh.loc,
-                           std::nullopt});
+            // The except line was already fired at the start of this handler's
+            // dispatch (CPython fires it while evaluating the clause), and the
+            // body entry above ran on it. So the body is loud from here: each
+            // statement fires its own line, starting with the body's first.
             for (const stmt& s2 : eh.body)
                 if (!lower_stmt(s2)) {
                     if (star) try_stack_.pop_back();
@@ -4339,6 +4348,11 @@ private:
             if (star) remaining = rest;
         }
 
+        // No handler matched: the exception propagates. This is bookkeeping
+        // (pop the handled state, release, re-raise) with no source line of its
+        // own, so it must not fire a LINE event. The dispatch's SetLine left
+        // quiet_locs_ false, so re-quiet here.
+        quiet_locs_ = true;
         if (star) handled_stack_.pop_back();
         call_capi("pyc_rt_pop_handled", {prev_handled}, n.loc, &ok);
         if (!ok) return false;
