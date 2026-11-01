@@ -3777,6 +3777,15 @@ private:
         std::uint32_t after   = new_block("try.after");
         auto live_in = live_i64_;
 
+        // The finally cleanup (push/snapshot of the handled exception, the
+        // reraise/return/fall-through dispatch, the pop/snapshot release, and
+        // the RERAISE) has no source line of its own: CPython's PUSH_EXC_INFO /
+        // POP_EXCEPT / RERAISE machinery is non-traceable. Stamp all of it with
+        // a line-0 location so it fires no LINE event and leaves lasti at the
+        // finally body's last line (a following return then reports the finally
+        // line, not the `try:` line).
+        const SourceLoc book = SourceLoc{};
+
         // Uncaught exceptions from the guarded region land here, not in an
         // enclosing handler: the cleanup has to run first.
         try_stack_.push_back(catch_b);
@@ -3872,45 +3881,47 @@ private:
         std::uint32_t none_b = new_block("finally.snapnone");
         std::uint32_t some_b = new_block("finally.snapsome");
         std::uint32_t body_b = new_block("finally.run");
+        // PUSH_EXC_INFO / snapshot of the handled exception for the cleanup:
+        // non-traceable bookkeeping, so a line-0 location (see `book`).
         {
-            ir::Value nn = const_null(n.loc);
+            ir::Value nn = const_null(book);
             ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
             emit(ir::Instr{ir::Op::Is, {p_exc, nn}, isnull, Ownership::NotAnObject,
-                           "", 0, 0, n.loc, std::nullopt});
+                           "", 0, 0, book, std::nullopt});
             emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
                            Ownership::NotAnObject, "", snap_b, push_b,
-                           n.loc, std::nullopt});
+                           book, std::nullopt});
         }
         set_block(push_b);
-        ir::Value pushed_prev = call_capi("pyc_rt_push_handled", {p_exc}, n.loc, &ok);
+        ir::Value pushed_prev = call_capi("pyc_rt_push_handled", {p_exc}, book, &ok);
         if (!ok) return false;
         mark_owned(pushed_prev); forget(pushed_prev);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", body_b, 0, n.loc, std::nullopt});
+                       "", body_b, 0, book, std::nullopt});
         set_block(snap_b);
-        ir::Value snapped = emit_get_handled(n.loc);
+        ir::Value snapped = emit_get_handled(book);
         {
-            ir::Value nn = const_null(n.loc);
+            ir::Value nn = const_null(book);
             ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
             emit(ir::Instr{ir::Op::Is, {snapped, nn}, isnull, Ownership::NotAnObject,
-                           "", 0, 0, n.loc, std::nullopt});
+                           "", 0, 0, book, std::nullopt});
             emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
                            Ownership::NotAnObject, "", none_b, some_b,
-                           n.loc, std::nullopt});
+                           book, std::nullopt});
         }
         set_block(none_b);
         ir::Value none_prev = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
         emit(ir::Instr{ir::Op::ConstNone, {}, none_prev, Ownership::Owned, "",
-                       0, 0, n.loc, std::nullopt});
+                       0, 0, book, std::nullopt});
         forget(none_prev);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", body_b, 0, n.loc, std::nullopt});
+                       "", body_b, 0, book, std::nullopt});
         set_block(some_b);
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", body_b, 0, n.loc, std::nullopt});
+                       "", body_b, 0, book, std::nullopt});
         set_block(body_b);
         ir::Value prev_h = emit_phi({pushed_prev, none_prev, snapped},
-                                    {push_b, none_b, some_b}, n.loc);
+                                    {push_b, none_b, some_b}, book);
         forget(prev_h);
         frame_owned_.push_back(prev_h);
         handled_stack_.push_back({prev_h, try_stack_.size(), p_exc, 2});
@@ -3918,11 +3929,8 @@ private:
         // The finally body's own statements own the line events (CPython has
         // no line for the `finally:` header). The bookkeeping around it --
         // reloading int locals before it, and popping the handled exception /
-        // dropping the snapshot after it -- has no source line, so use a line-0
-        // location: it fires no LINE event and leaves lasti at the finally
-        // body's last line, so a following return reports the finally line, not
-        // the `try:` line.
-        const SourceLoc book = SourceLoc{};
+        // dropping the snapshot after it -- uses the line-0 `book` location
+        // (see top of this function).
         reload_live_i64_from_slots(live_in, book);
         for (const stmt& s2 : n.finalbody) if (!lower_stmt(s2)) return false;
         handled_stack_.pop_back();
@@ -3986,7 +3994,11 @@ private:
 
         set_block(ret_b);
         mark_owned(p_ret);
-        if (!finish_return(p_ret, n.loc)) return false;
+        // Return after the cleanup: the line is the finally body's last line
+        // (lasti is already there), so complete the return with a line-0
+        // location -- finish_return's Return would otherwise re-stamp the
+        // `try:` line and the return event would report it.
+        if (!finish_return(p_ret, book)) return false;
 
         // break and continue, in that order, after return. Emitted only when
         // one actually reached this cleanup: otherwise the dispatch would
@@ -4003,34 +4015,36 @@ private:
         // comparison only inspects the pointer, but reading a pointer whose
         // reference has already been dropped is the kind of detail that is
         // true until it isn't.
-        ir::Value nb = const_null(n.loc), nc = const_null(n.loc);
+        // Break/continue dispatch after the cleanup: non-traceable bookkeeping
+        // (see `book`); the loop's continuation sets the line.
+        ir::Value nb = const_null(book), nc = const_null(book);
         ir::Value is_brk = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
         emit(ir::Instr{ir::Op::Is, {p_brk, nb}, is_brk, Ownership::NotAnObject,
-                       "", 0, 0, n.loc, std::nullopt});
+                       "", 0, 0, book, std::nullopt});
         ir::Value is_cont = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
         emit(ir::Instr{ir::Op::Is, {p_cont, nc}, is_cont, Ownership::NotAnObject,
-                       "", 0, 0, n.loc, std::nullopt});
+                       "", 0, 0, book, std::nullopt});
         // At most one marker is non-null; Py_DecRef is Py_XDECREF, so
         // releasing both unconditionally is correct on every path.
         mark_owned(p_brk); mark_owned(p_cont);
-        release(p_brk, n.loc); release(p_cont, n.loc);
+        release(p_brk, book); release(p_cont, book);
 
         std::uint32_t brk_b = new_block("finally.break");
         std::uint32_t nobrk_b = new_block("finally.nobreak");
         emit(ir::Instr{ir::Op::CondBr, {is_brk}, std::nullopt,
                        Ownership::NotAnObject, "", nobrk_b, brk_b,
-                       n.loc, std::nullopt});
+                       book, std::nullopt});
         set_block(brk_b);
-        if (!finish_jump(true, n.loc)) return false;
+        if (!finish_jump(true, book)) return false;
 
         set_block(nobrk_b);
         std::uint32_t cont_b = new_block("finally.continue");
         std::uint32_t done_b = new_block("finally.done");
         emit(ir::Instr{ir::Op::CondBr, {is_cont}, std::nullopt,
                        Ownership::NotAnObject, "", done_b, cont_b,
-                       n.loc, std::nullopt});
+                       book, std::nullopt});
         set_block(cont_b);
-        if (!finish_jump(false, n.loc)) return false;
+        if (!finish_jump(false, book)) return false;
 
         set_block(done_b);
         return true;
