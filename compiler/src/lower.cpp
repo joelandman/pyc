@@ -3819,10 +3819,15 @@ private:
         // terminated block produces a duplicate phi predecessor carrying a
         // different value, which LLVM rejects.
         if (!terminated()) {
-            fin.edge((std::uint32_t)blk_, const_null(n.loc), const_null(n.loc),
-                     const_null(n.loc), const_null(n.loc));
+            // The pending-value markers are null on the normal path; build them
+            // with a line-0 location so the ConstNulls fire no LINE event.
+            fin.edge((std::uint32_t)blk_, const_null(book), const_null(book),
+                     const_null(book), const_null(book));
+            // Normal completion into the cleanup: bookkeeping branch (no source
+            // line), so it fires no LINE event and leaves lasti at the guarded
+            // region's last line.
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                           "", fin.entry, 0, n.loc, std::nullopt});
+                           "", fin.entry, 0, book, std::nullopt});
         }
 
         // The unwind edge: take the exception so the cleanup runs with no
@@ -3846,10 +3851,10 @@ private:
                            "", keep_b, 0, n.loc, std::nullopt});
             set_block(keep_b);
         }
-        fin.edge((std::uint32_t)blk_, exc, const_null(n.loc),
-                 const_null(n.loc), const_null(n.loc));
+        fin.edge((std::uint32_t)blk_, exc, const_null(book),
+                 const_null(book), const_null(book));
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", fin.entry, 0, n.loc, std::nullopt});
+                       "", fin.entry, 0, book, std::nullopt});
         forget(exc);      // it lives on through the phi, not this name
 
         set_block(fin.entry);
@@ -4124,6 +4129,12 @@ private:
         std::uint32_t after    = new_block("try.after");
         auto live_in = live_i64_;
 
+        // Bookkeeping branches (the else path's branch into the continuation,
+        // the handler lookup, and the handler-exit pop/unbind/release) have no
+        // source line of their own: a line-0 location fires no LINE event and
+        // leaves lasti where the real code left it. See the dispatch note.
+        const SourceLoc book = SourceLoc{};
+
         try_stack_.push_back(dispatch);
         // CPython emits a NOP at the `try:` header (dis: a bare line before
         // the body) so the header line fires its LINE event in order, before
@@ -4136,10 +4147,11 @@ private:
         try_stack_.pop_back();
         if (!ok) return false;
 
-        // `else` runs only when the body completed without raising.
+        // `else` runs only when the body completed without raising. The branch
+        // into the continuation after the else is bookkeeping (no source line).
         for (const stmt& s2 : n.orelse) if (!lower_stmt(s2)) return false;
         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                       "", after, 0, n.loc, std::nullopt});
+                       "", after, 0, book, std::nullopt});
 
         set_block(dispatch);
         // The handler lookup (PUSH_EXC_INFO -> CHECK_EXC_MATCH -> dispatch) is
@@ -4151,16 +4163,10 @@ private:
         // return reports the `try:` line instead of the last body line.
         bool saved_quiet = quiet_locs_;
         quiet_locs_ = true;
-        // Bookkeeping CPython does with no source line of its own (the handler
-        // match, the `as e` binding, pop/unbind, refcount cleanup, and the
-        // branch into the continuation) must NOT move the frame's line. After
-        // a handler runs, lasti is the handler BODY's last line until the next
-        // real statement updates it; a line-0 location emits no location update
-        // at all (codegen emit_instr guards on loc.line > 0), so lasti is kept.
-        // Stamping these with n.loc (even quietly) would reset lasti to the
-        // `try:` line, and the implicit return would then report the `try:`
-        // line instead of the last body line.
-        const SourceLoc book = SourceLoc{};
+        // (The handler-exit bookkeeping uses the line-0 `book` location defined
+        // at the top of this function: no LINE event, lasti kept at the handler
+        // body's last line so the implicit return reports it, not the `try:`
+        // line.)
         ir::Value exc = call_capi("PyErr_GetRaisedException", {}, n.loc, &ok);
         if (!ok) return false;
         mark_owned(exc); forget(exc);
@@ -5938,8 +5944,15 @@ private:
             if (it == locals_.end()) continue;
             ir::Value iv = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
             std::uint32_t okb = new_block("int.rejoin");
+            // Restoring a live i64 after a loop is internal bookkeeping with no
+            // source line of its own. Stamping it with the loop's header line
+            // re-fires that line after a break (lasti was the break's line, and
+            // CPython's "after the loop" point carries no line). Line-0 emits
+            // no location update, so lasti is kept exactly where the break or
+            // the natural exit left it; the unbound-error pad keeps the real
+            // line for a traceback.
             ir::Instr in{ir::Op::IntLoad, {}, iv, Ownership::NotAnObject,
-                         name, 0, 0, loc, make_landing_pad(loc)};
+                         name, 0, 0, SourceLoc{}, make_landing_pad(loc)};
             in.has_imm = true;
             in.imm = it->second;
             in.target = okb;
