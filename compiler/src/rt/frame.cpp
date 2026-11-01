@@ -680,13 +680,15 @@ static int set_lasti_impl(int slot, int line, int end_line, int col,
             // build_linemap wrote this location at unit (8 + slot).
             // The watcher frees the index; skip caching if it cannot be
             // registered, and recompute the unit on the next call.
+            // A slot-less call has no such convention: leave off < 0 and let
+            // the tail walk the stub's real linetable for the line's unit.
             if (ensure_loc_watch()) {
                 idx = new LocIndex;
                 idx->direct = true;
                 g_loc_index[co] = idx;
                 loc_hot_set(co, idx);
             }
-            off = legacy;
+            off = (slot >= 0) ? legacy : -1;
         } else if (!idx) {
             g_loc_building++;
             idx = build_loc_index(co);
@@ -696,14 +698,21 @@ static int set_lasti_impl(int slot, int line, int end_line, int col,
                       : unit_for_source(co, line, end_line, col, end_col,
                                         legacy);
         } else if (idx->direct) {
-            off = legacy;
+            off = (slot >= 0) ? legacy : -1;
         } else {
             off = lookup_loc(idx, line, end_line, col, end_col);
         }
     } else if (off < 0) {
         off = unit_for_source(co, line, end_line, col, end_col, legacy);
     }
-    if (off < 0) off = legacy;
+    if (off < 0) {
+        // Slot-less: the unit comes from the source coordinates alone (the
+        // stub's linetable carries real per-unit positions). Only a slot call
+        // falls back to its (8 + slot) convention.
+        if (slot < 0) off = unit_for_source(co, line, end_line, col, end_col,
+                                            legacy);
+        if (off < 0) off = legacy;
+    }
     if (off >= nunits) off = (int)nunits - 1;
     if (idx) slot_store(idx, slot, off);
     // fire=false is the quiet variant: the location update is for the
