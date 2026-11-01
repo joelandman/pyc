@@ -3785,9 +3785,17 @@ private:
         fin_loop_depth_ = loops_.size();
         bool ok = true;
         if (n.handlers.empty() && n.orelse.empty()) {
+            // A plain try/finally has no lower_try_except to emit the header
+            // NOP, so fire the `try:` line here (CPython emits a NOP at the
+            // header so it precedes the body's first line). Without it the
+            // header line fires late, out of order, on the unwind path.
+            emit(ir::Instr{ir::Op::SetLine, {}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, n.loc,
+                           std::nullopt});
             for (const stmt& s2 : n.body) if (!lower_stmt(s2)) { ok = false; break; }
         } else {
             // try/except/finally is try/except wrapped in a finally region.
+            // lower_try_except emits its own `try:` header NOP.
             Try inner{n.body, n.handlers, n.orelse, {}, n.loc};
             ok = lower_try_except(inner, star);
         }
@@ -3907,14 +3915,22 @@ private:
         frame_owned_.push_back(prev_h);
         handled_stack_.push_back({prev_h, try_stack_.size(), p_exc, 2});
 
-        reload_live_i64_from_slots(live_in, n.loc);
+        // The finally body's own statements own the line events (CPython has
+        // no line for the `finally:` header). The bookkeeping around it --
+        // reloading int locals before it, and popping the handled exception /
+        // dropping the snapshot after it -- has no source line, so use a line-0
+        // location: it fires no LINE event and leaves lasti at the finally
+        // body's last line, so a following return reports the finally line, not
+        // the `try:` line.
+        const SourceLoc book = SourceLoc{};
+        reload_live_i64_from_slots(live_in, book);
         for (const stmt& s2 : n.finalbody) if (!lower_stmt(s2)) return false;
         handled_stack_.pop_back();
         frame_owned_.pop_back();
         if (!terminated()) {
-            call_capi("pyc_rt_pop_handled", {prev_h}, n.loc, &ok);
+            call_capi("pyc_rt_pop_handled", {prev_h}, book, &ok);
             if (!ok) return false;
-            emit_decref(prev_h, n.loc);
+            emit_decref(prev_h, book);
         }
         frame_owned_.pop_back();
         frame_owned_.pop_back();
@@ -3924,41 +3940,48 @@ private:
         std::uint32_t exc_b  = new_block("finally.reraise");
         std::uint32_t noexc_b = new_block("finally.noexc");
         std::uint32_t ret_b  = new_block("finally.return");
+        // Control-flow dispatch (was the cleanup a reraise / a return / a
+        // fall-through?). CPython's POP_EXCEPT-and-check machinery has no
+        // source line, so test the phis with a line-0 location: no LINE event,
+        // and lasti stays at the finally body's last line.
         {
-            ir::Value nn = const_null(n.loc);
+            ir::Value nn = const_null(book);
             ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
             emit(ir::Instr{ir::Op::Is, {p_exc, nn}, isnull, Ownership::NotAnObject,
-                           "", 0, 0, n.loc, std::nullopt});
+                           "", 0, 0, book, std::nullopt});
             emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
                            Ownership::NotAnObject, "", noexc_b, exc_b,
-                           n.loc, std::nullopt});
+                           book, std::nullopt});
         }
 
         set_block(exc_b);
         // SetRaisedException STEALS, so p_exc must not be released after it.
         mark_owned(p_exc);
-        call_capi("PyErr_SetRaisedException", {p_exc}, n.loc, &ok);
+        // Reraise after the cleanup: CPython's RERAISE is non-traceable, so it
+        // fires no LINE event and does not move lasti. Use a line-0 location
+        // (and a line-0 pad, whose internal bookkeeping would otherwise re-fire
+        // the `try:` line) -- otherwise the unwind re-fires the `try:` line out
+        // of order, after the finally body.
+        call_capi("PyErr_SetRaisedException", {p_exc}, book, &ok);
         if (!ok) return false;
         forget(p_exc);
         {
-            SourceLoc fl = n.loc;
-            if (n.loc.end_line > 0) fl.line = n.loc.end_line;
             // The pending exception was annotated where it was detected;
             // the cleanup ran and now the unwind continues. No new entry.
-            std::uint32_t pad = make_landing_pad(fl, /*add_tb=*/false);
+            std::uint32_t pad = make_landing_pad(book, /*add_tb=*/false);
             emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
-                           "", pad, 0, fl, std::nullopt});
+                           "", pad, 0, book, std::nullopt});
         }
 
         set_block(noexc_b);
         {
-            ir::Value nn = const_null(n.loc);
+            ir::Value nn = const_null(book);
             ir::Value isnull = cur()->fresh(ir::Type{ir::Type::Kind::Int64, {}});
             emit(ir::Instr{ir::Op::Is, {p_ret, nn}, isnull, Ownership::NotAnObject,
-                           "", 0, 0, n.loc, std::nullopt});
+                           "", 0, 0, book, std::nullopt});
             emit(ir::Instr{ir::Op::CondBr, {isnull}, std::nullopt,
                            Ownership::NotAnObject, "", after, ret_b,
-                           n.loc, std::nullopt});
+                           book, std::nullopt});
         }
 
         set_block(ret_b);
@@ -3971,7 +3994,9 @@ private:
         // reported "break outside a loop" for a try/finally containing no
         // break at all.
         set_block(after);
-        reload_live_i64_from_slots(live_in, n.loc);
+        // Fall-through continuation: bookkeeping only (see `book`); the next
+        // real statement sets its own line.
+        reload_live_i64_from_slots(live_in, book);
         if (!fin.any_jump) return true;
 
         // Both tests are computed BEFORE the markers are released: the
