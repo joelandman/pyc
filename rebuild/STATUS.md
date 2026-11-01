@@ -183,6 +183,36 @@ vs C.
 
 **Now**
 
+- 2026-10-31: `test_sys_settrace` event-stream gaps, two sub-fixes.
+  (1) The legacy `'exception'` trace event: CPython fires it once per frame
+  in the propagation chain (a fresh `raise`, a failing op, or the moment one
+  arrives from a callee) and NOT on a bare re-raise (RERAISE has no legacy
+  mapping) or the for-loop's normal StopIteration. The firing rule collapses
+  onto the pad's `add_tb` flag — a pad adds a traceback entry iff an
+  exception is thrown in this frame, which is exactly where the event fires.
+  New `FireException` IR op at the entry of every throwing pad; runtime
+  `pyc_rt_trace_exception` reports the in-flight `(type, value, tb)`.
+  (2) The `try:` header LINE event: CPython emits a NOP at the header so the
+  header line fires in order before the body; pyc lowered the body directly,
+  so the header line fired late and out of order. New `SetLine` op (a
+  standalone location update = CPython's NOP) emitted at the try header.
+  Oracle-verified across nested propagation, same-frame catch, re-raise,
+  `raise X from Y`, generator StopIteration, and failing subscript/attr/binary/
+  name. `test_sys_settrace` 113 -> 107 unique failing, zero new; fast gate
+  865/865, verify 887/887. File-level `Lib/test` neutral (the settrace row was
+  already failing), so I6 stays **369/389**.
+- 2026-10-31 known deltas, root-caused and decided (not regressions):
+  (c) `test_tracemalloc.test_no_incomplete_frames` — CPython's `MAKE_CELL`
+  sits BEFORE `RESUME` (frame "incomplete", `instr_ptr < firsttraceable`), so
+  tracemalloc skips it; pyc creates the cell at the def line after the frame
+  is already "complete", so tracemalloc records an extra frame. Fix = create
+  the cell before the frame becomes complete. (d) `test_sys`
+  `test_remote_exec_with_self_process` — `sys.remote_exec` on the *self*
+  process needs a `*python*` section in `/proc/pid/maps`; pyc statically links
+  libpython (deliberate Tier-1 self-contained binary) so there is none.
+  Decision: accept the delta; linking shared libpython would break the
+  self-contained design for one niche remote-debugging test. Child-process
+  `remote_exec` tests pass (the child is the sysroot CPython).
 - 2026-10-31: debugger line-jump redirects (a trace callback sets
   `frame.f_lineno`). A per-function jump table lands on the reported
   line's block; target selection is the exact all-or-nothing test (a use
