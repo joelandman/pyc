@@ -262,11 +262,20 @@ vs C.
 1. I6 re-run 2026-10-29: **368/389 (94.60%)**, adopted as
    `compiler/baseline-libtest.json`; the 2026-09-26 355/389 record is
    superseded. The unpublished `17270a0` run was never a substitute for
-   this. B2's replacement of the mislabeled published release is staged
-   at `~/opt/py-sysroots/cp314-3.14.7-tier1-x86_64.tar.xz`; republishing
-   needs a GitHub token (this machine has none): delete the stale asset
-   on the `sysroot-cp314-linux-x86_64` release and upload it. The
-   tooling will not let the mismatch happen again.
+   this. **B2 done 2026-11-01.** The stale asset on the
+   `sysroot-cp314-linux-x86_64` release was a **3.14.4** in a 3.14.7 box
+   (84MB, uploaded 2026-10-31). It was deleted and replaced with a fresh
+   pack of the genuine 3.14.7 sysroot (39.6MB, engine banner
+   `3.14.7 (main, Oct 28 2026, 10:24:26)`), re-verified by downloading the
+   published asset and running its launcher under `env -i`. Release notes
+   corrected to `glibc 2.43`. Gotcha that masked the truth locally: this
+   shell exports `LD_LIBRARY_PATH=/home/joe/local/lib` (a 3.14.5
+   `libpython3.14.so.1.0`); the prefix launcher uses `RUNPATH`, which the
+   loader ranks *below* `LD_LIBRARY_PATH`, so any direct `python3.14 -VV`
+   in that shell reports 3.14.5. The gates are unaffected — `child_env()`
+   strips `LD_LIBRARY_PATH` — so every measurement here has been against
+   the real 3.14.7. The B2 pack guard (refuse a sysroot whose interpreter
+   does not match its manifest) will not let the mismatch happen again.
 2. Dump the remaining `EXIT_DIFFERS` before adding syntax. The cluster
    that is already named: stub `co_code` / `co_consts` / linetable
    (`test_dis`, `test_compile`, `test_peepholer`, `test_opcache`) and
