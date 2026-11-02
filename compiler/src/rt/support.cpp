@@ -14,6 +14,7 @@
 #include <vector>
 #include <new>
 #include <set>
+#include <atomic>
 #include <unordered_map>
 
 extern "C" {
@@ -29,6 +30,10 @@ extern "C" PyObject* _PyFunction_Vectorcall(PyObject* func,
 // Py_BUILD_CORE; the symbol is exported from libpython.
 extern "C" int _PyObject_GetMethod(PyObject* obj, PyObject* name,
                                    PyObject** method);
+
+// MAKE_FUNCTION's version assignment, same story (Python/bytecodes.c):
+// exported from libpython, declared here rather than taking pycore headers.
+extern "C" void _PyFunction_SetVersion(PyFunctionObject* func, uint32_t version);
 
 // traceback.c: a fresh traceback entry for the current frame, used by
 // CPython's except* naked-exception wrap (_PyEval_ExceptionGroupMatch).
@@ -361,13 +366,25 @@ static void append_svarint(std::vector<char>& o, int val) {
 static bool build_linemap(PyObject** bytecode, PyObject** linetable,
                           const int* locs = nullptr, int nlocs = 0,
                           int firstlineno = 1, int helper_idx = 2) {
+    // RESUME; LOAD_CONST 0 (the __pyc_eval__ function -- a constant, so the
+    // stub dispatches even under foreign/fake globals where a LOAD_GLOBAL
+    // would be shadowed); PUSH_NULL; CALL 0 + 3 cache units; RETURN_VALUE;
+    // then zero pad to 11 units. The header must stay 11 units: the
+    // linetable's RESUME entry spans units 0-7 and the location slots sit
+    // at 8+slot.
+    //
+    // PUSH_NULL is load-bearing: the 3.14 CALL reads self_or_null from
+    // stack[-1] and the callable from stack[-2], and LOAD_GLOBAL provides
+    // that NULL itself ("g + NULL") while LOAD_CONST does not. Without it
+    // the CALL reads the slot below the constant and segfaults.
     char kEvalCode[] = {
         '\x80', '\x00',
-        '\x5c', '\x01',
-        0, 0, 0, 0, 0, 0, 0, 0,
+        '\x52', '\x00',
+        '\x21', '\x00',
         '\x34', '\x00',
         0, 0, 0, 0, 0, 0,
-        '\x23', '\x00'
+        '\x23', '\x00',
+        0, 0, 0, 0, 0, 0, 0, 0
     };
     (void)helper_idx;
     if (!locs || nlocs <= 0) {
@@ -457,13 +474,21 @@ static PyMethodDef pyc_eval_method = {
     nullptr
 };
 
+// The __pyc_eval__ builtin as a function object. Created once and kept for
+// the process lifetime: the eval-stub code objects hold it in co_consts
+// (LOAD_CONST), so it must outlive any individual code object.
+static PyObject* pyc_eval_fn(void) {
+    static PyObject* fn = nullptr;
+    if (!fn) fn = PyCFunction_New(&pyc_eval_method, nullptr);
+    return fn;
+}
+
 extern "C" int pyc_rt_install_helpers(void) {
     PyObject* builtins = PyEval_GetBuiltins();
     if (!builtins) return -1;
-    PyObject* fn = PyCFunction_New(&pyc_eval_method, nullptr);
+    PyObject* fn = pyc_eval_fn();
     if (!fn) return -1;
     int rc = PyDict_SetItemString(builtins, "__pyc_eval__", fn);
-    Py_DECREF(fn);
     return rc;
 }
 
@@ -620,7 +645,8 @@ struct Bound { PycImpl impl; int nargs; int nkwonly; int nposonly; int nlocals;
                char* name; const char* const* argnames;
                int vararg; int kwarg; int nfree; int firstlineno;
                const int* locs; int nlocs; const int* jtl; int njtl;
-               PyObject* code; };
+               PyObject* code;
+               std::atomic<uint32_t> warmup_calls{0}; };
 std::unordered_map<PyObject*, Bound*> g_func_bound;
 std::unordered_map<PyObject*, Bound*> g_code_bound;
 std::unordered_map<PyObject*, Bound*> g_weakref_bound;
@@ -893,12 +919,21 @@ PyCodeObject* make_func_code(Bound* b) {
         PyTuple_SET_ITEM(freevars, i, u);
     }
     const int nextra = (int)g_extra_consts.size();
-    PyObject* consts = PyTuple_New(nextra + 1);
-    if (consts) {
+    PyObject* evalfn = pyc_eval_fn();
+    PyObject* consts = PyTuple_New(nextra + 2);
+    if (consts && evalfn) {
+        // Const 0 is the __pyc_eval__ dispatch function: the stub's
+        // LOAD_CONST loads it by identity, which no globals dict can
+        // shadow (a LOAD_GLOBAL can, e.g. under annotationlib's
+        // _StringifierDict). pyc_eval_fn returns a borrowed reference to
+        // a process-lifetime object, so take an owning reference for the
+        // tuple: SET_ITEM below steals exactly one.
+        Py_INCREF(evalfn);
+        PyTuple_SET_ITEM(consts, 0, evalfn);
         for (int i = 0; i < nextra; ++i)
-            PyTuple_SET_ITEM(consts, i, g_extra_consts[static_cast<size_t>(i)]);
+            PyTuple_SET_ITEM(consts, i + 1, g_extra_consts[static_cast<size_t>(i)]);
         g_extra_consts.clear();
-        Py_INCREF(Py_None); PyTuple_SET_ITEM(consts, nextra, Py_None);
+        Py_INCREF(Py_None); PyTuple_SET_ITEM(consts, nextra + 1, Py_None);
     }
     if (!consts) { Py_DECREF(varnames); Py_DECREF(freevars); std::free(b->name); delete b; return nullptr; }
     PyObject *bytecode = nullptr, *linetable = nullptr;
@@ -1239,9 +1274,60 @@ PyObject* trampoline(PyObject* func, PyObject* const* args, Py_ssize_t npos,
     }
 }
 
+// CPython 3.14's adaptive engine rewrites _co_code_adaptive as code RUNS:
+// the first RESUME execution is quickened to RESUME_CHECK, and after
+// SPECIALIZATION_THRESHOLD executions with consistent types each
+// instruction specializes in place (BINARY_OP -> BINARY_OP_ADD_INT,
+// FOR_ITER -> FOR_ITER_LIST, CALL -> CALL_PY_GENERAL, ...). Measured in
+// the target 3.14: after 1 call the code shows RESUME_CHECK, after 2 it
+// shows the type-specialized opcodes, and the state is stable from there
+// on for a single type.
+//
+// pyc's native execution never runs that engine, so a pyc-managed code
+// object would stay in its compile-time state forever: dis(adaptive=True),
+// test_opcache's specialization assertions, and opcode-trace tests all
+// see un-specialized opcodes that CPython would have rewritten. The first
+// kWarmupCalls calls of every function therefore run through CPython's
+// own dispatcher, which specializes the code object exactly the way an
+// interpreted run would, and only then does execution switch to native.
+//
+// The trampoline is installed LAZILY (pyc_warmup_dispatch) rather than at
+// function creation: specialize_py_call refuses to write CALL_PY_GENERAL
+// while the callee's vectorcall is not _PyFunction_Vectorcall
+// (SPEC_FAIL_CALL_VECTORCALL, Python/specialize.c), so a pyc callee that
+// carried the trampoline from birth kept every caller's CALL cache
+// generic forever. With the standard vectorcall in place for the warmup
+// calls, callers' CALL opcodes specialize the way CPython's would; when
+// the trampoline is finally swapped in, PyFunction_SetVectorcall clears
+// the function's version, so a caller cache that stored it deopts to the
+// generic CALL on the next call and dispatches to the trampoline there.
+//
+// Calls that reach a still-warming-up function from the interpreter
+// (a generic CALL during some other warmup, or CALL_PY_GENERAL from an
+// already-specialized ceval caller) execute the code object in ceval and
+// advance its adaptive state the same way; they are simply not counted
+// toward the switch, which only delays it. A call dispatched by the
+// native helpers while the window is still open goes through the
+// standard vectorcall the same way.
+static constexpr uint32_t kWarmupCalls = 2;  // SPECIALIZATION_THRESHOLD of the target 3.14
+
 PyObject* func_vectorcall(PyObject* callable, PyObject* const* args,
                           size_t nargsf, PyObject* kwnames) {
     return trampoline(callable, args, PyVectorcall_NARGS(nargsf), nullptr, kwnames);
+}
+
+// Count one native-dispatched call toward the callee's warmup window and
+// install the trampoline when the window closes. It must run BEFORE the
+// dispatch: the call that observes done == kWarmupCalls is the first one
+// that executes natively.
+static void pyc_warmup_dispatch(PyObject* callable) {
+    if (!PyFunction_Check(callable)) return;
+    Bound* b = bound_from_func(callable);
+    if (!b) return;
+    uint32_t done = b->warmup_calls.fetch_add(1, std::memory_order_relaxed);
+    if (done == kWarmupCalls)
+        PyFunction_SetVectorcall(reinterpret_cast<PyFunctionObject*>(callable),
+                                 func_vectorcall);
 }
 
 int pyc_func_watch(PyFunction_WatchEvent ev, PyFunctionObject* func, PyObject* new_value) {
@@ -1249,8 +1335,10 @@ int pyc_func_watch(PyFunction_WatchEvent ev, PyFunctionObject* func, PyObject* n
     if (ev == PyFunction_EVENT_CREATE) {
         Bound* b = bound_from_func(fn);
         if (b) {
+            // Record the binding only. The vectorcall itself is installed
+            // by pyc_warmup_dispatch after the adaptive warmup window, so
+            // that callers' CALL caches can specialize in the meantime.
             g_func_bound[fn] = b;
-            PyFunction_SetVectorcall(func, func_vectorcall);
         }
     } else if (ev == PyFunction_EVENT_MODIFY_CODE && new_value) {
         Bound* nb = bound_from_code(new_value);
@@ -1317,6 +1405,7 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
     PyObject* qn = PyUnicode_FromString(name);
     if (!qn) { Py_DECREF(co); return nullptr; }
     PyObject* fn = PyFunction_NewWithQualName(reinterpret_cast<PyObject*>(co), g, qn);
+    uint32_t fversion = co->co_version;
     Py_DECREF(co);
     Py_DECREF(qn);
     if (!fn) return nullptr;
@@ -1333,7 +1422,20 @@ PyObject* pyc_rt_make_function(const char* name, PycImpl impl,
         Py_DECREF(clo);
         if (rc < 0) { Py_DECREF(fn); return nullptr; }
     }
-    PyFunction_SetVectorcall(reinterpret_cast<PyFunctionObject*>(fn), func_vectorcall);
+    // CPython assigns a function's version only in the MAKE_FUNCTION
+    // opcode, and specialize_py_call refuses to write CALL_PY_GENERAL for
+    // a callee whose version is not valid (SPEC_FAIL_OUT_OF_VERSIONS).
+    // A function created from C never runs that opcode, so it would keep
+    // FUNC_VERSION_UNSET forever and no caller could ever specialize CALL
+    // to it. Give it the version its code object already carries -- the
+    // same value MAKE_FUNCTION would have written. It must be LAST: the
+    // SetDefaults/SetKwDefaults/SetClosure setters above all clear the
+    // version (CPython's SET_FUNCTION_ATTRIBUTE bytecode avoids that by
+    // writing the field directly).
+    _PyFunction_SetVersion(reinterpret_cast<PyFunctionObject*>(fn), fversion);
+    // The standard vectorcall is kept deliberately for the adaptive
+    // warmup window; pyc_warmup_dispatch installs the trampoline once it
+    // closes (see the comment above it).
     g_func_bound[fn] = b;
     return fn;
 }
@@ -1461,6 +1563,7 @@ PyObject* pyc_rt_lookup_method(PyObject* obj, PyObject* name,
 static PyObject* vectorcall_prepend(PyObject* callable, PyObject* self,
                                     PyObject** args, Py_ssize_t nargs,
                                     PyObject* kwnames) {
+    pyc_warmup_dispatch(callable);
     PyObject** buf = args;
     Py_ssize_t total = nargs;
     PyObject* heap = nullptr;
@@ -1515,6 +1618,7 @@ PyObject* pyc_rt_call_bound_kw(PyObject* callable, PyObject* self,
 }
 
 PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {
+    pyc_warmup_dispatch(callable);
     PyObject *reported, *arg0;
     int skip = 0;
     profile_call_target(callable, args, nargs, 1, &reported, &arg0, &skip);
@@ -1527,6 +1631,7 @@ PyObject* pyc_rt_call(PyObject* callable, PyObject** args, Py_ssize_t nargs) {
 
 PyObject* pyc_rt_call_kw(PyObject* callable, PyObject** args, Py_ssize_t npos,
                          PyObject* kwnames) {
+    pyc_warmup_dispatch(callable);
     PyObject *reported, *arg0;
     int skip = 0;
     profile_call_target(callable, args, npos, 1, &reported, &arg0, &skip);
@@ -1557,6 +1662,7 @@ PyObject* pyc_rt_kwnames_from_csv(const char* csv) {
 }
 
 PyObject* pyc_rt_call_ex(PyObject* callable, PyObject* args, PyObject* kwargs) {
+    pyc_warmup_dispatch(callable);
     PyObject* t = args;
     int own = 0;
     if (!t) {
