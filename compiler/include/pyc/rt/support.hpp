@@ -8,6 +8,25 @@
 #include <Python.h>
 #include <cstdint>
 
+// Length of the eval-stub dispatch header, in code units. Units
+// 0..kStubHeaderUnits-1 are: RESUME; LOAD_CONST 0 (the __pyc_eval__ function);
+// PUSH_NULL; CALL 0 (+3 caches); LOAD_CONST <falsy> ; POP_JUMP_IF_TRUE over the
+// location slots; (+1 cache); RETURN_VALUE.
+//
+// The POP_JUMP_IF_TRUE is load-bearing in a subtle way: it is never taken at
+// runtime (the loaded constant is falsy), so ceval falls straight through to
+// the RETURN and never executes the slots -- meaning the stub fires no line
+// events of its own (a precise line-counting tracer sees only the impl's). But
+// mark_stacks (the 3.14 f_lineno setter's jump validator) follows the jump
+// EDGE, so every location slot is reachable and a debugger line jump from a
+// line event is accepted. With the RETURN before the slots (the old layout) the
+// slots were unreachable and every jump failed with "can't jump from
+// unreachable code"; with ceval executing the slots it would fire spurious
+// line events. Location `slot` lives at unit kStubHeaderUnits + slot.
+// build_linemap (support.cpp) writes it and the parking convention (frame.cpp)
+// reads it -- keep the two in lockstep through this constant.
+constexpr int kStubHeaderUnits = 11;
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -199,6 +199,35 @@ vs C.
 
 **Now**
 
+- 2026-11-02: debugger line jumps in eval-stub frames (MVP item 2). A
+  function that carries location slots is a pyc stub; the 3.14 `f_lineno`
+  setter validates a jump with `mark_stacks`, which does not propagate
+  reachability past `RETURN_VALUE`. The old stub put `RETURN_VALUE` at unit 7,
+  before the location slots (8+slot), so every slot was statically
+  unreachable and every debugger line jump failed with "can't jump from
+  unreachable code". Two changes:
+  (1) The slot-bearing stub (`kEvalCodeSlots`) is now an 11-unit header
+  (`kStubHeaderUnits`, support.hpp) ending in `LOAD_CONST <falsy>` ;
+  `POP_JUMP_IF_TRUE` over the slots ; `RETURN_VALUE`. The constant is `None`
+  (falsy), so at runtime the jump is never taken and ceval falls straight
+  through to the return without executing the slots -- the stub fires no line
+  events of its own (a precise line-counting tracer sees only the impl's).
+  But `mark_stacks` follows the jump EDGE, so the slots stay reachable and the
+  setter accepts the jump. The parking convention moves from 8+slot to
+  `kStubHeaderUnits`+slot (frame.cpp), and the linetable splits the 11-unit
+  header into two entries (8+3) to stay inside the 3-bit length field.
+  (2) codegen: a block reached only through an error edge is an exception pad;
+  landing a jump there raises and early-returns. Straight-line code is one
+  block, so a statement's line sat mid-block and could only be "claimed" by
+  its own pad, which stole the line. Exclude pads from jump-target candidacy.
+  Measured: `JumpTestCase` 96/99 -> 98/99 (fixes `test_jump_forward_over_
+  listcomp` 2->3 and `test_jump_backward_over_listcomp` 3->1); full
+  `test_sys_settrace` 445/448 -> 447/448 (oracle 448/448). The one remaining,
+  `test_jump_backward_over_listcomp_v2` (8->2), needs 1B: CPython inlines the
+  sync listcomp so its loop var is an enclosing local (NULL at the jump -> the
+  "assigning None to N unbound locals" warning) and the jump has real bytecode
+  to redirect onto; pyc models the comp as a separate frame, so neither holds.
+  fast 865/865, verify 887/887.
 - 2026-11-01: `test_sys_settrace` loop/finally/break tail worked to
   completion. Unique failing cases 228 -> 118, each group root-caused and
   oracle-differenced:

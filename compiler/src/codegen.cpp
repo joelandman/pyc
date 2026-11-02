@@ -427,6 +427,22 @@ private:
         std::set<int> claimed;
         std::vector<std::pair<std::size_t, int>> cands;
         std::vector<bool> is_target(f.blocks.size(), false);
+        // A block reached only through an error edge is exception-dispatch
+        // code (fire the exception event, add a traceback, return the error
+        // result). Landing a debugger jump there would "skip" the statement
+        // by raising, so a pad must never be offered as a target. This is the
+        // line-stealing case: straight-line code is ONE block, so a line's
+        // statement head sits mid-block and can never be claimed -- without
+        // this exclusion the statement's OWN pad (which does start a block)
+        // steals the line, and a jump to it early-returns the function.
+        std::vector<bool> is_pad(f.blocks.size(), false);
+        for (const ir::Block& blk : f.blocks)
+            for (const ir::Instr& in : blk.instrs) {
+                if (in.on_error)
+                    is_pad[static_cast<std::size_t>(*in.on_error)] = true;
+                if (in.loc_err)
+                    is_pad[static_cast<std::size_t>(*in.loc_err)] = true;
+            }
         int last_line = 0;
         for (std::size_t b = 0; b < f.blocks.size(); ++b) {
             const ir::Block& blk = f.blocks[b];
@@ -444,7 +460,7 @@ private:
             for (const ir::Instr& in : blk.instrs)
                 if (in.op != ir::Op::Phi && in.loc.line > 0)
                     last_line = in.loc.line;
-            if (!is_head || has_phi || first_stamped != 0) continue;
+            if (!is_head || has_phi || first_stamped != 0 || is_pad[b]) continue;
             if (b == 0 && !has_entry) continue;
             claimed.insert(head);
             cands.push_back({b, head});

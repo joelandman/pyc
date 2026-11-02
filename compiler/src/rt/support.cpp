@@ -347,7 +347,6 @@ thread_local void* tls_module_frame = nullptr;
 thread_local PyCodeObject* tls_module_code = nullptr;
 static const char* g_source_file = "<pyc>";
 static constexpr int kLineSlots = 8192;
-static constexpr int kStubUnits = 8;
 static constexpr uint8_t kNop = 27;
 
 static void append_varint(std::vector<char>& o, unsigned val) {
@@ -365,18 +364,18 @@ static void append_svarint(std::vector<char>& o, int val) {
 
 static bool build_linemap(PyObject** bytecode, PyObject** linetable,
                           const int* locs = nullptr, int nlocs = 0,
-                          int firstlineno = 1, int helper_idx = 2) {
-    // RESUME; LOAD_CONST 0 (the __pyc_eval__ function -- a constant, so the
-    // stub dispatches even under foreign/fake globals where a LOAD_GLOBAL
-    // would be shadowed); PUSH_NULL; CALL 0 + 3 cache units; RETURN_VALUE;
-    // then zero pad to 11 units. The header must stay 11 units: the
-    // linetable's RESUME entry spans units 0-7 and the location slots sit
-    // at 8+slot.
+                          int firstlineno = 1, int falsy_idx = 1) {
+    // falsy_idx: the co_consts index of a falsy value (Py_None). The slot
+    // header's LOAD_CONST loads it and the POP_JUMP_IF_TRUE pops it; being
+    // falsy, the jump is never taken, so ceval skips the slots (see
+    // kEvalCodeSlots).
+    // The eval-stub header. Two shapes:
     //
-    // PUSH_NULL is load-bearing: the 3.14 CALL reads self_or_null from
-    // stack[-1] and the callable from stack[-2], and LOAD_GLOBAL provides
-    // that NULL itself ("g + NULL") while LOAD_CONST does not. Without it
-    // the CALL reads the slot below the constant and segfaults.
+    // kEvalCode (frames with no location slots, e.g. comprehension stubs
+    // whose line events are quieted): RESUME; LOAD_CONST 0; PUSH_NULL;
+    // CALL 0 + 3 cache units; RETURN_VALUE; then NOP pad to kLineSlots
+    // units. Execution ends at the return; nothing is ever parked or
+    // executed past it, so the pad needs no locations of its own.
     char kEvalCode[] = {
         '\x80', '\x00',
         '\x52', '\x00',
@@ -386,7 +385,37 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable,
         '\x23', '\x00',
         0, 0, 0, 0, 0, 0, 0, 0
     };
-    (void)helper_idx;
+    // kEvalCodeSlots (frames with location slots): kStubHeaderUnits units
+    // (see support.hpp): RESUME; LOAD_CONST 0; PUSH_NULL; CALL 0 + 3 caches;
+    // LOAD_CONST <falsy> (unit 7, arg filled in by the caller);
+    // POP_JUMP_IF_TRUE 1 (unit 8); +1 cache; RETURN_VALUE (unit 10). The
+    // caller then appends one NOP per location slot (unit
+    // kStubHeaderUnits+slot, matching the linetable).
+    //
+    // The POP_JUMP_IF_TRUE is the reachability trick: at runtime the loaded
+    // constant is falsy, so the jump is NOT taken and ceval falls through to
+    // the RETURN without ever executing the slots -- the stub therefore fires
+    // no line events of its own. But mark_stacks (the 3.14 f_lineno setter's
+    // jump validator) follows the jump EDGE, so every slot stays reachable and
+    // a debugger line jump is accepted. A RETURN before the slots (old layout)
+    // made them unreachable ("can't jump from unreachable code"); letting ceval
+    // run the slots made it fire spurious line events.
+    //
+    // PUSH_NULL is load-bearing in both: the 3.14 CALL reads self_or_null
+    // from stack[-1] and the callable from stack[-2], and LOAD_GLOBAL
+    // provides that NULL itself ("g + NULL") while LOAD_CONST does not.
+    // Without it the CALL reads the slot below the constant and segfaults.
+    char kEvalCodeSlots[] = {
+        '\x80', '\x00',   // RESUME (0)
+        '\x52', '\x00',   // LOAD_CONST 0 (1)  -- the eval function
+        '\x21', '\x00',   // PUSH_NULL (2)
+        '\x34', '\x00',   // CALL 0 (3)
+        0, 0, 0, 0, 0, 0, // CALL caches (4,5,6)
+        '\x52', 0,        // LOAD_CONST ? (7)  -- arg set to the falsy const idx
+        '\x67', 0x01,     // POP_JUMP_IF_TRUE 1 (8)  -- target = first slot
+        0, 0,             // cache (9)
+        '\x23', '\x00'    // RETURN_VALUE (10)
+    };
     if (!locs || nlocs <= 0) {
         std::vector<char> codebuf(kLineSlots * 2, 0);
         std::memcpy(codebuf.data(), kEvalCode, sizeof kEvalCode);
@@ -410,14 +439,24 @@ static bool build_linemap(PyObject** bytecode, PyObject** linetable,
         *linetable = PyBytes_FromStringAndSize(lines.data(), (Py_ssize_t)lines.size());
         return *bytecode && *linetable;
     }
-    int nunits = kStubUnits + nlocs;
-    if (nunits < 11) nunits = 11;
+    int nunits = kStubHeaderUnits + nlocs;  // header + one NOP per slot
     std::vector<char> codebuf(nunits * 2, 0);
-    std::memcpy(codebuf.data(), kEvalCode, sizeof kEvalCode);
-    for (int i = (int)sizeof kEvalCode; i + 1 < nunits * 2; i += 2)
+    std::memcpy(codebuf.data(), kEvalCodeSlots, sizeof kEvalCodeSlots);
+    // Unit 7's LOAD_CONST loads the falsy constant (Py_None); its falseness is
+    // what makes the POP_JUMP_IF_TRUE skip the slots at runtime.
+    codebuf[15] = static_cast<char>(falsy_idx);
+    for (int i = (int)sizeof kEvalCodeSlots; i + 1 < nunits * 2; i += 2)
         codebuf[static_cast<std::size_t>(i)] = static_cast<char>(kNop);
     std::vector<char> lines;
+    // Header: kStubHeaderUnits units, all the def line. A linetable entry's
+    // 3-bit length field covers at most 8 units, so split the 11-unit header
+    // into 8 + 3.
     lines.push_back(static_cast<char>(128 | (14 << 3) | 7));
+    append_svarint(lines, 0);
+    append_varint(lines, 0);
+    append_varint(lines, 1);
+    append_varint(lines, 1);
+    lines.push_back(static_cast<char>(128 | (14 << 3) | 2));
     append_svarint(lines, 0);
     append_varint(lines, 0);
     append_varint(lines, 1);
@@ -937,8 +976,10 @@ PyCodeObject* make_func_code(Bound* b) {
     }
     if (!consts) { Py_DECREF(varnames); Py_DECREF(freevars); std::free(b->name); delete b; return nullptr; }
     PyObject *bytecode = nullptr, *linetable = nullptr;
+    // The slot header's POP_JUMP_IF_TRUE loads a falsy constant (the Py_None
+    // stashed at index nextra+1) so it is never taken at runtime.
     if (!build_linemap(&bytecode, &linetable, b->locs, b->nlocs, b->firstlineno,
-                       0)) {
+                       nextra + 1)) {
         Py_XDECREF(bytecode); Py_XDECREF(linetable);
         Py_DECREF(varnames); Py_DECREF(freevars); Py_DECREF(consts);
         std::free(b->name); delete b;

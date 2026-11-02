@@ -403,8 +403,8 @@ static int maybe_line_trace(_PyInterpreterFrame* f, PyThreadState* ts, int line)
 // carets read tb_lasti back through the line table. The compiler passes a
 // dense slot (0..n-1) for each site. by_slot[slot] is that unit after the
 // first visit; the coordinate maps exist only to fill a slot once. The eval
-// stub's padding makes unit (8 + slot) that instruction, so a stub records
-// the slot directly and never builds the maps.
+// stub's padding makes unit (kStubHeaderUnits + slot) that instruction, so a
+// stub records the slot directly and never builds the maps.
 struct LocKey {
     int line = 0;
     int end_line = 0;
@@ -500,7 +500,7 @@ static bool ensure_loc_watch() {
     return true;
 }
 
-// The eval stub's linetable is built so unit (8 + slot) has this location.
+// The eval stub's linetable is built so unit (kStubHeaderUnits + slot) has this location.
 // A real code object can have some other instruction at that unit with the
 // same start column and a shorter span; accepting it drops the end column
 // (test_with.NestedWith.testExceptionLocation reported self.InitRaises
@@ -659,10 +659,11 @@ static int set_lasti_impl(int slot, int line, int end_line, int col,
     }
     Py_ssize_t nunits = Py_SIZE(co);
     if (nunits <= 0) return -1;
-    // The eval stub's linetable puts location `slot` at unit (8 + slot); a
-    // slot-less call (slot -1) has no such convention and falls back to the
-    // first traceable unit if the coordinate walk comes up empty.
-    int legacy = (slot >= 0) ? 8 + slot : co->_co_firsttraceable;
+    // The eval stub's linetable puts location `slot` at unit
+    // (kStubHeaderUnits + slot); a slot-less call (slot -1) has no such
+    // convention and falls back to the first traceable unit if the coordinate
+    // walk comes up empty.
+    int legacy = (slot >= 0) ? kStubHeaderUnits + slot : co->_co_firsttraceable;
     if (legacy < co->_co_firsttraceable) legacy = co->_co_firsttraceable;
     if (legacy >= nunits) legacy = (int)nunits - 1;
 
@@ -677,7 +678,7 @@ static int set_lasti_impl(int slot, int line, int end_line, int col,
     int off = idx ? slot_cached(idx, slot) : -1;
     if (off < 0 && !g_loc_building) {
         if (!idx && is_eval_stub(co)) {
-            // build_linemap wrote this location at unit (8 + slot).
+            // build_linemap wrote this location at unit (kStubHeaderUnits + slot).
             // The watcher frees the index; skip caching if it cannot be
             // registered, and recompute the unit on the next call.
             // A slot-less call has no such convention: leave off < 0 and let
@@ -708,7 +709,7 @@ static int set_lasti_impl(int slot, int line, int end_line, int col,
     if (off < 0) {
         // Slot-less: the unit comes from the source coordinates alone (the
         // stub's linetable carries real per-unit positions). Only a slot call
-        // falls back to its (8 + slot) convention.
+        // falls back to its (kStubHeaderUnits + slot) convention.
         if (slot < 0) off = unit_for_source(co, line, end_line, col, end_col,
                                             legacy);
         if (off < 0) off = legacy;
