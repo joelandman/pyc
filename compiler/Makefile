@@ -1,6 +1,21 @@
 # Build pyc_lower. Same translation units as
 # .github/actions/setup-pyc/action.yml — keep them in sync.
-CXX      ?= clang++
+#
+# CXX must be an ordinary assignment, NOT `?=`: GNU make pre-defines
+# `CXX = g++` as a builtin default (see `make -p`), and a conditional
+# assignment never overrides an already-defined variable. The old
+# `CXX ?= clang++` was therefore dead: every local build silently used
+# g++, which accepts in list-init what clang++-22 (CI) rejects as a hard
+# error (lower.cpp:2780 narrowing, 2026-10-30). Local gates stayed green
+# while every CI run died in "Set up pyc" — the compiler had to match,
+# not just the corpus. Prefer the exact CI compiler when present; the
+# command line still wins (`make CXX=clang++-18`).
+HAVE_CXX22 := $(shell command -v clang++-22 >/dev/null 2>&1 && echo yes)
+ifneq ($(HAVE_CXX22),)
+CXX      = clang++-22
+else
+CXX      = clang++
+endif
 CXXFLAGS ?= -std=c++20 -O2 -I include
 OUT      ?= /tmp/pyc_lower
 

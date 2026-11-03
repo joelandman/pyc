@@ -2774,14 +2774,16 @@ private:
         emit(ir::Instr{ir::Op::ConstNone, {}, nn, Ownership::Owned, "",
                        0, 0, loc, std::nullopt});
         mark_owned(nn);
-        auto load_cell = [&](int slot) {
+        // Slot indices are uint32_t (cells_/locals_): an `int` here would
+        // narrow in the Instr brace-initialiser, which clang rejects.
+        auto load_cell = [&](std::uint32_t slot) {
             ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             emit(ir::Instr{ir::Op::LoadLocal, {}, cell, Ownership::Owned, nm,
                            slot, 0, loc, std::nullopt});
             mark_owned(cell);
             return cell;
         };
-        auto cell_bind = [&](int slot) {
+        auto cell_bind = [&](std::uint32_t slot) {
             ir::Value cell = load_cell(slot);
             emit(ir::Instr{ir::Op::CellSet, {cell, nn}, std::nullopt,
                            Ownership::NotAnObject, nm, 0, 0, loc,
@@ -2789,7 +2791,7 @@ private:
             release(cell, loc);
             release(nn, loc);   // the cell holds its own reference now
         };
-        auto cell_clear = [&](int slot) {
+        auto cell_clear = [&](std::uint32_t slot) {
             ir::Value cell = load_cell(slot);
             emit(ir::Instr{ir::Op::CellSet, {cell, ir::Value{}}, std::nullopt,
                            Ownership::NotAnObject, nm, 0, 0, loc,
