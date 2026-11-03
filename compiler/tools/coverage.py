@@ -26,12 +26,16 @@ class Runner:
 
     def outcome(self, path: str) -> str:
         """-> 'ok' or a short blocker label."""
+        # Strip LD_LIBRARY_PATH: the sysroot interpreter is a thin launcher
+        # over its own libpython, and a caller's path can swap in a different
+        # CPython (see check_ir_wellformed.py / verify/measure.py child_env).
+        env = {k: v for k, v in os.environ.items() if k != "LD_LIBRARY_PATH"}
         e = subprocess.run([self.python, "-m", "pyc_parse", os.path.abspath(path)],
-                           cwd=self.cwd, capture_output=True, text=True)
+                           cwd=self.cwd, env=env, capture_output=True, text=True)
         if e.returncode:
             return "parse"
         r = subprocess.run([self.lower, "-"], input=e.stdout,
-                           capture_output=True, text=True)
+                           env=env, capture_output=True, text=True)
         if r.returncode == 0:
             return "ok"
         first = (r.stderr.strip().splitlines() or [""])[0]

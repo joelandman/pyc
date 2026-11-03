@@ -14,7 +14,7 @@ the same class the old tree hit on `def g(a, /, b)`.
 """
 from __future__ import annotations
 
-import argparse, re, subprocess, sys
+import argparse, os, re, subprocess, sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -37,11 +37,18 @@ BLOCK = re.compile(r"^  (\S+):$")
 QUOTED = re.compile(r'"(?:[^"\\\\]|\\\\.)*"')
 DEF = re.compile(r"^    %(\d+) = ")
 USE = re.compile(r"%(\d+)")
-DECREF = re.compile(r"^    decref %(\d+)$")
+# A line may carry trailing "  ; on_error -> bbN" / "  ; loc_err -> bbN"
+# annotations: every loud location update records its own error edge, and a
+# plain decref is loud. Anchoring these at end-of-line made normal-path
+# releases invisible the moment the emitter grew the loc_err column (the
+# Oct-29 "boolop_once leaks" red was superseded by this blind spot flagging
+# every module-level class instead). Match the value, allow the tail.
+_ANNOT = r"(?:\s*;.*)?"
+DECREF = re.compile(rf"^    decref %(\d+){_ANNOT}$")
 # `ret %N` hands the reference to the caller: ownership is TRANSFERRED, not
 # leaked. Counting it as a leak is a false positive, and a checker that cries
 # wolf gets ignored just as surely as one that stays silent.
-RET_VAL = re.compile(r"^    ret %(\d+)$")
+RET_VAL = re.compile(rf"^    ret %(\d+){_ANNOT}$")
 RAISE_VAL = re.compile(r"^    raise %(\d+)\b")
 # A phi CONSUMES its incoming values: ownership transfers to the phi result,
 # which is then released once for whichever path was taken. Counting the
@@ -125,6 +132,12 @@ def _check_func(ir: str) -> list[str]:
         if PHI.match(line):
             for inc in PHI_IN.findall(line):
                 released[inc] = released.get(inc, 0) + 1
+                # A phi on the normal path is a release site for its
+                # operands: ownership transfers to the phi result, which is
+                # decref-ed once for whichever predecessor ran. Recording the
+                # block keeps the unwind-only rule below from flagging the
+                # and/or join (bool.join phi) as a normal-path leak.
+                release_blocks.setdefault(inc, set()).add(block or "?")
             # A phi operand comes from its PREDECESSOR, which may be emitted
             # later in the listing -- try/finally converges the normal, unwind
             # and return paths on one block, so its phis necessarily reference
@@ -229,15 +242,26 @@ def main() -> int:
         "func g()\n  entry:\n    %1 = const.int \"1\"  ; owned\n"
         "    decref %1\n    ret\n")
 
+    # LD_LIBRARY_PATH is stripped for the oracle: the sysroot interpreter is
+    # a thin launcher over its own libpython3.14.so.1.0, and a caller's
+    # LD_LIBRARY_PATH (conda, a hand-built local python) outranks the
+    # launcher's RUNPATH and silently swaps in a DIFFERENT CPython. On a
+    # machine with a 3.14.5 libpython on that path the parse oracle became
+    # 3.14.5 while CI parsed 3.14.7 -- the same program then "fails to
+    # parse" locally and parses fine on CI (classdict_comp.py, 2026-11-03).
+    # Same contract as verify/measure.py child_env and compiler/tools/pycc.
+    oracle_env = {k: v for k, v in os.environ.items()
+                  if k != "LD_LIBRARY_PATH"}
     ok = bad = unsup = 0
     outcomes = []
     for f in args.files:
         e = subprocess.run([args.python, "-m", "pyc_parse", str(f.resolve())],
-                           cwd=args.parser_cwd, capture_output=True, text=True)
+                           cwd=args.parser_cwd, env=oracle_env,
+                           capture_output=True, text=True)
         if e.returncode:
             print(f"  {f.name:10s} {DIM}parse failed{RST}"); bad += 1
             outcomes.append("parse"); continue
-        r = subprocess.run([args.lower, "-"], input=e.stdout,
+        r = subprocess.run([args.lower, "-"], input=e.stdout, env=oracle_env,
                            capture_output=True, text=True)
         if r.returncode:
             unsup += 1
