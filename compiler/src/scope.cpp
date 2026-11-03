@@ -104,10 +104,23 @@ struct Collector {
                 [&](const JoinedStr& n){ for (const expr& v : n.values) go(v); },
                 [&](const TemplateStr& n){ for (const expr& v : n.values) go(v); },
                 [&](const Interpolation& n){ go(*n.value); },
-                [&](const ListComp& n){ comp_walrus(n.generators, &*n.elt, nullptr, go); },
-                [&](const SetComp& n){ comp_walrus(n.generators, &*n.elt, nullptr, go); },
+                // CPython 3.12+ inlines sync comprehensions (PEP 709): the
+                // loop target is a FAST LOCAL of the enclosing function, so it
+                // must land in this scope's local set or the lowered layout
+                // diverges from the adopted code object's co_varnames and the
+                // function falls back to the eval stub. A generator expression
+                // is NOT inlined (it is its own frame), so its target stays in
+                // that frame.
+                [&](const ListComp& n){ for (const comprehension& g : n.generators)
+                                            target(*g.target);
+                                        comp_walrus(n.generators, &*n.elt, nullptr, go); },
+                [&](const SetComp& n){ for (const comprehension& g : n.generators)
+                                          target(*g.target);
+                                      comp_walrus(n.generators, &*n.elt, nullptr, go); },
                 [&](const GeneratorExp& n){ comp_walrus(n.generators, &*n.elt, nullptr, go); },
-                [&](const DictComp& n){ comp_walrus(n.generators, &*n.value, &*n.key, go); },
+                [&](const DictComp& n){ for (const comprehension& g : n.generators)
+                                           target(*g.target);
+                                       comp_walrus(n.generators, &*n.value, &*n.key, go); },
                 [&](const Lambda&){},          // its own scope
                 [&](const Name&){}, [&](const Constant&){},
             }, x.v);

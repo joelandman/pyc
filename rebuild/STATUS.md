@@ -199,6 +199,26 @@ vs C.
 
 **Now**
 
+- 2026-11-02: inline sync-comprehension loop vars into the enclosing
+  function's locals (MVP item 1B). CPython 3.12+ inlines sync
+  comprehensions (PEP 709): the loop target is a fast local of the
+  enclosing function (it shows in co_varnames but is not name-bound, so a
+  later `i` is a NameError and the slot is left NULL -- which is what makes
+  the debugger's unbound-locals warning count it). pyc lowered the comp as a
+  separate function, so the enclosing function's local set was missing the
+  loop var; the lowered layout diverged from the parse-oracle code object's
+  co_varnames, layout_ok failed, and the function fell back to the eval stub
+  (a synthetic code object) instead of adopting the real one. Bind the sync
+  comp's loop target in the enclosing scope during scope collection (the
+  walrus walk already descends into comps; generator expressions are left
+  alone -- they are their own frame). Now a comp-bearing function's layout
+  matches the oracle and it adopts the real inlined code object. Measured:
+  the comp functions' code objects now match the oracle byte-for-byte (list/
+  dict/set comp 46/50/48 units vs the old 220/254-unit stubs); test_trace
+  27/27 (was failing test_trace_list_comprehension) and JumpTestCase 99/99
+  (was failing test_jump_backward_over_listcomp_v2); full test_sys_settrace
+  448/448. Comp values differential-identical across list/dict/set/multi-gen/
+  nested/free-var/tuple-target forms. fast 865/865, verify 887/887.
 - 2026-11-02: debugger line jumps in eval-stub frames (MVP item 2). A
   function that carries location slots is a pyc stub; the 3.14 `f_lineno`
   setter validates a jump with `mark_stacks`, which does not propagate
