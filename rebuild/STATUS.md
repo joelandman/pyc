@@ -150,17 +150,30 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    Two runtimes from one binary is still S5.
 8. **Lock-file scale.** `lower.cpp` ~6k lines. Header still says nothing
    unboxes; unboxing has landed (`UNBOXING.md` 1–16).
+ 9. **Sync-comp loop var lives in the comp frame, not the enclosing one.**
+    1B (`b22c9d4`) makes the comp's loop var a local of the enclosing function
+    (so a comp-bearing function adopts its real inlined code object), but the
+    native impl still runs the comp as its own frame — the loop var's VALUE is
+    set in the comp frame, leaving the enclosing function's slot NULL. CPython's
+    inlined comp sets the enclosing slot to the last value. This is invisible to
+    normal programs (the loop var is name-unbound either way, so a later `i` is a
+    NameError on both) and to the warmup path (a once-called function runs the
+    adopted code object in ceval, which does set the slot). It only diverges in
+    the debugger's unbound-locals count for a comp function called 2+ times
+    (after warmup closes and the native impl is used): pyc counts the slot as
+    unbound, CPython does not. Closing it requires the native impl to run the
+    comp inline (full PEP 709 inlining), not merely adopt the code object.
 
 ### P2 — product / process
 
-9. **I6 republished 2026-09-26.** `compiler/baseline-libtest.json` is
+10. **I6 republished 2026-09-26.** `compiler/baseline-libtest.json` is
     355/389 vs sysroot 3.14.7, `jobs=16`, `-O0`. `DID_NOT_COMPILE` is 0.
-10. **Developer sysroot.** LLVM 22 + hand-built 3.14.7 tree +
+11. **Developer sysroot.** LLVM 22 + hand-built 3.14.7 tree +
     `PYC_LOWER=/tmp/pyc_lower`. See workstream S below.
-11. **Output home.** `PyConfig.home` is set from `PYTHONHOME`, then
+12. **Output home.** `PyConfig.home` is set from `PYTHONHOME`, then
      `lib/pythonX.Y` next to (or above) the executable, then the compile-time
      sysroot. Prefix is no longer implicit-only.
-12. **A2 leak bar.** Measured nightly (2026-10-28): the `leak` job in
+13. **A2 leak bar.** Measured nightly (2026-10-28): the `leak` job in
     `metric.yml` builds a cp314d (`Py_REF_DEBUG`) sysroot and runs
     `make -C compiler refcount-probe`; the workloads are flat per
     iteration and the negative-control `leak` workload leaks exactly
