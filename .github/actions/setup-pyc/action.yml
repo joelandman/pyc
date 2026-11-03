@@ -44,7 +44,13 @@ runs:
         # apt.llvm.org. clang++ compiles the compiler and assembles the LLVM
         # IR it emits. The remaining packages are CPython's build deps for the
         # sysroot.
-        wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+        # Retried: a single transient apt.llvm.org blip once turned BOTH
+        # scheduled workflows red (2026-11-03) while the code was fine.
+        for attempt in 1 2 3; do
+            wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh && break
+            [ "$attempt" -eq 3 ] && { echo "apt.llvm.org unreachable after 3 tries"; exit 1; }
+            sleep $((attempt * 10))
+        done
         chmod +x /tmp/llvm.sh
         sudo /tmp/llvm.sh 22
         sudo apt-get install -y --no-install-recommends \

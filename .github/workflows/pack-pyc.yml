@@ -27,7 +27,13 @@ jobs:
       - name: LLVM 22
         run: |
           set -euxo pipefail
-          wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh
+          # Retried: one transient apt.llvm.org blip once red every scheduled
+          # run (2026-11-03) while the code was fine.
+          for attempt in 1 2 3; do
+            wget -qO /tmp/llvm.sh https://apt.llvm.org/llvm.sh && break
+            [ "$attempt" -eq 3 ] && { echo "apt.llvm.org unreachable after 3 tries"; exit 1; }
+            sleep $((attempt * 10))
+          done
           chmod +x /tmp/llvm.sh
           sudo /tmp/llvm.sh 22
           echo "PYC_CXX=clang++-22" >> "$GITHUB_ENV"
