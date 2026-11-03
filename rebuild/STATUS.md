@@ -63,6 +63,41 @@ CI (no such worker on PATH) still measures 369. `test_logging` was
 a pyc fault) -- on a run where it is stable the row is 368/389 in this
 environment. `test_fork1` (chronically flaky) was stable in this run.
 
+2026-11-02: I6 re-recorded to **375/389 (96.40%)** (`f3ff9e6`); the header
+row above predates it. test_bdb, test_call, test_dis, test_opcache,
+test_peepholer, test_sys_settrace, test_type_cache, test_xpickle now pass.
+
+2026-11-03: CI reliability restored. Every push since 2026-10-11 and every
+scheduled run since 2026-10-30 had been red for reasons stacked on each
+other, so red no longer signalled anything:
+1. `lower.cpp:2780` narrowed an `int` slot into `Instr`'s `uint32_t`
+   (added 10-30 in `e1ee480`) -- a hard error for clang++-22 (CI), and
+   every workflow died in "Set up pyc" before verifying anything.
+2. `compiler/Makefile`'s `CXX ?= clang++` was dead: make's builtin
+   `CXX = g++` is already defined, so local builds silently used g++,
+   which demotes the same construct to a warning. Local green / CI red,
+   unforecastable. The Makefile now assigns CXX for real (clang++-22 when
+   present). A push must be built with the CI toolchain locally before it
+   leaves the machine.
+3. `check_ir_wellformed.py` had drifted from the IR format: the new
+   `; loc_err -> bbN` tail on `decref`/`ret` made normal-path releases
+   invisible (false "leaks on the normal path" on nearly every
+   module-level class), and a phi's hand-off was not recorded as a
+   release site (the and/or join read as a leak). The Oct-11/29
+   `boolop_once` finding was a real leak in the OLD class machinery,
+   superseded by the 11-02 class-body rework; the corpus is now
+   1035/1035 well-formed. The checker also runs the parse oracle with
+   `LD_LIBRARY_PATH` stripped (a 3.14.5 libpython on the path had
+   silently swapped the 3.14.7 parse oracle; classdict_comp.py parsed
+   on CI and "failed to parse" locally).
+4. The apt.llvm.org fetch is retried: one network blip (11-03 14:34 UTC)
+   red both scheduled workflows with the code green.
+ Measured, not assumed: after the fixes the full verify pipeline was
+ reproduced locally (clang++-22 build, static checks, smoke, 887-case
+ differential + gate, all green), and the pushed run is green on GitHub:
+ static `well-formed 1035 malformed 0`, differential **887/887**, verdict
+ "GATE RAN — no regression" (`206606b`).
+
 ## Major remaining issues
 
 Ranked by Architect and SWE-compiler. Causes of most `EXIT_DIFFERS` are
