@@ -31,15 +31,15 @@
     ]
   },
   "total": 389,
-  "passing": 367,
-  "clean": 365,
-  "pass_rate": 94.34447300771208,
+  "passing": 375,
+  "clean": 374,
+  "pass_rate": 96.40102827763496,
   "counts": {
-    "ORACLE_UNSTABLE": 11,
-    "TIMEOUT": 1,
-    "STDOUT_DIFFERS": 9,
-    "EXIT_DIFFERS": 12,
-    "STDERR_DIFFERS": 16
+    "ORACLE_UNSTABLE": 10,
+    "TIMEOUT": 2,
+    "STDOUT_DIFFERS": 8,
+    "EXIT_DIFFERS": 2,
+    "STDERR_DIFFERS": 6
   },
   "results": [
     {
@@ -355,10 +355,7 @@
     {
       "case": "Lib/test/test_bdb.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_bdb.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -367,7 +364,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -581,10 +578,7 @@
     {
       "case": "Lib/test/test_call.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_call.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -593,7 +587,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -1384,9 +1378,7 @@
     {
       "case": "Lib/test/test_descr.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_descr.py",
-      "flags": [
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -1489,20 +1481,16 @@
     {
       "case": "Lib/test/test_dis.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_dis.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
-        "elapsed",
-        "heap_address"
+        "elapsed"
       ],
       "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -1960,7 +1948,8 @@
       "case": "Lib/test/test_fork1.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_fork1.py",
       "flags": [
-        "ORACLE_UNSTABLE"
+        "ORACLE_UNSTABLE",
+        "STDERR_DIFFERS"
       ],
       "diagnostic": "",
       "normalizers": [
@@ -3174,10 +3163,7 @@
     {
       "case": "Lib/test/test_opcache.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_opcache.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3186,7 +3172,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -3340,10 +3326,7 @@
     {
       "case": "Lib/test/test_peepholer.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_peepholer.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -3352,7 +3335,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -4203,20 +4186,17 @@
       "case": "Lib/test/test_signal.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_signal.py",
       "flags": [
-        "ORACLE_UNSTABLE",
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
+        "TIMEOUT"
       ],
-      "diagnostic": "",
+      "diagnostic": "the binary did not finish within 60s",
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": true,
+      "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": -1
       }
     },
     {
@@ -4666,10 +4646,7 @@
     {
       "case": "Lib/test/test_sys_settrace.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_sys_settrace.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -4678,7 +4655,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -4837,9 +4814,7 @@
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_threading.py",
       "flags": [
         "ORACLE_UNSTABLE",
-        "STDOUT_DIFFERS",
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
+        "STDOUT_DIFFERS"
       ],
       "diagnostic": "",
       "normalizers": [
@@ -4849,7 +4824,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -5061,10 +5036,7 @@
     {
       "case": "Lib/test/test_type_cache.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_type_cache.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -5073,7 +5045,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {
@@ -5755,10 +5727,7 @@
     {
       "case": "Lib/test/test_xpickle.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_xpickle.py",
-      "flags": [
-        "EXIT_DIFFERS",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
@@ -5767,7 +5736,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": 1
+        "subject": 0
       }
     },
     {

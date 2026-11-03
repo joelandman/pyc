@@ -14,7 +14,7 @@ compared at run time; no expected output is stored ([CHARTER I5](rebuild/CHARTER
 
 | Corpus | Pass rate | |
 |---|---|---|
-| CPython `Lib/test/` | **94.34%** | 367/389 files, measured 2026-11-01 |
+| CPython `Lib/test/` | **96.40%** | 375/389 files, measured 2026-11-02 |
 | language + gaps + concurrency | **100%** | 887/887 cases |
 
 `Lib/test` is the north-star metric (CHARTER I6). It may not regress.
