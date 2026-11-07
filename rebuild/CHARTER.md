@@ -372,7 +372,7 @@ Port these as *design input*, not as code:
 The primary oracle and link sysroot is
 `$HOME/opt/py-sysroots/cp314-3.14.7-tier1` (CPython 3.14.7, Tier 1).
 Toolchain is clang++/LLVM 22. `tools/build-python-sysroot.sh` produces
-that tree; `pycc --fetch-sysroot` installs a published tarball of it.
+that tree; `pyc --fetch-sysroot` installs a published tarball of it.
 
 The 2026-08-22 check below is a machine path from that day, not the
 current tree:

@@ -12,7 +12,7 @@ A faster program that disagrees with CPython is a wrong program.
 make -C compiler                         # /tmp/pyc_lower
 export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
 export PYC_LOWER=/tmp/pyc_lower
-./compiler/tools/pycc prog.py -o /tmp/p -O0
+./compiler/tools/pyc prog.py -o /tmp/p -O0
 make -C verify fast                      # inner loop
 make -C verify verify                    # PR gate
 ```
@@ -47,5 +47,5 @@ Lock files (one writer): `compiler/src/lower.cpp`, `compiler/src/codegen.cpp`,
 Contracts: [rebuild/AGENT_DIRECTIVES.md](rebuild/AGENT_DIRECTIVES.md).
 Correctness slices: [rebuild/CORRECTNESS.md](rebuild/CORRECTNESS.md).
 
-When a doc disagrees with `compiler/tools/pycc` or a `verify/` run, trust the
+When a doc disagrees with `compiler/tools/pyc` or a `verify/` run, trust the
 executable and fix the doc.

@@ -26,7 +26,7 @@
     "machine": "x86_64"
   },
   "subject": {
-    "pyc": "/home/joe/work/pc/pyc/compiler/tools/pycc",
+    "pyc": "/home/joe/work/pc/pyc/compiler/tools/pyc",
     "pyc_flags": [
       "-O0"
     ]

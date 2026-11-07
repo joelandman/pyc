@@ -120,7 +120,7 @@ step_compiler() {
   if (( BESIDE )); then
     cp -f /tmp/pyc_lower "$REPO/compiler/tools/pyc_lower"
     chmod +x "$REPO/compiler/tools/pyc_lower"
-    info "copied pyc_lower next to pycc"
+    info "copied pyc_lower next to pyc"
   fi
 }
 
@@ -137,10 +137,10 @@ step_smoke() {
   printf 'print(2 ** 10)\n' > "$src"
   if (( BESIDE )); then
     env -u PYC_SYSROOT -u PYC_LOWER \
-      "$REPO/compiler/tools/pycc" "$src" -o /tmp/pyc-setup-smoke -O0
+      "$REPO/compiler/tools/pyc" "$src" -o /tmp/pyc-setup-smoke -O0
   else
     PYC_SYSROOT="$PREFIX" PYC_LOWER=/tmp/pyc_lower \
-      "$REPO/compiler/tools/pycc" "$src" -o /tmp/pyc-setup-smoke -O0
+      "$REPO/compiler/tools/pyc" "$src" -o /tmp/pyc-setup-smoke -O0
   fi
   local got
   got="$(PYTHONHOME="$PREFIX" /tmp/pyc-setup-smoke)"
@@ -157,8 +157,8 @@ step_smoke
 if (( BESIDE )); then
   cat <<EOF
 
-Ready. Sysroot and pyc_lower sit next to pycc; no env needed.
-  $REPO/compiler/tools/pycc prog.py -o prog -O0
+Ready. Sysroot and pyc_lower sit next to pyc; no env needed.
+  $REPO/compiler/tools/pyc prog.py -o prog -O0
   # override: PYC_SYSROOT=... PYC_LOWER=...
 EOF
 else
@@ -167,6 +167,6 @@ else
 Ready.
   export PYC_SYSROOT=$PREFIX
   export PYC_LOWER=/tmp/pyc_lower
-  $REPO/compiler/tools/pycc prog.py -o prog -O0
+  $REPO/compiler/tools/pyc prog.py -o prog -O0
 EOF
 fi

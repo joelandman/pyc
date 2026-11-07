@@ -7,7 +7,7 @@ a large corpus could not see the defect.
 ```bash
 S=~/opt/py-sysroots/cp314-3.14.7-tier1
 ./verify/measure_run.py --corpus verify/corpus/known-gaps \
-  --pyc "$PWD/compiler/tools/pycc" --pyc-flag=-O0 --sysroot "$S" --jobs 4
+  --pyc "$PWD/compiler/tools/pyc" --pyc-flag=-O0 --sysroot "$S" --jobs 4
 ```
 
 Open: none in this directory. Fixed, kept as regression cover: **B**

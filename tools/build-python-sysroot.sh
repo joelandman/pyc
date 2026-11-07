@@ -310,7 +310,7 @@ abi = "cp%d%d" % sys.version_info[:2]
 version = "%d.%d.%d" % sys.version_info[:3]
 if requested and requested != version:
     # A manifest that claims a version the interpreter does not have would
-    # poison every consumer: pycc, install-sysroot.sh, and CI would all
+    # poison every consumer: pyc, install-sysroot.sh, and CI would all
     # believe a sysroot is the CPython the program links against.
     sys.stderr.write(
         "interpreter is %s, build was requested as %s — refusing to stamp a "

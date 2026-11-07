@@ -8,12 +8,12 @@
 #   ./tools/install-pyc.sh --prefix DIR --from-archive FILE.tar.xz
 #
 # Layout:
-#   DIR/bin/pycc
+#   DIR/bin/pyc
 #   DIR/bin/pyc_lower
 #   DIR/lib/pyc/{pyc_parse,include,src/rt,install-sysroot.sh,pyc-prefix.json}
 #   DIR/sysroots/cp314-3.14.7-tier1/   (optional)
 #
-# After this, DIR/bin/pycc works with no PYC_SYSROOT / PYC_LOWER / repo cwd.
+# After this, DIR/bin/pyc works with no PYC_SYSROOT / PYC_LOWER / repo cwd.
 # Linking a user program still needs clang++/LLVM 22 on PATH (or PYC_CXX).
 #
 set -euo pipefail
@@ -52,9 +52,9 @@ if [[ -n "$ARCHIVE" ]]; then
   [[ -f "$ARCHIVE" ]] || die "no archive $ARCHIVE"
   info "unpack $ARCHIVE -> $PREFIX"
   tar -C "$PREFIX" -xJf "$ARCHIVE"
-  [[ -x "$PREFIX/bin/pycc" ]] || die "archive has no bin/pycc"
+  [[ -x "$PREFIX/bin/pyc" ]] || die "archive has no bin/pyc"
   info "installed"
-  echo "  $PREFIX/bin/pycc"
+  echo "  $PREFIX/bin/pyc"
   echo "  export PATH=$PREFIX/bin:\$PATH"
   exit 0
 fi
@@ -80,8 +80,8 @@ else
 fi
 
 info "layout $PREFIX"
-cp -f "$REPO/compiler/tools/pycc" "$PREFIX/bin/pycc"
-chmod +x "$PREFIX/bin/pycc" "$PREFIX/bin/pyc_lower"
+cp -f "$REPO/compiler/tools/pyc" "$PREFIX/bin/pyc"
+chmod +x "$PREFIX/bin/pyc" "$PREFIX/bin/pyc_lower"
 rm -rf "$PREFIX/lib/pyc/pyc_parse" "$PREFIX/lib/pyc/include" "$PREFIX/lib/pyc/src/rt"
 cp -a "$REPO/compiler/pyc_parse" "$PREFIX/lib/pyc/pyc_parse"
 cp -a "$REPO/compiler/include" "$PREFIX/lib/pyc/include"
@@ -111,7 +111,7 @@ SR_NAME=cp314-3.14.7-tier1
 DEST="$PREFIX/sysroots/$SR_NAME"
 HOME_SR="${PYC_SYSROOT:-$HOME/opt/py-sysroots/$SR_NAME}"
 if (( NO_SYSROOT )); then
-  info "no sysroot in prefix; $PREFIX/bin/pycc --fetch-sysroot after install"
+  info "no sysroot in prefix; $PREFIX/bin/pyc --fetch-sysroot after install"
 elif [[ -x "$HOME_SR/bin/python3.14" || -x "$HOME_SR/bin/python3" ]]; then
   if (( COPY_SYSROOT )); then
     info "copying $HOME_SR -> $DEST"
@@ -126,9 +126,9 @@ elif [[ -x "$REPO/compiler/tools/sysroot/bin/python3.14" ]]; then
   info "linking $DEST -> $REPO/compiler/tools/sysroot"
   ln -sfn "$REPO/compiler/tools/sysroot" "$DEST"
 else
-  info "no local sysroot; $PREFIX/bin/pycc --fetch-sysroot after install"
+  info "no local sysroot; $PREFIX/bin/pyc --fetch-sysroot after install"
 fi
 
 info "installed"
-echo "  $PREFIX/bin/pycc"
+echo "  $PREFIX/bin/pyc"
 echo "  export PATH=$PREFIX/bin:\$PATH"

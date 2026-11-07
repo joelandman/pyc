@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
     }
     // A parse failure arrives as a structured `error` envelope on stdout, not
     // as text on stderr. Rendering it here is what makes a SyntaxError reach
-    // the user: pycc redirects our stdin's producer into a file, so an
+    // the user: pyc redirects our stdin's producer into a file, so an
     // unrendered envelope was reported as a silent exit-1 with no diagnostic
     // at all -- a compiler that fails without saying why (INTERFACES §1.1).
     if (const json::Value* ev = doc.find(doc.root(), "error")) {

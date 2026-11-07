@@ -1,6 +1,6 @@
 # Layer Interfaces
 
-**Status: frozen v1.1 (2026-08-22).** Owned by A0. Changes require A0 sign-off, a
+**Status: frozen v1.2 (2026-11-07).** Owned by A0. Changes require A0 sign-off, a
 version bump, and a note in this file's changelog. A1–A4 build against these;
 they are what let the layers proceed independently.
 
@@ -327,6 +327,12 @@ Left to each layer, so freezing these interfaces does not over-constrain:
 
 ## Changelog
 
+- **v1.2 — 2026-11-07.** No contract change. A0 sign-off (2026-11-07, the
+  project owner) for the driver rename: the implementation had drifted from
+  the name §5 specifies — the in-tree driver was `pycc`, §5 has always
+  specified `pyc`. The rename (`compiler/tools/pyc`, `bin/pyc`) brings the
+  implementation back to the frozen contract; A5's `CompilerAdapter` targets
+  the §5 CLI, which is unchanged.
 - **v1.1 — 2026-08-22.** Added §1.2 (tree depth), §2.2a (encoding
   hazards) and §2.4 (totality proof); renumbered exhaustiveness to §2.5.
   Additive only — no existing contract changed.

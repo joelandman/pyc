@@ -61,7 +61,7 @@ jobs:
           notes="$(python3 - "$SYSROOT/pyc-sysroot.json" <<'PY'
           import json, sys, os
           d = json.load(open(sys.argv[1]))
-          print("Prebuilt pyc CPython sysroot (S2). Do not compile CPython to use pycc.")
+          print("Prebuilt pyc CPython sysroot (S2). Do not compile CPython to use pyc.")
           print()
           print("- abi:", d["abi"])
           print("- version:", d["version"])

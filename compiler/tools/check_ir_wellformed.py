@@ -249,7 +249,7 @@ def main() -> int:
     # machine with a 3.14.5 libpython on that path the parse oracle became
     # 3.14.5 while CI parsed 3.14.7 -- the same program then "fails to
     # parse" locally and parses fine on CI (classdict_comp.py, 2026-11-03).
-    # Same contract as verify/measure.py child_env and compiler/tools/pycc.
+    # Same contract as verify/measure.py child_env and compiler/tools/pyc.
     oracle_env = {k: v for k, v in os.environ.items()
                   if k != "LD_LIBRARY_PATH"}
     ok = bad = unsup = 0

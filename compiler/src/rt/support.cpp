@@ -590,7 +590,7 @@ void pyc_rt_pop_module_frame(void) {
 // These wrappers expand the target header's macros, so immortal objects and
 // the free-threaded build's atomics are handled by CPython's own definition
 // for the version being targeted rather than by an ABI guess here. They are
-// inlined into the generated module by LTO (see pycc); without LTO they are
+// inlined into the generated module by LTO (see pyc); without LTO they are
 // correct, just no faster than what they replaced.
 //
 // X variants deliberately: codegen relies on the null tolerance Py_DecRef had.

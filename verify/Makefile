@@ -13,7 +13,7 @@ CHECK   := $(CURDIR)/measure_compare.py
 JOBS    ?= $(shell nproc 2>/dev/null || echo 4)
 # Match the PR gate. See .github/workflows/verify.yml.
 PYCFLAGS ?= --pyc-flag=-O0
-# The oracle MUST be the runtime the subject actually embeds. pycc links a
+# The oracle MUST be the runtime the subject actually embeds. pyc links a
 # specific sysroot's libpython, so an oracle from anywhere else is measuring
 # two different installations against each other -- which is what
 # VERSION_TARGETING.md means by making the parse oracle and the differential
@@ -28,7 +28,7 @@ PYCFLAGS ?= --pyc-flag=-O0
 # of installation-specific build metadata: exit 0 under one install, exit 1
 # under the other, while the compiled binary followed the sysroot it embeds.
 #
-# Default it to the same sysroot pycc links, so the two cannot drift apart
+# Default it to the same sysroot pyc links, so the two cannot drift apart
 # without someone saying so explicitly.
 SYSROOT ?= $(PYC_SYSROOT)
 ifeq ($(strip $(SYSROOT)),)
@@ -72,7 +72,7 @@ verify:
 # baseline itself and the nightly number were never affected.
 metric:
 	@$(RUN) --libtest $(PYCFLAGS) --jobs $(JOBS) \
-	  --pyc $(REPO)/compiler/tools/pycc \
+	  --pyc $(REPO)/compiler/tools/pyc \
 	  --stdlib $(SYSROOT)/lib/python3.14 \
 	  --run-timeout 30 --compile-timeout 120 \
 	  --show 20 --json $(CURDIR)/libtest.json $(ORACLE_ARGS)

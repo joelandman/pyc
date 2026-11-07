@@ -38,7 +38,7 @@ writes down what it saw. `measure_compare.py` **compares** two of those
 records. Nothing in the measuring half forms an opinion about what a
 difference means, and nothing in the comparing half re-runs anything.
 
-The subject comes from `--pyc`, `$PYC_BINARY`, or `./compiler/tools/pycc`. The
+The subject comes from `--pyc`, `$PYC_BINARY`, or `./compiler/tools/pyc`. The
 oracle comes from `--oracle`, or `--sysroot DIR` (read from that sysroot's
 `pyc-sysroot.json`), or the running interpreter. Prefer `--sysroot`: a
 divergence must be measured against the runtime actually being targeted, and
@@ -367,7 +367,7 @@ regression unless someone reads the diagnostic:
 error: unable to open output file '…/support-eafbd5.o': 'No space left on device'
 ```
 
-Both `pycc` (`mktemp -d`) and the harness (Python's `tempfile`) honour
+Both `pyc` (`mktemp -d`) and the harness (Python's `tempfile`) honour
 `TMPDIR`, so point it at a real disk:
 
 ```bash
@@ -379,7 +379,7 @@ the diagnostics for `No space left`. This has bitten twice.
 
 ## Do not edit the tree while a measurement is running
 
-`pycc` compiles `compiler/src/rt/*.cpp` on **every link**, so the runtime
+`pyc` compiles `compiler/src/rt/*.cpp` on **every link**, so the runtime
 source is an input to every case in a run. Editing it mid-run makes every
 subsequent compile fail, and the result looks like a catastrophic compiler
 regression:

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Compile a Python file to a native executable (INTERFACES.md §5).
 #
-#   pycc prog.py -o prog [--python=X.Y] [-std=pyX.Y] [--python-sysroot DIR]
-#   pycc --fetch-sysroot
+#   pyc prog.py -o prog [--python=X.Y] [-std=pyX.Y] [--python-sysroot DIR]
+#   pyc --fetch-sysroot
 #
 # Sysroot search: --python-sysroot, then $PYC_SYSROOT, then sysroot/ next to
 # this script, ../sysroot, ../sysroots/<abi>-*, then
 # $HOME/opt/py-sysroots/cp314-3.14.7-tier1.
-# pyc_lower: $PYC_LOWER, next to pycc, ../lib/pyc/pyc_lower, /tmp/pyc_lower.
-# Parse/runtime: next to pycc, ../lib/pyc, or in-tree compiler/.
+# pyc_lower: $PYC_LOWER, next to pyc, ../lib/pyc/pyc_lower, /tmp/pyc_lower.
+# Parse/runtime: next to pyc, ../lib/pyc, or in-tree compiler/.
 #
 # Tier 1 by construction: static libpython plus -rdynamic, so the binary has no
 # libpython dependency yet can still dlopen extension modules and wheels.
@@ -17,8 +17,8 @@
 # _testinternalcapi fails with an undefined symbol.
 set -euo pipefail
 
-PYCC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd "$PYCC_DIR/../.." && pwd)"
+PYC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$PYC_DIR/../.." && pwd)"
 FLAG_SYSROOT=""
 FETCH_SYSROOT=0
 SRC=""; OUT="a.out"; KEEP=0; EMIT_LLVM=0; OPT="-O1"
@@ -50,9 +50,9 @@ while [[ $# -gt 0 ]]; do
     # compile time actually goes. It is not a claim that pyc optimises.
     -O0|-O1|-O2|-O3) OPT="$1"; shift;;
     --) shift; if [[ $# -gt 0 ]]; then SRC="$1"; shift; fi;;
-    -*) echo "pycc: unknown option '$1'" >&2; exit 2;;
+    -*) echo "pyc: unknown option '$1'" >&2; exit 2;;
     *)
-      [[ -z "$SRC" ]] || { echo "pycc: more than one input file ('$SRC', '$1')" >&2; exit 2; }
+      [[ -z "$SRC" ]] || { echo "pyc: more than one input file ('$SRC', '$1')" >&2; exit 2; }
       SRC="$1"; shift;;
   esac
 done
@@ -115,10 +115,10 @@ sysroot_xy() {
 
 collect_sysroot_dirs() {
   local d c
-  for c in "$PYCC_DIR/sysroot" "$PYCC_DIR/../sysroot"; do
+  for c in "$PYC_DIR/sysroot" "$PYC_DIR/../sysroot"; do
     [[ -d "$c" ]] && abs_dir "$c"
   done
-  for d in "$PYCC_DIR/../sysroots"/cp*-tier*; do
+  for d in "$PYC_DIR/../sysroots"/cp*-tier*; do
     [[ -d "$d" ]] && abs_dir "$d"
   done
   for d in "$HOME/opt/py-sysroots"/*; do
@@ -131,7 +131,7 @@ resolve_sysroot() {
   if [[ -n "$FLAG_SYSROOT" ]]; then
     c="$(abs_dir "$FLAG_SYSROOT")"
     is_sysroot "$c" || {
-      echo "pycc: --python-sysroot is not a sysroot: $c" >&2
+      echo "pyc: --python-sysroot is not a sysroot: $c" >&2
       echo "  need pyc-sysroot.json or bin/python3*" >&2
       exit 2
     }
@@ -141,7 +141,7 @@ resolve_sysroot() {
   if [[ -n "${PYC_SYSROOT:-}" ]]; then
     c="$(abs_dir "$PYC_SYSROOT")"
     is_sysroot "$c" || {
-      echo "pycc: PYC_SYSROOT is not a sysroot: $c" >&2
+      echo "pyc: PYC_SYSROOT is not a sysroot: $c" >&2
       echo "  need pyc-sysroot.json or bin/python3*" >&2
       exit 2
     }
@@ -168,21 +168,21 @@ resolve_sysroot() {
 }
 
 print_sysroot_miss() {
-  echo "pycc: no sysroot (need pyc-sysroot.json or bin/python3*)" >&2
+  echo "pyc: no sysroot (need pyc-sysroot.json or bin/python3*)" >&2
   echo "  tried:" >&2
   local t
   for t in "${_SYSROOT_TRIED[@]+"${_SYSROOT_TRIED[@]}"}"; do echo "    $t" >&2; done
-  echo "  pycc --fetch-sysroot" >&2
-  echo "  # or: PYC_FETCH=1 pycc file.py" >&2
+  echo "  pyc --fetch-sysroot" >&2
+  echo "  # or: PYC_FETCH=1 pyc file.py" >&2
   echo "  # or: ./tools/setup-machine.sh --beside" >&2
   echo "  # or: --python-sysroot DIR / PYC_SYSROOT" >&2
 }
 
 find_install_sysroot() {
   local c
-  for c in "$PYCC_DIR/install-sysroot.sh" \
-           "$PYCC_DIR/../lib/pyc/install-sysroot.sh" \
-           "$PYCC_DIR/../../tools/install-sysroot.sh" \
+  for c in "$PYC_DIR/install-sysroot.sh" \
+           "$PYC_DIR/../lib/pyc/install-sysroot.sh" \
+           "$PYC_DIR/../../tools/install-sysroot.sh" \
            "$REPO/tools/install-sysroot.sh"; do
     [[ -f "$c" ]] || continue
     printf '%s' "$(cd "$(dirname "$c")" && pwd)/$(basename "$c")"
@@ -192,36 +192,36 @@ find_install_sysroot() {
 }
 
 fetch_sysroot() {
-  local dest="$PYCC_DIR/sysroot"
-  if [[ "$(basename "$PYCC_DIR")" == "bin" ]]; then
-    dest="$PYCC_DIR/../sysroots/cp314-3.14.7-tier1"
+  local dest="$PYC_DIR/sysroot"
+  if [[ "$(basename "$PYC_DIR")" == "bin" ]]; then
+    dest="$PYC_DIR/../sysroots/cp314-3.14.7-tier1"
   fi
   local tag="${PYC_SYSROOT_TAG:-sysroot-cp314-linux-x86_64}"
   local asset="${PYC_SYSROOT_ASSET:-cp314-3.14.7-tier1-x86_64.tar.xz}"
   local gh="${PYC_GITHUB_REPO:-joelandman/pyc}"
   local inst archive url
   inst="$(find_install_sysroot)" || {
-    echo "pycc: --fetch-sysroot needs tools/install-sysroot.sh" >&2
+    echo "pyc: --fetch-sysroot needs tools/install-sysroot.sh" >&2
     exit 2
   }
   if is_sysroot "$dest"; then
-    echo "pycc: sysroot already at $dest" >&2
+    echo "pyc: sysroot already at $dest" >&2
     "$inst" --prefix "$dest" --verify-only
     return 0
   fi
-  command -v curl >/dev/null 2>&1 || { echo "pycc: curl required for --fetch-sysroot" >&2; exit 2; }
+  command -v curl >/dev/null 2>&1 || { echo "pyc: curl required for --fetch-sysroot" >&2; exit 2; }
   archive="$(mktemp "${TMPDIR:-/tmp}/pyc-sysroot.XXXXXX.tar.xz")"
   url="https://github.com/${gh}/releases/download/${tag}/${asset}"
-  echo "pycc: downloading $url" >&2
+  echo "pyc: downloading $url" >&2
   if ! curl -fL --retry 3 -o "$archive" "$url"; then
     rm -f "$archive"
-    echo "pycc: download failed" >&2
+    echo "pyc: download failed" >&2
     echo "  $url" >&2
     exit 2
   fi
   "$inst" --archive "$archive" --prefix "$dest"
   rm -f "$archive"
-  echo "pycc: sysroot installed at $dest" >&2
+  echo "pyc: sysroot installed at $dest" >&2
 }
 
 if [[ $FETCH_SYSROOT -eq 1 ]]; then
@@ -234,7 +234,7 @@ SYSROOT=""
 if ! resolve_sysroot; then
   if [[ "${PYC_FETCH:-0}" == "1" && $FETCH_SYSROOT -eq 0
         && -z "$FLAG_SYSROOT" && -z "${PYC_SYSROOT:-}" ]]; then
-    echo "pycc: PYC_FETCH=1, fetching sysroot" >&2
+    echo "pyc: PYC_FETCH=1, fetching sysroot" >&2
     fetch_sysroot
     resolve_sysroot || true
   fi
@@ -243,7 +243,7 @@ if [[ -z "${SYSROOT:-}" ]]; then
   _want="${PYTHON_VER:-}"
   _want="${_want#py}"
   if [[ -n "$_want" ]]; then
-    echo "pycc: no sysroot for --python=$_want" >&2
+    echo "pyc: no sysroot for --python=$_want" >&2
     echo "  installed:" >&2
     while IFS= read -r _c; do
       [[ -n "$_c" ]] && is_sysroot "$_c" || continue
@@ -261,30 +261,30 @@ resolve_lower() {
   local c tried=()
   if [[ -n "${PYC_LOWER:-}" ]]; then
     [[ -x "$PYC_LOWER" ]] || {
-      echo "pycc: PYC_LOWER is not executable: $PYC_LOWER" >&2
+      echo "pyc: PYC_LOWER is not executable: $PYC_LOWER" >&2
       exit 2
     }
     printf '%s' "$PYC_LOWER"
     return 0
   fi
-  for c in "$PYCC_DIR/pyc_lower" "$PYCC_DIR/../lib/pyc/pyc_lower" /tmp/pyc_lower; do
+  for c in "$PYC_DIR/pyc_lower" "$PYC_DIR/../lib/pyc/pyc_lower" /tmp/pyc_lower; do
     tried+=("$c")
     if [[ -x "$c" ]]; then
       printf '%s' "$c"
       return 0
     fi
   done
-  echo "pycc: no pyc_lower" >&2
+  echo "pyc: no pyc_lower" >&2
   echo "  tried:" >&2
   local t
   for t in "${tried[@]}"; do echo "    $t" >&2; done
-  echo "  set PYC_LOWER or put pyc_lower next to pycc (make -C compiler OUT=...)" >&2
+  echo "  set PYC_LOWER or put pyc_lower next to pyc (make -C compiler OUT=...)" >&2
   exit 2
 }
 
 PY="$(find_interpreter "$SYSROOT" "${PYTHON_VER:-}" || true)"
 if [[ -z "$PY" ]]; then
-  echo "pycc: no interpreter in sysroot $SYSROOT" >&2
+  echo "pyc: no interpreter in sysroot $SYSROOT" >&2
   exit 2
 fi
 XY="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
@@ -312,19 +312,19 @@ fi
 
 LOWER="$(resolve_lower)"
 
-[[ -n "$SRC" ]] || { echo "usage: pycc FILE [-o OUT] [--python=X.Y] [-std=pyX.Y] [--python-sysroot DIR]" >&2; exit 2; }
+[[ -n "$SRC" ]] || { echo "usage: pyc FILE [-o OUT] [--python=X.Y] [-std=pyX.Y] [--python-sysroot DIR]" >&2; exit 2; }
 
 if [[ -n "$PYTHON_VER" ]]; then
   PYTHON_VER="${PYTHON_VER#py}"
   if [[ "$XY" != "$PYTHON_VER" ]]; then
-    echo "pycc: sysroot is Python $XY, not $PYTHON_VER" >&2
+    echo "pyc: sysroot is Python $XY, not $PYTHON_VER" >&2
     echo "  --python=$PYTHON_VER" >&2
     echo "  sysroot $SYSROOT" >&2
     exit 2
   fi
 fi
 if [[ -n "$PYTHON_ABI" && "$PYTHON_ABI" != "$ABI" ]]; then
-  echo "pycc: sysroot ABI is $ABI, not $PYTHON_ABI" >&2
+  echo "pyc: sysroot ABI is $ABI, not $PYTHON_ABI" >&2
   echo "  --python-abi=$PYTHON_ABI" >&2
   echo "  sysroot $SYSROOT" >&2
   exit 2
@@ -333,7 +333,7 @@ STD_XY=""
 if [[ -n "$STD_VER" ]]; then
   STD_XY="${STD_VER#py}"
   if ! xy_le "$STD_XY" "$XY"; then
-    echo "pycc: -std=py$STD_XY requires a runtime of $STD_XY or newer; --python=$XY" >&2
+    echo "pyc: -std=py$STD_XY requires a runtime of $STD_XY or newer; --python=$XY" >&2
     exit 2
   fi
 fi
@@ -342,7 +342,7 @@ TMP="$(mktemp -d)"; trap '[[ $KEEP == 1 ]] || rm -rf "$TMP"' EXIT
 
 # Parse with the TARGET interpreter (VERSION_TARGETING.md): the AST is the
 # target's by construction, and pyc links no libpython itself.
-# PYTHONPATH so pyc_parse is importable from ANY cwd. Without it pycc only
+# PYTHONPATH so pyc_parse is importable from ANY cwd. Without it pyc only
 # worked when run from compiler/, which is exactly the kind of accidental
 # dependence on the caller's directory that the sysroot script hit three times.
 # A SyntaxError comes back as a structured envelope on STDOUT with a non-zero
@@ -350,16 +350,16 @@ TMP="$(mktemp -d)"; trap '[[ $KEEP == 1 ]] || rm -rf "$TMP"' EXIT
 # the user saw a bare exit 1 with no diagnostic. Hand the envelope to the
 # lowering stage, which renders it in the standard file:line:col form.
 PARSE_HOME=""
-if [[ -d "$PYCC_DIR/pyc_parse" ]]; then
-  PARSE_HOME="$PYCC_DIR"
-elif [[ -d "$PYCC_DIR/../lib/pyc/pyc_parse" ]]; then
-  PARSE_HOME="$(cd "$PYCC_DIR/../lib/pyc" && pwd)"
-elif [[ -d "$PYCC_DIR/../pyc_parse" ]]; then
-  PARSE_HOME="$(cd "$PYCC_DIR/.." && pwd)"
+if [[ -d "$PYC_DIR/pyc_parse" ]]; then
+  PARSE_HOME="$PYC_DIR"
+elif [[ -d "$PYC_DIR/../lib/pyc/pyc_parse" ]]; then
+  PARSE_HOME="$(cd "$PYC_DIR/../lib/pyc" && pwd)"
+elif [[ -d "$PYC_DIR/../pyc_parse" ]]; then
+  PARSE_HOME="$(cd "$PYC_DIR/.." && pwd)"
 elif [[ -d "$REPO/compiler/pyc_parse" ]]; then
   PARSE_HOME="$REPO/compiler"
 else
-  echo "pycc: no pyc_parse next to pycc, in lib/pyc, or in compiler/" >&2
+  echo "pyc: no pyc_parse next to pyc, in lib/pyc, or in compiler/" >&2
   exit 2
 fi
 PARSE_ARGS=("$(realpath "$SRC")")
@@ -382,7 +382,7 @@ if [[ $EMIT_LLVM == 1 ]]; then cp "$TMP/mod.ll" "$OUT"; exit 0; fi
 
 if [[ -x "${PY}-config" ]]; then CFG="${PY}-config"
 elif [[ -x "$SYSROOT/bin/python3-config" ]]; then CFG="$SYSROOT/bin/python3-config"
-else echo "pycc: no python-config next to $PY" >&2; exit 2
+else echo "pyc: no python-config next to $PY" >&2; exit 2
 fi
 INC=""
 LIB=""
@@ -402,7 +402,7 @@ if [[ -z "$LIB" ]]; then
     LIB="$(compgen -G "$SYSROOT/lib/python$XY/config-*/libpython*.a" | head -1 || true)"
   fi
 fi
-[[ -f "$LIB" ]] || { echo "pycc: no libpython.a under $SYSROOT" >&2; exit 2; }
+[[ -f "$LIB" ]] || { echo "pyc: no libpython.a under $SYSROOT" >&2; exit 2; }
 
 FILE_C="$("$PY" -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(realpath "$SRC")")"
 HOME_C="$("$PY" -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$(realpath "$SYSROOT")")"
@@ -432,7 +432,7 @@ EOC
 # (-print-prog-name is a lookup, not a compile -- no measurable cost) and use
 # LTO only when there is a linker that can do it.
 #
-# The fallback is SILENT on purpose: pycc's stderr is compared byte-for-byte by
+# The fallback is SILENT on purpose: pyc's stderr is compared byte-for-byte by
 # the differential harness, so a warning here would register as a divergence in
 # every case. Silent means CI must assert the fast path is live rather than
 # assume it -- see .github/actions/setup-pyc (a quiet downgrade would show up
@@ -461,16 +461,16 @@ esac
 # frames. Runtime objects are always -O2; generated IR keeps "$OPT".
 CXX="${PYC_CXX:-clang++}"
 RT_HOME=""
-if [[ -d "$PYCC_DIR/include/pyc/rt" && -f "$PYCC_DIR/src/rt/entry.cpp" ]]; then
-  RT_HOME="$PYCC_DIR"
-elif [[ -d "$PYCC_DIR/../lib/pyc/include/pyc/rt" && -f "$PYCC_DIR/../lib/pyc/src/rt/entry.cpp" ]]; then
-  RT_HOME="$(cd "$PYCC_DIR/../lib/pyc" && pwd)"
-elif [[ -d "$PYCC_DIR/../include/pyc/rt" && -f "$PYCC_DIR/../src/rt/entry.cpp" ]]; then
-  RT_HOME="$(cd "$PYCC_DIR/.." && pwd)"
+if [[ -d "$PYC_DIR/include/pyc/rt" && -f "$PYC_DIR/src/rt/entry.cpp" ]]; then
+  RT_HOME="$PYC_DIR"
+elif [[ -d "$PYC_DIR/../lib/pyc/include/pyc/rt" && -f "$PYC_DIR/../lib/pyc/src/rt/entry.cpp" ]]; then
+  RT_HOME="$(cd "$PYC_DIR/../lib/pyc" && pwd)"
+elif [[ -d "$PYC_DIR/../include/pyc/rt" && -f "$PYC_DIR/../src/rt/entry.cpp" ]]; then
+  RT_HOME="$(cd "$PYC_DIR/.." && pwd)"
 elif [[ -d "$REPO/compiler/include/pyc/rt" ]]; then
   RT_HOME="$REPO/compiler"
 else
-  echo "pycc: no runtime sources (include/pyc/rt + src/rt) next to pycc, in lib/pyc, or in compiler/" >&2
+  echo "pyc: no runtime sources (include/pyc/rt + src/rt) next to pyc, in lib/pyc, or in compiler/" >&2
   exit 2
 fi
 INC_ALL="$INC -I $RT_HOME/include"

@@ -41,10 +41,10 @@ Two published tarballs (linux x86_64):
 
 | Asset | Tag | What |
 |---|---|---|
-| `pyc-linux-x86_64.tar.xz` | `pyc-linux-x86_64` | `pycc`, `pyc_lower`, `lib/pyc` |
+| `pyc-linux-x86_64.tar.xz` | `pyc-linux-x86_64` | `pyc`, `pyc_lower`, `lib/pyc` |
 | `cp314-3.14.7-tier1-x86_64.tar.xz` | `sysroot-cp314-linux-x86_64` | CPython sysroot |
 
-The machine that *runs* `pycc` still needs clang++/LLVM 22 (it links the user program). The sysroot is not inside the compiler tarball.
+The machine that *runs* `pyc` still needs clang++/LLVM 22 (it links the user program). The sysroot is not inside the compiler tarball.
 
 **Wheel milestone, locally (CHARTER I7).** The published sysroot ships
 without numpy, so the CI nightly is the standing wheel gate. To verify it
@@ -57,7 +57,7 @@ DST=$SRC-numpy
 cp -a "$SRC" "$DST"
 sed -i "s|$SRC|$DST|g" "$DST/pyc-sysroot.json"   # manifest paths -> the copy
 env -u LD_LIBRARY_PATH "$DST/bin/python3.14" -m pip install numpy
-PYC_SYSROOT="$DST" pycc wheel.py -o wheel && ./wheel
+PYC_SYSROOT="$DST" pyc wheel.py -o wheel && ./wheel
 ```
 
 The copied interpreter resolves its own prefix (verified), and the compiled
@@ -70,8 +70,8 @@ path: it outranks the sysroot's RUNPATH (see `rebuild/STATUS.md`,
 mkdir -p "$HOME/opt/pyc"
 tar -C "$HOME/opt/pyc" -xJf pyc-linux-x86_64.tar.xz
 export PATH="$HOME/opt/pyc/bin:$PATH"
-pycc --fetch-sysroot
-pycc hello.py -o hello
+pyc --fetch-sysroot
+pyc hello.py -o hello
 ```
 
 From a clone:
@@ -79,27 +79,27 @@ From a clone:
 ```bash
 ./tools/install-pyc.sh --prefix "$HOME/opt/pyc"
 export PATH="$HOME/opt/pyc/bin:$PATH"
-pycc --fetch-sysroot          # into prefix/sysroots/cp314-3.14.7-tier1
-pycc hello.py -o hello
-pycc --python=3.14 hello.py -o hello   # selects that sysroot artifact
-pycc --list-python-targets
+pyc --fetch-sysroot          # into prefix/sysroots/cp314-3.14.7-tier1
+pyc hello.py -o hello
+pyc --python=3.14 hello.py -o hello   # selects that sysroot artifact
+pyc --list-python-targets
 ./tools/pack-pyc.sh -o /tmp/pyc-linux-x86_64.tar.xz
 ```
 
-Layout: `bin/pycc`, `bin/pyc_lower`, `lib/pyc/`, `sysroots/<abi>-<version>-tier1/`.
+Layout: `bin/pyc`, `bin/pyc_lower`, `lib/pyc/`, `sysroots/<abi>-<version>-tier1/`.
 `--python=X.Y` picks a tree under `sysroots/`; a missing version is an error,
 not a silent fallback. A second CPython is another directory there, not a
 second compiler.
 
-From a clone (how `pycc` is **built** without a prefix):
+From a clone (how `pyc` is **built** without a prefix):
 
 ```bash
-./compiler/tools/pycc --fetch-sysroot
-./compiler/tools/pycc hello.py -o hello
+./compiler/tools/pyc --fetch-sysroot
+./compiler/tools/pyc hello.py -o hello
 # or: ./tools/setup-machine.sh --beside
 ```
 
-`--fetch-sysroot` installs the S2 tarball next to `pycc`. After that, no
+`--fetch-sysroot` installs the S2 tarball next to `pyc`. After that, no
 `PYC_SYSROOT` is required (`--python-sysroot` and the env var still override).
 Missing sysroot is a compile error, not PATH `python3`. `PYC_FETCH=1` fetches
 on first compile.
@@ -114,13 +114,13 @@ If the GitHub Release asset is missing, or you are changing A2 headers,
 ## Usage
 
 ```bash
-pycc hello.py -o hello          # default -O1 (LLVM backend)
-pycc hello.py -o hello -O0
-pycc hello.py --emit-llvm -o hello.ll
+pyc hello.py -o hello          # default -O1 (LLVM backend)
+pyc hello.py -o hello -O0
+pyc hello.py --emit-llvm -o hello.ll
 ./hello
 ```
 
-`pycc` produces a Tier-1 binary: no libpython `DT_NEEDED` entry, `dlopen` still
+`pyc` produces a Tier-1 binary: no libpython `DT_NEEDED` entry, `dlopen` still
 works, so NumPy/PyTorch wheels load. Fully static (Tier 2) is deferred.
 
 ### Deploying a binary
@@ -157,7 +157,7 @@ Oracle and subject must share the sysroot (`PYC_SYSROOT` or the default above).
 ## Layout
 
 ```
-compiler/     frontend, lowering, codegen, C-API binding, pycc
+compiler/     frontend, lowering, codegen, C-API binding, pyc
 verify/       differential harness and corpora
 rebuild/      CHARTER, interfaces, agent directives, correctness plan
 tools/        sysroot builder, nightly checker

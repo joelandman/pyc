@@ -7,7 +7,7 @@
 #
 # --prefix is the sysroot directory itself (bin/python3.X lives there).
 # After unpack, pyc-sysroot.json interpreter/sysroot/include/libpython_* are
-# rewritten from the packed prefix to DIR so pycc does not need the old path.
+# rewritten from the packed prefix to DIR so pyc does not need the old path.
 #
 set -euo pipefail
 

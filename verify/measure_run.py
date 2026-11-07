@@ -45,7 +45,14 @@ def find_pyc() -> Path | None:
     if (env := os.environ.get("PYC_BINARY")):
         if Path(env).exists():
             return Path(env)
-    for c in ("compiler/tools/pycc",):
+    # CWD-relative first (a caller that cd'd to the repo root), then relative
+    # to THIS file: `make -C verify fast` runs with CWD=verify/, where the
+    # bare relative path cannot resolve. The driver script made the same
+    # "any cwd" guarantee for its sysroot/parse/runtime lookups; the harness
+    # was the one tool left with an accidental dependence on the caller's
+    # directory.
+    repo = Path(__file__).resolve().parent.parent
+    for c in ("compiler/tools/pyc", repo / "compiler" / "tools" / "pyc"):
         if Path(c).exists():
             return Path(c).resolve()
     return None

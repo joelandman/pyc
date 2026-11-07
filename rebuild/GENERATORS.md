@@ -3,7 +3,7 @@
 Status: **shipped as marshalled CPython code objects.** Native suspension
 is not implemented. Every mechanism below was exercised end to end
 against CPython 3.14.7 before the C++ was written, and the constructs in
-the table further down are what `pycc` emits.
+the table further down are what `pyc` emits.
 
 ## Decision
 

@@ -1,4 +1,4 @@
-# Publish a relocatable compiler prefix (pycc + pyc_lower + lib/pyc).
+# Publish a relocatable compiler prefix (pyc + pyc_lower + lib/pyc).
 # Sysroot is a separate asset (sysroot.yml). Host still needs LLVM 22 to link.
 name: pack-pyc
 
@@ -71,10 +71,10 @@ jobs:
           print("  mkdir -p \"$HOME/opt/pyc\"")
           print("  tar -C \"$HOME/opt/pyc\" -xJf pyc-linux-x86_64.tar.xz")
           print("  export PATH=\"$HOME/opt/pyc/bin:$PATH\"")
-          print("  pycc --fetch-sysroot")
-          print("  pycc hello.py -o hello")
+          print("  pyc --fetch-sysroot")
+          print("  pyc hello.py -o hello")
           print()
-          print("Needs clang++/LLVM 22 and ld.lld on the machine that runs pycc.")
+          print("Needs clang++/LLVM 22 and ld.lld on the machine that runs pyc.")
           PY
           )"
           if gh release view "$tag" >/dev/null 2>&1; then

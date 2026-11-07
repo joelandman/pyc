@@ -190,11 +190,11 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    FORWARDREF annotate reconstruction works. Nested `__annotate__` code objects from
    CPython's compile sit in the outer `co_consts`. Unexpected keywords
    offer a "Did you mean" suggestion.
-7. **I8 CLI — done (S1 + S5).** `pycc` finds the sysroot interpreter
+7. **I8 CLI — done (S1 + S5).** `pyc` finds the sysroot interpreter
    (manifest or `bin/python3`), `--python-sysroot` aliases `--sysroot`,
    `--python`/`-std`/`--python-abi`/`--list-python-targets` work,
    `--fetch-sysroot` installs the published tarball, and `install-pyc.sh`
-   lays out the prefix (`bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`).
+   lays out the prefix (`bin/pyc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`).
    `-std` is `--feature-version`. One CPython artifact is enough; a missing
    version is an exit-2 error, not a fallback. See workstream S below.
 8. **Lock-file scale.** `lower.cpp` 8155 lines (2026-11-07). Unboxing has
@@ -221,8 +221,8 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     355/389 and 2026-11-01/02 records are superseded history.
 11. **Developer sysroot — done (workstream S, S0–S5).** No local CPython
     *build* is required: `sysroot.yml` publishes the Tier-1 tarball,
-    `pycc --fetch-sysroot` / `PYC_FETCH=1` install it beside the prefix, and
-    `install-pyc.sh` lays out `bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`.
+    `pyc --fetch-sysroot` / `PYC_FETCH=1` install it beside the prefix, and
+    `install-pyc.sh` lays out `bin/pyc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`.
     A developer changing A2 headers still rebuilds the sysroot.
 12. **Output home.** `PyConfig.home` is set from `PYTHONHOME`, then
      `lib/pythonX.Y` next to (or above) the executable, then the compile-time
@@ -353,6 +353,17 @@ vs C.
   comparator's I1 rule exempts cases already baselined as exit 0 +
   `STDOUT_DIFFERS` ("a recorded defect, not a regression"), so future
   runs are stable under either flag shape.
+  (11) **Driver renamed `pycc` → `pyc` (A0 sign-off, the project owner,
+  2026-11-07).** Not a contract change: INTERFACES.md §5 has always
+  specified `pyc <source.py> [-o OUT]` — the implementation had drifted to
+  `pycc`. The in-tree driver is `compiler/tools/pyc`, the installed name is
+  `bin/pyc`; error prefixes, tool flags (`--pyc`), and every doc/CI/script
+  reference now use the contract name. INTERFACES bumped to v1.2 to record
+  the sign-off (changelog: no contract changed). Measured after the rename:
+  `make -C verify fast` 865/865, `make -C verify verify` 887/887 gate OK,
+  `install-pyc.sh` prefix runs `bin/pyc` with no env. `find_pyc()` in
+  `measure_run.py` now also resolves the driver relative to the repo root,
+  so `make -C verify fast` no longer depends on the caller's cwd.
   I6 re-recorded with (3) and (9) in effect: **376/389 (96.66%)**,
   `compiler/baseline-libtest.json` updated (see the header row).
 - 2026-11-02: inline sync-comprehension loop vars into the enclosing
@@ -484,7 +495,7 @@ vs C.
   The location update gets its own `loc_err` edge (separate from
   `on_error`), and the runtime stays silent while an exception is in
   flight. `test_traceback` passes, so I6 moves 368 -> 369/389. The jump
-  checks and `loc_err` pads make the generated module ~4.6x larger; `pycc`
+  checks and `loc_err` pads make the generated module ~4.6x larger; `pyc`
   now skips LTO at `-O0` (nothing to inline when unoptimised), taking the
   test_io final link 108s -> 9s and clearing the metric gate's compile
   timeouts (`DID_NOT_COMPILE` back to 0).
@@ -625,7 +636,7 @@ Four Pythons are conflated today:
 | D | Purpose-built Tier-1 vs stock distro | Distro 3.12 cannot do B/C/I7. |
 
 Parse already uses the target interpreter (VERSION_TARGETING option (b)).
-S1: `pycc` reads `pyc-sysroot.json` when present and does not hardcode
+S1: `pyc` reads `pyc-sysroot.json` when present and does not hardcode
 `python3.14`. `--python=X.Y` as a second artifact is S5.
 
 **What cannot be removed:** libpython in every output; internal headers for
@@ -638,11 +649,11 @@ an independent runtime.
 | Phase | What | Unlocks |
 |---|---|---|
 | S0 done | Document (a)≠(b). | Honest onboarding |
-| S1 done | `pycc` reads `pyc-sysroot.json`; `--python-sysroot`; no hardcoded `python3.14` | I8 locally |
+| S1 done | `pyc` reads `pyc-sysroot.json`; `--python-sysroot`; no hardcoded `python3.14` | I8 locally |
 | S2 done | `sysroot.yml` publishes `sysroot-cp314-linux-x86_64`. `build-python-sysroot.sh` remains the producer. The nightly has been succeeding. | Developers do not compile CPython |
-| S3 done | `pycc` searches beside itself (`sysroot/`, `../sysroot`, `pyc_lower`). `setup-machine.sh --beside`. `PyConfig.home` is set from the prefix. | Download ≠ `$HOME/opt/...` |
-| S4 done | `pycc --fetch-sysroot` / `PYC_FETCH=1`. A missing sysroot is exit 2. Verify still requires `--sysroot` / `--oracle`. | No local CPython install to compile a program |
-| S5 done | `install-pyc.sh` prefix: `bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`. `--python=X.Y` selects a tree; a missing version is exit 2. One 3.14 artifact is enough. `pack-pyc.sh` writes the compiler tarball. The nightly publish step is green — verified 2026-11-07: four consecutive successful runs and both release assets re-uploaded (the earlier "failing after a successful pack" note is closed). | VERSION_TARGETING as shipped |
+| S3 done | `pyc` searches beside itself (`sysroot/`, `../sysroot`, `pyc_lower`). `setup-machine.sh --beside`. `PyConfig.home` is set from the prefix. | Download ≠ `$HOME/opt/...` |
+| S4 done | `pyc --fetch-sysroot` / `PYC_FETCH=1`. A missing sysroot is exit 2. Verify still requires `--sysroot` / `--oracle`. | No local CPython install to compile a program |
+| S5 done | `install-pyc.sh` prefix: `bin/pyc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`. `--python=X.Y` selects a tree; a missing version is exit 2. One 3.14 artifact is enough. `pack-pyc.sh` writes the compiler tarball. The nightly publish step is green — verified 2026-11-07: four consecutive successful runs and both release assets re-uploaded (the earlier "failing after a successful pack" note is closed). | VERSION_TARGETING as shipped |
 
 S2 is what removes “build this specific Python on your machine,” and
 the sysroot release is the one that has been publishing. S4 is when the
@@ -652,17 +663,17 @@ contributor changing A2 still rebuilds the sysroot when headers change.
 ## Doc debt (do not confuse with compiler bugs)
 
 Still historical, not a description of the current tree:
-[INTERFACES.md](INTERFACES.md) §5 spells the driver as `pyc`; the binary
-is `pycc` (that file is frozen and needs A0 sign-off to rename — a
-factual rename is not an interface amendment, but the file's freeze
-still applies). `compiler/README.md` totality figures are the 2026-08-22
+`compiler/README.md` totality figures are the 2026-08-22
 round-trip and its "still refused" list is the 2026-08-23 state (both now
 carry correction notes; the live numbers are in this file's "Measured
-now" table). Trust `pycc` and `verify/` over those sentences. CHARTER
+now" table). Trust `pyc` and `verify/` over those sentences. CHARTER
 product rules still need explicit sign-off; a factual correction is not
 a rule change.
 
-Cleared 2026-11-07: VERSION_TARGETING.md already names the live Tier-1
+Cleared 2026-11-07: the INTERFACES.md naming debt is resolved — the driver
+was renamed `pycc` → `pyc` (A0 sign-off given 2026-11-07; INTERFACES v1.2,
+no contract change: §5 has always specified `pyc`, the implementation had
+drifted). VERSION_TARGETING.md already names the live Tier-1
 sysroot (the `/home/joe/local` reference is dated 2026-08-22); the
 STATUS "Next (MVP completeness)" EXIT_DIFFERS/test_dis items are marked
 done/closed; compiler/README's refusal list is corrected; UNBOXING.md's

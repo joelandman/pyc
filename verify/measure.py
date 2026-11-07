@@ -355,7 +355,7 @@ class Compiler:
         self.flags = flags
 
     def compile(self, src: Path, out: Path, *, cwd: Path, timeout: float) -> Run:
-        # child_env: pycc spawns the TARGET interpreter to parse, and a
+        # child_env: pyc spawns the TARGET interpreter to parse, and a
         # shadowed libpython on the caller's LD_LIBRARY_PATH would make that
         # parse run under a CPython the program is about to link against.
         return _exec([str(self.binary), str(src), "-o", str(out), *self.flags],

@@ -32,10 +32,10 @@ SR=~/opt/py-sysroots/cp314-3.14.7-tier1
 FT=~/opt/py-sysroots/cp314t-3.14.7-tier1
 
 ./verify/measure_run.py --corpus verify/corpus/concurrency \
-  --pyc "$PWD/compiler/tools/pycc" --pyc-flag=-O0 --sysroot "$SR"
+  --pyc "$PWD/compiler/tools/pyc" --pyc-flag=-O0 --sysroot "$SR"
 
 PYC_SYSROOT="$FT" ./verify/measure_run.py --corpus verify/corpus/concurrency \
-  --pyc "$PWD/compiler/tools/pycc" --pyc-flag=-O0 --oracle "$FT/bin/python3.14t"
+  --pyc "$PWD/compiler/tools/pyc" --pyc-flag=-O0 --oracle "$FT/bin/python3.14t"
 ```
 
 A divergence that appears on one target and not the other is the interesting
