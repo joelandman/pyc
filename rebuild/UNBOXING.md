@@ -2,7 +2,8 @@
 
 Keeping a Python `int` in a machine register instead of on the heap.
 
-Written mid-implementation. Steps 1–3 have landed. Every number here was
+Written mid-implementation; all sixteen staged steps have landed (see
+Staging). Every number here was
 measured on this machine against the target
 sysroot `cp314-3.14.7-tier1`, and the commands are in the session that produced
 them. Nothing in this file is a projection unless it says so.

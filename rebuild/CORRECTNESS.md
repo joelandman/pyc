@@ -39,8 +39,8 @@ SaveThread/RestoreThread was the deadlock: it dropped the GIL on every
 
 ## C3 — remaining language diffs that are not C1/C2
 
-**Status: residual.** Gate corpus **881/881** impactful. `STDERR_DIFFERS`
-does not count against the rate. `frame_lineno_and_traceback.py` and
+**Status: residual.** Gate corpus **887/887** impactful (2026-11-07).
+`STDERR_DIFFERS` does not count against the rate. `frame_lineno_and_traceback.py` and
 `test_with.py` match the sysroot, including caret columns
 (`adc0c4e`). Two language-corpus stderr rows (`case_208.py`,
 `case_209.py`) were not impactful on the 2026-10-02 fast gate and were

@@ -2,14 +2,16 @@
 
 ## Immediate
 
-- The location-slot commit is `adc0c4e`. Treat the CI `verify.yml` run as the
-  authoritative gate for a push. A local language fast gate on this tree
-  finished in 547s: 860/860 impactful, 858 byte-identical.
-- Watch CI for:
-  - language + known-gaps + concurrency gate at `881/881`
+- 2026-11-07 state: HEAD is `db2b40a` (pre-MVP blocker pass). Local gates on
+  this tree: `make -C verify fast` 865/865 impactful; `make -C verify verify`
+  887/887, gate "OK — nothing regressed". I6 baseline is 376/389 (96.66%).
+- Treat the CI `verify.yml` run as the authoritative gate for a push.
+  Watch CI for:
+  - language + known-gaps + concurrency gate at `887/887`
   - no new `DID_NOT_COMPILE`
   - no new silent-wrong answers
   - no `libpython` `DT_NEEDED` in the smoke binary
+  - the new `check_diagnostics` static-check step (M6 contract)
 
 ## Next correctness work
 
@@ -24,20 +26,29 @@
 
 - If `metric` changes the Lib/test result, update
   `compiler/baseline-libtest.json` and README/STATUS I6 numbers only with a
-  measured reason. Do not hand-edit I6 numbers.
-- Continue P0 `EXIT_DIFFERS` triage from `rebuild/STATUS.md`. Dump raw stderr,
-  IR, and the narrow failing case before adding syntax or runtime features.
+  measured reason. Do not hand-edit I6 numbers. Local re-records must also
+  match CI's interpreter set: run under a PATH with versioned pythons hidden
+  (a uv-managed 3.11 on this box made `test_xpickle` diverge on 2026-11-07 —
+  see the STATUS 2026-11-07 entry (9)).
+- The P0 `EXIT_DIFFERS` triage is closed: the two remaining `EXIT_DIFFERS`
+  files are root-caused and decided (2026-11-07, static-libpython inspection
+  deltas). Dump raw stderr, IR, and the narrow failing case before adding
+  syntax or runtime features — that remains the rule for any NEW difference.
 - Keep the new frame probe as the regression anchor:
   `verify/corpus/language/frame_lineno_and_traceback.py`.
 
 ## Process notes
 
-- `compiler/baseline-language.json` currently records `jobs: 16` because it was
-  refreshed locally. Job count is only a comparison note, not a gate condition,
-  but future baseline refreshes should ideally come from a stable machine or CI
+- `compiler/baseline-language.json` records `jobs: 32` (2026-11-07 local
+  refresh). Job count is only a comparison note, not a gate condition, but
+  future baseline refreshes should ideally come from a stable machine or CI
   if we want the record to be less local.
-- Local wheel/NumPy smoke is not reliable here because the sysroot currently
-  lacks `numpy`. Use the CI wheel step for that gate.
+- Local wheel/NumPy smoke now works: a numpy-carrying copy of the sysroot
+  lives at `$HOME/opt/py-sysroots/cp314-3.14.7-tier1-numpy` (recipe in
+  README.md). The primary sysroot stays pristine; CI's nightly wheel step
+  remains the per-commit wheel gate. Run the copy's python with
+  `LD_LIBRARY_PATH` scrubbed (this shell's 3.14.5 libpython outranks the
+  sysroot's RUNPATH).
 - The push check is `verify.yml`. It is green on the recent devel pushes.
   The red check on the branch is the scheduled `metric.yml` run, which does
   not start on push. Two follow-up pushes a few seconds apart used to cancel

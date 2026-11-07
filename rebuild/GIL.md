@@ -29,7 +29,7 @@ pyc 0.84s (`cp314`) vs 1.05s (`cp314t`); CPython 0.13s vs 0.21s. PEP 703's
 trade, not a reason to make free-threading the default.
 
 The language gate when C2 landed was **788/788** impactful. It is
-**881/881** now (`compiler/baseline-language.json`).
+**887/887** now (2026-11-07; `compiler/baseline-language.json`).
 
 ## What the GIL actually serialises
 

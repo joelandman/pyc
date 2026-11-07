@@ -83,14 +83,20 @@ two recorded numbers, not a judgement: `exit == 0` **and** `STDOUT_DIFFERS`.
 Both the runner (`--fail-on-silent-wrong`, needs no baseline) and the
 comparator (a *new* one fails the gate) read it straight off the record.
 
-Running `verify/corpus/known-gaps` re-derives, from measurement alone, exactly
-the three P0s from issue #9 and nothing else:
+Running `verify/corpus/known-gaps` was how the three P0s from issue #9
+re-derived themselves, from measurement alone:
 
 ```
 globals_none_p0.py  line 1: cpython 'False'      pyc 'True'
 locals_bool_p0.py   line 1: cpython 'True'       pyc 'False'
 locals_none_p0.py   line 1: cpython "{'a': 1}"   pyc 'None'
 ```
+
+That is history: the frame work (C1b) fixed them and the probes moved to
+`language/`, where they now pass. `known-gaps` keeps the fixed probes as
+regression cover (cells, nested-class closures, alloca hoist) and currently
+derives **no** failures — a baselined failure does not fail the gate, a new
+one does.
 
 **A compile error is not a bug.** Refusing an unsupported construct is the
 *correct* behaviour (I1: fail loudly, never silently). Coverage gaps should

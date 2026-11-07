@@ -147,7 +147,10 @@ leaks, and CPython already ships the answer. `kCApiSymbolCount` is only
 the `unordered_map` reserve; lookup is by name.
 
 Counted from `capi_table.hpp` on 2026-10-02 (`kCApiSymbolCount` is 1089;
-`pyc_rt_super_from_frame` is the symbol added since the 1088 count):
+`pyc_rt_super_from_frame` is the symbol added since the 1088 count).
+As of 2026-11-07 the count is **1090** (`pyc_rt_exit_exc` added in
+`770bc9d` with the with-line-on-unwind work); the table below is the
+2026-10-02 extract.
 
 | | count |
 |---|---|
@@ -343,6 +346,14 @@ diagnostic, not a metric):
 
 Everything else in the two corpora lowers: `./compiler/tools/coverage.py`
 reports **728/728 (100.0%)** on the language corpus.
+
+> **Correction (2026-11-07):** all three constructs above now **compile and
+> run correctly** on HEAD (verified: a program exercising posonly/kw-only
+> parameters, `type X = int`, and `raise … from` compiles and matches the
+> sysroot byte-for-byte). The list is the 2026-08-23 state, kept for
+> history. The current honest refusals (backstops that cannot fire on valid
+> 3.14 source) are recorded in `rebuild/STATUS.md`, P1 #5. The current gate
+> corpus is **887/887** (language + known-gaps + concurrency), not 728.
 
 ### Suspendable bodies are compiled by CPython
 

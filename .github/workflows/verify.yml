@@ -47,7 +47,8 @@ jobs:
           ./compiler/tools/lint_visitors.py compiler/
           # IR well-formedness. Both tools prove they can FAIL before
           # reporting (selfcheck.py), so a green result means something.
-          # Widened from compiler/tests to the whole corpus (898 files). It
+          # Widened from compiler/tests to the whole corpus (1035 files,
+          # 2026-11-07). It
           # was scoped narrowly because the corpus looked dirty -- 54 findings.
           # Every one was instrument error: ir.cpp printed string constants
           # unescaped, so a NUL or a non-ASCII byte truncated a line and the

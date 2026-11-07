@@ -104,8 +104,11 @@ other, so red no longer signalled anything:
 
 ## Major remaining issues
 
-Ranked by Architect and SWE-compiler. Causes of most `EXIT_DIFFERS` are
-**unknown** — dump artefacts before adding syntax.
+Ranked by Architect and SWE-compiler. As of 2026-11-07 every remaining
+`EXIT_DIFFERS` is root-caused and decided (see the 2026-11-07 entry); the
+open items below are the eval-stub residuals, the honest refusals, and
+process items. Dump artefacts before adding syntax — that remains the rule
+for any NEW difference.
 
 ### P0 — correctness of what we already accept
 
@@ -131,7 +134,11 @@ Probes: `verify/corpus/language/getframemodulename.py`,
 
 ### P1 — completeness without silent wrong answers
 
-4. **`EXIT_DIFFERS`.** Dump first. `test_super` **40/40** (3 skipped);
+4. **`EXIT_DIFFERS`.** **Closed 2026-11-07.** Every file named below passes
+   in the 376/389 baseline, and the two surviving `EXIT_DIFFERS` files
+   (`test_sys`, `test_external_inspection`) are decided design deltas —
+   see the 2026-11-07 entry. The paragraph is kept as the measured record
+   of how the cluster closed. `test_super` **40/40** (3 skipped);
    `test_copy` **81/81**; `test_funcattrs` **35/35**; `test_genericclass`
    **22/22**; `test_bytes` **319/319** (8 skip); `test_dict` **121/121**;
     `test_complex` **37/37**; `test_format` **18/18**; `test_dynamic` **11/11**;
@@ -146,10 +153,10 @@ Probes: `verify/corpus/language/getframemodulename.py`,
     `test_coroutines` **99/99**. Dumped EXIT_DIFFERS
     Former I6 `DID_NOT_COMPILE` (24 files) all **compile on HEAD** (t-strings,
     `except*`, type aliases, kw-only lambdas, genexp/genfunc marshal).
-    leftovers: `test_super_deep` (~464 B/C-frame, 90k needs ~42MB);
-    `test_compile` native `__code__` bytecode (A); `test_dis` is a
-    `dis`/`disasm` rendering gap (flags, cells, quickened opcodes),
-    not a `co_consts` issue — see Next steps.
+    leftovers at the time — all since closed: `test_super_deep` now skips
+    on both sides via CPython's own `@skip_if_huge_c_stack(90_000)`
+    (test_call passes in full); `test_compile` and `test_dis` closed with
+    the code-object work behind `f3ff9e6` (see the 2026-11-07 entry).
     `test_raise` **37/37**; `test_gc` get_objects/heap_size;
     `test_str` nomemory vs `with`
     GetAttr. `test_unpack`/`extcall` exit 1 both sides as `__main__`.
@@ -183,12 +190,15 @@ Probes: `verify/corpus/language/getframemodulename.py`,
    FORWARDREF annotate reconstruction works. Nested `__annotate__` code objects from
    CPython's compile sit in the outer `co_consts`. Unexpected keywords
    offer a "Did you mean" suggestion.
-7. **I8 CLI (S1).** `pycc` finds the sysroot interpreter (manifest or
-   `bin/python3`), `--python-sysroot` aliases `--sysroot`, `--python`/`-std`/
-   `--python-abi`/`--list-python-targets` work. `-std` is `--feature-version`.
-   Two runtimes from one binary is still S5.
-8. **Lock-file scale.** `lower.cpp` ~6k lines. Header still says nothing
-   unboxes; unboxing has landed (`UNBOXING.md` 1–16).
+7. **I8 CLI — done (S1 + S5).** `pycc` finds the sysroot interpreter
+   (manifest or `bin/python3`), `--python-sysroot` aliases `--sysroot`,
+   `--python`/`-std`/`--python-abi`/`--list-python-targets` work,
+   `--fetch-sysroot` installs the published tarball, and `install-pyc.sh`
+   lays out the prefix (`bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`).
+   `-std` is `--feature-version`. One CPython artifact is enough; a missing
+   version is an exit-2 error, not a fallback. See workstream S below.
+8. **Lock-file scale.** `lower.cpp` 8155 lines (2026-11-07). Unboxing has
+   landed (`UNBOXING.md`, all 16 staged steps).
  9. **Sync-comp loop var lives in the comp frame, not the enclosing one.**
     1B (`b22c9d4`) makes the comp's loop var a local of the enclosing function
     (so a comp-bearing function adopts its real inlined code object), but the
@@ -205,10 +215,15 @@ Probes: `verify/corpus/language/getframemodulename.py`,
 
 ### P2 — product / process
 
-10. **I6 republished 2026-09-26.** `compiler/baseline-libtest.json` is
-    355/389 vs sysroot 3.14.7, `jobs=16`, `-O0`. `DID_NOT_COMPILE` is 0.
-11. **Developer sysroot.** LLVM 22 + hand-built 3.14.7 tree +
-    `PYC_LOWER=/tmp/pyc_lower`. See workstream S below.
+10. **I6 republished 2026-11-07.** `compiler/baseline-libtest.json` is
+    376/389 vs sysroot 3.14.7, `-O0`, recorded under CI's interpreter set
+    (see the 2026-11-07 entry). `DID_NOT_COMPILE` is 0. The 2026-09-26
+    355/389 and 2026-11-01/02 records are superseded history.
+11. **Developer sysroot — done (workstream S, S0–S5).** No local CPython
+    *build* is required: `sysroot.yml` publishes the Tier-1 tarball,
+    `pycc --fetch-sysroot` / `PYC_FETCH=1` install it beside the prefix, and
+    `install-pyc.sh` lays out `bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`.
+    A developer changing A2 headers still rebuilds the sysroot.
 12. **Output home.** `PyConfig.home` is set from `PYTHONHOME`, then
      `lib/pythonX.Y` next to (or above) the executable, then the compile-time
      sysroot. Prefix is no longer implicit-only.
@@ -638,10 +653,18 @@ contributor changing A2 still rebuilds the sysroot when headers change.
 
 Still historical, not a description of the current tree:
 [INTERFACES.md](INTERFACES.md) §5 spells the driver as `pyc`; the binary
-is `pycc` (that file is frozen and needs A0 sign-off to rename).
-[VERSION_TARGETING.md](VERSION_TARGETING.md) still calls
-`/home/joe/local` the ready stock build; the live sysroot is named in
-CHARTER §6. `compiler/README.md` totality figures are the 2026-08-22
-round-trip. Trust `pycc` and `verify/` over those sentences. CHARTER
+is `pycc` (that file is frozen and needs A0 sign-off to rename — a
+factual rename is not an interface amendment, but the file's freeze
+still applies). `compiler/README.md` totality figures are the 2026-08-22
+round-trip and its "still refused" list is the 2026-08-23 state (both now
+carry correction notes; the live numbers are in this file's "Measured
+now" table). Trust `pycc` and `verify/` over those sentences. CHARTER
 product rules still need explicit sign-off; a factual correction is not
 a rule change.
+
+Cleared 2026-11-07: VERSION_TARGETING.md already names the live Tier-1
+sysroot (the `/home/joe/local` reference is dated 2026-08-22); the
+STATUS "Next (MVP completeness)" EXIT_DIFFERS/test_dis items are marked
+done/closed; compiler/README's refusal list is corrected; UNBOXING.md's
+"Steps 1–3 landed" header now reads all sixteen; GIL/CORRECTNESS carry
+the 887/887 gate figure; NOTES.md's immediate state is current.
