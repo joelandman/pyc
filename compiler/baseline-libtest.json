@@ -13,6 +13,7 @@
       "test_httpservers.py",
       "test_math.py",
       "test_runpy.py",
+      "test_signal.py",
       "test_sys_settrace.py",
       "test_zipfile64.py",
       "test_zipimport.py"
@@ -31,15 +32,15 @@
     ]
   },
   "total": 389,
-  "passing": 375,
-  "clean": 374,
-  "pass_rate": 96.40102827763496,
+  "passing": 376,
+  "clean": 375,
+  "pass_rate": 96.65809768637533,
   "counts": {
-    "ORACLE_UNSTABLE": 10,
-    "TIMEOUT": 2,
-    "STDOUT_DIFFERS": 8,
+    "ORACLE_UNSTABLE": 9,
+    "TIMEOUT": 1,
+    "STDOUT_DIFFERS": 9,
     "EXIT_DIFFERS": 2,
-    "STDERR_DIFFERS": 6
+    "STDERR_DIFFERS": 5
   },
   "results": [
     {
@@ -2821,15 +2822,12 @@
     {
       "case": "Lib/test/test_logging.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_logging.py",
-      "flags": [
-        "ORACLE_UNSTABLE",
-        "STDERR_DIFFERS"
-      ],
+      "flags": [],
       "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
-      "oracle_varied": true,
+      "oracle_varied": false,
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
@@ -4186,9 +4184,9 @@
       "case": "Lib/test/test_signal.py",
       "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/lib/python3.14/test/test_signal.py",
       "flags": [
-        "TIMEOUT"
+        "STDOUT_DIFFERS"
       ],
-      "diagnostic": "the binary did not finish within 60s",
+      "diagnostic": "",
       "normalizers": [
         "elapsed"
       ],
@@ -4196,7 +4194,7 @@
       "oracle_timed_out": false,
       "exit": {
         "oracle": 0,
-        "subject": -1
+        "subject": 0
       }
     },
     {

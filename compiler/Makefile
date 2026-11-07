@@ -22,11 +22,23 @@ OUT      ?= /tmp/pyc_lower
 SRCS := src/pyc_lower_main.cpp src/lower.cpp src/scope.cpp src/ir.cpp \
         src/codegen.cpp src/capi.cpp src/ast_support.cpp src/json.cpp
 
+# `all` is not a file target: if $(OUT) exists as a DIRECTORY, a plain
+# `all: $(OUT)` rule reads it as "already exists" and prints
+# "Nothing to be done" without building (hit 2026-11-07: /tmp/pyc_lower
+# was a stale empty directory, so the gate ran on a silent no-op build).
+# Guard explicitly: a directory at the output path is removed, and the
+# binary is rebuilt when missing or older than the newest source.
 .PHONY: all clean refcount-probe
-all: $(OUT)
-
-$(OUT): $(SRCS)
-	$(CXX) $(CXXFLAGS) $(SRCS) -o $@
+all:
+	@if [ -d "$(OUT)" ] && [ ! -f "$(OUT)" ]; then \
+	  echo "removing stale directory at $(OUT)"; rm -rf "$(OUT)"; \
+	fi
+	@if [ ! -f "$(OUT)" ] || \
+	   [ "$$(ls -t $(SRCS) | head -n 1)" -nt "$(OUT)" ]; then \
+	  $(CXX) $(CXXFLAGS) $(SRCS) -o $(OUT); \
+	else \
+	  echo "pyc_lower up to date: $(OUT)"; \
+	fi
 
 # Leak bar (B8): build the refcount harness against a Py_REF_DEBUG sysroot.
 # The nightly metric job runs it; the workloads must be flat per iteration

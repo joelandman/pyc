@@ -1,8 +1,9 @@
 # pyc — current state and MVP
 
-**Date:** 2026-10-31. Language numbers in the table below are the recorded
+**Date:** 2026-11-07. Language numbers in the table below are the recorded
 `compiler/baseline-language.json` gate (887/887). The `Lib/test` row is the
-2026-11-01 I6 record (367/389, `-O0`, sysroot 3.14.7, `--stdlib`).
+2026-11-07 I6 re-record (`-O0`, sysroot 3.14.7, `--stdlib`), taken after the
+`test_signal` longrunning move (see 2026-11-07 entry below).
 CHARTER remains binding. §4 product rules were not changed.
 
 Roles that produced this: Architect (`agents/architect.md`), PM
@@ -14,12 +15,15 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
 libpython, C-API protocols, I1 refusals, I5 differential harness, published
 I6. Language + gaps + concurrency is **887/887** impactful. `Lib/test` is
-**367/389 = 94.34%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
-2026-11-01. C1 (frames) and C2 (periodic GIL) are closed. A proved
+**376/389 = 96.66%** (`-O0`, sysroot 3.14.7, `--stdlib`), last measured
+2026-11-07. C1 (frames) and C2 (periodic GIL) are closed. A proved
 heap-free loop drops the GIL only when another thread requests it
-([GIL.md](GIL.md)). The remaining product gap is stub code objects,
-named refusals instead of LLVM crashes, unexplained `EXIT_DIFFERS`, and
-getting the nightly Lib/test job to finish so this row can move.
+([GIL.md](GIL.md)). All remaining `EXIT_DIFFERS` are root-caused and
+decided (static-libpython inspection deltas, 2026-11-07), refusals are
+named and the contract is gated in CI (M6), and the nightly is green
+(2026-11-07). The residual non-passes are 9 oracle-unstable coin-flips,
+1 oracle-side timeout, and 1 measurement-value line — none a compiler
+defect (see the 2026-11-07 entry).
 Ordinary functions carry CPython's code object when the local layout
 matches (`df32461`); the native body still runs. The eval stub remains
 for the module frame, class bodies, comprehensions, and any function
@@ -30,15 +34,15 @@ whose locals do not match.
 | Check | Result |
 |---|---|
 | language + gaps + concurrency | 887/887 impactful |
-| `Lib/test` (I6) | 367/389 (94.34%), measured 2026-11-01 |
-| I6 composition | 365 clean + 2 `STDERR_DIFFERS`-only = 367 pass |
+| `Lib/test` (I6) | 376/389 (96.66%), measured 2026-11-07 |
+| I6 composition | 375 clean + 1 `STDERR_DIFFERS`-only = 376 pass |
 | `DID_NOT_COMPILE` | 0 |
-| `EXIT_DIFFERS` | 11 |
-| `STDOUT_DIFFERS` | 9 |
-| timeout | 1 |
+| `EXIT_DIFFERS` | 2 (both decided: `test_sys`, `test_external_inspection`) |
+| `STDOUT_DIFFERS` | 9 (8 `ORACLE_UNSTABLE` coin-flips + `test_signal` measurement line) |
+| timeout | 1 (`test_runpy`, oracle side) |
 | `ORACLE_UNSTABLE` | 9 |
 | A1 round-trip | 3.14.7 and 3.13.15 TOTAL (`compiler/README.md`) |
-| Tier-1 / NumPy | CI wheel smoke; `ldd` has no libpython `DT_NEEDED` |
+| Tier-1 / NumPy | CI wheel smoke + local wheel smoke via the numpy sysroot copy (2026-11-07); `ldd` has no libpython `DT_NEEDED` |
 | C1b / C2 | closed; probes in `language/` |
 
 I6 is file-as-script vs sysroot 3.14.7 with `--stdlib` (unittest can
@@ -237,7 +241,7 @@ works), and completeness is measured and not gamed. Not: C speed, two
 | M2 | `make -C verify fast` | `--fail-on-silent-wrong` |
 | M3 | CI `ldd` smoke | no `libpython` `DT_NEEDED` |
 | M4 | CI wheel step | NumPy import+run in that binary |
-| M5 | I6 vs README | **367/389 (94.34%)**, no regress |
+| M5 | I6 vs README | **376/389 (96.66%)**, no regress |
 | M6 | remaining compile fails | construct + line + reason — **not** invalid LLVM IR |
 
 **Not MVP gates:** unittest metric; `--python=3.13`; ELF `-static`; unboxing
@@ -247,6 +251,95 @@ vs C.
 
 **Now**
 
+- 2026-11-07: pre-MVP blocker pass (B1–B6), all measured:
+  (1) **B1 decided — `test_external_inspection.py` accepted as a design
+  delta.** Root cause: its `test_self_trace` runs `RemoteUnwinder(os.getpid())`,
+  which scans `/proc/<pid>/maps` for a `PyRuntime` section; a Tier-1 binary
+  statically links libpython, so the section does not exist (reproduced
+  locally: `RuntimeError: Failed to find the PyRuntime section`, exit 1 vs
+  0, other 8 tests pass). Same defect class as the already-accepted
+  `test_sys` `remote_exec`-on-self delta (2026-10-31). No code change.
+  (2) **B2 decided — `test_runpy.py` accepted and documented.** It is the
+  *oracle* that does not finish within the 600s longrunning budget on the
+  4-core runner (baseline record: `oracle_timed_out`, subject exit 0).
+  I5a: a statement about the limit, never a pyc fault; still counted against
+  the rate.
+  (3) **B3 — `test_signal.py` added to the longrunning group**
+  (`verify/longrunning.py`). Its ITIMER/signal tests are wall-clock bound:
+  ~67s under CPython and ~66s under pyc on this 32-core box (measured
+  2026-11-07, both exit 0, `OK (skipped=4)`), which straddles the 30s + 60s
+  budget on the 4-core runner. Not a hang.
+  (4) **B4 — the I6 ceiling is now stated.** Of the 14 non-passing files:
+  2 are the accepted static-libpython inspection deltas (above, plus
+  `test_sys`), 2 are wall-clock budget artifacts (`test_runpy` oracle side;
+  `test_signal` fixed in (3)), and 10 are `ORACLE_UNSTABLE` programs that
+  print a coin flip — pids, ports, unseeded `random`, temp paths, thread
+  order (`test_fork1`, `test_imaplib`, `test_logging`, `test_pty`,
+  `test_socketserver`, `test_sort`, `test_ssl`, `test_thread`,
+  `test_threading`, `test_zipimport_support`). I5a counts those against the
+  rate on purpose; they cannot be compiler-fixed without violating the
+  contract, so the published number has a ceiling below 100%.
+  (5) **B5 verified — release publishing is healthy.** `pack-pyc` and
+  `metric` nightlies green four consecutive days (2026-11-04…07) and both
+  assets re-uploaded 2026-11-07 (`pyc-linux-x86_64.tar.xz` 626 KB,
+  `cp314-3.14.7-tier1-x86_64.tar.xz` 84 MB). The S5 "publish step failing"
+  note is closed.
+  (6) **B6 — the M4 wheel milestone is provable locally.** A numpy-carrying
+  copy of the sysroot now lives at
+  `$HOME/opt/py-sysroots/cp314-3.14.7-tier1-numpy` (numpy 2.5.4; the primary
+  sysroot stays pristine; the copy's `pyc-sysroot.json` paths are rewritten
+  and the copied interpreter resolves its own prefix). Measured:
+  `numpy.arange(10).sum()` compiles against that sysroot, the Tier-1 binary
+  prints 45 = oracle, `ldd` shows no libpython dependency. Note for future
+  readers: run the sysroot's python with a scrubbed `LD_LIBRARY_PATH` —
+  this shell's 3.14.5 libpython on the path outranks the sysroot's RUNPATH,
+  and even the *primary* sysroot fails `import array` under it (the harness
+  `child_env()` already strips it; the gates were never affected).
+  (7) **M6 contract gated:** `check_diagnostics.py` now runs in
+  `verify.yml` static checks (DIAGNOSED on HEAD before wiring): a refused
+  compile must name file:line:col and the kind, and the checker proves it
+  can fail.
+  (8) **`compiler/Makefile` no longer reads a directory as "up to date":**
+  `/tmp/pyc_lower` was a stale empty directory, `make` reported "Nothing to
+  be done", and a gate would have run on a no-op build. A directory at
+  `$(OUT)` is removed and the binary rebuilt when missing or stale.
+  (9) **Local I6 re-records must match CI's interpreter set.** The first
+  2026-11-07 metric run scored `test_xpickle` `EXIT_DIFFERS`: its
+  backwards-compat workers resolve every versioned CPython on PATH, and
+  this box carries a uv-managed 3.11 that lacks the pyc-only
+  `__pyc_eval__` builtin — the same pre-existing delta recorded 2026-11-01,
+  which `metric.yml` removes with its "Match the baseline's interpreter set"
+  step so the nightly scores the suite the baseline saw. A baseline
+  recorded under a polluted PATH would make CI report noise every morning.
+  The re-record therefore ran under a shadow PATH with versioned pythons
+  hidden (CI rule: keep `python3`, `python3.14`, drop the rest). Follow-up
+  (not done here, A5 contract change on its own review): pin the same
+  interpreter set inside `child_env()` so every local run is CI-comparable
+  without a workflow step.
+  (10) **`test_signal.py` re-classified: a measurement-value line, not a
+  silent wrong answer.** Under the 600s budget it finishes (both sides,
+  `OK (skipped=4)`), but in script mode `support.verbose` defaults to 1
+  (`test/support/__init__.py:189` — regrtest sets it to 0), so the test
+  always prints `detected median itimer() resolution: %.6f s.` — a runtime
+  JITTER MEASUREMENT (20 samples of a 1 µs `setitimer`, median of gaps),
+  not a computed answer. In the 2026-11-07 metric run the two oracle
+  samples happened to agree (0.000013 s) while the subject, run at a
+  different load point, printed 0.000016 s — so the per-run I5a "earned"
+  rule did not fire and the mechanical I1 rule (exit 0 + `STDOUT_DIFFERS`)
+  flagged it as a new silent wrong answer. Discriminating experiment
+  (I9): an exact replica of `measure_itimer_resolution` run 10× per side
+  sequentially and 32× per side at 8-way concurrency — CPython and pyc
+  produced indistinguishable distributions on every pass (seq: 8×0.000012
+  + 2×0.000013 each; 8-way: 31×0.000013 + 1×0.000014 each). No systematic
+  pyc offset. The value has no stable ground truth (same family as the
+  other coin-flips); whether a run reports it as `ORACLE_UNSTABLE` or
+  `STDOUT_DIFFERS` depends on whether the oracle's two samples straddle a
+  load shift. It is recorded in the re-baseline as a known case: the
+  comparator's I1 rule exempts cases already baselined as exit 0 +
+  `STDOUT_DIFFERS` ("a recorded defect, not a regression"), so future
+  runs are stable under either flag shape.
+  I6 re-recorded with (3) and (9) in effect: **376/389 (96.66%)**,
+  `compiler/baseline-libtest.json` updated (see the header row).
 - 2026-11-02: inline sync-comprehension loop vars into the enclosing
   function's locals (MVP item 1B). CPython 3.12+ inlines sync
   comprehensions (PEP 709): the loop target is a fast local of the
@@ -431,12 +524,17 @@ vs C.
    strips `LD_LIBRARY_PATH` — so every measurement here has been against
    the real 3.14.7. The B2 pack guard (refuse a sysroot whose interpreter
    does not match its manifest) will not let the mismatch happen again.
-2. Dump the remaining `EXIT_DIFFERS` before adding syntax. The cluster
-   that is already named: stub `co_code` / `co_consts` / linetable
-   (`test_dis`, `test_compile`, `test_peepholer`, `test_opcache`) and
-   `test_sys_settrace` (600s timeout).
+2. ~~Dump the remaining `EXIT_DIFFERS` before adding syntax.~~
+   **Done (2026-11-07).** The named cluster (stub `co_code` / `co_consts` /
+   linetable — `test_dis`, `test_compile`, `test_peepholer`,
+   `test_opcache` — plus `test_sys_settrace`) is closed: all pass in the
+   375/389 baseline (`f3ff9e6`). The two remaining `EXIT_DIFFERS` files
+   are root-caused and decided, not open: `test_sys` (accepted 2026-10-31)
+   and `test_external_inspection` (accepted 2026-11-07, same class).
+   The `test_dis` sub-item below is closed history.
 
-    - `test_dis` dis-rendering gap (open, unqueued). Baseline was 16
+    - `test_dis` dis-rendering gap — **closed** (passes in the 375/389
+      baseline; see the 2026-11-07 entry above). It was 16
       failures on `be1b7f3` (sysroot 3.14.7, 2026-10-05). The co_firstline
       stub fix `3c03bff` (in `lower.cpp`) resolves the 6
       `disassemble_*` stub cases (`test_disassemble_class`/`_method`/
@@ -457,6 +555,9 @@ vs C.
       opcode). These are `dis`/`disasm` rendering gaps, not silent wrong
       answers (I1). Bound the count with an I6 run before/after.
 3. M6: a refusal names the construct, the line, and the reason.
+   **Gated 2026-11-07** — `check_diagnostics.py` runs in `verify.yml`
+   static checks and fails the PR gate on a bare `exit 1` (it proved
+   DIAGNOSED on HEAD before wiring).
 
 **Speed, measured 2026-10-02** (`adc0c4e`, sysroot 3.14.7, all exit 0).
 `-O2` is the generated IR only; the runtime is already `-O2`.
@@ -526,7 +627,7 @@ an independent runtime.
 | S2 done | `sysroot.yml` publishes `sysroot-cp314-linux-x86_64`. `build-python-sysroot.sh` remains the producer. The nightly has been succeeding. | Developers do not compile CPython |
 | S3 done | `pycc` searches beside itself (`sysroot/`, `../sysroot`, `pyc_lower`). `setup-machine.sh --beside`. `PyConfig.home` is set from the prefix. | Download ≠ `$HOME/opt/...` |
 | S4 done | `pycc --fetch-sysroot` / `PYC_FETCH=1`. A missing sysroot is exit 2. Verify still requires `--sysroot` / `--oracle`. | No local CPython install to compile a program |
-| S5 done | `install-pyc.sh` prefix: `bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`. `--python=X.Y` selects a tree; a missing version is exit 2. One 3.14 artifact is enough. `pack-pyc.sh` writes the compiler tarball. The nightly publish step has been failing after a successful pack (see Next steps). | VERSION_TARGETING as shipped |
+| S5 done | `install-pyc.sh` prefix: `bin/pycc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`. `--python=X.Y` selects a tree; a missing version is exit 2. One 3.14 artifact is enough. `pack-pyc.sh` writes the compiler tarball. The nightly publish step is green — verified 2026-11-07: four consecutive successful runs and both release assets re-uploaded (the earlier "failing after a successful pack" note is closed). | VERSION_TARGETING as shipped |
 
 S2 is what removes “build this specific Python on your machine,” and
 the sysroot release is the one that has been publishing. S4 is when the

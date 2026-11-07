@@ -14,6 +14,11 @@ FILES = frozenset({
     "test_httpservers.py",
     "test_math.py",
     "test_runpy.py",
+    # test_signal's ITIMER/signal tests are wall-clock bound: the suite takes
+    # ~67s under CPython AND ~66s under pyc on a 32-core box (measured
+    # 2026-11-07), which straddles the 30s + 60s retry budget on the 4-core
+    # runner. Not a hang; a budget artifact.
+    "test_signal.py",
     "test_sys_settrace.py",
     "test_zipfile64.py",
     "test_zipimport.py",

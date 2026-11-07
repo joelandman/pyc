@@ -14,12 +14,14 @@ compared at run time; no expected output is stored ([CHARTER I5](rebuild/CHARTER
 
 | Corpus | Pass rate | |
 |---|---|---|
-| CPython `Lib/test/` | **96.40%** | 375/389 files, measured 2026-11-02 |
+| CPython `Lib/test/` | **96.66%** | 376/389 files, measured 2026-11-07 |
 | language + gaps + concurrency | **100%** | 887/887 cases |
 
 `Lib/test` is the north-star metric (CHARTER I6). It may not regress.
-The fraction above is the last `make -C verify metric` record. Commits
-after 2026-10-29 are not in it until that command is run again.
+The fraction above is the last `make -C verify metric` record (2026-11-07,
+see `rebuild/STATUS.md`). The residual 13 non-passes are decided design
+deltas, an oracle-side timeout, an oracle-unstable coin flip, and one
+runtime-measured jitter line — none a compiler defect.
 
 Python frames (C1b): compiled functions, the module body, and class bodies
 push `_PyInterpreterFrame` on the thread datastack, so `locals()` /
@@ -43,6 +45,26 @@ Two published tarballs (linux x86_64):
 | `cp314-3.14.7-tier1-x86_64.tar.xz` | `sysroot-cp314-linux-x86_64` | CPython sysroot |
 
 The machine that *runs* `pycc` still needs clang++/LLVM 22 (it links the user program). The sysroot is not inside the compiler tarball.
+
+**Wheel milestone, locally (CHARTER I7).** The published sysroot ships
+without numpy, so the CI nightly is the standing wheel gate. To verify it
+locally, use a numpy-carrying *copy* of the sysroot (the primary stays
+pristine):
+
+```bash
+SRC=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
+DST=$SRC-numpy
+cp -a "$SRC" "$DST"
+sed -i "s|$SRC|$DST|g" "$DST/pyc-sysroot.json"   # manifest paths -> the copy
+env -u LD_LIBRARY_PATH "$DST/bin/python3.14" -m pip install numpy
+PYC_SYSROOT="$DST" pycc wheel.py -o wheel && ./wheel
+```
+
+The copied interpreter resolves its own prefix (verified), and the compiled
+binary finds numpy through the sysroot it was linked against. `env -u
+LD_LIBRARY_PATH` matters on boxes whose shell puts another libpython on the
+path: it outranks the sysroot's RUNPATH (see `rebuild/STATUS.md`,
+2026-11-07).
 
 ```bash
 mkdir -p "$HOME/opt/pyc"
