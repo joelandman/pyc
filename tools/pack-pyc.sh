@@ -3,7 +3,7 @@
 # pack-pyc.sh — tar a relocatable pyc prefix (compiler, not CPython).
 #
 # Two published artifacts:
-#   pyc-linux-x86_64.tar.xz          this script (pyc, pyc_lower, lib/pyc)
+#   pyc-linux-x86_64.tar.xz          this script (pyc, lib/pyc)
 #   cp314-*-tier1-x86_64.tar.xz      pack-sysroot.sh (already)
 #
 # The compiler tarball does not include the sysroot. After unpack:

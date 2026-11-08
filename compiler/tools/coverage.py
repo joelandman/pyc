@@ -6,7 +6,7 @@ lowerable program from an unsupported one before reporting, and refuses a
 result where nearly every input failed identically -- which is what a
 misconfigured harness looks like, and what this script did on its first run.
 
-    ./compiler/tools/coverage.py --lower /tmp/pyc_lower verify/corpus/language
+    ./compiler/tools/coverage.py --lower compiler/tools/pyc verify/corpus/language
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ class Runner:
                            cwd=self.cwd, env=env, capture_output=True, text=True)
         if e.returncode:
             return "parse"
-        r = subprocess.run([self.lower, "-"], input=e.stdout,
+        r = subprocess.run([self.lower, "--lower", "-"], input=e.stdout,
                            env=env, capture_output=True, text=True)
         if r.returncode == 0:
             return "ok"

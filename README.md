@@ -41,7 +41,7 @@ Two published tarballs (linux x86_64):
 
 | Asset | Tag | What |
 |---|---|---|
-| `pyc-linux-x86_64.tar.xz` | `pyc-linux-x86_64` | `pyc`, `pyc_lower`, `lib/pyc` |
+| `pyc-linux-x86_64.tar.xz` | `pyc-linux-x86_64` | `pyc`, `lib/pyc` |
 | `cp314-3.14.7-tier1-x86_64.tar.xz` | `sysroot-cp314-linux-x86_64` | CPython sysroot |
 
 The machine that *runs* `pyc` still needs clang++/LLVM 22 (it links the user program). The sysroot is not inside the compiler tarball.
@@ -86,7 +86,7 @@ pyc --list-python-targets
 ./tools/pack-pyc.sh -o /tmp/pyc-linux-x86_64.tar.xz
 ```
 
-Layout: `bin/pyc`, `bin/pyc_lower`, `lib/pyc/`, `sysroots/<abi>-<version>-tier1/`.
+Layout: `bin/pyc`, `lib/pyc/`, `sysroots/<abi>-<version>-tier1/`.
 `--python=X.Y` picks a tree under `sysroots/`; a missing version is an error,
 not a silent fallback. A second CPython is another directory there, not a
 second compiler.

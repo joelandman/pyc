@@ -10,7 +10,7 @@ the same class the old tree hit on `def g(a, /, b)`.
   * every value is defined before use
   * every owned result is released on the normal path exactly once
 
-    ./compiler/tools/check_ir_wellformed.py --lower /tmp/pyc_lower compiler/tests/*.py
+    ./compiler/tools/check_ir_wellformed.py --lower compiler/tools/pyc compiler/tests/*.py
 """
 from __future__ import annotations
 
@@ -261,7 +261,7 @@ def main() -> int:
         if e.returncode:
             print(f"  {f.name:10s} {DIM}parse failed{RST}"); bad += 1
             outcomes.append("parse"); continue
-        r = subprocess.run([args.lower, "-"], input=e.stdout, env=oracle_env,
+        r = subprocess.run([args.lower, "--lower", "-"], input=e.stdout, env=oracle_env,
                            capture_output=True, text=True)
         if r.returncode:
             unsup += 1

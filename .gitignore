@@ -2,7 +2,7 @@ build/
 build_debug/
 build_asan/
 /pyc
-/tmp/pyc_lower
+/compiler/tools/pyc
 
 a.out
 a.out.*

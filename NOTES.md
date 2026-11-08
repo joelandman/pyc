@@ -18,9 +18,7 @@
 - Run the long `Lib/test` metric separately before changing any I6 numbers:
 
   ```bash
-  export PYC_BINARY="$PWD/compiler/tools/pyc"
   export PYC_SYSROOT="$HOME/opt/py-sysroots/cp314-3.14.7-tier1"
-  export PYC_LOWER=/tmp/pyc_lower
   make -C verify metric
   ```
 

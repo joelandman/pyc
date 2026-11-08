@@ -9,11 +9,10 @@
 #
 # Layout:
 #   DIR/bin/pyc
-#   DIR/bin/pyc_lower
 #   DIR/lib/pyc/{pyc_parse,include,src/rt,install-sysroot.sh,pyc-prefix.json}
 #   DIR/sysroots/cp314-3.14.7-tier1/   (optional)
 #
-# After this, DIR/bin/pyc works with no PYC_SYSROOT / PYC_LOWER / repo cwd.
+# After this, DIR/bin/pyc works with no PYC_SYSROOT / repo cwd.
 # Linking a user program still needs clang++/LLVM 22 on PATH (or PYC_CXX).
 #
 set -euo pipefail
@@ -74,14 +73,13 @@ CXX="$(pick_cxx || true)"
 info "compiler $CXX"
 mkdir -p "$PREFIX/bin" "$PREFIX/lib/pyc/src" "$PREFIX/sysroots"
 if (( ! SKIP_BUILD )); then
-  make -C "$REPO/compiler" CXX="$CXX" OUT="$PREFIX/bin/pyc_lower"
+  make -C "$REPO/compiler" CXX="$CXX" OUT="$PREFIX/bin/pyc"
 else
-  [[ -x "$PREFIX/bin/pyc_lower" ]] || die "--skip-build but no $PREFIX/bin/pyc_lower"
+  [[ -x "$PREFIX/bin/pyc" ]] || die "--skip-build but no $PREFIX/bin/pyc"
 fi
 
 info "layout $PREFIX"
-cp -f "$REPO/compiler/tools/pyc" "$PREFIX/bin/pyc"
-chmod +x "$PREFIX/bin/pyc" "$PREFIX/bin/pyc_lower"
+chmod +x "$PREFIX/bin/pyc"
 rm -rf "$PREFIX/lib/pyc/pyc_parse" "$PREFIX/lib/pyc/include" "$PREFIX/lib/pyc/src/rt"
 cp -a "$REPO/compiler/pyc_parse" "$PREFIX/lib/pyc/pyc_parse"
 cp -a "$REPO/compiler/include" "$PREFIX/lib/pyc/include"

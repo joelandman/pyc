@@ -364,6 +364,25 @@ vs C.
   `install-pyc.sh` prefix runs `bin/pyc` with no env. `find_pyc()` in
   `measure_run.py` now also resolves the driver relative to the repo root,
   so `make -C verify fast` no longer depends on the caller's cwd.
+  (12) **Driver and backend consolidated into ONE C++ binary (A0-directed,
+  2026-11-07).** The former bash `compiler/tools/pyc` script plus the separate
+  `pyc_lower` binary are now a single `pyc` executable (`compiler/src/driver.cpp`
+  links the lowering core, called in-process via `pyc::lower_envelope` — it is
+  no longer a process the driver must find and launch). Only the parse (target
+  interpreter, VERSION_TARGETING (b)) and the final clang link (CHARTER toolchain
+  pin) remain subprocesses; the lowering was the part that was a second binary
+  for no architectural reason. `make -C compiler` builds
+  `compiler/tools/pyc` (where the script lived); `install-pyc.sh` now installs a
+  single `bin/pyc` (no `bin/pyc_lower`); `PYC_LOWER` is gone. The binary keeps an
+  internal `pyc --lower [ENVELOPE|-]` door (the old `pyc_lower` CLI) so the
+  IR-level checks drive the lowering directly. §5 CLI unchanged; INTERFACES
+  v1.3. Measured on this tree: `make -C verify fast` 865/865, `make -C verify
+  verify` 887/887 gate OK, `check_ir_wellformed` 77 well-formed / 0 malformed,
+  `install-pyc.sh` prefix runs `bin/pyc` with no env. (Separate, pre-existing:
+  `coverage.py`'s self-check now finds none of its 7 hardcoded probe constructs
+  refused — the compiler covers all of them — so it cannot build a probe; it is
+  a local dev tool, not a CI gate. Needs a new still-refused candidate or
+  retirement.)
   I6 re-recorded with (3) and (9) in effect: **376/389 (96.66%)**,
   `compiler/baseline-libtest.json` updated (see the header row).
 - 2026-11-02: inline sync-comprehension loop vars into the enclosing
@@ -628,9 +647,9 @@ It is onboarding and CI friction.
 
 Four Pythons are conflated today:
 
-| | Role | Need Python headers in `pyc_lower`? |
+| | Role | Need Python headers in `pyc`? |
 |---|---|---|
-| A | Host: run `pyc_parse` (subprocess) | **No.** `pyc_lower` is plain clang++. |
+| A | Host: run `pyc_parse` (subprocess) | **No.** `pyc` is plain clang++ (links no libpython). |
 | B | Target: headers + `libpython.a` to **link the user's program** | Yes, including `internal/pycore_*.h` for C1b (`frame.cpp`). |
 | C | Oracle: I5 differential tests | Same interpreter as B. |
 | D | Purpose-built Tier-1 vs stock distro | Distro 3.12 cannot do B/C/I7. |
@@ -651,7 +670,7 @@ an independent runtime.
 | S0 done | Document (a)≠(b). | Honest onboarding |
 | S1 done | `pyc` reads `pyc-sysroot.json`; `--python-sysroot`; no hardcoded `python3.14` | I8 locally |
 | S2 done | `sysroot.yml` publishes `sysroot-cp314-linux-x86_64`. `build-python-sysroot.sh` remains the producer. The nightly has been succeeding. | Developers do not compile CPython |
-| S3 done | `pyc` searches beside itself (`sysroot/`, `../sysroot`, `pyc_lower`). `setup-machine.sh --beside`. `PyConfig.home` is set from the prefix. | Download ≠ `$HOME/opt/...` |
+| S3 done | `pyc` searches beside itself (`sysroot/`, `../sysroot`). `setup-machine.sh --beside`. `PyConfig.home` is set from the prefix. | Download ≠ `$HOME/opt/...` |
 | S4 done | `pyc --fetch-sysroot` / `PYC_FETCH=1`. A missing sysroot is exit 2. Verify still requires `--sysroot` / `--oracle`. | No local CPython install to compile a program |
 | S5 done | `install-pyc.sh` prefix: `bin/pyc`, `lib/pyc/`, `sysroots/<abi>-<ver>-tier1/`. `--python=X.Y` selects a tree; a missing version is exit 2. One 3.14 artifact is enough. `pack-pyc.sh` writes the compiler tarball. The nightly publish step is green — verified 2026-11-07: four consecutive successful runs and both release assets re-uploaded (the earlier "failing after a successful pack" note is closed). | VERSION_TARGETING as shipped |
 

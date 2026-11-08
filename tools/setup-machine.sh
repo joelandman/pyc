@@ -3,7 +3,7 @@
 # setup-machine.sh — onboard a clone on a new machine (S2).
 #
 # Order: check host tools → fetch sysroot tarball (or build it) → unpack →
-# build pyc_lower → smoke. Does not install LLVM; does not sudo.
+# build pyc → smoke. Does not install LLVM; does not sudo.
 #
 #   ./tools/setup-machine.sh
 #   ./tools/setup-machine.sh --beside
@@ -116,12 +116,9 @@ step_compiler() {
     info "skipped"
     return 0
   fi
+  # One binary: make builds the driver (which links the lowering core) into
+  # the in-tree compiler/tools/pyc. There is no separate pyc_lower to place.
   make -C "$REPO/compiler" CXX="$CXX"
-  if (( BESIDE )); then
-    cp -f /tmp/pyc_lower "$REPO/compiler/tools/pyc_lower"
-    chmod +x "$REPO/compiler/tools/pyc_lower"
-    info "copied pyc_lower next to pyc"
-  fi
 }
 
 step_smoke() {
@@ -130,16 +127,14 @@ step_smoke() {
     info "skipped"
     return 0
   fi
-  local lower=/tmp/pyc_lower
-  (( BESIDE )) && lower="$REPO/compiler/tools/pyc_lower"
-  [[ -x "$lower" ]] || die "pyc_lower missing at $lower"
+  [[ -x "$REPO/compiler/tools/pyc" ]] || die "compiler/tools/pyc missing (run make -C compiler)"
   local src="/tmp/pyc-setup-machine-smoke.py"
   printf 'print(2 ** 10)\n' > "$src"
   if (( BESIDE )); then
-    env -u PYC_SYSROOT -u PYC_LOWER \
+    env -u PYC_SYSROOT \
       "$REPO/compiler/tools/pyc" "$src" -o /tmp/pyc-setup-smoke -O0
   else
-    PYC_SYSROOT="$PREFIX" PYC_LOWER=/tmp/pyc_lower \
+    PYC_SYSROOT="$PREFIX" \
       "$REPO/compiler/tools/pyc" "$src" -o /tmp/pyc-setup-smoke -O0
   fi
   local got
@@ -157,16 +152,15 @@ step_smoke
 if (( BESIDE )); then
   cat <<EOF
 
-Ready. Sysroot and pyc_lower sit next to pyc; no env needed.
+Ready. Sysroot and the compiler sit beside the tree; no env needed.
   $REPO/compiler/tools/pyc prog.py -o prog -O0
-  # override: PYC_SYSROOT=... PYC_LOWER=...
+  # override: PYC_SYSROOT=...
 EOF
 else
   cat <<EOF
 
 Ready.
   export PYC_SYSROOT=$PREFIX
-  export PYC_LOWER=/tmp/pyc_lower
   $REPO/compiler/tools/pyc prog.py -o prog -O0
 EOF
 fi

@@ -1,6 +1,6 @@
 # Layer Interfaces
 
-**Status: frozen v1.2 (2026-11-07).** Owned by A0. Changes require A0 sign-off, a
+**Status: frozen v1.3 (2026-11-07).** Owned by A0. Changes require A0 sign-off, a
 version bump, and a note in this file's changelog. A1–A4 build against these;
 they are what let the layers proceed independently.
 
@@ -327,6 +327,17 @@ Left to each layer, so freezing these interfaces does not over-constrain:
 
 ## Changelog
 
+- **v1.3 — 2026-11-07.** No contract change. The driver is now a **single C++
+  binary**: the former separate `pyc_lower` backend is linked in and called
+  in-process (`pyc::lower_envelope`), so there is one `pyc` executable to
+  build, install, and run — no `PYC_LOWER`, no second binary to find and point
+  at. The §5 CLI is unchanged (A5's `CompilerAdapter` is untouched). The binary
+  also exposes an internal `pyc --lower [ENVELOPE|-]` door (the former
+  `pyc_lower` CLI: read a parse envelope, print IR) used by the IR-level checks
+  (`check_ir_wellformed.py`, `coverage.py`); it is not part of the §5 user
+  contract. Parsing in the target interpreter and the final clang link remain
+  subprocesses — constraint-bound (VERSION_TARGETING option (b); the CHARTER
+  pins the toolchain to clang/LLVM 22), not a residual split.
 - **v1.2 — 2026-11-07.** No contract change. A0 sign-off (2026-11-07, the
   project owner) for the driver rename: the implementation had drifted from
   the name §5 specifies — the in-tree driver was `pycc`, §5 has always

@@ -2,4 +2,4 @@
 # each working tree, so it is not committed.
 selfcheck-refusals.log
 tools/sysroot
-tools/pyc_lower
+tools/pyc

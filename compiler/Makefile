@@ -1,4 +1,4 @@
-# Build pyc_lower. Same translation units as
+# Build the pyc compiler (the single driver binary). Same translation units as
 # .github/actions/setup-pyc/action.yml — keep them in sync.
 #
 # CXX must be an ordinary assignment, NOT `?=`: GNU make pre-defines
@@ -17,10 +17,15 @@ else
 CXX      = clang++
 endif
 CXXFLAGS ?= -std=c++20 -O2 -I include
-OUT      ?= /tmp/pyc_lower
+# The compiler is ONE binary: the driver (driver.cpp) links the lowering core
+# (pyc_lower_main.cpp + lower/scope/ir/codegen/capi/ast_support/json). It used
+# to be a bash script plus a separate pyc_lower; that split is gone. The
+# default output is the in-tree compiler/tools/pyc (where the old script lived)
+# so `make -C compiler && ./compiler/tools/pyc prog.py` just works.
+OUT      ?= $(CURDIR)/tools/pyc
 
-SRCS := src/pyc_lower_main.cpp src/lower.cpp src/scope.cpp src/ir.cpp \
-        src/codegen.cpp src/capi.cpp src/ast_support.cpp src/json.cpp
+SRCS := src/pyc_lower_main.cpp src/driver.cpp src/lower.cpp src/scope.cpp \
+        src/ir.cpp src/codegen.cpp src/capi.cpp src/ast_support.cpp src/json.cpp
 
 # `all` is not a file target: if $(OUT) exists as a DIRECTORY, a plain
 # `all: $(OUT)` rule reads it as "already exists" and prints
@@ -37,7 +42,7 @@ all:
 	   [ "$$(ls -t $(SRCS) | head -n 1)" -nt "$(OUT)" ]; then \
 	  $(CXX) $(CXXFLAGS) $(SRCS) -o $(OUT); \
 	else \
-	  echo "pyc_lower up to date: $(OUT)"; \
+	  echo "pyc up to date: $(OUT)"; \
 	fi
 
 # Leak bar (B8): build the refcount harness against a Py_REF_DEBUG sysroot.

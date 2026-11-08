@@ -9,9 +9,8 @@ A faster program that disagrees with CPython is a wrong program.
 ## Build & test
 
 ```bash
-make -C compiler                         # /tmp/pyc_lower
+make -C compiler                         # builds the compiler/tools/pyc driver
 export PYC_SYSROOT=$HOME/opt/py-sysroots/cp314-3.14.7-tier1
-export PYC_LOWER=/tmp/pyc_lower
 ./compiler/tools/pyc prog.py -o /tmp/p -O0
 make -C verify fast                      # inner loop
 make -C verify verify                    # PR gate

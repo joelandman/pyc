@@ -1,4 +1,4 @@
-# Publish a relocatable compiler prefix (pyc + pyc_lower + lib/pyc).
+# Publish a relocatable compiler prefix (pyc + lib/pyc).
 # Sysroot is a separate asset (sysroot.yml). Host still needs LLVM 22 to link.
 name: pack-pyc
 
