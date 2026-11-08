@@ -281,6 +281,25 @@ vs C.
   CI-gated `check_ir_wellformed.py` uses on every push. The `pyc --lower`
   door it used is kept: `check_ir_wellformed.py` still drives it
   (INTERFACES v1.4, no contract change).
+  (2) **`--trace` / `--flamegraph` designed and de-risked (A0 request,
+  2026-11-08).** Full design in `rebuild/TRACING.md`; INTERFACES v1.5 adds
+  the two flags. The load-bearing facts were measured first, on this tree:
+  (a) a `sys.monitoring` tool under `PROFILER_ID` receives a
+  **byte-identical event stream under pyc vs the sysroot oracle** for
+  PY_START/PY_RETURN/CALL on compiled functions (42 events, same qualnames
+  and lines) — the runtime's existing `fire_monitor` sites (one wrapper for
+  every generated call) are the tracer's event source, so **no codegen or
+  lowering changes are needed**; (b) LINE events fire: 2003/2007 (99.8%) of
+  the oracle's events on a 1000-iteration loop, program output identical
+  (the 4-event delta is a bounded, recorded delta in the setup window);
+  (c) Perfetto's UI imports Chrome JSON natively, so the binary carries no
+  protobuf dependency; (d) frames are real CPython frames, so the
+  flamegraph's stack walk uses public C API only. Known bounded gaps to
+  close in the implementation pass: generator bodies may produce no events
+  today (first execution is a `next()`; `PY_RESUME` fire to be verified),
+  and the LINE delta. One open decision each for A0: sample rate default
+  (99 Hz), `C:` boundary slices on by default under `--trace`, env names —
+  TRACING.md §8.
 - 2026-11-07: pre-MVP blocker pass (B1–B6), all measured:
   (1) **B1 decided — `test_external_inspection.py` accepted as a design
   delta.** Root cause: its `test_self_trace` runs `RemoteUnwinder(os.getpid())`,

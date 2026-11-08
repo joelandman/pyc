@@ -1,6 +1,6 @@
 # Layer Interfaces
 
-**Status: frozen v1.4 (2026-11-08).** Owned by A0. Changes require A0 sign-off, a
+**Status: frozen v1.5 (2026-11-08).** Owned by A0. Changes require A0 sign-off, a
 version bump, and a note in this file's changelog. A1–A4 build against these;
 they are what let the layers proceed independently.
 
@@ -296,6 +296,7 @@ pyc <source.py> [-o OUT]
     [--python=X.Y] [-std=pyX.Y] [--python-abi=...] [--python-sysroot=DIR]
     [-O0|-O1|-O2|-O3] [--static] [-g]
     [--emit-llvm] [--emit-asm|-S] [--verbose]
+    [--trace] [--flamegraph]
 ```
 
 **Contract.**
@@ -304,6 +305,10 @@ pyc <source.py> [-o OUT]
 - Any nonzero exit leaves no output file and prints §1.1 diagnostics to stderr.
 - Diagnostics go to stderr; program output never does.
 - `--python`/`-std` semantics are fixed by `VERSION_TARGETING.md`.
+- `--trace` / `--flamegraph` select instrumented builds (capability linked in).
+  Activation is a runtime decision via `PYC_TRACE` / `PYC_FLAMEGRAPH` env
+  vars; without them the binary behaves identically to an unflagged build.
+  See `TRACING.md` — the mechanism is measured, not assumed.
 
 A5's `CompilerAdapter` targets exactly this. Changing it is an interface change
 requiring A0 sign-off, because it silently invalidates every recorded baseline.
@@ -327,6 +332,14 @@ Left to each layer, so freezing these interfaces does not over-constrain:
 
 ## Changelog
 
+- **v1.5 — 2026-11-08.** A0 request (2026-11-08, the project owner): two new
+  driver flags for generated-code performance tooling. `--trace` links a
+  tracing core; with `PYC_TRACE=<file>` set the binary emits a Perfetto
+  (Chrome-JSON) trace of its execution. `--flamegraph` links a sampling
+  profiler; with `PYC_FLAMEGRAPH=<file.svg>` set the binary writes an SVG
+  flamegraph at exit. Without the env vars both are behaviourally identical
+  to an unflagged build (a gated invariant). Design + measured evidence:
+  `TRACING.md`. No change to any existing flag's semantics.
 - **v1.4 — 2026-11-08.** No contract change. `coverage.py` — a local dev
   tool that used the internal `--lower` door — was retired: its measurement
   had become a constant (887/887) and its self-check requires a construct
