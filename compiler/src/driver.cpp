@@ -696,7 +696,7 @@ int pyc_driver_main(int argc, char** argv) {
 
     for (const char* rt : {"entry", "support", "frame"}) {
         std::vector<std::string> c = {cxx, "-std=c++20", "-O2"};
-        if (!lto.empty()) c.push_back(lto);
+        for (auto& t : split_ws(lto)) c.push_back(t);  // e.g. -flto=thin -fuse-ld=lld (two args)
         for (auto& t : split_ws(inc_all)) c.push_back(t);
         c.push_back("-c");
         c.push_back(rt_home + "/src/rt/" + rt + ".cpp");
@@ -711,7 +711,7 @@ int pyc_driver_main(int argc, char** argv) {
 
     {
         std::vector<std::string> c = {cxx, "-std=c++20", opt, "-rdynamic"};
-        if (!lto.empty()) c.push_back(lto);
+        for (auto& t : split_ws(lto)) c.push_back(t);  // e.g. -flto=thin -fuse-ld=lld (two args)
         for (auto& t : split_ws(inc_all)) c.push_back(t);
         c.push_back(tmp.path + "/mod.ll");
         c.push_back(tmp.path + "/main.cpp");
