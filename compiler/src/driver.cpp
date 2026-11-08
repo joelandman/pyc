@@ -425,26 +425,34 @@ int pyc_driver_main(int argc, char** argv) {
             return 0;
         }
         {
-            // `command -v curl`
-            std::string which = trim(run_proc({"command", "-v", "curl"}, {}, {}).out);
+            // `command -v curl` — a shell builtin: there is no program named
+            // `command`, so this must run through sh (the bash driver ran the
+            // builtin directly).
+            std::string which = trim(run_proc({"sh", "-c", "command -v curl"}, {}, {}).out);
             if (which.empty()) {
                 std::fprintf(stderr, "pyc: curl required for --fetch-sysroot\n");
                 return 2;
             }
         }
-        char tmpl[] = "/tmp/pyc-sysroot.XXXXXX.tar.xz";
+        // A temp DIRECTORY for the download. mkdtemp (the C call) requires the
+        // six X's at the END of the last component; the old bash used GNU
+        // mktemp on "...XXXXXX.tar.xz" (X's in the middle), which mkdtemp
+        // rejects. Keep the archive inside the dir and remove_all the dir.
+        char tmpl[] = "/tmp/pyc-sysroot.XXXXXX";
         if (!::mkdtemp(tmpl)) return 2;
-        std::string archive = tmpl;
+        std::string tmpdir = tmpl;
+        std::string archive = tmpdir + "/sysroot.tar.xz";
         std::string url = "https://github.com/" + gh + "/releases/download/" + tag + "/" + asset;
         std::fprintf(stderr, "pyc: downloading %s\n", url.c_str());
+        auto cleanup = [&]() { std::error_code ec; fs::remove_all(tmpdir, ec); };
         Proc curl = run_proc({"curl", "-fL", "--retry", "3", "-o", archive, url}, {}, {});
         if (curl.code != 0) {
-            std::remove(archive.c_str());
+            cleanup();
             std::fprintf(stderr, "pyc: download failed\n  %s\n", url.c_str());
             return 2;
         }
         run_proc({inst, "--archive", archive, "--prefix", dest}, {}, {});
-        std::remove(archive.c_str());
+        cleanup();
         std::fprintf(stderr, "pyc: sysroot installed at %s\n", dest.c_str());
         return 0;
     };
