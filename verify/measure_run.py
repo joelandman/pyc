@@ -123,6 +123,15 @@ def main() -> int:
     if pyc is None:
         print("error: no pyc binary (--pyc or $PYC_BINARY)", file=sys.stderr)
         return 2
+    # Absolute, and only then: the harness compiles every case from a per-case
+    # temp cwd (measure.Measurer.measure), so a relative --pyc is resolved
+    # against THAT cwd by exec and dies with ENOENT — every case
+    # DID_NOT_COMPILE, CI 2026-11-08. find_pyc already returns an absolute
+    # path; a caller-supplied one must be normalized the same way.
+    pyc = pyc.resolve()
+    if not pyc.is_file():
+        print(f"error: --pyc is not an executable file: {pyc}", file=sys.stderr)
+        return 2
     oracle = args.oracle or corpus_mod.resolve_sysroot_oracle(args.sysroot)
     if oracle is None:
         print("error: no oracle (--oracle or --sysroot); "
