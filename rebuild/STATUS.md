@@ -266,6 +266,21 @@ vs C.
 
 **Now**
 
+- 2026-11-08:
+  (1) **`coverage.py` retired.** The local tool that measured "what fraction
+  of the corpus lowers" was removed (`git rm compiler/tools/coverage.py`).
+  Its one output had become a constant: its own parse+lower logic reports
+  **887/887 (100.0%), zero blockers** on the gated corpus set (language +
+  known-gaps + concurrency), and no CI step, Makefile target, or doc
+  referenced it. Its self-check is structurally incompatible with the
+  project's goal — it proves it can detect a gap by finding one, so a gap
+  must exist (its hardcoded probe construct had gone stale seven times
+  before; at 100% coverage it fails permanently, which is the guard working,
+  not a bug). The measurement discipline it embodied ("prove you can produce
+  both answers before reporting") survives in `selfcheck.py`, which the
+  CI-gated `check_ir_wellformed.py` uses on every push. The `pyc --lower`
+  door it used is kept: `check_ir_wellformed.py` still drives it
+  (INTERFACES v1.4, no contract change).
 - 2026-11-07: pre-MVP blocker pass (B1–B6), all measured:
   (1) **B1 decided — `test_external_inspection.py` accepted as a design
   delta.** Root cause: its `test_self_trace` runs `RemoteUnwinder(os.getpid())`,

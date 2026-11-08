@@ -5,7 +5,7 @@
 //   pyc --lower [ENVELOPE|-]      the former standalone `pyc_lower`: read a
 //                                 pyc_parse envelope, print IR. No sysroot, no
 //                                 link -- this is how check_ir_wellformed.py
-//                                 and coverage.py drive the lowering directly.
+//                                 drives the lowering directly.
 //
 // The lowering itself is `lower_envelope` below; both doors call it.
 #include "pyc/ast/generated_from_json.hpp"

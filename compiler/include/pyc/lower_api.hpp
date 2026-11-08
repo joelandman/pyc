@@ -5,7 +5,7 @@
 //     links; and
 //   * the `--lower` mode (compiler/src/pyc_lower_main.cpp), the former
 //     standalone `pyc_lower` binary, which reads an envelope and prints IR so
-//     the IR-level checks (check_ir_wellformed.py, coverage.py) can drive the
+//     the IR-level check (check_ir_wellformed.py, a CI gate) can drive the
 //     lowering directly without a sysroot or a link.
 //
 // This is why the driver and the backend live in ONE binary now: the backend

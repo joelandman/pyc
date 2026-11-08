@@ -354,6 +354,9 @@ reports **728/728 (100.0%)** on the language corpus.
 > history. The current honest refusals (backstops that cannot fire on valid
 > 3.14 source) are recorded in `rebuild/STATUS.md`, P1 #5. The current gate
 > corpus is **887/887** (language + known-gaps + concurrency), not 728.
+> The `coverage.py` tool that produced such numbers was retired 2026-11-08:
+> at 100% coverage its output is a constant and its self-check requires a
+> construct pyc no longer refuses (rebuild/STATUS.md).
 
 ### Suspendable bodies are compiled by CPython
 

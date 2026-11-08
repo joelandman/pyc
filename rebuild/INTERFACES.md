@@ -1,6 +1,6 @@
 # Layer Interfaces
 
-**Status: frozen v1.3 (2026-11-07).** Owned by A0. Changes require A0 sign-off, a
+**Status: frozen v1.4 (2026-11-08).** Owned by A0. Changes require A0 sign-off, a
 version bump, and a note in this file's changelog. A1–A4 build against these;
 they are what let the layers proceed independently.
 
@@ -327,6 +327,11 @@ Left to each layer, so freezing these interfaces does not over-constrain:
 
 ## Changelog
 
+- **v1.4 — 2026-11-08.** No contract change. `coverage.py` — a local dev
+  tool that used the internal `--lower` door — was retired: its measurement
+  had become a constant (887/887) and its self-check requires a construct
+  pyc no longer refuses (see STATUS 2026-11-08). The `--lower` door is now
+  driven only by `check_ir_wellformed.py`. The §5 user CLI is unchanged.
 - **v1.3 — 2026-11-07.** No contract change. The driver is now a **single C++
   binary**: the former separate `pyc_lower` backend is linked in and called
   in-process (`pyc::lower_envelope`), so there is one `pyc` executable to
