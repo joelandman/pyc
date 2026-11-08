@@ -139,14 +139,16 @@ runs:
       shell: bash
       run: |
         set -euxo pipefail
-        # Keep in sync with compiler/Makefile. One driver binary: the lowering
-        # core (pyc_lower_main.cpp) is linked in and called in-process, not
-        # launched as a separate pyc_lower.
+        # Keep in sync with compiler/Makefile. One driver binary, built IN-TREE
+        # (compiler/tools/pyc) on purpose: the driver resolves pyc_parse and the
+        # runtime sources relative to its own location (../pyc_parse,
+        # ../include/pyc/rt), which is only valid in-tree. The lowering core
+        # (pyc_lower_main.cpp) is linked in and called in-process, not launched.
         clang++-22 -std=c++20 -O2 -I compiler/include \
           compiler/src/pyc_lower_main.cpp compiler/src/driver.cpp \
           compiler/src/lower.cpp \
           compiler/src/scope.cpp compiler/src/ir.cpp compiler/src/codegen.cpp \
           compiler/src/capi.cpp compiler/src/ast_support.cpp \
-          compiler/src/json.cpp -o "$RUNNER_TEMP/pyc"
-        echo "PYC=$RUNNER_TEMP/pyc" >> "$GITHUB_ENV"
-        echo "pyc=$RUNNER_TEMP/pyc" >> "$GITHUB_OUTPUT"
+          compiler/src/json.cpp -o "$GITHUB_WORKSPACE/compiler/tools/pyc"
+        echo "PYC=$GITHUB_WORKSPACE/compiler/tools/pyc" >> "$GITHUB_ENV"
+        echo "pyc=$GITHUB_WORKSPACE/compiler/tools/pyc" >> "$GITHUB_OUTPUT"

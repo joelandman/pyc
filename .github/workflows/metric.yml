@@ -103,7 +103,7 @@ jobs:
           # the monotonicity step. One worker keeps the files and the
           # 600s budget. Do not drop a file to make the job green.
           ./verify/measure_run.py --libtest $LIMIT \
-            --pyc "$RUNNER_TEMP/pyc" \
+            --pyc "./compiler/tools/pyc" \
             --pyc-flag=-O0 \
             --sysroot "$SYSROOT" \
             --stdlib "$SYSROOT/lib/python3.14" \

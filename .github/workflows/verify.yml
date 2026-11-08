@@ -57,19 +57,19 @@ jobs:
           # the corpus is genuinely clean, so this gates at zero findings with
           # no known-failures list.
           ./compiler/tools/check_ir_wellformed.py \
-            --lower "$RUNNER_TEMP/pyc" \
+            --lower "./compiler/tools/pyc" \
             --python "$SYSROOT/bin/python3.14" \
             compiler/tests/*.py verify/corpus/language/*.py verify/corpus/programs/*.py
           # M6: a refused compile must name the file, line, and reason
           # (INTERFACES §1.1). The corpus sees DID_NOT_COMPILE either way,
           # so without this step a bare `exit 1` would ride through green.
-          ./compiler/tools/check_diagnostics.py --pyc "$RUNNER_TEMP/pyc"
+          ./compiler/tools/check_diagnostics.py --pyc "./compiler/tools/pyc"
 
       - name: Smoke — the compiler produces a running binary
         run: |
           set -euxo pipefail
           echo 'print(2 ** 200)' > "$RUNNER_TEMP/smoke.py"
-          "$RUNNER_TEMP/pyc" \
+          "./compiler/tools/pyc" \
             "$RUNNER_TEMP/smoke.py" -o "$RUNNER_TEMP/smoke"
           got="$("$RUNNER_TEMP/smoke")"
           want="$("$SYSROOT/bin/python3.14" "$RUNNER_TEMP/smoke.py")"
@@ -91,7 +91,7 @@ jobs:
           print(numpy.arange(10).sum())
           EOP
           sed -i 's/^          //' "$RUNNER_TEMP/wheel.py"
-          "$RUNNER_TEMP/pyc" \
+          "./compiler/tools/pyc" \
             "$RUNNER_TEMP/wheel.py" -o "$RUNNER_TEMP/wheel"
           got="$("$RUNNER_TEMP/wheel")"
           want="$("$SYSROOT/bin/python3.14" "$RUNNER_TEMP/wheel.py")"
@@ -108,7 +108,7 @@ jobs:
             --corpus verify/corpus/language \
             --corpus verify/corpus/known-gaps \
             --corpus verify/corpus/concurrency \
-            --pyc "$RUNNER_TEMP/pyc" \
+            --pyc "./compiler/tools/pyc" \
             --pyc-flag=-O0 \
             --sysroot "$SYSROOT" \
             --jobs "$(nproc)" \
