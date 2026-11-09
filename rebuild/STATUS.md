@@ -44,6 +44,7 @@ whose locals do not match.
 | A1 round-trip | 3.14.7 and 3.13.15 TOTAL (`compiler/README.md`) |
 | Tier-1 / NumPy | CI wheel smoke + local wheel smoke via the numpy sysroot copy (2026-11-07); `ldd` has no libpython `DT_NEEDED` |
 | C1b / C2 | closed; probes in `language/` |
+| `--trace` / `--flamegraph` | gated in verify.yml (dormancy byte-identical, well-formedness); overhead ≈0% dormant and ≈0% active flamegraph (99 Hz); active trace ≈10× function-dense — TRACING.md §6, 2026-11-08 |
 
 I6 is file-as-script vs sysroot 3.14.7 with `--stdlib` (unittest can
 import `test.support`). Do not treat unittest MATCH on a single file as
@@ -281,25 +282,29 @@ vs C.
   CI-gated `check_ir_wellformed.py` uses on every push. The `pyc --lower`
   door it used is kept: `check_ir_wellformed.py` still drives it
   (INTERFACES v1.4, no contract change).
-  (2) **`--trace` / `--flamegraph` designed and de-risked (A0 request,
-  2026-11-08).** Full design in `rebuild/TRACING.md`; INTERFACES v1.5 adds
-  the two flags. The load-bearing facts were measured first, on this tree:
-  (a) a `sys.monitoring` tool under `PROFILER_ID` receives a
+  (2) **`--trace` / `--flamegraph` implemented (A0 request, 2026-11-08).**
+  Full design + measurements in `rebuild/TRACING.md`; INTERFACES v1.5 adds
+  the two flags. The load-bearing facts were measured before the first line
+  was written: (a) a `sys.monitoring` tool under `PROFILER_ID` receives a
   **byte-identical event stream under pyc vs the sysroot oracle** for
   PY_START/PY_RETURN/CALL on compiled functions (42 events, same qualnames
-  and lines) — the runtime's existing `fire_monitor` sites (one wrapper for
-  every generated call) are the tracer's event source, so **no codegen or
-  lowering changes are needed**; (b) LINE events fire: 2003/2007 (99.8%) of
-  the oracle's events on a 1000-iteration loop, program output identical
-  (the 4-event delta is a bounded, recorded delta in the setup window);
-  (c) Perfetto's UI imports Chrome JSON natively, so the binary carries no
-  protobuf dependency; (d) frames are real CPython frames, so the
-  flamegraph's stack walk uses public C API only. Known bounded gaps to
-  close in the implementation pass: generator bodies may produce no events
-  today (first execution is a `next()`; `PY_RESUME` fire to be verified),
-  and the LINE delta. One open decision each for A0: sample rate default
-  (99 Hz), `C:` boundary slices on by default under `--trace`, env names —
-  TRACING.md §8.
+  and lines) — the runtime's existing `fire_monitor` sites are the tracer's
+  event source, so **no codegen or lowering changes**; (b) generator bodies
+  are real CPython bytecode (`lower.cpp`), so their events fire natively —
+  a 13-event probe is byte-identical to the oracle, closing the design's
+  one open gap; (c) the flamegraph walker needs only public C API
+  (`_PyThread_CurrentFrames` / `PyFrame_GetBack` / `f_code`).
+  Implementation findings, all measured: five 3.14 API divergences from the
+  C header / 3.13 docs (event numbering, tool-as-name, one-event
+  callbacks, non-importable `sys.monitoring`, opaque GILState handle);
+  two concurrency bugs found on the reproducer and fixed — accumulated
+  sleep deadlines (→ GIL ping-pong, >100× slowdown) and join-with-GIL
+  deadlock (~1 in 3 runs hung; 10/10 after the fix). Result: dormancy is
+  byte-identical and now a verify.yml gate; overhead measured at ≈0% for
+  both flags dormant and for the active flamegraph (99 Hz), ≈10× for the
+  active trace on a function-dense workload (≈0% on arithmetic-dense —
+  event-based, per TRACING.md §6). A0 signed off 99 Hz, default `C:`
+  slices, and the env names.
 - 2026-11-07: pre-MVP blocker pass (B1–B6), all measured:
   (1) **B1 decided — `test_external_inspection.py` accepted as a design
   delta.** Root cause: its `test_self_trace` runs `RemoteUnwinder(os.getpid())`,

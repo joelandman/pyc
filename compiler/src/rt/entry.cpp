@@ -5,6 +5,9 @@
 #ifdef PYC_WITH_TRACE
 #include "pyc/rt/trace.hpp"
 #endif
+#ifdef PYC_WITH_FLAME
+#include "pyc/rt/flame.hpp"
+#endif
 
 #include <Python.h>
 
@@ -300,6 +303,9 @@ int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
 #ifdef PYC_WITH_TRACE
     pyc_rt_trace_init();
 #endif
+#ifdef PYC_WITH_FLAME
+    pyc_rt_flame_init();
+#endif
     int status = 0;
     if (body && body() != 0) {
         // SystemExit is control flow, not an error: honour its code and do not
@@ -326,6 +332,9 @@ int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
     }
 #ifdef PYC_WITH_TRACE
     pyc_rt_trace_end();
+#endif
+#ifdef PYC_WITH_FLAME
+    pyc_rt_flame_end();
 #endif
     pyc_rt_pop_module_frame();
     pyc_rt_shutdown();
