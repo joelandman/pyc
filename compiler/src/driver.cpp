@@ -309,6 +309,7 @@ int pyc_driver_main(int argc, char** argv) {
     // ---- argument parsing (mirrors the former bash driver's diagnostics) ----
     std::string flag_sysroot, out = "a.out", src;
     int fetch_sysroot = 0, keep = 0, emit_llvm = 0, list_targets = 0;
+    int with_trace = 0;
     std::string opt = "-O1";
     std::string python_ver = env_get("PYC_PYTHON", "");
     std::string std_ver, python_abi;
@@ -331,6 +332,7 @@ int pyc_driver_main(int argc, char** argv) {
         else if (a == "--list-python-targets") list_targets = 1;
         else if (a == "--keep") keep = 1;
         else if (a == "--emit-llvm") emit_llvm = 1;
+        else if (a == "--trace") with_trace = 1;
         else if (a == "-O0" || a == "-O1" || a == "-O2" || a == "-O3") opt = a;
         else if (a == "--") { if (++i < argc) { src = argv[i]; } }
         else if (!a.empty() && a[0] == '-') {
@@ -558,7 +560,7 @@ int pyc_driver_main(int argc, char** argv) {
     if (src.empty()) {
         std::fprintf(stderr,
                      "usage: pyc FILE [-o OUT] [--python=X.Y] [-std=pyX.Y] "
-                     "[--python-sysroot DIR]\n");
+                     "[--python-sysroot DIR] [--trace]\n");
         return 2;
     }
 
@@ -685,7 +687,8 @@ int pyc_driver_main(int argc, char** argv) {
     } else lto = lto_mode;
 
     // Runtime sources (the trampoline is compiled on every link; runtime
-    // objects are always -O2, the generated IR keeps $OPT).
+    // objects are always -O2, the generated IR keeps $OPT). --trace /
+    // --flamegraph add their cores and the matching defines for entry.cpp.
     std::string rt_home;
     auto has_rt = [](const std::string& d) {
         return is_dir(d + "/include/pyc/rt") && is_file(d + "/src/rt/entry.cpp");
@@ -702,8 +705,15 @@ int pyc_driver_main(int argc, char** argv) {
     }
     std::string inc_all = inc + " -I " + rt_home + "/include";
 
-    for (const char* rt : {"entry", "support", "frame"}) {
+    std::vector<const char*> rts = {"entry", "support", "frame"};
+    std::vector<std::string> rt_def;
+    if (with_trace) {
+        rts.push_back("trace");
+        rt_def.push_back("-DPYC_WITH_TRACE=1");
+    }
+    for (const char* rt : rts) {
         std::vector<std::string> c = {cxx, "-std=c++20", "-O2"};
+        for (auto& t : rt_def) c.push_back(t);
         for (auto& t : split_ws(lto)) c.push_back(t);  // e.g. -flto=thin -fuse-ld=lld (two args)
         for (auto& t : split_ws(inc_all)) c.push_back(t);
         c.push_back("-c");
@@ -726,6 +736,7 @@ int pyc_driver_main(int argc, char** argv) {
         c.push_back(tmp.path + "/entry.o");
         c.push_back(tmp.path + "/support.o");
         c.push_back(tmp.path + "/frame.o");
+        if (with_trace) c.push_back(tmp.path + "/trace.o");
         c.push_back("-Wl,--whole-archive");
         c.push_back(lib);
         c.push_back("-Wl,--no-whole-archive");

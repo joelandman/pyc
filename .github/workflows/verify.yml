@@ -99,6 +99,78 @@ jobs:
           ! ldd "$RUNNER_TEMP/wheel" | grep -qi libpython \
             || { echo "wheel binary has a libpython dependency"; exit 1; }
 
+      # --trace (INTERFACES v1.5): the instrumented build variant. Two
+      # things are pinned: (1) DORMANCY -- without the env var, the variant
+      # must behave byte-identically to the unflagged build (stdout, stderr,
+      # exit code), so a shipped instrumented binary cannot change clean
+      # runs; (2) WELL-FORMEDNESS -- when activated via PYC_TRACE, the file
+      # parses as a balanced Chrome-JSON stream (the format Perfetto's UI
+      # imports natively) with function slices and C boundary slices.
+      - name: Instrumented build (--trace)
+        run: |
+          set -euxo pipefail
+          cat > "$RUNNER_TEMP/instr.py" <<'EOP'
+          import math
+
+          def inner(x):
+              return math.sqrt(x) + math.sin(x)
+
+          def outer(n):
+              total = 0
+              for i in range(n):
+                  total += inner(i + 1)
+              return total
+
+          def gen():
+              for i in range(4):
+                  yield i * 2
+
+          def main():
+              try:
+                  raise ValueError("expected")
+              except ValueError:
+                  pass
+              print("total", repr(outer(50000)))
+              print("gen", list(gen()))
+
+          main()
+          EOP
+          sed -i 's/^          //' "$RUNNER_TEMP/instr.py"
+          P=./compiler/tools/pyc
+          $P "$RUNNER_TEMP/instr.py" -o "$RUNNER_TEMP/instr" -O0
+          $P "$RUNNER_TEMP/instr.py" -o "$RUNNER_TEMP/instr_t" -O0 --trace
+          # (1) Dormancy: no env vars -> byte-identical to the plain build.
+          "$RUNNER_TEMP/instr" > "$RUNNER_TEMP/out" 2> "$RUNNER_TEMP/err"
+          e0=$?
+          "$RUNNER_TEMP/instr_t" > "$RUNNER_TEMP/out_t" 2> "$RUNNER_TEMP/err_t"
+          e1=$?
+          [ "$e0" -eq "$e1" ] || { echo "exit code differs ($e0 vs $e1)"; exit 1; }
+          cmp -s "$RUNNER_TEMP/out" "$RUNNER_TEMP/out_t" \
+            || { echo "stdout differs"; exit 1; }
+          cmp -s "$RUNNER_TEMP/err" "$RUNNER_TEMP/err_t" \
+            || { echo "stderr differs"; exit 1; }
+          # (2) Activation + well-formedness.
+          PYC_TRACE="$RUNNER_TEMP/t.json" "$RUNNER_TEMP/instr_t" > /dev/null
+          cat > "$RUNNER_TEMP/check_instr.py" <<'EOP'
+          import json, sys
+
+          evs = [json.loads(l) for l in open(sys.argv[1])]
+          assert evs, "empty trace"
+          assert any(e["ph"] == "M" for e in evs), "no metadata events"
+          assert any(e["ph"] == "B" for e in evs), "no function slices"
+          stack = []
+          for e in evs:
+              if e["ph"] == "B":
+                  stack.append(e["name"])
+              elif e["ph"] == "E":
+                  assert stack and stack[-1] == e["name"], "unbalanced B/E"
+                  stack.pop()
+          assert not stack, "unclosed slices at EOF"
+          assert any(e.get("cat") == "pyc.ccall" for e in evs), "no C slices"
+          EOP
+          sed -i 's/^          //' "$RUNNER_TEMP/check_instr.py"
+          python3 "$RUNNER_TEMP/check_instr.py" "$RUNNER_TEMP/t.json"
+
       - name: Differential run
         run: |
           # known-gaps is gated deliberately. C1 (frames) and C2 (GIL) are

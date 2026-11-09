@@ -2,6 +2,10 @@
 #include "pyc/rt/entry.hpp"
 #include "pyc/rt/support.hpp"
 
+#ifdef PYC_WITH_TRACE
+#include "pyc/rt/trace.hpp"
+#endif
+
 #include <Python.h>
 
 #include <cstdio>
@@ -293,6 +297,9 @@ int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
     set_executable();
     set_main_file(argv);
 
+#ifdef PYC_WITH_TRACE
+    pyc_rt_trace_init();
+#endif
     int status = 0;
     if (body && body() != 0) {
         // SystemExit is control flow, not an error: honour its code and do not
@@ -317,6 +324,9 @@ int pyc_rt_main(int argc, char** argv, PycModuleBody body) {
             status = 1;
         }
     }
+#ifdef PYC_WITH_TRACE
+    pyc_rt_trace_end();
+#endif
     pyc_rt_pop_module_frame();
     pyc_rt_shutdown();
 
