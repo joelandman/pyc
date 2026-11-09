@@ -4,6 +4,7 @@
 #   make -C verify fast      seconds  — language corpus, P0 gate
 #   make -C verify verify    minutes  — full rescued corpus + monotonicity gate
 #   make -C verify metric    long     — CPython Lib/test (the I6 number)
+#   make -C verify perf      minutes  — real-world perf smoke set + artifacts
 #   make -C verify hook      install a pre-push gate
 #   make -C verify accept    adopt the current run as the new baseline
 
@@ -43,7 +44,7 @@ else
 ORACLE_ARGS := --sysroot $(SYSROOT)
 endif
 
-.PHONY: fast verify metric accept hook clean
+.PHONY: fast verify metric accept hook clean perf perf-full
 
 ## Seconds. The developer inner loop: language corpus, fail only on a silent
 ## wrong answer. That check needs no baseline -- exit 0 with the wrong stdout
@@ -84,6 +85,34 @@ accept:
 	@test -f $(OUT) || { echo "no $(OUT) — run 'make verify' first"; exit 1; }
 	@$(CHECK) --update --baseline $(REPO)/compiler/baseline-language.json \
 	          --current $(OUT)
+
+PERF_FLAGS ?= --pyc-flag=-O2
+## Real-world performance (STATUS.md 'Real-world performance'). The smoke set:
+## 1 warmup + 7 timed runs per side, median, plus one --trace and one
+## --flamegraph artifact per workload. Wall clock around the whole process,
+## both sides under the pinned child_env (I5).
+##
+## PERF_FLAGS defaults to -O2 and deliberately does NOT inherit PYCFLAGS: the
+## comparability key includes the compile flags, and mixing -O0 gate builds
+## into a -O2 baseline is a different measurement, not a drift.
+##
+## perf_compare reports drift against verify/perf/baseline.json but is
+## report-only here (like metric): alerts are warnings until run-to-run
+## variance is characterised. CI runs the same comparison as a non-blocking
+## PR smoke with the same semantics.
+perf:
+	@$(CURDIR)/perf_run.py --set smoke $(PERF_FLAGS) \
+	  --json $(CURDIR)/perf.json --artifacts-dir $(CURDIR)/perf-artifacts \
+	  $(ORACLE_ARGS)
+	@$(CURDIR)/perf_compare.py --current $(CURDIR)/perf.json \
+	  --baseline $(CURDIR)/perf/baseline.json || true
+
+perf-full:
+	@$(CURDIR)/perf_run.py --set full $(PERF_FLAGS) \
+	  --json $(CURDIR)/perf-full.json --artifacts-dir $(CURDIR)/perf-full-artifacts \
+	  $(ORACLE_ARGS)
+	@$(CURDIR)/perf_compare.py --current $(CURDIR)/perf-full.json \
+	  --baseline $(CURDIR)/perf/baseline.json || true
 
 ## Pre-push hook: runs the fast gate, refuses a push that introduces a P0.
 hook:

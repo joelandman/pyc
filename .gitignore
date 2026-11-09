@@ -15,6 +15,10 @@ __pycache__/
 
 verify/current.json
 verify/libtest.json
+verify/perf.json
+verify/perf-full.json
+verify/perf-artifacts/
+verify/perf-full-artifacts/
 
 /c.err
 /c.out

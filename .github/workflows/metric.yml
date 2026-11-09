@@ -210,6 +210,88 @@ jobs:
           if [ "$GATE_OK" = "yes" ]; then exit 0; fi
           exit "${GATE_CODE:-1}"
 
+  # Real-world performance (STATUS.md 'Real-world performance'): the FULL set
+  # nightly. The PR smoke (verify.yml) runs the same harness on the smoke
+  # subset, so the nightly extends the same trend line with the slower
+  # workloads instead of measuring a different set.
+  #
+  # pgo: "false" on purpose, matching the PR smoke and the recorded baseline:
+  # one build class across PR and nightly, so a trend crossing a boundary is
+  # a code change, not a build change. The libtest job above uses pgo "true"
+  # because its baseline was recorded that way; the two jobs are different
+  # measurements and do not share numbers.
+  #
+  # Failure policy: perf_run fails the job only on real signals (a workload
+  # did not compile, mismatched the oracle, or timed out entirely);
+  # perf_compare fails it only when the records are NOT comparable (the
+  # harness refusing to make a claim it cannot make). Alerts are warnings:
+  # the timing gate arrives with the characterised variance, not before.
+  perf:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: devel
+
+      - name: Set up pyc
+        uses: ./.github/actions/setup-pyc
+        with:
+          cpython-version: ${{ env.CPYTHON_VERSION }}
+          pgo: "false"             # same build class as the PR smoke (see above)
+          wheel-check: "none"      # I7 is the libtest job's gate
+
+      - name: Perf — full set (pyc -O2 vs sysroot CPython)
+        run: |
+          set -euxo pipefail
+          ./verify/perf_run.py --set full \
+            --pyc "./compiler/tools/pyc" \
+            --pyc-flag=-O2 \
+            --sysroot "$SYSROOT" \
+            --json perf-full.json \
+            --artifacts-dir "$RUNNER_TEMP/perf-full-art"
+
+      - name: Perf — compare against baseline
+        run: |
+          # exit 0 = comparable (alerts, if any, are in the log; not a gate)
+          # exit 2 = not comparable: pin hash, oracle version, or flags
+          # drifted. The nightly's job is the trend; a trend whose key
+          # changed is not a trend, so that IS a failure.
+          set -euxo pipefail
+          ./verify/perf_compare.py \
+            --current perf-full.json \
+            --baseline verify/perf/baseline.json
+
+      - name: Publish the table
+        if: always()
+        run: |
+          python3 - <<'EOF' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+          d = json.load(open("perf-full.json"))
+          print(f"## Real-world performance (pyc -O2 vs CPython {d['oracle']['version']})\n")
+          print("| workload | class | CPython (s) | pyc (s) | speedup |")
+          print("|---|---|---:|---:|---:|")
+          for w in d["workloads"]:
+              if w["status"] != "OK":
+                  print(f"| {w['name']} | {w['cls']} | **{w['status']}** | | |")
+                  continue
+              print(f"| {w['name']} | {w['cls']} "
+                    f"| {w['oracle']['median']:.3f} "
+                    f"| {w['pyc']['median']:.3f} "
+                    f"| {w['speedup']:.2f}x |")
+          print(f"\n<sub>pin {d['pin_hash']} · runs {d['runs']} "
+                f"· host {d['host']['class']} · elapsed {d['elapsed_s']}s</sub>\n")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-nightly
+          path: |
+            perf-full.json
+            $RUNNER_TEMP/perf-full-art
+
   # Leak bar (B8): the runtime C code that Lib/test cannot reach. CPython's
   # suite exercises the interpreter, not pyc's trampolines; a refcount leak
   # in the trampoline surfaces nowhere else. The harness runs workloads

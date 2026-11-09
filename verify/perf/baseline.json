@@ -1,0 +1,366 @@
+{
+  "schema": "pyc-perf/1",
+  "generated": "2026-11-09T03:02:31+00:00",
+  "git": {
+    "sha": "803ce99c3c3c4cb7a6139ae093dff3f276d40b14"
+  },
+  "host": {
+    "name": "hal9k",
+    "machine": "x86_64",
+    "cpus": 32,
+    "ci": false,
+    "class": "local"
+  },
+  "pyc": {
+    "binary": "/home/joe/work/pc/pyc/compiler/tools/pyc",
+    "flags": [
+      "-O2"
+    ]
+  },
+  "oracle": {
+    "path": "/home/joe/opt/py-sysroots/cp314-3.14.7-tier1/bin/python3.14",
+    "version": "3.14.7",
+    "banner": "3.14.7 (main, Oct 28 2026, 10:24:26) [GCC 15.2.0]",
+    "machine": "x86_64"
+  },
+  "set": "smoke",
+  "runs": 7,
+  "warmup": 1,
+  "pin_hash": "2bb9791fdd1518c1",
+  "elapsed_s": 151.5,
+  "artifacts_dir": "/tmp/opencode/perf-art",
+  "workloads": [
+    {
+      "name": "nbody",
+      "cls": "numeric",
+      "path": "verify/corpus/programs/nbody.py",
+      "argv": [
+        "500000"
+      ],
+      "timeout": 120.0,
+      "flags": [
+        "-O2"
+      ],
+      "compile_s": 7.019810402998701,
+      "pyc": {
+        "n": 7,
+        "times": [
+          1.318573,
+          1.326264,
+          1.335062,
+          1.343454,
+          1.346999,
+          1.347703,
+          1.369358
+        ],
+        "median": 1.343454,
+        "p25": 1.326263896015007,
+        "p75": 1.3469994280021638,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "-0.169075164\n-0.169096567"
+      },
+      "oracle": {
+        "n": 7,
+        "times": [
+          1.741386,
+          1.747616,
+          1.763781,
+          1.79399,
+          1.795718,
+          1.797554,
+          1.811348
+        ],
+        "median": 1.79399,
+        "p25": 1.7476161160157062,
+        "p75": 1.79571797902463,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "-0.169075164\n-0.169096567"
+      },
+      "speedup": 1.335,
+      "mismatch": false,
+      "status": "OK",
+      "compile_instr_s": 7.7894444380071945,
+      "artifacts": {
+        "trace": "nbody/nbody.trace.ndjson",
+        "flame": "nbody/nbody.flame.svg"
+      }
+    },
+    {
+      "name": "spectralnorm",
+      "cls": "numeric",
+      "path": "verify/perf/workloads/spectralnorm.py",
+      "argv": [],
+      "timeout": 180.0,
+      "flags": [
+        "-O2"
+      ],
+      "compile_s": 3.191571249975823,
+      "pyc": {
+        "n": 7,
+        "times": [
+          1.100034,
+          1.100732,
+          1.103505,
+          1.108281,
+          1.108778,
+          1.110111,
+          1.110335
+        ],
+        "median": 1.108281,
+        "p25": 1.1007321769720875,
+        "p75": 1.1087776929489337,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0."
+      },
+      "oracle": {
+        "n": 7,
+        "times": [
+          1.46654,
+          1.470282,
+          1.473737,
+          1.482397,
+          1.496228,
+          1.512749,
+          1.523915
+        ],
+        "median": 1.482397,
+        "p25": 1.4702817409997806,
+        "p75": 1.4962277470040135,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0.0019938529645336612\n0."
+      },
+      "speedup": 1.338,
+      "mismatch": false,
+      "status": "OK",
+      "compile_instr_s": 4.168750153039582,
+      "artifacts": {
+        "trace": "spectralnorm/spectralnorm.trace.ndjson",
+        "flame": "spectralnorm/spectralnorm.flame.svg"
+      }
+    },
+    {
+      "name": "ast_parse",
+      "cls": "pure-python",
+      "path": "verify/perf/workloads/ast_parse.py",
+      "argv": [],
+      "timeout": 180.0,
+      "flags": [
+        "-O2"
+      ],
+      "compile_s": 3.3318558579776436,
+      "pyc": {
+        "n": 7,
+        "times": [
+          0.861817,
+          0.863986,
+          0.866202,
+          0.870187,
+          0.872209,
+          0.87825,
+          0.888964
+        ],
+        "median": 0.870187,
+        "p25": 0.863985875970684,
+        "p75": 0.8722085799672641,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "400 1360289"
+      },
+      "oracle": {
+        "n": 7,
+        "times": [
+          0.950943,
+          0.9541,
+          0.956938,
+          0.96119,
+          0.962757,
+          0.969327,
+          0.998548
+        ],
+        "median": 0.96119,
+        "p25": 0.9540998169686645,
+        "p75": 0.9627566960407421,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "400 1360289"
+      },
+      "speedup": 1.105,
+      "mismatch": false,
+      "status": "OK",
+      "compile_instr_s": 4.36546584602911,
+      "artifacts": {
+        "trace": "ast_parse/ast_parse.trace.ndjson",
+        "flame": "ast_parse/ast_parse.flame.svg"
+      }
+    },
+    {
+      "name": "xml_build",
+      "cls": "pure-python",
+      "path": "verify/perf/workloads/xml_build.py",
+      "argv": [],
+      "timeout": 180.0,
+      "flags": [
+        "-O2"
+      ],
+      "compile_s": 2.3867902709753253,
+      "pyc": {
+        "n": 7,
+        "times": [
+          0.308587,
+          0.313294,
+          0.313409,
+          0.313431,
+          0.320838,
+          0.322709,
+          0.323571
+        ],
+        "median": 0.313431,
+        "p25": 0.31329370103776455,
+        "p75": 0.3208379589486867,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "200000 11596982"
+      },
+      "oracle": {
+        "n": 7,
+        "times": [
+          0.338882,
+          0.341786,
+          0.347806,
+          0.349003,
+          0.349661,
+          0.351626,
+          0.352858
+        ],
+        "median": 0.349003,
+        "p25": 0.341786389995832,
+        "p75": 0.34966083796462044,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "200000 11596982"
+      },
+      "speedup": 1.113,
+      "mismatch": false,
+      "status": "OK",
+      "compile_instr_s": 3.340922862989828,
+      "artifacts": {
+        "trace": "xml_build/xml_build.trace.ndjson",
+        "flame": "xml_build/xml_build.flame.svg"
+      }
+    },
+    {
+      "name": "decimal_pi",
+      "cls": "c-bound",
+      "path": "verify/perf/workloads/decimal_pi.py",
+      "argv": [],
+      "timeout": 180.0,
+      "flags": [
+        "-O2"
+      ],
+      "compile_s": 2.318793980986811,
+      "pyc": {
+        "n": 7,
+        "times": [
+          0.312409,
+          0.313541,
+          0.320995,
+          0.32653,
+          0.330256,
+          0.333005,
+          0.333345
+        ],
+        "median": 0.32653,
+        "p25": 0.3135411580442451,
+        "p75": 0.3302555449772626,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "4.554906177857991631552360947006197975576756618974792806114911356751526098272867185848698097479339578604339749320799111604408769088960228834671714089991061778000191523390016289604594792847541113016799"
+      },
+      "oracle": {
+        "n": 7,
+        "times": [
+          0.313659,
+          0.314246,
+          0.316292,
+          0.320492,
+          0.324956,
+          0.32642,
+          0.327646
+        ],
+        "median": 0.320492,
+        "p25": 0.3142459850059822,
+        "p75": 0.3249557039816864,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "4.554906177857991631552360947006197975576756618974792806114911356751526098272867185848698097479339578604339749320799111604408769088960228834671714089991061778000191523390016289604594792847541113016799"
+      },
+      "speedup": 0.982,
+      "mismatch": false,
+      "status": "OK",
+      "compile_instr_s": 3.3237961439881474,
+      "artifacts": {
+        "trace": "decimal_pi/decimal_pi.trace.ndjson",
+        "flame": "decimal_pi/decimal_pi.flame.svg"
+      }
+    },
+    {
+      "name": "nqueens",
+      "cls": "pure-python",
+      "path": "verify/perf/workloads/nqueens.py",
+      "argv": [],
+      "timeout": 180.0,
+      "flags": [
+        "-O2"
+      ],
+      "compile_s": 2.2475366839789785,
+      "pyc": {
+        "n": 7,
+        "times": [
+          0.701849,
+          0.70422,
+          0.705308,
+          0.707684,
+          0.708231,
+          0.709191,
+          0.728863
+        ],
+        "median": 0.707684,
+        "p25": 0.704220337967854,
+        "p75": 0.7082305410294794,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "73712"
+      },
+      "oracle": {
+        "n": 7,
+        "times": [
+          0.804233,
+          0.80854,
+          0.80915,
+          0.811678,
+          0.815444,
+          0.815773,
+          0.825947
+        ],
+        "median": 0.811678,
+        "p25": 0.8085401880089194,
+        "p75": 0.8154440870275721,
+        "timeouts": 0,
+        "exit": 0,
+        "stdout_tail": "73712"
+      },
+      "speedup": 1.147,
+      "mismatch": false,
+      "status": "OK",
+      "compile_instr_s": 3.2275001750094816,
+      "artifacts": {
+        "trace": "nqueens/nqueens.trace.ndjson",
+        "flame": "nqueens/nqueens.flame.svg"
+      }
+    }
+  ]
+}

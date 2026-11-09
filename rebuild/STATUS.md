@@ -45,6 +45,7 @@ whose locals do not match.
 | Tier-1 / NumPy | CI wheel smoke + local wheel smoke via the numpy sysroot copy (2026-11-07); `ldd` has no libpython `DT_NEEDED` |
 | C1b / C2 | closed; probes in `language/` |
 | `--trace` / `--flamegraph` | gated in verify.yml (dormancy byte-identical, well-formedness); overhead ≈0% dormant and ≈0% active flamegraph (99 Hz); active trace ≈10× function-dense — TRACING.md §6, 2026-11-08 |
+| real-world perf (smoke, `-O2`) | baseline 2026-11-08: numeric **1.33–1.34×**, pure-python **1.10–1.15×**, c-bound **0.98×** vs CPython 3.14.7 — "Real-world performance" section below |
 
 I6 is file-as-script vs sysroot 3.14.7 with `--stdlib` (unittest can
 import `test.support`). Do not treat unittest MATCH on a single file as
@@ -102,6 +103,87 @@ other, so red no longer signalled anything:
  differential + gate, all green), and the pushed run is green on GitHub:
  static `well-formed 1035 malformed 0`, differential **887/887**, verdict
  "GATE RAN — no regression" (`206606b`).
+
+## Real-world performance
+
+CHARTER §4's bar — "measurable speedup over CPython on a typed numeric
+benchmark" — measured the way this project measures everything else: real
+programs, pinned deterministic inputs, the sysroot CPython as oracle
+(I5), a published record. This section is the published home for it (A0
+decision, 2026-11-08: no separate PERF.md).
+
+**Harness** — `verify/perf_run.py` (record schema `pyc-perf/1`), a sibling
+of the differential harness, which deliberately discards timing. Per
+workload: one pyc build at the pinned flags (default `-O2`), 1 warmup +
+7 timed runs per side, alternated, median with p25–p75, wall clock
+around the whole process (startup included, symmetric on both sides).
+Both sides run under the same pinned `child_env`; the oracle is the
+sysroot CPython the binary embeds. The harness cross-checks pyc against
+the oracle per workload (exit + stdout): a workload that disagrees is
+flagged MISMATCH, because its timing is a coin flip (I9). Every workload
+also ships one `--trace` and one `--flamegraph` artifact (TRACING.md),
+from a separate instrumented build that is not in the timed set.
+
+**Workloads** — `verify/perf.py` (registry) plus `verify/perf/workloads/`
+and three corpus programs (nbody, mandelbrot). Three classes:
+`numeric` (type-stable float/int — where unboxing is expected to pay),
+`pure-python` (call/combinatorial density — where native dispatch should
+win), `c-bound` (C work dominates — the honest floor). Every input is a
+pinned constant or an in-memory construction from fixed patterns; the
+set's pin hash is part of the comparability key. Measured on this box
+(32 cores): smoke set 2–3 min including the artifact builds; the full
+set adds ~1 min of work. The 2-core CI runner runs both about twice as
+slow.
+
+**Comparability** — a record compares only against another with the same
+pin hash, oracle version, and pyc flags (`verify/perf_compare.py`);
+anything else is refused (exit 2) rather than compared, because the
+comparison would measure two different things. The host is deliberately
+not in the key: a speedup measured side-by-side on one machine is the
+machine-invariant quantity, and the two recorded runs agree on it within
+±5% while their absolute seconds diverge up to 49% (below). The
+baseline is `verify/perf/baseline.json`; it is re-recorded only with a
+measured reason in the commit, like the correctness baselines.
+
+**Policy** — PR: the smoke set runs on every push, trend-only. Nightly:
+the full set in `metric.yml` (one build class with the PR smoke: pgo off,
+`-O2`). Until run-to-run variance is characterised, drift beyond ±15% is
+a red warning, not a failure; the timing gate arrives with the
+characterised variance, not before. Harness errors are still hard
+failures in both: a workload that does not compile, mismatches the
+oracle, or times out entirely, and a record that is not comparable, both
+fail the job.
+
+**First record** (baseline pin `2bb9791fdd1518c1`, 2026-11-08, local box
+`hal9k`, sysroot 3.14.7, pyc `-O2`, 1 warmup + 7 runs):
+
+| Workload | Class | CPython (s) | pyc (s) | Speedup |
+|---|---|---:|---:|---:|
+| nbody (500000) | numeric | 1.794 | 1.343 | **1.33×** |
+| spectralnorm (N=500) | numeric | 1.482 | 1.108 | **1.34×** |
+| ast_parse (400 classes) | pure-python | 0.961 | 0.870 | 1.10× |
+| xml_build (200k rows) | pure-python | 0.349 | 0.313 | 1.11× |
+| decimal_pi (10000 digits) | c-bound | 0.320 | 0.327 | 0.98× |
+| nqueens (N=13) | pure-python | 0.812 | 0.708 | 1.15× |
+
+The class picture is the shape the 2026-10-02 speed section predicted:
+type-stable numeric is where the native body wins (1.33–1.34×),
+call-dense pure Python wins smaller (1.10–1.15×), and C-bound is the
+floor (0.98× — the four C-bound `Lib/test` files of 2026-10-02 are the
+same class measured at per-line granularity, where the overhead a
+dedicated workload amortises shows as 1.9–2.4×). The direction of CHARTER
+§4 is confirmed in measurement; the attribution is not yet proven —
+whether the numeric win is unboxing or simply the absent eval loop is
+what the per-workload flamegraph artifacts exist to answer (plan
+question A, "where do the cycles live").
+
+**Measured variance** (two smoke runs, same machine, minutes apart,
+2026-11-08): absolute medians moved up to +49% between runs (machine
+load); the speedups moved within ±5% (1.33→1.31, 1.34→1.34,
+1.10→1.08, 1.11→1.06, 0.98→0.97, 1.15→1.15). The speedup is the quantity
+a trend line can be built on; the absolute seconds are machine-local,
+which is why cross-host comparisons in `perf_compare.py` alert on
+speedups only.
 
 ## Major remaining issues
 
@@ -305,6 +387,28 @@ vs C.
   active trace on a function-dense workload (≈0% on arithmetic-dense —
   event-based, per TRACING.md §6). A0 signed off 99 Hz, default `C:`
   slices, and the env names.
+  (3) **Real-world performance harness (Phase 0 of the measurement plan;
+  A0 decisions: workload set as proposed; PR timing smoke ON for trend
+  tracking; the published home is this file — no separate PERF.md).**
+  `verify/perf.py` (registry: 6 smoke + 4 nightly workloads, three classes,
+  pin hash) + `verify/perf/workloads/` (7 new deterministic programs) +
+  `verify/perf_run.py` (1 warmup + 7 timed runs per side, median/p25–p75,
+  wall clock around the whole process, same pinned env both sides, I5
+  oracle, per-workload trace + flamegraph artifacts, MISMATCH cross-check)
+  + `verify/perf_compare.py` (comparability keyed on pin hash + oracle
+  version + flags; drift beyond ±15% is a warning, not a gate, until
+  variance is characterised). First record committed as
+  `verify/perf/baseline.json` (2026-11-08, local box, sysroot 3.14.7,
+  `-O2`): numeric 1.33–1.34×, pure-python 1.10–1.15×, c-bound 0.98× — the
+  class shape the 2026-10-02 speed section predicted. Two-run variance
+  measured the same day: absolute seconds up to +49%, speedups within
+  ±5% — the speedup is the trend quantity. CI: verify.yml runs the smoke
+  set on every push after the gate (hard-fails only on harness errors:
+  workload failure or incomparable records); metric.yml gets a nightly
+  `perf` job (full set, same build class: pgo off, `-O2`). One bug found
+  and fixed on the first `make perf` run: an argparse `append` list
+  default silently doubled `-O2`, which the comparability key correctly
+  refused — the harness working as designed.
 - 2026-11-07: pre-MVP blocker pass (B1–B6), all measured:
   (1) **B1 decided — `test_external_inspection.py` accepted as a design
   delta.** Root cause: its `test_self_trace` runs `RemoteUnwinder(os.getpid())`,

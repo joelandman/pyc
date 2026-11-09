@@ -277,3 +277,65 @@ jobs:
         run: |
           if [ "$GATE_OK" = "yes" ]; then exit 0; fi
           exit "${GATE_CODE:-1}"
+
+      # Real-world performance smoke (STATUS.md 'Real-world performance').
+      # Placed AFTER the gate reflection on purpose: the I6 verdict is
+      # authoritative and independent, and a perf harness error must not
+      # swallow it. The perf step still fails the job when it fails:
+      #   perf_run   exit 1/2 = a workload DID_NOT_COMPILE, MISMATCHed the
+      #              oracle, or timed out entirely -- real signals, not noise.
+      #   perf_compare exit 2 = records not comparable (pin hash, oracle
+      #              version, or flags drifted) -- the harness refusing to
+      #              make a claim it cannot make. That IS the finding.
+      # Alerts (exit 0, red lines) are trend warnings only: run-to-run
+      # variance is characterised in STATUS.md, and the gate on a timing
+      # number arrives only when the threshold is earned.
+      - name: Perf smoke (--set smoke, pyc -O2 vs sysroot CPython)
+        run: |
+          set -euxo pipefail
+          ./verify/perf_run.py --set smoke \
+            --pyc "./compiler/tools/pyc" \
+            --pyc-flag=-O2 \
+            --sysroot "$SYSROOT" \
+            --json perf-smoke.json \
+            --artifacts-dir "$RUNNER_TEMP/perf-smoke-art"
+          ./verify/perf_compare.py \
+            --current perf-smoke.json \
+            --baseline verify/perf/baseline.json
+
+      - name: Perf smoke summary
+        if: always()
+        run: |
+          python3 - "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import json, sys
+          try:
+              d = json.load(open("perf-smoke.json"))
+          except (OSError, json.JSONDecodeError):
+              d = None
+          with open(sys.argv[1] if len(sys.argv) > 1 else "/dev/null", "a") as f:
+              if d is None:
+                  f.write("## Perf smoke\n\nNot summarised: the perf step "
+                          "failed or produced no record (see its log).\n")
+                  sys.exit(0)
+              f.write(f"## Perf smoke (pyc -O2 vs CPython {d['oracle']['version']})\n\n")
+              f.write("| workload | class | CPython (s) | pyc (s) | speedup |\n")
+              f.write("|---|---|---:|---:|---:|\n")
+              for w in d["workloads"]:
+                  if w["status"] != "OK":
+                      f.write(f"| {w['name']} | {w['cls']} | **{w['status']}** | | |\n")
+                      continue
+                  f.write(f"| {w['name']} | {w['cls']} "
+                          f"| {w['oracle']['median']:.3f} "
+                          f"| {w['pyc']['median']:.3f} "
+                          f"| {w['speedup']:.2f}x |\n")
+              f.write(f"\n<sub>pin {d['pin_hash']} · runs {d['runs']} "
+                      f"· {d['host']['class']}</sub>\n")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: perf-smoke-results
+          path: |
+            perf-smoke.json
+            $RUNNER_TEMP/perf-smoke-art
