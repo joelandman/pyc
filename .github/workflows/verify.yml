@@ -336,6 +336,9 @@ jobs:
         if: always()
         with:
           name: perf-smoke-results
+          # with: does not run a shell: $RUNNER_TEMP would stay literal and
+          # upload-artifact would find nothing. Expressions expand at parse
+          # time.
           path: |
             perf-smoke.json
-            $RUNNER_TEMP/perf-smoke-art
+            ${{ env.RUNNER_TEMP }}/perf-smoke-art

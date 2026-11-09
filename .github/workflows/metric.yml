@@ -288,9 +288,10 @@ jobs:
         if: always()
         with:
           name: perf-nightly
+          # with: does not run a shell: $RUNNER_TEMP would stay literal.
           path: |
             perf-full.json
-            $RUNNER_TEMP/perf-full-art
+            ${{ env.RUNNER_TEMP }}/perf-full-art
 
   # Leak bar (B8): the runtime C code that Lib/test cannot reach. CPython's
   # suite exercises the interpreter, not pyc's trampolines; a refcount leak
