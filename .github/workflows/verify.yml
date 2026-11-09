@@ -135,7 +135,6 @@ jobs:
 
           main()
           EOP
-          sed -i 's/^          //' "$RUNNER_TEMP/instr.py"
           P=./compiler/tools/pyc
           $P "$RUNNER_TEMP/instr.py" -o "$RUNNER_TEMP/instr" -O0
           $P "$RUNNER_TEMP/instr.py" -o "$RUNNER_TEMP/instr_t" -O0 --trace
@@ -190,7 +189,6 @@ jobs:
           for p in sys.argv[1:]:
               (trace_ok if p.endswith(".json") else flame_ok)(p)
           EOP
-          sed -i 's/^          //' "$RUNNER_TEMP/check_instr.py"
           python3 "$RUNNER_TEMP/check_instr.py" \
             "$RUNNER_TEMP/t.json" "$RUNNER_TEMP/f.svg" \
             "$RUNNER_TEMP/ft.json" "$RUNNER_TEMP/ft.svg"
