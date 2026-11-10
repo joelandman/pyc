@@ -19,6 +19,10 @@ verify/perf.json
 verify/perf-full.json
 verify/perf-artifacts/
 verify/perf-full-artifacts/
+perf-smoke.json
+perf-smoke-art/
+perf-full.json
+perf-full-art/
 
 /c.err
 /c.out

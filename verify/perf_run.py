@@ -161,6 +161,7 @@ class Runner:
         record = {
             "name": w.name, "cls": w.cls, "path": w.relpath,
             "argv": list(w.argv), "timeout": w.timeout,
+            "content_sha": w.content_sha,
             "flags": list(self.pyc_flags),
         }
         plain = self.build / f"{w.name}"

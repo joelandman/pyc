@@ -45,7 +45,7 @@ whose locals do not match.
 | Tier-1 / NumPy | CI wheel smoke + local wheel smoke via the numpy sysroot copy (2026-11-07); `ldd` has no libpython `DT_NEEDED` |
 | C1b / C2 | closed; probes in `language/` |
 | `--trace` / `--flamegraph` | gated in verify.yml (dormancy byte-identical, well-formedness); overhead ≈0% dormant and ≈0% active flamegraph (99 Hz); active trace ≈10× function-dense — TRACING.md §6, 2026-11-08 |
-| real-world perf (smoke, `-O2`) | baseline 2026-11-08: numeric **1.33–1.34×**, pure-python **1.10–1.15×**, c-bound **0.98×** vs CPython 3.14.7 — "Real-world performance" section below |
+| real-world perf (smoke, `-O2`) | baseline 2026-11-09: numeric **1.31–1.35×**, pure-python **1.10–1.12×**, c-bound **0.98×** vs CPython 3.14.7 — "Real-world performance" section below |
 
 I6 is file-as-script vs sysroot 3.14.7 with `--stdlib` (unittest can
 import `test.support`). Do not treat unittest MATCH on a single file as
@@ -129,21 +129,26 @@ and three corpus programs (nbody, mandelbrot). Three classes:
 `numeric` (type-stable float/int — where unboxing is expected to pay),
 `pure-python` (call/combinatorial density — where native dispatch should
 win), `c-bound` (C work dominates — the honest floor). Every input is a
-pinned constant or an in-memory construction from fixed patterns; the
-set's pin hash is part of the comparability key. Measured on this box
+pinned constant or an in-memory construction from fixed patterns. The pin
+covers name, path, argv, and the workload FILE's content, so an edit to a
+pinned constant (N=500 → 600) changes the pin and the comparison is
+refused until the baseline is re-recorded with a reason. Measured on this box
 (32 cores): smoke set 2–3 min including the artifact builds; the full
 set adds ~1 min of work. The 2-core CI runner runs both about twice as
 slow.
 
-**Comparability** — a record compares only against another with the same
-pin hash, oracle version, and pyc flags (`verify/perf_compare.py`);
-anything else is refused (exit 2) rather than compared, because the
-comparison would measure two different things. The host is deliberately
-not in the key: a speedup measured side-by-side on one machine is the
-machine-invariant quantity, and the two recorded runs agree on it within
-±5% while their absolute seconds diverge up to 49% (below). The
-baseline is `verify/perf/baseline.json`; it is re-recorded only with a
-measured reason in the commit, like the correctness baselines.
+**Comparability** — two-level key (`verify/perf_compare.py`). Record
+level: oracle version and pyc flags must agree. Workload level: every
+name in the intersection must be pin-identical (path, argv, file
+content) — so the nightly full set compares against the smoke baseline,
+and the intersection is the comparison. Anything else is refused (exit
+2) rather than compared, because the comparison would measure two
+different things. The host is deliberately not in the key: a speedup
+measured side-by-side on one machine is the machine-invariant quantity,
+and the two recorded runs agree on it within ±5% while their absolute
+seconds diverge up to 49% (below). The baseline is
+`verify/perf/baseline.json`; it is re-recorded only with a measured
+reason in the commit, like the correctness baselines.
 
 **Policy** — PR: the smoke set runs on every push, trend-only. Nightly:
 the full set in `metric.yml` (one build class with the PR smoke: pgo off,
@@ -154,17 +159,19 @@ failures in both: a workload that does not compile, mismatches the
 oracle, or times out entirely, and a record that is not comparable, both
 fail the job.
 
-**First record** (baseline pin `2bb9791fdd1518c1`, 2026-11-08, local box
-`hal9k`, sysroot 3.14.7, pyc `-O2`, 1 warmup + 7 runs):
+**First record** (baseline pin `8227920d1e85c6af`, 2026-11-09, local box
+`hal9k`, sysroot 3.14.7, pyc `-O2`, 1 warmup + 7 runs; re-recorded
+2026-11-09 because the pin was extended to cover workload file
+content — see the 2026-11-09 entry):
 
 | Workload | Class | CPython (s) | pyc (s) | Speedup |
 |---|---|---:|---:|---:|
-| nbody (500000) | numeric | 1.794 | 1.343 | **1.33×** |
-| spectralnorm (N=500) | numeric | 1.482 | 1.108 | **1.34×** |
-| ast_parse (400 classes) | pure-python | 0.961 | 0.870 | 1.10× |
-| xml_build (200k rows) | pure-python | 0.349 | 0.313 | 1.11× |
-| decimal_pi (10000 digits) | c-bound | 0.320 | 0.327 | 0.98× |
-| nqueens (N=13) | pure-python | 0.812 | 0.708 | 1.15× |
+| nbody (500000) | numeric | 1.772 | 1.349 | **1.31×** |
+| spectralnorm (N=500) | numeric | 1.516 | 1.123 | **1.35×** |
+| ast_parse (400 classes) | pure-python | 0.981 | 0.883 | 1.11× |
+| xml_build (200k rows) | pure-python | 0.351 | 0.319 | 1.10× |
+| decimal_pi (10000 digits) | c-bound | 0.321 | 0.327 | 0.98× |
+| nqueens (N=13) | pure-python | 0.806 | 0.716 | 1.12× |
 
 The class picture is the shape the 2026-10-02 speed section predicted:
 type-stable numeric is where the native body wins (1.33–1.34×),
@@ -349,6 +356,41 @@ vs C.
 
 **Now**
 
+- 2026-11-09:
+  (1) **First nightly perf run: the comparison contract had a hole; fixed
+  and the baseline re-recorded.** The 06:00 metric run measured the full
+  set correctly (10/10 workloads OK, artifacts produced, 329 s) but
+  `perf_compare` refused the comparison: the pin hash was per-SET, and
+  the baseline is a smoke record while the nightly runs full — so the
+  cross-set comparison could never match (the local tests only ever
+  compared smoke against smoke). The hole was worse than that: the pin
+  covered name+path+argv, not the workload file, so editing a pinned
+  constant (N=500 → 600) would have kept the key and silently compared
+  different amounts of work. Fixed: the pin now includes the file
+  content per workload (`content_sha`), and comparability is two-level —
+  record level (oracle version, pyc flags) plus per-workload pin identity
+  over the intersection, which is what makes full-vs-smoke-baseline
+  legal (verified locally: exit 0, the 4 full-only workloads listed as
+  "no baseline"). Baseline re-recorded under the new key (pin
+  `8227920d1e85c6af`; reason in the commit, per the re-record rule).
+  Second defect in the same run: `upload-artifact@v4` only takes
+  workspace-relative paths, so the absolute `$RUNNER_TEMP` artifact dir
+  was dropped with a warning and the shipped artifact held the record but
+  not a single trace — the artifact dirs now live in the workspace.
+  Runner numbers for the record (4-core, first full-set run): numeric
+  1.26–1.35×, pure-python 1.08–1.18×, c-bound 1.00× — within ±5% of the
+  local box on every shared workload, which is the speedup-stability
+  claim holding across machines for the first time.
+  (2) **I6 at 368/389 (94.60%) in the same nightly — not a regression.**
+  Case-level against the 376 baseline: 10 cases newly non-pass, ALL
+  `ORACLE_UNSTABLE` (CPython disagreed with itself that run: 5
+  `test_codecmaps_*`, `test_hashlib`, `test_logging`, `test_ucn`,
+  `test_unicodedata`, `test_zipfile64` — coin flips, no ground truth, the
+  documented jitter of 2026-11-01), and 2 cases fixed (`test_signal`'s
+  measurement line now clean, `test_fork1`'s flake gone). The gate ran
+  and passed: no reproducible difference appeared. The published
+  baseline stays at 376; re-recording to a coin-flip number is exactly
+  what the re-record rule forbids.
 - 2026-11-08:
   (1) **`coverage.py` retired.** The local tool that measured "what fraction
   of the corpus lowers" was removed (`git rm compiler/tools/coverage.py`).

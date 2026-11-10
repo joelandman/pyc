@@ -3,11 +3,20 @@
 
   ./verify/perf_compare.py --current perf-smoke.json --baseline verify/perf/baseline.json
 
-The comparability key is the one the plan fixed: workload pin hash, oracle
-version, and pyc flags. A mismatch on any of them means the two records
-measure DIFFERENT THINGS and no number in the table below it is a
-comparison -- the comparator says so and exits 2. That is the harness
-refusing to make a claim it cannot make (I9).
+The comparability key has two levels:
+  * record level: oracle version and pyc flags. Both records must agree,
+    whatever set was run;
+  * workload level: for every workload name present in BOTH records, the
+    pin (path, argv, workload-file content hash) must be identical. A
+    changed constant in a workload file is a different workload.
+
+The two levels meet, not the sets: a set can be compared against a
+baseline recorded for a DIFFERENT set (the nightly full set against the
+smoke baseline) as long as the intersection is pin-identical. New
+workloads (no baseline entry) are listed, not compared. A mismatch at
+either level means the two records measure DIFFERENT THINGS and no number
+in the table is a comparison -- the comparator says so and exits 2. That
+is the harness refusing to make a claim it cannot make (I9).
 
 Hosts are deliberately NOT in the key: they are machine, not measurement
 setup. When the hosts differ, absolute-time deltas are printed for the
@@ -61,8 +70,10 @@ def main() -> int:
         return 2
 
     def key(rec: dict) -> dict:
+        # Record-level key: what BOTH records must agree on, whatever set
+        # was run. (The set's pin_hash identifies the set, it does not gate
+        # a comparison -- see the per-workload pin pass below.)
         return {
-            "pin_hash": rec.get("pin_hash"),
             "oracle_version": rec.get("oracle", {}).get("version"),
             "pyc_flags": sorted(rec.get("pyc", {}).get("flags", [])),
         }
@@ -79,12 +90,40 @@ def main() -> int:
               "different things.")
         return 2
 
+    # Per-workload pin: every name in the intersection must be the SAME
+    # workload (path, argv, file content). A baseline record without
+    # content_sha is a pre-content-pin record and cannot be matched.
+    base_by_name = {w["name"]: w for w in base["workloads"]}
+    pin_drift = []
+    for w in cur["workloads"]:
+        b = base_by_name.get(w["name"])
+        if b is None:
+            continue  # new workload: nothing to pin against
+        for field in ("path", "argv", "content_sha"):
+            if b.get(field) != w.get(field):
+                pin_drift.append(
+                    f"  {w['name']}: {field} drifted: baseline "
+                    f"{b.get(field)!r} -> current {w.get(field)!r}")
+                break
+    if pin_drift:
+        print(f"{RED}not comparable{RST} {DIM}({args.baseline} vs {args.current}){RST}")
+        for line in pin_drift:
+            print(line)
+        print("  a workload whose pinned input changed (or a baseline "
+              "recorded before file contents were pinned) is a DIFFERENT "
+              "workload: comparing it would measure two different things. "
+              "Re-record the baseline with a measured reason in the commit.")
+        return 2
+
     by = {w["name"]: w for w in base["workloads"] if w.get("status") == "OK"}
     host_same = (cur.get("host", {}).get("class")
                  == base.get("host", {}).get("class"))
 
     print(f"{BOLD}perf drift{RST} {DIM}baseline {args.baseline} "
           f"-> current {args.current}{RST}")
+    print(f"  {DIM}pin: baseline {base.get('pin_hash')} vs current "
+          f"{cur.get('pin_hash')} (set identity; the per-workload pins "
+          f"matched){RST}")
     print(f"  {DIM}hosts: {base.get('host', {}).get('class')} vs "
           f"{cur.get('host', {}).get('class')}"
           f"{' (same class: absolute deltas alert)' if host_same else ' (different class: only speedups alert)'}{RST}")

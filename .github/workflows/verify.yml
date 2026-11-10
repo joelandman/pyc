@@ -293,12 +293,16 @@ jobs:
       - name: Perf smoke (--set smoke, pyc -O2 vs sysroot CPython)
         run: |
           set -euxo pipefail
+          # Artifacts live in the workspace: upload-artifact@v4 only takes
+          # workspace-relative paths (an absolute $RUNNER_TEMP path is
+          # dropped with a warning, which is how the first nightly shipped
+          # its record without a single trace).
           ./verify/perf_run.py --set smoke \
             --pyc "./compiler/tools/pyc" \
             --pyc-flag=-O2 \
             --sysroot "$SYSROOT" \
             --json perf-smoke.json \
-            --artifacts-dir "$RUNNER_TEMP/perf-smoke-art"
+            --artifacts-dir perf-smoke-art
           ./verify/perf_compare.py \
             --current perf-smoke.json \
             --baseline verify/perf/baseline.json
@@ -336,9 +340,6 @@ jobs:
         if: always()
         with:
           name: perf-smoke-results
-          # with: does not run a shell: $RUNNER_TEMP would stay literal and
-          # upload-artifact would find nothing. Expressions expand at parse
-          # time.
           path: |
             perf-smoke.json
-            ${{ env.RUNNER_TEMP }}/perf-smoke-art
+            perf-smoke-art

@@ -245,12 +245,14 @@ jobs:
       - name: Perf — full set (pyc -O2 vs sysroot CPython)
         run: |
           set -euxo pipefail
+          # Artifacts in the workspace: upload-artifact@v4 only takes
+          # workspace-relative paths (see verify.yml's perf step).
           ./verify/perf_run.py --set full \
             --pyc "./compiler/tools/pyc" \
             --pyc-flag=-O2 \
             --sysroot "$SYSROOT" \
             --json perf-full.json \
-            --artifacts-dir "$RUNNER_TEMP/perf-full-art"
+            --artifacts-dir perf-full-art
 
       - name: Perf — compare against baseline
         run: |
@@ -288,10 +290,9 @@ jobs:
         if: always()
         with:
           name: perf-nightly
-          # with: does not run a shell: $RUNNER_TEMP would stay literal.
           path: |
             perf-full.json
-            ${{ env.RUNNER_TEMP }}/perf-full-art
+            perf-full-art
 
   # Leak bar (B8): the runtime C code that Lib/test cannot reach. CPython's
   # suite exercises the interpreter, not pyc's trampolines; a refcount leak

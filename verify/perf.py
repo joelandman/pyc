@@ -50,6 +50,15 @@ class Workload:
         except ValueError:
             return str(self.path)
 
+    @property
+    def content_sha(self) -> str:
+        """Hash of the workload FILE, not just its name/path/argv. The
+        pinned inputs mostly live in the file (N=500, ROWS=200000, ...), so
+        a constant edit must change the pin: otherwise the baseline would
+        silently keep comparing a workload that now measures a different
+        amount of work."""
+        return hashlib.sha256(self.path.read_bytes()).hexdigest()[:16]
+
 SMOKE: list[Workload] = [
     # Small, stable, fast to compile: the PR-gate trend set. Each is sized
     # for ~1-2 s of work on the oracle, so process startup is a small,
@@ -74,9 +83,14 @@ SETS: dict[str, list[Workload]] = {"smoke": SMOKE, "full": FULL}
 
 
 def pin_hash(workloads: list[Workload]) -> str:
-    """The comparability key for the workload set: name + relative path +
-    argv. A change to any pinned input (a constant, an argv, a path)
-    changes the hash, and perf_compare then refuses to compare -- the
-    same refusal measure_compare gives you for a flag or version drift."""
-    parts = [f"{w.name}|{w.relpath}|{','.join(w.argv)}" for w in workloads]
+    """The identity of a workload set: name + relative path + argv + file
+    content, per workload. A change to any pinned input (a constant in the
+    file, an argv, a path) changes the hash, and perf_compare then refuses
+    to compare -- the same refusal measure_compare gives you for a flag or
+    version drift. The per-workload form of this pin is what the comparator
+    actually enforces: a set can be compared against a baseline recorded
+    for a DIFFERENT set (the nightly full set against the smoke baseline)
+    as long as every workload in the intersection is pin-identical."""
+    parts = [f"{w.name}|{w.relpath}|{','.join(w.argv)}|{w.content_sha}"
+             for w in workloads]
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
