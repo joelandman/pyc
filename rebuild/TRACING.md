@@ -248,6 +248,26 @@ the GIL ~1–2 µs per tick; the rest of the tick it sleeps). These are
 inherent to event-based vs sampling profiling, not bugs; a Perfetto proto
 writer would shrink the trace file but not the callback cost.
 
+**Feasibility, measured over the 10-workload perf set (2026-11-10):**
+one X event per generator step makes event traces infeasible on
+generator-dense workloads — matmul (N=300) wrote a **3.6 GB** trace for a
+1 s run (27M `sum(genexpr)` steps), mandelbrot 2.8 GB, spectralnorm 2.3 GB,
+nqueens and mail_parse ~1 GB each. There the flamegraph is the
+observation: at 99 Hz its cost is bounded by the run, not the call count.
+Event traces stay small and are the right tool on the call-dense class
+(ast_parse 6 MB, xml_build 51 MB, decimal_pi 0.4 MB). Second refinement of
+the ≈0% line above: on nbody the 500k-iteration hot loop produced **zero**
+CALL events — the whole run's B/E count is 11 (the epilogue calls only).
+Steady-state calls inside native loops are unobserved by the event
+trace; their time shows up in the enclosing native frame's self time
+(measurably: ast_parse's 222.9 ms of "main self" is the unobserved
+`ast.parse` call, its real work visible only as the 521 ms `C:compile`
+slice). The sampling flamegraph sees all of it, because it walks the real
+stack. Whether the silent call path is a deliberate direct-call fast path
+in codegen is an open question — it is plausibly the same mechanism that
+makes the loops fast, and it deserves a dedicated look before anyone
+"fixes" the trace.
+
 ## 7. Files
 
 | File | Change |

@@ -356,6 +356,51 @@ vs C.
 
 **Now**
 
+- 2026-11-10:
+  (1) **First survey pass: where the cycles live (plan question A),
+  measured over the 10-workload perf set** (`verify/perf_analyze.py`,
+  new; parses the trace windows + flamegraph frames side by side so a
+  disagreement between the two independent measurements is visible).
+  Findings, all measured today:
+  a. **Generator expressions are the measured codegen gap.** matmul's
+     flamegraph: `main.<locals>.<genexpr>` is **94.7% of all self
+     samples**; pidigits' trace: the genexpr's self time is **74.0%** of
+     the run (1016 ms of 1373 ms; the actual bigint work is the `spigot`
+     steps at 20.3%). Both workloads trail their loop-only siblings
+     (matmul 1.14× vs nbody/spectralnorm 1.34–1.35×) precisely because
+     the inner loop is a lazy genexpr running as CPython bytecode — 3.14
+     inlined list comprehensions but not genexprs. Compiling a
+     genexpr-plus-known-consumer (`sum`/`join`/`for`/`any`/`all`) as one
+     native loop is the top codegen target; it is also the most common
+     real-world idiom.
+  b. **The native-loop win is real and near the floor already**: nbody
+     `advance` 100% self (1.35×), spectralnorm mul/at/mat ~90% (1.34×),
+     mandelbrot main 98.8% (1.20×); decimal_pi 1.00× with 8% in
+     `C:sqrt` is the c-bound floor behaving as predicted (2026-10-02
+     section, confirmed).
+  c. **Event traces are infeasible on generator-dense workloads**: one X
+     event per generator step → matmul 3.6 GB / mandelbrot 2.8 GB /
+     spectralnorm 2.3 GB / nqueens+mail_parse ~1 GB for ~1 s runs.
+     Flamegraph is the observation there; event traces stay right for
+     the call-dense class (ast_parse 6 MB, xml_build 51 MB). Recorded in
+     TRACING.md §6.
+  d. **The trace is blind to native hot loops**: nbody's 500k-iteration
+     loop produced zero CALL events (11 B/E events for the whole run);
+     ast_parse's `ast.parse` call from native code produced no frame, so
+     its 222.9 ms lands in "main self". Whether that is a deliberate
+     direct-call fast path in codegen is open — plausibly the same
+     mechanism that makes the loops fast; investigate before touching
+     the trace.
+  e. C: attribution on the call-dense class (the target list below):
+     ast_parse is **66.2% in `C:compile`** (the C compiler is the
+     program), xml_build 27.3% `C:feed` (expat) + 18.5% `C:sum`,
+     decimal_pi 8.0% `C:sqrt`.
+  Survey of *real programs in use*: still not done — the perf set is ten
+  hand-picked benchmark shapes, and the `real-app` class in `perf.py`
+  is declared but empty. Proposal on the table: two pinned third-party
+  workloads (`black --check` / `mypy --fast` on a pinned corpus, both
+  pure-Python, installed into a sysroot copy per the numpy-copy
+  precedent), run through the same harness + analyzer.
 - 2026-11-09:
   (1) **First nightly perf run: the comparison contract had a hole; fixed
   and the baseline re-recorded.** The 06:00 metric run measured the full
