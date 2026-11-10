@@ -78,6 +78,28 @@ pyc --list-python-targets        # -> the sysroots pyc can see (see §3.2)
 ```bash
 git clone https://github.com/joelandman/pyc && cd pyc
 
+# one command: builds pyc and installs the compiler and sysroot trees into
+# one self-contained prefix, then runs a differential smoke (the pyc side
+# vs the sysroot's own CPython — I5)
+./install.sh --prefix "$HOME/opt/pyc"
+./install.sh --prefix DIR --dryrun       # print the plan, change nothing
+./install.sh --uninstall --prefix DIR    # remove only the paths pyc owns
+```
+
+The prefix is self-contained after this: `$PREFIX/bin/pyc` finds the
+sysroot in `$PREFIX/sysroots/...` (§3.2), so neither `PYC_SYSROOT` nor the
+checkout is needed at compile time (the host still needs clang++/LLVM 22 to
+*link* user programs — §1.1). The download can be mirrored with
+`PYC_GITHUB_REPO` / `PYC_SYSROOT_TAG` / `PYC_SYSROOT_ASSET`;
+`--sysroot DIR` links an existing sysroot instead (`--copy-sysroot` copies,
+rewriting the manifest paths); `--build-sysroot` compiles CPython instead
+of downloading. Uninstall is marker-guarded (`lib/pyc/pyc-prefix.json`)
+and never touches the prefix itself or anything pyc does not own — a
+symlinked sysroot loses the link, not its target.
+
+To keep working inside the checkout (no prefix):
+
+```bash
 # one script: checks host tools -> fetches (or builds) the sysroot ->
 # builds pyc -> compiles+runs a smoke program, and prints your ready line
 ./tools/setup-machine.sh
@@ -112,11 +134,11 @@ pyc --fetch-sysroot or export PYC_SYSROOT=...   # one of the §3.1 paths
 ./compiler/tools/pyc hello.py -o hello
 ```
 
-An **installed prefix** from a clone (same layout as the tarball, built
-locally, and works with no `PYC_SYSROOT` and no repo checkout):
+The building blocks `install.sh` composes, if you want the compiler
+without a sysroot or a custom layout:
 
 ```bash
-./tools/install-pyc.sh --prefix "$HOME/opt/pyc"
+./tools/install-pyc.sh --prefix "$HOME/opt/pyc" --no-sysroot  # compiler only
 export PATH="$HOME/opt/pyc/bin:$PATH"
 pyc --fetch-sysroot          # into $HOME/opt/pyc/sysroots/...
 pyc hello.py -o hello
@@ -432,13 +454,15 @@ sysroot CPython, no libpython `DT_NEEDED`).
 | CPython-side check "fails" with a version-matching interpreter | a shadowed `libpython` on `LD_LIBRARY_PATH` (conda, local) outranks the sysroot's RUNPATH | `env -u LD_LIBRARY_PATH "$SYSROOT/bin/python3.14" ...` (§5.4) |
 | compile works here, binary won't start on the target box | target glibc older than the sysroot's build host (manifest `"glibc"`) | build/run the sysroot on a newer base, or deploy where the glibc matches |
 | `pip install` inside the primary sysroot | the primary must stay pristine (it is the published/oracle sysroot) | install into a copy (§8) |
+| `install.sh --uninstall` refuses: `not a pyc install: no .../pyc-prefix.json` | the prefix was not made by `install.sh` / `install-pyc.sh` | point `--prefix` at the right directory, or `--force` |
+| `install.sh` (or `pyc --fetch-sysroot`) refuses the downloaded sysroot: `version mismatch: manifest claims X, interpreter is Y` | the published release asset was stamped against a different CPython build than its manifest claims | do not work around the check — republish the asset from a sysroot whose interpreter matches its manifest |
 
 ---
 
 ## 10. Where everything lives
 
 ```
-# installed prefix (tarball or install-pyc.sh)
+# installed prefix (tarball, install.sh, or install-pyc.sh)
 $PREFIX/
   bin/pyc                        # the compiler
   lib/pyc/{pyc_parse,include,src/rt,install-sysroot.sh,pyc-prefix.json}

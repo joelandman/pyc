@@ -401,6 +401,29 @@ vs C.
   workloads (`black --check` / `mypy --fast` on a pinned corpus, both
   pure-Python, installed into a sysroot copy per the numpy-copy
   precedent), run through the same harness + analyzer.
+  (2) **`install.sh`: one-command installer for the compiler + sysroot
+  prefix, with `--dryrun` and `--uninstall`** (repo root; composes
+  `tools/install-pyc.sh` + `tools/install-sysroot.sh`, then a differential
+  smoke that compiles with `$PREFIX/bin/pyc` and NO `PYC_SYSROOT` — the
+  prefix's own `sysroots/` must resolve — and compares the output with the
+  sysroot's own CPython). Uninstall is marker-guarded
+  (`lib/pyc/pyc-prefix.json`), removes only pyc-owned paths, and never
+  follows the sysroot symlink. Verified end to end locally: symlink-sysroot
+  install + reinstall-over + uninstall (target left intact, empty dirs
+  pruned), all dry-run plans.
+  Measured while testing the download path: **the published sysroot is not
+  ELF-relocatable.** Its `bin/python3.14` carries an absolute RUNPATH to
+  the CI build path (`/home/runner/opt/py-sysroots/cp314-3.14.7-tier1/lib`);
+  the asset is self-consistent (launcher + its own lib report 3.14.7,
+  matching the manifest), but on a machine without that path the loader
+  falls back to a system `libpython3.14.so.1.0` (hal9k has 3.14.4 in
+  /usr/lib) — so the interpreter silently runs on a DIFFERENT CPython than
+  the one the binary links (I5 exposure), and `install-sysroot.sh`'s
+  identity check was fooled by the fallback (it refused a good asset:
+  "manifest claims 3.14.7, interpreter is 3.14.4"). The driver's parse
+  subprocess (LD_LIBRARY_PATH stripped, RUNPATH broken) has the same
+  exposure on such machines. Fix pending: relocatable RUNPATH in
+  `build-python-sysroot.sh` (+ verify against the tree's own lib).
 - 2026-11-09:
   (1) **First nightly perf run: the comparison contract had a hole; fixed
   and the baseline re-recorded.** The 06:00 metric run measured the full
