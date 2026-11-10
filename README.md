@@ -168,6 +168,8 @@ Flow: target `ast.parse` → JSON → generated `pyc::ast` → SSA IR → LLVM I
 
 ## Documentation
 
+- [USAGE.md](USAGE.md) — installing and using pyc: step-by-step installs,
+  the sysroot, environment variables, deploying, wheels, tracing
 - [rebuild/CHARTER.md](rebuild/CHARTER.md) — product definition and invariants
 - [rebuild/INTERFACES.md](rebuild/INTERFACES.md) — layer contracts
 - [rebuild/AGENT_DIRECTIVES.md](rebuild/AGENT_DIRECTIVES.md) — how to work on it
