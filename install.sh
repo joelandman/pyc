@@ -76,7 +76,22 @@ if [[ "$SR_NAME" == *$_arch_suffix ]]; then
   SR_NAME="${SR_NAME%"$_arch_suffix"}"
 fi
 if [[ -n "$SRC_SYSROOT" ]]; then
-  SR_NAME="$(basename "$SRC_SYSROOT")"
+  # Use the name the sysroot's manifest declares (archive_name,
+  # e.g. cp314-3.14.7-tier1-x86_64.tar.xz) so the installed directory
+  # matches the cp*-tier* pattern the driver's sysroots/ auto-search
+  # expects. A bare directory basename would not resolve without
+  # PYC_SYSROOT, and the post-install smoke (which deliberately runs
+  # without it) would test nothing.
+  sr_archive="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get("archive_name") or "")' "$SRC_SYSROOT/pyc-sysroot.json" 2>/dev/null || true)"
+  if [[ -n "$sr_archive" ]]; then
+    SR_NAME="$(basename "$sr_archive")"
+    SR_NAME="${SR_NAME%.tar.xz}"
+    if [[ "$SR_NAME" == *$_arch_suffix ]]; then
+      SR_NAME="${SR_NAME%"$_arch_suffix"}"
+    fi
+  else
+    SR_NAME="$(basename "$SRC_SYSROOT")"
+  fi
 fi
 SR_DEST="$PREFIX/sysroots/$SR_NAME"
 
@@ -147,14 +162,21 @@ rewrite_manifest() {
   python3 - "$root/pyc-sysroot.json" "$old" "$root" <<'PY'
 import json, os, sys
 path, old, new = sys.argv[1:4]
-if not old.endswith("/"):
-    old += "/"
+old, new = os.path.abspath(old), os.path.abspath(new)
 data = {}
 if os.path.isfile(path):
     data = json.load(open(path))
+def rewrite(v):
+    if not isinstance(v, str):
+        return v
+    if v == old:
+        return new
+    if v.startswith(old + "/"):
+        return new + v[len(old):]
+    return v
 for k, v in list(data.items()):
-    if isinstance(v, str) and v.startswith(old):
-        data[k] = new + v[len(old):]
+    data[k] = rewrite(v)
+data["sysroot"] = new
 json.dump(data, open(path, "w"), indent=2, sort_keys=True)
 open(path, "a").write("\n")
 PY
@@ -224,7 +246,12 @@ step_smoke() {
   # resolve (that is the property an installed prefix must have).
   env -u PYC_SYSROOT "$PREFIX/bin/pyc" "$src" -o "$out" -O0
   got_pyc="$("$out")"
-  got_py="$(env -u LD_LIBRARY_PATH "$py" "$src")"
+  # Pinned (not just scrubbed) to the sysroot's own libpython, exactly as the
+  # pyc driver pins its oracle subprocesses: on a machine that carries a
+  # SYSTEM libpython3.X, a pre-2026-11-10 tree's RUNPATH does not resolve
+  # here and the scrubbed interpreter would silently run the HOST's CPython
+  # while pyc measured the tree's — subject and oracle would differ (I5).
+  got_py="$(env -u LD_LIBRARY_PATH LD_LIBRARY_PATH="$SR_DEST/lib" "$py" "$src")"
   rm -f "$src" "$out"
   if [[ "$got_pyc" != "$got_py" ]]; then
     die "smoke: pyc said '$got_pyc', sysroot CPython said '$got_py'"

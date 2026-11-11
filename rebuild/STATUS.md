@@ -46,6 +46,7 @@ whose locals do not match.
 | C1b / C2 | closed; probes in `language/` |
 | `--trace` / `--flamegraph` | gated in verify.yml (dormancy byte-identical, well-formedness); overhead ≈0% dormant and ≈0% active flamegraph (99 Hz); active trace ≈10× function-dense — TRACING.md §6, 2026-11-08 |
 | real-world perf (smoke, `-O2`) | baseline 2026-11-09: numeric **1.31–1.35×**, pure-python **1.10–1.12×**, c-bound **0.98×** vs CPython 3.14.7 — "Real-world performance" section below |
+| sysroot relocatability | launcher RUNPATH `[&lt;build-prefix&gt;/lib : $ORIGIN/../lib]`; moved-tree bare run reports the tree's own 3.14.7 on a box carrying two OTHER libpythons (2026-11-10, hal9k) |
 
 I6 is file-as-script vs sysroot 3.14.7 with `--stdlib` (unittest can
 import `test.support`). Do not treat unittest MATCH on a single file as
@@ -422,7 +423,54 @@ vs C.
   identity check was fooled by the fallback (it refused a good asset:
   "manifest claims 3.14.7, interpreter is 3.14.4"). The driver's parse
   subprocess (LD_LIBRARY_PATH stripped, RUNPATH broken) has the same
-  exposure on such machines. Fix pending: relocatable RUNPATH in
+  exposure on such machines.
+  (3) **Sysroot relocatability fixed — the three steps, measured.**
+   1. `build-python-sysroot.sh` now appends
+      `LDFLAGS += -Wl,-rpath,'$$ORIGIN/../lib'` to the generated Makefile
+      after configure. It cannot ride configure's `LDFLAGS` or a make
+      command-line variable: the token must survive script shell → make
+      input → recipe shell, and every other route measured today failed
+      (env LDFLAGS → RUNPATH `/../lib`; make cmdline `$$ORIGIN` → `/../lib`
+      because make re-expands command-line values once; `$$$$ORIGIN` →
+      `/&lt;pid&gt;/../lib` because the recipe shell reads `$$` as its PID).
+      In the Makefile, make's `$$`→`$` plus single quotes is one auditable
+      layer. The launcher now carries BOTH the absolute `$PREFIX/lib` entry
+      (build machine) and `$ORIGIN/../lib` (any machine).
+   2. `install-sysroot.sh` verify runs the interpreter with
+      `LD_LIBRARY_PATH` scrubbed AND pinned to the tree's own `lib/`
+      (scrub alone was the hole), checks the manifest's `libpython_shared`
+      actually sits inside the tree, and WARNS (not dies) when the bare
+      launcher cannot run on this machine (pre-2026-11-10 tree).
+   3. `driver.cpp` pins `LD_LIBRARY_PATH=&lt;sysroot&gt;/lib` for ALL oracle
+      subprocesses (the `oracle_env` helper: xy/abi probes, parse,
+      `python3-config --includes`, the two sysconfig lookups) — not just
+      parse. Pinning, not scrubbing, is what keeps a hostile or merely
+      loaded host environment (conda, `/home/.../local` carrying its own
+      libpython3.14) from swapping the oracle; measured today, hal9k's
+      ambient `LD_LIBRARY_PATH` shadows even a perfectly healthy tree.
+   Measured proof on hal9k (2026-11-10): a `--no-pgo` local build → tree
+   moved to a new path → bare run (host env stripped) reports **3.14.7**
+   (pre-fix the same exercise reported the host's 3.14.4/3.14.5),
+   `factorial(25)` correct, `ssl`/`sqlite3` dynload extensions resolve
+   libpython through the executable's `$ORIGIN` RUNPATH; RUNPATH is
+   `[&lt;build-prefix&gt;/lib:$ORIGIN/../lib]`. Full `install.sh` flow green
+   for both sysroot modes (copy + symlink) with the smoke comparing against
+   the pinned oracle; `--uninstall` re-verified for both.
+   Latent bugs the new checks caught and fixed: (a) `build-python-sysroot.sh`
+   `fetch_source`'s "tree already present" shortcut skipped the
+   `patchlevel.h` version check (only ran after fresh extract) — a mislabeled
+   tree would compile for minutes and fail only at the manifest stamp; (b)
+   `install.sh`'s local `rewrite_manifest` swallowed the path separator
+   (`…/prefix` + `lib/…` → `…/prefixlib/…`) and left the `sysroot` field
+   stale; (c) `install.sh` named the `--sysroot DIR` destination after the
+   directory's basename instead of the manifest's `archive_name`, so the
+   driver's `sysroots/` auto-search (pattern `cp*-tier*`) would never have
+   found it — the smoke would have tested nothing; (d) the smoke's own
+   oracle was scrubbed but not pinned (subject and oracle could diverge on
+   pre-fix trees).
+   Outstanding: the PUBLISHED asset is still the pre-fix tree until the next
+   sysroot nightly republishes it; after that, re-run `./install.sh --prefix
+   &lt;tmp&gt;` (download path) to confirm the identity check passes end to end.
   `build-python-sysroot.sh` (+ verify against the tree's own lib).
 - 2026-11-09:
   (1) **First nightly perf run: the comparison contract had a hole; fixed

@@ -83,14 +83,63 @@ verify_sysroot() {
   local py=""
   py="$(compgen -G "$root/bin/python3.[0-9]*" | grep -v -- '-config$' | sort -V | tail -1 || true)"
   [[ -n "$py" && -x "$py" ]] || die "no interpreter in $root/bin"
-  local py_clean=(env -u LD_LIBRARY_PATH "$py")
-  "${py_clean[@]}" -c 'pass' 2>/dev/null || die \
-    "interpreter cannot run without LD_LIBRARY_PATH — RPATH missing, sysroot is not self-contained"
+
+  # Every measurement below runs with LD_LIBRARY_PATH scrubbed AND pinned to
+  # the tree's own lib directory. Scrubbing alone is not enough: the
+  # launcher's RUNPATH may not exist on this machine (trees packed before
+  # 2026-11-10 carry the CI build path, and a fresh local build carries its
+  # build prefix), and then the loader falls back to a SYSTEM libpython3.X —
+  # measured 2026-11-10 on hal9k, a sound 3.14.7 tree "reported" 3.14.4 that
+  # way, and its identity check below refused a good asset. Worse, the
+  # version banner and the sysconfig data can come from DIFFERENT
+  # interpreters (core from the host lib, data from the tree's stdlib), so a
+  # check that measures the host is not measuring the sysroot at all (I5).
+  local py_own=(env -u LD_LIBRARY_PATH LD_LIBRARY_PATH="$root/lib" "$py")
+  "${py_own[@]}" -c 'pass' 2>/dev/null || die \
+    "interpreter cannot run against its own lib: $root/lib (sysroot is broken)"
+
+  # The manifest's shared libpython, when named, must exist inside the tree.
+  # This is what makes py_own above trustworthy: if the tree's own lib were
+  # missing, the pinned run could still fall through to a host libpython and
+  # pass every check while the sysroot itself is hollow.
+  if ! "${py_own[@]}" - "$root/pyc-sysroot.json" <<'PY'
+import json, os, sys
+path = sys.argv[1]
+data = {}
+if os.path.isfile(path):
+    data = json.load(open(path))
+shared = data.get("libpython_shared")
+if shared:
+    # realpath: a symlinked sysroot's manifest points at the tree the
+    # link targets, and that is where self-containment must hold.
+    root = os.path.dirname(os.path.realpath(path))
+    if not (os.path.isfile(shared) and shared.startswith(root + os.sep)):
+        sys.stderr.write(
+            "manifest names libpython_shared %r, which is missing or outside "
+            "the sysroot tree — the tree is not self-contained\n" % shared)
+        sys.exit(4)
+PY
+  then
+    die "sysroot self-containment check failed (see above)"
+  fi
+
+  # Relocatability: warn, not die. A tree whose RUNPATH does not resolve on
+  # this machine (the pre-2026-11-10 published assets) still works via the
+  # pin above — pyc pins $root/lib for all its oracle subprocesses — but a
+  # user who runs this interpreter directly would silently get a host
+  # CPython on a box that carries one.
+  if ! env -u LD_LIBRARY_PATH "$py" -c 'pass' 2>/dev/null; then
+    warn "interpreter only runs via LD_LIBRARY_PATH=$root/lib on this machine:
+  $py carries a RUNPATH that does not exist here (pre-2026-11-10 tree).
+  pyc pins $root/lib for its own subprocesses; when you run $py directly,
+  set LD_LIBRARY_PATH=$root/lib (see USAGE.md section 5.4)."
+  fi
+
   local got want="15511210043330985984000000"
-  got="$("${py_clean[@]}" -c 'import math;print(math.factorial(25))')"
+  got="$("${py_own[@]}" -c 'import math;print(math.factorial(25))')"
   [[ "$got" == "$want" ]] || die "factorial(25)=$got (want $want) — CHARTER I2"
   local ident
-  ident="$("${py_clean[@]}" - "$root/pyc-sysroot.json" <<'PY'
+  ident="$("${py_own[@]}" - "$root/pyc-sysroot.json" <<'PY'
 import json, os, platform, sys
 path = sys.argv[1]
 host = platform.machine() or "unknown"

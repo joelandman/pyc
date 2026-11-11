@@ -107,6 +107,20 @@ Proc run_proc(const std::vector<std::string>& argv,
     return r;
 }
 
+// The oracle interpreter must load the sysroot's OWN libpython. Stripping
+// the inherited LD_LIBRARY_PATH (run_proc's env_unset) is not enough on a
+// tree whose RUNPATH does not exist on this machine: the published assets
+// before 2026-11-10 carry the CI build path (/home/runner/...) in the
+// launcher, and on a box without it the loader falls back to a SYSTEM
+// libpython3.X — so pyc would parse with (and report) a DIFFERENT CPython
+// than the one the binary links (I5). Measured 2026-11-10 on hal9k: the
+// same tree reported 3.14.7 with its own lib and 3.14.4 via the fallback.
+// Pinning the tree's lib directory is exact (that is where the shared
+// libpython lives) and a no-op where the RUNPATH already works.
+std::vector<std::string> oracle_env(const std::string& sysroot) {
+    return {"LD_LIBRARY_PATH=" + sysroot + "/lib"};
+}
+
 std::string exe_dir() {
     char buf[4096];
     ssize_t n = ::readlink("/proc/self/exe", buf, sizeof buf - 1);
@@ -266,7 +280,7 @@ std::string sysroot_xy(const std::string& root) {
         if (!p.empty()) {
             Proc r = run_proc({p, "-c",
                                "import sys; print('%d.%d'%sys.version_info[:2])"},
-                              {}, {"LD_LIBRARY_PATH"});
+                              oracle_env(root), {"LD_LIBRARY_PATH"});
             xy = trim(r.out);
         }
     }
@@ -502,8 +516,8 @@ int pyc_driver_main(int argc, char** argv) {
         return 2;
     }
     std::string xy = trim(run_proc(
-        {py, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"}, {},
-        {"LD_LIBRARY_PATH"}).out);
+        {py, "-c", "import sys; print('%d.%d' % sys.version_info[:2])"},
+        oracle_env(sysroot), {"LD_LIBRARY_PATH"}).out);
     std::string abi = trim(run_proc(
         {py, "-c",
          "import sys,sysconfig\n"
@@ -511,7 +525,7 @@ int pyc_driver_main(int argc, char** argv) {
          "if sysconfig.get_config_var('Py_GIL_DISABLED'): a+='t'\n"
          "if hasattr(sys,'gettotalrefcount'): a+='d'\n"
          "print(a)"},
-        {}, {"LD_LIBRARY_PATH"}).out);
+        oracle_env(sysroot), {"LD_LIBRARY_PATH"}).out);
 
     if (list_targets) {
         std::printf("selected %s  abi=%s\n", xy.c_str(), abi.c_str());
@@ -581,7 +595,9 @@ int pyc_driver_main(int argc, char** argv) {
                                            {"--feature-version", std_xy});
     std::string pp = env_get("PYTHONPATH", "");
     std::string pythonpath = parse_home + (pp.empty() ? "" : (":" + pp));
-    Proc parse = run_proc(parse_args, {"PYTHONPATH=" + pythonpath}, {"LD_LIBRARY_PATH"});
+    std::vector<std::string> parse_env = oracle_env(sysroot);
+    parse_env.push_back("PYTHONPATH=" + pythonpath);
+    Proc parse = run_proc(parse_args, parse_env, {"LD_LIBRARY_PATH"});
     if (parse.code != 0) {
         if (!parse.err.empty()) std::fputs(parse.err.c_str(), stderr);
         if (!parse.out.empty()) {
@@ -624,14 +640,15 @@ int pyc_driver_main(int argc, char** argv) {
         std::string lib_static = manifest_key(sysroot, "libpython_static");
         if (is_file(lib_static)) lib = lib_static;
     }
-    if (inc.empty()) inc = trim(run_proc({cfg, "--includes"}, {}, {}).out);
+    if (inc.empty()) inc = trim(run_proc({cfg, "--includes"}, oracle_env(sysroot),
+                                          {"LD_LIBRARY_PATH"}).out);
     if (lib.empty()) {
         std::string libpl = trim(run_proc(
-            {py, "-c", "import sysconfig;print(sysconfig.get_config_var('LIBPL') or '')"}, {},
-            {"LD_LIBRARY_PATH"}).out);
+            {py, "-c", "import sysconfig;print(sysconfig.get_config_var('LIBPL') or '')"},
+            oracle_env(sysroot), {"LD_LIBRARY_PATH"}).out);
         std::string libname = trim(run_proc(
-            {py, "-c", "import sysconfig;print(sysconfig.get_config_var('LIBRARY') or '')"}, {},
-            {"LD_LIBRARY_PATH"}).out);
+            {py, "-c", "import sysconfig;print(sysconfig.get_config_var('LIBRARY') or '')"},
+            oracle_env(sysroot), {"LD_LIBRARY_PATH"}).out);
         if (!libpl.empty() && !libname.empty() && is_file(libpl + "/" + libname))
             lib = libpl + "/" + libname;
         else {

@@ -150,10 +150,15 @@ pyc hello.py -o hello
 release asset is missing, you need a different CPython, or you are changing
 the A2 runtime headers. It downloads and configures CPython, builds a
 **Tier 1** sysroot (static `libpython.a`, dynamic libc, `-rdynamic`, PGO),
-verifies it (interpreter runs with `LD_LIBRARY_PATH` stripped;
-`math.factorial(25)` — CHARTER I2; manifest/interpreter version match), and
-leaves it under `$PYC_SYSROOT_ROOT` (default `$HOME/opt/py-sysroots`),
-named `<abi>-<version>-tier1`:
+verifies it (every interpreter measurement runs with `LD_LIBRARY_PATH`
+scrubbed **and pinned to the tree's own `lib/`** — scrub alone is not
+enough when the launcher's RUNPATH does not resolve on this machine;
+`math.factorial(25)` — CHARTER I2; manifest/interpreter version match),
+stamps the manifest from that pinned measurement, and leaves it under
+`$PYC_SYSROOT_ROOT` (default `$HOME/opt/py-sysroots`), named
+`<abi>-<version>-tier1`. The installed launcher carries both an absolute
+`$PREFIX/lib` and a relative `$ORIGIN/../lib` RUNPATH entry (2026-11-10),
+so the tree stays self-contained after it is moved.
 
 ```bash
 ./tools/build-python-sysroot.sh                          # 3.14.7 tier 1
@@ -348,8 +353,10 @@ swaps in a different libpython — then the "oracle" is not the CPython your
 program embeds, and nothing downstream notices, because the version string
 usually matches.
 
-- pyc handles this for you at compile time: the parse subprocess runs with
-  `LD_LIBRARY_PATH` stripped.
+- pyc handles this for you at compile time: every oracle subprocess
+  (parse, version/ABI probes, `python3-config`) runs with `LD_LIBRARY_PATH`
+  scrubbed **and pinned to the sysroot's own `lib/`**, so the oracle is the
+  tree's CPython no matter what the host carries (2026-11-10).
 - When **you** run the sysroot's interpreter (as an oracle, for a
   differential check, `pip install`, …), strip it yourself:
 
@@ -360,6 +367,13 @@ usually matches.
 
   A compiled binary itself is never affected — it links `libpython.a`
   statically and has no `DT_NEEDED` for it.
+
+- Sysroots built on/after 2026-11-10 additionally carry a `$ORIGIN/../lib`
+  RUNPATH entry, so the launcher finds its own libpython even after the
+  tree is moved to another path. That does **not** remove this advice: on a
+  machine whose `LD_LIBRARY_PATH` already carries a libpython (conda,
+  `/home/.../local`, distro), the environment still outranks RUNPATH, and
+  scrubbing (or letting pyc do it) remains the fix.
 
 - The harness pins this for both sides (`child_env` strips
   `LD_LIBRARY_PATH` and also fixes `PYTHONHASHSEED`, `PYTHONDONTWRITEBYTECODE`,
@@ -455,7 +469,7 @@ sysroot CPython, no libpython `DT_NEEDED`).
 | compile works here, binary won't start on the target box | target glibc older than the sysroot's build host (manifest `"glibc"`) | build/run the sysroot on a newer base, or deploy where the glibc matches |
 | `pip install` inside the primary sysroot | the primary must stay pristine (it is the published/oracle sysroot) | install into a copy (§8) |
 | `install.sh --uninstall` refuses: `not a pyc install: no .../pyc-prefix.json` | the prefix was not made by `install.sh` / `install-pyc.sh` | point `--prefix` at the right directory, or `--force` |
-| `install.sh` (or `pyc --fetch-sysroot`) refuses the downloaded sysroot: `version mismatch: manifest claims X, interpreter is Y` | the published release asset was stamped against a different CPython build than its manifest claims | do not work around the check — republish the asset from a sysroot whose interpreter matches its manifest |
+| `install.sh` (or `pyc --fetch-sysroot`) refuses the downloaded sysroot: `version mismatch: manifest claims X, interpreter is Y` | since 2026-11-10 the verify pins the tree's own libpython, so this is a genuinely bad asset; on pre-2026-11-10 assets the same error could also be a broken RUNPATH (the published asset) whose launcher fell back to the host's libpython | pre-fix asset: rebuild the tree (§1.4) — post-fix trees are relocatable and pass; do not work around the check |
 
 ---
 

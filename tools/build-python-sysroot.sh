@@ -184,12 +184,31 @@ check_deps() {
 
 # ---------------------------------------------------------------- fetch src --
 
+# The tree must declare the requested version — on EVERY path, not only
+# after a fresh extract. The "already present" shortcut in fetch_source()
+# reuses whatever sits in $SRC_DIR, and a mislabeled tree (a git-archive or
+# an old extract under the wrong directory name) would otherwise compile for
+# minutes and only fail at the manifest stamp. Checking here turns that into
+# an immediate, specific refusal (CHARTER I1).
+check_tree_version() {
+  (( DRY_RUN )) && return 0
+  local got
+  got="$(sed -n 's/^#define PY_VERSION[[:space:]]*"\([^"]*\)".*/\1/p' \
+         "$SRC_DIR/Include/patchlevel.h")"
+  if [[ "$got" != "$VERSION" ]]; then
+    die "source tree at $SRC_DIR declares $got, expected $VERSION —
+  rm the tree (or the cached tarball $TARBALL) and re-extract, or pass --force"
+  fi
+  info "source verified: PY_VERSION $got"
+}
+
 fetch_source() {
   step "Fetching CPython ${VERSION}"
   run "mkdir -p '$SRC_ROOT'"
 
   if [[ -d "$SRC_DIR" && $FORCE -eq 0 ]]; then
     info "source tree already present: $SRC_DIR (use --force to re-extract)"
+    check_tree_version
     return
   fi
 
@@ -222,13 +241,7 @@ fetch_source() {
   run "rm -rf '$SRC_DIR'"
   run "tar -xf '${SRC_ROOT}/${TARBALL}' -C '$SRC_ROOT'"
 
-  if (( ! DRY_RUN )); then
-    local got
-    got="$(sed -n 's/^#define PY_VERSION[[:space:]]*"\([^"]*\)".*/\1/p' \
-           "$SRC_DIR/Include/patchlevel.h")"
-    [[ "$got" == "$VERSION" ]] || die "tarball declares $got, expected $VERSION"
-    info "source verified: PY_VERSION $got"
-  fi
+  check_tree_version
 }
 
 # ------------------------------------------------------------------ config --
@@ -245,6 +258,10 @@ configure_build() {
   # binary dies with "libpython3.X.so.1.0: cannot open shared object file" on
   # any machine that does not happen to carry $PREFIX/lib in LD_LIBRARY_PATH --
   # which is precisely the portability bug this script exists to avoid.
+  #
+  # The RELOCATABLE half ($ORIGIN/../lib) is appended to the generated
+  # Makefile after configure (see below) because it cannot survive the
+  # configure->make->shell escaping chain as an environment value.
   local env_prefix=("LDFLAGS=-Wl,-rpath,${PREFIX}/lib")
 
   if (( TIER == 1 )); then
@@ -279,6 +296,31 @@ configure_build() {
   info "prefix:  $PREFIX"
   info "configure: ${env_prefix[*]:-} ../configure ${args[*]}"
   run "cd '$BUILD_DIR' && ${env_prefix[*]:-} ../configure ${args[*]}"
+
+  # Relocatable RUNPATH entry for the installed launcher: $ORIGIN/../lib
+  # (bin/ -> lib/). It cannot ride configure's LDFLAGS or a make command-line
+  # variable: the value would have to survive script shell -> eval -> make
+  # input expansion -> recipe shell, and every layer eats a dollar or a quote
+  # (measured 2026-11-10: the RUNPATH came out "/../lib" — and a naive
+  # doubling comes out "/<pid>/../lib", because the recipe shell reads $$ as
+  # its PID). Appending it to the generated Makefile keeps the quoting at one
+  # auditable layer: make turns $$ into a literal $ for the recipe shell, and
+  # the single quotes (passed through by make) stop the recipe shell from
+  # expanding the token, so the linker stores the $ORIGIN token itself. The
+  # launcher already carries the absolute $PREFIX/lib entry from configure's
+  # LDFLAGS; with both, a tree moved by install-sysroot.sh still finds its
+  # own libpython on any machine, instead of silently resolving to a SYSTEM
+  # libpython3.X when one is around (I5).
+  if (( DRY_RUN )); then
+    printf '  \033[90m$ append $ORIGIN RUNPATH line to %s/Makefile\033[0m\n' "$BUILD_DIR"
+  else
+    cat >> "$BUILD_DIR/Makefile" <<'PYC_ORIGIN_RPATH'
+# Added by build-python-sysroot.sh (see configure_build): relative RUNPATH
+# so the installed launcher resolves its own libpython after the tree is
+# moved. The doubled dollar is make syntax for a literal dollar.
+LDFLAGS += -Wl,-rpath,'$$ORIGIN/../lib'
+PYC_ORIGIN_RPATH
+  fi
 }
 
 build_install() {
@@ -301,8 +343,14 @@ write_manifest() {
   local manifest="$PREFIX/pyc-sysroot.json"
   info "writing $manifest"
   (( DRY_RUN )) && return 0
+  # Pinned to the tree's own libpython: the stamp must measure the tree, not
+  # whatever libpython the host environment puts in front of the launcher
+  # (see verify()). Without this, a host with a system libpython3.X makes the
+  # guard compare the HOST's version against the request and refuse a sound
+  # tree — or, if the host matched, stamp a manifest about the host.
+  local py_own=(env -u LD_LIBRARY_PATH LD_LIBRARY_PATH="$PREFIX/lib" "$py")
 
-  "$py" - "$manifest" "$ABI" "$TIER" "$VERSION" "$WHEEL_VERIFIED" <<'PYEOF'
+  "${py_own[@]}" - "$manifest" "$ABI" "$TIER" "$VERSION" "$WHEEL_VERIFIED" <<'PYEOF'
 import json, sys, sysconfig, os, platform
 manifest, abi, tier, requested = sys.argv[1:5]
 # Recompute from the interpreter so the manifest cannot disagree with reality.
@@ -374,48 +422,64 @@ verify() {
   if (( DRY_RUN )); then info "(dry run — skipping verification)"; return 0; fi
   [[ -x "$py" ]] || die "no interpreter at $py"
 
+  # Every interpreter invocation below runs with LD_LIBRARY_PATH scrubbed AND
+  # pinned to $PREFIX/lib. Scrubbing alone is not enough: the launcher's
+  # RUNPATH may not exist on this machine, and then the loader falls back to
+  # a SYSTEM libpython3.X — measured 2026-11-10 on hal9k, the same launcher
+  # reported 3.14.7 against its own lib and 3.14.5 via the host environment,
+  # and the version banner and the sysconfig data even came from DIFFERENT
+  # interpreters (the core from the host lib, the sysconfig data from the
+  # tree's stdlib). A verify that measures the host would stamp a manifest
+  # about a CPython the sysroot does not contain (I5). Pinning measures the
+  # tree's own libpython no matter what the host carries.
+  local py_own=(env -u LD_LIBRARY_PATH LD_LIBRARY_PATH="$PREFIX/lib" "$py")
+
   # Let the sysroot describe ITSELF rather than trusting the flags of this
   # invocation. `--verify-only` on an existing tree may be run without the
   # --debug/--freethreaded flags it was built with, and inferring the ABI from
   # the command line then mislabels it (cp314 for a cp314d tree) and skips the
   # debug-specific checks. Targets are data; read the data.
-  if "$py" -c 'import sys; sys.gettotalrefcount()' >/dev/null 2>&1; then DEBUG=1; fi
-  if "$py" -c 'import sysconfig,sys; sys.exit(0 if sysconfig.get_config_var("Py_GIL_DISABLED") else 1)' >/dev/null 2>&1; then
+  if "${py_own[@]}" -c 'import sys; sys.gettotalrefcount()' >/dev/null 2>&1; then DEBUG=1; fi
+  if "${py_own[@]}" -c 'import sysconfig,sys; sys.exit(0 if sysconfig.get_config_var("Py_GIL_DISABLED") else 1)' >/dev/null 2>&1; then
     FREETHREADED=1
   fi
   ABI="cp${XY//./}"
   (( FREETHREADED )) && ABI="${ABI}t"
   (( DEBUG ))        && ABI="${ABI}d"
 
-  # Verify with LD_LIBRARY_PATH scrubbed. Otherwise a developer machine that
-  # already exports $PREFIX/lib will report a sysroot healthy that is broken
-  # everywhere else.
-  local py_clean=(env -u LD_LIBRARY_PATH "$py")
-  "${py_clean[@]}" -c 'pass' 2>/dev/null || die \
-    "interpreter cannot run without LD_LIBRARY_PATH set — the RPATH is missing,
-  so this sysroot is not self-contained and will fail on other machines"
+  # Self-containment, separately: can the tree run with NO environment help
+  # at all? On the build machine the absolute RUNPATH entry covers it; on
+  # other machines only a tree built with the $ORIGIN entry (2026-11-10)
+  # does. Older trees fail here with an accurate message: they are not
+  # self-contained on this machine.
+  if ! env -u LD_LIBRARY_PATH "$py" -c 'pass' 2>/dev/null; then
+    die "interpreter cannot run without LD_LIBRARY_PATH set — the RUNPATH
+  does not resolve on this machine, so this sysroot is not self-contained
+  here (rebuild with the current build-python-sysroot.sh, which adds a
+  \$ORIGIN entry, or run it where the build path exists)"
+  fi
 
   # 1. interpreter runs, and int is arbitrary precision (CHARTER I2)
   local got want="15511210043330985984000000"
-  got="$("${py_clean[@]}" -c 'import math;print(math.factorial(25))')"
+  got="$("${py_own[@]}" -c 'import math;print(math.factorial(25))')"
   [[ "$got" == "$want" ]] || die "interpreter sanity failed: factorial(25) = $got"
-  info "interpreter OK — $("$py" -V 2>&1)"
+  info "interpreter OK — $("${py_own[@]}" -V 2>&1)"
 
   # A debug sysroot that is not actually a debug build is worse than none: A2
   # would report zero leaks because nothing was counting. gettotalrefcount()
   # exists only under Py_REF_DEBUG, so its presence is the real proof.
   if (( DEBUG )); then
-    "${py_clean[@]}" -c 'import sys; sys.gettotalrefcount()' 2>/dev/null \
+    "${py_own[@]}" -c 'import sys; sys.gettotalrefcount()' 2>/dev/null \
       || die "sysroot built with --debug but sys.gettotalrefcount() is missing:
   Py_REF_DEBUG is not active, so refcount checking would silently pass"
-    local flags; flags="$("${py_clean[@]}" -c 'import sys;print(sys.abiflags)')"
+    local flags; flags="$("${py_own[@]}" -c 'import sys;print(sys.abiflags)')"
     info "Py_REF_DEBUG active (abiflags='${flags}', gettotalrefcount present)"
   fi
 
   # 2. the static library exists where we expect (LIBPL, not lib/)
   local libpl static_lib
-  libpl="$("$py" -c 'import sysconfig;print(sysconfig.get_config_var("LIBPL"))')"
-  static_lib="$libpl/$("$py" -c 'import sysconfig;print(sysconfig.get_config_var("LIBRARY"))')"
+  libpl="$("${py_own[@]}" -c 'import sysconfig;print(sysconfig.get_config_var("LIBPL"))')"
+  static_lib="$libpl/$("${py_own[@]}" -c 'import sysconfig;print(sysconfig.get_config_var("LIBRARY"))')"
   [[ -f "$static_lib" ]] || die "static libpython missing: $static_lib"
   info "static libpython: $static_lib ($(du -h "$static_lib" | cut -f1))"
 
@@ -493,10 +557,15 @@ verify_wheel() {
 
   step "Verifying C-extension wheel support (${WHEEL_PKG})"
   local py="$PREFIX/bin/python${XY}"
+  # Pinned to the tree's own libpython (see write_manifest): an unpinned
+  # `pip install` would install into the HOST's prefix if the launcher
+  # resolves the host's libpython, and the sysconfig queries below would read
+  # the host's LIBPL.
+  local py_own=(env -u LD_LIBRARY_PATH LD_LIBRARY_PATH="$PREFIX/lib" "$py")
 
   # No network is an environment problem, not a sysroot defect, so this warns
   # by default. --require-wheel makes it fatal; that is what CI should use.
-  if ! "$py" -m pip install --quiet --no-input --disable-pip-version-check \
+  if ! "${py_own[@]}" -m pip install --quiet --no-input --disable-pip-version-check \
         "$WHEEL_PKG" >/dev/null 2>&1; then
     (( WHEEL_REQUIRED )) && die "cannot install '$WHEEL_PKG' into the sysroot"
     warn "cannot install '$WHEEL_PKG' (offline?) — wheel support UNVERIFIED"
@@ -505,7 +574,7 @@ verify_wheel() {
   fi
 
   local wheel_ver
-  wheel_ver="$("$py" -c "import ${WHEEL_PKG} as m;print(m.__version__)" 2>/dev/null || echo '?')"
+  wheel_ver="$("${py_own[@]}" -c "import ${WHEEL_PKG} as m;print(m.__version__)" 2>/dev/null || echo '?')"
   info "installed ${WHEEL_PKG} ${wheel_ver} into the sysroot"
 
   local probe="$SCRATCH/wheel"; mkdir -p "$probe"
@@ -522,8 +591,8 @@ int main(void){
 CEOF
   local inc libpl static_lib
   inc="$("$PREFIX/bin/python${XY}-config" --includes)"
-  libpl="$("$py" -c 'import sysconfig;print(sysconfig.get_config_var("LIBPL"))')"
-  static_lib="$libpl/$("$py" -c 'import sysconfig;print(sysconfig.get_config_var("LIBRARY"))')"
+  libpl="$("${py_own[@]}" -c 'import sysconfig;print(sysconfig.get_config_var("LIBPL"))')"
+  static_lib="$libpl/$("${py_own[@]}" -c 'import sysconfig;print(sysconfig.get_config_var("LIBRARY"))')"
 
   # The product's own link mode: static libpython plus -rdynamic, so the
   # wheel's .so can resolve libpython symbols out of the executable.
