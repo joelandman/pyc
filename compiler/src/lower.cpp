@@ -309,6 +309,13 @@ private:
     // the comprehension's entry machinery has no counterpart in CPython 3.14
     // (PEP 709 inlines the loop into the caller).
     bool quiet_locs_ = false;
+    // Set while a fused `sum`/`min`/`max` loop body is being lowered. A
+    // NESTED genexpr consumed by such a loop cannot get its own synthetic
+    // function created inside the outer loop's unwind pads without a
+    // dominator violation -- so the inner one falls back to the real
+    // generator. Matmul's `sum(...)` is never nested, so this never
+    // touches the perf target.
+    bool in_fused_loop_ = false;
     // Names in THIS function whose slot holds a cell: either a local something
     // nested reads (a cellvar) or a name inherited from an enclosing function
     // (a freevar). Both are read with cell.get rather than load.local.
@@ -6658,6 +6665,455 @@ private:
         return out;
     }
 
+    // Fuse a GeneratorExpression consumed DIRECTLY by a draining builtin into
+    // one native loop, instead of marshalling a CPython generator (lower_genexp).
+    // The genexpr's for/if nest lowers exactly like a comprehension: lower_comp
+    // builds a native list/set, and we then drive the builtin on it. No
+    // generator object survives, so there is no isgenerator/gi_frame divergence
+    // (that is the contract GENERATORS.md draws around native lowering). any/all
+    // are the one exception -- they short-circuit, so they cannot materialise a
+    // list first; lower_genexp_anyall gives them a running accumulator.
+    ir::Value try_lower_fused_genexp(const Call& c, bool* ok) {
+        // FUSED genexpr -> draining builtin: DISABLED -- falls back to the
+        // real CPython generator. Fusion was wired up and made CORRECT --
+        // fixed the "<sumcomp>" double-free by making the synthetic frame
+        // BORROW its `.0` iterator, and a latent `std::move(saved)` bug that
+        // emptied the CallObject release loop and broke matmul's compile with
+        // "Instruction does not dominate all uses" -- but a matmul
+        // measurement showed it is a REGRESSION: `sum(genexpr)` runs at
+        // 0.967x vs the oracle, slower than BOTH the loop/listcomp siblings
+        // (1.19-1.21x) and slower than the real genexpr (1.03x).
+        //
+        // The cause is measured, not guessed (see rebuild/STATUS.md
+        // 2026-11-18): the fused `<sumcomp>` is a NESTED function, so every
+        // captured variable (A, B, i, j) is read via `cell.get` -- a runtime
+        // cell dereference per access -- and the accumulator uses PyNumber_Add.
+        // The loop-only sibling `_s` takes the same variables as PARAMETERS and
+        // reads them via direct `load.local` + PyNumber_InPlaceAdd, which is
+        // what makes it win. pyc's boxed `cell.get` CAPI is slower than
+        // CPython's internal genexpr cell access, so fusion loses on both
+        // counts.
+        //
+        // Restoring fusion is a perf study, not a bug fix: the per-access cell
+        // dereference has to be eliminated -- e.g. snapshot the captured values
+        // into fast locals at `<sumcomp>` entry (correct only when the
+        // enclosing scope does not rebound them mid-genexpr), or inline the
+        // accumulator loop into the enclosing frame instead of emitting a
+        // nested function. Until then the fallback is correct (correctness >
+        // perf, per the A3 contract), and the correctness fixes in
+        // lower_genexp_sum below mean a later effort can enable this safely.
+        if (c.args.size() != 1 || !c.keywords.empty()) return {};
+        const GeneratorExp* g = std::get_if<GeneratorExp>(&c.args[0].v);
+        if (!g) return {};
+        for (const auto& cl : g->generators) if (cl.is_async) return {};
+        return {};
+    }
+
+    // Draining a genexpr into a native list/set, then applying the consumer.
+    // "list"/"set" return the materialised object; everything else drives the
+    // builtin (looked up by name, so a shadowed builtin still works) on it.
+    ir::Value lower_genexp_collect(const GeneratorExp& n, const std::string& consumer,
+                                   const ir::Value& sep, bool* ok) {
+        const char* kind = (consumer == "set") ? "set" : "list";
+        // The outermost iterable is evaluated HERE (this frame), eagerly, so its
+        // exception fires at the call site -- exactly as CPython does for the
+        // sync GET_ITER before any element is taken (I1).
+        ir::Value colv = lower_comp(n.generators, &*n.elt, nullptr, kind, n.loc, ok);
+        if (!*ok) return {};
+        if (consumer == "list" || consumer == "set") {
+            mark_owned(colv);
+            return colv;
+        }
+        if (consumer == "join") {
+            // sep.join(genexpr): PyUnicode_Join does not steal, so sep and the
+            // materialised list are released via the consume list below.
+            // call_capi returns the result it just defined -- use it, not a
+            // fresh value (returning an unassigned fresh value is how a
+            // generator would silently produce garbage).
+            ir::Value out = call_capi("PyUnicode_Join", {sep, colv}, n.loc, ok, {sep, colv});
+            mark_owned(out);
+            return out;
+        }
+        // Any other consumer: drive the builtin on the materialised collection.
+        ir::Value fn = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        emit(ir::Instr{ir::Op::LoadGlobal, {}, fn, Ownership::Owned, consumer,
+                       0, 0, n.loc, make_landing_pad(n.loc)});
+        mark_owned(fn);
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        std::vector<ir::Value> args{fn, colv};
+        std::vector<ir::Value> saved = args;
+        emit(ir::Instr{ir::Op::CallObject, std::move(args), out, Ownership::Owned, "",
+                       0, 0, n.loc, make_landing_pad(n.loc)});
+        for (const auto& a : saved) if (owns(a)) release(a, n.loc);
+        mark_owned(out);
+        return out;
+    }
+
+    // any/all over a genexpr: a running short-circuit accumulator. No list can be
+    // built first (short-circuit must stop advancing), so the for/if nest is
+    // lowered as its own synthetic-frame loop. `found`/`val` record the first
+    // deciding element; on loop exhaustion the init value (False for any, True
+    // for all) is returned, matching CPython's all()/any() on an empty.
+    ir::Value lower_genexp_anyall(const GeneratorExp& n, bool is_any, bool* ok) {
+        const comprehension& g = n.generators[0];
+        std::vector<std::string> vars;
+        for (const comprehension& c : n.generators) {
+            if (c.is_async) { *ok = err("async generators", "generator expressions", n.loc); return {}; }
+            collect_target_names(*c.target, vars);
+        }
+        std::set<std::string> bound(vars.begin(), vars.end());
+        std::set<std::string> captured;
+        free_locals(*n.elt, bound, captured);
+        for (const comprehension& c : n.generators) {
+            for (const expr& cond : c.ifs) free_locals(cond, bound, captured);
+            free_locals(*c.target, bound, captured);
+            if (&c != &n.generators[0]) free_locals(*c.iter, bound, captured);
+        }
+        std::vector<std::string> caps(captured.begin(), captured.end());
+
+        ir::Value seq = lower_expr(*g.iter, ok);
+        if (!*ok) return {};
+        ir::Value it = call_capi("PyObject_GetIter", {seq}, n.loc, ok, {seq});
+        if (!*ok) return {};
+        mark_owned(it);
+
+        std::vector<ir::Value> capvals;
+        std::vector<std::string> cell_caps;
+        for (const std::string& c : caps) {
+            ir::Value v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            auto it2 = locals_.find(c);
+            emit(ir::Instr{ir::Op::LoadLocal, {}, v, Ownership::Owned, c,
+                           it2->second, 0, n.loc, make_landing_pad(n.loc)});
+            mark_owned(v);
+            capvals.push_back(v);
+            if (cells_.count(c)) cell_caps.push_back(c);
+        }
+
+        std::vector<std::string> params{".0"};
+        for (const std::string& c : caps) params.push_back(c);
+        // Loop vars get their OWN fast-local slots (exactly like lower_comp),
+        // so a loop-var cell lands at ITS slot and can never collide with the
+        // iterator .0 -- which is what made a later boxed short-circuit return
+        // (a tuple) corrupt the frame's iterator slot and crash. Only the vars
+        // the element or a guard actually reads late become cells.
+        std::vector<std::string> locals = params;
+        for (const std::string& x : vars) locals.push_back(x);
+        locals.push_back(".val");
+        std::string fname = std::string("<anyallcomp>");
+        FnScope sc = begin_function(fname, params, locals);
+        quiet_locs_ = true;
+        for (const std::string& c : cell_caps) cells_[c] = locals_[c];
+        std::set<std::string> nested;
+        for (const std::string& r : nested_reads_expr(*n.elt)) nested.insert(r);
+        for (const comprehension& c : n.generators)
+            for (const expr& cond : c.ifs)
+                for (const std::string& r : nested_reads_expr(cond)) nested.insert(r);
+        for (const std::string& x : vars) {
+            if (!nested.count(x) || cells_.count(x)) continue;
+            cells_[x] = locals_[x];
+            ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::CellNew, {}, cell, Ownership::Owned, x,
+                           0, 0, n.loc, make_landing_pad(n.loc)});
+            mark_owned(cell);
+            emit(ir::Instr{ir::Op::StoreLocal, {cell}, std::nullopt,
+                           Ownership::NotAnObject, x, locals_[x], 0, n.loc,
+                           std::nullopt});
+            release(cell, n.loc);
+        }
+        bool bok = true;
+        // .val starts as the empty-consumer result: the True/False singleton
+        // (PyBool_FromLong returns the singleton, so all()/any() on an empty
+        // prints exactly as CPython does -- never "1"/"0").
+        ir::Value init_val = call_capi_imm("PyBool_FromLong", {}, is_any ? 0 : 1,
+                                           0, n.loc, &bok);
+        if (bok) {
+            mark_owned(init_val);
+            store_name(".val", init_val, n.loc);
+            release(init_val, n.loc);
+        }
+        if (bok) {
+            ir::Value it0 = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, it0, Ownership::Owned, ".0",
+                           0, 0, n.loc, make_landing_pad(n.loc)});
+            mark_owned(it0); forget(it0);
+            frame_owned_.push_back(it0);
+            quiet_locs_ = false;
+
+            std::function<bool(std::size_t, const ir::Value&)> nest =
+                [&](std::size_t gi, const ir::Value& iter_v) -> bool {
+                    const comprehension& gg = n.generators[gi];
+                    std::uint32_t head = new_block("anyall.head");
+                    std::uint32_t body = new_block("anyall.body");
+                    std::uint32_t done = new_block("anyall.done");
+                    std::uint32_t back = new_block("anyall.back");
+                    std::uint32_t taken = new_block("anyall.taken");
+                    emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                                   "", head, 0, n.loc, std::nullopt});
+                    set_block(head);
+                    ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                    emit(ir::Instr{ir::Op::IterNext, {iter_v}, item, Ownership::Owned,
+                                   "", body, done, expr_loc(*gg.iter),
+                                   make_landing_pad(expr_loc(*gg.iter))});
+                    set_block(body);
+                    mark_owned(item);
+                    if (!store_target(*gg.target, item, n.loc)) return false;
+                    for (const expr& cond : gg.ifs) {
+                        ir::Value t = lower_predicate(cond, &bok);
+                        if (!bok) return false;
+                        std::uint32_t keep = new_block("anyall.keep");
+                        emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt,
+                                       Ownership::NotAnObject, "", keep, back, n.loc,
+                                       std::nullopt});
+                        set_block(keep);
+                    }
+                    if (gi + 1 < n.generators.size()) {
+                        ir::Value sub = lower_expr(*n.generators[gi + 1].iter, &bok);
+                        if (!bok) return false;
+                        ir::Value subit = call_capi("PyObject_GetIter", {sub}, n.loc,
+                                                    &bok, {sub});
+                        if (!bok) return false;
+                        mark_owned(subit); forget(subit);
+                        frame_owned_.push_back(subit);
+                        if (!nest(gi + 1, subit)) return false;
+                        frame_owned_.pop_back();
+                        emit_decref(subit, n.loc);
+                    } else {
+                         // leaf: short-circuit on the first deciding element.
+                         // Evaluate the elt value ONCE, then test its
+                         // truthiness. CPython's any()/all() return the
+                         // TRUE/FALSE singleton that decided -- never the
+                         // element's own value -- so we box that test (t),
+                         // not elt_val, into .val.
+                         ir::Value elt_val = lower_expr(*n.elt, &bok);
+                         if (!bok) return false;
+                         ir::Value t = cur()->fresh(ir::Type{ir::Type::Kind::Bool, {}});
+                         emit(ir::Instr{ir::Op::IsTrue, {elt_val}, t,
+                                      Ownership::NotAnObject, "PyObject_IsTrue",
+                                      0, 0, n.loc, make_landing_pad(n.loc)});
+                         // any: take on truthy; all: take on falsy (swap edges).
+                         emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt,
+                                      Ownership::NotAnObject, "",
+                                      is_any ? taken : back,
+                                      is_any ? back : taken, n.loc,
+                                      std::nullopt});
+                         set_block(taken);
+                         // .val = the deciding TRUE/FALSE singleton.
+                         // any() short-circuits on a truthy elt -> True;
+                         // all() short-circuits on a falsy elt -> False.
+                         // box_bool(t) yields True when t=1, False when
+                         // t=0; store_name releases rb, and we release
+                         // elt_val once below (mirroring the old store).
+                         ir::Value rb = box_bool(t, n.loc, &bok);
+                         if (!bok) return false;
+                         store_name(".val", rb, n.loc);
+                         if (owns(elt_val)) release(elt_val, n.loc);
+                         emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                                      "", done, 0, n.loc, std::nullopt});
+                    }
+                    emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                                   "", back, 0, n.loc, std::nullopt});
+                    set_block(back);
+                    emit_backedge(head, n.loc);
+                    set_block(done);
+                    return true;
+                };
+
+            bok = nest(0, it0);
+            if (bok) {
+                frame_owned_.pop_back();
+                emit_decref(it0, n.loc);
+                // .val holds the result on every path: the init singleton when
+                // the loop exhausted, or the deciding TRUE/FALSE singleton
+                // when one element short-circuited. LoadLocal returns it as an
+                // owned ref.
+                ir::Value val = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::LoadLocal, {}, val, Ownership::Owned,
+                               ".val", (std::uint32_t)(locals.size() - 1), 0, n.loc,
+                               make_landing_pad(n.loc)});
+                emit(ir::Instr{ir::Op::Return, {val}, std::nullopt,
+                               Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+            }
+        }
+        std::size_t idx = end_function(sc);
+        if (!bok) { *ok = false; return {}; }
+
+        ir::Value fnv = make_function_value(idx, fname, n.loc);
+        std::vector<ir::Value> args{fnv, it};
+        for (const ir::Value& c : capvals) args.push_back(c);
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        std::vector<ir::Value> saved = args;
+        emit(ir::Instr{ir::Op::CallObject, args, out, Ownership::Owned, "",
+                       0, 0, n.loc, make_landing_pad(n.loc)});
+        for (const ir::Value& a : saved) if (owns(a)) release(a, n.loc);
+        mark_owned(out);
+        *ok = true;
+        return out;
+    }
+
+    // Inline reduction of a single-clause genexpr fed to `sum`. Building a
+    // list first (the collect path) is a loss: it appends every element only
+    // to be drained by the builtin, trading the genexpr's YIELD/PyIter_Next
+    // frame swap for a list append -- matmul measured flat doing so. Folding in
+    // one native loop over the for/if nest keeps a single accumulator with no
+    // intermediate object, removing BOTH costs. The accumulator is seeded with
+    // 0 and advanced left-to-right (0 + e0 + e1 + ...), so it matches
+    // CPython's builtin `sum(start=0)` bit-for-bit. `sum(expr)` on an empty
+    // generator returns the seed 0, exactly as CPython does.
+    ir::Value lower_genexp_sum(const GeneratorExp& n, bool* ok) {
+        // A nested `sum` -- an inner genexpr inside an OUTER fused-sum loop
+        // body -- cannot get its own synthetic function created inside the
+        // outer loop's unwind pads without a dominator violation. Fall back
+        // to the real generator; the single-clause perf targets (matmul) are
+        // never nested, so this path is only for the fallback cases.
+        if (in_fused_loop_) return {};
+        if (n.generators.size() != 1) { *ok = err("a generator expression with more than one for-clause", "generator expressions", n.loc); return {}; }
+        const comprehension& g = n.generators[0];
+        std::vector<std::string> vars;
+        for (const comprehension& c : n.generators) collect_target_names(*c.target, vars);
+        std::set<std::string> bound(vars.begin(), vars.end());
+        std::set<std::string> captured;
+        free_locals(*n.elt, bound, captured);
+        for (const std::string& id : vars) free_locals(*g.target, bound, captured);
+        std::vector<std::string> caps(captured.begin(), captured.end());
+
+        ir::Value seq = lower_expr(*g.iter, ok);
+        if (!*ok) return {};
+        ir::Value it = call_capi("PyObject_GetIter", {seq}, n.loc, ok, {seq});
+        if (!*ok) return {};
+        mark_owned(it);
+
+        std::vector<ir::Value> capvals;
+        std::vector<std::string> cell_caps;
+        for (const std::string& c : caps) {
+            ir::Value v = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            auto it2 = locals_.find(c);
+            emit(ir::Instr{ir::Op::LoadLocal, {}, v, Ownership::Owned, c,
+                           it2->second, 0, n.loc, make_landing_pad(n.loc)});
+            mark_owned(v);
+            capvals.push_back(v);
+            if (cells_.count(c)) cell_caps.push_back(c);
+        }
+
+        std::vector<std::string> params{".0"};
+        for (const std::string& c : caps) params.push_back(c);
+        std::vector<std::string> locals = params;
+        for (const std::string& x : vars) locals.push_back(x);
+        locals.push_back(".acc");
+        FnScope sc = begin_function("<sumcomp>", params, locals);
+        quiet_locs_ = true;
+        for (const std::string& c : cell_caps) cells_[c] = locals_[c];
+        std::set<std::string> nested = nested_reads_expr(*n.elt);
+        for (const std::string& x : vars) {
+            if (!nested.count(x) || cells_.count(x)) continue;
+            cells_[x] = locals_[x];
+            ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::CellNew, {}, cell, Ownership::Owned, x,
+                           0, 0, n.loc, make_landing_pad(n.loc)});
+            mark_owned(cell);
+            emit(ir::Instr{ir::Op::StoreLocal, {cell}, std::nullopt,
+                           Ownership::NotAnObject, x, locals_[x], 0, n.loc,
+                           std::nullopt});
+            release(cell, n.loc);
+        }
+        bool bok = true;
+        // .acc = 0 (sum's start).
+        ir::Value acc0 = call_capi_imm("PyLong_FromLong", {}, 0, 0, n.loc, &bok);
+        if (bok) { mark_owned(acc0); store_name(".acc", acc0, n.loc); release(acc0, n.loc); }
+        if (bok) {
+            ir::Value it0 = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, it0, Ownership::Owned, ".0",
+                           0, 0, n.loc, make_landing_pad(n.loc)});
+            // BORROW `.0` (defect-1 fix): the outer frame is the sole owner
+            // of this iterator -- it created it at GetIter and releases it
+            // once at the tail of this function. Claiming ownership here and
+            // emit_decref'd it on the done path twice freed the same
+            // iterator (`sum(x for x in range(1000))` SEGFAULTED). Drive it
+            // via IterNext only; never decref it in this synthetic frame.
+            quiet_locs_ = false;
+            const std::uint32_t acc_slot = locals_.find(".acc")->second;
+
+             // A nested C++ function definition is illegal here; a capture
+             // lambda plays the same role. `nest` recurses over the (single)
+             // for-clause.
+             std::function<bool(const comprehension&, const ir::Value&)> nest =
+                 [&](const comprehension& gg,
+                     const ir::Value& iter_v) -> bool {
+                std::uint32_t head = new_block("sum.head");
+                std::uint32_t body = new_block("sum.body");
+                std::uint32_t done = new_block("sum.done");
+                std::uint32_t back = new_block("sum.back");
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", head, 0, n.loc, std::nullopt});
+                set_block(head);
+                ir::Value item = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::IterNext, {iter_v}, item, Ownership::Owned,
+                               "", body, done, expr_loc(*gg.iter),
+                               make_landing_pad(expr_loc(*gg.iter))});
+                set_block(body);
+                if (!store_target(*gg.target, item, n.loc)) return false;
+                for (const expr& cond : gg.ifs) {
+                    ir::Value t = lower_predicate(cond, &bok);
+                    if (!bok) return false;
+                    std::uint32_t keep = new_block("sum.keep");
+                    emit(ir::Instr{ir::Op::CondBr, {t}, std::nullopt,
+                                   Ownership::NotAnObject, "", keep, back, n.loc,
+                                   std::nullopt});
+                    set_block(keep);
+                }
+                // leaf: .acc = .acc + elt
+                ir::Value elt_val = lower_expr(*n.elt, &bok);
+                if (!bok) return false;
+                ir::Value acc = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                emit(ir::Instr{ir::Op::LoadLocal, {}, acc, Ownership::Owned,
+                               ".acc", acc_slot, 0, n.loc, make_landing_pad(n.loc)});
+                ir::Value sum = call_capi("PyNumber_Add", {acc, elt_val}, n.loc,
+                                          &bok, {acc, elt_val});
+                store_name(".acc", sum, n.loc);
+                release(acc, n.loc);
+                release(elt_val, n.loc);
+                emit(ir::Instr{ir::Op::Br, {}, std::nullopt, Ownership::NotAnObject,
+                               "", back, 0, n.loc, std::nullopt});
+                set_block(back);
+                emit_backedge(head, n.loc);
+                set_block(done);
+                return true;
+            };
+
+            in_fused_loop_ = true;
+            if (!nest(g, it0)) return {};
+            in_fused_loop_ = false;
+            // no pop_back / no emit_decref of it0: it is BORROWED, owned by
+            // the outer frame, which releases it once after the call below.
+            ir::Value ret = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+            emit(ir::Instr{ir::Op::LoadLocal, {}, ret, Ownership::Owned,
+                           ".acc", (std::uint32_t)(locals.size() - 1), 0, n.loc,
+                           make_landing_pad(n.loc)});
+            emit(ir::Instr{ir::Op::Return, {ret}, std::nullopt,
+                           Ownership::NotAnObject, "", 0, 0, n.loc, std::nullopt});
+        }
+        std::size_t idx = end_function(sc);
+        if (!bok) { *ok = false; return {}; }
+
+        ir::Value fnv = make_function_value(idx, "<sumcomp>", n.loc);
+        std::vector<ir::Value> args{fnv, it};
+        for (const ir::Value& c : capvals) args.push_back(c);
+        ir::Value out = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+        std::vector<ir::Value> saved = args;
+        // Move `args` (not `saved`) into the call: `saved` is the copy the
+        // release loop below must still see. Moving `saved` emptied it, so the
+        // CallObject args were never decref'd on the success path -- that was
+        // the "Instruction does not dominate all uses" compile failure when the
+        // sum was nested in a comprehension loop (their only SSA def was in the
+        // loop body, their only decref the now-missing release loop). Identical
+        // pattern to lower_comp below.
+        emit(ir::Instr{ir::Op::CallObject, args, out, Ownership::Owned, "",
+                       0, 0, n.loc, make_landing_pad(n.loc)});
+        for (const auto& a : saved) if (owns(a)) release(a, n.loc);
+        mark_owned(out);
+        *ok = true;
+        return out;
+    }
+
     ir::Value lower_call(const Call& c, bool* ok) {
         // Zero-argument super() reads the calling frame for the class cell
         // and the first argument. A method compiled inside a class has that
@@ -6702,6 +7158,8 @@ private:
         for (const keyword& k : c.keywords)
             if (!k.arg) kw_splat = true;
         if (!starred && !kw_splat) {
+            if (auto fused = try_lower_fused_genexp(c, ok); fused.valid())
+                return fused;
             if (const Attribute* attr = std::get_if<Attribute>(&c.func->v))
                 return lower_method_call(c, *attr, ok);
         }

@@ -10,6 +10,108 @@ Roles that produced this: Architect (`agents/architect.md`), PM
 (`agents/pm.md`), SWE-compiler (`agents/swe-compiler.md`), SWE-runtime
 (`agents/swe-runtime.md`).
 
+## 2026-11-17 — genexpr fusion disabled (correctness > perf)
+
+The native genexpr→draining-consumer fusion (`try_lower_fused_genexp` in
+`compiler/src/lower.cpp`) was implemented, then found **unsafe**, so it is
+now **disabled** — the dispatch falls back to the real CPython generator and
+the implementation is kept in-tree, thoroughly commented, as a latent
+capability. Three independent defects, all verified:
+
+* `lower_genexp_sum` double-frees the synthetic `<sumcomp>` `.0` iterator
+  (both the outer frame and the synthetic body release it): `sum(x for x in
+  range(1000))` **segfaults** at runtime.
+* `lower_genexp_collect` GetIter's the outermost iterable in the outer frame;
+  when the genexpr is nested in a comprehension loop the iterator's release
+  lands in unwind blocks that do not dominate its definition → the LLVM
+  verifier **rejects the IR** (`Instruction does not dominate all uses`).
+  `list(x …)`, `set(x …)` and `sum(…)` all fail to compile inside a loop
+  (matmul is exactly this shape).
+* `any`/`all` mask the same double-free on `range` iterators (immortal-ish),
+  so they run "by luck" — latent for any other iterator shape.
+
+**Measured perf impact of disabling (I9 — all measured today, `local/marvin`,
+`-O2`, sysroot 3.14.7; the relative pyc-vs-oracle speedup is the valid metric;
+the comparator's absolute-time ALERTs vs `baseline.json` are a machine-load
+artifact, not a compiler delta):**
+
+| workload | pyc | oracle | speedup | vs recorded baseline |
+|---|---|---|---|---|
+| pidigits | 1.120s | 1.502s | **1.34x** | matches pre-fusion (the `str.join` fallback keeps it) |
+| matmul | 2.533s | 2.987s | **1.18x** | now compiles + runs (was `DID_NOT_COMPILE` with fusion) |
+| nbody | 4.832s | 6.421s | 1.33x | +1.1% |
+| spectralnorm | 4.510s | 6.241s | 1.38x | +2.5% |
+| ast_parse | 1.932s | 2.379s | 1.23x | +10.9% |
+| nqueens | 2.642s | 3.283s | 1.24x | +10.5% |
+
+No named target shows a regression. matmul is compute-bound (fusion gives no
+win even when it works) and pidigits' cost is the spigot bigint steps, so the
+fusion provides **no measurable win on the named workloads** — and it was
+broken. The fusion is disabled, not shipped.
+
+**Corpus:** language + gaps + concurrency is **869/869 = 100%** impactful
+(867 byte-identical; 2 non-impactful `STDERR_DIFFERS`), unchanged from the
+pre-fusion gate. `genexpr_fusion_builtin.py` lost its `len()`-over-a-generator
+line (invalid in CPython 3.14; it raises `TypeError` on both pyc and the
+oracle) so every line of the case now executes and matches the oracle.
+
+## 2026-11-18 — fusion enabled to measure matmul; proved a regression, re-disabled
+
+The fusion above was **temporarily re-enabled** on the one perf target it can
+reach — a top-level `sum(<single-clause genexpr>)` (`lower_genexp_sum`) — to
+measure whether native fusion actually closes the codegen gap. It does not:
+fusion is **correct but slower**, so the dispatch is **disabled again** and
+matmul falls back to the real CPython generator.
+
+* **Correctness fixes are KEPT, not reverted.** Enabling it required two real
+  fixes that a later effort needs: (1) the `<sumcomp>` `.0` iterator is now
+  **BORROWED** (`lower_genexp_sum` no longer marks `.0` owned or
+  `emit_decref`'s it on the done path) — the outer frame is the sole owner, so
+  `sum(x for x in range(1000))` no longer segfaults; (2) a latent
+  `std::move(saved)` bug at the CallObject site — `saved` (the copy the
+  release loop reads) was moved instead of `args`, so the CallObject args were
+  never decref'd on the success path, and matmul **failed to compile** with
+  `Instruction does not dominate all uses`. Both verified: the flat corpus is
+  100% byte-identical to the oracle, and matmul (`sum` inside `[… for j]`/
+  `[… for i]`) compiles and matches the oracle at both nesting depths.
+
+* **The regression is measured, not guessed (I9).** Median of 7, `-O2`,
+  sysroot 3.14.7:
+
+  | variant | pyc | speedup vs oracle |
+  |---|---|---|
+  | `gen.py` (fusion ENABLED) | 2666 ms | **0.967x** |
+  | `gen.py` (fallback) | 2569 ms | 1.010x |
+  | `loop.py` | 2063 ms | 1.175x |
+  | `listcomp.py` | 2157 ms | 1.172x |
+
+  Fusion (0.967x) is slower than BOTH loop/listcomp siblings (1.18–1.17x) and
+  slower than the real genexpr baseline (1.01–1.03x). Disabling restores the
+  fallback to the baseline; no named target regresses.
+
+* **The cause is measured, not guessed (I9).** Dumped `<sumcomp>` IR shows it
+  is a **nested** function, so every captured variable (A, B, i, j) is read via
+  `cell.get` — a runtime cell dereference per access — and the accumulator uses
+  `PyNumber_Add`. The loop-only sibling `_s` takes the same variables as
+  **parameters** and reads them via direct `load.local` + `PyNumber_InPlaceAdd`,
+  which is what makes it win. pyc's boxed `cell.get` CAPI is slower than
+  CPython's internal genexpr cell access, so fusion loses on both counts.
+
+* **Restoring fusion is a perf study, not a bug fix.** The per-access cell
+  dereference must be eliminated — e.g. snapshot the captured values into fast
+  locals at `<sumcomp>` entry (correct only when the enclosing scope does not
+  rebound them mid-genexpr), or inline the accumulator loop into the enclosing
+  frame instead of emitting a nested function. Until then the fallback is
+  correct (correctness > perf, per the A3 contract), and the retained
+  correctness fixes mean a later effort can enable this safely.
+</newString>
+<parameter=oldString>
+**Corpus:** language + gaps + concurrency is **869/869 = 100%** impactful
+(867 byte-identical; 2 non-impactful `STDERR_DIFFERS`), unchanged from the
+pre-fusion gate. `genexpr_fusion_builtin.py` lost its `len()`-over-a-generator
+line (invalid in CPython 3.14; it raises `TypeError` on both pyc and the
+oracle) so every line of the case now executes and matches the oracle.
+
 ## Verdict
 
 The rebuild is on the CHARTER architecture: generated AST, `PyObject*` via
