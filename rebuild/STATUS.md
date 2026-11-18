@@ -1,10 +1,63 @@
 # pyc — current state and MVP
 
-**Date:** 2026-11-07. Language numbers in the table below are the recorded
+**Date:** 2026-11-18. Language numbers in the table below are the recorded
 `compiler/baseline-language.json` gate (887/887). The `Lib/test` row is the
 2026-11-07 I6 re-record (`-O0`, sysroot 3.14.7, `--stdlib`), taken after the
 `test_signal` longrunning move (see 2026-11-07 entry below).
 CHARTER remains binding. §4 product rules were not changed.
+
+## 2026-11-18 — re-enabled the `sum` genexpr fusion; corrected, ~1.0x (1.18x needs unboxing)
+
+The single-clause, non-async `sum(<genexpr>)` dispatch (`try_lower_fused_genexp`
+→ `lower_genexp_sum`) is **enabled again** — that is the matmul fusion shape.
+Enabling it required two correctness-preserving perf fixes that close most of
+the gap left by the 2026-11-18 disable (both verified against the oracle):
+
+1. **Read-capture deref snapshot.** `sum()` runs the geniterator to completion
+   inside its own C stack, so the enclosing frame cannot rebind a free variable
+   mid-drain (the one exception is a walrus write, which stays a cell so the
+   enclosing frame still sees it). The read-only captures are now **deref'd once
+   at `<sumcomp>` entry** into plain value locals and passed as extra params, so
+   the inner loop reads them via `load.local` instead of one `cell.get` per
+   element — the matmul fusion regression, 2026-11-18.
+2. **Loop var `k` is a local, not a cell.** A genexpr loop var needs a closure
+   cell only when a nested **lambda** inside the genexpr captures it (the
+   closure shares that cell). A loop var read directly in the body needs none.
+   A new `lambda_captured` walker collects names appearing inside nested-lambda
+   bodies, and the loop-var cell registration is gated on it. Over-approx
+   (sound): it never misses a real capture, so I2 is preserved. This drops the
+   per-iteration `cell.set`/`cell.get` for `k` — the last cell cost.
+
+**Correctness (I5):** matmul (`sum` inside `[… for j]` / `[… for i]`) compiles
+and matches the oracle at N=40/200/300; the fusion corpus
+(`genexpr_fusion_builtin` / `_scoping` / `_object_semantics`) and a targeted
+edge suite (lambda-capture → `[2,2,2]`, walrus write, nested sum, `sum(...,
+start)`, range with step) are byte-identical to the oracle. Multi-clause
+`sum(...)` still falls back to the real generator (the dispatch gates on exactly
+one clause); any/min/max/list/tuple/set/sorted stay on the real generator.
+
+**Measured perf (I9 — median of 11, `-O2`, sysroot 3.14.7; relative
+pyc-vs-oracle speedup is the valid metric; the comparator's absolute ALERTs vs
+`baseline.json` are machine-load, not a compiler delta):**
+
+| variant | pyc speedup vs oracle |
+|---|---|
+| `gen.py` (fusion ON, current) | ~1.00x |
+| `gen.py` (2026-11-18 disable-era) | 0.967x |
+| `gen.py` (fallback) | ~1.00x |
+| `loop.py` (`_s` helper) | ~1.13–1.18x |
+
+Fusion is correct and **no longer a regression vs the fallback** (0.967x → ~1.0x,
+the two fixes together). But it is still **short of the ~1.18x loop-sibling
+target**. The residual gap is that the sibling's `for k in range(N)` is
+recognised as a **native-int loop** (`int.load`/`int.store` + phi via
+`emit_for_range_loop` + `int_locals`), so `k` is a native int, whereas the
+synthetic `<sumcomp>` iterator loop cannot unbox `k`. Closing it means porting
+that native-range machinery into the synthetic elt-loop — the documented
+"big lever" (plan question A): correct-risky and deliberately a **separate
+effort**, not a quick continue. Fusion stays **enabled** (correct, not a
+regression, and the capable path the unboxing effort builds on); the loop-var
+cell rule and the walrus cell rule are the I2 guards.
 
 Roles that produced this: Architect (`agents/architect.md`), PM
 (`agents/pm.md`), SWE-compiler (`agents/swe-compiler.md`), SWE-runtime

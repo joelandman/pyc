@@ -6674,38 +6674,47 @@ private:
     // are the one exception -- they short-circuit, so they cannot materialise a
     // list first; lower_genexp_anyall gives them a running accumulator.
     ir::Value try_lower_fused_genexp(const Call& c, bool* ok) {
-        // FUSED genexpr -> draining builtin: DISABLED -- falls back to the
-        // real CPython generator. Fusion was wired up and made CORRECT --
-        // fixed the "<sumcomp>" double-free by making the synthetic frame
-        // BORROW its `.0` iterator, and a latent `std::move(saved)` bug that
-        // emptied the CallObject release loop and broke matmul's compile with
-        // "Instruction does not dominate all uses" -- but a matmul
-        // measurement showed it is a REGRESSION: `sum(genexpr)` runs at
-        // 0.967x vs the oracle, slower than BOTH the loop/listcomp siblings
-        // (1.19-1.21x) and slower than the real genexpr (1.03x).
-        //
-        // The cause is measured, not guessed (see rebuild/STATUS.md
-        // 2026-11-18): the fused `<sumcomp>` is a NESTED function, so every
-        // captured variable (A, B, i, j) is read via `cell.get` -- a runtime
-        // cell dereference per access -- and the accumulator uses PyNumber_Add.
-        // The loop-only sibling `_s` takes the same variables as PARAMETERS and
-        // reads them via direct `load.local` + PyNumber_InPlaceAdd, which is
-        // what makes it win. pyc's boxed `cell.get` CAPI is slower than
-        // CPython's internal genexpr cell access, so fusion loses on both
-        // counts.
-        //
-        // Restoring fusion is a perf study, not a bug fix: the per-access cell
-        // dereference has to be eliminated -- e.g. snapshot the captured values
-        // into fast locals at `<sumcomp>` entry (correct only when the
-        // enclosing scope does not rebound them mid-genexpr), or inline the
-        // accumulator loop into the enclosing frame instead of emitting a
-        // nested function. Until then the fallback is correct (correctness >
-        // perf, per the A3 contract), and the correctness fixes in
-        // lower_genexp_sum below mean a later effort can enable this safely.
+         // FUSED genexpr -> draining builtin. ENABLED for the single-clause,
+         // non-async `sum` consumer (see the gate below): that is the matmul
+         // fusion shape. Restoring it was a perf study, not a bug fix -- the
+         // 2026-11-18 disable showed `sum(genexpr)` ran at 0.967x vs the oracle,
+         // slower than the loop/sibling siblings (1.19-1.21x). The cause is
+         // measured, not guessed (see rebuild/STATUS.md 2026-11-18): the fused
+         // `<sumcomp>` is a NESTED function, so every captured variable (A, B,
+         // i, j) was read via `cell.get` -- a runtime cell dereference per
+         // access -- and the loop var `k` was a cell too. The loop-only sibling
+         // `_s` takes the same variables as PARAMETERS, reads them via direct
+         // `load.local`, and unboxes `k` to a native int (its `for k in
+         // range(N)` is a native-range loop), which is what makes it win.
+         //
+         // Two correctness-preserving perf fixes closed most of the gap: the
+         // read captures are deref'd once into value locals at `<sumcomp>`
+         // entry (see lower_genexp_sum), and the loop var `k` is now a plain
+         // local unless a nested lambda captures it (the lambda_captured
+         // walker). Net: ~0.967x -> ~1.0x, no longer a regression vs the
+         // fallback. The residual gap to the loop sibling is that the synthetic
+         // `<sumcomp>` iterator loop cannot unbox `k`; that is the "big lever"
+         // (native-range unboxing, plan question A), correct-risky and a
+         // separate effort. Fusion stays enabled (correct, not a regression,
+         // and the capable path unboxing builds on); the loop-var cell rule and
+         // the walrus cell rule are the I2 guards.
         if (c.args.size() != 1 || !c.keywords.empty()) return {};
         const GeneratorExp* g = std::get_if<GeneratorExp>(&c.args[0].v);
         if (!g) return {};
         for (const auto& cl : g->generators) if (cl.is_async) return {};
+        // 2026-11-18 (perf): re-enable for the single-clause, non-async `sum`
+        // consumer ONLY -- that is the matmul fusion shape. The captured-value
+        // deref snapshot in lower_genexp_sum (below) removes the per-element
+        // cell.get that made fused `sum(genexpr)` a regression, so the fused
+        // loop now reads its captures via load.local like the loop sibling.
+        // Multi-clause `sum(...)` must NOT fuse here: lower_genexp_sum emits a
+        // hard error on >1 for-clause, so a two-clause sum must fall back to
+        // the real generator -- gate on exactly one clause. any/min/max/list/
+        // tuple/set/sorted/join stay on the real generator for now.
+        if (g->generators.size() == 1 &&
+            std::get_if<Name>(&c.func->v) &&
+            std::get<Name>(c.func->v).id == "sum")
+            return lower_genexp_sum(*g, ok);
         return {};
     }
 
@@ -6976,6 +6985,85 @@ private:
         for (const std::string& id : vars) free_locals(*g.target, bound, captured);
         std::vector<std::string> caps(captured.begin(), captured.end());
 
+        // The genexpr's READ captures are stable for the whole drain: sum()
+        // runs the geniterator to completion inside its own C stack, so the
+        // enclosing frame cannot rebind a free variable while the genexpr is
+        // suspended between iterations. The one exception is a capture the
+        // genexpr WRITES via walrus -- that write must stay observable by the
+        // enclosing frame after sum() returns, so it stays a cell. snap =
+        // read-only captures, deref'd to a value once at the call site and
+        // handed to the synthetic loop as a plain value local. That is what
+        // lets the loop read them via load.local instead of cell.get per
+        // element -- the matmul fusion regression, 2026-11-18.
+        std::set<std::string> gen_writes;
+        for (const auto& cl : n.generators) {
+            std::set<std::string> w = walrus_writes(*cl.target);
+            gen_writes.insert(w.begin(), w.end());
+            for (const expr& cond : cl.ifs) {
+                std::set<std::string> w2 = walrus_writes(cond);
+                gen_writes.insert(w2.begin(), w2.end());
+            }
+        }
+        std::set<std::string> nested = nested_reads_expr(*n.elt);
+        std::set<std::string> snap;
+        for (const std::string& c : caps)
+            if (nested.count(c) && !gen_writes.count(c)) snap.insert(c);
+
+        // A genexpr LOOP var (k) needs a closure cell only when a nested
+        // lambda/def inside the genexpr CAPTURES it -- the closure then shares
+        // that cell, so the read observes the live per-iteration binding
+        // (I2). A loop var read only directly in the genexpr body needs no cell
+        // at all; a plain local is what lets the fused sum loop match the loop
+        // sibling (no per-iter cell.set/cell.get for k) -- the matmul fusion
+        // gap, 2026-11-18. The walker collects every name that appears inside
+        // a nested lambda body; over-approx (it also counts a lambda's own
+        // params, which the loop var may shadow) -- sound: never misses a real
+        // capture.
+        std::set<std::string> lambda_captured;
+        {
+            bool in_lambda = false;
+            std::function<void(const expr&)> go = [&](const expr& x) {
+                std::visit(ov{
+                    [&](const Lambda& l){
+                        bool prev = in_lambda;
+                        in_lambda = true;
+                        go(*l.body);
+                        in_lambda = prev;
+                    },
+                    [&](const Name& nm){ if (in_lambda) lambda_captured.insert(nm.id); },
+                    [&](const BinOp& z){ go(*z.left); go(*z.right); },
+                    [&](const BoolOp& z){ for (const expr& v : z.values) go(v); },
+                    [&](const UnaryOp& z){ go(*z.operand); },
+                    [&](const Compare& z){ go(*z.left); for (const expr& v : z.comparators) go(v); },
+                    [&](const Call& z){ go(*z.func); for (const expr& v : z.args) go(v); for (const keyword& k : z.keywords) go(*k.value); },
+                    [&](const Attribute& z){ go(*z.value); },
+                    [&](const Subscript& z){ go(*z.value); go(*z.slice); },
+                    [&](const IfExp& z){ go(*z.test); go(*z.body); go(*z.orelse); },
+                    [&](const Tuple& z){ for (const expr& v : z.elts) go(v); },
+                    [&](const List& z){ for (const expr& v : z.elts) go(v); },
+                    [&](const Set& z){ for (const expr& v : z.elts) go(v); },
+                    [&](const Dict& z){ for (const auto& k : z.keys) if (k && *k) go(**k); for (const expr& v : z.values) go(v); },
+                    [&](const Starred& z){ go(*z.value); },
+                    [&](const Slice& z){ if (z.lower && *z.lower) go(**z.lower); if (z.upper && *z.upper) go(**z.upper); if (z.step && *z.step) go(**z.step); },
+                    [&](const NamedExpr& z){ go(*z.value); go(*z.target); },
+                    [&](const ListComp& z){ go(*z.elt); for (const comprehension& c : z.generators) { go(*c.iter); for (const expr& ife : c.ifs) go(ife); } },
+                    [&](const SetComp& z){ go(*z.elt); for (const comprehension& c : z.generators) { go(*c.iter); for (const expr& ife : c.ifs) go(ife); } },
+                    [&](const DictComp& z){ go(*z.key); go(*z.value); for (const comprehension& c : z.generators) { go(*c.iter); for (const expr& ife : c.ifs) go(ife); } },
+                    [&](const GeneratorExp& z){ go(*z.elt); for (const comprehension& c : z.generators) { go(*c.iter); for (const expr& ife : c.ifs) go(ife); } },
+                    [&](const Await& z){ go(*z.value); },
+                    [&](const FormattedValue& z){ go(*z.value); if (z.format_spec) go(**z.format_spec); },
+                    [&](const Interpolation& z){ go(*z.value); if (z.format_spec) go(**z.format_spec); },
+                    [&](const JoinedStr& z){ for (const expr& v : z.values) go(v); },
+                    [&](const TemplateStr& z){ for (const expr& v : z.values) go(v); },
+                    [&](const Yield& z){ if (z.value) go(**z.value); },
+                    [&](const YieldFrom& z){ go(*z.value); },
+                    [&](const Constant&){},
+                }, x.v);
+            };
+            for (const auto& cl : n.generators) { go(*cl.iter); for (const expr& cond : cl.ifs) go(cond); }
+            go(*n.elt);
+        }
+
         ir::Value seq = lower_expr(*g.iter, ok);
         if (!*ok) return {};
         ir::Value it = call_capi("PyObject_GetIter", {seq}, n.loc, ok, {seq});
@@ -6989,9 +7077,26 @@ private:
             auto it2 = locals_.find(c);
             emit(ir::Instr{ir::Op::LoadLocal, {}, v, Ownership::Owned, c,
                            it2->second, 0, n.loc, make_landing_pad(n.loc)});
+            if (snap.count(c) && cells_.count(c)) {
+                // Deref the captured cell to a value once, at the call site.
+                // The enclosing frame is parked inside sum()'s C stack for the
+                // whole drain, so this value cannot change; handing the value
+                // in (not the cell) is what lets the synthetic loop read the
+                // capture via load.local instead of cell.get per element
+                // (matmul fusion regression, 2026-11-18). pyc_rt_cell_get
+                // raises NameError on an unbound freevar -- the same error the
+                // per-access path raised.
+                ir::Value dv = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
+                ir::Instr cg{ir::Op::CellGet, {v}, dv, Ownership::Owned, c,
+                             0, 0, n.loc, make_landing_pad(n.loc)};
+                cg.imm = 1; cg.has_imm = true;
+                emit(std::move(cg));
+                release(v, n.loc);
+                v = dv;
+            }
             mark_owned(v);
             capvals.push_back(v);
-            if (cells_.count(c)) cell_caps.push_back(c);
+            if (cells_.count(c) && !snap.count(c)) cell_caps.push_back(c);
         }
 
         std::vector<std::string> params{".0"};
@@ -7002,9 +7107,8 @@ private:
         FnScope sc = begin_function("<sumcomp>", params, locals);
         quiet_locs_ = true;
         for (const std::string& c : cell_caps) cells_[c] = locals_[c];
-        std::set<std::string> nested = nested_reads_expr(*n.elt);
         for (const std::string& x : vars) {
-            if (!nested.count(x) || cells_.count(x)) continue;
+            if (!lambda_captured.count(x) || cells_.count(x)) continue;
             cells_[x] = locals_[x];
             ir::Value cell = cur()->fresh(ir::Type{ir::Type::Kind::Boxed, {}});
             emit(ir::Instr{ir::Op::CellNew, {}, cell, Ownership::Owned, x,
