@@ -37,4 +37,15 @@ struct FuncCodeEntry {
     std::vector<std::string> freevars;
 };
 
+// One annotation's canonical source string, produced by the target
+// interpreter's ast.unparse and emitted only when the scope was compiled with
+// `from __future__ import annotations` (the form CPython's compiler produces
+// for the STRING annotation format instead of the evaluated value). Keyed by
+// source position so lower.cpp can look it up while building __annotate__.
+struct AnnotationEntry {
+    int line = 0;
+    int col = 0;
+    std::string text;
+};
+
 }  // namespace pyc

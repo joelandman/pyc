@@ -58,8 +58,9 @@ class Lowerer {
 public:
     Lowerer(ir::Module& m, DiagnosticSink& d,
             const std::vector<GenexpEntry>& gx,
-            const std::vector<FuncCodeEntry>& fc)
-        : mod_(m), diags_(d), genexps_(gx), func_codes_(fc) {}
+            const std::vector<FuncCodeEntry>& fc,
+            const std::vector<AnnotationEntry>& an)
+        : mod_(m), diags_(d), genexps_(gx), func_codes_(fc), annotations_(an) {}
 
     // Generator expressions carry a code object CPython compiled at build
     // time, keyed by source position (rebuild/GENERATORS.md).
@@ -67,6 +68,16 @@ public:
     const GenexpEntry* find_genexp(const SourceLoc& loc) const {
         for (const GenexpEntry& g : genexps_)
             if (g.line == loc.line && g.col == loc.col) return &g;
+        return nullptr;
+    }
+
+    // Canonical annotation strings for the STRING annotation format (from
+    // __future__ import annotations). Keyed by the annotation's source
+    // position so __annotate__ can look one up instead of evaluating it.
+    const std::vector<AnnotationEntry>& annotations_;
+    const AnnotationEntry* find_annotation(const SourceLoc& loc) const {
+        for (const AnnotationEntry& a : annotations_)
+            if (a.line == loc.line && a.col == loc.col) return &a;
         return nullptr;
     }
 
@@ -223,6 +234,8 @@ public:
         fn_idx_ = mod_.functions.size() - 1;
         cur()->blocks.push_back(ir::Block{"entry", {}});
         blk_ = 0;
+        // Whole-module flag: inherited by every nested scope's __annotate__.
+        str_annotations_ = future_annotations_enabled(mm->body);
         // Bound BEFORE the first statement runs. Measured: CPython answers
         // True to `"__annotate__" in vars(module)` even on the line above the
         // first annotation, and __annotations__ is CACHED on first access, so
@@ -257,6 +270,11 @@ private:
     // lowered, and a raw pointer into a vector that reallocates is a
     // use-after-free. ASAN caught exactly that here.
     std::size_t fn_idx_ = 0;
+    // True when this module was compiled with `from __future__ import
+    // annotations`: every scope in the module (nested ones included) then keeps
+    // annotations as their canonical source string rather than evaluating
+    // them. Detected once at module level; inherited by all nested scopes.
+    bool str_annotations_ = false;
     // Named cur() rather than fn(): lower_call has a local `fn` holding the
     // callable, and a shadowed accessor there compiles into a call on a Value.
     ir::Function*       cur()       { return &mod_.functions[fn_idx_]; }
@@ -2557,6 +2575,22 @@ private:
 
     using AnnItems = std::vector<std::pair<std::string, const expr*>>;
 
+    // True when the module begins with `from __future__ import annotations`
+    // (PEP 563 / 649): a whole-module flag inherited by every nested scope, so
+    // __annotate__ returns each annotation's canonical source string rather
+    // than the evaluated value. The parse stage compiled the source first, so a
+    // misplaced future import would already have been a hard SyntaxError; a bare
+    // presence test here is therefore sound.
+    static bool future_annotations_enabled(const std::vector<stmt>& body) {
+        for (const stmt& s : body) {
+            const ast::ImportFrom* imp = std::get_if<ast::ImportFrom>(&s.v);
+            if (!imp || imp->module.value_or("") != "__future__") return false;
+            for (const auto& a : imp->names)
+                if (a.name == "annotations") return true;
+        }
+        return false;
+    }
+
     // Every simple-name annotation belonging to THIS scope, in source order.
     // Descends into compound statements, which are the same scope, and stops
     // at a nested def or class, which are not. Measured: `if c: x: int = 5` at
@@ -3257,8 +3291,27 @@ private:
             mark_owned(d); forget(d);
             frame_owned_.push_back(d);
             for (const auto& [name, ann] : items) {
-                ir::Value v = lower_expr(*ann, ok);
-                if (!*ok) break;
+                ir::Value v;
+                if (str_annotations_) {
+                    // The STRING annotation format: use CPython's own canonical
+                    // source form rather than evaluating the annotation. Looked
+                    // up by the annotation's source position, which the parse
+                    // stage keyed the string on.
+                    if (const AnnotationEntry* e = find_annotation(expr_loc(*ann))) {
+                        v = const_str(e->text, loc);
+                    } else {
+                        // No canonical string was recorded for this annotation
+                        // (should not happen: every collected annotation is
+                        // emitted). Fall back to evaluating it so a missing
+                        // entry degrades to the pre-fix behaviour instead of
+                        // crashing __annotate__.
+                        v = lower_expr(*ann, ok);
+                        if (!*ok) break;
+                    }
+                } else {
+                    v = lower_expr(*ann, ok);
+                    if (!*ok) break;
+                }
                 ir::Value k = const_str(name, loc);
                 call_capi("PyDict_SetItem", {d, k, v}, loc, ok, {k, v});
                 if (!*ok) break;
@@ -8708,9 +8761,10 @@ private:
 bool lower_to_ir(const ast::mod& tree, const std::string& file,
                  ir::Module& out, DiagnosticSink& diags,
                  const std::vector<GenexpEntry>& genexps,
-                 const std::vector<FuncCodeEntry>& func_codes) {
+                 const std::vector<FuncCodeEntry>& func_codes,
+                 const std::vector<AnnotationEntry>& annotations) {
     out.source_file = file;
-    Lowerer l(out, diags, genexps, func_codes);
+    Lowerer l(out, diags, genexps, func_codes, annotations);
     return l.lower_module(tree);
 }
 

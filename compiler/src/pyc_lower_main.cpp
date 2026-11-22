@@ -20,7 +20,8 @@
 
 namespace pyc {
 bool lower_to_ir(const ast::mod&, const std::string&, ir::Module&, DiagnosticSink&,
-                 const std::vector<GenexpEntry>&, const std::vector<FuncCodeEntry>&);
+                 const std::vector<GenexpEntry>&, const std::vector<FuncCodeEntry>&,
+                 const std::vector<AnnotationEntry>&);
 }
 using namespace pyc;
 
@@ -110,7 +111,24 @@ int lower_envelope(const std::string& json_text, const std::string& default_file
         }
     }
 
-    if (!lower_to_ir(tree, file, m, sink, genexps, func_codes)) {
+    // Annotation strings for the STRING annotation format (from __future__
+    // import annotations). Emitted by the parse stage keyed by source position;
+    // lower.cpp installs them in __annotate__ instead of evaluating the
+    // annotation.
+    std::vector<AnnotationEntry> annotations;
+    if (const json::Value* av = doc.find(doc.root(), "annotations")) {
+        for (std::uint32_t i = 0; i < av->count; ++i) {
+            const json::Value& e = doc.elem(*av, i);
+            AnnotationEntry a;
+            if (const json::Value* x = doc.find(e, "line")) a.line = (int)x->number;
+            if (const json::Value* x = doc.find(e, "col"))  a.col  = (int)x->number;
+            if (const json::Value* x = doc.find(e, "text"))
+                a.text = doc.str_of(*x);
+            annotations.push_back(std::move(a));
+        }
+    }
+
+    if (!lower_to_ir(tree, file, m, sink, genexps, func_codes, annotations)) {
         for (const auto& d : sink.items) {
             if (d.severity != Diagnostic::Severity::Error) continue;
             std::fprintf(stderr, "%s:%d:%d: error: %s [%s]\n",

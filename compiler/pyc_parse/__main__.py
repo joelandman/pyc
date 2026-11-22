@@ -108,6 +108,61 @@ def collect_annotate_consts(code):
     walk(code)
     return out
 
+
+# Annotations: the canonical source text of every annotation expression in the
+# module, keyed by source position. Emitted for the STRING annotation format
+# (from __future__ import annotations) so lower.cpp can install each string in
+# __annotate__ instead of evaluating the annotation. ast.unparse is the target
+# interpreter's own canonicaliser and is byte-identical to what CPython's
+# compiler stores for that format -- the normalised form, not the raw source
+# slice (so ``list [ int ]`` becomes ``'list[int]'`` while a quoted literal
+# ``"list [ int ]"`` keeps its quotes). Emitted for every annotation regardless
+# of which scope pyc will collect it in; a string lower.cpp never looks up is
+# simply ignored, and no two annotation expressions can share a position.
+def collect_annotations(tree):
+    out = []
+
+    def emit(annotation):
+        if annotation is None:
+            return
+        out.append({
+            "line": annotation.lineno,
+            "col": annotation.col_offset,
+            "text": ast.unparse(annotation),
+        })
+
+    def annotate_args(node):
+        args = getattr(node, "args", None)
+        if args is None:
+            return
+        for group in (args.posonlyargs, args.args, args.kwonlyargs):
+            for param in group:
+                emit(param.annotation)
+        if getattr(args, "vararg", None):
+            emit(args.vararg.annotation)
+        if getattr(args, "kwarg", None):
+            emit(args.kwarg.annotation)
+        emit(getattr(node, "returns", None))
+
+    def walk(node):
+        if isinstance(node, ast.AnnAssign) and node.annotation is not None:
+            emit(node.annotation)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                               ast.Lambda)):
+            annotate_args(node)
+        for field in node._fields:
+            value = getattr(node, field)
+            if isinstance(value, ast.AST):
+                walk(value)
+            elif isinstance(value, list):
+                for child in value:
+                    if isinstance(child, ast.AST):
+                        walk(child)
+
+    walk(tree)
+    return out
+
+
 # Real code nests deeper than CPython's default 1000 frames allows once each
 # AST level costs several: sympy's resolvent_lookup.py reaches depth 568.
 # ast.parse itself copes; a recursive encoder does not, without this.
@@ -198,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
         "file": args.file,
         "genexps": genexps,
         "func_codes": collect_func_codes(compiled),
+        "annotations": collect_annotations(tree),
         "ast": encode_node(tree),
     }, sys.stdout, indent=args.indent)
     sys.stdout.write("\n")
