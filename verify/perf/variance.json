@@ -1,0 +1,110 @@
+{
+  "schema": "pyc-perf-variance/1",
+  "generated": "2026-11-28T02:07:28+00:00",
+  "git": "055f950f08b0d5f3ef640a6bb833659a71aa1699",
+  "host": {
+    "name": "marvin",
+    "machine": "x86_64",
+    "cpus": 64
+  },
+  "set": "smoke",
+  "runs": 5,
+  "threshold": {
+    "spread_multiple": 3.0,
+    "absolute_floor": 0.02
+  },
+  "by_workload": {
+    "nbody": {
+      "class": "numeric",
+      "runs": 5,
+      "mean": 1.2666,
+      "std": 0.0015,
+      "cv": 0.0012,
+      "robust_cv": 0.0012,
+      "min": 1.265,
+      "max": 1.268,
+      "threshold": 0.02
+    },
+    "spectralnorm": {
+      "class": "numeric",
+      "runs": 5,
+      "mean": 1.3172,
+      "std": 0.0134,
+      "cv": 0.0102,
+      "robust_cv": 0.0034,
+      "min": 1.294,
+      "max": 1.328,
+      "threshold": 0.02
+    },
+    "ast_parse": {
+      "class": "pure-python",
+      "runs": 5,
+      "mean": 1.1924,
+      "std": 0.076,
+      "cv": 0.0637,
+      "robust_cv": 0.0099,
+      "min": 1.057,
+      "max": 1.233,
+      "threshold": 0.0298
+    },
+    "xml_build": {
+      "class": "pure-python",
+      "runs": 5,
+      "mean": 1.1646,
+      "std": 0.0034,
+      "cv": 0.0029,
+      "robust_cv": 0.0025,
+      "min": 1.159,
+      "max": 1.168,
+      "threshold": 0.02
+    },
+    "decimal_pi": {
+      "class": "c-bound",
+      "runs": 5,
+      "mean": 1.004,
+      "std": 0.005,
+      "cv": 0.005,
+      "robust_cv": 0.0015,
+      "min": 0.997,
+      "max": 1.011,
+      "threshold": 0.02
+    },
+    "nqueens": {
+      "class": "pure-python",
+      "runs": 5,
+      "mean": 1.2134,
+      "std": 0.0144,
+      "cv": 0.0119,
+      "robust_cv": 0.0024,
+      "min": 1.2,
+      "max": 1.238,
+      "threshold": 0.02
+    }
+  },
+  "by_class": {
+    "numeric": {
+      "workloads": 2,
+      "runs": 5,
+      "mean": 1.2919,
+      "cv": 0.0218,
+      "robust_cv": 0.0184,
+      "threshold": 0.0551
+    },
+    "pure-python": {
+      "workloads": 3,
+      "runs": 5,
+      "mean": 1.1901,
+      "cv": 0.0389,
+      "robust_cv": 0.0299,
+      "threshold": 0.0897
+    },
+    "c-bound": {
+      "workloads": 1,
+      "runs": 5,
+      "mean": 1.004,
+      "cv": 0.005,
+      "robust_cv": 0.0015,
+      "threshold": 0.02
+    }
+  }
+}

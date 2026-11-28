@@ -289,7 +289,8 @@ jobs:
       #              make a claim it cannot make. That IS the finding.
       # Alerts (exit 0, red lines) are trend warnings only: run-to-run
       # variance is characterised in STATUS.md, and the gate on a timing
-      # number arrives only when the threshold is earned.
+      # number arrived only once the threshold was earned. It now is --
+      # perf_compare --variance fails the job (exit 1) on a real regression.
       - name: Perf smoke (--set smoke, pyc -O2 vs sysroot CPython)
         run: |
           set -euxo pipefail
@@ -305,7 +306,8 @@ jobs:
             --artifacts-dir perf-smoke-art
           ./verify/perf_compare.py \
             --current perf-smoke.json \
-            --baseline verify/perf/baseline.json
+            --baseline verify/perf/baseline.json \
+            --variance verify/perf/variance.json
 
       - name: Perf smoke summary
         if: always()
@@ -343,3 +345,108 @@ jobs:
           path: |
             perf-smoke.json
             perf-smoke-art
+
+  # Coverage boundary (CHARTER I1) on the constructs the rescued corpus does
+  # not reach in depth: verify/corpus/stress (advanced stdlib, match/class
+  # patterns, descriptors, dataclasses, enums, async, t-strings, type params,
+  # ...). This is NOT a monotonicity gate -- it needs no baseline, because a
+  # silent-wrong answer is a property of this run alone (I1). It gates on the
+  # ONE failure mode that matters and nothing else:
+  #   * FAILS   -- a case exits 0 and prints something other than CPython's
+  #               answer (CHARTER I1). The stress survey caught exactly this
+  #               once already (the __future__ annotations P0); it must keep
+  #               failing on it.
+  #   * passes  -- a clean pass, OR an honest refusal (DID_NOT_COMPILE: a
+  #               diagnostic naming the construct, which is the acceptable
+  #               outcome for an unsupported construct, I1a), OR an
+  #               oracle-unstable / diff case. Those are the moving coverage
+  #               boundary, reported here as information, never a failure --
+  #               so an intentional refusal added later does not red CI.
+  # The reject/ subdirectory is valid-3.14 code pyc deliberately refuses; it
+  # is not globbed by --corpus (non-recursive *.py), so it does not enter this
+  # pass, only the on-demand run in the corpus README.
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pyc
+        uses: ./.github/actions/setup-pyc
+        with:
+          pgo: "false"
+          wheel-check: "none"
+
+      - name: Stress coverage (I1 on unmapped constructs)
+        id: coverage
+        run: |
+          # Capture the exit code without set -e aborting before we record
+          # it (measure_run exits 1 on a silent-wrong, which is the failure
+          # we want to report, not an unrecorded step abort).
+          set +e
+          ./verify/measure_run.py \
+            --corpus verify/corpus/stress \
+            --pyc "./compiler/tools/pyc" \
+            --pyc-flag=-O0 \
+            --sysroot "$SYSROOT" \
+            --jobs "$(nproc)" \
+            --run-timeout 20 --compile-timeout 90 \
+            --show 12 \
+            --fail-on-silent-wrong \
+            --json stress.json
+          code=$?
+          set -e
+          echo "ok=$([ "$code" -eq 0 ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the coverage boundary
+        if: always()
+        run: |
+          python3 - "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import json, sys
+          try:
+              d = json.load(open("stress.json"))
+          except (OSError, json.JSONDecodeError):
+              d = None
+          with open(sys.argv[1] if len(sys.argv) > 1 else "/dev/null", "a") as f:
+              if not d:
+                  f.write("## Stress coverage\n\nNot published: the step failed "
+                          "or produced no record.\n")
+                  sys.exit(0)
+              f.write(f"## Stress coverage (pyc -O0 vs CPython {d['oracle']['version']})\n\n")
+              f.write(f"**{d['pass_rate']:.2f}%** — {d['passing']}/{d['total']} "
+                      f"byte-identical to CPython\n\n")
+              # A DID_NOT_COMPILE here is the *acceptable* outcome for an
+              # unsupported construct (I1a). We publish the refusals so the
+              # boundary is visible, but only a silent-wrong (exit 0 + stdout
+              # diff) is a gate failure, and that is a nonzero coverage exit.
+              f.write("| flag | count |\n|---|---|")
+              for k, v in d["counts"].items():
+                  f.write(f"\n| `{k}` | {v} |")
+              silent = [r["case"] for r in d["results"]
+                        if "STDOUT_DIFFERS" in r["flags"]
+                        and (r["exit"] or {}).get("subject") == 0]
+              if silent:
+                  f.write(f"\n\n**{len(silent)} silent wrong answer(s)** — "
+                          "exited 0 and printed the wrong thing (I1).")
+              f.write(f"\n\n<sub>{d['total']} probes · gate fails only on a "
+                      "silent-wrong answer; honest refusals (DID_NOT_COMPILE) "
+                      "are the boundary, reported here.</sub>")
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stress-coverage-results
+          path: stress.json
+
+      - name: Reflect the coverage gate in the job status
+        if: always()
+        env:
+          COVERAGE_OK: ${{ steps.coverage.outputs.ok }}
+        run: |
+          if [ "$COVERAGE_OK" = "yes" ]; then exit 0; fi
+          echo "STRESS COVERAGE: FAIL — a silent-wrong answer (I1) slipped " \
+               "past; the stress survey found it before a user did" \
+               | tee -a "$GITHUB_STEP_SUMMARY"
+          exit 1

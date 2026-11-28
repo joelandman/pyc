@@ -306,14 +306,15 @@ seconds diverge up to 49% (below). The baseline is
 `verify/perf/baseline.json`; it is re-recorded only with a measured
 reason in the commit, like the correctness baselines.
 
-**Policy** — PR: the smoke set runs on every push, trend-only. Nightly:
+**Policy** — PR: the smoke set runs on every push, gated. Nightly:
 the full set in `metric.yml` (one build class with the PR smoke: pgo off,
-`-O2`). Until run-to-run variance is characterised, drift beyond ±15% is
-a red warning, not a failure; the timing gate arrives with the
-characterised variance, not before. Harness errors are still hard
-failures in both: a workload that does not compile, mismatches the
-oracle, or times out entirely, and a record that is not comparable, both
-fail the job.
+`-O2`). Run-to-run variance is now characterised
+(`verify/perf/variance.json`), so `perf_compare --variance` is a real
+regression gate: a workload regressing beyond its own characterised spread
+fails the job (exit 1). Drift beyond ±15% that is *not* a regression is a
+red warning, not a failure. Harness errors are still hard failures in both:
+a workload that does not compile, mismatches the oracle, or times out
+entirely, and a record that is not comparable, both fail the job.
 
 **First record** (baseline pin `8227920d1e85c6af`, 2026-11-09, local box
 `hal9k`, sysroot 3.14.7, pyc `-O2`, 1 warmup + 7 runs; re-recorded
@@ -347,6 +348,23 @@ load); the speedups moved within ±5% (1.33→1.31, 1.34→1.34,
 a trend line can be built on; the absolute seconds are machine-local,
 which is why cross-host comparisons in `perf_compare.py` alert on
 speedups only.
+
+**Variance model (committed 2026-11-28).** `verify/perf_variance.py`
+characterises the per-workload and per-class spread of the speedup and
+writes `verify/perf/variance.json` (schema `pyc-perf-variance/1`), which
+`perf_compare --variance` consumes as the gate. Threshold is
+`max(absolute_floor, spread_multiple × robust_CV)`: the `absolute_floor`
+(0.02) keeps trivially-stable c-bound workloads from gating below 2%, and
+the **robust** CV (1.4826 × MAD/median, not plain std) keeps a single
+environmental blip from setting the gate. The latter is deliberate: on this
+shared dev box the smoke set shows one ast_parse run at 1.06 against ~1.22
+elsewhere — plain std would gate ast_parse at ~18% and hide a real ~15%
+regression; robust CV gives 3%, which is what the workload's genuine spread
+is. Both knobs are CLI args and are recorded in the file (I9). The model is
+run-specific: CI re-characterises after any runner/flag change. The smoke
+set's six workloads are a pinned subset of the nightly full set, so their
+per-workload thresholds gate the full set directly and the four
+full-only workloads fall back to their class threshold.
 
 ## Major remaining issues
 
@@ -710,7 +728,8 @@ vs C.
   oracle, per-workload trace + flamegraph artifacts, MISMATCH cross-check)
   + `verify/perf_compare.py` (comparability keyed on pin hash + oracle
   version + flags; drift beyond ±15% is a warning, not a gate, until
-  variance is characterised). First record committed as
+  variance is characterised — now done: `--variance` gates on a
+  per-workload regression (see the 2026-11-28 variance entry). First record committed as
   `verify/perf/baseline.json` (2026-11-08, local box, sysroot 3.14.7,
   `-O2`): numeric 1.33–1.34×, pure-python 1.10–1.15×, c-bound 0.98× — the
   class shape the 2026-10-02 speed section predicted. Two-run variance
