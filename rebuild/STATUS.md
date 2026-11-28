@@ -281,14 +281,20 @@ also ships one `--trace` and one `--flamegraph` artifact (TRACING.md),
 from a separate instrumented build that is not in the timed set.
 
 **Workloads** — `verify/perf.py` (registry) plus `verify/perf/workloads/`
-and three corpus programs (nbody, mandelbrot). Three classes:
-`numeric` (type-stable float/int — where unboxing is expected to pay),
+and three corpus programs (nbody, mandelbrot). Four classes: `numeric`
+(type-stable float/int — where unboxing is expected to pay),
 `pure-python` (call/combinatorial density — where native dispatch should
-win), `c-bound` (C work dominates — the honest floor). Every input is a
-pinned constant or an in-memory construction from fixed patterns. The pin
-covers name, path, argv, and the workload FILE's content, so an edit to a
-pinned constant (N=500 → 600) changes the pin and the comparison is
-refused until the baseline is re-recorded with a reason. Measured on this box
+win), `c-bound` (C work dominates — the honest floor), and `real-app`
+(unmodified third-party pure-Python code — the class this section
+was missing). Every input is a pinned constant or an in-memory
+construction from fixed patterns. The pin covers name, path, argv, and
+the workload FILE's content, so an edit to a pinned constant (N=500 → 600)
+changes the pin and the comparison is refused until the baseline is
+re-recorded with a reason. A real-app workload additionally pins its
+vendored third-party source (`Workload.pinned_files`, folded into the set
+pin by `perf.pin_hash`) — editing the real-world code changes the pin
+exactly like an input edit would, so the class can never silently start
+measuring a different program. Measured on this box
 (32 cores): smoke set 2–3 min including the artifact builds; the full
 set adds ~1 min of work. The 2-core CI runner runs both about twice as
 slow.

@@ -42,6 +42,11 @@ class Workload:
     path: Path
     argv: tuple[str, ...] = ()
     timeout: float = 180.0
+    # Extra files the workload depends on but does not itself carry -- the
+    # vendored third-party source of a real-app workload. Folded into the set
+    # pin (see pin_hash) so a change to that real-world code changes the
+    # identity just like an input edit would.
+    pinned_files: tuple[str, ...] = ()
 
     @property
     def relpath(self) -> str:
@@ -77,6 +82,16 @@ FULL: list[Workload] = SMOKE + [
     Workload("matmul", NUMERIC, WORKLOADS_DIR / "matmul.py"),
     Workload("mail_parse", PURE_PYTHON, WORKLOADS_DIR / "mail_parse.py"),
     Workload("mandelbrot", NUMERIC, CORPROG / "mandelbrot.py", ("1000",)),
+    # Real-app: unmodified third-party pure-Python code, vendored under
+    # verify/corpus/realapp/ and pinned via pinned_files. Two different code
+    # paths and call shapes than any named workload -- the class STATUS.md
+    # was missing. json_validate exercises fastjsonschema (schema validation,
+    # including the validator it generates at runtime); host_encode exercises
+    # idna (IDNA/punycode encoding). Sized for ~1.5 s of work on the oracle.
+    Workload("json_validate", REAL_APP, WORKLOADS_DIR / "json_validate.py",
+             pinned_files=("verify/corpus/realapp/fastjsonschema",)),
+    Workload("host_encode", REAL_APP, WORKLOADS_DIR / "host_encode.py",
+             pinned_files=("verify/corpus/realapp/idna",)),
 ]
 
 SETS: dict[str, list[Workload]] = {"smoke": SMOKE, "full": FULL}
@@ -93,4 +108,16 @@ def pin_hash(workloads: list[Workload]) -> str:
     as long as every workload in the intersection is pin-identical."""
     parts = [f"{w.name}|{w.relpath}|{','.join(w.argv)}|{w.content_sha}"
              for w in workloads]
+    # A real-app workload measures vendored third-party source that lives
+    # outside its own file; fold that source into the pin too, so a change to
+    # the real-world code changes the set identity just like an input edit
+    # would (perf_compare refuses a set whose per-workload pins drift).
+    for w in workloads:
+        for rel in w.pinned_files:
+            base = REPO / rel
+            targets = sorted(base.rglob("*.py")) if base.is_dir() else [base]
+            for fp in targets:
+                tag = fp.relative_to(REPO).as_posix()
+                parts.append(
+                    f"{w.name}:{tag}|{hashlib.sha256(fp.read_bytes()).hexdigest()[:16]}")
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]

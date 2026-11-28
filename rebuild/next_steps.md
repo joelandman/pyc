@@ -65,15 +65,25 @@ bottleneck, this effort changes direction rather than spending it. Go
 straight to the smallest slice only if that is preferred.
 
 ## 2. Fill the empty `real-app` perf class
-**Restated 2026-11-28 (after items 1–3):** still open. `verify/perf.py`
-declares `REAL_APP` but no workload uses it. Standing proposal: two pinned
-third-party **pure-Python** workloads (e.g. `black --check` / `mypy
---fast` on a pinned corpus) so the 10-workload set measures pyc on
-unmodified real-world code — the class it currently lacks. Pinned,
-deterministic, no clock/rand/network (perf.py docstring, I9).
+**Status: DONE (2026-11-28).** `verify/perf.py` declares `REAL_APP`; two
+workloads now use it:
 
-This is now the *only* named class the committed full-set baseline
-(`verify/perf/baseline.json`, matmul included) does not exercise, and it is
+- `json_validate` — runs the real, dependency-free third-party package
+  `fastjsonschema` (vendored under `verify/corpus/realapp/`) to validate a
+  deterministically generated dataset; the validator it generates at
+  runtime also runs under pyc.
+- `host_encode` — runs the real, dependency-free package `idna` (vendored
+  beside it) to encode N host names to IDNA/punycode.
+
+Both are pinned, deterministic, no clock/rand/network (perf.py docstring,
+I9). The vendored source is folded into the set pin via the new
+`Workload.pinned_files` field + `pin_hash` extension, so editing the
+third-party code changes the set identity like an input edit would. They
+were sized to ~1.5 s of work on the oracle and validated byte-identical
+under pyc vs CPython.
+
+This was the *only* named class the committed full-set baseline
+(`verify/perf/baseline.json`, matmul included) did not exercise. It is
 also where the fusion lever (#1) gets validated on genexpr-dense code,
 since no named workload exercises that shape heavily. Once #1 proves the
 native-range counter win, a genexpr-dense real-app workload is the direct
